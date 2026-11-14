@@ -488,7 +488,9 @@ keys: the row outlives nothing and refers to the record by type and id.
 | next_position | int | Yes | 1 | - | The step to execute next; every advance is `WHERE status = 'running' AND next_position = ?` |
 | attempts | int | Yes | 0 | - | Failed step attempts; the third failure fails the run with `step_failed` |
 | resume_at | datetime | No | - | indexed, UTC | When a waiting run becomes claimable |
-| claimed_at | datetime | No | - | - | When the executor claimed it |
+| claimed_at | datetime | No | - | - | When the executor claimed it; serialised, not a lease |
+| owner_instance | string | No | NULL | `varchar(64)`; not serialised | Instance id of the engine holding the claim (#237, see [Automation Run Leases](#automation-run-leases)) |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL, UTC; not serialised | The lease stamp, renewed every 30 s by the owner (#237) |
 | finished_at | datetime | No | - | - | Set on completed, failed and cancelled |
 | cancel_reason | string | No | - | `rule_changed`, `rule_disabled`, `rule_deleted`, `manual`, `record_deleted`, max 30 | `record_deleted`: the lead was erased or the ticket deleted (in that transaction), or the record was gone at the run's next step |
 | error_code | string | No | - | `email_unconfirmed`, `step_failed`, max 40 | |
@@ -886,6 +888,33 @@ back by its former owner. A scheduled start refused by a manual run's lock recor
 backfill: a legacy running row has a NULL heartbeat and is failed by the next boot. MySQL and
 MariaDB get the columns and indexes from `20261114120000_add_aeo_run_ownership` (each only when
 missing); SQLite from `MigrateDatabase`. Several processes on one SQLite file are not supported.
+
+## Automation Run Leases
+
+`automation_runs` carries two lease columns (#237) that let several API replicas run the
+follow-up automation worker against one MySQL/MariaDB database. Neither is serialised: the run
+JSON is unchanged, and `claimed_at` still reads as before.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the engine holding the claim: 32 lowercase hex characters from `crypto/rand`, generated per `AutomationEngine`. Not a foreign key; never logged. NULL on legacy rows; cleared when the run leaves `running` (see below for one exception) |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL, UTC | Set to the claim time by `ClaimRun` and renewed every 30 s by the owner while it executes. A `running` row whose value is NULL or older than now − 3 min is stale |
+
+Lifecycle: `ClaimRun` writes `running`, both columns and `claimed_at` in one conditional update.
+`RenewRunLease`, `AdvanceRun` and `ReleaseRun` match only `owner_instance = <owner>`; an advance or
+release that leaves `running` clears both columns, and so do `CancelRun`, `CancelRunsForRule` and
+`CancelRunsForEntity`. The stale sweep (boot and every worker tick) reads the stale running rows
+with a plain query and recovers each by primary key with `RecoverStaleRun`, re-checking status,
+owner and staleness: back to `pending` (attempts unchanged), or `failed`/`email_unconfirmed` when
+its last step row is a `send_email` still `sending`; both columns are cleared. No new index: the
+sweep reads through the existing `status` index without a lock and every lease write is by
+primary key. No backfill: a legacy running row has a NULL heartbeat and is recovered by the next
+sweep. MySQL and MariaDB get the columns from `20261116120000_add_automation_run_leases` (each only
+when missing; the down half drops each only when present); SQLite from `MigrateDatabase`. Upgrade
+by stopping every replica first: an older binary's boot reconciliation resets live runs. Several
+processes on one SQLite file are not supported. Runs cancelled by a lead erasure or a ticket
+delete (`cancelAutomationForEntity`) keep the values of the two columns; nothing reads them on a
+cancelled run.
 
 ## API Request/Response Format
 

@@ -148,9 +148,10 @@ and turns some into deals and quotes.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
    opt-in. Embed it and submit once from a real browser.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
-   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:363`) and assumes
-   one replica (`docs/ROADMAP.md`, "Multi-replica leases"). If you run more than one API instance,
-   set `AUTOMATION_ENABLED=false` on all but one.
+   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:363`). Several API
+   instances sharing one MySQL/MariaDB database may all run it: run claims carry a heartbeat
+   lease (#237, `docs/DEVELOPMENT.md`, "Run leases"). Keep replica clocks in sync and stop every
+   instance before an upgrade; a SQLite deployment stays one process.
 6. Decide whether `contacted` and `qualified` are the right conversion statuses for your team, and
    change `leads.conversion.*` in Settings if not.
 
@@ -460,7 +461,7 @@ planning around an issue number.
 | Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1153,1161,1164` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
-| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229). Still open: TLS proxy configuration, and the automation worker stays on one replica (#237) | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-60`; `docker-compose.sqlite.yml:25-43`; `docs/FORKING.md` 5.4 | #222, #229 |
+| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-60`; `docker-compose.sqlite.yml:25-43`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
 | Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
@@ -469,7 +470,7 @@ planning around an issue number.
 | Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
-| More than one automation worker | 1 | `docs/ROADMAP.md`, "Multi-replica leases" | #237 |
+| Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_engine.go`; `docs/DEVELOPMENT.md`, "Run leases (#237)" | #237 |
 | Tax lines, fractional quantities, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`; `docs/FEATURES.md` 4d | #233 |
 | Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |

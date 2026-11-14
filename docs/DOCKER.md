@@ -150,13 +150,15 @@ Notes on the wiring:
   delivered. Add the `SMTP_*` variables to the backend environment to enable
   real mail.
 - Follow-up automation: the worker is on by default (`AUTOMATION_ENABLED`,
-  `AUTOMATION_POLL_INTERVAL_SECONDS` in `.env.example`) and assumes a single
-  backend container. If you scale the backend service, keep the worker
-  enabled on exactly one replica and set `AUTOMATION_ENABLED=false` on the
-  others: those serve the API and record events but neither execute runs nor
-  reconcile them at boot. Runs left `running` by a killed worker container
-  are recovered when the next worker container boots. AEO is not part of this
-  limit on MySQL/MariaDB (#229): each run has an owner and a heartbeat in
+  `AUTOMATION_POLL_INTERVAL_SECONDS` in `.env.example`). On MySQL/MariaDB
+  every backend container may keep it on (#237): each run claim records the
+  container's instance id and a heartbeat it renews every 30 s, every later
+  write is fenced on that owner, and a run left `running` by a killed worker
+  container is recovered by the next tick of any worker once its heartbeat is
+  older than 3 minutes, without a restart. A container with
+  `AUTOMATION_ENABLED=false` serves the API and records events but neither
+  executes nor recovers runs. AEO is coordinated the same way on
+  MySQL/MariaDB (#229): each run has an owner and a heartbeat in
   `aeo_runs`, one run is admitted across all containers, the daily scheduled
   run starts once per slot whichever containers keep `AEO_SCHEDULE_ENABLED`
   on, and a starting container fails only runs whose heartbeat is older than
@@ -249,9 +251,10 @@ What the values mean here:
   the API through the UI nginx `/api/v1/` proxy, not on port 8080.
 - `CORS_ALLOWED_ORIGINS` is a comma-separated list added to the built-in
   localhost origins; list every origin your UI is served from.
-- `AUTOMATION_ENABLED` assumes one worker container; the stack runs exactly
-  one backend (#237). AEO runs and the daily schedule are coordinated across
-  backend replicas on MySQL/MariaDB (#229).
+- The stack runs one backend. The automation worker (#237), AEO runs and the
+  daily schedule (#229) are coordinated across backend replicas on
+  MySQL/MariaDB if you scale it: keep the containers' clocks synchronised and
+  stop every backend container before starting a new image.
 
 Warning: `.env.example` sets `PUBLIC_BASE_URL` to `http://localhost:8080`. A
 repo-root `.env` copied from it therefore satisfies the required check with a

@@ -1262,8 +1262,9 @@ settings:
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
 - `DISABLE_RATE_LIMIT` — test-only escape hatch, never enable in production
 - `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker and runs the
-  boot-time reconciliation; the API and the event capture work without it, but no run starts or
-  resumes and no stranded run is touched. Enable it on exactly one replica.
+  boot-time stale sweep; the API and the event capture work without it, but no run starts or
+  resumes and no stranded run is touched. It may be on for any number of replicas sharing one
+  MySQL/MariaDB database (run leases, #237); a SQLite file stays one process
 - `AUTOMATION_POLL_INTERVAL_SECONDS` (default 30, clamped to 1..3600) — how often the worker
   polls for events, due runs and schedule passes; also the granularity of every wait
 - `FORM_RETENTION_DAYS` (default off) — age in days after which spam and never-confirmed form
@@ -1787,7 +1788,8 @@ Schema: `models.AEORun` (`json:"-"` on the four columns) via `MigrateDatabase` o
 `migrations/20261114120000_add_aeo_run_ownership` (each column and index only when missing) on
 MySQL/MariaDB; see [datamodel.md](datamodel.md#aeo-run-ownership). Regression roots:
 `TestAEORunOwnership{SchemaSQLite,SQLiteUpgrade,JSONHidden}` (`internal/models`);
-`TestAEORunOwnershipMigrationFiles` (now holding the newest-migration assertion) and
+`TestAEORunOwnershipMigrationFiles` (the newest-migration assertion has since moved to
+`TestAutomationRunLeaseMigrationFiles`, #237) and
 `TestAEORunOwnershipMigration` (`cmd/migrate`); `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`
 (`internal/repository`); `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`,
 `TestAEORunHeartbeatLifecycle` and `TestAEOReplicaLogsOmitPersonalData` (`internal/service`,
@@ -1914,19 +1916,78 @@ The pieces, and why each is shaped the way it is:
   a second executor cannot start the same send); only after that commit is `Mailer.Send` called,
   once, with the staff user's current address; the second marks the row `succeeded` or `failed`
   (`mail_failed`) and advances the run conditionally. A fault after the send leaves the row in
-  `sending`, and a row found in `sending` — by the next execution or by the boot reconciliation —
-  is failed with `email_unconfirmed` together with the run; the mail is never sent again. A run
-  cancelled between the two halves stays cancelled with its row finalized.
-- **Boot reconciliation, single replica.** `AutomationEngine.Reconcile` runs in `setupDependencies`
-  before the worker and the HTTP server start, and only when `AUTOMATION_ENABLED` is true: a run
-  left in `running` goes back to `pending` at its `next_position`; one whose last step row is a
-  `send_email` in `sending` is failed as above. That is only safe because the worker assumes a
-  single API replica: no live executor owns the runs it touches, and there is no lease timeout on
-  `claimed_at`. A process started with the worker off owns no run and therefore reconciles
-  nothing — a restart of such a replica beside the worker replica would otherwise reset the runs
-  the worker is executing (their next conditional advance would fail and the step would be
-  repeated) and fail an email that is mid-send. A second replica with the worker enabled would
-  double-execute; multi-replica leases are a roadmap item.
+  `sending`, and a row found in `sending` — by the next execution or by the stale sweep — is
+  failed with `email_unconfirmed` together with the run; the mail is never sent again. A run
+  cancelled between the send and the stamp stays cancelled with its row finalized; a run cancelled
+  before the pre-send check (below) is not sent and its row stays `sending`.
+- **Run leases (#237).** Several replicas may run the worker against one MySQL/MariaDB database.
+  - *Ownership.* Each `AutomationEngine` generates an instance id at construction (32 lowercase
+    hex characters from `crypto/rand`). `ClaimRun(id, fromStatus, owner, now)` writes `status =
+    running`, `owner_instance`, `heartbeat_at` and `claimed_at` in one conditional update.
+    `ExecuteDue` reads the clock afresh for every claim of its batch: the runs execute one after
+    another, and a time read before the loop would stamp a late claim with a lease that is
+    already stale. The batch is a plain read taken before the claims, so between that read and a
+    claim another engine may have claimed the run, executed a step and released it back to
+    `pending` at a later position: the claim still matches. After every successful claim the
+    executor therefore re-reads the run by primary key and runs from the stored `next_position`
+    and `attempts`, skipping it if it is no longer `running` under this engine; it never executes
+    from the batch snapshot. A fenced write that ends the hold and matches nothing is logged at Info
+    with `run_id` and `operation`. Both lease columns are `json:"-"`; `claimed_at` is still
+    serialised and is not a lease.
+  - *Heartbeat.* After a successful claim the executor starts one goroutine that calls
+    `RenewRunLease(id, owner, at)` every `automationRunHeartbeatInterval` (30 s): `UPDATE … SET
+    heartbeat_at WHERE id = ? AND status = 'running' AND owner_instance = ?`, re-checked with a read
+    when MySQL reports zero changed rows. `repository.ErrAutomationRunNotOwned` (a cancel, a
+    takeover) cancels the run's context: the executor starts no further step and writes nothing
+    more. Any other failure is logged and retried at the next interval. The goroutine is joined
+    before `executeRun` returns, so once `AutomationRuntime.Stop` returns nil nothing renews.
+  - *Fenced writes.* `AdvanceRun` and `ReleaseRun` also require `owner_instance = owner` and clear
+    `owner_instance` and `heartbeat_at` when the run leaves `running`. The writes that end the
+    executor's hold outside a step (complete, fail after the last attempt, release, cancel on a rule
+    change) each run in their own short transaction replayed on a deadlock, a lock wait or SQLite
+    busy (`runWrite`); one that still fails is logged with `run_id` and `operation` only, and the
+    run stays `running` under the expired lease until the sweep recovers it. The first `send_email`
+    transaction refuses a run row (read `FOR UPDATE`) that is not running at its position under its
+    own owner; a plain read of the run just before `Mailer.Send` (the pre-send check) does the same,
+    so an executor paused there neither sends nor stamps; the second transaction advances (fenced)
+    and then stamps with `FinishSendingStep(id, outcome, errorCode, details)`, which matches only a
+    row still in `sending`. A claimed run whose position already holds a finalized `send_email`
+    row (an earlier executor's late stamp) is not sent again and not left running: the executor
+    advances past it (fenced), or fails the run when the row is `email_unconfirmed`
+    (`continuePastRecordedEmail`). `CancelRun`, `CancelRunsForRule` and `CancelRunsForEntity` keep their
+    predicates and clear the lease through the shared cancel helper. `FailRun`,
+    `ResetRunToPending`, `UpdateRunStepOutcome` and `ListRunsByStatus` are gone.
+  - *Stale sweep.* `AutomationEngine.SweepStaleRuns` replaces `Reconcile`. It runs in
+    `setupDependencies` before the worker and the HTTP server start (only when `AUTOMATION_ENABLED`
+    is true) and at the start of every worker tick, on every replica. `ListStaleRunningRuns` is a
+    plain read of the running rows whose `heartbeat_at` is NULL (a legacy row) or older than
+    `automationRunLeaseStaleAfter` (3 min), in id order; each is recovered in one transaction by
+    `RecoverStaleRun(id, observedOwner, heartbeatBefore, failCode, now)`, an update by primary key
+    that re-checks `running`, the observed owner (NULL-safe) and the staleness, so a run renewed,
+    re-claimed or finished meanwhile is left alone. A run whose last step row is a `send_email` in
+    `sending` is failed with `email_unconfirmed` and the row stamped the same in that transaction;
+    every other stale run goes back to `pending` at its `next_position` with `attempts` unchanged.
+    The choice comes from a plain read taken before the transaction, so after the conditional
+    update the transaction re-reads the last step row; when it differs (a stale owner committed its
+    sending row, or stamped it, in between) the recovery rolls back and the next sweep decides on
+    the current row. A sending row is inserted only by the owner while it holds the run row, so none
+    can appear after the update. A live run on another replica is never touched. Locks are taken run row first, step row second,
+    the order of the email step, and the sweep and the heartbeat each write one run row by primary
+    key, so they queue behind a step instead of deadlocking.
+  - *Limits.* The window between the pre-send check and `Send` stays open: an executor paused
+    exactly there can still send once after a sweep recorded `email_unconfirmed` (outcome unknown,
+    never resent). Replica clocks must agree to well under 90 s. Upgrade by stopping every replica
+    before starting the new version: an older binary's boot `Reconcile` resets live runs. Several
+    processes on one SQLite file are not supported. Lead erasure and ticket delete cancel runs with
+    their own statement (`cancelAutomationForEntity`), which does not clear the two lease columns of
+    the cancelled rows; nothing reads them on a cancelled run.
+  - *Logs.* The claim, heartbeat, heartbeat-loss, pre-send, sweep, takeover and fenced-write lines
+    carry operation names, ids, positions, step types, outcomes, error codes and counts (plus the
+    sanitised database error of a failed renewal or recovery); never the instance id.
+  - *Schema.* `models.AutomationRun.OwnerInstance` (`varchar(64)`) and `HeartbeatAt`
+    (`datetime(3)`), both nullable, from `MigrateDatabase` on SQLite and
+    `migrations/20261116120000_add_automation_run_leases` (each column only when missing, no
+    index, no backfill) on MySQL/MariaDB; see [datamodel.md](datamodel.md#automation-run-leases).
 - **Waits and schedules survive a restart.** A wait step advances the run to `waiting` with
   `resume_at = now + duration` (written in UTC, compared with a UTC parameter, so SQLite's text
   timestamps order correctly) and `next_position` after the wait; the worker claims it at the first
@@ -1953,7 +2014,8 @@ The pieces, and why each is shaped the way it is:
   runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
   even on a context that has already ended: the join and the admission drain check their
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
-  the deadline passes: the process exits without closing the database and the next boot reconciles.
+  the deadline passes: the process exits without closing the database, the run's lease goes stale
+  and the next sweep on any worker replica recovers it.
 - **Erasure hooks.** See *Deleting personal data* above: lead erasure cancels the lead's runs and
   purges its notifications before the scrub; user erasure purges the user's notifications; the
   erasure of a deal's customer or lead purges the notifications about that deal (#245) and leaves
@@ -2067,16 +2129,37 @@ and blanked by the task renderer), `TestAutomationWaitResume{SQLite,MySQL}`
 GORM callbacks that refuse any transaction start, write or locking read during the draft),
 `TestAutomationDraftDryRunValidatesLikeCreate`, `TestAutomationRuleValidationCollectsAllFields`,
 `TestAutomationRuleValidationLegacyMessage`, `TestAutomationRuleValidationReferencePaths`,
-`TestAutomationReconcile{SQLite,MySQL}`, `TestAutomationRuntimeDrain`,
+`TestAutomationReconcile{SQLite,MySQL}` (now the stale sweep), `TestAutomationRuntimeDrain`,
 `TestAutomationLogsOmitPersonalData` (`internal/service`); `TestAutomationRunListScope{SQLite,MySQL}`,
 `TestAutomationRunRuleNames{SQLite,MySQL}`,
 `TestAutomationErasure{SQLite,MySQL}` (the MySQL root reproduces the paused-step deadlock at the
 repository level) (`internal/repository`); `TestAutomationRunServiceRoles`;
 `TestAutomationRuleAPISQLite`, `TestAutomationRunAPISQLite`, `TestNotificationAPISQLite` (`tests`);
 `TestAutomationRuntimeLifecycle` (`cmd`, the real wiring over a SQLite file: the worker replica
-reconciles and runs, a replica with the worker off leaves a stranded run untouched);
+sweeps and runs, a replica with the worker off leaves a stranded run untouched);
 `TestMigrationAutomationSchema` and `TestMigrationAutomationTablesListed` (`cmd/migrate`). The MySQL
 roots skip without the variable and fail when it points at an unreachable server.
+
+Run lease roots (#237), two engines with separate pools on one SQLite file or one disposable
+`TEST_MYSQL_DSN` schema unless noted: `TestAutomationRunLeaseJSONHidden`,
+`TestAutomationRunLeaseSQLiteUpgrade` (`internal/models`); `TestAutomationRunLeaseMigrationFiles`
+(now holding the newest-migration assertion), `TestAutomationRunLeaseMigration` (`cmd/migrate`);
+`TestAutomationRunLeaseRepository{SQLite,MySQL}` (`internal/repository`);
+`TestAutomationRunLeaseTakeover{SQLite,MySQL}`, `TestAutomationRunLeaseEmailAtMostOnce{SQLite,MySQL}`
+(a stale first transaction, a send parked before and after the pre-send check, exact `Send`
+counts), `TestAutomationRunLeaseLiveRunSpared{SQLite,MySQL}`, `TestAutomationRunLeaseHeartbeatLifecycle`
+(SQLite), `TestAutomationRunLeaseConcurrentWorkers{SQLite,MySQL}` (with a subtest that parks an
+engine through the `beforeClaim` seam between its batch read and its claim while the other engine
+steps and releases the run, and asserts the late claimer finishes from the stored position
+without a sweep),
+`TestAutomationRunLeaseLockOrderMySQL` (a heartbeat and a sweep against a step in both orderings,
+each wait seen in `information_schema.PROCESSLIST` on two consecutive polls, no error 1213) and
+`TestAutomationRunLeaseLogsOmitPersonalData` (`internal/service`, through the engine's
+instance-local seams `afterRecordRead`, `beforeStep`, `beforeSend`, `afterSend` and
+`afterStaleRecover`); `TestAutomationRunLeaseProductionWiring` (`cmd`, the real wiring and clock
+over a SQLite file, observed through the `automationRuntimeBuilt` hook and
+`AutomationEngine.SetRecoveryObserver`). Registering the MySQL roots in `scripts/ci/check-go.py`
+and the migration roots in the Database migrations workflow is an operator follow-up.
 
 Ticket roots (#242), on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
 `TestAutomationTicketEvents{SQLite,MySQL}`, `TestTicketServiceWithoutAutomationUnchanged` (SQLite),
@@ -2153,7 +2236,7 @@ the setting is off, so no goroutine runs and no row is read.
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
   drains after the automation worker and before the stale bulk operation sweep and AEO:
   `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)`.
-- **Replicas.** The purge is safe on every replica, unlike the automation worker: extra sweeps only
+- **Replicas.** The purge is safe on every replica, like the automation worker (#237): extra sweeps only
   compete for the same rows.
 - **Logs.** A sweep logs `spam_removed`, `pending_removed`, `tokens_removed` and `chunks`, and a
   failure adds the error through `utils.LogError`. The boot line `form retention purge enabled`

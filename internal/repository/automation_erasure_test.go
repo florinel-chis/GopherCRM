@@ -132,7 +132,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		lead := newLead()
 		run := seedAutomationRun(t, db, rule, lead.ID, models.AutomationRunPending)
 		now := time.Now().UTC()
-		rows, err := repo.ClaimRun(run.ID, models.AutomationRunPending, now)
+		rows, err := repo.ClaimRun(run.ID, models.AutomationRunPending, "erasure-step-owner", now)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, rows)
 
@@ -159,7 +159,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		// The step resumes with its conditional advance, which needs the run
 		// row the erasure holds: InnoDB resolves the deadlock against the
 		// transaction that modified nothing, which is the step.
-		rows, err = stepRepo.AdvanceRun(run.ID, 1, AutomationRunAdvance{Status: models.AutomationRunRunning, NextPosition: 2}, now)
+		rows, err = stepRepo.AdvanceRun(run.ID, 1, "erasure-step-owner", AutomationRunAdvance{Status: models.AutomationRunRunning, NextPosition: 2}, now)
 		if err == nil {
 			require.Zero(t, rows, "the advance must not match once the erasure holds the run")
 		} else {
@@ -180,7 +180,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		require.NoError(t, retry.Error)
 		_, err = repo.WithTx(retry).GetLeadForUpdate(lead.ID)
 		assert.True(t, errors.Is(err, gorm.ErrRecordNotFound), "the erased lead is not found, got %v", err)
-		rows, err = repo.WithTx(retry).AdvanceRun(run.ID, 1, AutomationRunAdvance{Status: models.AutomationRunCancelled, NextPosition: 1, CancelReason: models.AutomationCancelRecordDeleted}, now)
+		rows, err = repo.WithTx(retry).AdvanceRun(run.ID, 1, "erasure-step-owner", AutomationRunAdvance{Status: models.AutomationRunCancelled, NextPosition: 1, CancelReason: models.AutomationCancelRecordDeleted}, now)
 		require.NoError(t, err)
 		assert.Zero(t, rows, "the run was cancelled by the erasure")
 		require.NoError(t, retry.Rollback().Error)

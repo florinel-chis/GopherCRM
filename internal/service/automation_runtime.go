@@ -13,7 +13,11 @@ import (
 // through cmd/automation_runtime.go and drains it before closing the
 // database: Stop closes admission, cancels the worker context and waits for
 // the goroutine and every admitted step to release under the caller's
-// deadline. The worker assumes a single API replica (no run leases).
+// deadline. Several replicas sharing one MySQL/MariaDB database may each run
+// a worker (#237): every claim carries the engine's instance id and a
+// heartbeat lease, each tick starts with the stale sweep, and the heartbeat
+// goroutine of a run is joined before its executor returns, so once Stop
+// returns nil no heartbeat is written either.
 type AutomationRuntime struct {
 	engine   *AutomationEngine
 	interval time.Duration
@@ -41,6 +45,12 @@ func NewAutomationRuntime(engine *AutomationEngine, interval time.Duration) *Aut
 
 // Engine is the engine the worker drives.
 func (r *AutomationRuntime) Engine() *AutomationEngine { return r.engine }
+
+// SweepStaleRuns runs the engine's stale sweep once, outside the worker:
+// main calls it at boot, before the worker and the HTTP server start.
+func (r *AutomationRuntime) SweepStaleRuns(ctx context.Context) (recovered int, failed int, err error) {
+	return r.engine.SweepStaleRuns(ctx)
+}
 
 // Start arms the worker on a context derived from ctx and from the engine's
 // owned context, so either the process-wide background cancel or Stop ends

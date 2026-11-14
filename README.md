@@ -1025,13 +1025,18 @@ gophercrm/
   admin and sales retry a failed, log-only or stuck one with
   `POST /api/v1/forms/deliveries/{id}/retry`. Nothing retries automatically, and `sent` means the
   relay accepted the message: bounces are not tracked.
-- **The automation worker assumes a single API replica.** Runs are claimed by conditional updates
-  and recovered only at boot of the worker process (`AUTOMATION_ENABLED`, see `.env.example`);
-  there is no lease timeout, so a run left `running` by a crashed worker is handed back only
-  when that process restarts. Enable the worker on exactly one instance: a replica started with
-  `AUTOMATION_ENABLED=false` serves the API and records events but neither executes runs nor
-  reconciles them at boot, so it leaves the worker replica's runs alone. Processed events and
-  finished runs are kept; there is no retention pruning yet.
+- **The automation worker is replica-safe on MySQL/MariaDB, with conditions.** Every replica with
+  `AUTOMATION_ENABLED=true` (see `.env.example`) may run the worker against one shared database
+  (#237): each run claim carries the replica's instance id and a heartbeat lease, every later
+  write is fenced on that owner, and a run whose lease is older than 3 minutes (a crashed or
+  paused worker) is recovered by the next tick of any worker, without a restart. A replica with
+  the worker off serves the API and records events but neither executes nor recovers runs.
+  Replica clocks must agree to well under 90 seconds, and an upgrade stops every replica before
+  starting the new version (an older binary resets live runs at boot). Several processes on one
+  SQLite file are still not supported. An email whose worker paused between its final owner check
+  and the relay call can still go out once after another worker recorded it `email_unconfirmed`;
+  it is never resent. Processed events and finished runs are kept; there is no retention pruning
+  yet.
 - **AEO is replica-safe on MySQL/MariaDB, with conditions.** One AEO run is admitted across every
   replica sharing the database and the daily scheduled run starts once per slot (#229). A run of a
   crashed or killed process is recovered up to 3 minutes after the crash, at the next boot or start

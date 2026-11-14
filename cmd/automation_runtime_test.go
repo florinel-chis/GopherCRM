@@ -1,12 +1,11 @@
 package main
 
 // AC-15 through the real wiring: setupRouter builds every repository, service
-// and handler over a SQLite file exactly as main does, reconciles stranded
-// runs and starts the automation worker only when AUTOMATION_ENABLED is on,
-// and returns the drain handle main calls before closing the database. A
-// process without the worker owns no run, so it must not reconcile either:
-// under the single-replica assumption the worker replica is the only one
-// that may touch a run left in running.
+// and handler over a SQLite file exactly as main does, sweeps stale runs and
+// starts the automation worker only when AUTOMATION_ENABLED is on, and returns
+// the drain handle main calls before closing the database. A process without
+// the worker owns no run, so it sweeps nothing either. The lease cases (#237)
+// are in automation_run_lease_wiring_test.go.
 
 import (
 	"context"
@@ -55,14 +54,15 @@ func bootAutomation(t *testing.T, enabled bool) *automationBoot {
 }
 
 // strandedRun leaves a run in running with an unconfirmed email, as a
-// crashed process would, before the router is built.
+// crashed process would, before the router is built: claimed by an instance
+// that stopped renewing its lease ten minutes ago.
 func strandedRun(t *testing.T, repo repository.AutomationRepository, rule *models.AutomationRule, leadID uint) *models.AutomationRun {
 	t.Helper()
 	run := &models.AutomationRun{RuleID: rule.ID, RuleVersion: rule.Version, EntityType: "lead", EntityID: leadID, DedupeKey: "stranded", Status: models.AutomationRunPending, NextPosition: 1}
 	inserted, err := repo.CreateRunIgnoringDuplicate(run)
 	require.NoError(t, err)
 	require.True(t, inserted)
-	rows, err := repo.ClaimRun(run.ID, models.AutomationRunPending, time.Now())
+	rows, err := repo.ClaimRun(run.ID, models.AutomationRunPending, "crashed-process-instance", time.Now().Add(-10*time.Minute))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, rows)
 	require.NoError(t, repo.CreateRunStep(&models.AutomationRunStep{RunID: run.ID, Position: 1, StepType: models.AutomationStepSendEmail, Outcome: models.AutomationOutcomeSending, ExecutedAt: time.Now()}))
@@ -108,7 +108,7 @@ func automationRun(t *testing.T, id uint) models.AutomationRun {
 }
 
 func TestAutomationRuntimeLifecycle(t *testing.T) {
-	t.Run("enabled: reconcile at boot, the worker runs rules and the drain leaves no goroutine", func(t *testing.T) {
+	t.Run("enabled: sweep at boot, the worker runs rules and the drain leaves no goroutine", func(t *testing.T) {
 		boot := bootAutomation(t, true)
 		rule, lead := seedAutomationFixture(t, boot.repo)
 		stranded := strandedRun(t, boot.repo, rule, lead.ID)
@@ -123,7 +123,7 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 			_ = stop(ctx)
 		})
 
-		// Reconciliation ran before the worker: the unconfirmed email failed
+		// The boot sweep ran before the worker: the unconfirmed email failed
 		// the stranded run, and the log says so before the worker started.
 		recovered := automationRun(t, stranded.ID)
 		assert.Equal(t, models.AutomationRunFailed, recovered.Status)
@@ -167,7 +167,7 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 		require.NoError(t, models.CloseDatabase())
 	})
 
-	t.Run("disabled: no worker, no reconciliation, no goroutine, the API still serves", func(t *testing.T) {
+	t.Run("disabled: no worker, no sweep, no goroutine, the API still serves", func(t *testing.T) {
 		boot := bootAutomation(t, false)
 		rule, lead := seedAutomationFixture(t, boot.repo)
 		stranded := strandedRun(t, boot.repo, rule, lead.ID)

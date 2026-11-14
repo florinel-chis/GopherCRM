@@ -380,6 +380,18 @@ type AutomationRun struct {
 	ResumeAt *time.Time `gorm:"index" json:"resume_at,omitempty" example:"2026-10-31T08:00:00Z" readonly:"true"`
 	// When an executor last claimed the run (RFC 3339); omitted when not set. Read-only.
 	ClaimedAt *time.Time `json:"claimed_at,omitempty" example:"2026-10-30T08:00:01Z" readonly:"true"`
+	// OwnerInstance (#237) is the instance id of the engine holding the
+	// claim: 32 lowercase hex characters from crypto/rand, one per engine. Set
+	// by the claim, cleared whenever the run leaves running (advance, release,
+	// stale recovery, cancel). NULL on legacy rows. Never serialised and never
+	// logged.
+	OwnerInstance *string `gorm:"type:varchar(64)" json:"-"`
+	// HeartbeatAt (#237) is the lease stamp in UTC: the claim time, renewed
+	// every 30 s by the owner while it executes. A running row whose value is
+	// NULL or older than 3 minutes is stale and recovered by the sweep.
+	// Cleared together with OwnerInstance. Never serialised. No type tag, like
+	// the other timestamps: datetime(3) on MySQL, datetime on SQLite.
+	HeartbeatAt *time.Time `json:"-"`
 	// When the run reached completed, failed or cancelled (RFC 3339); omitted while it is active. Read-only.
 	FinishedAt *time.Time `json:"finished_at,omitempty" example:"2026-10-30T08:00:05Z" readonly:"true"`
 	// Why a cancelled run was cancelled: the rule was changed, disabled or deleted, an admin cancelled it (manual), or the record was deleted. Omitted unless the run is cancelled. Read-only.
