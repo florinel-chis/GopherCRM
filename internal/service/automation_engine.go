@@ -206,6 +206,10 @@ type AutomationEngine struct {
 
 	afterStaleRecover func(runID uint)
 
+	// beforeStaleRecover fires in the sweep after its plain read of the run's
+	// last step row and before the recovery transaction begins.
+	beforeStaleRecover func(runID uint)
+
 	// instanceID (#237) names this engine in automation_runs.owner_instance:
 	// 32 lowercase hex characters from crypto/rand. Never logged.
 	instanceID string
@@ -1241,7 +1245,7 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 		logger.WithField("error_code", models.AutomationErrorEmailUnconfirmed).Warn("Automation email left unconfirmed; run failed")
 		return stepResult{terminal: true}, nil
 	case err == nil:
-		return stepResult{}, errRunNotAdvanced
+		return e.continuePastRecordedEmail(run, existing, stepCount, logger)
 	case !isNotFound(err):
 		return stepResult{}, err
 	}
@@ -1426,6 +1430,46 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 	return result, nil
 }
 
+// continuePastRecordedEmail handles a claimed run whose current position
+// already holds a finalized send_email row: an earlier executor recorded the
+// step (its late stamp landed after its fenced advance missed, for example
+// because a sweep recovered the run in between). The step is never repeated.
+// A row failed with email_unconfirmed fails the run with that code; any other
+// outcome advances the run past the position as that executor's advance would
+// have. Both writes are owner-fenced, so a run this engine no longer holds is
+// left alone.
+func (e *AutomationEngine) continuePastRecordedEmail(run *models.AutomationRun, existing *models.AutomationRunStep, stepCount int, logger *logrus.Entry) (stepResult, error) {
+	pos := existing.Position
+	if existing.ErrorCode == models.AutomationErrorEmailUnconfirmed {
+		if err := e.failUnconfirmedEmail(run, existing); err != nil {
+			return stepResult{}, err
+		}
+		logger.WithFields(logrus.Fields{"operation": "recorded_email", "error_code": models.AutomationErrorEmailUnconfirmed}).
+			Warn("Automation email step already recorded; run failed")
+		return stepResult{terminal: true}, nil
+	}
+	var result stepResult
+	err := e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		now := e.now().UTC()
+		adv := nextAdvance(stepCount, pos+1, now)
+		if err := e.advance(e.repo.WithTx(tx), run, pos, adv, now); err != nil {
+			return err
+		}
+		result = stepResult{terminal: adv.Status != models.AutomationRunRunning, nextPosition: pos + 1}
+		return nil
+	}, automationTxRetries)
+	if err != nil {
+		return stepResult{}, err
+	}
+	logger.WithFields(logrus.Fields{"operation": "recorded_email", "outcome": existing.Outcome}).
+		Info("Automation email step already recorded; run advanced past it")
+	return result, nil
+}
+
 // holdsRun reports whether the run row is still running at position under
 // this engine's own lease.
 func (e *AutomationEngine) holdsRun(run *models.AutomationRun, position int) bool {
@@ -1516,6 +1560,9 @@ func (e *AutomationEngine) recoverStaleRun(run models.AutomationRun, cutoff, now
 	if unconfirmed {
 		failCode = models.AutomationErrorEmailUnconfirmed
 	}
+	if e.beforeStaleRecover != nil {
+		e.beforeStaleRecover(run.ID)
+	}
 	err = e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
@@ -1531,6 +1578,23 @@ func (e *AutomationEngine) recoverStaleRun(run models.AutomationRun, cutoff, now
 		}
 		if e.afterStaleRecover != nil {
 			e.afterStaleRecover(run.ID)
+		}
+		// The decision above came from a read taken before this transaction.
+		// Re-read the last step row now that the run row is held by the
+		// conditional update (run row first, step row second). A sending row is
+		// inserted only by the run's owner while it holds the run row, so this
+		// read sees every sending row committed before the update, and none can
+		// appear after it. When the row changed since the pre-read (a stale
+		// owner committed its first email transaction, or stamped the row), the
+		// recovery rolls back and the next sweep decides on the current row; the
+		// owner meanwhile keeps its run.
+		current, err := r.LastRunStep(run.ID)
+		if err != nil {
+			return err
+		}
+		nowUnconfirmed := current != nil && current.StepType == models.AutomationStepSendEmail && current.Outcome == models.AutomationOutcomeSending
+		if nowUnconfirmed != unconfirmed || (unconfirmed && current.ID != last.ID) {
+			return errRunNotAdvanced
 		}
 		if !unconfirmed {
 			return nil

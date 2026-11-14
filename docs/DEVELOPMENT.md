@@ -1945,7 +1945,10 @@ The pieces, and why each is shaped the way it is:
     own owner; a plain read of the run just before `Mailer.Send` (the pre-send check) does the same,
     so an executor paused there neither sends nor stamps; the second transaction advances (fenced)
     and then stamps with `FinishSendingStep(id, outcome, errorCode, details)`, which matches only a
-    row still in `sending`. `CancelRun`, `CancelRunsForRule` and `CancelRunsForEntity` keep their
+    row still in `sending`. A claimed run whose position already holds a finalized `send_email`
+    row (an earlier executor's late stamp) is not sent again and not left running: the executor
+    advances past it (fenced), or fails the run when the row is `email_unconfirmed`
+    (`continuePastRecordedEmail`). `CancelRun`, `CancelRunsForRule` and `CancelRunsForEntity` keep their
     predicates and clear the lease through the shared cancel helper. `FailRun`,
     `ResetRunToPending`, `UpdateRunStepOutcome` and `ListRunsByStatus` are gone.
   - *Stale sweep.* `AutomationEngine.SweepStaleRuns` replaces `Reconcile`. It runs in
@@ -1958,7 +1961,11 @@ The pieces, and why each is shaped the way it is:
     re-claimed or finished meanwhile is left alone. A run whose last step row is a `send_email` in
     `sending` is failed with `email_unconfirmed` and the row stamped the same in that transaction;
     every other stale run goes back to `pending` at its `next_position` with `attempts` unchanged.
-    A live run on another replica is never touched. Locks are taken run row first, step row second,
+    The choice comes from a plain read taken before the transaction, so after the conditional
+    update the transaction re-reads the last step row; when it differs (a stale owner committed its
+    sending row, or stamped it, in between) the recovery rolls back and the next sweep decides on
+    the current row. A sending row is inserted only by the owner while it holds the run row, so none
+    can appear after the update. A live run on another replica is never touched. Locks are taken run row first, step row second,
     the order of the email step, and the sweep and the heartbeat each write one run row by primary
     key, so they queue behind a step instead of deadlocking.
   - *Limits.* The window between the pre-send check and `Send` stays open: an executor paused

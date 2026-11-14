@@ -401,6 +401,8 @@ var leaseLogMessages = stringSet(
 	"Automation stale run recovery failed",
 	"Automation runs recovered from stale leases",
 	"Automation run write failed; the stale sweep will recover the run",
+	"Automation email step already recorded; run advanced past it",
+	"Automation email step already recorded; run failed",
 )
 
 // leaseLogFields are the only fields those lines may carry (error is the
@@ -495,6 +497,15 @@ func TestAutomationRunLeaseLogsOmitPersonalData(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, recovered)
 
+	// A claimed run whose position already holds a finalized email row.
+	recorded := p.startRun(email, lead)
+	require.NoError(t, p.db.Create(&models.AutomationRunStep{
+		RunID: recorded.ID, Position: 1, StepType: models.AutomationStepSendEmail,
+		Outcome: models.AutomationOutcomeSucceeded, Details: map[string]interface{}{}, ExecutedAt: p.clock.Now().UTC(),
+	}).Error)
+	require.NoError(t, p.b.ExecuteDue(context.Background()))
+	assert.Equal(t, models.AutomationRunCompleted, p.runRow(recorded.ID).Status)
+
 	logs := output.String()
 	for _, needle := range []string{
 		p.a.instanceID, p.b.instanceID,
@@ -512,7 +523,8 @@ func TestAutomationRunLeaseLogsOmitPersonalData(t *testing.T) {
 		`"msg":"Automation run moved between the two email halves; stopping"`,
 		`"msg":"Automation run recovered from a stale lease"`,
 		`"msg":"Automation runs recovered from stale leases"`,
-		`"operation":"takeover"`, `"operation":"heartbeat"`, `"operation":"pre_send_check"`, `"operation":"fenced_advance"`,
+		`"msg":"Automation email step already recorded; run advanced past it"`,
+		`"operation":"takeover"`, `"operation":"recorded_email"`, `"operation":"heartbeat"`, `"operation":"pre_send_check"`, `"operation":"fenced_advance"`,
 		`"error_code":"run_not_owned"`, `"error_code":"email_unconfirmed"`, `"outcome":"pending"`, `"outcome":"failed"`,
 	} {
 		assert.Contains(t, logs, expected)

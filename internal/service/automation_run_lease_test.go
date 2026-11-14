@@ -251,6 +251,128 @@ func runAutomationRunLeaseEmailAtMostOnce(t *testing.T, dbA, dbB *gorm.DB) {
 		assert.Equal(t, models.AutomationErrorEmailUnconfirmed, stored.ErrorCode)
 		neverAgain(t, run, 1, 0)
 	})
+
+	// (4) The sweep reads the last step row before its recovery transaction.
+	// A stale owner commits its sending row between that read and the
+	// conditional recovery. The recovery re-reads the step row after its
+	// update, sees the sending row, rolls back and spares the run, so A sends
+	// once and completes it; the run is never handed back to pending with a
+	// finalized row at its position.
+	t.Run("(4) a sending row committed between the sweep's read and its recovery spares the run", func(t *testing.T) {
+		reset()
+		run := p.startRun(rule, lead)
+		inFirstTx := newLeaseGate(t)
+		p.a.afterRecordRead = func(runID uint, _ int) {
+			if runID == run.ID {
+				inFirstTx.park()
+			}
+		}
+		beforeSend := newLeaseGate(t)
+		p.a.beforeSend = func(runID uint, _ int) {
+			if runID == run.ID {
+				beforeSend.park()
+			}
+		}
+		aDone := goAsync(func() error { return p.a.ExecuteDue(context.Background()) })
+		inFirstTx.await(t)
+
+		p.clock.Advance(automationRunLeaseStaleAfter + time.Second)
+		decided := newLeaseGate(t)
+		p.b.beforeStaleRecover = func(runID uint) {
+			if runID == run.ID {
+				decided.park()
+			}
+		}
+		type sweepResult struct {
+			recovered, failed int
+			err               error
+		}
+		swept := make(chan sweepResult, 1)
+		go func() {
+			recovered, failed, err := p.b.SweepStaleRuns(context.Background())
+			swept <- sweepResult{recovered, failed, err}
+		}()
+		decided.await(t)
+
+		// A commits its sending row while the sweep holds its stale decision.
+		inFirstTx.open()
+		beforeSend.await(t)
+		require.Equal(t, models.AutomationOutcomeSending, p.stepsOf(run.ID)[0].Outcome)
+
+		decided.open()
+		var result sweepResult
+		select {
+		case result = <-swept:
+		case <-time.After(automationTestTimeout):
+			t.Fatal("the sweep did not finish")
+		}
+		require.NoError(t, result.err)
+		assert.Zero(t, result.recovered, "the recovery saw the sending row and rolled back")
+		assert.Zero(t, result.failed)
+		spared := p.runRow(run.ID)
+		assert.Equal(t, models.AutomationRunRunning, spared.Status)
+		require.NotNil(t, spared.OwnerInstance)
+		assert.Equal(t, p.a.instanceID, *spared.OwnerInstance, "A keeps its run")
+
+		beforeSend.open()
+		require.NoError(t, waitDone(t, aDone))
+		p.a.afterRecordRead = nil
+		p.a.beforeSend = nil
+		p.b.beforeStaleRecover = nil
+
+		a, b := sends()
+		assert.Equal(t, 1, a, "A sent once")
+		assert.Equal(t, 0, b)
+		steps := p.stepsOf(run.ID)
+		require.Len(t, steps, 1)
+		assert.Equal(t, models.AutomationOutcomeSucceeded, steps[0].Outcome)
+		stored := p.runRow(run.ID)
+		assert.Equal(t, models.AutomationRunCompleted, stored.Status)
+		assert.Nil(t, stored.OwnerInstance)
+		assert.Nil(t, stored.HeartbeatAt)
+		neverAgain(t, run, 1, 0)
+	})
+
+	// (5) A claimed run whose position already holds a finalized email row
+	// (an earlier executor's late stamp) is never left running without a
+	// lease: the executor advances past the recorded step, or fails the run
+	// when the row is email_unconfirmed, and sends nothing.
+	t.Run("(5) a finalized email row at the claimed position ends the step without a send", func(t *testing.T) {
+		cases := []struct {
+			name      string
+			outcome   string
+			errorCode string
+			status    string
+		}{
+			{"succeeded row advances the run", models.AutomationOutcomeSucceeded, "", models.AutomationRunCompleted},
+			{"email_unconfirmed row fails the run", models.AutomationOutcomeFailed, models.AutomationErrorEmailUnconfirmed, models.AutomationRunFailed},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reset()
+				run := p.startRun(rule, lead)
+				require.NoError(t, p.db.Create(&models.AutomationRunStep{
+					RunID: run.ID, Position: 1, StepType: models.AutomationStepSendEmail,
+					Outcome: tc.outcome, ErrorCode: tc.errorCode, Details: map[string]interface{}{}, ExecutedAt: p.clock.Now().UTC(),
+				}).Error)
+
+				require.NoError(t, p.b.ExecuteDue(context.Background()))
+
+				a, b := sends()
+				assert.Zero(t, a)
+				assert.Zero(t, b, "the recorded step is not sent again")
+				stored := p.runRow(run.ID)
+				assert.Equal(t, tc.status, stored.Status, "the run is not left running")
+				assert.Equal(t, tc.errorCode, stored.ErrorCode)
+				assert.Nil(t, stored.OwnerInstance)
+				assert.Nil(t, stored.HeartbeatAt)
+				steps := p.stepsOf(run.ID)
+				require.Len(t, steps, 1)
+				assert.Equal(t, tc.outcome, steps[0].Outcome, "the recorded row is kept")
+				neverAgain(t, run, 0, 0)
+			})
+		}
+	})
 }
 
 // --- AC-6: a live run is spared ---------------------------------------------
