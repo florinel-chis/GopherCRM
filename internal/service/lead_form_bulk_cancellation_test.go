@@ -623,10 +623,13 @@ func runRequestRootRequired(t *testing.T, db *gorm.DB) {
 // pattern never depends on a parameter's value.
 var (
 	leadLockingRead = regexp.MustCompile("^SELECT \\* FROM `leads` WHERE `leads`\\.`id` = (\\d+|\\?) .*FOR UPDATE$")
-	leadStatusWrite = regexp.MustCompile("^UPDATE `leads` SET `status`=")
 	leadNotesWrite  = regexp.MustCompile("^UPDATE `leads` SET .*`notes`=")
 	tokenClaim      = regexp.MustCompile("^UPDATE `form_confirmation_tokens` SET `used_at`=")
 )
+
+// bulkLeadLockingRead is the bulk batch's locking read of its leads (#182:
+// FOR UPDATE in id order), the first statement that touches the locked row.
+var bulkLeadLockingRead = regexp.MustCompile("^SELECT \\* FROM `leads` WHERE id IN .*ORDER BY id ASC FOR UPDATE$")
 
 // TestRequestCancellationMySQLLockWait covers the wait MySQL deployments
 // actually see: a request queued behind another transaction's row lock.
@@ -693,8 +696,8 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 
 		release := lockRow(t, env.db, &models.Lead{}, lead.ID)
 		// The history row is written before the transaction opens, so it
-		// exists once the status write is seen waiting.
-		err := cancelWhileWaiting(t, lockWaiter(t, env.db, leadStatusWrite), release, func(ctx context.Context) error {
+		// exists once the batch's locking read of the lead is seen waiting.
+		err := cancelWhileWaiting(t, lockWaiter(t, env.db, bulkLeadLockingRead), release, func(ctx context.Context) error {
 			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
 			return err
 		})
