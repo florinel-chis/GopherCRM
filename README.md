@@ -370,10 +370,12 @@ prompt needs admin.
    competitors and their trend, over 7, 30 or 90 days.
 4. **Citations** (`/aeo/citations`) — how often each company's domains are cited, and how often a
    citation coincides with a brand mention.
-5. **Export** (API only for now) — `GET /api/v1/aeo/export` downloads one run (`run_id`) or a 7,
-   30 or 90-day window (`days`) as CSV (one row per citation, formula-guarded cells) or JSON (with
-   the full answer text), for client reporting. Admin, sales and support; at most 10,000 answers
-   per file.
+5. **Export** — the dashboard's **Export CSV** / **Export JSON** buttons download the selected 7,
+   30 or 90-day window, and the answer drawer's **Export run as CSV** / **Export run as JSON**
+   buttons download the run picked in its run filter (every prompt of that run). Both call
+   `GET /api/v1/aeo/export` (`run_id` or `days`), which integrations can use directly: CSV (one
+   row per citation, formula-guarded cells) or JSON (with the full answer text), for client
+   reporting. Admin, sales and support; at most 10,000 answers per file.
 
 ![AEO answer drawer](docs/img/gophercrm-aeo-answers.png)
 

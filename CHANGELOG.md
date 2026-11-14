@@ -61,8 +61,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a larger selection is 422 `EXPORT_TOO_LARGE` (`error.details.max_answers`), detected before any
   citation is read; an unknown run is 404. Every row is read before the first byte is written; the
   run-ownership columns of #229 are never exported; log lines carry ids, counts and error codes
-  only. No schema change. Still open: the download control in the web UI, threshold alerts and
-  scheduled client reports.
+  only. No schema change. The web UI download control followed in #318 (below). Still open:
+  threshold alerts and scheduled client reports.
+- **AEO export download control in the web UI (#318).** The AEO dashboard header has Export CSV
+  and Export JSON buttons that download the selected 7, 30 or 90-day window
+  (`GET /aeo/export?format=…&days=…`), and the prompts answer drawer has Export run as CSV /
+  Export run as JSON buttons that download the run chosen in its run filter (`run_id`; every
+  prompt of that run, disabled while "All runs" is selected). The controls are shown to admin,
+  sales and support only. The file is named by the client (`aeo-export-run-<id>.<ext>` or
+  `aeo-export-<days>d-<YYYY-MM-DD>.<ext>`, the browser's UTC date), because CORS does not expose
+  `Content-Disposition`; around UTC midnight on a skewed clock it can differ from the server's
+  name. Errors are read from the Blob body and shown with a status-specific message (422 with the
+  10,000-answer limit, 400, 403, 404, otherwise a generic failure); no file is saved on error.
+  Frontend only; no API change.
 - **AEO run ownership and the daily slot across API replicas (#229).** `aeo_runs` gains the
   nullable `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` columns (none is
   serialised) with the unique indexes `idx_aeo_runs_running_lock` and `idx_aeo_runs_schedule_slot`

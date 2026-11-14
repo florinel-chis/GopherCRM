@@ -36,6 +36,7 @@ vi.mock('@/api/endpoints/aeo', () => ({
     deletePrompt: vi.fn(),
     generatePrompts: vi.fn(),
     runPrompt: vi.fn(),
+    exportResults: vi.fn(),
   },
 }));
 

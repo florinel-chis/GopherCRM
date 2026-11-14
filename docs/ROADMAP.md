@@ -55,9 +55,10 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   run stops reading `running` before the next boot or start attempt; and several processes on one
   SQLite file, which stays unsupported.
 - **AEO reporting: follow-ups** — the CSV/JSON export is delivered (#244): `GET /aeo/export`
-  downloads one run or a 7/30/90-day window, capped at 10,000 answers. Still open: the download
-  control in the web UI (AEO dashboard and answer drawer), threshold alerts or notifications on
-  visibility, scheduled, emailed or PDF client reports, a higher or streamed export cap for large
+  downloads one run or a 7/30/90-day window, capped at 10,000 answers, and the web UI download
+  control is delivered (#318): Export CSV / Export JSON on the AEO dashboard (the selected window)
+  and Export run as CSV / JSON in the prompts answer drawer (the selected run), for admin, sales and
+  support. Still open: threshold alerts or notifications on visibility, scheduled, emailed or PDF client reports, a higher or streamed export cap for large
   90-day windows, and the `trigger`/`status` rows of the export run type in the closed-set table of
   `scripts/ci/check-api-docs.py` (operator follow-up).
 - **Extend the SQLite upgrade fixtures per release** — auto-migration

@@ -45,6 +45,7 @@ import {
   AutoAwesome as AutoAwesomeIcon,
   Close as CloseIcon,
   Delete as DeleteIcon,
+  Download as DownloadIcon,
   Edit as EditIcon,
   PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
@@ -54,8 +55,19 @@ import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { aeoApi, type AEOAnswer, type AEOPrompt } from '@/api/endpoints/aeo';
+import {
+  aeoApi,
+  type AEOAnswer,
+  type AEOExportFormat,
+  type AEOPrompt,
+} from '@/api/endpoints/aeo';
 import AnswerMarkdown from './AnswerMarkdown';
+import {
+  aeoExportErrorMessage,
+  aeoExportFilename,
+  canExportAEO,
+  saveAEOExport,
+} from './aeoExport';
 
 const DAY_WINDOWS = [7, 30, 90] as const;
 const MAX_PROMPTS_PER_BATCH = 25;
@@ -116,10 +128,13 @@ export const Component: React.FC = () => {
   // admin may delete. Support is read-only, customers never reach the route.
   const canManage = user?.role === 'admin' || user?.role === 'sales';
   const canDelete = user?.role === 'admin';
+  // Exporting is a read: support may export although it cannot manage prompts.
+  const canExport = canExportAEO(user?.role);
 
   const [days, setDays] = useState<number>(30);
   const [selected, setSelected] = useState<AEOPrompt | null>(null);
   const [runFilter, setRunFilter] = useState<number | 'all'>('all');
+  const [exporting, setExporting] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -289,6 +304,23 @@ export const Component: React.FC = () => {
       showError('Failed to generate prompt suggestions');
     },
   });
+
+  // Exports the whole selected run (every prompt of it), not just this prompt.
+  const exportRun = async (format: AEOExportFormat) => {
+    if (runFilter === 'all') {
+      return;
+    }
+    const runId = runFilter;
+    setExporting(true);
+    try {
+      const blob = await aeoApi.exportResults({ format, run_id: runId });
+      saveAEOExport(blob, aeoExportFilename({ run_id: runId }, format));
+    } catch (exportError) {
+      showError(await aeoExportErrorMessage(exportError));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const openDrawer = (prompt: AEOPrompt) => {
     setSelected(prompt);
@@ -520,6 +552,36 @@ export const Component: React.FC = () => {
                 ))}
               </Select>
             </FormControl>
+
+            {canExport && (
+              <Box mb={2} data-testid="aeo-run-export">
+                <Tooltip title={runFilter === 'all' ? 'Select a run to export' : ''}>
+                  <Stack direction="row" spacing={1} component="span">
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<DownloadIcon />}
+                      disabled={runFilter === 'all' || exporting}
+                      onClick={() => void exportRun('csv')}
+                    >
+                      Export run as CSV
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<DownloadIcon />}
+                      disabled={runFilter === 'all' || exporting}
+                      onClick={() => void exportRun('json')}
+                    >
+                      Export run as JSON
+                    </Button>
+                  </Stack>
+                </Tooltip>
+                <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
+                  Includes every prompt of the selected run.
+                </Typography>
+              </Box>
+            )}
 
             <Divider sx={{ mb: 2 }} />
 

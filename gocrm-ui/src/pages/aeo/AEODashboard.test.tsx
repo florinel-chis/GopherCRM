@@ -16,7 +16,23 @@ const mockGetDashboard = vi.fn();
 vi.mock('@/api/endpoints/aeo', () => ({
   aeoApi: {
     getDashboard: (days?: number) => mockGetDashboard(days),
+    exportResults: vi.fn(),
   },
+}));
+
+// The header's export controls read the role and report errors through the
+// snackbar; AEODashboard.export.test.tsx covers them.
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { id: 1, role: 'admin' }, isLoading: false, isAuthenticated: true }),
+}));
+
+vi.mock('@/hooks/useSnackbar', () => ({
+  useSnackbar: () => ({
+    showSuccess: vi.fn(),
+    showError: vi.fn(),
+    showWarning: vi.fn(),
+    showInfo: vi.fn(),
+  }),
 }));
 
 const dashboardFixture: AEODashboardData = {
