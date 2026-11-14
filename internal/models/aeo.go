@@ -168,7 +168,7 @@ type AEORun struct {
 	// OwnerInstance is the instance id of the process that claimed the run
 	// (32 lowercase hex characters, generated once per service). NULL on rows
 	// written before ownership existed.
-	OwnerInstance *string `gorm:"size:64" json:"-"`
+	OwnerInstance *string `gorm:"type:varchar(64)" json:"-"`
 	// HeartbeatAt is set to StartedAt by the claim and renewed by the owner
 	// while the run executes. A running row whose heartbeat is NULL or stale is
 	// abandoned and may be failed by any replica.
@@ -180,7 +180,7 @@ type AEORun struct {
 	// ScheduleSlot is the daily slot a scheduled run was claimed for
 	// (AEOScheduleSlotFormat, UTC); NULL for manual and prompt runs. Its unique
 	// index starts each slot at most once across replicas.
-	ScheduleSlot *string `gorm:"size:20;uniqueIndex:idx_aeo_runs_schedule_slot" json:"-"`
+	ScheduleSlot *string `gorm:"type:varchar(20);uniqueIndex:idx_aeo_runs_schedule_slot" json:"-"`
 }
 
 // AEOScheduleSlotFormat is the layout of aeo_runs.schedule_slot, applied to the
