@@ -322,6 +322,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Roadmap: scheduled AEO client reports are a deliberate cut (#320, docs).** docs/ROADMAP.md
+  records scheduled or emailed client reports as a deliberate cut and names its prerequisites: a
+  single scheduling owner across replicas (#229), a mail delivery record without false success
+  (#216) and a decision on external recipients (#238). No behaviour change.
 - **Mail names the configured product (#292, backend).** The password reset mail (subject and
   first body line), the quote mail subject and the ticket reply mail subject now use the stored
   `general.company_name` setting, read at send time, instead of the fixed `GopherCRM`. The value is
