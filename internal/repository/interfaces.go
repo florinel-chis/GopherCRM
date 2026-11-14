@@ -872,29 +872,45 @@ type AutomationRepository interface {
 	// is at or before now, in id order.
 	ListClaimableRuns(now time.Time, limit int) ([]models.AutomationRun, error)
 	// ClaimRun moves the run from fromStatus to running conditionally (a
-	// waiting run only once resume_at <= now) and returns the matched count.
-	ClaimRun(id uint, fromStatus string, now time.Time) (int64, error)
+	// waiting run only once resume_at <= now) and, in the same update, sets
+	// owner_instance to owner and heartbeat_at and claimed_at to now (#237).
+	// It returns the matched count.
+	ClaimRun(id uint, fromStatus string, owner string, now time.Time) (int64, error)
+	// RenewRunLease sets heartbeat_at = at WHERE id = ? AND status = 'running'
+	// AND owner_instance = owner; a zero count is re-checked with a read and
+	// answered ErrAutomationRunNotOwned when the run is no longer owned.
+	RenewRunLease(id uint, owner string, at time.Time) error
 	// AdvanceRun is UPDATE ... WHERE id = ? AND status = 'running' AND
-	// next_position = ?; it returns the matched count.
-	AdvanceRun(id uint, expectedPosition int, advance AutomationRunAdvance, now time.Time) (int64, error)
-	// ReleaseRun hands a running run back to pending at the same position
-	// after a failed attempt, incrementing attempts; the matched count.
-	ReleaseRun(id uint, expectedPosition int, now time.Time) (int64, error)
+	// next_position = ? AND owner_instance = owner; an advance out of running
+	// clears owner_instance and heartbeat_at. It returns the matched count.
+	AdvanceRun(id uint, expectedPosition int, owner string, advance AutomationRunAdvance, now time.Time) (int64, error)
+	// ReleaseRun hands a running run of owner back to pending at the same
+	// position after a failed attempt, incrementing attempts and clearing the
+	// lease; the matched count.
+	ReleaseRun(id uint, expectedPosition int, owner string, now time.Time) (int64, error)
 	// CancelRun and the two bulk cancels set status cancelled with the reason
-	// on pending, waiting and running runs and return the affected count.
+	// on pending, waiting and running runs, clear owner_instance and
+	// heartbeat_at, and return the affected count.
 	CancelRun(id uint, reason string, now time.Time) (int64, error)
 	CancelRunsForRule(ruleID uint, reason string, now time.Time) (int64, error)
 	CancelRunsForEntity(entityType string, entityID uint, reason string, now time.Time) (int64, error)
-	ListRunsByStatus(status string) ([]models.AutomationRun, error)
-	FailRun(id uint, errorCode string, now time.Time) error
-	ResetRunToPending(id uint, now time.Time) error
+	// ListStaleRunningRuns is the plain read of the stale sweep: running rows
+	// whose heartbeat_at is NULL or older than heartbeatBefore, in id order.
+	ListStaleRunningRuns(heartbeatBefore time.Time, limit int) ([]models.AutomationRun, error)
+	// RecoverStaleRun recovers one stale run by primary key, re-checking
+	// status running, the observed owner (NULL-safe) and staleness. An empty
+	// failCode sends it back to pending (attempts unchanged); otherwise it
+	// fails with failCode. The lease is cleared; it returns the matched count.
+	RecoverStaleRun(id uint, observedOwner *string, heartbeatBefore time.Time, failCode string, now time.Time) (int64, error)
 
 	CreateRunStep(step *models.AutomationRunStep) error
 	// GetRunStep returns the step row at the position or gorm.ErrRecordNotFound.
 	GetRunStep(runID uint, position int) (*models.AutomationRunStep, error)
 	// LastRunStep returns the highest-positioned step row, or (nil, nil).
 	LastRunStep(runID uint) (*models.AutomationRunStep, error)
-	UpdateRunStepOutcome(id uint, outcome, errorCode string, details map[string]interface{}) error
+	// FinishSendingStep stamps a send_email step row WHERE outcome =
+	// 'sending' and returns the matched count (0 when already stamped).
+	FinishSendingStep(id uint, outcome, errorCode string, details map[string]interface{}) (int64, error)
 	ListRunSteps(runID uint) ([]models.AutomationRunStep, error)
 
 	// GetLeadForUpdate and GetDealForUpdate are the locking reads of a step

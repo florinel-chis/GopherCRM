@@ -15,12 +15,18 @@ import (
 // aeoDrainTimeout (15 s). A step
 // transaction is a handful of statements, so an honest drain takes well under
 // that; when the deadline passes anyway, main does not close the database
-// under the work still using it (see main) and the next boot's reconciliation
-// hands the run back to pending. A nil runtime (AUTOMATION_ENABLED=false) has
-// nothing to stop.
+// under the work still using it (see main) and the run's lease goes stale:
+// the stale sweep of any worker (at its next tick or boot) hands the run back
+// to pending. A nil runtime (AUTOMATION_ENABLED=false) has nothing to stop.
 type automationBackground struct {
 	runtime *service.AutomationRuntime
 }
+
+// automationRuntimeBuilt, nil in production, receives the automation runtime
+// as soon as setupDependencies has built it: before the boot sweep and before
+// the worker starts. The production wiring root uses it to observe the sweep
+// and to wake the worker.
+var automationRuntimeBuilt func(*service.AutomationRuntime)
 
 func newAutomationBackground(runtime *service.AutomationRuntime) *automationBackground {
 	return &automationBackground{runtime: runtime}

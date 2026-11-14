@@ -283,7 +283,10 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 			assert.Equal(t, models.AutomationErrorEmailUnconfirmed, failed.ErrorCode)
 		})
 
-		t.Run("a cancel between the two halves stays cancelled with the row finalized", func(t *testing.T) {
+		t.Run("a cancel before the pre-send check stops the send", func(t *testing.T) {
+			// #237: beforeSend fires before the pre-send owner check, so a
+			// cancel committed there is seen by that check: nothing is sent and
+			// nothing is stamped.
 			env.mailer.reset(nil, nil)
 			run := env.startRun(rule, lead)
 			env.engine.beforeSend = func(runID uint, position int) {
@@ -294,6 +297,28 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 			}
 			env.executeDue()
 			env.engine.beforeSend = nil
+			assert.Empty(t, env.mailer.messages(), "the pre-send check refuses a cancelled run")
+			steps := env.stepsOf(run.ID)
+			require.Len(t, steps, 1, "no further step ran")
+			assert.Equal(t, models.AutomationOutcomeSending, steps[0].Outcome, "the row is not stamped")
+			cancelled := env.run(run.ID)
+			assert.Equal(t, models.AutomationRunCancelled, cancelled.Status)
+			assert.Equal(t, models.AutomationCancelManual, cancelled.CancelReason)
+			assert.Nil(t, cancelled.OwnerInstance, "the cancel cleared the owner")
+		})
+
+		t.Run("a cancel between the send and the stamp stays cancelled with the row finalized", func(t *testing.T) {
+			env.mailer.reset(nil, nil)
+			run := env.startRun(rule, lead)
+			env.engine.afterSend = func(runID uint, position int) error {
+				if runID == run.ID {
+					_, err := env.svc.CancelRun(run.ID)
+					require.NoError(t, err)
+				}
+				return nil
+			}
+			env.executeDue()
+			env.engine.afterSend = nil
 			assert.Len(t, env.mailer.messages(), 1, "the send already in flight went out")
 			steps := env.stepsOf(run.ID)
 			require.Len(t, steps, 1, "no further step ran")

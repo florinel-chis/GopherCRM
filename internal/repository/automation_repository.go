@@ -36,6 +36,12 @@ func (r *automationRepository) locking() *gorm.DB {
 	return r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
 }
 
+// ErrAutomationRunNotOwned is returned by RenewRunLease when the run is no
+// longer running under the given owner (#237): it was cancelled, finished,
+// recovered by another engine's stale sweep or re-claimed. The executor that
+// receives it stops writing for the run.
+var ErrAutomationRunNotOwned = errors.New("automation run is not owned by this instance")
+
 // activeRunStatuses are the statuses a cancel reaches.
 var activeRunStatuses = []string{models.AutomationRunPending, models.AutomationRunWaiting, models.AutomationRunRunning}
 
@@ -396,18 +402,23 @@ func (r *automationRepository) ListClaimableRuns(now time.Time, limit int) ([]mo
 	return runs, err
 }
 
-// ClaimRun moves the run from fromStatus to running with one conditional
-// update; a waiting run is claimed only once its resume_at has passed.
-func (r *automationRepository) ClaimRun(id uint, fromStatus string, now time.Time) (int64, error) {
+// ClaimRun moves the run from fromStatus to running under owner with one
+// conditional update (#237): status, owner_instance, heartbeat_at and
+// claimed_at are written together, the lease starting at now. A waiting run is
+// claimed only once its resume_at has passed. It returns the matched count;
+// the status always changes, so MySQL's changed-rows count agrees.
+func (r *automationRepository) ClaimRun(id uint, fromStatus string, owner string, now time.Time) (int64, error) {
 	stamp := now.UTC()
 	query := r.db.Model(&models.AutomationRun{}).Where("id = ? AND status = ?", id, fromStatus)
 	if fromStatus == models.AutomationRunWaiting {
 		query = query.Where("resume_at <= ?", stamp)
 	}
 	result := query.Updates(map[string]interface{}{
-		"status":     models.AutomationRunRunning,
-		"claimed_at": &stamp,
-		"updated_at": stamp,
+		"status":         models.AutomationRunRunning,
+		"owner_instance": owner,
+		"heartbeat_at":   &stamp,
+		"claimed_at":     &stamp,
+		"updated_at":     stamp,
 	})
 	if result.Error != nil {
 		return 0, result.Error
@@ -415,11 +426,43 @@ func (r *automationRepository) ClaimRun(id uint, fromStatus string, now time.Tim
 	return result.RowsAffected, nil
 }
 
+// RenewRunLease moves heartbeat_at to at, and nothing else, while the run is
+// running under owner. A renewal that matches no row is re-checked with a
+// plain read, because MySQL reports changed rows and a renewal that wrote the
+// value already stored changes none: a run still running under owner is a
+// success, anything else is ErrAutomationRunNotOwned.
+func (r *automationRepository) RenewRunLease(id uint, owner string, at time.Time) error {
+	stamp := at.UTC()
+	owned := func(db *gorm.DB) *gorm.DB {
+		return db.Model(&models.AutomationRun{}).
+			Where("id = ? AND status = ? AND owner_instance = ?", id, models.AutomationRunRunning, owner)
+	}
+	// UpdateColumn, not Update: GORM would add updated_at to an Update, and
+	// the renewal writes heartbeat_at alone.
+	result := owned(r.db).UpdateColumn("heartbeat_at", &stamp)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	var count int64
+	if err := owned(r.db).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return ErrAutomationRunNotOwned
+}
+
 // AdvanceRun is the conditional advance every step makes: it matches only
-// while the run is still running at the position the executor claimed. A
-// cancel, a rule change or an erasure committed meanwhile leaves nothing to
-// match, so the step's transaction rolls back and the executor stops.
-func (r *automationRepository) AdvanceRun(id uint, expectedPosition int, advance AutomationRunAdvance, now time.Time) (int64, error) {
+// while the run is still running at the position the executor claimed and
+// under the executor's own instance id (#237). A cancel, a rule change, an
+// erasure or a stale recovery committed meanwhile leaves nothing to match, so
+// the step's transaction rolls back and the executor stops. An advance that
+// leaves running clears owner_instance and heartbeat_at.
+func (r *automationRepository) AdvanceRun(id uint, expectedPosition int, owner string, advance AutomationRunAdvance, now time.Time) (int64, error) {
 	var resumeAt, finishedAt *time.Time
 	if advance.ResumeAt != nil {
 		stamp := advance.ResumeAt.UTC()
@@ -429,16 +472,41 @@ func (r *automationRepository) AdvanceRun(id uint, expectedPosition int, advance
 		stamp := advance.FinishedAt.UTC()
 		finishedAt = &stamp
 	}
+	values := map[string]interface{}{
+		"status":        advance.Status,
+		"next_position": advance.NextPosition,
+		"resume_at":     resumeAt,
+		"finished_at":   finishedAt,
+		"cancel_reason": advance.CancelReason,
+		"error_code":    advance.ErrorCode,
+		"updated_at":    now.UTC(),
+	}
+	if advance.Status != models.AutomationRunRunning {
+		values["owner_instance"] = nil
+		values["heartbeat_at"] = nil
+	}
 	result := r.db.Model(&models.AutomationRun{}).
-		Where("id = ? AND status = ? AND next_position = ?", id, models.AutomationRunRunning, expectedPosition).
+		Where("id = ? AND status = ? AND next_position = ? AND owner_instance = ?", id, models.AutomationRunRunning, expectedPosition, owner).
+		Updates(values)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// ReleaseRun hands a running run of owner back to pending at the same
+// position after a failed step attempt, counting the attempt and clearing the
+// lease. Under another owner it matches nothing.
+func (r *automationRepository) ReleaseRun(id uint, expectedPosition int, owner string, now time.Time) (int64, error) {
+	result := r.db.Model(&models.AutomationRun{}).
+		Where("id = ? AND status = ? AND next_position = ? AND owner_instance = ?", id, models.AutomationRunRunning, expectedPosition, owner).
 		Updates(map[string]interface{}{
-			"status":        advance.Status,
-			"next_position": advance.NextPosition,
-			"resume_at":     resumeAt,
-			"finished_at":   finishedAt,
-			"cancel_reason": advance.CancelReason,
-			"error_code":    advance.ErrorCode,
-			"updated_at":    now.UTC(),
+			"status":         models.AutomationRunPending,
+			"attempts":       gorm.Expr("attempts + 1"),
+			"claimed_at":     nil,
+			"owner_instance": nil,
+			"heartbeat_at":   nil,
+			"updated_at":     now.UTC(),
 		})
 	if result.Error != nil {
 		return 0, result.Error
@@ -446,30 +514,67 @@ func (r *automationRepository) AdvanceRun(id uint, expectedPosition int, advance
 	return result.RowsAffected, nil
 }
 
-// ReleaseRun hands a running run back to pending at the same position after
-// a failed step attempt, counting the attempt.
-func (r *automationRepository) ReleaseRun(id uint, expectedPosition int, now time.Time) (int64, error) {
-	result := r.db.Model(&models.AutomationRun{}).
-		Where("id = ? AND status = ? AND next_position = ?", id, models.AutomationRunRunning, expectedPosition).
-		Updates(map[string]interface{}{
-			"status":     models.AutomationRunPending,
-			"attempts":   gorm.Expr("attempts + 1"),
-			"claimed_at": nil,
-			"updated_at": now.UTC(),
-		})
+// ListStaleRunningRuns is the plain, non-locking read of the stale sweep: the
+// running rows whose heartbeat_at is NULL (a legacy row) or older than
+// heartbeatBefore, in id order, at most limit of them. Nothing is locked: the
+// recovery of each row is a separate conditional update by primary key.
+func (r *automationRepository) ListStaleRunningRuns(heartbeatBefore time.Time, limit int) ([]models.AutomationRun, error) {
+	runs := []models.AutomationRun{}
+	err := r.db.
+		Where("status = ? AND (heartbeat_at IS NULL OR heartbeat_at < ?)", models.AutomationRunRunning, heartbeatBefore.UTC()).
+		Order("id ASC").Limit(limit).
+		Find(&runs).Error
+	return runs, err
+}
+
+// RecoverStaleRun takes over one stale run by primary key. It re-checks that
+// the run is still running under the observed owner (NULL-safe) and still
+// stale, so it matches nothing when the owner renewed the lease, another
+// sweep re-claimed the run or the run finished meanwhile. An empty failCode
+// sends the run back to pending at its position with attempts unchanged;
+// otherwise the run fails with that code. Either way owner_instance,
+// heartbeat_at and claimed_at are cleared.
+func (r *automationRepository) RecoverStaleRun(id uint, observedOwner *string, heartbeatBefore time.Time, failCode string, now time.Time) (int64, error) {
+	stamp := now.UTC()
+	query := r.db.Model(&models.AutomationRun{}).
+		Where("id = ? AND status = ? AND (heartbeat_at IS NULL OR heartbeat_at < ?)", id, models.AutomationRunRunning, heartbeatBefore.UTC())
+	if observedOwner == nil {
+		query = query.Where("owner_instance IS NULL")
+	} else {
+		query = query.Where("owner_instance = ?", *observedOwner)
+	}
+	values := map[string]interface{}{
+		"status":         models.AutomationRunPending,
+		"claimed_at":     nil,
+		"owner_instance": nil,
+		"heartbeat_at":   nil,
+		"updated_at":     stamp,
+	}
+	if failCode != "" {
+		values["status"] = models.AutomationRunFailed
+		values["error_code"] = failCode
+		values["finished_at"] = &stamp
+	}
+	result := query.Updates(values)
 	if result.Error != nil {
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
 }
 
+// cancel is the shared helper of the three cancels: the caller's predicate
+// plus the active statuses, unchanged. A cancel also clears the lease, so the
+// executor that held a running run loses it: its next renewal is refused and
+// its next fenced write matches nothing.
 func (r *automationRepository) cancel(query *gorm.DB, reason string, now time.Time) (int64, error) {
 	stamp := now.UTC()
 	result := query.Where("status IN ?", activeRunStatuses).Updates(map[string]interface{}{
-		"status":        models.AutomationRunCancelled,
-		"cancel_reason": reason,
-		"finished_at":   &stamp,
-		"updated_at":    stamp,
+		"status":         models.AutomationRunCancelled,
+		"cancel_reason":  reason,
+		"finished_at":    &stamp,
+		"owner_instance": nil,
+		"heartbeat_at":   nil,
+		"updated_at":     stamp,
 	})
 	if result.Error != nil {
 		return 0, result.Error
@@ -487,31 +592,6 @@ func (r *automationRepository) CancelRunsForRule(ruleID uint, reason string, now
 
 func (r *automationRepository) CancelRunsForEntity(entityType string, entityID uint, reason string, now time.Time) (int64, error) {
 	return r.cancel(r.db.Model(&models.AutomationRun{}).Where("entity_type = ? AND entity_id = ?", entityType, entityID), reason, now)
-}
-
-func (r *automationRepository) ListRunsByStatus(status string) ([]models.AutomationRun, error) {
-	runs := []models.AutomationRun{}
-	err := r.db.Where("status = ?", status).Order("id ASC").Find(&runs).Error
-	return runs, err
-}
-
-func (r *automationRepository) FailRun(id uint, errorCode string, now time.Time) error {
-	stamp := now.UTC()
-	return r.db.Model(&models.AutomationRun{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"status":      models.AutomationRunFailed,
-		"error_code":  errorCode,
-		"finished_at": &stamp,
-		"claimed_at":  nil,
-		"updated_at":  stamp,
-	}).Error
-}
-
-func (r *automationRepository) ResetRunToPending(id uint, now time.Time) error {
-	return r.db.Model(&models.AutomationRun{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"status":     models.AutomationRunPending,
-		"claimed_at": nil,
-		"updated_at": now.UTC(),
-	}).Error
 }
 
 // --- Run steps ---------------------------------------------------------------
@@ -545,20 +625,31 @@ func (r *automationRepository) LastRunStep(runID uint) (*models.AutomationRunSte
 	return &step, nil
 }
 
-func (r *automationRepository) UpdateRunStepOutcome(id uint, outcome, errorCode string, details map[string]interface{}) error {
+// FinishSendingStep stamps the outcome of a send_email step row only while
+// it is still 'sending' (#237), by primary key. A row another engine already
+// stamped (the sweep's email_unconfirmed, or the send's own stamp) matches
+// nothing, so a second stamp never overwrites the first. The outcome always
+// changes when it matches, so the count is the matched count on MySQL too.
+func (r *automationRepository) FinishSendingStep(id uint, outcome, errorCode string, details map[string]interface{}) (int64, error) {
 	detail := "{}"
 	if details != nil {
 		encoded, err := json.Marshal(details)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		detail = string(encoded)
 	}
-	return r.db.Model(&models.AutomationRunStep{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"outcome":    outcome,
-		"error_code": errorCode,
-		"detail":     detail,
-	}).Error
+	result := r.db.Model(&models.AutomationRunStep{}).
+		Where("id = ? AND outcome = ?", id, models.AutomationOutcomeSending).
+		Updates(map[string]interface{}{
+			"outcome":    outcome,
+			"error_code": errorCode,
+			"detail":     detail,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *automationRepository) ListRunSteps(runID uint) ([]models.AutomationRunStep, error) {

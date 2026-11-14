@@ -2,10 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -19,7 +22,22 @@ import (
 
 // The automation engine turns outbox events into runs (Dispatch), continues
 // schedule passes (RunSchedules), claims and executes due runs (ExecuteDue)
-// and recovers runs a previous process left behind (Reconcile).
+// and recovers runs whose executor stopped renewing its lease
+// (SweepStaleRuns).
+//
+// Run leases (#237). Several engines (one per API replica) may share one
+// MySQL/MariaDB database. Each engine has an instance id; ClaimRun stores it
+// in owner_instance together with heartbeat_at, and a heartbeat goroutine
+// renews heartbeat_at every automationRunHeartbeatInterval while the run
+// executes. Every write after the claim is fenced on the owner: the step
+// advance, the release, the first send_email transaction (a locking read of
+// the run row), a plain read just before the send, and the second send_email
+// transaction. A cancel clears the owner. The stale sweep, at boot and at the
+// start of every tick, recovers a running run whose heartbeat is NULL or older
+// than automationRunLeaseStaleAfter: back to pending at its position, or
+// failed with email_unconfirmed when its last step row is a send_email still
+// in sending. A stale executor that wakes up afterwards matches nothing with
+// its fenced writes and stops.
 //
 // Every step other than send_email runs in one transaction that, in order,
 // re-reads the target record with a locking read (FOR UPDATE on MySQL, a
@@ -36,8 +54,8 @@ import (
 // transactions around one Mailer.Send: the first commits a run-step row with
 // outcome sending (unique on run_id and position, so no second executor can
 // start the same send), the second finalizes the row and advances the run.
-// A row left in sending is never resent: the next execution, or the boot
-// reconciliation, marks it failed with email_unconfirmed.
+// A row left in sending is never resent: the next execution, or the stale
+// sweep, marks it failed with email_unconfirmed.
 
 // ErrAutomationShuttingDown is returned by the admission once the runtime has
 // begun shutting down.
@@ -63,6 +81,22 @@ const (
 	automationClaimBatch    = 100
 	automationMaxAttempts   = 3
 	automationTxRetries     = 3
+)
+
+// Lease timings (#237), package constants rather than settings. The stale
+// horizon is six missed heartbeats, as for AEO runs (#229): room for a slow
+// database, a 30 s SMTP send and clock skew between replicas, which must stay
+// well under 90 s.
+const (
+	automationRunHeartbeatInterval = 30 * time.Second
+	automationRunLeaseStaleAfter   = 3 * time.Minute
+	automationSweepBatch           = 100
+)
+
+// Outcomes of a stale recovery, as the sweep logs and counts them.
+const (
+	automationRecoveredPending = "pending"
+	automationRecoveredFailed  = "failed"
 )
 
 // automationOwner is the lifecycle of the worker's owned work: the admission
@@ -164,12 +198,31 @@ type AutomationEngine struct {
 	afterEffect     func(runID uint, position int) error
 	beforeSend      func(runID uint, position int)
 	afterSend       func(runID uint, position int) error
+
+	// beforeStep (#237) fires in the run loop before each step is admitted,
+	// outside any transaction; afterStaleRecover fires inside the sweep's
+	// recovery transaction right after the conditional recovery update.
+	beforeStep func(runID uint, position int)
+
+	afterStaleRecover func(runID uint)
+
+	// instanceID (#237) names this engine in automation_runs.owner_instance:
+	// 32 lowercase hex characters from crypto/rand. Never logged.
+	instanceID string
+
+	// heartbeatInterval is how often the owner renews heartbeat_at while it
+	// executes a run; automationRunHeartbeatInterval in production.
+	heartbeatInterval time.Duration
+
+	// recoveryObserver, nil in production, is told about every run the sweep
+	// recovered, after the recovery committed (SetRecoveryObserver).
+	recoveryObserver func(runID uint, outcome string)
 }
 
 // NewAutomationEngine wires the engine. The mailer may be nil, in which case
 // every send_email step fails with mail_failed.
 func NewAutomationEngine(repo repository.AutomationRepository, notifications repository.NotificationRepository, tasks repository.TaskRepository, users repository.UserRepository, m mailer.Mailer, txManager *utils.TransactionManager) *AutomationEngine {
-	return &AutomationEngine{
+	e := &AutomationEngine{
 		repo:          repo,
 		notifications: notifications,
 		tasks:         tasks,
@@ -179,6 +232,28 @@ func NewAutomationEngine(repo repository.AutomationRepository, notifications rep
 		now:           time.Now,
 		owner:         newAutomationOwner(),
 	}
+	e.instanceID = newAutomationInstanceID()
+	e.heartbeatInterval = automationRunHeartbeatInterval
+	return e
+}
+
+// newAutomationInstanceID returns 32 lowercase hex characters from
+// crypto/rand. A failing random source is not survivable for ownership, so it
+// panics at construction rather than handing two engines the same id.
+func newAutomationInstanceID() string {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(fmt.Sprintf("automation: cannot generate an instance id: %v", err))
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// SetRecoveryObserver registers a function told about every run the stale
+// sweep recovered (outcome "pending" or "failed"), after the recovery
+// committed and before anything else touches the run. It is a test seam of
+// the production wiring; set it before the engine is started.
+func (e *AutomationEngine) SetRecoveryObserver(fn func(runID uint, outcome string)) {
+	e.recoveryObserver = fn
 }
 
 // SetClock replaces the engine's time source (tests).
@@ -210,10 +285,21 @@ func (e *AutomationEngine) logger() *logrus.Entry {
 	return utils.Logger.WithField("component", "automation")
 }
 
-// Tick is one worker pass: dispatch, schedules, due runs. Each phase keeps
-// going after a failure in one item; the errors are joined for the log.
+// Tick is one worker pass: the stale sweep, dispatch, schedules, due runs.
+// Each phase keeps going after a failure in one item; the errors are joined
+// for the log. Sweeping first means a run abandoned by a crashed worker is
+// recovered within the stale horizon, without a restart, and claimed by the
+// same pass.
 func (e *AutomationEngine) Tick(ctx context.Context) error {
 	var errs []error
+	recovered, failed, err := e.SweepStaleRuns(ctx)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	if recovered > 0 || failed > 0 {
+		e.logger().WithFields(logrus.Fields{"recovered": recovered, "failed": failed}).
+			Warn("Automation runs recovered from stale leases")
+	}
 	if _, err := e.Dispatch(ctx); err != nil {
 		errs = append(errs, err)
 	}
@@ -470,15 +556,20 @@ func (e *AutomationEngine) ExecuteDue(ctx context.Context) error {
 			break
 		}
 		run := runs[i]
-		claimed, err := e.repo.ClaimRun(run.ID, run.Status, now)
+		claimed, err := e.repo.ClaimRun(run.ID, run.Status, e.instanceID, now)
 		if err != nil {
-			e.logger().WithField("run_id", run.ID).WithError(utils.LogError(err)).Error("Automation run claim failed")
+			e.logger().WithFields(logrus.Fields{"run_id": run.ID, "operation": "claim"}).
+				WithError(utils.LogError(err)).Error("Automation run claim failed")
 			continue
 		}
 		if claimed != 1 {
 			continue
 		}
+		owner := e.instanceID
+		stamp := now.UTC()
 		run.Status = models.AutomationRunRunning
+		run.OwnerInstance = &owner
+		run.HeartbeatAt = &stamp
 		e.executeRun(ctx, run)
 	}
 	return nil
@@ -490,12 +581,72 @@ type stepResult struct {
 	nextPosition int
 }
 
-// executeRun runs the claimed run step by step until it waits, finishes, is
-// cancelled under the executor, fails, or the runtime stops admitting work.
+// executeRun runs the claimed run under its lease: one heartbeat goroutine
+// renews heartbeat_at every heartbeatInterval while the steps execute, and is
+// joined before executeRun returns, so nothing renews a run whose executor
+// has returned. A renewal refused because the run is no longer owned (a
+// cancel, a stale recovery by another engine) cancels the run's context: the
+// executor starts no further step and writes nothing more for the run.
 func (e *AutomationEngine) executeRun(ctx context.Context, run models.AutomationRun) {
 	logger := e.logger().WithFields(logrus.Fields{
 		"run_id": run.ID, "rule_id": run.RuleID, "entity_type": run.EntityType, "entity_id": run.EntityID,
 	})
+	runCtx, cancelRun := context.WithCancel(ctx)
+	var leaseLost atomic.Bool
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		e.renewLease(runCtx, run.ID, &leaseLost, cancelRun, logger)
+	}()
+	defer func() {
+		cancelRun()
+		<-heartbeatDone
+	}()
+	e.runSteps(runCtx, run, &leaseLost, logger)
+}
+
+// renewLease renews the run's heartbeat every heartbeatInterval until ctx
+// ends. A renewal refused with ErrAutomationRunNotOwned marks the lease lost
+// and cancels the run; any other failure is logged and retried at the next
+// interval.
+func (e *AutomationEngine) renewLease(ctx context.Context, runID uint, lost *atomic.Bool, cancel context.CancelFunc, logger *logrus.Entry) {
+	ticker := time.NewTicker(e.heartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		err := e.repo.RenewRunLease(runID, e.instanceID, e.now().UTC())
+		switch {
+		case err == nil:
+		case errors.Is(err, repository.ErrAutomationRunNotOwned):
+			if ctx.Err() != nil {
+				// The run ended while the renewal was in flight.
+				return
+			}
+			lost.Store(true)
+			cancel()
+			logger.WithFields(logrus.Fields{"operation": "heartbeat", "error_code": "run_not_owned"}).
+				Warn("Automation run lease lost; the executor stops")
+			return
+		case ctx.Err() != nil:
+			return
+		default:
+			logger.WithField("operation", "heartbeat").WithError(utils.LogError(err)).
+				Warn("Could not renew the automation run lease")
+		}
+	}
+}
+
+// runSteps runs the claimed run step by step until it waits, finishes, is
+// cancelled under the executor, fails, loses its lease, or the runtime stops
+// admitting work.
+func (e *AutomationEngine) runSteps(ctx context.Context, run models.AutomationRun, leaseLost *atomic.Bool, logger *logrus.Entry) {
 	rule, err := e.repo.GetRuleByID(run.RuleID)
 	if err != nil {
 		if isNotFound(err) {
@@ -514,14 +665,24 @@ func (e *AutomationEngine) executeRun(ctx context.Context, run models.Automation
 	for guard := 0; guard <= models.AutomationMaxSteps; guard++ {
 		if run.NextPosition > len(rule.Steps) {
 			now := e.now().UTC()
-			_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, repository.AutomationRunAdvance{
+			_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
 				Status: models.AutomationRunCompleted, NextPosition: run.NextPosition, FinishedAt: &now,
 			}, now)
 			logger.WithField("status", models.AutomationRunCompleted).Info("Automation run finished")
 			return
 		}
+		if e.beforeStep != nil {
+			e.beforeStep(run.ID, run.NextPosition)
+		}
+		if leaseLost.Load() {
+			logger.WithFields(logrus.Fields{"operation": "heartbeat_loss", "position": run.NextPosition}).
+				Info("Automation run lease lost; no further step")
+			return
+		}
 		if ctx.Err() != nil {
-			e.releaseRun(run)
+			if !leaseLost.Load() {
+				e.releaseRun(run)
+			}
 			return
 		}
 		release, err := e.owner.admit()
@@ -550,9 +711,10 @@ func (e *AutomationEngine) executeRun(ctx context.Context, run models.Automation
 }
 
 // releaseRun hands the run back to pending at its position, so the next
-// tick (or the next boot) continues it.
+// tick (on any engine) continues it. Fenced on the owner: a run this engine
+// no longer owns is left as it is.
 func (e *AutomationEngine) releaseRun(run models.AutomationRun) {
-	_, _ = e.repo.ReleaseRun(run.ID, run.NextPosition, e.now())
+	_, _ = e.repo.ReleaseRun(run.ID, run.NextPosition, e.instanceID, e.now())
 }
 
 // releaseOrFail releases a run whose step attempt failed, or fails it once
@@ -560,7 +722,7 @@ func (e *AutomationEngine) releaseRun(run models.AutomationRun) {
 func (e *AutomationEngine) releaseOrFail(run models.AutomationRun, logger *logrus.Entry) {
 	if run.Attempts+1 >= automationMaxAttempts {
 		now := e.now().UTC()
-		_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, repository.AutomationRunAdvance{
+		_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
 			Status: models.AutomationRunFailed, NextPosition: run.NextPosition, FinishedAt: &now, ErrorCode: models.AutomationErrorStepFailed,
 		}, now)
 		logger.WithField("error_code", models.AutomationErrorStepFailed).Warn("Automation run failed after repeated attempts")
@@ -572,7 +734,7 @@ func (e *AutomationEngine) releaseOrFail(run models.AutomationRun, logger *logru
 // cancelRunning cancels a run the executor holds, conditionally.
 func (e *AutomationEngine) cancelRunning(run models.AutomationRun, reason string) {
 	now := e.now().UTC()
-	_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, repository.AutomationRunAdvance{
+	_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, e.instanceID, repository.AutomationRunAdvance{
 		Status: models.AutomationRunCancelled, NextPosition: run.NextPosition, FinishedAt: &now, CancelReason: reason,
 	}, now)
 }
@@ -586,14 +748,16 @@ func nextAdvance(stepCount, next int, now time.Time) repository.AutomationRunAdv
 	return repository.AutomationRunAdvance{Status: models.AutomationRunRunning, NextPosition: next}
 }
 
-// advance performs the conditional advance and turns a miss into
-// errRunNotAdvanced.
+// advance performs the owner-fenced conditional advance and turns a miss into
+// errRunNotAdvanced, logged once as a fenced write.
 func (e *AutomationEngine) advance(r repository.AutomationRepository, run *models.AutomationRun, position int, adv repository.AutomationRunAdvance, now time.Time) error {
-	rows, err := r.AdvanceRun(run.ID, position, adv, now)
+	rows, err := r.AdvanceRun(run.ID, position, e.instanceID, adv, now)
 	if err != nil {
 		return err
 	}
 	if rows != 1 {
+		e.logger().WithFields(logrus.Fields{"operation": "fenced_advance", "run_id": run.ID, "position": position}).
+			Info("Automation run advance matched nothing; the run moved under the executor")
 		return errRunNotAdvanced
 	}
 	return nil
@@ -1025,7 +1189,9 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 	existing, err := e.repo.GetRunStep(run.ID, pos)
 	switch {
 	case err == nil && existing.Outcome == models.AutomationOutcomeSending:
-		e.failUnconfirmedEmail(run, existing)
+		if err := e.failUnconfirmedEmail(run, existing); err != nil {
+			return stepResult{}, err
+		}
 		logger.WithField("error_code", models.AutomationErrorEmailUnconfirmed).Warn("Automation email left unconfirmed; run failed")
 		return stepResult{terminal: true}, nil
 	case err == nil:
@@ -1067,7 +1233,9 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 			}, now)
 		}
 		// The conditional check of this half: the run row under lock, still
-		// running at this position, else the run moved and nothing is sent.
+		// running at this position under this engine's own lease, else the
+		// run moved (cancelled, recovered or re-claimed by another engine)
+		// and nothing is recorded or sent.
 		current, err := r.GetRunByIDForUpdate(run.ID)
 		if err != nil {
 			if isNotFound(err) {
@@ -1075,7 +1243,8 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 			}
 			return err
 		}
-		if current.Status != models.AutomationRunRunning || current.NextPosition != pos {
+		if !e.holdsRun(current, pos) {
+			logger.WithField("operation", "email_claim").Info("Automation email refused: the run is no longer held by this executor")
 			return errRunNotAdvanced
 		}
 		users := e.users.WithTx(tx)
@@ -1125,6 +1294,23 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 	if e.beforeSend != nil {
 		e.beforeSend(run.ID, pos)
 	}
+	// The pre-send check (#237): a plain read of the run just before the
+	// relay is called. A run that another engine's sweep failed as
+	// email_unconfirmed, that was cancelled or re-claimed while this executor
+	// was paused is not sent and not stamped. The window between this read
+	// and Send stays open; the row then means "outcome unknown" and nothing
+	// resends it.
+	current, err := e.repo.GetRunByID(run.ID)
+	if err != nil {
+		if isNotFound(err) {
+			return stepResult{}, errRunNotAdvanced
+		}
+		return stepResult{}, err
+	}
+	if !e.holdsRun(current, pos) {
+		logger.WithField("operation", "pre_send_check").Warn("Automation email not sent: the run is no longer held by this executor")
+		return stepResult{}, errRunNotAdvanced
+	}
 	var sendErr error
 	if e.mailer == nil {
 		sendErr = errors.New("no mailer is configured")
@@ -1141,6 +1327,7 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 		}
 	}
 
+	advanced, stampedRow := false, false
 	err = e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
@@ -1152,17 +1339,23 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 		if sendErr != nil {
 			outcome, errorCode = models.AutomationOutcomeFailed, models.AutomationErrorMailFailed
 		}
-		if err := r.UpdateRunStepOutcome(stepRowID, outcome, errorCode, map[string]interface{}{"recipient_id": recipient}); err != nil {
-			return err
-		}
+		// The run row first, then the step row: the order of the first half
+		// and of the stale sweep, so they queue instead of deadlocking.
 		adv := nextAdvance(stepCount, pos+1, now)
-		rows, err := r.AdvanceRun(run.ID, pos, adv, now)
+		rows, err := r.AdvanceRun(run.ID, pos, e.instanceID, adv, now)
 		if err != nil {
 			return err
 		}
+		// Stamped only while the row is still sending: a row the stale sweep
+		// already failed as email_unconfirmed keeps that outcome.
+		stamped, err := r.FinishSendingStep(stepRowID, outcome, errorCode, map[string]interface{}{"recipient_id": recipient})
+		if err != nil {
+			return err
+		}
+		advanced, stampedRow = rows == 1, stamped == 1
 		if rows != 1 {
-			// Cancelled between the two halves: the row is finalized, the
-			// run stays as the cancel left it.
+			// Cancelled or recovered between the two halves: the run stays as
+			// the cancel or the sweep left it.
 			result = stepResult{terminal: true}
 			return nil
 		}
@@ -1172,6 +1365,13 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 	if err != nil {
 		return stepResult{}, err
 	}
+	if !stampedRow {
+		logger.WithField("operation", "email_stamp").Warn("Automation email outcome not recorded: the step row was already finalized")
+	}
+	if !advanced {
+		logger.WithField("operation", "fenced_advance").Info("Automation run moved between the two email halves; stopping")
+		return result, nil
+	}
 	entry := logger.WithField("outcome", models.AutomationOutcomeSucceeded)
 	if sendErr != nil {
 		entry = logger.WithFields(logrus.Fields{"outcome": models.AutomationOutcomeFailed, "error_code": models.AutomationErrorMailFailed})
@@ -1180,50 +1380,142 @@ func (e *AutomationEngine) executeEmailStep(run *models.AutomationRun, rule *mod
 	return result, nil
 }
 
-// failUnconfirmedEmail marks a sending row failed with email_unconfirmed and
-// fails the run with the same code.
-func (e *AutomationEngine) failUnconfirmedEmail(run *models.AutomationRun, row *models.AutomationRunStep) {
-	now := e.now().UTC()
-	_ = e.repo.UpdateRunStepOutcome(row.ID, models.AutomationOutcomeFailed, models.AutomationErrorEmailUnconfirmed, row.Details)
-	_, _ = e.repo.AdvanceRun(run.ID, run.NextPosition, repository.AutomationRunAdvance{
-		Status: models.AutomationRunFailed, NextPosition: run.NextPosition, FinishedAt: &now, ErrorCode: models.AutomationErrorEmailUnconfirmed,
-	}, now)
+// holdsRun reports whether the run row is still running at position under
+// this engine's own lease.
+func (e *AutomationEngine) holdsRun(run *models.AutomationRun, position int) bool {
+	return run.Status == models.AutomationRunRunning && run.NextPosition == position &&
+		run.OwnerInstance != nil && *run.OwnerInstance == e.instanceID
 }
 
-// --- Reconciliation ----------------------------------------------------------
+// failUnconfirmedEmail fails the run with email_unconfirmed through the
+// owner-fenced advance and, in the same transaction, stamps the sending row
+// failed with the same code (only while it is still sending). An advance that
+// matches nothing rolls both back and stops the executor.
+func (e *AutomationEngine) failUnconfirmedEmail(run *models.AutomationRun, row *models.AutomationRunStep) error {
+	return e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		r := e.repo.WithTx(tx)
+		now := e.now().UTC()
+		if err := e.advance(r, run, run.NextPosition, repository.AutomationRunAdvance{
+			Status: models.AutomationRunFailed, NextPosition: run.NextPosition, FinishedAt: &now, ErrorCode: models.AutomationErrorEmailUnconfirmed,
+		}, now); err != nil {
+			return err
+		}
+		_, err := r.FinishSendingStep(row.ID, models.AutomationOutcomeFailed, models.AutomationErrorEmailUnconfirmed, row.Details)
+		return err
+	}, automationTxRetries)
+}
 
-// Reconcile recovers the runs a previous process left in running. It is
-// called at boot, before the worker and the HTTP server start, under the
-// single-replica assumption: no live executor owns these runs. A run whose
-// last step row is a send_email in sending is failed with email_unconfirmed
-// (the mail may have gone out and is never sent again); every other running
-// run goes back to pending at its next_position.
-func (e *AutomationEngine) Reconcile() (reset int, failed int, err error) {
-	runs, err := e.repo.ListRunsByStatus(models.AutomationRunRunning)
+// --- Stale sweep -------------------------------------------------------------
+
+// SweepStaleRuns recovers the running runs whose lease went stale: the
+// heartbeat is NULL (a run claimed before #237) or older than
+// automationRunLeaseStaleAfter. It runs at boot, before the worker starts,
+// and at the start of every tick, on every engine. Selection is a plain read;
+// each recovery is a conditional update by primary key that re-checks the
+// status, the observed owner and the staleness, so a run whose owner renewed
+// its lease, that another engine recovered or re-claimed, or that finished
+// meanwhile is left alone. A run whose last step row is a send_email still in
+// sending is failed with email_unconfirmed together with that row (the mail
+// may have gone out and is never sent again); every other stale run goes back
+// to pending at its next_position with attempts unchanged. It returns how
+// many runs went back to pending and how many failed.
+func (e *AutomationEngine) SweepStaleRuns(ctx context.Context) (recovered int, failed int, err error) {
+	now := e.now().UTC()
+	cutoff := now.Add(-automationRunLeaseStaleAfter)
+	runs, err := e.repo.ListStaleRunningRuns(cutoff, automationSweepBatch)
 	if err != nil {
 		return 0, 0, err
 	}
-	now := e.now()
+	var errs []error
 	for i := range runs {
-		run := runs[i]
-		last, err := e.repo.LastRunStep(run.ID)
-		if err != nil {
-			return reset, failed, err
+		if ctx.Err() != nil {
+			break
 		}
-		if last != nil && last.StepType == models.AutomationStepSendEmail && last.Outcome == models.AutomationOutcomeSending {
-			if err := e.repo.UpdateRunStepOutcome(last.ID, models.AutomationOutcomeFailed, models.AutomationErrorEmailUnconfirmed, last.Details); err != nil {
-				return reset, failed, err
-			}
-			if err := e.repo.FailRun(run.ID, models.AutomationErrorEmailUnconfirmed, now); err != nil {
-				return reset, failed, err
-			}
-			failed++
+		outcome, err := e.recoverStaleRun(runs[i], cutoff, now)
+		if err != nil {
+			errs = append(errs, err)
+			e.logger().WithFields(logrus.Fields{"operation": "sweep", "run_id": runs[i].ID}).
+				WithError(utils.LogError(err)).Error("Automation stale run recovery failed")
 			continue
 		}
-		if err := e.repo.ResetRunToPending(run.ID, now); err != nil {
-			return reset, failed, err
+		switch outcome {
+		case automationRecoveredPending:
+			recovered++
+		case automationRecoveredFailed:
+			failed++
 		}
-		reset++
 	}
-	return reset, failed, nil
+	return recovered, failed, errors.Join(errs...)
+}
+
+// recoverStaleRun recovers one stale run in one transaction: the run row
+// first, then the sending step row, the lock order of the email step. It
+// returns the outcome, or "" when the run was spared because it moved since
+// the sweep read it.
+func (e *AutomationEngine) recoverStaleRun(run models.AutomationRun, cutoff, now time.Time) (string, error) {
+	logger := e.logger().WithFields(logrus.Fields{
+		"operation": "takeover", "run_id": run.ID, "rule_id": run.RuleID,
+		"entity_type": run.EntityType, "entity_id": run.EntityID, "position": run.NextPosition,
+	})
+	last, err := e.repo.LastRunStep(run.ID)
+	if err != nil {
+		return "", err
+	}
+	unconfirmed := last != nil && last.StepType == models.AutomationStepSendEmail && last.Outcome == models.AutomationOutcomeSending
+	failCode := ""
+	if unconfirmed {
+		failCode = models.AutomationErrorEmailUnconfirmed
+	}
+	err = e.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		r := e.repo.WithTx(tx)
+		rows, err := r.RecoverStaleRun(run.ID, run.OwnerInstance, cutoff, failCode, now)
+		if err != nil {
+			return err
+		}
+		if rows != 1 {
+			return errRunNotAdvanced
+		}
+		if e.afterStaleRecover != nil {
+			e.afterStaleRecover(run.ID)
+		}
+		if !unconfirmed {
+			return nil
+		}
+		stamped, err := r.FinishSendingStep(last.ID, models.AutomationOutcomeFailed, models.AutomationErrorEmailUnconfirmed, last.Details)
+		if err != nil {
+			return err
+		}
+		if stamped != 1 {
+			// The executor stamped the row after the sweep read it: the next
+			// sweep decides on what the row says now.
+			return errRunNotAdvanced
+		}
+		return nil
+	}, automationTxRetries)
+	if errors.Is(err, errRunNotAdvanced) {
+		logger.Info("Automation run spared by the sweep: it moved since it was read")
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	outcome := automationRecoveredPending
+	entry := logger.WithField("outcome", outcome)
+	if unconfirmed {
+		outcome = automationRecoveredFailed
+		entry = logger.WithFields(logrus.Fields{"outcome": outcome, "error_code": models.AutomationErrorEmailUnconfirmed})
+	}
+	entry.Warn("Automation run recovered from a stale lease")
+	if e.recoveryObserver != nil {
+		e.recoveryObserver(run.ID, outcome)
+	}
+	return outcome, nil
 }

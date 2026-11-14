@@ -3,7 +3,7 @@
 Cases for the follow-up automation and notifications area added 2026-10-28 (issue #164): admin
 rules with ordered steps, the outbox events every lead and deal write records, the dispatcher,
 the step executor, waits and schedules that survive a restart, the dry run, the run history, the
-in-app notifications, the boot reconciliation, the erasure hooks and the migration, and the
+in-app notifications, the boot and per-tick stale sweep (run leases, #237), the erasure hooks and the migration, and the
 screens added 2026-10-29: rule list and form, dry-run dialog, run list and detail, the lead and
 deal "Automation" sections, the notification bell and page; and, also on 2026-10-29, rule names
 on runs, field-level rule errors and the dry run of unsaved rule edits (TC-AUT-034 to 036); and
@@ -54,10 +54,19 @@ Priorities: 22 P0, 17 P1, 2 P2.
   `Mailer.Send`; a row left in `sending` is failed with `email_unconfirmed` and never resent.
   Without `SMTP_HOST` the development `LogMailer` logs the recipient and subject and the step is
   `succeeded` with nothing delivered.
-- **Single replica, no retention.** The worker (`AUTOMATION_ENABLED`, default true) assumes one
-  API replica: runs left `running` are recovered at the boot of the worker process, not by a
-  lease; a process started with the worker off neither executes nor reconciles runs. Processed
-  events and finished runs are kept.
+- **Several workers, no retention.** The worker (`AUTOMATION_ENABLED`, default true) may run on
+  several replicas sharing one MySQL/MariaDB database (#237): each claim carries the engine's
+  instance id and a heartbeat lease renewed every 30 s, every later write is fenced on that owner,
+  and a run whose heartbeat is NULL or older than 3 minutes is recovered by the stale sweep at boot
+  and on every tick; a process started with the worker off neither executes nor recovers runs.
+  Several processes on one SQLite file are not supported. Processed events and finished runs are
+  kept. Manual multi-worker check (MySQL/MariaDB): start two API processes on different ports
+  with `AUTOMATION_ENABLED=true` against one database, enable a rule with a task, an email and a
+  notify step, create 20 leads, and confirm that every run completes with exactly one
+  `automation_run_steps` row per position, one task and one notification per run, one mail per
+  run in the relay or `LogMailer` output, and `owner_instance`/`heartbeat_at` NULL on every
+  finished run; then kill one process (`kill -9`) while a 1-minute `wait` rule is mid-run and
+  confirm that the other recovers its running runs within about 3 minutes, without a restart.
 - **A task never carries the person.** A `create_task` title or description accepts only
   `lead.id`, `lead.status`, `lead.source` and the `deal.*` placeholders, because the task is kept
   when its lead is erased; the name, email, phone, company and owner placeholders are refused in
@@ -302,13 +311,15 @@ Priorities: 22 P0, 17 P1, 2 P2.
   2. Execute with a seam reading the step row before the send; then try to insert a second
      `sending` row at the position.
   3. Execute with a fault injected after the send; execute again.
-  4. Execute with a cancel committed between the two halves.
+  4. Execute with a cancel committed after the first half, before the pre-send owner check (#237).
+  5. Execute with a cancel committed after the send, before the second half.
 - **Expected:** (1) the row is `failed`/`mail_failed` and the run goes on to the notify; (2) the
   `sending` row is committed before `Mailer.Send`, the send goes to the owner, the row ends
   `succeeded`, and the second insert is refused by the unique key; (3) one send, the row left in
   `sending`, the run handed back, and the next execution marks the row and the run
-  `failed`/`email_unconfirmed` without a second send; (4) the send in flight goes out, the row is
-  finalized, the run stays `cancelled`/`manual` at position 1.
+  `failed`/`email_unconfirmed` without a second send; (4) nothing is sent, the row stays
+  `sending` and the run stays `cancelled`/`manual` with its owner cleared; (5) the send in flight
+  went out, the row is finalized `succeeded`, the run stays `cancelled`/`manual` at position 1.
 - **Automation:** automated — `TestAutomationStepExecution{SQLite,MySQL}` ("send_email is two
   transactions around one send").
 
@@ -448,28 +459,31 @@ Priorities: 22 P0, 17 P1, 2 P2.
 
 ## 16.5 Runtime, erasure and migration
 
-### TC-AUT-024 — Boot reconciliation and the drain
+### TC-AUT-024 — Stale sweep (formerly boot reconciliation) and the drain
 - **Priority:** P0
 - **Type:** regression
 - **Preconditions:** A run left `running` between two ordinary steps; one left `running` after
-  its first email transaction; a waiting and a completed run.
+  its first email transaction (both claimed by an engine that stopped renewing its lease); a
+  legacy `running` row without a lease; a run claimed by a live engine; a waiting and a completed
+  run.
 - **Steps:**
-  1. Rebuild the engine and reconcile; execute.
+  1. Advance the clock past the 3-minute stale horizon, rebuild the engine and sweep; execute.
   2. Through the real wiring over a SQLite file: seed a stranded run, build the router with
      `AUTOMATION_ENABLED=true`, record an event, wait for the worker, stop under the deadline,
      record another event, wait. Repeat with `AUTOMATION_ENABLED=false`, again with a stranded
      run seeded first.
   3. Start a runtime whose first step pauses after its effect; stop it while paused; release.
-- **Expected:** (1) the interrupted run is `pending` at its `next_position` and later completes
-  without repeating its first step; the unconfirmed email's row and run are `failed` with
-  `email_unconfirmed` and the mail is never sent again; waiting and completed runs are untouched;
-  an idle reconcile is a no-op. (2) The stranded run is failed before the worker starts and the log
+- **Expected:** (1) the interrupted and the legacy runs are `pending` at their `next_position`
+  (attempts unchanged, lease cleared) and later complete without repeating a step; the unconfirmed
+  email's row and run are `failed` with `email_unconfirmed` and the mail is never sent again; the
+  live engine's run, waiting and completed runs are untouched; an idle sweep is a no-op. (2) The
+  stranded run is failed before the worker starts and the log
   says so; "Automation worker started" appears once; the event becomes a completed run with its
   notification; the stop logs "Automation worker stopped", the goroutine count returns to its
   baseline, the later event stays unprocessed and a second stop is a no-op; with the worker off,
-  "Automation worker not started" appears, the stranded run is *not* reconciled (still `running`,
+  "Automation worker not started" appears, the stranded run is *not* swept (still `running`,
   its `sending` row untouched, no recovery log line — a process without the worker owns no run
-  and leaves the worker replica's runs alone), the event is never dispatched and the stop is
+  and recovers none), the event is never dispatched and the stop is
   immediate. (3) Stop blocks while the step is in flight, returns once it commits, the run is
   handed back at its next position, the second run was never claimed, and no row changes after
   Stop returned; a second Stop is a no-op even on a context that has already ended, as is Stop on
@@ -477,7 +491,11 @@ Priorities: 22 P0, 17 P1, 2 P2.
 - **Automation:** automated — `internal/service/automation_reconcile_test.go`:
   `TestAutomationReconcileSQLite`, `TestAutomationReconcileMySQL`;
   `cmd/automation_runtime_test.go`: `TestAutomationRuntimeLifecycle`;
-  `internal/service/automation_runtime_test.go`: `TestAutomationRuntimeDrain`.
+  `internal/service/automation_runtime_test.go`: `TestAutomationRuntimeDrain`. The multi-worker
+  lease cases (#237) — takeover, email at most once, a live run spared, the heartbeat lifecycle,
+  concurrent workers, the MySQL lock order, log privacy and the production wiring — are pinned by
+  the `TestAutomationRunLease*` roots listed in
+  [DEVELOPMENT.md](../DEVELOPMENT.md#automation-runtime) ("Run lease roots").
 
 ### TC-AUT-025 — Lead and user erasure end the automation state inside the erasure transaction
 - **Priority:** P0

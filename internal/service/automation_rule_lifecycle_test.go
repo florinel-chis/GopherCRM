@@ -73,15 +73,18 @@ func runAutomationRuleLifecycle(t *testing.T, db *gorm.DB) {
 		// The pending one was executed too and is waiting now; make it pending
 		// again and claim a third as running, so every active status is
 		// covered by the cancel.
-		require.NoError(t, env.repo.ResetRunToPending(pending.ID, env.clock.Now()))
+		// A direct write: the repository has no unconditional reset any more
+		// (#237).
+		require.NoError(t, db.Model(&models.AutomationRun{}).Where("id = ?", pending.ID).
+			Updates(map[string]interface{}{"status": models.AutomationRunPending, "resume_at": nil}).Error)
 		running := env.startRun(rule, lead)
-		claimed, err := env.repo.ClaimRun(running.ID, models.AutomationRunPending, env.clock.Now())
+		claimed, err := env.repo.ClaimRun(running.ID, models.AutomationRunPending, env.engine.instanceID, env.clock.Now())
 		require.NoError(t, err)
 		require.EqualValues(t, 1, claimed)
 		finished := env.startRun(rule, lead)
-		_, err = env.repo.ClaimRun(finished.ID, models.AutomationRunPending, env.clock.Now())
+		_, err = env.repo.ClaimRun(finished.ID, models.AutomationRunPending, env.engine.instanceID, env.clock.Now())
 		require.NoError(t, err)
-		rows, err := env.repo.AdvanceRun(finished.ID, 1, repository.AutomationRunAdvance{Status: models.AutomationRunCompleted, NextPosition: 3}, env.clock.Now())
+		rows, err := env.repo.AdvanceRun(finished.ID, 1, env.engine.instanceID, repository.AutomationRunAdvance{Status: models.AutomationRunCompleted, NextPosition: 3}, env.clock.Now())
 		require.NoError(t, err)
 		require.EqualValues(t, 1, rows)
 
@@ -102,6 +105,8 @@ func runAutomationRuleLifecycle(t *testing.T, db *gorm.DB) {
 			assert.Equal(t, models.AutomationRunCancelled, run.Status, "run %d", id)
 			assert.Equal(t, models.AutomationCancelRuleChanged, run.CancelReason, "run %d", id)
 			assert.NotNil(t, run.FinishedAt)
+			assert.Nil(t, run.OwnerInstance, "run %d: the cancel clears the owner", id)
+			assert.Nil(t, run.HeartbeatAt, "run %d: the cancel clears the heartbeat", id)
 		}
 		assert.Equal(t, models.AutomationRunCompleted, env.run(finished.ID).Status, "a finished run is left alone")
 

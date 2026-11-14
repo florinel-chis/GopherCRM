@@ -381,6 +381,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	if cfg.Automation.Enabled {
 		automationRuntime = service.NewAutomationRuntime(automationEngine,
 			time.Duration(cfg.Automation.PollIntervalSeconds)*time.Second)
+		if automationRuntimeBuilt != nil {
+			automationRuntimeBuilt(automationRuntime)
+		}
 	}
 	automation := newAutomationBackground(automationRuntime)
 
@@ -409,23 +412,23 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	automationHandler := handler.NewAutomationHandler(automationService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
 
-	// Recover the automation runs a previous process left in running before
-	// the worker and the HTTP server start, under the single-replica
-	// assumption: no live executor owns them. A run goes back to pending at
-	// its next position; one whose last step row is an email in sending is
-	// failed with email_unconfirmed, so the mail is never sent twice.
+	// Recover the automation runs whose lease went stale before the worker and
+	// the HTTP server start (#237). Each claim records this engine's instance
+	// id and a heartbeat its owner renews every 30 s, so only a running run
+	// whose heartbeat is NULL (claimed before leases existed) or older than
+	// 3 minutes is touched: its owner is gone. It goes back to pending at its
+	// next position; one whose last step row is an email in sending is failed
+	// with email_unconfirmed, so the mail is never sent twice. A live run on
+	// another replica is left alone. The same sweep starts every worker tick,
+	// so a run abandoned later is recovered without a restart.
 	//
-	// Only the process that runs the worker reconciles. A replica started with
-	// AUTOMATION_ENABLED=false owns no run and must not touch the ones the
-	// worker replica is executing: resetting a live running run would make its
-	// next conditional advance fail and the step be re-executed, and failing
-	// an email mid-send would leave the run failed under a step the worker
-	// then marks succeeded.
-	if cfg.Automation.Enabled {
-		if reset, failed, err := automationEngine.Reconcile(); err != nil {
-			utils.Logger.WithError(err).Error("Failed to reconcile stranded automation runs")
-		} else if reset > 0 || failed > 0 {
-			utils.Logger.WithFields(map[string]interface{}{"reset": reset, "failed": failed}).
+	// Only a process that runs the worker sweeps: a replica started with
+	// AUTOMATION_ENABLED=false owns no run and recovers none.
+	if automationRuntime != nil {
+		if recovered, failed, err := automationRuntime.SweepStaleRuns(backgroundCtx); err != nil {
+			utils.Logger.WithError(utils.LogError(err)).Error("Failed to recover stale automation runs")
+		} else if recovered > 0 || failed > 0 {
+			utils.Logger.WithFields(map[string]interface{}{"recovered": recovered, "failed": failed}).
 				Warn("Recovered automation runs left behind by a previous process")
 		}
 	}
@@ -464,8 +467,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		}).Info("AEO scheduler not started")
 	}
 
-	// The automation worker, after the reconciliation above and before the
-	// routes are served.
+	// The automation worker, after the boot sweep above and before the routes
+	// are served.
 	if cfg.Automation.Enabled {
 		automation.start(backgroundCtx)
 	} else {

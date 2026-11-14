@@ -36,7 +36,7 @@ wiring is in `setupDependencies` (`cmd/main.go:257`).
 | Tickets and comments | create support+admin; sales read-only; support own assignments; customer own, non-internal | visibility applied in the query before pagination | `internal/handler/ticket_handler_test.go`, `internal/integration/ticket_visibility_integration_test.go` |
 | Tasks and labels | tasks in-handler; labels write admin+sales+support | hidden lead links redacted on every read | `internal/handler/task_labels_handler_test.go`, `task_lead_visibility_handler_test.go` |
 | Forms | admin `/forms` read admin+sales+support; public `/forms/public/*` | spam layers in fixed order; double opt-in claim, lead write and submission update in one transaction | `internal/service/form_service_test.go`, `form_confirmation_regression_test.go`, `internal/handler/form_public_handler_test.go` |
-| Follow-up automation | rules admin; runs admin+sales (sales never sees ticket runs) | outbox event per lead/deal/ticket write (#242); conditional run advance after a locking read of the record; ticket delete cancels the ticket's open runs; boot reconciliation | `internal/service/automation_runtime_test.go`, `cmd/automation_runtime_test.go`, `internal/service/ticket_automation_*_test.go` |
+| Follow-up automation | rules admin; runs admin+sales (sales never sees ticket runs) | outbox event per lead/deal/ticket write (#242); conditional run advance after a locking read of the record; ticket delete cancels the ticket's open runs; lease-based claims with a stale sweep at boot and every tick (#237) | `internal/service/automation_runtime_test.go`, `internal/service/automation_run_lease*_test.go`, `cmd/automation_runtime_test.go`, `internal/service/ticket_automation_*_test.go` |
 | AEO (answer-engine tracking) | admin+sales+support; run and generate admin+sales | keys encrypted at rest; environment-only egress allowlist | `internal/service/aeo_service_test.go`, `aeo_egress_boundary_test.go`, `docs/AEO_SECURITY.md` |
 | GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:738-746`) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245). Ticket and task deletes are soft deletes that scrub no text (`internal/repository/ticket_repository.go`, `task_repository.go:53`; a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
 | Dashboard | admin+sales+support | activity lists scoped inside the query | `internal/repository/dashboard_queries_test.go` |
@@ -68,9 +68,9 @@ Checked by searching the tracked tree on `4dfe404`:
 - An issued JWT ends early only through logout, a password change or a password reset, which
   increment `users.token_version` (#236). A role change does not end it, and the token a refresh
   rotation replaces stays valid until it expires (README "Known Limitations").
-- The automation worker assumes a single API process (README "Known Limitations"; section 5.4;
-  #237). AEO runs and the daily schedule are coordinated across replicas on MySQL/MariaDB (#229,
-  section 5.4).
+- The automation worker (#237) and AEO runs with the daily schedule (#229) are coordinated across
+  replicas on MySQL/MariaDB (README "Known Limitations"; section 5.4). Several processes on one
+  SQLite file are not supported.
 
 ### 1.3 Open issues you inherit
 
@@ -324,7 +324,7 @@ Configuration comes from three places:
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:321-325` | empty host means log-only mail |
 | `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:357-358` | both or the layer is skipped |
 | `FORM_RETENTION_DAYS` | off | `config.go:360` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
-| `AUTOMATION_ENABLED` | `true` | `config.go:363` | true on exactly one instance |
+| `AUTOMATION_ENABLED` | `true` | `config.go:363` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
 | `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:350-351` | daily AEO run |
 | `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:353` | environment only; see `docs/AEO_SECURITY.md` |
 | `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:313-314` | SQL statements only at debug/trace |
@@ -474,10 +474,16 @@ workflow if you never intend to use it.
 
 ### 5.4 Worker topology
 
-Run the automation worker on exactly one instance. Every other replica sets
-`AUTOMATION_ENABLED=false` (README "Known Limitations"). Rate limits are per process, so they are
-not shared between replicas either. The form retention purge (`FORM_RETENTION_DAYS`) needs no such
-rule: it is safe on every replica, because extra sweeps only compete for the same rows.
+The automation worker is replica-safe on MySQL/MariaDB (#237): every replica may keep
+`AUTOMATION_ENABLED=true`. Each run claim records the engine's instance id and a heartbeat it
+renews every 30 s; every write after the claim (step advance, release, both email transactions and
+a check just before the send) is fenced on that owner, and a stale sweep at boot and at every tick
+recovers a run whose heartbeat is older than 3 minutes, so a run of a crashed replica is resumed by
+another without a restart and a live run is never touched. Replica clocks must agree to well under
+90 s, and an upgrade stops every replica before starting the new version (README "Known
+Limitations"). Rate limits are per process, so they are not shared between replicas. The form
+retention purge (`FORM_RETENTION_DAYS`) is also safe on every replica, because extra sweeps only
+compete for the same rows.
 
 AEO is replica-safe on MySQL/MariaDB (#229). Each run has a database owner and a heartbeat the
 owner renews every 30 s; admission is one insert guarded by the unique `aeo_runs.running_lock`, so

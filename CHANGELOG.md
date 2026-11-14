@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Lease-based automation run claims (#237).** Several API replicas may now run the follow-up
+  automation worker (`AUTOMATION_ENABLED=true`) against one MySQL/MariaDB database. Each claim
+  records the engine's instance id and a heartbeat in `automation_runs.owner_instance` and
+  `heartbeat_at` (both hidden from the API; `claimed_at` is unchanged), renewed every 30 s while
+  the run executes. Every write after the claim is fenced on that owner: the step advance, the
+  release, the first `send_email` transaction, a check just before the send and the email stamp
+  (only while the row is still `sending`); cancels clear the owner. The boot-only, owner-blind
+  reconciliation is replaced by a stale sweep that runs at boot and at the start of every worker
+  tick on every replica: a running run whose heartbeat is NULL or older than 3 minutes goes back to
+  `pending` at its position (attempts unchanged), or is failed with `email_unconfirmed` when its
+  email is still `sending`; a live run on another replica is never touched. No step runs twice
+  and no mail is sent twice, and a run abandoned by a crashed worker is recovered within the
+  stale horizon without a restart. An executor paused between the pre-send check and the relay
+  call can still send once after the sweep recorded `email_unconfirmed` (never resent). Schema
+  migration `20261116120000_add_automation_run_leases` (MySQL/MariaDB, each column only when
+  missing; SQLite through `MigrateDatabase`); no API change. **Upgrade by stopping every replica
+  before starting the new version** (an older binary's boot reconciliation resets live runs), and
+  keep replica clocks within well under 90 s. Several processes on one SQLite file stay
+  unsupported. Registering the new MySQL roots in `scripts/ci/check-go.py` and the migration roots
+  in the Database migrations workflow is an operator follow-up.
+
 - **Form → ticket intake (#213).** A double opt-in form with `create_ticket` (admin or sales on
   `POST /forms` and `PUT /forms/{id}`; absent means false, excludes `create_lead`, which then
   defaults to false; with `create_lead` true or without double opt-in it is the existing 400) opens

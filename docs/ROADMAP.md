@@ -234,8 +234,13 @@ each a candidate follow-up:
 
 - **Email to leads and customers** — `send_email` reaches staff users only until a consent and
   opt-out model exists.
-- **Multi-replica leases** — the worker assumes one API replica: runs are recovered at boot, not
-  by a lease timeout on `claimed_at`, so two workers would double-execute.
+- ~~**Multi-replica leases**~~ — done (#237): each claim records the engine's instance id and a
+  heartbeat lease, every write after it is fenced on the owner, and a stale sweep at boot and on
+  every tick recovers runs whose lease is older than 3 minutes, so several replicas may run the
+  worker against one MySQL/MariaDB database. Still open: fencing the window between the pre-send
+  check and `Mailer.Send` (an executor paused exactly there can send once after a sweep recorded
+  `email_unconfirmed`), and clearing the lease columns of runs cancelled by a lead erasure or a
+  ticket delete.
 - **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
   sweep is a retention decision, not an erasure one (the rows hold ids only).
 - **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer and
