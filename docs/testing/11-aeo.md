@@ -299,8 +299,8 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Preconditions:** A run in `running`.
 - **Steps:**
   1. `POST /api/v1/aeo/runs`.
-- **Expected:** 409 `CONFLICT` with "an AEO run is already in progress". The scheduler hits the same guard and logs the skip instead of failing. The UI surfaces the message and leaves the existing run alone.
-- **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`.
+- **Expected:** 409 `CONFLICT` with "an AEO run is already in progress", whichever API replica the request reaches (the guard is the unique `aeo_runs.running_lock`, #229). The scheduler hits the same guard and logs the skip instead of failing. The UI surfaces the message and leaves the existing run alone.
+- **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`. Below the browser: `tests/aeo_replica_test.go` "TestAEOReplicaAPISQLite" (two routers on one database, TC-AEO-051).
 
 ### TC-AEO-025 — Run precondition ordering
 - **Priority:** P2
@@ -316,12 +316,12 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 ### TC-AEO-026 — A run stranded by a restart does not brick the module
 - **Priority:** P0
 - **Type:** regression
-- **Preconditions:** A row in `aeo_runs` with `status='running'` and no `completed_at` — reproduce by killing the backend mid-run, or by inserting one directly.
+- **Preconditions:** A row in `aeo_runs` with `status='running'` and no `completed_at` — reproduce by killing the backend mid-run, or by inserting one directly (with `heartbeat_at` NULL or more than 3 minutes old).
 - **Steps:**
   1. Restart the backend and read its startup log.
   2. `POST /api/v1/aeo/runs`.
-- **Expected:** Startup reconciliation flips every `running` row to `failed` with `completed_at` stamped and logs "Recovered AEO runs left behind by a previous process"; the subsequent run starts normally. Without a restart the same row is swept lazily by the next `StartRun` once it is older than 6 h (`aeoRunStaleAfter`), so a crash cannot block the daily scheduled run either. Since #111 a graceful SIGTERM no longer produces such a row in the ordinary case — the run is cancelled and finalized before the database closes (TC-AEO-047) — so reconciliation at boot now covers an actual crash, a kill, or a drain that hit its 15 s deadline.
-- **Known issue:** Fixed 2026-08-11. Before that there was no reconciliation anywhere: the executor is in-process and `finalize` never ran after a crash, so a single stranded row made every later run answer 409 and every scheduled run log "skipped" **forever**, until an operator ran `UPDATE aeo_runs SET status='failed'` by hand. Regression-tested by `internal/service/aeo_service_test.go` "TestReconcileRunningRuns" / "TestStartRun_SweepsRunsStrandedByACrash" and `internal/repository/aeo_repository_test.go` "TestAEORepository_MarkStaleRunsFailed".
+- **Expected:** Startup reconciliation fails the `running` rows whose heartbeat is older than 3 minutes (`aeoRunHeartbeatStaleAfter`) or NULL, or that started more than 6 h ago (`aeoRunStaleAfter`), with `completed_at` stamped and `running_lock` cleared, and logs "Recovered AEO runs left behind by a previous process"; the subsequent run starts normally. A row whose heartbeat is fresher may be another replica's live run and is left running (TC-AEO-050): a backend restarted less than 3 minutes after a crash answers 409 until a later start attempt passes the horizon, which the sweep before every start then fails (TC-AEO-053), so a crash cannot block the daily scheduled run either. Since #111 a graceful SIGTERM no longer produces such a row in the ordinary case — the run is cancelled and finalized before the database closes (TC-AEO-047) — so reconciliation at boot now covers an actual crash, a kill, or a drain that hit its 15 s deadline.
+- **Known issue:** Fixed 2026-08-11. Before that there was no reconciliation anywhere: the executor is in-process and `finalize` never ran after a crash, so a single stranded row made every later run answer 409 and every scheduled run log "skipped" **forever**, until an operator ran `UPDATE aeo_runs SET status='failed'` by hand. Until #229 the boot reconciliation failed every `running` row, which also failed another replica's live run. Regression-tested by `internal/service/aeo_service_test.go` "TestReconcileRunningRuns" / "TestStartRun_SweepsRunsStrandedByACrash" and `internal/repository/aeo_run_ownership_test.go` "TestAEORunAbandonedSweepSQLite" / "TestAEORunAbandonedSweepMySQL".
 - **Automation:** planned — backend-level; a Playwright case can only assert the second half (run starts after restart).
 
 ### TC-AEO-027 — Concurrent run requests start exactly one run
@@ -331,7 +331,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Steps:**
   1. Fire eight `POST /api/v1/aeo/runs` requests simultaneously.
 - **Expected:** One 202 and seven 409 `CONFLICT`; exactly one row is inserted into `aeo_runs`. The realistic trigger is a manual run landing on the scheduled hour.
-- **Known issue:** Fixed 2026-08-11 — the guard was a non-atomic check-then-insert (`CountRunsByStatus` then `CreateRun` with nothing in between), so concurrent callers could all read zero and all fan out, doubling provider spend. Serialised in the service. This covers one API process, which is what the module assumes: a second replica would run its own scheduler and needs a database-level claim. Regression-tested by `internal/service/aeo_service_test.go` "TestStartRun_ConcurrentCallsStartExactlyOneRun" (fails without the guard, verified).
+- **Known issue:** Fixed 2026-08-11 — the guard was a non-atomic check-then-insert (`CountRunsByStatus` then `CreateRun` with nothing in between), so concurrent callers could all read zero and all fan out, doubling provider spend. It was first serialised in the service, which covered one process only; since #229 admission is one `ClaimRun` insert guarded by the unique `aeo_runs.running_lock`, so the same holds across replicas (TC-AEO-051). Regression-tested by `internal/service/aeo_service_test.go` "TestStartRun_ConcurrentCallsStartExactlyOneRun" and `internal/repository/aeo_run_ownership_test.go` "TestAEORunClaimMySQL" (concurrent claims from separate connections).
 - **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts` via `request` fan-out.
 
 ### TC-AEO-028 — Sorting the run list by trigger
@@ -552,6 +552,56 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Expected:** Step 1: `AEO providers loaded` with an empty roster **and** `AEO scheduler started` — the empty roster no longer disables the schedule. Step 3: a `scheduled` run executes against the engine whose key was stored after boot; the provider request carries that key; the run completes and the scheduler re-arms for the next day. Step 4 (unconfigured): the tick logs one info line `AEO scheduled run skipped: the module is not fully configured` naming the reason, no error-level line, no run row, and the loop re-arms — there is no retry inside the day. Step 4 (disabled): `AEO scheduler not started`, no timer is ever armed, and shutdown is immediate.
 - **Automation:** automated (backend) — `cmd/aeo_runtime_test.go` "TestAEORuntimeStartup", `internal/aeo/runtime_test.go` (`TestSchedulerFiresWhenDueAndRearms`, `TestSchedulerWaitJoinsAStartInProgress`, `TestTriggerScheduledRunIsQuietOnIncompleteConfiguration`). The `aeo-providers` browser spec covers runtime credentials on the settings page but not the scheduled start.
 
+## 11.8 Several API replicas (#229)
+
+Two or more backend processes share one MySQL/MariaDB database. Every run row carries its owner
+instance and a heartbeat the owner renews every 30 s; admission is one insert guarded by the unique
+`aeo_runs.running_lock`; the daily run is claimed once per slot through the unique
+`aeo_runs.schedule_slot`. Several processes on one SQLite file are not supported; the Go roots use
+two connection pools on one SQLite file to prove the outcomes in sequence.
+
+### TC-AEO-050 — A starting replica leaves another replica's live run running
+- **Priority:** P0
+- **Type:** regression / concurrency
+- **Preconditions:** Replica A is executing a run (provider call in flight); the database also holds a `running` row whose heartbeat is older than 3 minutes, one with a NULL heartbeat (written before #229), and one started more than 6 hours ago.
+- **Steps:**
+  1. Start replica B and read its startup log.
+  2. Read the rows.
+- **Expected:** A's run stays `running` with `running_lock = 1`; the three abandoned rows are `failed` with `completed_at` set and `running_lock` NULL; B logs "Recovered AEO runs left behind by a previous process" for those three only. A second boot recovers nothing. Terminal rows are untouched. The recovery happens before B arms its scheduler.
+- **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaBootSparesLiveRunSQLite" / "…MySQL", `cmd/aeo_replica_test.go` "TestAEOReplicaProductionWiring" (the real `setupDependencies` booted again over the same SQLite file).
+
+### TC-AEO-051 — One run across replicas
+- **Priority:** P0
+- **Type:** regression / concurrency
+- **Preconditions:** Replicas A and B; a saved profile, an active prompt, a configured engine.
+- **Steps:**
+  1. Start a run on A (`POST /aeo/runs`).
+  2. While it runs, `POST /aeo/runs` and `POST /aeo/prompts/{id}/run` on B.
+  3. Let A's run finish, then `POST /aeo/runs` on B.
+  4. Fire starts on both replicas at once.
+- **Expected:** Step 2: 409 `CONFLICT` "an AEO run is already in progress", no row inserted, no provider call from B. Step 3: 202. Step 4: exactly one run is admitted (MySQL), every other start is 409.
+- **Automation:** automated (backend) — `tests/aeo_replica_test.go` "TestAEOReplicaAPISQLite", `internal/service/aeo_replica_test.go` "TestAEOReplicaAdmissionSQLite" / "…MySQL", `internal/repository/aeo_run_ownership_test.go` "TestAEORunClaimSQLite" / "…MySQL".
+
+### TC-AEO-052 — One scheduled run per daily slot
+- **Priority:** P1
+- **Type:** regression / concurrency
+- **Preconditions:** `AEO_SCHEDULE_ENABLED=true` with the same `AEO_SCHEDULE_HOUR` and `TZ` on every replica.
+- **Steps:**
+  1. Let the scheduled hour pass with every replica running.
+  2. Read the run list and the schedulers' logs.
+- **Expected:** One `scheduled` run for the slot; the other replicas log one info line "AEO scheduled run skipped: this slot was already started" (no slot value in the log) and re-arm for the next day, also when the first run has already finished. A replica whose timer fires late names the same slot (the `NextRunAt` instant, not the wake-up time). A slot refused because a manual run held the lock is not retried.
+- **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaScheduleSlotSQLite" / "…MySQL", `internal/aeo/scheduler_slot_test.go` (`TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`).
+
+### TC-AEO-053 — A crashed replica's run is recovered after the heartbeat horizon
+- **Priority:** P0
+- **Type:** regression / operational
+- **Preconditions:** Replica A killed (`kill -9`) mid-run, so its row stays `running` with its last heartbeat.
+- **Steps:**
+  1. Within 3 minutes of the kill, `POST /aeo/runs` on replica B.
+  2. After 3 minutes, repeat (or trigger the scheduled start).
+- **Expected:** Step 1: 409, A's row stays `running`. Step 2: the start fails A's row (`failed`, `running_lock` NULL) and is admitted. If another replica failed a run whose owner is in fact still alive (a paused process), the owner's finalisation is refused and leaves the row `failed`, its next heartbeat cancels the run's provider calls, and nothing later changes the row; answers it wrote before that heartbeat are kept. A Warn line "AEO run finalization refused" carries the `run_id` only.
+- **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaDeadOwnerRecoveredSQLite" / "…MySQL", "TestAEOReplicaFinalizeAfterTakeoverSQLite" / "…MySQL", "TestAEORunHeartbeatLifecycle", "TestAEOReplicaLogsOmitPersonalData", `internal/aeo/scheduler_slot_test.go` "TestEngineFinalizeRefusedWhenNotOwned".
+
 ---
 
 ## Coverage summary
@@ -565,8 +615,9 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 | 11.5 Citations | 3 | 0 | 2 | 1 |
 | 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
 | 11.7 Provider configuration, egress and runtime | 7 | 4 | 3 | 0 |
-| **Total** | **49** | **9** | **27** | **13** |
+| 11.8 Several API replicas | 4 | 3 | 1 | 0 |
+| **Total** | **53** | **12** | **28** | **13** |
 
-Automation status: 10 automated below the browser (the route smoke test, the two column-length
-cases and TC-AEO-043 to 049, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
+Automation status: 14 automated below the browser (the route smoke test, the two column-length
+cases and TC-AEO-043 to 053, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
 the missing sales/support login helper, one on a live Anthropic call).

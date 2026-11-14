@@ -16,8 +16,10 @@ import (
 // itself bounded (aeo.EngineOptions.CleanupTimeout, 5s by default), so an
 // honest drain takes well under this. When the deadline passes anyway — a
 // database write that ignores cancellation, typically — main does not close the
-// database handle under the work that is still using it: it exits and lets the
-// next boot's reconciliation fail the rows left in "running".
+// database handle under the work that is still using it: it exits, and once the
+// heartbeat of a row it left in "running" is older than three minutes, the next
+// boot or start on any replica fails it. The run's heartbeat goroutine is joined
+// with the run, so a drain that returned nil leaves no heartbeat writer.
 const aeoDrainTimeout = 15 * time.Second
 
 // aeoSchedulerClock is the scheduler's time source. It is a variable so the

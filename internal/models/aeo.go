@@ -147,7 +147,7 @@ type AEORun struct {
 	// "completed" (no call failed), "partial" (some failed) or "failed" (every
 	// call failed). A run interrupted by shutdown ends "failed" when no answer
 	// was recorded and "partial" otherwise. A run still "running" after 6
-	// hours, or left running by a previous process, is marked "failed".
+	// hours, or whose owner stopped renewing its heartbeat, is marked "failed".
 	Status string `gorm:"not null;type:varchar(20);index" json:"status" enums:"running,completed,failed,partial" example:"running" readonly:"true"`
 	// When the run was started (UTC, RFC 3339).
 	StartedAt time.Time `gorm:"not null" json:"started_at" example:"2026-10-30T06:00:00Z" readonly:"true"`
@@ -162,7 +162,30 @@ type AEORun struct {
 	FailedQueries int `gorm:"not null;default:0" json:"failed_queries" example:"0" readonly:"true"`
 	// ID of the user who started a manual run; omitted for scheduled runs.
 	TriggeredByID *uint `gorm:"index" json:"triggered_by_id,omitempty" example:"1" readonly:"true"`
+
+	// Ownership across API replicas (#229). None of these is serialised.
+	//
+	// OwnerInstance is the instance id of the process that claimed the run
+	// (32 lowercase hex characters, generated once per service). NULL on rows
+	// written before ownership existed.
+	OwnerInstance *string `gorm:"size:64" json:"-"`
+	// HeartbeatAt is set to StartedAt by the claim and renewed by the owner
+	// while the run executes. A running row whose heartbeat is NULL or stale is
+	// abandoned and may be failed by any replica.
+	HeartbeatAt *time.Time `json:"-"`
+	// RunningLock is 1 while the run is running and NULL once it reached a
+	// terminal status. Its unique index admits at most one running run across
+	// every process sharing the database; NULLs never collide.
+	RunningLock *uint8 `gorm:"uniqueIndex:idx_aeo_runs_running_lock" json:"-"`
+	// ScheduleSlot is the daily slot a scheduled run was claimed for
+	// (AEOScheduleSlotFormat, UTC); NULL for manual and prompt runs. Its unique
+	// index starts each slot at most once across replicas.
+	ScheduleSlot *string `gorm:"size:20;uniqueIndex:idx_aeo_runs_schedule_slot" json:"-"`
 }
+
+// AEOScheduleSlotFormat is the layout of aeo_runs.schedule_slot, applied to the
+// slot instant in UTC.
+const AEOScheduleSlotFormat = "2006-01-02T15:04Z"
 
 func (AEORun) TableName() string {
 	return "aeo_runs"

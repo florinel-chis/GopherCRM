@@ -125,6 +125,15 @@ var (
 	// this with a message naming the selected engine. Also answered with 503.
 	ErrGenerationProviderNotConfigured = errors.New("the prompt generation engine has no API key configured")
 
+	// ErrAEOScheduleSlotTaken means another replica (or an earlier tick of this
+	// one) already claimed the daily scheduled run of that slot (#229). The
+	// scheduler logs it as a skip; it never reaches HTTP.
+	ErrAEOScheduleSlotTaken = errors.New("the AEO scheduled run of this slot was already started")
+	// ErrAEORunNotOwned means a conditional write on an aeo_runs row matched
+	// nothing: the row is no longer running, or another instance owns it
+	// (#229). The owner stops writing to the run.
+	ErrAEORunNotOwned = errors.New("the AEO run is no longer running under this instance")
+
 	// Follow-up automation errors. ErrAutomationRuleNotFound and
 	// ErrAutomationRunNotFound are 404 at the requested path; a sales caller
 	// asking for a run on a record it does not own gets the same not-found.

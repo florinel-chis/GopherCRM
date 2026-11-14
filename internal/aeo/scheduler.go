@@ -17,8 +17,13 @@ const AEOSchedulerName = "aeo-scheduler"
 // RunStarter is the slice of the AEO service the scheduler needs. Depending on
 // this instead of service.AEOService keeps internal/aeo free of an import cycle
 // (the service already imports this package for Executor and Provider).
+//
+// StartScheduledRun receives the slot instant the scheduler computed with
+// NextRunAt, never the time it woke up, so every replica sleeping towards the
+// same configured hour names the same slot and only one of them starts it
+// (apperrors.ErrAEOScheduleSlotTaken for the others).
 type RunStarter interface {
-	StartRun(ctx context.Context, trigger string, triggeredByID *uint) (*models.AEORun, error)
+	StartScheduledRun(ctx context.Context, slot time.Time) (*models.AEORun, error)
 }
 
 // NextRunAt returns the next occurrence of hour:00 in now's location, strictly
@@ -60,16 +65,17 @@ func schedulerLoop(ctx context.Context, starter RunStarter, hour int) {
 	NewScheduler(starter, hour).run(ctx)
 }
 
-// triggerScheduledRun starts one scheduled run. Every outcome — including a
-// panic inside the service — is contained here so the loop always survives to
-// schedule tomorrow.
+// triggerScheduledRun starts the scheduled run of slot. Every outcome —
+// including a panic inside the service — is contained here so the loop always
+// survives to schedule tomorrow.
 //
 // Incomplete configuration is an ordinary state of a scheduled deployment, not
 // a fault: a profile not saved yet, no engine with credentials, or no active
 // prompt. Each is logged once at info level and the loop sleeps until the next
 // day; there is no retry and no error-level line, so an unconfigured module
-// cannot flood the log a tick at a time.
-func triggerScheduledRun(ctx context.Context, starter RunStarter) {
+// cannot flood the log a tick at a time. A slot another replica already
+// started is the same kind of skip. No line carries the slot value.
+func triggerScheduledRun(ctx context.Context, starter RunStarter, slot time.Time) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			logScheduler().WithField("panic", recovered).
@@ -77,11 +83,16 @@ func triggerScheduledRun(ctx context.Context, starter RunStarter) {
 		}
 	}()
 
-	run, err := starter.StartRun(ctx, TriggerScheduled, nil)
+	run, err := starter.StartScheduledRun(ctx, slot)
 	switch {
+	case errors.Is(err, apperrors.ErrAEOScheduleSlotTaken):
+		// Another replica (or an earlier start of this one) owns the slot.
+		logScheduler().WithField("error_code", "schedule_slot_taken").
+			Info("AEO scheduled run skipped: this slot was already started")
 	case errors.Is(err, apperrors.ErrRunInProgress):
-		// A manual run is still going. Skipping is correct: the overlap guard
-		// exists precisely to keep provider spend bounded.
+		// A manual run, on this or another replica, is still going. Skipping
+		// is correct: the claim exists precisely to keep provider spend
+		// bounded. The slot is not retried.
 		logScheduler().Info("AEO scheduled run skipped: a run is already in progress")
 	case errors.Is(err, ErrShuttingDown):
 		logScheduler().Info("AEO scheduled run skipped: the runtime is shutting down")

@@ -155,15 +155,18 @@ Notes on the wiring:
   enabled on exactly one replica and set `AUTOMATION_ENABLED=false` on the
   others: those serve the API and record events but neither execute runs nor
   reconcile them at boot. Runs left `running` by a killed worker container
-  are recovered when the next worker container boots. This does not make the
-  backend safe to scale as a whole: every backend container marks all AEO runs
-  still `running` as failed when it starts, whatever its `AUTOMATION_ENABLED`
-  and `AEO_SCHEDULE_ENABLED` (`cmd/main.go:418`,
-  `internal/repository/aeo_repository.go:310-320`), so a second replica fails
-  the first one's AEO run, and the AEO scheduler and overlap guard are
-  per process. Keep one backend container (#229). The form retention purge
-  (`FORM_RETENTION_DAYS`) is not part of this limit: it is safe on every
-  replica, because extra sweeps only compete for the same rows.
+  are recovered when the next worker container boots. AEO is not part of this
+  limit on MySQL/MariaDB (#229): each run has an owner and a heartbeat in
+  `aeo_runs`, one run is admitted across all containers, the daily scheduled
+  run starts once per slot whichever containers keep `AEO_SCHEDULE_ENABLED`
+  on, and a starting container fails only runs whose heartbeat is older than
+  3 minutes (see `aeoService.ReconcileRunningRuns` in `setupDependencies`).
+  Give every container the same `TZ` and `AEO_SCHEDULE_HOUR`, keep their
+  clocks synchronised, and upgrade by stopping every backend container before
+  starting the new image. The SQLite stack runs one backend container; several
+  processes on one SQLite file are not supported. The form retention purge
+  (`FORM_RETENTION_DAYS`) is not part of the worker limit either: it is safe on
+  every replica, because extra sweeps only compete for the same rows.
 
 ## Running Compose beyond localhost
 
@@ -246,8 +249,9 @@ What the values mean here:
   the API through the UI nginx `/api/v1/` proxy, not on port 8080.
 - `CORS_ALLOWED_ORIGINS` is a comma-separated list added to the built-in
   localhost origins; list every origin your UI is served from.
-- `AUTOMATION_ENABLED` assumes one backend container; the stack runs exactly
-  one (#229).
+- `AUTOMATION_ENABLED` assumes one worker container; the stack runs exactly
+  one backend (#237). AEO runs and the daily schedule are coordinated across
+  backend replicas on MySQL/MariaDB (#229).
 
 Warning: `.env.example` sets `PUBLIC_BASE_URL` to `http://localhost:8080`. A
 repo-root `.env` copied from it therefore satisfies the required check with a

@@ -68,8 +68,9 @@ Checked by searching the tracked tree on `4dfe404`:
 - An issued JWT ends early only through logout, a password change or a password reset, which
   increment `users.token_version` (#236). A role change does not end it, and the token a refresh
   rotation replaces stays valid until it expires (README "Known Limitations").
-- The automation worker and the AEO module both assume a single API process (README "Known
-  Limitations"; section 5.4; #237, #229).
+- The automation worker assumes a single API process (README "Known Limitations"; section 5.4;
+  #237). AEO runs and the daily schedule are coordinated across replicas on MySQL/MariaDB (#229,
+  section 5.4).
 
 ### 1.3 Open issues you inherit
 
@@ -478,13 +479,22 @@ Run the automation worker on exactly one instance. Every other replica sets
 not shared between replicas either. The form retention purge (`FORM_RETENTION_DAYS`) needs no such
 rule: it is safe on every replica, because extra sweeps only compete for the same rows.
 
-That does not make the whole application safe to scale. Every process, whatever its
-`AUTOMATION_ENABLED` and `AEO_SCHEDULE_ENABLED`, marks every AEO run still `running` as failed at
-startup (`cmd/main.go:418`, `internal/service/aeo_service.go:847-853`,
-`internal/repository/aeo_repository.go:310-320`), so starting a second replica fails a run the
-first one is executing. The AEO overlap guard and the daily scheduler are process-local too
-(`docs/ROADMAP.md`, "Cross-process AEO coordination"). Run one API process, or coordinate AEO across
-replicas first (#229).
+AEO is replica-safe on MySQL/MariaDB (#229). Each run has a database owner and a heartbeat the
+owner renews every 30 s; admission is one insert guarded by the unique `aeo_runs.running_lock`, so
+a run on any replica answers 409 to a start on another; the daily run is claimed once per slot
+through the unique `aeo_runs.schedule_slot`, so every replica may keep `AEO_SCHEDULE_ENABLED` on.
+The boot reconciliation (`aeoService.ReconcileRunningRuns` in `setupDependencies`) and the sweep
+before every start fail only runs whose heartbeat is older than 3 minutes, legacy rows without one,
+or runs started more than 6 hours ago, so a starting replica never fails another replica's live
+run. A run of a crashed process is recovered up to 3 minutes after the crash, at the next boot or
+start attempt. Requirements:
+
+- every replica uses the same `TZ` and `AEO_SCHEDULE_HOUR` (the slot is the configured local hour
+  stored in UTC);
+- replica clocks are synchronised to well under 90 s;
+- upgrades stop every replica before starting the new version: an older binary neither sets the
+  running lock nor spares other replicas' runs, so mixed versions are not supported;
+- several processes on one SQLite file are not supported (SQLite deployments run one process).
 
 ## 6. CI on a fork
 

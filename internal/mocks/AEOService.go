@@ -118,6 +118,17 @@ func (_m *AEOService) StartPromptRun(ctx context.Context, promptID uint, trigger
 	return r0, ret.Error(1)
 }
 
+// StartScheduledRun provides a mock function with given fields: ctx, slot
+func (_m *AEOService) StartScheduledRun(ctx context.Context, slot time.Time) (*models.AEORun, error) {
+	ret := _m.Called(ctx, slot)
+
+	var r0 *models.AEORun
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.AEORun)
+	}
+	return r0, ret.Error(1)
+}
+
 // ReconcileRunningRuns provides a mock function with given fields:
 func (_m *AEOService) ReconcileRunningRuns() (int64, error) {
 	ret := _m.Called()

@@ -351,20 +351,21 @@ func TestAEORepository_RunLifecycle(t *testing.T) {
 	repo := NewAEORepository(db)
 	base := time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC)
 
-	run := &models.AEORun{Trigger: models.AEOTriggerScheduled, Status: models.AEORunStatusRunning, StartedAt: base}
-	require.NoError(t, repo.CreateRun(run))
+	owner := "owner-lifecycle"
+	run := &models.AEORun{Trigger: models.AEOTriggerScheduled, StartedAt: base, OwnerInstance: &owner}
+	require.NoError(t, repo.ClaimRun(run))
 	require.NotZero(t, run.ID)
 
 	running, err := repo.CountRunsByStatus(models.AEORunStatusRunning)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), running, "the overlap guard counts on this")
+	assert.Equal(t, int64(1), running)
 
 	completedAt := base.Add(4 * time.Minute)
 	run.Status = models.AEORunStatusPartial
 	run.CompletedAt = &completedAt
 	run.TotalQueries = 10
 	run.FailedQueries = 2
-	require.NoError(t, repo.UpdateRun(run))
+	require.NoError(t, repo.FinishRun(run))
 
 	loaded, err := repo.GetRunByID(run.ID)
 	require.NoError(t, err)
@@ -409,66 +410,36 @@ func TestAEORepository_ListRunsAndLatest(t *testing.T) {
 	assert.Equal(t, newest.ID, latest.ID)
 }
 
-// TestAEORepository_MarkStaleRunsFailed is the recovery path for a run stranded
-// by a crash or a restart: the executor is in-process, so a row still flagged
-// running long after it started belongs to a process that is gone. Without this
-// the overlap guard rejects every later run with 409 forever.
-func TestAEORepository_MarkStaleRunsFailed(t *testing.T) {
-	db := setupAEOTestDB(t)
-	repo := NewAEORepository(db)
-	now := time.Now().UTC()
-
-	stale := makeAEORun(t, db, models.AEORunStatusRunning, now.Add(-8*time.Hour))
-	fresh := makeAEORun(t, db, models.AEORunStatusRunning, now.Add(-2*time.Minute))
-	finished := makeAEORun(t, db, models.AEORunStatusCompleted, now.Add(-9*time.Hour))
-
-	swept, err := repo.MarkStaleRunsFailed(now.Add(-6 * time.Hour))
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), swept)
-
-	recovered, err := repo.GetRunByID(stale.ID)
-	require.NoError(t, err)
-	assert.Equal(t, models.AEORunStatusFailed, recovered.Status)
-	require.NotNil(t, recovered.CompletedAt, "a failed run must carry a completion timestamp")
-
-	untouched, err := repo.GetRunByID(fresh.ID)
-	require.NoError(t, err)
-	assert.Equal(t, models.AEORunStatusRunning, untouched.Status,
-		"a run younger than the cutoff may still be alive")
-
-	unchanged, err := repo.GetRunByID(finished.ID)
-	require.NoError(t, err)
-	assert.Equal(t, models.AEORunStatusCompleted, unchanged.Status)
-
-	// The guard reads this count; the whole point of the sweep is that it drops.
-	running, err := repo.CountRunsByStatus(models.AEORunStatusRunning)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), running)
-}
-
-// A cutoff of "now" is what the startup reconciliation passes: at boot no run
-// can legitimately be in flight, so every running row is debris.
-func TestAEORepository_MarkStaleRunsFailed_StartupSweepClearsEverything(t *testing.T) {
+// TestAEORepository_FailAbandonedRuns_LegacyRows: rows written before run
+// ownership (#229) carry no heartbeat, so the sweep treats them as abandoned
+// whatever their age.
+func TestAEORepository_FailAbandonedRuns_LegacyRows(t *testing.T) {
 	db := setupAEOTestDB(t)
 	repo := NewAEORepository(db)
 	now := time.Now().UTC()
 
 	makeAEORun(t, db, models.AEORunStatusRunning, now.Add(-3*time.Hour))
 	makeAEORun(t, db, models.AEORunStatusRunning, now.Add(-1*time.Minute))
+	finished := makeAEORun(t, db, models.AEORunStatusCompleted, now.Add(-9*time.Hour))
 
-	swept, err := repo.MarkStaleRunsFailed(now)
+	swept, err := repo.FailAbandonedRuns(now.Add(-6*time.Hour), now.Add(-3*time.Minute))
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), swept)
 
 	running, err := repo.CountRunsByStatus(models.AEORunStatusRunning)
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), running)
+
+	unchanged, err := repo.GetRunByID(finished.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.AEORunStatusCompleted, unchanged.Status)
 }
 
-func TestAEORepository_MarkStaleRunsFailed_NothingToDo(t *testing.T) {
+func TestAEORepository_FailAbandonedRuns_NothingToDo(t *testing.T) {
 	repo := NewAEORepository(setupAEOTestDB(t))
 
-	swept, err := repo.MarkStaleRunsFailed(time.Now().UTC())
+	now := time.Now().UTC()
+	swept, err := repo.FailAbandonedRuns(now.Add(-6*time.Hour), now.Add(-3*time.Minute))
 
 	require.NoError(t, err, "an empty table is a state, not a failure")
 	assert.Equal(t, int64(0), swept)

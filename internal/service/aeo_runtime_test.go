@@ -208,6 +208,7 @@ type aeoRepoHooks struct {
 	// rather than for the admission alone.
 	profileReads  atomic.Int32
 	createRuns    atomic.Int32
+	heartbeats    atomic.Int32
 	updateRunCtxs []error
 	writes        atomic.Int32
 	sealed        atomic.Bool
@@ -259,7 +260,8 @@ func (r *hookedAEORepo) GetProfile() (*models.AEOProfile, error) {
 	return profile, err
 }
 
-func (r *hookedAEORepo) CreateRun(run *models.AEORun) error {
+// ClaimRun is the run insert (#229): the hooks named CreateRun interpose on it.
+func (r *hookedAEORepo) ClaimRun(run *models.AEORun) error {
 	r.hooks.write()
 	r.hooks.createRuns.Add(1)
 	r.hooks.mu.Lock()
@@ -270,7 +272,7 @@ func (r *hookedAEORepo) CreateRun(run *models.AEORun) error {
 			return err
 		}
 	}
-	if err := r.AEORepository.CreateRun(run); err != nil {
+	if err := r.AEORepository.ClaimRun(run); err != nil {
 		return err
 	}
 	if after != nil {
@@ -279,7 +281,9 @@ func (r *hookedAEORepo) CreateRun(run *models.AEORun) error {
 	return nil
 }
 
-func (r *hookedAEORepo) UpdateRun(run *models.AEORun) error {
+// FinishRun is the terminal write (#229): the hooks named UpdateRun interpose
+// on it.
+func (r *hookedAEORepo) FinishRun(run *models.AEORun) error {
 	r.hooks.write()
 	r.hooks.mu.Lock()
 	r.hooks.updateRunCtxs = append(r.hooks.updateRunCtxs, r.ctx.Err())
@@ -290,7 +294,15 @@ func (r *hookedAEORepo) UpdateRun(run *models.AEORun) error {
 			return err
 		}
 	}
-	return r.AEORepository.UpdateRun(run)
+	return r.AEORepository.FinishRun(run)
+}
+
+// RenewRunHeartbeat counts as a write, so a heartbeat after a successful join
+// is a late write.
+func (r *hookedAEORepo) RenewRunHeartbeat(id uint, owner string, at time.Time) error {
+	r.hooks.write()
+	r.hooks.heartbeats.Add(1)
+	return r.AEORepository.RenewRunHeartbeat(id, owner, at)
 }
 
 func (r *hookedAEORepo) CreateAnswerWithCitations(answer *models.AEOAnswer, citations []models.AEOCitation) error {
@@ -636,9 +648,19 @@ func runAEOLifecycleScenarios(t *testing.T, open func(t *testing.T) *gorm.DB) {
 		require.NoError(t, f.shutdown(), "the join succeeds even though the terminal write failed")
 		assert.Equal(t, models.AEORunStatusRunning, f.run(run.ID).Status, "nothing could record the interruption")
 
-		// The next boot reconciles exactly as after a crash.
-		restarted := NewAEORuntime(repository.NewAEORepository(db), aeo.NewEngine(repository.NewAEORepository(db), nil, aeo.EngineOptions{}), nil, utils.NewTransactionManager(db))
-		recovered, err := restarted.Service().ReconcileRunningRuns()
+		// A boot inside the heartbeat horizon cannot tell the row from another
+		// replica's live run and leaves it alone (#229).
+		soon := NewAEORuntime(repository.NewAEORepository(db), aeo.NewEngine(repository.NewAEORepository(db), nil, aeo.EngineOptions{}), nil, utils.NewTransactionManager(db))
+		recovered, err := soon.Service().ReconcileRunningRuns()
+		require.NoError(t, err)
+		assert.EqualValues(t, 0, recovered)
+		assert.Equal(t, models.AEORunStatusRunning, f.run(run.ID).Status)
+
+		// A boot past the horizon reconciles exactly as after a crash.
+		later := func() time.Time { return time.Now().Add(aeoRunHeartbeatStaleAfter + time.Minute) }
+		restarted := NewAEORuntime(repository.NewAEORepository(db), aeo.NewEngine(repository.NewAEORepository(db), nil, aeo.EngineOptions{}), nil, utils.NewTransactionManager(db),
+			WithAEOClock(later))
+		recovered, err = restarted.Service().ReconcileRunningRuns()
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, recovered)
 		row := f.run(run.ID)

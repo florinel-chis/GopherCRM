@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -39,8 +41,8 @@ const aeoRunCleanupTimeout = 5 * time.Second
 // is either counted before the close or refused after it.
 //
 // The owner deliberately never takes the service's startMu. That mutex
-// serializes the overlap guard with the run insert and may be held by a start
-// blocked in a database call; shutdown must not queue behind it. The blocked
+// serializes this process's abandoned-run sweep with the run claim and may be
+// held by a start blocked in a database call; shutdown must not queue behind it. The blocked
 // start is counted as owned work instead, so the deadline governs.
 type aeoRunOwner struct {
 	mu sync.Mutex
@@ -156,27 +158,101 @@ func (r *AEORuntime) ActiveRuns() int { return r.svc.lifecycle.activeCount() }
 // runInBackground executes an admitted run on the owner's context and releases
 // the admission once the engine has attempted finalization. It is the only place a
 // run's ownership ends.
+//
+// While the executor runs, a heartbeat goroutine renews heartbeat_at every
+// heartbeatInterval. When a renewal is refused with ErrAEORunNotOwned another
+// replica has failed the run as abandoned: the heartbeat cancels the
+// executor's context, so no further provider call is dispatched, and the
+// engine's conditional FinishRun leaves the failed row as it is. The heartbeat
+// goroutine is joined before the admission is released, so a Shutdown that
+// returned nil leaves no heartbeat writer behind.
 func (s *aeoService) runInBackground(ctx context.Context, executor aeo.Executor, run *models.AEORun, prompts []models.AEOPrompt, profile *models.AEOProfile, release func(), logger *logrus.Entry) {
 	defer release()
 
-	err := executor.Execute(ctx, run, prompts, profile)
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
+	runID := run.ID
+	owner := ""
+	if run.OwnerInstance != nil {
+		owner = *run.OwnerInstance
+	}
+
+	var ownershipLost atomic.Bool
+	heartbeatCtx, stopHeartbeat := context.WithCancel(execCtx)
+	heartbeatDone := make(chan struct{})
+	go func() {
+		defer close(heartbeatDone)
+		if s.renewHeartbeats(heartbeatCtx, runID, owner, logger) {
+			ownershipLost.Store(true)
+			cancelExec()
+		}
+	}()
+
+	err := executor.Execute(execCtx, run, prompts, profile)
+	stopHeartbeat()
+	<-heartbeatDone
+
 	switch {
 	case err == nil:
+	case ownershipLost.Load():
+		logger.WithField("run_id", runID).Warn("AEO run stopped: another instance failed it as abandoned")
 	case ctx.Err() != nil, errors.Is(err, context.Canceled):
 		logger.WithFields(map[string]interface{}{
-			"run_id": run.ID,
+			"run_id": runID,
 			"status": run.Status,
 		}).Warn("AEO run interrupted by shutdown")
 	default:
-		logger.WithField("run_id", run.ID).WithError(utils.LogError(err)).Error("AEO run failed")
+		logger.WithField("run_id", runID).WithError(utils.LogError(err)).Error("AEO run failed")
+	}
+}
+
+// renewHeartbeats renews heartbeat_at of the run every heartbeatInterval until
+// ctx ends. It reports true when a renewal was refused with ErrAEORunNotOwned
+// (the run is no longer running under this instance); any other failure is
+// logged and the next tick tries again. Every write is bound to ctx, so the
+// goroutine stops writing as soon as the run ends.
+func (s *aeoService) renewHeartbeats(ctx context.Context, runID uint, owner string, logger *logrus.Entry) bool {
+	ticker := time.NewTicker(s.heartbeatInterval)
+	defer ticker.Stop()
+	repo := s.repo.WithContext(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		err := repo.RenewRunHeartbeat(runID, owner, s.clock())
+		switch {
+		case err == nil:
+		case errors.Is(err, apperrors.ErrAEORunNotOwned):
+			if ctx.Err() != nil {
+				// The run finished while the renewal was in flight.
+				return false
+			}
+			logger.WithFields(map[string]interface{}{
+				"run_id":     runID,
+				"error_code": "run_not_owned",
+			}).Warn("AEO run heartbeat refused: the run is no longer owned by this instance")
+			return true
+		case ctx.Err() != nil:
+			return false
+		default:
+			logger.WithField("run_id", runID).WithError(utils.LogError(err)).
+				Warn("Could not renew the AEO run heartbeat")
+		}
 	}
 }
 
 // failInterruptedRun records a terminal state for a run whose creation was
 // overtaken by shutdown before the executor took it over: the row would
-// otherwise stay "running" until the stale sweep or the next boot recovers it.
-// The write uses a short fresh context because the run context is already
-// cancelled. A run that never got an id was never inserted.
+// otherwise stay "running" until its heartbeat goes stale and a sweep fails
+// it. The write is the owner's conditional FinishRun on a short fresh context,
+// because the run context is already cancelled. A run that never got an id was
+// never inserted.
 func (s *aeoService) failInterruptedRun(run *models.AEORun, logger *logrus.Entry) {
 	if run == nil || run.ID == 0 {
 		return
@@ -184,13 +260,13 @@ func (s *aeoService) failInterruptedRun(run *models.AEORun, logger *logrus.Entry
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), aeoRunCleanupTimeout)
 	defer cancel()
 
-	now := time.Now().UTC()
+	now := s.clock()
 	run.Status = models.AEORunStatusFailed
 	run.FailedQueries = run.TotalQueries
 	run.CompletedAt = &now
-	if err := s.repo.WithContext(cleanupCtx).UpdateRun(run); err != nil {
+	if err := s.repo.WithContext(cleanupCtx).FinishRun(run); err != nil {
 		logger.WithField("run_id", run.ID).WithError(utils.LogError(err)).
-			Warn("Could not fail an AEO run interrupted at creation; left for stale-run recovery")
+			Warn("Could not fail an AEO run interrupted at creation; left for abandoned-run recovery")
 		return
 	}
 	logger.WithField("run_id", run.ID).Warn("AEO run interrupted by shutdown before it started")

@@ -813,8 +813,8 @@ Regression roots: `TestTicketCommentEmailHandlerFlag`, `TestTicketCommentEmailHa
 `TestTicketNumber` (`internal/models`); `TestTicketMailDeliveryRepository{SQLite,MySQL}`,
 `TestTicketDeletePurgesMailDeliveries{SQLite,MySQL}`,
 `TestTicketMailDeliveryErasure{SQLite,MySQL,WithoutTable}` (`internal/repository`);
-`TestTicketMailDeliveriesMigrationFiles`, `TestTicketMailDeliveriesMigration` (`cmd/migrate`, which
-now holds the newest-migration assertion); `TestTicketCommentEmailAPISQLite` (`tests`);
+`TestTicketMailDeliveriesMigrationFiles`, `TestTicketMailDeliveriesMigration` (`cmd/migrate`; the
+newest-migration assertion has since moved to `TestAEORunOwnershipMigrationFiles`, #229); `TestTicketCommentEmailAPISQLite` (`tests`);
 `TestTicketCommentMailProductionWiring` (`cmd`);
 `TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable` (`test/integration`). The MySQL roots
 use a disposable `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable; CI limit:
@@ -1733,6 +1733,67 @@ engine finalizes on a fresh context bounded by `EngineOptions.CleanupTimeout`. W
 background work elsewhere, follow the same shape: register before the first database call, hand
 the registration to the goroutine, release after the terminal write, and never close the pool
 while the count is non-zero. Tests substitute `aeoSchedulerClock` to deliver a due tick on demand.
+
+**Run ownership across replicas (#229).** AEO runs are safe across several API replicas sharing
+one MySQL/MariaDB database.
+
+- **Ownership.** Each `aeoService` generates an instance id at construction (32 lowercase hex
+  characters from `crypto/rand`; `WithAEOInstanceID` for tests) and stores it in
+  `aeo_runs.owner_instance` of every run it claims. While the executor runs, a heartbeat goroutine
+  renews `heartbeat_at` every `aeoRunHeartbeatInterval` (30 s) through
+  `RenewRunHeartbeat(id, owner, at)` (`UPDATE … WHERE id = ? AND status = 'running' AND
+  owner_instance = ?`; MySQL's zero changed rows are re-checked with a read). The goroutine is
+  joined before the run's admission is released, so `AEORuntime.Shutdown` returning nil leaves no
+  heartbeat writer. `WithAEOClock` and `WithAEOHeartbeatInterval` are the test seams.
+- **Admission.** `startRun` runs: lifecycle admission; the profile and provider checks; `startMu`;
+  the abandoned-run sweep; prompt selection; `ClaimRun`. The claim is one INSERT with
+  `running_lock = 1` and `heartbeat_at = started_at`; the unique `idx_aeo_runs_running_lock` admits
+  one running row across every process, so there is no count-then-insert any more and
+  `startMu` only serialises this process's own sweep and claim. A duplicate key is
+  `apperrors.ErrRunInProgress` (409, or a scheduled skip), or `apperrors.ErrAEOScheduleSlotTaken`
+  when the claim names a slot that a row already holds.
+- **The daily slot.** The scheduler calls `StartScheduledRun(ctx, slot)` with the instant it
+  computed with `aeo.NextRunAt`, never the wake-up time; the slot is stored as
+  `slot.UTC().Format("2006-01-02T15:04Z")` under the unique `idx_aeo_runs_schedule_slot`, so one
+  replica starts it and the others log one info line (`error_code=schedule_slot_taken`), also
+  after the run finished. A scheduled claim refused by a manual run's lock records no slot, and a
+  skipped slot is not retried. A body trigger of `scheduled` on `POST /aeo/runs` stores no slot.
+  Every replica must share `TZ` and `AEO_SCHEDULE_HOUR`.
+- **Recovery.** `FailAbandonedRuns(startedBefore, heartbeatBefore)` fails, in one conditional
+  UPDATE, the running rows that started more than `aeoRunStaleAfter` (6 h) ago or whose
+  `heartbeat_at` is NULL (legacy) or older than `aeoRunHeartbeatStaleAfter` (3 min), clearing
+  `running_lock`. It runs at boot (`ReconcileRunningRuns`, on every replica whatever
+  `AUTOMATION_ENABLED` and `AEO_SCHEDULE_ENABLED`) and before every start; there is no periodic
+  sweep, so a crashed run reads `running` until the next boot or start after the horizon (up to
+  3 minutes of 409 after a crash). A live run on another replica is never failed.
+- **Finalisation.** The engine and `failInterruptedRun` write the terminal state with
+  `FinishRun(run)`, `UPDATE … SET status, completed_at, total_queries, failed_queries,
+  updated_at, running_lock = NULL WHERE id = ? AND status = 'running' AND owner_instance = ?`.
+  `AEORepository` has no `UpdateRun` and nothing saves an `aeo_runs` struct. A run another
+  replica failed matches nothing (`apperrors.ErrAEORunNotOwned`, one Warn line with `run_id`),
+  and its owner's next heartbeat cancels the executor. Answers written between the takeover and
+  that heartbeat (at most one interval) stay on the failed run; fencing them is a roadmap item.
+- **Logs.** The claim refusal, slot skip, heartbeat loss, refused finalisation and recovery lines
+  carry `run_id`, counts, the trigger, the status and error codes; never the brand, a prompt, the
+  instance id or the slot.
+- **Deployment.** Upgrade by stopping every replica before starting the new version (an older
+  binary fails every running row at boot and sets no lock). Replica clocks must agree to well
+  under 90 s. Several processes on one SQLite file are not supported.
+
+Schema: `models.AEORun` (`json:"-"` on the four columns) via `MigrateDatabase` on SQLite, and
+`migrations/20261114120000_add_aeo_run_ownership` (each column and index only when missing) on
+MySQL/MariaDB; see [datamodel.md](datamodel.md#aeo-run-ownership). Regression roots:
+`TestAEORunOwnership{SchemaSQLite,SQLiteUpgrade,JSONHidden}` (`internal/models`);
+`TestAEORunOwnershipMigrationFiles` (now holding the newest-migration assertion) and
+`TestAEORunOwnershipMigration` (`cmd/migrate`); `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`
+(`internal/repository`); `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`,
+`TestAEORunHeartbeatLifecycle` and `TestAEOReplicaLogsOmitPersonalData` (`internal/service`,
+two service instances with separate pools on one SQLite file or one disposable `TEST_MYSQL_DSN`
+schema); `TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`,
+`TestEngineFinalizeRefusedWhenNotOwned` (`internal/aeo`); `TestAEOReplicaAPISQLite` (`tests`);
+`TestAEOReplicaProductionWiring` (`cmd`). The MySQL roots skip without the variable and fail
+when it is unreachable; registering them in `scripts/ci/check-go.py` and the migration roots in
+the Database migrations workflow is an operator follow-up.
 
 ### Automation runtime
 

@@ -83,7 +83,7 @@ type fakeAEORepo struct {
 	citations [][]models.AEOCitation
 	runs      []models.AEORun
 	contexts  []context.Context
-	// runWrites records, for every UpdateRun that went through a WithContext
+	// runWrites records, for every FinishRun that went through a WithContext
 	// binding, the state of the bound context at the moment of the write. The
 	// engine releases its cleanup context as soon as the write returns, so
 	// inspecting the context afterwards would always see it cancelled.
@@ -107,12 +107,12 @@ type boundFakeRepo struct {
 	ctx context.Context
 }
 
-func (r *boundFakeRepo) UpdateRun(run *models.AEORun) error {
+func (r *boundFakeRepo) FinishRun(run *models.AEORun) error {
 	_, hasDeadline := r.ctx.Deadline()
 	r.mu.Lock()
 	r.runWrites = append(r.runWrites, boundWrite{err: r.ctx.Err(), hasDeadline: hasDeadline})
 	r.mu.Unlock()
-	return r.fakeAEORepo.UpdateRun(run)
+	return r.fakeAEORepo.FinishRun(run)
 }
 
 var _ repository.AEORepository = (*fakeAEORepo)(nil)
@@ -129,7 +129,7 @@ func (r *fakeAEORepo) CreateAnswerWithCitations(answer *models.AEOAnswer, citati
 	return nil
 }
 
-func (r *fakeAEORepo) UpdateRun(run *models.AEORun) error {
+func (r *fakeAEORepo) FinishRun(run *models.AEORun) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.updateErr != nil {
@@ -187,8 +187,12 @@ func (r *fakeAEORepo) GetLatestRun() (*models.AEORun, error) {
 func (r *fakeAEORepo) CountRunsByStatus(string) (int64, error) {
 	return 0, r.unexpected("CountRunsByStatus")
 }
-func (r *fakeAEORepo) MarkStaleRunsFailed(time.Time) (int64, error) {
-	return 0, r.unexpected("MarkStaleRunsFailed")
+func (r *fakeAEORepo) ClaimRun(*models.AEORun) error { return r.unexpected("ClaimRun") }
+func (r *fakeAEORepo) RenewRunHeartbeat(uint, string, time.Time) error {
+	return r.unexpected("RenewRunHeartbeat")
+}
+func (r *fakeAEORepo) FailAbandonedRuns(time.Time, time.Time) (int64, error) {
+	return 0, r.unexpected("FailAbandonedRuns")
 }
 func (r *fakeAEORepo) ListAnswersByPrompt(uint, *uint, int, int) ([]models.AEOAnswer, error) {
 	return nil, r.unexpected("ListAnswersByPrompt")
@@ -233,7 +237,7 @@ func (r *fakeAEORepo) boundContexts() []context.Context {
 	return out
 }
 
-// finalizedWrites returns the bound-context state observed by each UpdateRun,
+// finalizedWrites returns the bound-context state observed by each FinishRun,
 // in order.
 func (r *fakeAEORepo) finalizedWrites() []boundWrite {
 	r.mu.Lock()
@@ -636,7 +640,7 @@ func (r *blockingUpdateRepo) WithContext(ctx context.Context) repository.AEORepo
 	return &blockingUpdateRepo{fakeAEORepo: r.fakeAEORepo, bound: ctx}
 }
 
-func (r *blockingUpdateRepo) UpdateRun(run *models.AEORun) error {
+func (r *blockingUpdateRepo) FinishRun(run *models.AEORun) error {
 	<-r.bound.Done()
 	return r.bound.Err()
 }

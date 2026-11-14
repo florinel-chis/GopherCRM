@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AEO run ownership and the daily slot across API replicas (#229).** `aeo_runs` gains the
+  nullable `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` columns (none is
+  serialised) with the unique indexes `idx_aeo_runs_running_lock` and `idx_aeo_runs_schedule_slot`
+  (migration `20261114120000_add_aeo_run_ownership` on MySQL/MariaDB, each added only when missing;
+  `MigrateDatabase` on SQLite). A run is admitted by one insert guarded by the running lock, so a
+  run on any replica answers 409 to a start on another; the owner renews its heartbeat every 30 s;
+  the scheduler claims each daily slot once (`StartScheduledRun` with the `NextRunAt` instant),
+  and other replicas log a skip. Boot reconciliation and the sweep before every start fail only
+  runs whose heartbeat is older than 3 minutes (or NULL) or that started over 6 hours ago, so a
+  starting replica no longer fails another replica's live run; a crashed run is recovered up to
+  3 minutes after the crash. Finalisation is a conditional owner+status update (`FinishRun`)
+  instead of `Save`: a run another replica failed stays failed and its owner's next heartbeat
+  cancels it. Upgrade by stopping every replica before starting the new version; replicas must
+  share `TZ` and `AEO_SCHEDULE_HOUR`. API status codes and shapes are unchanged.
 - **Ticket rules in the automation rule form, rule list, run list and dry run (#312).** The rule
   form offers the entity Ticket with the triggers Ticket created, Ticket updated, Ticket status
   changed (From status / To status: Open, In progress, Resolved, Closed) and Schedule (Only

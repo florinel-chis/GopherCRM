@@ -69,21 +69,11 @@ func TestTicketMailDeliveriesMigrationFiles(t *testing.T) {
 	assert.Contains(t, downSQL, "drop table if exists ticket_mail_deliveries;")
 	assert.Equal(t, 1, strings.Count(downSQL, "drop table"), "rollback drops one table")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestProductExternalIDsMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, ticketMailDeliveriesName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestAEORunOwnershipMigrationFiles (#229).
+	version, err := strconv.Atoi(strings.SplitN(ticketMailDeliveriesName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, ticketMailDeliveriesVersion, version)
-	assert.Equal(t, ticketMailDeliveriesVersion, latestMigrationVersion)
 	assert.Greater(t, ticketMailDeliveriesVersion, ticketMailDeliveriesPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")
@@ -143,6 +133,8 @@ func TestTicketMailDeliveriesMigration(t *testing.T) {
 		assert.Equal(t, want, snapshotTable(t, tdb, ticketMailDeliveriesTable), "a fresh SQL schema carries what MigrateDatabase creates")
 		insertMigrationDeliveries(t, tdb.sql, 100)
 
+		// Back to this migration first: newer migrations (#229) sort after it.
+		require.NoError(t, tdb.m.Migrate(ticketMailDeliveriesVersion))
 		tablesBefore := listTables(t, tdb.sql, tdb.name)
 		require.NoError(t, tdb.m.Steps(-1))
 		assert.Equal(t, without(tablesBefore, []string{ticketMailDeliveriesTable}), listTables(t, tdb.sql, tdb.name),

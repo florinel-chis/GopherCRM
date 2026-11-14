@@ -801,6 +801,32 @@ is not recorded anywhere. Migration `20261110120000_add_bulk_operation_status_in
 index on MySQL/MariaDB; `MigrateDatabase` creates it on SQLite. `bulk_operation_items` holds legacy
 rows only; nothing writes it.
 
+## AEO Run Ownership
+
+`aeo_runs` (one batch of AEO provider queries) carries four ownership columns (#229) that make
+runs safe across API replicas sharing one MySQL/MariaDB database. None of them is serialised: the
+run JSON is unchanged.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the process that claimed the run: 32 lowercase hex characters from `crypto/rand`, generated once per service. Not a foreign key; instances are not persisted. NULL on rows written before #229 |
+| heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL | Set to `started_at` by the claim and renewed by the owner every 30 s while the run executes |
+| running_lock | uint8 | No | NULL | unique index `idx_aeo_runs_running_lock`; `tinyint unsigned` | 1 while the run is running, NULL once it is terminal. At most one row holds 1, so admission is one atomic insert; NULLs never collide |
+| schedule_slot | string | No | NULL | unique index `idx_aeo_runs_schedule_slot`; `varchar(20)` | Daily slot of a scheduled run, the scheduler's `NextRunAt` instant in UTC as `2006-01-02T15:04Z`; NULL for manual and prompt runs. Each slot starts at most once, also after its run finished |
+
+Lifecycle: `ClaimRun` inserts the row `running` with its owner, `heartbeat_at = started_at` and
+`running_lock = 1`; a duplicate on `running_lock` is a run in progress (409, or a scheduled skip),
+a duplicate slot is a taken slot. The owner renews `heartbeat_at` and finishes the row with one
+`UPDATE … WHERE id = ? AND status = 'running' AND owner_instance = ?` that writes the terminal
+status, the counters, `completed_at` and `running_lock = NULL`; there is no full-struct write of
+the table. At boot and before every start, any replica fails, in one conditional `UPDATE`, the
+running rows whose `heartbeat_at` is NULL or older than 3 minutes or whose `started_at` is more
+than 6 hours old, clearing `running_lock`. A run a replica has failed this way is never written
+back by its former owner. A scheduled start refused by a manual run's lock records no slot. No
+backfill: a legacy running row has a NULL heartbeat and is failed by the next boot. MySQL and
+MariaDB get the columns and indexes from `20261114120000_add_aeo_run_ownership` (each only when
+missing); SQLite from `MigrateDatabase`. Several processes on one SQLite file are not supported.
+
 ## API Request/Response Format
 
 ### Frontend to Backend Field Mapping

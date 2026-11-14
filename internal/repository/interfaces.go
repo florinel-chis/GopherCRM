@@ -650,22 +650,40 @@ type AEORepository interface {
 	// live rows. excludeID is the row an update may collide with; 0 for create.
 	ExistsByTextInsensitive(text string, excludeID uint) (bool, error)
 
+	// CreateRun inserts a run row as given. The service admits runs through
+	// ClaimRun only; CreateRun sets no ownership column.
 	CreateRun(run *models.AEORun) error
 	GetRunByID(id uint) (*models.AEORun, error)
-	UpdateRun(run *models.AEORun) error
 	ListRuns(offset, limit int, sortBy, sortOrder string) ([]models.AEORun, error)
 	CountRuns() (int64, error)
 	// GetLatestRun returns the most recently started run, or (nil, nil) when
 	// none exists — a fresh install is not an error condition.
 	GetLatestRun() (*models.AEORun, error)
-	// CountRunsByStatus backs the overlap guard on "running".
+	// CountRunsByStatus counts the runs in one status (a plain read).
 	CountRunsByStatus(status string) (int64, error)
-	// MarkStaleRunsFailed fails every run left in "running" that started
-	// before cutoff, stamping completed_at, and returns the row count. It is
-	// how a run stranded by a crash or a restart stops blocking the overlap
-	// guard: the executor is in-process, so a running row older than a whole
-	// run's worst-case duration belongs to a process that is already gone.
-	MarkStaleRunsFailed(cutoff time.Time) (int64, error)
+
+	// Run ownership across replicas (#229). There is deliberately no
+	// full-struct update of aeo_runs: every write after the claim is
+	// conditional on the owner and the running status.
+
+	// ClaimRun inserts run as running, owned by run.OwnerInstance, with
+	// heartbeat_at = started_at and running_lock = 1. While another row holds
+	// running_lock it inserts nothing and returns apperrors.ErrRunInProgress;
+	// when run.ScheduleSlot is set and a row with that slot exists it inserts
+	// nothing and returns apperrors.ErrAEOScheduleSlotTaken.
+	ClaimRun(run *models.AEORun) error
+	// FinishRun writes status, completed_at, total_queries, failed_queries,
+	// updated_at and running_lock = NULL WHERE id = ? AND status = 'running'
+	// AND owner_instance = ?, and returns apperrors.ErrAEORunNotOwned with
+	// nothing changed when no row matches.
+	FinishRun(run *models.AEORun) error
+	// RenewRunHeartbeat updates heartbeat_at and updated_at under the same
+	// predicate as FinishRun and returns apperrors.ErrAEORunNotOwned otherwise.
+	RenewRunHeartbeat(id uint, owner string, at time.Time) error
+	// FailAbandonedRuns fails, in one conditional UPDATE, the running rows
+	// that started before startedBefore or whose heartbeat_at is NULL or
+	// before heartbeatBefore, clearing running_lock, and returns the count.
+	FailAbandonedRuns(startedBefore, heartbeatBefore time.Time) (int64, error)
 
 	// CreateAnswerWithCitations writes the answer and its citations in one
 	// transaction, filling each citation's AnswerID from the inserted answer.
