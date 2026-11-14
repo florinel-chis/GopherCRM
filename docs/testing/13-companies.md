@@ -305,12 +305,23 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   `GET /api/v1/companies/{id}` is now 404. The customer and the lead still exist with their
   free-text company unchanged and `company_id` and `company_record` absent. The domain can be
   reused immediately (TC-COMP-009's check sees live rows only). Deleting again is **404**.
+  Concurrency (#182): the delete's transaction locks the company row first
+  (`CompanyRepository.LockLive`, `FOR UPDATE` on MySQL/MariaDB), then unlinks leads, customers
+  and deals, then soft-deletes. A lead conversion or lead edit running at the same time either
+  committed first (its link is then cleared by the delete) or waits for that lock and never links
+  the deleted company; a company deleted between the delete's own lookup and its lock is **404**
+  with nothing written.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "deleting a company leaves the customer with its text company only" (customer half through the
   UI; the lead half, the 404 afterwards and the domain reuse are pinned in Go).
   Go: `company_service_test.go` `TestCompanyServiceDelete_UnlinksLeadsAndCustomersThenSoftDeletes`,
   `TestCompanyServiceDelete_RollsBackTheUnlinksWhenTheDeleteFails`;
-  `company_integration_test.go` `TestDeleteUnlinksLeadsAndCustomers`.
+  `company_integration_test.go` `TestDeleteUnlinksLeadsAndCustomers`; lock order (#182):
+  `company_delete_lock_test.go` `TestCompanyServiceDeleteLocksCompanyFirst`,
+  `TestCompanyServiceDeleteRacedAfterPreReadSQLite`; `TestLeadCompanyLockOrderOutcomesSQLite`,
+  `TestLeadConversionVsCompanyDeleteMySQL`, `TestLeadUpdateVsCompanyDeleteMySQL`,
+  `TestBulkLeadStatusVsCompanyDeleteMySQL` (`internal/service`, the MySQL roots skip without
+  `TEST_MYSQL_DSN`); `TestCompanyRepositoryLockLive{SQLite,MySQL}` (`internal/repository`).
 
 ### TC-COMP-018 — Sales and support cannot delete
 - **Priority:** P0

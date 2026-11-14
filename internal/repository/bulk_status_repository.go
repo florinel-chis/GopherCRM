@@ -58,8 +58,25 @@ func setStatus(db *gorm.DB, model interface{}, ids []uint, status interface{}) e
 	return db.Model(model).Where("id IN ?", ids).Update("status", status).Error
 }
 
+// GetLeadsByIDs is a locking read of the batch's live leads in id order
+// (#182): `SELECT … FOR UPDATE … ORDER BY id` on MySQL/MariaDB, a plain read
+// on SQLite where the dialector drops the clause. Soft-deleted leads still
+// read as missing. It is the "leads in id order" step of the shared lock order
+// companies -> leads -> customers -> deals: the batch takes no company lock
+// (SetLeadStatus never writes company_id), so a company delete that already
+// unlinked these leads makes the batch wait on the lead rows, and a batch that
+// locked them first makes the delete's UnlinkLeads wait, with no lock cycle.
 func (r *bulkStatusRepository) GetLeadsByIDs(ids []uint) ([]models.Lead, error) {
-	return getByIDs[models.Lead](r.db, ids)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var leads []models.Lead
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id ASC").Find(&leads).Error
+	if err != nil {
+		return nil, err
+	}
+	return leads, nil
 }
 
 // GetTicketsByIDs is a locking read of the batch's live tickets in id order

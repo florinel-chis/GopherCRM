@@ -72,6 +72,17 @@ func (_m *CompanyRepository) Delete(id uint) error {
 	return ret.Error(0)
 }
 
+// LockLive provides a mock function with given fields: id
+func (_m *CompanyRepository) LockLive(id uint) error {
+	ret := _m.Called(id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for LockLive")
+	}
+
+	return ret.Error(0)
+}
+
 // List provides a mock function with given fields: offset, limit, search, sortBy, sortOrder
 func (_m *CompanyRepository) List(offset int, limit int, search string, sortBy string, sortOrder string) ([]models.Company, int64, error) {
 	ret := _m.Called(offset, limit, search, sortBy, sortOrder)

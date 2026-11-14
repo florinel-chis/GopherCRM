@@ -218,9 +218,17 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 	}
 
 	return s.runBulkStatusUpdate(ctx, actorID, "leads", unique, func(txRepo repository.BulkStatusRepository, events repository.AutomationRepository) error {
+		// A locking read in id order (#182). Bulk lead status takes no
+		// company lock: SetLeadStatus never writes company_id. It locks only
+		// its leads, in the "leads by id ascending" step of the shared order
+		// companies -> leads -> customers -> deals, so a company delete either
+		// waits for the batch at its UnlinkLeads or makes the batch wait here.
 		leads, err := txRepo.GetLeadsByIDs(unique)
 		if err != nil {
 			return err
+		}
+		if s.afterLeadLock != nil {
+			s.afterLeadLock(unique)
 		}
 
 		found := make(map[uint]struct{}, len(leads))
@@ -388,6 +396,9 @@ type bulkStatusService struct {
 	// every ticket (#242) a bulk status update changes, inside the bulk
 	// transaction, origin bulk. Nil means no automation.
 	automation repository.AutomationRepository
+	// afterLeadLock is an instance-local test seam (#182), nil in production:
+	// it runs inside the lead batch right after the locking read of the leads.
+	afterLeadLock func(ids []uint)
 }
 
 // BulkStatusServiceOption configures NewBulkStatusService beyond its required

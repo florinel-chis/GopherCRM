@@ -147,6 +147,11 @@ func respondLeadRuleError(c *gin.Context, ruleErr *service.LeadConversionRuleErr
 	utils.RespondError(c, http.StatusBadRequest, utils.ErrCodeValidation, ruleErr.Message, ruleErr.Details())
 }
 
+// leadCompanyContendedMessage is the 409 CONFLICT message of a conversion or
+// lead update that gave up after its restarts because the lead's company_id
+// kept changing (apperrors.ErrLeadCompanyContended, #182).
+const leadCompanyContendedMessage = "The lead's company changed during the write; retry"
+
 // respondInvalidLeadOwner answers an owner the service refused. The answer is
 // the same whatever the reason, so it does not tell a caller which user ids
 // exist, are deactivated or hold which role; the log line has the reason. field
@@ -520,6 +525,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; a sales user asked for another owner's lead ('You can only update your own leads'); a non-admin sent owner_id ('Only administrators can reassign leads')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live lead has this id ('Lead not found')"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: the lead's company_id kept changing while the update waited for the company and lead row locks, and three restarts did not settle it ('The lead's company changed during the write; retry'); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /leads/{id} [put]
@@ -624,6 +630,11 @@ func (h *LeadHandler) Update(c *gin.Context) {
 		if errors.Is(err, apperrors.ErrInvalidLeadOwner) {
 			logger.WithField("lead_id", uint(id)).WithError(utils.LogError(err)).Warn("Lead owner refused")
 			respondInvalidLeadOwner(c, "owner_id")
+			return
+		}
+		if errors.Is(err, apperrors.ErrLeadCompanyContended) {
+			logger.WithField("lead_id", uint(id)).WithError(utils.LogError(err)).Warn("Lead update refused: the lead's company kept changing")
+			utils.RespondConflict(c, leadCompanyContendedMessage)
 			return
 		}
 		logger.WithError(utils.LogError(err)).Error("Failed to update lead")
@@ -758,7 +769,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // ConvertToCustomer godoc
 // @Summary Convert a lead into a customer
 // @Description Create a customer from the lead and mark the lead converted, in one transaction. Roles: admin (any lead) and sales (only the leads it owns).
-// @Description The customer gets the lead's first_name, last_name, email and phone; company is company_name or, when that is empty, the lead's free-text company; website (trimmed, at most 255 characters, an http or https URL with a host), address and notes come from the body. The lead's company_id is copied when it still names a live company (a link to a deleted company is dropped and the conversion succeeds). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id).
+// @Description The customer gets the lead's first_name, last_name, email and phone; company is company_name or, when that is empty, the lead's free-text company; website (trimmed, at most 255 characters, an http or https URL with a host), address and notes come from the body. The lead's company_id is copied when it still names a live company, checked under a row lock on the company taken before the lead's (a link to a deleted company, including one deleted while the conversion waited, is dropped and the conversion succeeds). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id).
 // @Description Refusals, before anything is written: a lead already converted (status converted or a customer_id set) is 400 BAD_REQUEST; the lead's status must be one of leads.conversion.allowed_statuses (re-checked under a row lock) and notes must not be blank when leads.conversion.require_notes is on, both 400 VALIDATION_ERROR; a lead without an email is 400 BAD_REQUEST (every customer needs one); an email that already belongs to a customer is 409. A failure to read the conversion settings is a 500. Deadlocks are retried up to three times.
 // @Description Side effect: lead_updated and lead_status_changed (to converted, origin conversion) are recorded in the same transaction. No customer_created event exists.
 // @Tags leads
@@ -773,7 +784,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead ('You can only convert your own leads')"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live lead has this id, or it was erased during the conversion ('Lead not found')"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: a customer with the lead's email address already exists ('customer with this email already exists')"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: a customer with the lead's email address already exists ('customer with this email already exists'), or the lead's company_id kept changing while the conversion waited for the company and lead row locks and three restarts did not settle it ('The lead's company changed during the write; retry'); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the settings could not be read, the transaction failed, or the client went away while the lead was read"
 // @Router /leads/{id}/convert [post]
@@ -851,6 +862,9 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 		case errors.Is(err, apperrors.ErrDuplicateEmail):
 			warn("Failed to convert lead")
 			utils.RespondConflict(c, "customer with this email already exists")
+		case errors.Is(err, apperrors.ErrLeadCompanyContended):
+			warn("Failed to convert lead")
+			utils.RespondConflict(c, leadCompanyContendedMessage)
 		case apperrors.IsNotFound(err):
 			// Erased between the lookup above and the conversion.
 			warn("Failed to convert lead")

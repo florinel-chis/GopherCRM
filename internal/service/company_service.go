@@ -17,6 +17,15 @@ type companyService struct {
 	companyRepo repository.CompanyRepository
 	userRepo    repository.UserRepository
 	txManager   *utils.TransactionManager
+
+	// Instance-local test seams (#182), nil in production: afterDeletePreRead
+	// runs between Delete's plain pre-read and its transaction, afterDeleteLock
+	// right after the company lock, before the unlinks.
+	afterDeletePreRead func(id uint)
+	afterDeleteLock    func(id uint)
+	// afterDeleteUnlink runs after the unlinks and the soft delete, before the
+	// commit, so a test can park the delete while it holds its locks.
+	afterDeleteUnlink func(id uint)
 }
 
 func NewCompanyService(companyRepo repository.CompanyRepository, userRepo repository.UserRepository, txManager *utils.TransactionManager) CompanyService {
@@ -80,6 +89,15 @@ func (s *companyService) Update(company *models.Company) error {
 // customer and deal that points at it, all in ONE transaction: a company must
 // never vanish behind a link that still names it, and a failure halfway must
 // leave the links exactly as they were.
+//
+// Lock order (#182): the transaction first locks the live company row
+// (CompanyRepository.LockLive, FOR UPDATE by primary key on MySQL/MariaDB),
+// then unlinks leads, customers and deals, then soft-deletes — the shared
+// order companies -> leads -> customers -> deals that lead conversion and lead
+// update follow too. A conversion or update that linked the company and
+// committed first is unlinked here; one that waits on the company lock finds
+// it deleted. A company deleted between the plain pre-read and the lock is
+// apperrors.ErrNotFound with nothing written.
 func (s *companyService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("company_id", id), "CompanyService", "Delete")
 
@@ -91,6 +109,9 @@ func (s *companyService) Delete(id uint) error {
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
+	if s.afterDeletePreRead != nil {
+		s.afterDeletePreRead(id)
+	}
 
 	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -98,6 +119,17 @@ func (s *companyService) Delete(id uint) error {
 			return utils.ErrNoTransaction
 		}
 		repo := s.companyRepo.WithTx(tx)
+		if err := repo.LockLive(id); err != nil {
+			if isNotFound(err) {
+				logger.Warn("Company deleted before its lock was taken")
+				return fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
+			}
+			logger.WithError(utils.LogError(err)).Error("Failed to lock company")
+			return err
+		}
+		if s.afterDeleteLock != nil {
+			s.afterDeleteLock(id)
+		}
 		if err := repo.UnlinkLeads(id); err != nil {
 			return err
 		}
@@ -112,6 +144,9 @@ func (s *companyService) Delete(id uint) error {
 				return fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
 			}
 			return err
+		}
+		if s.afterDeleteUnlink != nil {
+			s.afterDeleteUnlink(id)
 		}
 		return nil
 	})

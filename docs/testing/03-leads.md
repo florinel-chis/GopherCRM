@@ -295,8 +295,13 @@ the frontend gating.
 - **Expected:** `PUT /api/v1/leads/{id}` returns **200** with the updated lead. Snackbar "Lead
   updated successfully"; navigation back to `/leads`. The form is prefilled from
   `GET /leads/{id}` on mount (`LeadForm.tsx:74`).
+  Concurrency (#182): the update locks the lead's stored company and the sent `company_id`
+  before the lead. Setting a company that is deleted meanwhile is **400** `INVALID_REFERENCE`
+  with the lead unchanged; an edit that commits first is unlinked by the delete; a lead whose
+  `company_id` keeps changing under the update is answered **409** `CONFLICT` after 3 restarts.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can edit an existing
-  lead"
+  lead"; lock order in Go: `TestLeadCompanyLockOrderOutcomesSQLite`,
+  `TestLeadUpdateVsCompanyDeleteMySQL`, `TestLeadCompanyContendedHandlerMapping`
 
 ### TC-LEAD-017 — Clearing the Notes field does not clear it
 - **Priority:** P1
@@ -732,6 +737,15 @@ the frontend gating.
   `lead_handler.go:537`). `data.customer_id` is therefore `undefined` and both
   `LeadList.tsx:135` and `LeadDetail.tsx:114` navigate to `/customers/undefined`. The conversion
   itself succeeded — only the redirect is broken.
+- **Concurrency (#182):** the conversion locks the lead's company row before the lead. A company
+  deleted while the lead converts yields a customer without `company_id` (the delete committed
+  first) or a linked customer that the delete then unlinks; no live customer keeps a link to the
+  deleted company. A lead whose `company_id` keeps changing during the conversion is retried at
+  most 3 times, then answered **409** `CONFLICT` ("The lead's company changed during the write;
+  retry") with nothing written. The same 409 applies to `PUT /leads/{id}` (TC-LEAD-016).
+  Go roots: `TestLeadCompanyLockOrderOutcomesSQLite`, `TestLeadCompanyRestartBoundSQLite`,
+  `TestLeadConversionVsCompanyDeleteMySQL`, `TestLeadUpdateVsCompanyDeleteMySQL`
+  (`internal/service`), `TestLeadCompanyContendedHandlerMapping` (`internal/handler`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new). `docs/FEATURES.md`
   row 3.10 credits `admin-entity-suite.spec.ts` "admin can create complete CRM workflow:
   Lead -> Customer -> Task", but that test creates a lead and a customer independently and never
