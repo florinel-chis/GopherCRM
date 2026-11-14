@@ -566,6 +566,66 @@ No index: rules read the attribution of one submission by primary key. Migration
 `20261107120000_add_form_attribution` adds the columns on MySQL/MariaDB (with the two
 `automation_events` ids); `MigrateDatabase` adds them on SQLite.
 
+## Form Ticket Intake
+
+A form can open a support ticket instead of feeding a lead (#213). `forms.create_ticket` turns it
+on; a confirmed submission then opens one ticket for the live customer whose email matches the
+confirmed address (see [DEVELOPMENT.md](DEVELOPMENT.md#form-ticket-intake-213)).
+
+```mermaid
+erDiagram
+    forms ||--o{ form_submissions : "form_id"
+    forms ||--o{ form_ticket_keys : "form_id (no FK)"
+    form_submissions ||--o| form_ticket_keys : "submission_id (no FK)"
+    tickets ||--o{ form_ticket_keys : "ticket_id (no FK)"
+    tickets ||--o{ form_submissions : "ticket_id (no FK)"
+    customers ||--o{ tickets : "customer_id"
+    customers ||--o{ form_ticket_keys : "customer_id (no FK)"
+```
+
+### Form columns
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| create_ticket | boolean | Yes | false | `tinyint(1) NOT NULL DEFAULT 0` on MySQL/MariaDB; requires `double_opt_in` true and `create_lead` false | A confirmed submission opens a ticket for the matching customer. Absent on `POST /forms` and `PUT /forms/{id}` means false; forms stored before the change read false |
+
+### Form submission columns
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| idempotency_key | string | Yes | `''` | `varchar(128)`; `[A-Za-z0-9._:-]` | The client key sent with the submission, stored on the pending rows of `create_ticket` forms only; `''` when none was sent, for spam and for other forms. Set to `''` by the lead and unlinked-submission erasure scrubs |
+| ticket_id | uint | No | NULL | non-unique index `idx_form_submissions_ticket_id`; no foreign key | The ticket the submission created (`created`) or duplicated (`duplicate`); null otherwise |
+| ticket_outcome | string | Yes | `''` | `varchar(20)`; one of `''`, `created`, `duplicate`, `key_conflict`, `no_customer`, `unavailable` | Set in the confirmation transaction: `''` for a non-ticket form or an unconfirmed submission; `key_conflict` when the key already opened a ticket for another customer; `no_customer` when no live customer has the address; `unavailable` when the server runs without ticket intake |
+
+All three are serialised on every submission read (`ticket_id` as `null` when unset).
+
+### Form Ticket Keys
+
+`form_ticket_keys` records that an idempotency key of a form opened one ticket. No `deleted_at` and
+no foreign keys; the links below are logical. It holds ids and the key only.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | timestamp | - | now | `datetime(3)` on MySQL | Written once |
+| form_id | uint | Yes | - | first column of the unique `idx_form_ticket_keys_identity` | The form the key is scoped to |
+| idempotency_key | string | Yes | - | `varchar(128)`; second column of `idx_form_ticket_keys_identity`; `utf8mb4_bin` on MySQL/MariaDB, `BINARY` on SQLite | The client key, or `submission-<submission id>` for a keyless submission. Compared exactly (case-sensitive) |
+| ticket_id | uint | Yes | - | index `idx_form_ticket_keys_ticket_id` | The ticket the key opened (`tickets.id`) |
+| submission_id | uint | Yes | - | index `idx_form_ticket_keys_submission_id` | The submission whose confirmation opened it |
+| customer_id | uint | Yes | - | index `idx_form_ticket_keys_customer_id` | The customer the ticket was opened for: tells `duplicate` from `key_conflict`, and is the erasure purge key |
+
+`idx_form_ticket_keys_identity (form_id, idempotency_key)` is the table's only unique index, so a key
+opens at most one ticket per form. Rows are hard-deleted by `DELETE /tickets/{id}` (in the
+transaction that soft-deletes the ticket, so the key can be used again), by every erasure that
+reaches the customer (rows whose `customer_id` is the customer or whose `ticket_id` names one of its
+tickets, soft-deleted tickets included), and by the lead and unlinked-submission erasure scrubs (the
+rows of the scrubbed submissions). Keys do not expire otherwise. A ticket opened by a form carries
+fixed text, `Form: <form name>` (cut to 255 runes) and `Submitted through form <form id>, submission
+<submission id>.`, and no submitted value. MySQL and MariaDB get the columns, the index and the
+table from `20261115120000_add_form_ticket_intake` (each only when missing); SQLite from
+`MigrateDatabase`, whose collation guard also converts a key column AutoMigrate created on
+MySQL/MariaDB to `utf8mb4_bin`.
+
 ## Customer Model
 
 Represents confirmed customers in the system.

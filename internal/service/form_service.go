@@ -194,6 +194,14 @@ type PublicSubmissionRequest struct {
 	// URL of the page the form was submitted from, stored as the submission's
 	// referrer (cut to 512 characters). Not verified.
 	PageURL string `json:"page_url" example:"https://www.example.com/pricing"`
+	// Optional idempotency key of an API client (#213): 1 to 128 characters of
+	// A-Z, a-z, 0-9, '.', '_', ':' and '-', not starting with "submission-",
+	// and never personal data. On a form with create_ticket, confirmations
+	// carrying the same key open at most one ticket; elsewhere it is ignored.
+	// An invalid value (an explicit empty string included) is 400
+	// VALIDATION_ERROR with error.details.idempotency_key; the value is never
+	// echoed. The hosted view and the embed script do not send it.
+	IdempotencyKey *string `json:"idempotency_key,omitempty" example:"order-2026-1187" maxLength:"128"`
 }
 
 // SubmissionMeta is what the transport knows about a submission and the
@@ -279,6 +287,16 @@ type formService struct {
 	// time.Now and the 5-second bound of each post-commit claim and stamp.
 	mailClock        func() time.Time
 	mailStampTimeout time.Duration
+
+	// Ticket intake (#213, form_ticket_intake.go). ticketRepo is nil when the
+	// service was built without WithFormTicketIntake: a create_ticket
+	// confirmation then records the outcome unavailable.
+	ticketRepo repository.FormTicketRepository
+	ticketTx   *utils.TransactionManager
+	// ticketIntakeSeam is a test-only, instance-local hook called at the
+	// named stages of a ticket confirmation inside its transaction; an error
+	// it returns rolls the confirmation back. Nil in production.
+	ticketIntakeSeam func(stage string) error
 }
 
 // FormServiceOption configures NewFormService beyond its required
@@ -714,6 +732,11 @@ func (s *formService) SubmitPublic(ctx context.Context, publicID string, req *Pu
 	if err != nil {
 		return nil, err
 	}
+	// The handler refuses a malformed key before calling; this guards every
+	// other caller (#213). The value is never echoed or logged.
+	if req.IdempotencyKey != nil && !ValidFormIdempotencyKey(*req.IdempotencyKey) {
+		return nil, FieldErrors{"idempotency_key": FormIdempotencyKeyRule}
+	}
 
 	spamReason, err := s.checkChallenge(req.Challenge)
 	if err != nil {
@@ -884,6 +907,8 @@ func (s *formService) recordSpam(ctx context.Context, form *models.Form, values 
 	submission := s.newSubmission(form, values, meta, req)
 	submission.Status = models.FormSubmissionSpam
 	submission.SpamReason = reason
+	// Spam never opens a ticket, so it keeps no key (#213).
+	submission.IdempotencyKey = ""
 
 	if err := s.repo.WithTx(s.txManager.DB(ctx)).CreateSubmission(submission); err != nil {
 		return nil, err
@@ -895,7 +920,7 @@ func (s *formService) recordSpam(ctx context.Context, form *models.Form, values 
 }
 
 func (s *formService) newSubmission(form *models.Form, values map[string]string, meta SubmissionMeta, req *PublicSubmissionRequest) *models.FormSubmission {
-	return &models.FormSubmission{
+	submission := &models.FormSubmission{
 		FormID:    form.ID,
 		Data:      values,
 		Email:     values[models.FormFieldEmail],
@@ -903,6 +928,12 @@ func (s *formService) newSubmission(form *models.Form, values map[string]string,
 		UserAgent: truncate(meta.UserAgent, 255),
 		Referrer:  truncate(req.PageURL, 512),
 	}
+	// Only a ticket form keeps the client key (#213): the pending row carries
+	// it to the confirmation. Every other form ignores it.
+	if form.CreateTicket && req.IdempotencyKey != nil {
+		submission.IdempotencyKey = *req.IdempotencyKey
+	}
+	return submission
 }
 
 // storeReceivedSubmission persists a final submission together with the lead it
@@ -1043,12 +1074,18 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 			return utils.ErrNoTransaction
 		}
 		var err error
-		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), hash)
+		form, submission, err = s.confirmInTransaction(logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), s.ticketRepoFor(ctx), hash)
 		if err != nil {
 			return err
 		}
 		jobs, err = s.recordAcceptedMail(s.repo.WithTx(tx), form, submission)
-		return err
+		if err != nil {
+			return err
+		}
+		if form.CreateTicket {
+			return s.ticketSeam(formTicketStageAfterMail)
+		}
+		return nil
 	})
 	if err != nil {
 		// A rejected link is the visitor's problem and is logged where it is
@@ -1063,6 +1100,9 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 	// exists and the visitor gets the content for a confirmation that stuck.
 	s.deliverMail(ctx, jobs)
 
+	if form.CreateTicket {
+		logFormTicketOutcome(logger, form, submission)
+	}
 	logger.WithField("submission_id", submission.ID).Info("Form submission confirmed")
 	return nil
 }
@@ -1071,7 +1111,11 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 // repositories and returns the form and the now-confirmed submission for the
 // mail that follows the commit. Any error discards every write, the token claim
 // included.
-func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, events repository.AutomationRepository, hash string) (*models.Form, *models.FormSubmission, error) {
+//
+// For a create_ticket form (#213) ticketRepo (nil when ticket intake is not
+// wired) opens the ticket after the claim and before the submission update:
+// the lock order is token, customer, ticket, key, submission.
+func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, events repository.AutomationRepository, ticketRepo repository.FormTicketRepository, hash string) (*models.Form, *models.FormSubmission, error) {
 	// The lookup already excludes spent and expired tokens; the claim below
 	// re-applies both predicates as part of its own UPDATE.
 	stored, err := formRepo.GetConfirmationTokenByHash(hash)
@@ -1141,8 +1185,18 @@ func (s *formService) confirmInTransaction(logger *logrus.Entry, formRepo reposi
 			return nil, nil, err
 		}
 	}
+	if form.CreateTicket {
+		if err := s.applySubmissionTicket(ticketRepo, events, form, submission); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := formRepo.UpdateSubmission(submission); err != nil {
 		return nil, nil, err
+	}
+	if form.CreateTicket {
+		if err := s.ticketSeam(formTicketStageAfterSubmission); err != nil {
+			return nil, nil, err
+		}
 	}
 	return form, submission, nil
 }

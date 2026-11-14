@@ -1401,6 +1401,9 @@ What the erasure touches, and what it keeps on purpose:
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |
 | `ticket_mail_deliveries` whose `customer_id` is an erased customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included (#219) | hard-deleted (the customer plan's `AfterScrub`, `purgeCustomerTicketMailDeliveries`, every root that reaches the customer; skipped by a `HasTable` probe when the table is absent) | deliveries of other customers; the rows of a comment whose staff author is erased |
+| `form_ticket_keys` whose `customer_id` is an erased customer or whose `ticket_id` names one of its tickets, soft-deleted tickets included, and the key rows of every submission the lead or unlinked-submission scrub reaches (#213) | hard-deleted (`purgeCustomerFormTicketKeys` in the customer plan's `AfterScrub`, every root that reaches the customer; `scrubSubmissionTicketKeys` in `scrubLeadFormSubmissions` and `scrubUnlinkedSubmissions`; each skipped by a `HasTable` probe when the table is absent) | key rows of other customers and submissions |
+| `form_submissions.idempotency_key` of the submissions those two scrubs reach (#213) | `''` | `ticket_id`, `ticket_outcome` (an id and an outcome) |
+| `tickets` opened by a form (#213) | not touched | Their text is fixed (`Form: <form name>`, `Submitted through form <id>, submission <id>.`) and holds no submitted value |
 | Logs, already-issued JWTs | out of reach | See below |
 
 The whole-schema sweep tests (`test/integration/erasure_pii_sweep_test.go`,
@@ -2310,6 +2313,96 @@ Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless n
 (`internal/models`); `TestFormAttributionMigration` and `TestFormAttributionMigrationFiles`
 (`cmd/migrate`). CI limit: as for the purge, the MySQL roots skip in `make verify-backend`, which
 has no DSN.
+
+### Form ticket intake (#213)
+
+A form with `create_ticket` opens a support ticket when a pending submission is confirmed. The
+logic lives in `internal/service/form_ticket_intake.go` and
+`internal/repository/form_ticket_repository.go`; `cmd/main.go` passes
+`service.WithFormTicketIntake(formTicketRepo, txManager)` to `NewFormService`.
+
+- **Definition.** `create_ticket` requires `double_opt_in` and excludes `create_lead`
+  (`Form.ValidateDefinition`, `ErrInvalidFormDefinition`, 400 with nothing written); it needs no
+  default owner. On `POST /forms` and `PUT /forms/{id}` an absent `create_ticket` is false, and an
+  absent `create_lead` is false when `create_ticket` is true. The write guard is unchanged: admin
+  and sales.
+- **Key.** `POST /forms/public/{key}/submissions` accepts an optional `idempotency_key`
+  (`^[A-Za-z0-9._:-]{1,128}$`, not starting with `submission-`, never personal data). The handler
+  checks it after binding and before any service call; a refusal is 400 `VALIDATION_ERROR` with
+  `error.details.idempotency_key`, never echoing the value. Only the pending row of a
+  `create_ticket` form stores it; spam and every other form store `''`. A confirmation without a
+  client key uses `submission-<submission id>`, which deduplicates that one submission only: the
+  hosted view and the embed script send no key, so their retries are **not** deduplicated yet.
+- **Placement.** Only a confirmation opens a ticket, inside the confirmation transaction after the
+  token claim. Lock order: token (claim) → customer (`LockLiveCustomerByEmail`) → ticket → key row
+  → submission. Spam and never-confirmed rows open nothing.
+- **Customer match.** `deleted_at IS NULL AND email IN (address, lower(address))`, lowest id
+  first, `FOR UPDATE` on MySQL/MariaDB and a plain read on SQLite: the rule the unlinked-submission
+  erasure (#214) uses. SQLite compares binary (the stored address equal to the submitted one or to
+  its lower-cased form); on MySQL/MariaDB the `utf8mb4_unicode_ci` collation of `customers.email`
+  decides (case- and accent-insensitive, trailing spaces ignored). No match: no ticket, outcome
+  `no_customer` (no customer is created).
+- **Ticket.** `open`, `medium`, unassigned, no `due_at`, `first_responded_at` not written; title
+  exactly `Form: <form name>` cut to 255 runes, description exactly `Submitted through form <form
+  id>, submission <submission id>.`. No submitted value is copied into the ticket. A
+  `ticket_created` event (origin `form`, `actor_id` NULL) is recorded in the same transaction.
+- **Duplicates.** `CreateTicketWithKey` inserts the ticket and then the key row in one savepoint,
+  with no pre-read. The unique `idx_form_ticket_keys_identity (form_id, idempotency_key)` is the
+  only unique index of the table, so a duplicate-key error is `repository.ErrFormTicketKeyTaken`;
+  the savepoint is rolled back (the ticket with it) and `GetKeyForUpdate` reads the committed row.
+  The same customer: `duplicate`, and the submission links the existing ticket. Another customer:
+  `key_conflict`, no link. On MySQL a concurrent confirmation's key insert waits on the first one's
+  uncommitted entry and then gets the duplicate error, never 1213.
+- **Outcomes.** `form_submissions.ticket_outcome` is one of `''`, `created`, `duplicate`,
+  `key_conflict`, `no_customer`, `unavailable`, with `ticket_id` set for `created` and `duplicate`.
+  A service built without `WithFormTicketIntake` records `unavailable` instead of refusing like
+  `ErrTicketCommentMailUnavailable`: the confirmation is public, and a refusal would change the
+  public page, roll back the token claim and leave the link failing on every retry, while the
+  recorded outcome stays visible to staff. The public answers (`SubmitOutcome` and the confirmation
+  page) are identical for every outcome. Form mail is unchanged.
+- **Atomicity.** A failure after the ticket insert (key insert, event insert, submission update,
+  form mail rows) rolls the whole confirmation back, token claim included, so the link works again.
+- **Erasure race (#183).** The confirmation locks token then customer; a customer erasure locks the
+  customer then the address's tokens (`scrubUnlinkedSubmissions`). On MySQL one of the two may
+  therefore end in error 1213 and roll back whole; it is not retried. Confirmation first: both
+  commit and the erasure purges the key row. Erasure first: the confirmation finds no live
+  customer (`no_customer`) or an invalid link. No committed state keeps a key row of an erased
+  customer.
+- **Purges.** `ticketRepository.Delete` hard-deletes the ticket's key rows in its transaction, so
+  the key can open a new ticket. Customer erasure (every root) purges the rows of the customer and
+  of its tickets; the lead and unlinked-submission scrubs set `idempotency_key` to `''` and purge
+  the key rows of their submissions. Each step has a `HasTable` probe; a failure rolls the unit
+  back. Keys never expire otherwise.
+- **Logs.** The intake logs `form_id`, `submission_id`, `ticket_id`, `ticket_outcome` and error
+  codes only, never the key, the address, a submitted value, the form name or the ticket text.
+- **Schema.** `forms.create_ticket`, `form_submissions.idempotency_key`, `ticket_id`,
+  `ticket_outcome`, `idx_form_submissions_ticket_id` and `form_ticket_keys` (see
+  [datamodel.md](datamodel.md#form-ticket-keys)) come from `MigrateDatabase` on SQLite and from
+  `20261115120000_add_form_ticket_intake` (each only when missing) on MySQL/MariaDB;
+  `ensureFormTicketKeyCollation` gives an AutoMigrate-created key column `utf8mb4_bin`.
+
+Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema (skipped without it) where
+named: `TestFormTicketTargetDefinition`, `TestFormTicketIntakeSchemaSQLite`,
+`TestFormTicketIntakeSQLiteUpgrade`, `TestFormSubmissionTicketJSON` (`internal/models`);
+`TestFormTicketFlagHandler`, `TestFormPublicSubmitIdempotencyKeyValidation` (`internal/handler`);
+`TestFormTicketKeyRepository{SQLite,MySQL}`, `TestFormTicketCustomerMatch{SQLite,MySQL}`,
+`TestFormTicketKeyErasure{SQLite,MySQL}`, `TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}`
+(`internal/repository`); `TestFormTicketIntakeConfirmed{SQLite,MySQL}`,
+`TestFormTicketIntakePendingSpamAndKeyless`, `TestFormTicketIntakeDuplicateKey{SQLite,MySQL}`,
+`TestFormTicketIntakeKeyConflict{SQLite,MySQL}`, `TestFormTicketIntakeNoCustomer`,
+`TestFormTicketIntakeUnwired`, `TestFormTicketIntakeAtomicity{SQLite,MySQL}`,
+`TestFormTicketIntakeVsCustomerErasure{SQLite,MySQL}` (both MySQL orderings forced, each wait seen
+in `information_schema.PROCESSLIST` on two consecutive polls) and
+`TestFormTicketIntakeLogsOmitPersonalData` (`internal/service`); `TestFormTicketIntakeAPISQLite`
+(`tests`); `TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable` and
+`TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` (`test/integration`);
+`TestFormTicketIntakeMigrationFiles`, `TestFormTicketIntakeMigration` (`cmd/migrate`);
+`TestFormTicketIntakeProductionWiring` (`cmd`).
+
+Operator follow-ups: register the new roots in `scripts/ci/check-go.py` and the migration roots in
+the Database migrations workflow; add the `ticket_outcome` closed set to
+`scripts/ci/check-api-docs.py`; decide which task profile may change `internal/handler/assets/` so
+the embed script and hosted view can send a per-render key.
 
 ### AEO runtime validation and candidate inspection
 

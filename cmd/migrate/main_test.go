@@ -120,7 +120,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"aeo_answers", "aeo_citations", "forms", "form_submissions", "form_confirmation_tokens", "form_mail_deliveries",
 		"products", "quotes", "quote_lines", "quote_status_changes",
 		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
-		"customer_external_ids", "product_external_ids", "ticket_mail_deliveries",
+		"customer_external_ids", "product_external_ids", "ticket_mail_deliveries", "form_ticket_keys",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())
@@ -347,6 +347,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 	assert.NoError(t, err)
 	assertCustomerExternalIDsBinary(t, appDB, testDBName)
 	assertProductExternalIDsBinary(t, appDB, testDBName)
+	assertFormTicketKeysBinary(t, appDB, testDBName)
 
 	// 6. Verify down migration also runs cleanly in reverse
 	err = m.Down()
@@ -400,6 +401,7 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	assertRetiredConfigurations(t, appDB, 0)
 	assertCustomerExternalIDsBinary(t, appDB, testDBName)
 	assertProductExternalIDsBinary(t, appDB, testDBName)
+	assertFormTicketKeysBinary(t, appDB, testDBName)
 
 	// The retirement steps back to the two rows the 2025 seed wrote. It is
 	// addressed by the version before it: newer migrations sort after it.

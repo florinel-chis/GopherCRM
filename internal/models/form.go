@@ -261,6 +261,13 @@ type Form struct {
 	// user (checked on save only).
 	DefaultOwnerID uint `gorm:"index" json:"default_owner_id" example:"2"`
 
+	// Whether a confirmed submission opens a support ticket (#213) for the live
+	// customer whose email matches the confirmed address: open, medium
+	// priority, unassigned, with fixed text that holds no submitted value.
+	// Requires double_opt_in and excludes create_lead. A submitter that matches
+	// no customer gets no ticket. Defaults to false.
+	CreateTicket bool `gorm:"not null;default:false" json:"create_ticket" example:"false"`
+
 	// Origin allowlist: bare host names with an optional port, lower-cased,
 	// matched exactly (subdomains must be listed one by one). Empty allows
 	// every origin. A definition requested from another origin is a 404; a
@@ -352,6 +359,15 @@ func (f *Form) ValidateDefinition() error {
 
 	if err := f.validateSubmitAction(); err != nil {
 		return err
+	}
+	// The ticket target (#213) opens a ticket for whoever owns the confirmed
+	// mailbox, so it needs double opt-in, and a submission feeds either a lead
+	// or a ticket, never both.
+	if f.CreateTicket && f.CreateLead {
+		return formDefinitionError("a form cannot both create leads and create tickets")
+	}
+	if f.CreateTicket && !f.DoubleOptIn {
+		return formDefinitionError("a form that creates tickets needs double opt-in")
 	}
 	if f.CreateLead && f.DefaultOwnerID == 0 {
 		return formDefinitionError("a form that creates leads needs a default owner")
@@ -522,6 +538,23 @@ type FormSubmission struct {
 	// Lower-cased host of an absolute http(s) page_url, without port,
 	// credentials, path or query, cut to 255 characters; empty when absent.
 	ReferrerHost string `gorm:"column:referrer_host;type:varchar(255);not null;default:''" json:"referrer_host" example:"www.example.com" readonly:"true"`
+
+	// Ticket intake (#213). Only forms with create_ticket use these columns.
+
+	// Client idempotency key sent with the submission (characters
+	// A-Z a-z 0-9 . _ : -, at most 128). Stored on the submissions of
+	// create_ticket forms only; empty when none was sent, for spam, for other
+	// forms, and after an erasure of the submitter.
+	IdempotencyKey string `gorm:"type:varchar(128);not null;default:''" json:"idempotency_key" example:"order-2026-1187" readonly:"true"`
+	// Ticket this submission created (ticket_outcome created) or duplicated
+	// (ticket_outcome duplicate); null otherwise.
+	TicketID *uint `gorm:"index" json:"ticket_id" example:"311" extensions:"x-nullable" readonly:"true"`
+	// What the confirmation did about a ticket: empty (not a ticket form, or
+	// not confirmed yet), created, duplicate (the key already opened a ticket
+	// for the same customer), key_conflict (the key already opened a ticket for
+	// another customer), no_customer (no live customer has the address) or
+	// unavailable (ticket intake is not wired on this server).
+	TicketOutcome string `gorm:"type:varchar(20);not null;default:''" json:"ticket_outcome" enums:",created,duplicate,key_conflict,no_customer,unavailable" example:"created" readonly:"true"`
 
 	// When the double opt-in link was confirmed (RFC 3339); null otherwise.
 	ConfirmedAt *time.Time `json:"confirmed_at" example:"2026-10-30T09:15:00Z" extensions:"x-nullable" readonly:"true"`

@@ -363,8 +363,12 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		})))
 	aeoService := aeoRuntime.runs.Service()
 
+	// A confirmed submission of a create_ticket form opens a ticket for the
+	// matching customer in the confirmation transaction (#213).
+	formTicketRepo := repository.NewFormTicketRepository(models.DB)
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
-		txManager, cfg.Forms, cfg.API.Prefix, service.WithFormAutomationEvents(automationRepo))
+		txManager, cfg.Forms, cfg.API.Prefix, service.WithFormAutomationEvents(automationRepo),
+		service.WithFormTicketIntake(formTicketRepo, txManager))
 
 	// Follow-up automation. The engine executes rules behind locking reads
 	// and conditional advances; the runtime owns the worker goroutine and is

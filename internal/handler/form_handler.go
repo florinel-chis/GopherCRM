@@ -85,9 +85,15 @@ type CreateFormRequest struct {
 	// Require a reCAPTCHA v3 token; ignored unless the server has both
 	// reCAPTCHA keys.
 	CaptchaEnabled bool `json:"captcha_enabled" example:"false"`
-	// Feed accepted submissions into leads. Absent means true; send false
-	// explicitly to turn it off.
+	// Feed accepted submissions into leads. Absent means true, except when
+	// create_ticket is true, where absent means false; send false explicitly
+	// to turn it off.
 	CreateLead *bool `json:"create_lead" example:"true"`
+	// Open a support ticket for the matching live customer when a submission
+	// is confirmed (#213). Absent means false, on create and on update alike.
+	// Requires double_opt_in true and create_lead not true (else 400
+	// VALIDATION_ERROR, nothing written); default_owner_id may be 0.
+	CreateTicket *bool `json:"create_ticket" example:"false"`
 	// Owner of created leads; 0 means none. Must be non-zero when create_lead
 	// is true or absent, and any non-zero value must name an existing, active
 	// admin or sales user.
@@ -101,8 +107,9 @@ type CreateFormRequest struct {
 
 // UpdateFormRequest is the body of PUT /forms/:id. The update replaces the
 // whole definition, so every field is sent on every call and an omitted one is
-// cleared rather than kept. create_lead follows the create request: absent
-// means true.
+// cleared rather than kept. create_lead and create_ticket follow the create
+// request: create_ticket absent means false, create_lead absent means true (or
+// false when create_ticket is true).
 type UpdateFormRequest CreateFormRequest
 
 // FormListItem is one row of the form list: the stored form with the number of
@@ -118,7 +125,10 @@ type FormListItem struct {
 // the identifier, the public key, the author, the timestamps — is left alone
 // so the service can fill it in or carry it over from the stored row.
 func (r *CreateFormRequest) toModel() *models.Form {
-	createLead := true
+	createTicket := r.CreateTicket != nil && *r.CreateTicket
+	// A ticket form feeds no lead, so an absent create_lead is false there; an
+	// explicit true is kept and refused by the definition rules.
+	createLead := !createTicket
 	if r.CreateLead != nil {
 		createLead = *r.CreateLead
 	}
@@ -141,6 +151,7 @@ func (r *CreateFormRequest) toModel() *models.Form {
 		ContentURL:          r.ContentURL,
 		CaptchaEnabled:      r.CaptchaEnabled,
 		CreateLead:          createLead,
+		CreateTicket:        createTicket,
 		DefaultOwnerID:      r.DefaultOwnerID,
 		AllowedDomains:      r.AllowedDomains,
 	}
@@ -197,7 +208,7 @@ func (h *FormHandler) List(c *gin.Context) {
 
 // Create godoc
 // @Summary Create a form
-// @Description Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named "email"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true, and then default_owner_id must name an active admin or sales user. status defaults to draft, submit_action to message. The response is the stored form.
+// @Description Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named "email"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true (false when create_ticket is true), and then default_owner_id must name an active admin or sales user. create_ticket (absent means false) makes a confirmed submission open a ticket for the live customer whose email matches (#213); it requires double_opt_in true and create_lead not true, and needs no default owner. status defaults to draft, submit_action to message. The response is the stored form.
 // @Description Roles: admin, sales.
 // @Description Errors: 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user.
 // @Tags forms
@@ -269,7 +280,7 @@ func (h *FormHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a form
-// @Description Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_lead to true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.
+// @Description Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_ticket to false, create_lead to true, or to false when create_ticket is true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.
 // @Description Roles: admin, sales.
 // @Description Errors: 400 BAD_REQUEST for a path id that is not a positive integer ("Invalid form ID"); 400 VALIDATION_ERROR (message "Validation failed", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST ("Invalid request format") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. "a form that creates leads needs a default owner: invalid form definition: validation failed"); 400 VALIDATION_ERROR (message "Validation failed") with error.details {"default_owner_id": "..."} when the lead owner does not exist, is deactivated or is not an admin or sales user; 404 NOT_FOUND for an unknown or deleted form.
 // @Tags forms

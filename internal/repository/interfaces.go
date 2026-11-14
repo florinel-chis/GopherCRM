@@ -1037,6 +1037,25 @@ type FormRepository interface {
 	WithTx(tx *gorm.DB) FormRepository
 }
 
+// FormTicketRepository backs form ticket intake (#213), implemented in
+// form_ticket_repository.go. Every method runs on the handle it was bound to;
+// the confirmation binds it to its transaction with WithTx.
+type FormTicketRepository interface {
+	// LockLiveCustomerByEmail reads the live customer with
+	// `deleted_at IS NULL AND email IN (address, lower(address))`, lowest id
+	// first, FOR UPDATE on MySQL/MariaDB and a plain read on SQLite. No match
+	// is gorm.ErrRecordNotFound.
+	LockLiveCustomerByEmail(address string) (*models.Customer, error)
+	// CreateTicketWithKey inserts the ticket and then the key row in one
+	// savepoint. A taken (form_id, idempotency_key) is ErrFormTicketKeyTaken
+	// and leaves no ticket row.
+	CreateTicketWithKey(ticket *models.Ticket, key *models.FormTicketKey) error
+	// GetKeyForUpdate reads the committed key row with a locking read;
+	// gorm.ErrRecordNotFound when absent.
+	GetKeyForUpdate(formID uint, key string) (*models.FormTicketKey, error)
+	WithTx(tx *gorm.DB) FormTicketRepository
+}
+
 // FormMailDeliveryOutcome is the stamp FinishDelivery writes.
 type FormMailDeliveryOutcome struct {
 	// Status is sent, failed, log_only or skipped.

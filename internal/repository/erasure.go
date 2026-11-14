@@ -296,6 +296,10 @@ func scrubUnlinkedSubmissions(tx *gorm.DB, table string, id uint, original, plac
 			return fmt.Errorf("purging form mail deliveries of unlinked submissions of %s %d: %w", table, id, err)
 		}
 	}
+	// Their idempotency keys and form ticket key rows (#213) go too.
+	if err := scrubSubmissionTicketKeys(tx, submissionIDs); err != nil {
+		return fmt.Errorf("scrubbing form ticket keys of unlinked submissions of %s %d: %w", table, id, err)
+	}
 	return nil
 }
 

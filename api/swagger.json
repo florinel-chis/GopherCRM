@@ -13492,7 +13492,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named \"email\"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true, and then default_owner_id must name an active admin or sales user. status defaults to draft, submit_action to message. The response is the stored form.\nRoles: admin, sales.\nErrors: 400 VALIDATION_ERROR (message \"Validation failed\", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST (\"Invalid request format\") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. \"a form that creates leads needs a default owner: invalid form definition: validation failed\"); 400 VALIDATION_ERROR (message \"Validation failed\") with error.details {\"default_owner_id\": \"...\"} when the lead owner does not exist, is deactivated or is not an admin or sales user.",
+                "description": "Create a form definition. The server assigns the public identifier used by the embed script and records the caller as author. The definition is normalised and validated before it is stored: name trimmed and non-blank; 1 to 50 fields with unique machine names matching ^[a-z][a-z0-9_]{0,49}$; exactly one field of type email, named \"email\"; select fields with 1 to 50 non-blank options and no options on other types; hidden fields never required; max_length defaulted and clamped (see FormFieldDef); a redirect action needs an http(s) redirect_url; notification addresses shaped like email addresses; allowed domains bare hosts. Omitting create_lead means true (false when create_ticket is true), and then default_owner_id must name an active admin or sales user. create_ticket (absent means false) makes a confirmed submission open a ticket for the live customer whose email matches (#213); it requires double_opt_in true and create_lead not true, and needs no default owner. status defaults to draft, submit_action to message. The response is the stored form.\nRoles: admin, sales.\nErrors: 400 VALIDATION_ERROR (message \"Validation failed\", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST (\"Invalid request format\") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. \"a form that creates leads needs a default owner: invalid form definition: validation failed\"); 400 VALIDATION_ERROR (message \"Validation failed\") with error.details {\"default_owner_id\": \"...\"} when the lead owner does not exist, is deactivated or is not an admin or sales user.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14053,7 +14053,7 @@
                 }
             },
             "post": {
-                "description": "Spend a confirmation token. The token is read from the form-encoded field token (what the confirmation page posts) or, when that is empty, from a JSON body {\"token\": \"...\"}. On success the pending submission becomes confirmed (confirmed_at set) and, in the same transaction, the token is claimed and the lead is created or noted exactly as for a submission without double opt-in (automation event lead_created or lead_updated, origin form); after the commit the notification mails and the follow-up mail go out, and the response is the \"Email confirmed\" page. Tokens are single-use and expire 48 hours after the submission; a re-submission of the same form and address invalidates earlier tokens.\nEvery failure - missing, unknown, expired or already used token, a submission that is no longer pending, a deleted form or submission, a stored value too long for its lead column, or an internal error - renders the same \"This link is no longer valid\" page with the same 200 status, so token validity cannot be probed. A failure after the claim and before the commit rolls back, so the link stays usable for a retry; when the COMMIT itself fails the outcome is ambiguous (the lead may have been created and the link spent) although the page still says the link is no longer valid. The handler always answers 200 text/html, never the JSON envelope; only the rate limiter in front of it answers in JSON (429 TOO_MANY_REQUESTS).\nUnauthenticated.",
+                "description": "Spend a confirmation token. The token is read from the form-encoded field token (what the confirmation page posts) or, when that is empty, from a JSON body {\"token\": \"...\"}. On success the pending submission becomes confirmed (confirmed_at set) and, in the same transaction, the token is claimed and the lead is created or noted exactly as for a submission without double opt-in (automation event lead_created or lead_updated, origin form); after the commit the notification mails and the follow-up mail go out, and the response is the \"Email confirmed\" page. Tokens are single-use and expire 48 hours after the submission; a re-submission of the same form and address invalidates earlier tokens.\nOn a form with create_ticket (#213) the same transaction, after the claim, locks the live customer whose email matches the confirmed address and opens one open, medium-priority, unassigned ticket (title \"Form: \u003cform name\u003e\", description \"Submitted through form \u003cid\u003e, submission \u003cid\u003e.\", no submitted value) with a form_ticket_keys row for the stored idempotency key or submission-\u003csubmission id\u003e, and records ticket_created (origin form). The submission records ticket_outcome created, duplicate (the key already opened a ticket for the same customer; ticket_id names it), key_conflict, no_customer or unavailable. The page is identical for every outcome.\nEvery failure - missing, unknown, expired or already used token, a submission that is no longer pending, a deleted form or submission, a stored value too long for its lead column, or an internal error - renders the same \"This link is no longer valid\" page with the same 200 status, so token validity cannot be probed. A failure after the claim and before the commit rolls back, so the link stays usable for a retry; when the COMMIT itself fails the outcome is ambiguous (the lead may have been created and the link spent) although the page still says the link is no longer valid. The handler always answers 200 text/html, never the JSON envelope; only the rate limiter in front of it answers in JSON (429 TOO_MANY_REQUESTS).\nUnauthenticated.",
                 "consumes": [
                     "application/x-www-form-urlencoded",
                     "application/json"
@@ -14244,7 +14244,7 @@
         },
         "/forms/public/{key}/submissions": {
             "post": {
-                "description": "Accept a submission for a published form. The body carries the field values, the consent flag, the challenge handed out with the definition, the honeypot input, the reCAPTCHA token when the form uses it, and the page URL. Bodies are capped at 64 KiB (65536 bytes).\nChecks run in a fixed order and the first that trips decides: (1) values are validated against the definition; (2) the challenge must be present and correctly signed; then the spam layers: (3) time trap - submitted less than 3 seconds or more than 24 hours after the definition was served; (4) origin - the Origin header (or Referer) host must be on the form's allowlist when it has one; (5) honeypot - the decoy input must be empty; (6) reCAPTCHA v3, only when the form enables it and the server has both keys - a missing token, a score below RECAPTCHA_MIN_SCORE or an unreachable verification service fails it.\nA submission caught by a spam layer is stored with status spam and its reason and answered with exactly the same 200 outcome a genuine one gets, so the response reveals nothing about the layers; no mail is sent and no lead is touched. This is deliberate.\nSide effects of a genuine submission: without double opt-in it is stored as received; when the form creates leads, the newest live lead with the same email gains a note (automation event lead_updated, origin form) or a new lead is created (status new, owner default_owner_id, source the form name; automation event lead_created, origin form), in the same transaction; after the commit one notification mail goes to each notify_emails address and, when follow_up_subject is set, the follow-up mail goes to the submitter. With double opt-in it is stored as pending, earlier outstanding confirmation links for the same form and address are invalidated, and a confirmation mail with a single-use link valid for 48 hours goes to the submitted address; lead, notification and follow-up wait for POST /forms/public/confirm. Mail failures are logged and never change the response.\nErrors: 400 VALIDATION_ERROR (message \"The submission could not be accepted\") with error.details mapping field names to messages - an undeclared field (\"unknown field\"), a missing required value, a value longer than its max_length, an invalid email, a value that is not one of a select's options, \"consent\" when the form has consent text and consent is not true, or \"challenge\" when the challenge is missing or invalid (reported only once the values are valid); 400 BAD_REQUEST (\"Invalid request body\") for a body that is not valid JSON; 404 NOT_FOUND for an unknown, unpublished or deleted form (an origin outside the allowlist is NOT a 404 here: it is stored as spam); 413 with code VALIDATION_ERROR (\"Submission is too large\") for a body over 64 KiB.\nUnauthenticated: no credentials are needed or accepted. Cross-origin calls get a permissive, credential-less CORS policy (the request Origin is echoed, methods GET, POST, OPTIONS, header Content-Type; preflights answer 204).",
+                "description": "Accept a submission for a published form. The body carries the field values, the consent flag, the challenge handed out with the definition, the honeypot input, the reCAPTCHA token when the form uses it, and the page URL. Bodies are capped at 64 KiB (65536 bytes).\nChecks run in a fixed order and the first that trips decides: (1) values are validated against the definition; (2) the challenge must be present and correctly signed; then the spam layers: (3) time trap - submitted less than 3 seconds or more than 24 hours after the definition was served; (4) origin - the Origin header (or Referer) host must be on the form's allowlist when it has one; (5) honeypot - the decoy input must be empty; (6) reCAPTCHA v3, only when the form enables it and the server has both keys - a missing token, a score below RECAPTCHA_MIN_SCORE or an unreachable verification service fails it.\nA submission caught by a spam layer is stored with status spam and its reason and answered with exactly the same 200 outcome a genuine one gets, so the response reveals nothing about the layers; no mail is sent and no lead is touched. This is deliberate.\nSide effects of a genuine submission: without double opt-in it is stored as received; when the form creates leads, the newest live lead with the same email gains a note (automation event lead_updated, origin form) or a new lead is created (status new, owner default_owner_id, source the form name; automation event lead_created, origin form), in the same transaction; after the commit one notification mail goes to each notify_emails address and, when follow_up_subject is set, the follow-up mail goes to the submitter. With double opt-in it is stored as pending, earlier outstanding confirmation links for the same form and address are invalidated, and a confirmation mail with a single-use link valid for 48 hours goes to the submitted address; lead, notification and follow-up wait for POST /forms/public/confirm. Mail failures are logged and never change the response.\nIdempotency key (#213): an optional idempotency_key (^[A-Za-z0-9._:-]{1,128}$, not starting with \"submission-\", never personal data) is checked before anything else is done; an invalid value, an explicit empty string included, is 400 VALIDATION_ERROR with error.details.idempotency_key and the value is not echoed. On a form with create_ticket it is stored on the pending submission, and confirmations carrying the same key open at most one ticket; on other forms it is ignored. The answer is identical whether the key is new, already used, absent, the submission is spam or the form is not a ticket form. The hosted view and the embed script do not send a key, so their retries are not deduplicated.\nErrors: 400 VALIDATION_ERROR (message \"The submission could not be accepted\") with error.details mapping field names to messages - an undeclared field (\"unknown field\"), a missing required value, a value longer than its max_length, an invalid email, a value that is not one of a select's options, \"consent\" when the form has consent text and consent is not true, or \"challenge\" when the challenge is missing or invalid (reported only once the values are valid); 400 BAD_REQUEST (\"Invalid request body\") for a body that is not valid JSON; 404 NOT_FOUND for an unknown, unpublished or deleted form (an origin outside the allowlist is NOT a 404 here: it is stored as spam); 413 with code VALIDATION_ERROR (\"Submission is too large\") for a body over 64 KiB.\nUnauthenticated: no credentials are needed or accepted. Cross-origin calls get a permissive, credential-less CORS policy (the request Origin is echoed, methods GET, POST, OPTIONS, header Content-Type; preflights answer 204).",
                 "consumes": [
                     "application/json"
                 ],
@@ -14293,7 +14293,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR - error.details maps field names to messages; BAD_REQUEST - malformed JSON",
+                        "description": "VALIDATION_ERROR - error.details maps field names (or idempotency_key) to messages; BAD_REQUEST - malformed JSON",
                         "schema": {
                             "allOf": [
                                 {
@@ -14755,7 +14755,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_lead to true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.\nRoles: admin, sales.\nErrors: 400 BAD_REQUEST for a path id that is not a positive integer (\"Invalid form ID\"); 400 VALIDATION_ERROR (message \"Validation failed\", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST (\"Invalid request format\") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. \"a form that creates leads needs a default owner: invalid form definition: validation failed\"); 400 VALIDATION_ERROR (message \"Validation failed\") with error.details {\"default_owner_id\": \"...\"} when the lead owner does not exist, is deactivated or is not an admin or sales user; 404 NOT_FOUND for an unknown or deleted form.",
+                "description": "Replace a form definition wholesale, publication status included. The body is the complete document: a field left out is cleared (status falls back to draft, submit_action to message, create_ticket to false, create_lead to true, or to false when create_ticket is true), not kept. id, public identifier, author and created_at are carried over from the stored row, so embedded forms keep working across edits. Validation is identical to creation. Submissions already stored are not touched.\nRoles: admin, sales.\nErrors: 400 BAD_REQUEST for a path id that is not a positive integer (\"Invalid form ID\"); 400 VALIDATION_ERROR (message \"Validation failed\", error.details maps the failing Go struct field name, e.g. Name or Fields, to a message) when a binding rule fails; 400 BAD_REQUEST (\"Invalid request format\") for a body that is not valid JSON or does not match the field types; 400 VALIDATION_ERROR without error.details (the member is omitted) when a definition rule fails (the message states the rule, e.g. \"a form that creates leads needs a default owner: invalid form definition: validation failed\"); 400 VALIDATION_ERROR (message \"Validation failed\") with error.details {\"default_owner_id\": \"...\"} when the lead owner does not exist, is deactivated or is not an admin or sales user; 404 NOT_FOUND for an unknown or deleted form.",
                 "consumes": [
                     "application/json"
                 ],
@@ -27546,6 +27546,11 @@
                     "type": "boolean",
                     "example": true
                 },
+                "create_ticket": {
+                    "description": "Whether a confirmed submission opens a support ticket (#213) for the live\ncustomer whose email matches the confirmed address: open, medium\npriority, unassigned, with fixed text that holds no submitted value.\nRequires double_opt_in and excludes create_lead. A submitter that matches\nno customer gets no ticket. Defaults to false.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "created_at": {
                     "description": "When the record was created (RFC 3339 date-time), set by the server. Read-only.",
                     "type": "string",
@@ -27901,6 +27906,12 @@
                     "readOnly": true,
                     "example": 42
                 },
+                "idempotency_key": {
+                    "description": "Client idempotency key sent with the submission (characters\nA-Z a-z 0-9 . _ : -, at most 128). Stored on the submissions of\ncreate_ticket forms only; empty when none was sent, for spam, for other\nforms, and after an erasure of the submitter.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "order-2026-1187"
+                },
                 "ip_address": {
                     "description": "Client IP as resolved through the trusted proxies (TRUSTED_PROXIES).\nEmptied when the linked lead is erased.",
                     "type": "string",
@@ -27947,6 +27958,27 @@
                     ],
                     "readOnly": true,
                     "example": "received"
+                },
+                "ticket_id": {
+                    "description": "Ticket this submission created (ticket_outcome created) or duplicated\n(ticket_outcome duplicate); null otherwise.",
+                    "type": "integer",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": 311
+                },
+                "ticket_outcome": {
+                    "description": "What the confirmation did about a ticket: empty (not a ticket form, or\nnot confirmed yet), created, duplicate (the key already opened a ticket\nfor the same customer), key_conflict (the key already opened a ticket for\nanother customer), no_customer (no live customer has the address) or\nunavailable (ticket intake is not wired on this server).",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "created",
+                        "duplicate",
+                        "key_conflict",
+                        "no_customer",
+                        "unavailable"
+                    ],
+                    "readOnly": true,
+                    "example": "created"
                 },
                 "updated_at": {
                     "description": "When the record was last written (RFC 3339 date-time), set by the server on every update. Read-only.",
@@ -29382,6 +29414,12 @@
                     "type": "boolean",
                     "example": true
                 },
+                "idempotency_key": {
+                    "description": "Optional idempotency key of an API client (#213): 1 to 128 characters of\nA-Z, a-z, 0-9, '.', '_', ':' and '-', not starting with \"submission-\",\nand never personal data. On a form with create_ticket, confirmations\ncarrying the same key open at most one ticket; elsewhere it is ignored.\nAn invalid value (an explicit empty string included) is 400\nVALIDATION_ERROR with error.details.idempotency_key; the value is never\nechoed. The hosted view and the embed script do not send it.",
+                    "type": "string",
+                    "maxLength": 128,
+                    "example": "order-2026-1187"
+                },
                 "page_url": {
                     "description": "URL of the page the form was submitted from, stored as the submission's\nreferrer (cut to 512 characters). Not verified.",
                     "type": "string",
@@ -30536,9 +30574,14 @@
                     "example": "https://www.example.com/files/guide.pdf"
                 },
                 "create_lead": {
-                    "description": "Feed accepted submissions into leads. Absent means true; send false\nexplicitly to turn it off.",
+                    "description": "Feed accepted submissions into leads. Absent means true, except when\ncreate_ticket is true, where absent means false; send false explicitly\nto turn it off.",
                     "type": "boolean",
                     "example": true
+                },
+                "create_ticket": {
+                    "description": "Open a support ticket for the matching live customer when a submission\nis confirmed (#213). Absent means false, on create and on update alike.\nRequires double_opt_in true and create_lead not true (else 400\nVALIDATION_ERROR, nothing written); default_owner_id may be 0.",
+                    "type": "boolean",
+                    "example": false
                 },
                 "default_owner_id": {
                     "description": "Owner of created leads; 0 means none. Must be non-zero when create_lead\nis true or absent, and any non-zero value must name an existing, active\nadmin or sales user.",
@@ -31204,6 +31247,11 @@
                     "description": "Whether an accepted submission feeds a lead: the newest live lead with\nthe same address gains a note, otherwise a new lead (status new, owner\ndefault_owner_id, source the form name) is created.",
                     "type": "boolean",
                     "example": true
+                },
+                "create_ticket": {
+                    "description": "Whether a confirmed submission opens a support ticket (#213) for the live\ncustomer whose email matches the confirmed address: open, medium\npriority, unassigned, with fixed text that holds no submitted value.\nRequires double_opt_in and excludes create_lead. A submitter that matches\nno customer gets no ticket. Defaults to false.",
+                    "type": "boolean",
+                    "example": false
                 },
                 "created_at": {
                     "description": "When the record was created (RFC 3339 date-time), set by the server. Read-only.",
@@ -32073,9 +32121,14 @@
                     "example": "https://www.example.com/files/guide.pdf"
                 },
                 "create_lead": {
-                    "description": "Feed accepted submissions into leads. Absent means true; send false\nexplicitly to turn it off.",
+                    "description": "Feed accepted submissions into leads. Absent means true, except when\ncreate_ticket is true, where absent means false; send false explicitly\nto turn it off.",
                     "type": "boolean",
                     "example": true
+                },
+                "create_ticket": {
+                    "description": "Open a support ticket for the matching live customer when a submission\nis confirmed (#213). Absent means false, on create and on update alike.\nRequires double_opt_in true and create_lead not true (else 400\nVALIDATION_ERROR, nothing written); default_owner_id may be 0.",
+                    "type": "boolean",
+                    "example": false
                 },
                 "default_owner_id": {
                     "description": "Owner of created leads; 0 means none. Must be non-zero when create_lead\nis true or absent, and any non-zero value must name an existing, active\nadmin or sales user.",

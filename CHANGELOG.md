@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Form → ticket intake (#213).** A double opt-in form with `create_ticket` (admin or sales on
+  `POST /forms` and `PUT /forms/{id}`; absent means false, excludes `create_lead`, which then
+  defaults to false; with `create_lead` true or without double opt-in it is the existing 400) opens
+  one open, medium-priority, unassigned ticket when a pending submission is confirmed, for the
+  live customer whose email is the confirmed address or its lower-cased form. The ticket text is
+  fixed (`Form: <form name>`, `Submitted through form <id>, submission <id>.`) and holds no
+  submitted value. Ticket, `form_ticket_keys` row and `ticket_created` event (origin `form`) commit
+  in the confirmation transaction after the token claim. `POST /forms/public/{key}/submissions`
+  accepts an optional `idempotency_key` (`^[A-Za-z0-9._:-]{1,128}$`, not starting with
+  `submission-`; anything else is 400 `VALIDATION_ERROR` with `error.details.idempotency_key`,
+  the value not echoed): confirmations carrying the same key open at most one ticket per form.
+  A keyless submission uses `submission-<id>`, so retries from the hosted view and the embed
+  script, which send no key, are not deduplicated yet. Each submission records `ticket_outcome`
+  (`created`, `duplicate`, `key_conflict`, `no_customer`, `unavailable`) and `ticket_id`; the
+  public answers are identical for every outcome. Key rows are hard-deleted with their ticket
+  and by every erasure of the customer or of the submitter, which also empties the submission's
+  key. Schema migration `20261115120000_add_form_ticket_intake` (MySQL/MariaDB; SQLite through
+  `MigrateDatabase`): `forms.create_ticket`, `form_submissions.idempotency_key`, `ticket_id`,
+  `ticket_outcome`, `idx_form_submissions_ticket_id` and the `form_ticket_keys` table. Backend
+  only; the form builder and submission views follow in a frontend ticket.
 - **AEO results export (#244).** `GET /aeo/export` (admin, sales, support; customers 403) downloads
   the answers and citations of one run (`run_id`) or of a 7, 30 or 90-day window (`days`, default
   30, any other value 400 rather than clamped; with `run_id` also 400) ending at the start of
