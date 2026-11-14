@@ -536,6 +536,12 @@ type AEOService interface {
 
 	Dashboard(from, to time.Time) (*models.AEODashboard, error)
 	Citations(from, to time.Time) (*models.AEOCitationsReport, error)
+	// Export assembles the AEO export of one run (selection.RunID) or of a
+	// 7/30/90-day window (selection.Days) ending at the start of tomorrow UTC
+	// on the service clock (#244). An unknown run is apperrors.ErrNotFound; a
+	// selection of more than AEOExportMaxAnswers answers is
+	// ErrAEOExportTooLarge, detected before any citation is read.
+	Export(ctx context.Context, selection models.AEOExportSelection) (*models.AEOExport, error)
 	// Providers reports the engines this instance can actually query.
 	Providers() []models.AEOProviderStatus
 }

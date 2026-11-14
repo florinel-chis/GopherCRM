@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -708,6 +709,134 @@ func (r *aeoRepository) CountAnswersWithCitations(from, to time.Time) (int64, er
 		Where("(a.error IS NULL OR a.error = '')").
 		Scan(&count).Error
 	return count, err
+}
+
+// ---------------------------------------------------------------------------
+// Export (#244)
+//
+// The bulk reads of GET /aeo/export. Same dual-database rules as the metrics
+// above: no date or JSON function, the window is a plain [from, to) predicate
+// on created_at, and every order is total (a column then id) so SQLite and
+// MySQL return the same sequence. GORM's soft-delete scope applies to every
+// read except the prompt texts, which are read Unscoped on purpose.
+// ---------------------------------------------------------------------------
+
+var _ AEOExportReader = (*aeoRepository)(nil)
+
+// exportDB binds the statement to ctx; a nil ctx keeps the receiver's session.
+func (r *aeoRepository) exportDB(ctx context.Context) *gorm.DB {
+	if ctx == nil {
+		return r.db
+	}
+	return r.db.WithContext(ctx)
+}
+
+// ListAnswersForExport implements AEOExportReader. Citations are not
+// preloaded: the service reads them only once it knows the selection is under
+// its cap.
+func (r *aeoRepository) ListAnswersForExport(ctx context.Context, filter AEOExportFilter, limit int) ([]models.AEOAnswer, error) {
+	answers := []models.AEOAnswer{}
+	if limit <= 0 {
+		return answers, nil
+	}
+	query := r.exportDB(ctx).Model(&models.AEOAnswer{})
+	if filter.RunID != nil {
+		query = query.Where("run_id = ?", *filter.RunID)
+	} else {
+		query = query.Where("created_at >= ? AND created_at < ?", filter.From.UTC(), filter.To.UTC())
+	}
+	if err := query.Order("created_at ASC").Order("id ASC").Limit(limit).Find(&answers).Error; err != nil {
+		return nil, err
+	}
+	return answers, nil
+}
+
+// ListCitationsByAnswerIDs implements AEOExportReader.
+func (r *aeoRepository) ListCitationsByAnswerIDs(ctx context.Context, answerIDs []uint) ([]models.AEOCitation, error) {
+	citations := []models.AEOCitation{}
+	for _, chunk := range aeoExportIDChunks(answerIDs) {
+		part := []models.AEOCitation{}
+		if err := r.exportDB(ctx).Model(&models.AEOCitation{}).
+			Where("answer_id IN ?", chunk).
+			Order("answer_id ASC").Order("id ASC").
+			Find(&part).Error; err != nil {
+			return nil, err
+		}
+		citations = append(citations, part...)
+	}
+	return citations, nil
+}
+
+// ListRunsByIDs implements AEOExportReader.
+func (r *aeoRepository) ListRunsByIDs(ctx context.Context, ids []uint) ([]models.AEORun, error) {
+	runs := []models.AEORun{}
+	for _, chunk := range aeoExportIDChunks(ids) {
+		part := []models.AEORun{}
+		if err := r.exportDB(ctx).Model(&models.AEORun{}).
+			Where("id IN ?", chunk).
+			Order("id ASC").
+			Find(&part).Error; err != nil {
+			return nil, err
+		}
+		runs = append(runs, part...)
+	}
+	return runs, nil
+}
+
+// aeoPromptTextRow is the projection ListPromptTextsByIDs reads.
+type aeoPromptTextRow struct {
+	ID   uint   `gorm:"column:id"`
+	Text string `gorm:"column:text"`
+}
+
+// ListPromptTextsByIDs implements AEOExportReader. Unscoped: an answer keeps
+// pointing at a prompt after the prompt is soft-deleted, and the export must
+// still say what was asked.
+func (r *aeoRepository) ListPromptTextsByIDs(ctx context.Context, ids []uint) (map[uint]string, error) {
+	texts := make(map[uint]string, len(ids))
+	for _, chunk := range aeoExportIDChunks(ids) {
+		rows := []aeoPromptTextRow{}
+		if err := r.exportDB(ctx).Unscoped().Model(&models.AEOPrompt{}).
+			Select("id, text").
+			Where("id IN ?", chunk).
+			Order("id ASC").
+			Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			texts[row.ID] = row.Text
+		}
+	}
+	return texts, nil
+}
+
+// aeoExportIDChunks de-duplicates and sorts ids ascending and splits them into
+// chunks of at most AEOExportChunkSize. An empty input yields no chunk, so the
+// callers issue no statement for it.
+func aeoExportIDChunks(ids []uint) [][]uint {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[uint]struct{}, len(ids))
+	sorted := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		sorted = append(sorted, id)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+
+	chunks := make([][]uint, 0, (len(sorted)+AEOExportChunkSize-1)/AEOExportChunkSize)
+	for start := 0; start < len(sorted); start += AEOExportChunkSize {
+		end := start + AEOExportChunkSize
+		if end > len(sorted) {
+			end = len(sorted)
+		}
+		chunks = append(chunks, sorted[start:end])
+	}
+	return chunks
 }
 
 // ---------------------------------------------------------------------------

@@ -602,6 +602,61 @@ two connection pools on one SQLite file to prove the outcomes in sequence.
 - **Expected:** Step 1: 409, A's row stays `running`. Step 2: the start fails A's row (`failed`, `running_lock` NULL) and is admitted. If another replica failed a run whose owner is in fact still alive (a paused process), the owner's finalisation is refused and leaves the row `failed`, its next heartbeat cancels the run's provider calls, and nothing later changes the row; answers it wrote before that heartbeat are kept. A Warn line "AEO run finalization refused" carries the `run_id` only.
 - **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaDeadOwnerRecoveredSQLite" / "…MySQL", "TestAEOReplicaFinalizeAfterTakeoverSQLite" / "…MySQL", "TestAEORunHeartbeatLifecycle", "TestAEOReplicaLogsOmitPersonalData", `internal/aeo/scheduler_slot_test.go` "TestEngineFinalizeRefusedWhenNotOwned".
 
+## 11.9 Export (#244)
+
+`GET /aeo/export?format=csv|json` with `run_id=<id>` or `days=7|30|90` (default 30 days, CSV).
+The success body is the raw file, not the envelope; errors keep the envelope and carry no
+`Content-Disposition`. API only: there is no download control in the web UI yet.
+
+### TC-AEO-054 — Export one run as CSV and as JSON
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A finished run with answers, some with citations, one failed answer without citations, one soft-deleted citation, one answer whose prompt was deleted since.
+- **Steps:**
+  1. `GET /aeo/export?run_id=<id>` as admin.
+  2. `GET /aeo/export?run_id=<id>&format=json` as sales.
+- **Expected:** Step 1: 200, `text/csv; charset=utf-8`, `attachment; filename=aeo-export-run-<id>.csv`; the header row is `run_id, run_trigger, run_status, run_started_at, answer_id, answer_created_at, prompt_id, prompt_text, provider, model, brand_mentioned, first_mention_pos, latency_ms, error, competitor_mentions, citation_id, citation_url, citation_domain, citation_is_owned, citation_competitor_name`; one row per live citation and one row with empty citation cells for the failed answer, in answer order (created_at, then id) then citation order; no answer text. Step 2: 200, `application/json; charset=utf-8`, `aeo-export-run-<id>.json`; the body has `format_version` 1, `generated_at`, `selection.run_id`, the run, and the same answers with `answer_text`, `competitor_mentions` as an object and `citations` as an array. The deleted prompt's text is present. The rows of both formats are identical.
+- **Automation:** automated (backend) — `tests/aeo_export_test.go` "TestAEOExportAPISQLite", `internal/handler/aeo_export_test.go` "TestAEOExportCSVShape", "TestAEOExportJSON", `internal/service/aeo_export_test.go` "TestAEOExportService", `internal/repository/aeo_export_repository_test.go` "TestAEOExportRepositorySQLite" / "…MySQL".
+
+### TC-AEO-055 — Export a window
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Answers today and 40 days ago.
+- **Steps:**
+  1. `GET /aeo/export?days=7` as support.
+  2. `GET /aeo/export` (no parameters).
+  3. `GET /aeo/export?days=90&format=json`.
+- **Expected:** The window is [start of tomorrow UTC minus days, start of tomorrow UTC): steps 1 and 2 hold today's answers only, step 3 also the older ones and both runs. File names are `aeo-export-7d-<today>.csv`, `aeo-export-30d-<today>.csv` and `aeo-export-90d-<today>.json` (the date is the last day of the window, UTC). An empty window is 200 with the header row only, or empty arrays.
+- **Automation:** automated (backend) — `tests/aeo_export_test.go` "TestAEOExportAPISQLite", `internal/service/aeo_export_test.go` "TestAEOExportService" (pinned clock at 00:00:00 and 23:59:59.999 UTC and in other zones).
+
+### TC-AEO-056 — Invalid parameters are refused, not replaced
+- **Priority:** P1
+- **Type:** negative
+- **Steps:** `format=xml`, `format=CSV`, `run_id=0`, `run_id=-3`, `run_id=abc`, `days=14`, `days=365`, `run_id=1&days=7`.
+- **Expected:** 400 `VALIDATION_ERROR`; `error.details` is keyed by the parameter (`format`, `run_id`, `days`; both of the last two for the combination) and never echoes the value. `days=14` is not clamped to 30 as the dashboard does. No service call, no read.
+- **Automation:** automated (backend) — `internal/handler/aeo_export_test.go` "TestAEOExportHandlerValidation".
+
+### TC-AEO-057 — Roles, unknown run and the 10,000-answer cap
+- **Priority:** P0
+- **Type:** security / negative
+- **Steps:**
+  1. `GET /aeo/export` as admin, sales, support and customer.
+  2. `GET /aeo/export?run_id=999999`.
+  3. Export a selection with more than 10,000 answers.
+- **Expected:** Step 1: 200 for the three staff roles, 403 `FORBIDDEN` for the customer with no read. Step 2: 404 `NOT_FOUND`, before any answer is read. Step 3: 422 `EXPORT_TOO_LARGE` with `error.details.max_answers` 10000, detected before any citation is read. A read failure is 500 `INTERNAL_ERROR` with the cause not echoed.
+- **Automation:** automated (backend) — `internal/handler/aeo_export_test.go` "TestAEOExportRoles", "TestAEOExportErrorMapping", `internal/service/aeo_export_test.go` "TestAEOExportService", `tests/aeo_export_test.go` "TestAEOExportAPISQLite".
+
+### TC-AEO-058 — Formula-guarded cells, no ownership columns, quiet logs
+- **Priority:** P0
+- **Type:** security / privacy
+- **Preconditions:** An answer whose prompt, model, error, competitor name, citation URL or domain starts with `=`, `@`, `+`, `-`, a tab, CR, LF or a full-width ＝ ＋ － ＠.
+- **Steps:**
+  1. Export as CSV and open the file in a spreadsheet.
+  2. Export as JSON.
+  3. Read the server log.
+- **Expected:** Step 1: every such cell starts with an apostrophe and is shown as text (a `+` or `-` followed by a plain number, such as `+44 20`, is left alone). The customer and lead exports keep their own rules. Step 2: the values are unmodified; `owner_instance`, `heartbeat_at`, `running_lock` and `schedule_slot` appear nowhere. Step 3: the export lines carry operation, format, run_id, days, counts and error codes only; no prompt or answer text, URL, domain, competitor, brand, model or raw query value.
+- **Automation:** automated (backend) — `internal/handler/aeo_export_test.go` "TestAEOExportCSVFormulaGuard", "TestAEOExportJSON", "TestAEOExportHandlerLogsOmitPersonalData", `internal/service/aeo_export_test.go` "TestAEOExportLogsOmitPersonalData".
+
 ---
 
 ## Coverage summary
@@ -616,8 +671,9 @@ two connection pools on one SQLite file to prove the outcomes in sequence.
 | 11.6 Cross-cutting | 4 | 1 | 1 | 2 |
 | 11.7 Provider configuration, egress and runtime | 7 | 4 | 3 | 0 |
 | 11.8 Several API replicas | 4 | 3 | 1 | 0 |
-| **Total** | **53** | **12** | **28** | **13** |
+| 11.9 Export | 5 | 3 | 2 | 0 |
+| **Total** | **58** | **15** | **30** | **13** |
 
-Automation status: 14 automated below the browser (the route smoke test, the two column-length
-cases and TC-AEO-043 to 053, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
+Automation status: 19 automated below the browser (the route smoke test, the two column-length
+cases and TC-AEO-043 to 058, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
 the missing sales/support login helper, one on a live Anthropic call).

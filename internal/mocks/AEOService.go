@@ -205,6 +205,17 @@ func (_m *AEOService) Citations(from time.Time, to time.Time) (*models.AEOCitati
 	return r0, ret.Error(1)
 }
 
+// Export provides a mock function with given fields: ctx, selection
+func (_m *AEOService) Export(ctx context.Context, selection models.AEOExportSelection) (*models.AEOExport, error) {
+	ret := _m.Called(ctx, selection)
+
+	var r0 *models.AEOExport
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.AEOExport)
+	}
+	return r0, ret.Error(1)
+}
+
 // Providers provides a mock function with no fields
 func (_m *AEOService) Providers() []models.AEOProviderStatus {
 	ret := _m.Called()

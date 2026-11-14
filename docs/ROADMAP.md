@@ -54,6 +54,12 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   run and its next heartbeat (at most one 30 s interval); an optional periodic sweep, so a crashed
   run stops reading `running` before the next boot or start attempt; and several processes on one
   SQLite file, which stays unsupported.
+- **AEO reporting: follow-ups** — the CSV/JSON export is delivered (#244): `GET /aeo/export`
+  downloads one run or a 7/30/90-day window, capped at 10,000 answers. Still open: the download
+  control in the web UI (AEO dashboard and answer drawer), threshold alerts or notifications on
+  visibility, scheduled, emailed or PDF client reports, a higher or streamed export cap for large
+  90-day windows, and the `trigger`/`status` rows of the export run type in the closed-set table of
+  `scripts/ci/check-api-docs.py` (operator follow-up).
 - **Extend the SQLite upgrade fixtures per release** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
   the SQL files in `migrations/` target MySQL. The v1.2.0 → next upgrade is

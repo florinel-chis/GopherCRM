@@ -231,6 +231,36 @@ SQLite WAL is recovered on the next open, and the run row left in `running` is f
 heartbeat is older than 3 minutes, at the next boot or start, the same path a crash takes. Its
 remaining results are lost. Several processes on one SQLite file are not supported.
 
+## Exported results (#244)
+
+`GET /aeo/export` hands stored results to whoever downloads the file, so its boundaries are
+deliberate:
+
+- **Who.** Admin, sales and support, the roles that already read every AEO report; the customer
+  role gets 403 before the handler runs. There is no per-record narrowing: AEO data is one
+  workspace-wide data set.
+- **What leaves.** Stored data only: the runs' trigger, status, timestamps, counters and
+  `triggered_by_id`; per answer the prompt text (also of a deleted prompt), engine name, model,
+  mention analysis, latency, the already-sanitised failure description (see above) and, in the JSON
+  format only, the full answer text; per citation the URL, domain, owned flag and competitor name.
+  Answer text and citations reproduce what third-party engines said about the brand and its
+  competitors, so treat a downloaded file as confidential marketing data.
+- **What never leaves.** Provider keys, base URLs and egress policy are not read. The run-ownership
+  columns of #229 (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`) are absent
+  because the export uses its own types (`internal/models/aeo_export.go`), not the persisted
+  models.
+- **No outbound call.** The export reads the database only; it never contacts an answer engine and
+  spends no provider credit.
+- **Formula injection.** Prompts, answers and citations come from users and from engines, so every
+  free-text CSV cell passes through `aeoCSVSafeField`: the shared guard (`=`, `@`, tab, CR, and `+`
+  or `-` not followed by a plain number) plus a leading line feed and the full-width ＝ ＋ － ＠.
+  JSON values are not altered.
+- **Bounded.** At most 10,000 answers per file (422 `EXPORT_TOO_LARGE`, checked before any
+  citation is read), and every row is read before the first byte is written, so a failure is a
+  JSON error, never a truncated file.
+- **Logs.** The export's log lines carry operation, format, `run_id`, `days`, counts and error codes;
+  never a raw query value, prompt or answer text, URL, domain, competitor, brand or model.
+
 ## Regression coverage
 
 No test reaches a real provider or uses a real credential. The tests inject a scripted resolver,
@@ -252,4 +282,6 @@ policy. Production defaults are not weakened, and no `localhost` or `.test` spec
 | `TestAEORunLifecycle{SQLite,MySQL}`, `TestAEOConcurrentShutdown{SQLite,MySQL}` | `internal/service` | Real repository and engine on SQLite and disposable MySQL: interrupted manual/scheduled/single-prompt runs persist `failed`/`partial`, cancellation reaches provider gates and blocked writes, finalization uses a live bounded context, a failed finalization is recovered by `ReconcileRunningRuns`, no late writes after a successful join; concurrent manual/scheduled starts admit one run, shutdown does not deadlock on a start blocked in the database, nothing starts after shutdown, repeated/concurrent shutdown is safe, uncooperative providers hold only the deadline |
 | `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`, `TestAEORunHeartbeatLifecycle`, `TestAEOReplicaLogsOmitPersonalData` | `internal/service` | Two service instances on one database (#229): boot reconciliation spares a live run and fails stale, legacy and over-6h rows; a run on one replica refuses starts on the other (MySQL: concurrent starts admit one); one scheduled run per slot, also after it finished; a dead owner's run blocks starts until its heartbeat passes 3 minutes; a taken-over run stays failed and the owner's next heartbeat cancels its executor; heartbeats stop with the run; the new log lines carry no brand, prompt, instance id or slot |
 | `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}` | `internal/repository` | Atomic claim and its classification, owner-conditional finish and heartbeat, no full-struct run write, one-statement abandoned sweep |
+| `TestAEOExport{HandlerValidation,Roles,ErrorMapping,HandlerLogsOmitPersonalData,CSVShape,CSVFormulaGuard,JSON}` | `internal/handler` | Export (#244): strict parameters with no value echoed, customer 403, 404/422/500 envelopes without an attachment, per-column formula guard (LF and full-width included) with the shared guard unchanged, no ownership key in the JSON, handler logs without content or raw query values |
+| `TestAEOExport{Service,LogsOmitPersonalData}`, `TestAEOExportRepository{SQLite,MySQL}`, `TestAEOExportAPISQLite` | `internal/service`, `internal/repository`, `tests` | Export reads: unknown run before any answer read, the 10,000 cap before any citation read, window from the instance clock, soft-deleted rows excluded, prompt text of deleted prompts kept, 500-id chunks, service logs without content; end to end over HTTP |
 | `TestAEOReplicaAPISQLite`, `TestAEOReplicaProductionWiring` | `tests`, `cmd` | 409 from the second router while the first one's run is running; a second boot over the same SQLite file spares a live run and fails a stale one before the scheduler is armed |

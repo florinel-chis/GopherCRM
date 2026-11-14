@@ -287,6 +287,52 @@ func (_m *AEORepository) CountAnswersWithCitations(from time.Time, to time.Time)
 	return r0, ret.Error(1)
 }
 
+var _ repository.AEOExportReader = (*AEORepository)(nil)
+
+// ListAnswersForExport provides a mock function with given fields: ctx, filter, limit
+func (_m *AEORepository) ListAnswersForExport(ctx context.Context, filter repository.AEOExportFilter, limit int) ([]models.AEOAnswer, error) {
+	ret := _m.Called(ctx, filter, limit)
+
+	var r0 []models.AEOAnswer
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.AEOAnswer)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListCitationsByAnswerIDs provides a mock function with given fields: ctx, answerIDs
+func (_m *AEORepository) ListCitationsByAnswerIDs(ctx context.Context, answerIDs []uint) ([]models.AEOCitation, error) {
+	ret := _m.Called(ctx, answerIDs)
+
+	var r0 []models.AEOCitation
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.AEOCitation)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListRunsByIDs provides a mock function with given fields: ctx, ids
+func (_m *AEORepository) ListRunsByIDs(ctx context.Context, ids []uint) ([]models.AEORun, error) {
+	ret := _m.Called(ctx, ids)
+
+	var r0 []models.AEORun
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.AEORun)
+	}
+	return r0, ret.Error(1)
+}
+
+// ListPromptTextsByIDs provides a mock function with given fields: ctx, ids
+func (_m *AEORepository) ListPromptTextsByIDs(ctx context.Context, ids []uint) (map[uint]string, error) {
+	ret := _m.Called(ctx, ids)
+
+	var r0 map[uint]string
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(map[uint]string)
+	}
+	return r0, ret.Error(1)
+}
+
 // WithTx provides a mock function with given fields: tx
 func (_m *AEORepository) WithTx(tx *gorm.DB) repository.AEORepository {
 	ret := _m.Called(tx)

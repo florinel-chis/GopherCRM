@@ -370,6 +370,10 @@ prompt needs admin.
    competitors and their trend, over 7, 30 or 90 days.
 4. **Citations** (`/aeo/citations`) — how often each company's domains are cited, and how often a
    citation coincides with a brand mention.
+5. **Export** (API only for now) — `GET /api/v1/aeo/export` downloads one run (`run_id`) or a 7,
+   30 or 90-day window (`days`) as CSV (one row per citation, formula-guarded cells) or JSON (with
+   the full answer text), for client reporting. Admin, sales and support; at most 10,000 answers
+   per file.
 
 ![AEO answer drawer](docs/img/gophercrm-aeo-answers.png)
 
@@ -822,6 +826,12 @@ expired, or if its owner has been deactivated or erased.
 - `GET /api/v1/dashboard/pipeline` - The deal pipeline per stage (as `GET /deals/pipeline`) plus
   `won_this_month` (count and amounts per currency of the deals won in the current calendar month,
   UTC) *(admin sees all deals, sales its own; support and customer get 403 — no deal access)*
+
+### AEO *(entire group requires admin, sales or support; the profile, prompt and run routes are in the [API reference](api/index.html))*
+- `GET /api/v1/aeo/export?format=csv|json&run_id=<id>|days=7|30|90` - Download one run's answers
+  and citations, or a window's (default 30 days), as a CSV (one row per citation, no answer text)
+  or JSON (runs, answers with their text and citations) attachment; at most 10,000 answers, a
+  larger selection is 422 `EXPORT_TOO_LARGE`; an invalid parameter or `run_id` with `days` is 400
 
 ### Automation *(rules and dry run: admin; runs: admin and sales, sales narrowed to the leads and deals it owns; support and customer get 403)*
 - `GET /api/v1/automation/rules` - List rules with their steps (`entity_type`, `enabled`, `sort_by` in

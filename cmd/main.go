@@ -32,7 +32,7 @@ import (
 // @description
 // @description ## Response envelope
 // @description Every JSON response has the shape {success, data, error, meta}. success is true for a 2xx response; data carries the payload (its shape is documented per operation); error is present only on failures; meta always carries request_id and, on paginated lists, page, per_page, total and total_pages (zero values are omitted, so an empty page has no total). A 204 response has no body.
-// @description Exceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
+// @description Exceptions that are not enveloped: GET /customers/export and GET /leads/export (text/csv), GET /aeo/export (a text/csv or application/json attachment), the public form pages GET /forms/public/embed.js (JavaScript), GET /forms/public/{key}/view and GET/POST /forms/public/confirm (HTML), a CORS rejection (a bare 403 with no body) and a path or method that no route matches (the router's plain-text 404 "404 page not found").
 // @description
 // @description ## Errors
 // @description error.code is the stable value to branch on; error.message is for people and may change. Shared codes:
@@ -44,6 +44,7 @@ import (
 // @description - 404 NOT_FOUND: no live record with that id within the caller's visibility. Erased (soft-deleted) records are never returned.
 // @description - 409 CONFLICT and SESSION_STALE: a duplicate (email, domain, label name), a refused state change, or a stale session on a password change.
 // @description - INVALID_STATUS_TRANSITION: a refused status change; 400 for a quote transition, 409 for cancelling an automation run that has already finished.
+// @description - 422 EXPORT_TOO_LARGE: an AEO export (GET /aeo/export) that selects more than 10,000 answers; error.details.max_answers carries the cap.
 // @description - 429 TOO_MANY_REQUESTS: see Rate limits.
 // @description - 500 INTERNAL_ERROR: an unexpected failure ("An unexpected error occurred"); details are logged server-side, never returned.
 // @description - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).
