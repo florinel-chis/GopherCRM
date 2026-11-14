@@ -321,6 +321,13 @@ type CompanyRepository interface {
 	// Delete soft-deletes the company and reports gorm.ErrRecordNotFound when
 	// no live row matched.
 	Delete(id uint) error
+	// LockLive takes a row lock on the live company by primary key
+	// (SELECT id … FOR UPDATE on MySQL/MariaDB, a plain read on SQLite) and
+	// returns gorm.ErrRecordNotFound for a missing or soft-deleted company. It
+	// runs on the handle bound by WithTx(tx), which carries the transaction's
+	// context. It is the first lock of the shared order
+	// companies -> leads (id ascending) -> customers -> deals (#182).
+	LockLive(id uint) error
 	// List returns one page plus the total matching the same search. sortBy is
 	// checked against utils.AllowedSortColumns["companies"] (id, name, domain,
 	// industry, created_at, updated_at); an unknown column is an error, an

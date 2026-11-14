@@ -136,14 +136,20 @@ func (h *onceHook) fire() {
 	}
 }
 
-// hookedLeadRepo fires the hook after the first lead read made on a
-// transaction handle — the conversion's in-transaction read of the lead.
+// hookedLeadRepo fires the hook after the first lead read made on a locking
+// transaction handle — the conversion's locked in-transaction read of the
+// lead. Since #182 each attempt reads the lead's company_id plainly first; that
+// read does not fire the hook, so the hold still starts once the lead row is
+// locked.
 type hookedLeadRepo struct {
 	repository.LeadRepository
 	hook *onceHook
 }
 
 func (r hookedLeadRepo) WithTx(tx *gorm.DB) repository.LeadRepository {
+	if _, locking := tx.Statement.Clauses["FOR"]; !locking {
+		return r.LeadRepository.WithTx(tx)
+	}
 	return hookedTxLeadRepo{LeadRepository: r.LeadRepository.WithTx(tx), hook: r.hook}
 }
 

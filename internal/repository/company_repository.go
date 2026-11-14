@@ -6,6 +6,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type companyRepository struct {
@@ -48,6 +49,29 @@ func (r *companyRepository) Delete(id uint) error {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// LockLive takes a row lock on the live company by primary key: `SELECT id
+// FROM companies WHERE id = ? AND deleted_at IS NULL … FOR UPDATE` on
+// MySQL/MariaDB, a plain read on SQLite where the dialector drops the clause.
+// A missing or soft-deleted company is gorm.ErrRecordNotFound. It takes no
+// context: it runs on the handle WithTx(tx) bound, which carries the
+// transaction's context. Companies are the first lock of the shared order
+// companies -> leads (id ascending) -> customers -> deals (#182).
+func (r *companyRepository) LockLive(id uint) error {
+	var ids []uint
+	err := r.db.Model(&models.Company{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", id).
+		Limit(1).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
 		return gorm.ErrRecordNotFound
 	}
 	return nil

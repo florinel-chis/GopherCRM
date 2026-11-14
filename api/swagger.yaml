@@ -17090,6 +17090,18 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "409":
+          description: 'CONFLICT: the lead''s company_id kept changing while the update
+            waited for the company and lead row locks, and three restarts did not
+            settle it (''The lead''s company changed during the write; retry''); nothing
+            is written'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: 'TOO_MANY_REQUESTS: more than 120 requests per minute (burst
             30) from this client IP, one bucket shared by every authenticated endpoint;
@@ -17232,7 +17244,7 @@ paths:
       - application/json
       description: |-
         Create a customer from the lead and mark the lead converted, in one transaction. Roles: admin (any lead) and sales (only the leads it owns).
-        The customer gets the lead's first_name, last_name, email and phone; company is company_name or, when that is empty, the lead's free-text company; website (trimmed, at most 255 characters, an http or https URL with a host), address and notes come from the body. The lead's company_id is copied when it still names a live company (a link to a deleted company is dropped and the conversion succeeds). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id).
+        The customer gets the lead's first_name, last_name, email and phone; company is company_name or, when that is empty, the lead's free-text company; website (trimmed, at most 255 characters, an http or https URL with a host), address and notes come from the body. The lead's company_id is copied when it still names a live company, checked under a row lock on the company taken before the lead's (a link to a deleted company, including one deleted while the conversion waited, is dropped and the conversion succeeds). With leads.conversion.auto_assign_owner on, the lead's owner becomes the customer's assigned_to_id (never user_id).
         Refusals, before anything is written: a lead already converted (status converted or a customer_id set) is 400 BAD_REQUEST; the lead's status must be one of leads.conversion.allowed_statuses (re-checked under a row lock) and notes must not be blank when leads.conversion.require_notes is on, both 400 VALIDATION_ERROR; a lead without an email is 400 BAD_REQUEST (every customer needs one); an email that already belongs to a customer is 409. A failure to read the conversion settings is a 500. Deadlocks are retried up to three times.
         Side effect: lead_updated and lead_status_changed (to converted, origin conversion) are recorded in the same transaction. No customer_created event exists.
       parameters:
@@ -17308,7 +17320,10 @@ paths:
               type: object
         "409":
           description: 'CONFLICT: a customer with the lead''s email address already
-            exists (''customer with this email already exists'')'
+            exists (''customer with this email already exists''), or the lead''s company_id
+            kept changing while the conversion waited for the company and lead row
+            locks and three restarts did not settle it (''The lead''s company changed
+            during the write; retry''); nothing is written'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

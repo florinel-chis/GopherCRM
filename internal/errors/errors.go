@@ -62,6 +62,11 @@ var (
 	// the bad reference is in the body, not at the requested path.
 	ErrDuplicateCompanyDomain = errors.New("a company with this domain already exists")
 	ErrCompanyNotFound        = errors.New("company not found")
+	// ErrLeadCompanyContended is a lead conversion or lead update whose lead's
+	// company_id kept changing between the attempt's plain read and its locked
+	// read (#182): after 3 restarts the call gives up with nothing written. The
+	// handlers answer 409 CONFLICT; the client may retry.
+	ErrLeadCompanyContended = errors.New("the lead's company changed during the write")
 
 	// Product and quote errors. The *NotFound sentinels follow the company
 	// rule: at the requested path they are a 404, inside a request body (a

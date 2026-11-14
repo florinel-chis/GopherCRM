@@ -282,6 +282,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Lead conversion, lead update and bulk lead status are serialised with company deletion
+  (#182).** One lock order is shared: companies (`CompanyRepository.LockLive`, `FOR UPDATE` by
+  primary key on MySQL/MariaDB) → leads (id ascending) → customers → deals. `DELETE
+  /companies/{id}` locks the company before unlinking; a conversion or lead update locks the
+  companies its attempt involves, then the lead, and restarts (at most 3 times, only after a clean
+  rollback) when the lead's `company_id` changed in between; bulk lead status locks only its
+  leads, in id order. Once both have committed, no live customer or lead references a
+  soft-deleted company. New answer: `POST /leads/{id}/convert` and `PUT /leads/{id}` return 409
+  `CONFLICT` ("The lead's company changed during the write; retry") when the lead's company keeps
+  changing; nothing is written. A company deleted between the delete's lookup and its lock is
+  404 with nothing written. Lead create, customer and deal writes and form intake are not covered
+  yet (see the roadmap).
 - **Full-page documentation screenshots.** The fixed app bar and the permanent navigation drawer no longer appear part-way down full-page captures: the screenshot helper applies a screen-only stylesheet for the shot that pins both to the top of the document (`gocrm-ui/e2e/screenshots/helpers/capture.ts`, `gocrm-ui/src/test/screenshotCapture.ts`). The live application and print media are unchanged; the images themselves are regenerated with `npm run screenshots` in a follow-up. (#187)
 - **Local Compose overrides are git-ignored.** `docker-compose.override.yml` and `docker-compose.prod.yml` are in `.gitignore`, so a fork's local copy of the production override with real values cannot be committed by accident; `docs/DOCKER.md` names both. (#302)
 - **Browser tabs sharing a remembered session no longer sign each other out (#184).** The web

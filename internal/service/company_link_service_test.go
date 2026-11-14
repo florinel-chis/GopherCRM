@@ -41,34 +41,45 @@ func (suite *LeadServiceTestSuite) TestUpdate_CompanyLinkNilClearsValueSetsUnkno
 		return &models.Lead{BaseModel: models.BaseModel{ID: 1}, FirstName: "J", OwnerID: 1, CompanyID: &id}
 	}
 
-	// nil pointer under the key: cleared.
-	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Once()
+	// With a transaction manager every update follows the lead/company lock
+	// order (#182): a plain read of the stored company_id, LockLive on the
+	// stored and the sent company (ascending id), then the locked lead read.
+	// The sent company is checked against that lock, never by a plain GetByID.
+
+	// nil pointer under the key: cleared; the stored company is still locked.
+	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Twice()
+	suite.mockCompanyRepo.On("LockLive", uint(4)).Return(nil).Once()
 	suite.mockLeadRepo.On("Update", mock.MatchedBy(func(l *models.Lead) bool { return l.CompanyID == nil })).Return(nil).Once()
 	updated, err := suite.leadService.Update(1, map[string]interface{}{"company_id": (*uint)(nil)})
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), updated.CompanyID)
 
-	// key absent: untouched, and the company repository is not consulted.
-	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Once()
+	// key absent: untouched; only the stored company is locked.
+	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Twice()
+	suite.mockCompanyRepo.On("LockLive", uint(4)).Return(nil).Once()
 	suite.mockLeadRepo.On("Update", mock.MatchedBy(func(l *models.Lead) bool { return l.CompanyID != nil && *l.CompanyID == 4 })).Return(nil).Once()
 	_, err = suite.leadService.Update(1, map[string]interface{}{"first_name": "Jane"})
 	assert.NoError(suite.T(), err)
 
-	// a value: checked, then set.
+	// a value: locked live, then set.
 	nine := uint(9)
-	suite.mockCompanyRepo.On("GetByID", uint(9)).Return(&models.Company{BaseModel: models.BaseModel{ID: 9}}, nil).Once()
-	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Once()
+	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Twice()
+	suite.mockCompanyRepo.On("LockLive", uint(4)).Return(nil).Once()
+	suite.mockCompanyRepo.On("LockLive", uint(9)).Return(nil).Once()
 	suite.mockLeadRepo.On("Update", mock.MatchedBy(func(l *models.Lead) bool { return l.CompanyID != nil && *l.CompanyID == 9 })).Return(nil).Once()
 	_, err = suite.leadService.Update(1, map[string]interface{}{"company_id": &nine})
 	assert.NoError(suite.T(), err)
 
-	// unknown: rejected before the write.
+	// unknown: the lock finds no live company; rejected before the write.
 	missing := uint(77)
-	suite.mockCompanyRepo.On("GetByID", uint(77)).Return(nil, gorm.ErrRecordNotFound).Once()
-	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Once()
+	suite.mockLeadRepo.On("GetByID", uint(1)).Return(existing(), nil).Twice()
+	suite.mockCompanyRepo.On("LockLive", uint(4)).Return(nil).Once()
+	suite.mockCompanyRepo.On("LockLive", uint(77)).Return(gorm.ErrRecordNotFound).Once()
 	_, err = suite.leadService.Update(1, map[string]interface{}{"company_id": &missing})
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrCompanyNotFound), "got %v", err)
 	suite.mockLeadRepo.AssertNumberOfCalls(suite.T(), "Update", 3)
+	suite.mockCompanyRepo.AssertExpectations(suite.T())
+	suite.mockCompanyRepo.AssertNotCalled(suite.T(), "GetByID", mock.Anything)
 }
 
 func (suite *CustomerServiceTestSuite) TestCreate_UnknownCompanyIsRejectedBeforeTheWrite() {

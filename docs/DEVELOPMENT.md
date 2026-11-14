@@ -923,6 +923,61 @@ RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNo
 discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded and
 full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
 
+**Lead and company lock order (#182)** — lead conversion, lead update, bulk lead status and company
+deletion share one lock order: **companies** (by primary key, `CompanyRepository.LockLive`:
+`SELECT id … FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite, `gorm.ErrRecordNotFound` for a
+missing or soft-deleted company; it takes no context and runs on the `WithTx(tx)` handle) →
+**leads** (id ascending) → **customers** → **deals**.
+
+- `CompanyService.Delete` keeps its plain pre-read (the 404 fast path), then in one transaction
+  locks the company first, then runs `UnlinkLeads`, `UnlinkCustomers`, `UnlinkDeals` and the soft
+  delete. A company deleted between the pre-read and the lock is `apperrors.ErrNotFound` (404) with
+  nothing written. It stays on `context.Background()`.
+- `LeadService.ConvertToCustomer` and `LeadService.Update` (with a transaction manager) run each
+  attempt as: a plain read of the lead's `company_id` on the transaction; `LockLive` on the
+  distinct non-nil ids among that value and the company the call names (the caller's
+  `customer.company_id` for a conversion, the sent `company_id` for an update), ascending; the
+  lead's locking read. When the locked lead names another company than the plain read (a delete
+  unlinked it, or another write moved it, in between) the attempt rolls back with the unexported
+  `errLeadCompanyMoved` and is restarted. A conversion links the lead's company only when that
+  lock found it live, else converts without the link (the existing Warn line). An update checks a
+  sent `company_id` against the lock: a company deleted while the update waited is
+  `ErrCompanyNotFound` (400 `INVALID_REFERENCE`); a stored company found deleted is not an error
+  (the restart sees the unlink). Without a transaction manager `Update` is unchanged.
+- Restarts happen only for `errLeadCompanyMoved` on an attempt that rolled back cleanly (not
+  `ErrRollbackFailed`, `ErrTransactionPoisoned`, `ErrCommitFailed` or `ErrBeginFailed`) on a
+  context that is not done (`shouldRestartLeadCompanyAttempt`), at most 3 times (4 attempts); then
+  the call returns `apperrors.ErrLeadCompanyContended` with no customer, lead change or automation
+  event written, answered 409 `CONFLICT` by `POST /leads/{id}/convert` and `PUT /leads/{id}`. The
+  conversion's deadlock retries (`WithTransactionAndRetry`, 3) still run inside each attempt.
+- `BulkStatusService.BulkSetLeadStatus` takes no company lock (`SetLeadStatus` never writes
+  `company_id`) and reads its leads with `BulkStatusRepository.GetLeadsByIDs`, now a locking read of
+  the live leads ordered by id ascending (`FOR UPDATE` on MySQL); soft-deleted leads still read as
+  missing.
+- Result: once a conversion or lead update and a company delete have both committed, no live
+  customer or lead names the soft-deleted company, in either order, on SQLite, MySQL 8 and
+  MariaDB 10.11, and neither order ends in error 1213.
+- The restart, exhaustion, missing-company and company-lock log lines carry `lead_id`,
+  `company_id`, `operation`, attempt counts and `error_code` only.
+- Not covered: lead create, customer create/update, deal writes and form intake still check
+  `company_id` with a plain read and can race a delete (see the roadmap); existing links to deleted
+  companies are not repaired.
+
+Regression roots: `TestCompanyRepositoryLockLive{SQLite,MySQL}`,
+`TestBulkStatusLeadsLockingRead{SQLite,MySQL}` (`internal/repository`);
+`TestCompanyServiceDeleteLocksCompanyFirst`, `TestCompanyServiceDeleteRacedAfterPreReadSQLite`,
+`TestLeadCompanyRestartDecision`, `TestLeadCompanyRestartBoundSQLite` (an instance-local seam moves
+the lead's `company_id` inside each attempt), `TestLeadCompanyLockOrderOutcomesSQLite`,
+`TestLeadCompanyLockLogsOmitPersonalData`, `TestLeadConversionVsCompanyDeleteMySQL`,
+`TestLeadUpdateVsCompanyDeleteMySQL` and `TestBulkLeadStatusVsCompanyDeleteMySQL`
+(`internal/service`; the MySQL roots park the first party through instance-local seams, see the
+second party's wait in `information_schema.PROCESSLIST` on two consecutive polls, and count the
+attempts with an instance-local counter); `TestLeadCompanyContendedHandlerMapping`
+(`internal/handler`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema (migrated by
+`AutoMigrate` without foreign keys), skip without it and fail when it is unreachable. CI limit:
+`make verify-backend` has no DSN and skips them; registering the roots in
+`scripts/ci/check-go.py` is an operator follow-up.
+
 **Duplicate email** — repositories translate driver-level unique-constraint violations into the
 sentinel `apperrors.ErrDuplicateEmail` via `isDuplicateKeyError` in
 `internal/repository/duplicate_key.go`. Handlers classify it with `errors.Is` and return 409 for both

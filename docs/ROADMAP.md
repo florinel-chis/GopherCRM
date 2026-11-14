@@ -100,8 +100,12 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   (free-mail domains excluded). Today the forms module writes only the text column, so a lead
   from `jane@acme.example` is not linked to the Acme company even when it exists; linking by hand
   on the lead form is the only path.
-- **Lead conversion vs company deletion race** — a company deleted while a lead converts can leave
-  the new customer linked to a soft-deleted company; tracked in #182.
+- **Other `company_id` writers outside the lock order** — lead conversion, lead update and bulk
+  lead status now serialise with company deletion (#182, see the lock order in
+  [DEVELOPMENT.md](DEVELOPMENT.md)), but lead create, customer create/update, deal writes and form
+  intake still check `company_id` with a plain read and take no company lock, so one of them
+  committing while the company is deleted can still link a soft-deleted company. Links left by
+  that race before #182 are not repaired.
 
 ## Follow-ups from the backend build-out
 
