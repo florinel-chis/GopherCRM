@@ -58,9 +58,20 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   downloads one run or a 7/30/90-day window, capped at 10,000 answers, and the web UI download
   control is delivered (#318): Export CSV / Export JSON on the AEO dashboard (the selected window)
   and Export run as CSV / JSON in the prompts answer drawer (the selected run), for admin, sales and
-  support. Still open: threshold alerts or notifications on visibility, scheduled, emailed or PDF client reports, a higher or streamed export cap for large
-  90-day windows, and the `trigger`/`status` rows of the export run type in the closed-set table of
-  `scripts/ci/check-api-docs.py` (operator follow-up).
+  support. Still open: threshold alerts or notifications on visibility, PDF client reports
+  (scheduled or emailed reports: see the deliberate cut below), a higher or streamed export cap for
+  large 90-day windows, and the `trigger`/`status` rows of the export run type in the closed-set
+  table of `scripts/ci/check-api-docs.py` (operator follow-up).
+- **AEO scheduled client reports: deliberate cut** — scheduled or emailed AEO client reports are
+  deliberately not built (#320); `GET /aeo/export` and its web UI buttons (#244, #318) are the only
+  client-report output. Like the other cuts this is a candidate follow-up, not an accident. Three
+  things must exist first: (1) a single scheduling owner across replicas, so each report slot is
+  sent exactly once — the #229 pattern, where the daily AEO run is claimed once per slot through
+  `aeo_runs.schedule_slot`; (2) a per-mail delivery record that never reports false success — the
+  #216 pattern, where `form_mail_deliveries` keeps `sent`, `failed` and `log_only` apart, so a
+  log-only mailer is never recorded as delivered; (3) an owner decision on mailing external,
+  non-user recipients — the consent and opt-out question of #238, which already keeps automation
+  `send_email` limited to staff users.
 - **Extend the SQLite upgrade fixtures per release** — auto-migration
   (`models.MigrateDatabase`) is the only schema path when `DB_DRIVER=sqlite`;
   the SQL files in `migrations/` target MySQL. The v1.2.0 → next upgrade is
