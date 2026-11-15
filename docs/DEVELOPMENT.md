@@ -524,6 +524,37 @@ Accepting a quote never touches its deal (owner decision). Regression roots:
 MySQL root creates a disposable schema on `TEST_MYSQL_DSN`, skips without it and fails when it is
 unreachable) and `TestQuoteRepository_LockingReadsCarryForUpdateOnMySQLOnly`.
 
+**Quote tax (#324).** A line carries `tax_rate_bp` (0..10000, `models.QuoteTaxRateBPMax`; 2100 is
+21 %), written like every other line field: only while the quote is a draft (`lockDraft` refuses
+anything else with `ErrQuoteLocked`, 409). `POST /quotes/{id}/lines` binds it as an `int64` (absent
+is 0) and `PUT /quotes/{id}/lines/{lineId}` as an `*int64` (absent keeps the stored rate, 0 clears
+it), both `binding:"min=0,max=10000"`, so an out-of-range value is 400 `VALIDATION_ERROR` before the
+service is called; `validateLineBounds` repeats the bound, so the service refuses it with
+`apperrors.ErrValidation` before any transaction starts. `computeLine` sets `line_total_cents` and
+then `tax_cents = models.ComputeQuoteLineTax(line_total_cents, tax_rate_bp)`, `(total × bp + 5000) /
+10000` round half up. `recomputeTotals` sums the lines with `models.SumQuoteTotals` (subtotal,
+discount and net total exactly as `ComputeQuoteTotals`, tax as Σ line `tax_cents`, gross as total +
+tax) and refuses a gross total above 10^12 (`QuoteAmountCentsMax`, now the gross bound; the net
+total is never larger) with `ErrValidation`, rolling the whole write back. `UpdateTotals(id,
+models.QuoteTotals)` writes all five totals and `updated_at` under the same `WHERE id = ? AND
+status = 'draft'`, with the `matched()` re-check. `total_cents` keeps its meaning (net after
+discount); tax is rounded per line, so the quote tax can differ by cents from tax on per-rate
+totals. MySQL/MariaDB get the columns from `20261117120000_add_quote_tax` (each only when missing,
+plus one gross backfill); SQLite from `MigrateDatabase`, whose `backfillQuoteGrossTotals` step sets
+`gross_total_cents = total_cents + tax_cents` by primary key wherever it differs, on every driver and
+without touching `updated_at`, so a backfilled database takes no write. Regression roots:
+`TestQuoteLineTaxCompute`, `TestQuoteTotalsWithTax`, `TestQuoteTaxColumnsSchemaSQLite`,
+`TestQuoteTaxSQLiteUpgrade`, `TestQuoteTaxJSON` (`internal/models`); `TestQuoteLineTaxRateBinding`
+(`internal/handler`); `TestQuoteTaxRateBoundsRejectedWithoutWrites`,
+`TestQuoteLineTaxRounding{SQLite,MySQL}`, `TestQuoteGrossCapRefusalWritesNothing{SQLite,MySQL}`,
+`TestQuoteTaxRateNonDraftRefused{SQLite,MySQL}`, `TestQuoteEmailShowsTax` (`internal/service`);
+`TestQuoteRepositoryUpdateTotalsWithTax{SQLite,MySQL}` (`internal/repository`);
+`TestQuoteTaxMigrationFiles` (now holding the newest-migration assertion, moved from
+`TestAutomationRunLeaseMigrationFiles`), `TestQuoteTaxMigration` (`cmd/migrate`); and, over HTTP,
+`TestQuoteTaxAPISQLite` (`tests/quote_tax_test.go`). The MySQL roots skip without
+`TEST_MYSQL_DSN`; registering them in `scripts/ci/check-go.py` and the migration roots in the
+Database migrations workflow is an operator follow-up.
+
 **Quote email: no transaction during SMTP, a conditional stamp after it** — `QuoteService.Email`
 reads the latest `quote_status_changes` id *first*, then the quote and the customer's *current*
 address, hands the plaintext rendering to the `Mailer` with no transaction held, and then stamps
@@ -541,7 +572,9 @@ the same fallback the password reset shares (form mail records it `log_only`, se
 known limitations). The subject is `Quote Q-000042 from <name>`, the name resolved at send time by
 `service.ResolveMailProductName` from the configuration source the service already holds for the
 default currency (see *Mail product name*, #292; `GopherCRM` when that source is nil),
-the recipient is never copied onto the quote, and the log lines of the call carry `quote_id` and
+the recipient is never copied onto the quote, the body (`RenderQuoteEmail`) ends every line with
+` | tax <rate>% <tax>` (also at 0 %) and closes with `Subtotal:`, `Discount:`, `Net total:`
+(`total_cents`), `Tax:` and `Gross total:` (#324), and the log lines of the call carry `quote_id` and
 `customer_id` only — a transport error that quotes the address is returned, not logged. Roots:
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
 and `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
@@ -2143,7 +2176,8 @@ roots skip without the variable and fail when it points at an unreachable server
 Run lease roots (#237), two engines with separate pools on one SQLite file or one disposable
 `TEST_MYSQL_DSN` schema unless noted: `TestAutomationRunLeaseJSONHidden`,
 `TestAutomationRunLeaseSQLiteUpgrade` (`internal/models`); `TestAutomationRunLeaseMigrationFiles`
-(now holding the newest-migration assertion), `TestAutomationRunLeaseMigration` (`cmd/migrate`);
+(the newest-migration assertion has since moved to `TestQuoteTaxMigrationFiles`, #324),
+`TestAutomationRunLeaseMigration` (`cmd/migrate`);
 `TestAutomationRunLeaseRepository{SQLite,MySQL}` (`internal/repository`);
 `TestAutomationRunLeaseTakeover{SQLite,MySQL}`, `TestAutomationRunLeaseEmailAtMostOnce{SQLite,MySQL}`
 (a stale first transaction, a send parked before and after the pre-send check, exact `Send`

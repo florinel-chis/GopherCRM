@@ -106,10 +106,12 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 }
 
 // RenderQuoteEmail is the plaintext body: the number, the title, every line
-// with its description, quantity, unit price, discount and total, the three
-// totals with the currency, the validity date and the notes. It is a rendering
-// of the quote, not the printable document, and it carries no personal data of
-// its own: the recipient is only the envelope.
+// with its description, quantity, unit price, discount, total, tax rate and
+// tax (also on a 0 percent line), then the subtotal, the discount, the net
+// total, the tax and the gross total with the currency (#324), the validity
+// date and the notes. It is a rendering of the quote, not the printable
+// document, and it carries no personal data of its own: the recipient is only
+// the envelope.
 func RenderQuoteEmail(quote *models.Quote) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Quote %s\n", quote.Number())
@@ -125,15 +127,19 @@ func RenderQuoteEmail(quote *models.Quote) string {
 		b.WriteString("(no lines)\n")
 	}
 	for i, line := range quote.Lines {
-		fmt.Fprintf(&b, "%d. %s | quantity %d x %s | discount %s%% | line total %s\n",
+		fmt.Fprintf(&b, "%d. %s | quantity %d x %s | discount %s%% | line total %s | tax %s%% %s\n",
 			i+1, line.Description, line.Quantity,
 			FormatMinorUnits(line.UnitPriceCents, quote.Currency),
 			FormatBasisPoints(line.DiscountBP),
-			FormatMinorUnits(line.LineTotalCents, quote.Currency))
+			FormatMinorUnits(line.LineTotalCents, quote.Currency),
+			FormatBasisPoints(line.TaxRateBP),
+			FormatMinorUnits(line.TaxCents, quote.Currency))
 	}
 	fmt.Fprintf(&b, "\nSubtotal: %s\n", FormatMinorUnits(quote.SubtotalCents, quote.Currency))
 	fmt.Fprintf(&b, "Discount: %s\n", FormatMinorUnits(quote.DiscountCents, quote.Currency))
-	fmt.Fprintf(&b, "Total: %s\n", FormatMinorUnits(quote.TotalCents, quote.Currency))
+	fmt.Fprintf(&b, "Net total: %s\n", FormatMinorUnits(quote.TotalCents, quote.Currency))
+	fmt.Fprintf(&b, "Tax: %s\n", FormatMinorUnits(quote.TaxCents, quote.Currency))
+	fmt.Fprintf(&b, "Gross total: %s\n", FormatMinorUnits(quote.GrossTotalCents, quote.Currency))
 	if notes := strings.TrimSpace(quote.Notes); notes != "" {
 		fmt.Fprintf(&b, "\nNotes:\n%s\n", notes)
 	}

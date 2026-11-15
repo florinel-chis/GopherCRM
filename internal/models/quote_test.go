@@ -88,6 +88,16 @@ func TestQuoteColumnWidthsMatchConstants(t *testing.T) {
 	for _, field := range []string{"Position", "Quantity", "UnitPriceCents", "DiscountBP", "LineTotalCents"} {
 		assert.Empty(t, columnDefault(t, &QuoteLine{}, field), "QuoteLine.%s", field)
 	}
+	// The four tax columns (#324) are the deliberate exception: SQLite cannot
+	// add a NOT NULL column without a default to a populated table, and their
+	// default is the zero value itself, so an explicit 0 still persists.
+	for _, field := range []string{"TaxCents", "GrossTotalCents"} {
+		assert.Equal(t, "0", columnDefault(t, &Quote{}, field), "Quote.%s", field)
+	}
+	for _, field := range []string{"TaxRateBP", "TaxCents"} {
+		assert.Equal(t, "0", columnDefault(t, &QuoteLine{}, field), "QuoteLine.%s", field)
+	}
+	assert.Equal(t, int64(10000), QuoteTaxRateBPMax)
 	// GORM strips the quotes of a string default when it parses the tag.
 	assert.Equal(t, "draft", columnDefault(t, &Quote{}, "Status"))
 }

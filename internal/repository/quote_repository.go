@@ -88,15 +88,17 @@ func (r *quoteRepository) UpdateDraft(quote *models.Quote) (int64, error) {
 	return r.matched(result.RowsAffected, "id = ? AND status = ?", quote.ID, models.QuoteStatusDraft)
 }
 
-// UpdateTotals writes the three totals WHERE the status is still draft.
-func (r *quoteRepository) UpdateTotals(id uint, subtotal, discount, total int64) (int64, error) {
+// UpdateTotals writes the five totals WHERE the status is still draft.
+func (r *quoteRepository) UpdateTotals(id uint, totals models.QuoteTotals) (int64, error) {
 	result := r.db.Model(&models.Quote{}).
 		Where("id = ? AND status = ?", id, models.QuoteStatusDraft).
 		Updates(map[string]interface{}{
-			"subtotal_cents": subtotal,
-			"discount_cents": discount,
-			"total_cents":    total,
-			"updated_at":     time.Now().UTC(),
+			"subtotal_cents":    totals.Subtotal,
+			"discount_cents":    totals.Discount,
+			"total_cents":       totals.Total,
+			"tax_cents":         totals.Tax,
+			"gross_total_cents": totals.Gross,
+			"updated_at":        time.Now().UTC(),
 		})
 	if result.Error != nil {
 		return 0, result.Error

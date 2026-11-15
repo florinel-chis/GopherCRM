@@ -85,7 +85,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 - 🏢 **Customer Management**: Complete customer lifecycle management
 - 🏭 **Companies**: Organisation records that leads and customers link to, with domain de-duplication and per-company customer and lead views
 - 💼 **Deals**: Sales opportunities with a five-stage pipeline, integer money per currency, per-stage probabilities and an append-only stage history
-- 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, server-computed totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email; the UI has the products list and admin form, the quotes list and detail with draft-only line editing and status actions, an email confirmation, a print page and a Quotes section on each deal
+- 🧾 **Products & Quotes**: A product catalogue and quotes on deals and customers, with lines that copy the catalogue price, a per-line tax rate, server-computed net, tax and gross totals, a draft → sent → accepted/rejected/expired lifecycle with history, and a plaintext quote email; the UI has the products list and admin form, the quotes list and detail with draft-only line editing and status actions, an email confirmation, a print page and a Quotes section on each deal
 - ⏱️ **Follow-up Automation**: Admin-defined rules that start on lead, deal or ticket events, or on a daily UTC schedule, and run ordered steps — wait, condition, create task, assign owner, staff email, in-app notification — as persisted runs that survive a restart, with a dry run that writes, sends and notifies nothing; the UI has the admin rule list and form with a dry-run dialog, the run list and detail (admin and sales, with an admin cancel), Automation sections on lead and deal pages, and a notification bell and page for staff ([screenshots](docs/SCREENSHOTS.md#follow-up-automation))
 - 🎫 **Ticket System**: Support ticket management with assignments
 - ✅ **Task Management**: Task tracking and assignment
@@ -738,13 +738,19 @@ authentication and live on the moderate tier:
   `valid_until: null` clears; 409 `CONFLICT` when the quote is not a draft)*
 - `DELETE /api/v1/quotes/:id` - Soft-delete *(sales: its own drafts only, 409 on a non-draft; admin:
   any quote; lines and history stay)*
-- `POST /api/v1/quotes/:id/lines` - Add a line `{product_id, quantity, discount_bp?, unit_price_cents?, description?}`
+- `POST /api/v1/quotes/:id/lines` - Add a line `{product_id, quantity, discount_bp?, unit_price_cents?, description?, tax_rate_bp?}`
   *(copies the product's name and price unless overridden; `quantity` 1–1,000,000, `discount_bp`
-  0–10000, the line's gross and the quote total at most 10^12, at most 100 lines; another currency
-  is 400; an inactive or deleted product is 400 `INVALID_REFERENCE`; returns the quote with its
-  recomputed totals; 409 when not a draft)*
-- `PUT /api/v1/quotes/:id/lines/:lineId` - Edit a line *(same bounds; a line of another quote is 404)*
+  0–10000, `tax_rate_bp` 0–10000 (2100 = 21 %, 0 when absent), the line's gross and the quote's
+  gross total at most 10^12, at most 100 lines; another currency is 400; an inactive or deleted
+  product is 400 `INVALID_REFERENCE`; returns the quote with its recomputed totals; 409 when not a
+  draft)*
+- `PUT /api/v1/quotes/:id/lines/:lineId` - Edit a line *(same bounds; an absent `tax_rate_bp` keeps
+  the stored rate and 0 clears it; a line of another quote is 404)*
 - `DELETE /api/v1/quotes/:id/lines/:lineId` - Remove a line and recompute the totals
+
+  Every quote response carries `tax_cents` (Σ line tax) and `gross_total_cents` (`total_cents +
+  tax_cents`), and every line `tax_rate_bp` and `tax_cents` (`(line_total_cents × tax_rate_bp +
+  5000) / 10000`, rounded half up per line); `total_cents` stays the net total after discount.
 - `POST /api/v1/quotes/:id/status` - Move the quote `{status}` *(draft→sent, sent→accepted,
   sent→rejected, sent→expired, sent→draft; anything else or a lost race is 400
   `INVALID_STATUS_TRANSITION`; sending without lines or accepting after `valid_until` is 409; one

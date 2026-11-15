@@ -60,7 +60,9 @@ Checked by searching the tracked tree on `4dfe404`:
   `ticket_mail_deliveries` (backend only; no retry). A ticket channel field and inbound mail remain
   later work.
 - No internationalisation framework in `gocrm-ui/package.json`.
-- No quote PDF and no tax lines (`docs/FEATURES.md`, rows 4d.3 and 4d.7; #233).
+- No quote PDF, and tax is one rate per quote line only: no tax categories, reverse charge or
+  per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
+  #324, #233).
 - CSV export covers customers and leads only (`internal/handler/customer_handler.go:582`,
   `lead_handler.go:915`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
 - The CSRF middleware is not installed (`internal/middleware/csrf.go`; README "Known Limitations";

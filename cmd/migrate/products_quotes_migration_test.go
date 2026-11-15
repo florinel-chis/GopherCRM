@@ -178,7 +178,10 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 	refDB, err := gorm.Open(gormmysql.Open(reference.dsn), &gorm.Config{Logger: gormlogger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, refDB.AutoMigrate(&models.Product{}, &models.Quote{}, &models.QuoteLine{}, &models.QuoteStatusChange{}))
-	want := snapshotQuoteTables(t, reference.sql, reference.name)
+	// The tax columns (#324) belong to 20261117120000_add_quote_tax, a later
+	// migration that AutoMigrate knows about; they are left out of every
+	// comparison here and checked by TestQuoteTaxMigration.
+	want := withoutQuoteTaxColumns(snapshotQuoteTables(t, reference.sql, reference.name))
 	for _, table := range quoteMigrationTables {
 		require.NotEmpty(t, want[table].Columns, "AutoMigrate must have created %s", table)
 	}
@@ -215,7 +218,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			assert.False(t, dirty)
 			assert.Equal(t, uint(quotesMigrationVersion), version)
 
-			got := snapshotQuoteTables(t, tdb.sql, tdb.name)
+			got := withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name))
 			for _, table := range quoteMigrationTables {
 				assert.Equalf(t, want[table], got[table], "%s differs between the SQL migration and AutoMigrate", table)
 			}
@@ -231,7 +234,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			// model), so the rollback below is compared against this list.
 			models.DB = appDB
 			require.NoError(t, models.MigrateDatabase())
-			assert.Equal(t, got, snapshotQuoteTables(t, tdb.sql, tdb.name), "MigrateDatabase must not alter the migrated tables")
+			assert.Equal(t, got, withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name)), "MigrateDatabase must not alter the migrated tables")
 			tablesMigrated := listTables(t, tdb.sql, tdb.name)
 			assert.Subset(t, tablesMigrated, tablesBefore, "MigrateDatabase drops nothing")
 
@@ -259,7 +262,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 
 			// And it applies again from there.
 			require.NoError(t, tdb.m.Migrate(quotesMigrationVersion))
-			assert.Equal(t, got, snapshotQuoteTables(t, tdb.sql, tdb.name))
+			assert.Equal(t, got, withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name)))
 		})
 	}
 }

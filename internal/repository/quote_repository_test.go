@@ -113,10 +113,11 @@ func TestQuoteRepository_DraftWritesAreConditional(t *testing.T) {
 	f := seedQuoteFixture(t, db, "draft")
 	quote := f.quote(t, repo, models.QuoteStatusDraft, "Draft")
 
-	rows, err := repo.UpdateTotals(quote.ID, 2000, 250, 1750)
+	totals := models.QuoteTotals{Subtotal: 2000, Discount: 250, Total: 1750, Tax: 0, Gross: 1750}
+	rows, err := repo.UpdateTotals(quote.ID, totals)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, rows)
-	rows, err = repo.UpdateTotals(quote.ID, 2000, 250, 1750)
+	rows, err = repo.UpdateTotals(quote.ID, totals)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, rows, "writing the values the row already holds still matches the row")
 
@@ -139,7 +140,7 @@ func TestQuoteRepository_DraftWritesAreConditional(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, rows)
 
-	rows, err = repo.UpdateTotals(quote.ID, 1, 1, 1)
+	rows, err = repo.UpdateTotals(quote.ID, models.QuoteTotals{Subtotal: 1, Discount: 1, Total: 1, Tax: 1, Gross: 2})
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, rows, "a sent quote's totals are locked")
 	quote.Title = "Changed after send"
