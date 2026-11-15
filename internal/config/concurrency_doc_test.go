@@ -361,6 +361,22 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.NotContains(t, generate, "WithTransaction")
 	assert.Contains(t, generate, "s.apiKeyRepo.Create(")
 
+	// Child inserts without a transaction: no lock is held across statements,
+	// but the foreign-key check takes a statement-long shared lock on the owner.
+	for _, fk := range []struct{ flow, constraint, migration string }{
+		{"Login", "fk_refresh_tokens_user", "migrations/20250806120000_initial_schema.up.sql"},
+		{"Password-reset request", "fk_password_reset_tokens_user", "migrations/20261001120000_v1_2_0_schema_parity.up.sql"},
+		{"API-key create", "fk_api_keys_user", "migrations/20250806120000_initial_schema.up.sql"},
+	} {
+		body := flow(fk.flow)
+		assert.Contains(t, body, "no lock held across statements", fk.flow)
+		assert.Contains(t, body, "the foreign-key check takes a shared lock on the owner row for the insert statement only", fk.flow)
+		assert.Contains(t, body, "`"+fk.constraint+"`", fk.flow)
+		assert.NotContains(t, body, "neither read nor locked", fk.flow)
+		assert.Contains(t, readRepositoryFile(t, fk.migration),
+			"CONSTRAINT "+fk.constraint+" FOREIGN KEY (user_id) REFERENCES users(id)", fk.flow)
+	}
+
 	assert.Contains(t, flow("Refresh rotation"), "users → refresh_tokens")
 	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → refresh_tokens")
 

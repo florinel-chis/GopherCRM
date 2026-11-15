@@ -50,7 +50,7 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
 
 - Each attempt is a fresh root transaction (`runRoot`, `internal/utils/transaction.go:244`). Only a
   root transaction is replayed, and only after a clean rollback: a failed `COMMIT` or `ROLLBACK`
-  is ambiguous and is returned as it is (`internal/utils/transaction.go:196-201`).
+  is ambiguous and is returned as it is (`internal/utils/transaction.go:196-198`).
 - An attempt is replayed only for a retryable error: MySQL error 1213 (deadlock) or 1205 (lock wait
   timeout), SQLite busy or locked (`isRetryableError`, `internal/utils/transaction.go:473`).
 - Replays stop after `maxRetries` replays and as soon as the context is done; a negative
@@ -196,10 +196,12 @@ session flows, and their order depends on the root. That is why they are `partia
 
 ### Login
 
-- **Rows locked:** none by a locking read. The conditional `UpdateFields`
+- **Rows locked:** no lock held across statements. The conditional `UpdateFields`
   (`internal/repository/user_repository.go:93`) of the failure bookkeeping or its reset and
   `UpdateLastLogin` lock the `users` row for their own statement only; the `refresh_tokens` row is
-  inserted afterwards (`issueRefreshToken`, `internal/service/auth_service.go:458`).
+  inserted afterwards (`issueRefreshToken`, `internal/service/auth_service.go:458`), and on
+  MySQL/MariaDB the foreign-key check takes a shared lock on the owner row for the insert statement
+  only (`fk_refresh_tokens_user`, `migrations/20250806120000_initial_schema.up.sql:172`).
 - **Order:** plain `GetByEmail` (`internal/service/auth_service.go:173`) → bcrypt →
   `UpdateFields` (`internal/service/auth_service.go:224` or `:238` in the same file) →
   `UpdateLastLogin` (`internal/service/auth_service.go:254`) → refresh token insert
@@ -229,11 +231,13 @@ Logout (`internal/service/auth_service.go:699`) and password change
 
 ### Password-reset request
 
-- **Rows locked:** none by a locking read; no owner lock. The user is read plainly by
-  `GetByEmail` (`internal/service/auth_service.go:961`); the user's outstanding
+- **Rows locked:** no lock held across statements; no locking read of the owner. The user is read
+  plainly by `GetByEmail` (`internal/service/auth_service.go:961`); the user's outstanding
   `password_reset_tokens` are spent by `InvalidateAllForUser`
   (`internal/service/auth_service.go:976`) and a new one is inserted
-  (`internal/service/auth_service.go:992`); the mail goes out last.
+  (`internal/service/auth_service.go:992`); for that insert the foreign-key check takes a shared
+  lock on the owner row for the insert statement only (`fk_password_reset_tokens_user`,
+  `migrations/20261001120000_v1_2_0_schema_parity.up.sql:152`). The mail goes out last.
 - **Order:** users (plain read) → password_reset_tokens (update, then insert), each statement on
   its own.
 - **Transaction:** no transaction.
@@ -256,9 +260,12 @@ Logout (`internal/service/auth_service.go:699`) and password change
 
 ### API-key create
 
-- **Rows locked:** none; one `api_keys` insert.
+- **Rows locked:** one `api_keys` insert; no lock held across statements; the foreign-key check
+  takes a shared lock on the owner row for the insert statement only (`fk_api_keys_user`,
+  `migrations/20250806120000_initial_schema.up.sql:135`).
 - **Order:** `apiKeyService.Generate` (`internal/service/apikey_service.go:24`) runs one `Create`
-  (`internal/service/apikey_service.go:42`); the owner's `users` row is neither read nor locked.
+  (`internal/service/apikey_service.go:42`); the owner's `users` row is not read first, and its
+  only lock is the foreign-key check's shared lock during that insert.
 - **Transaction:** no transaction.
 - **Retry:** none. Target (C3): one transaction that locks the owner first, so an erasure in
   flight cannot miss the new key, under the #183 retry rule.
@@ -269,7 +276,8 @@ Logout (`internal/service/auth_service.go:699`) and password change
 - **Rows locked:** none by a locking read. `UserService.Update`
   (`internal/service/user_service.go:55`) reads the user plainly and writes the role with one
   conditional `UpdateFields` (`internal/service/user_service.go:107`). There is no `roles` table:
-  a role is a string column of `users` (`internal/models/user.go:14`).
+  a role is the string column `role` of `users` (the `Role` field, `internal/models/user.go:38`),
+  typed by the `UserRole` string type (`internal/models/user.go:14`).
 - **Order:** users only, one statement. The #259 target is admin set → users (id ascending) →
   roles (id ascending).
 - **Transaction:** no transaction today.
