@@ -468,7 +468,11 @@ func purgeUserNotifications(tx *gorm.DB, userID uint) error {
 // cancelAutomationForEntity ends the automation state that refers to a
 // record about to be erased: every pending, waiting or running run of the
 // record is cancelled with record_deleted, so no further step runs against
-// it, and every notification whose entity is the record is hard-deleted,
+// it, and the run lease (owner_instance, heartbeat_at) is cleared in the same
+// conditional update, as automationRepository.cancel does (#333), so a
+// cancelled run never looks claimed. A run already completed, failed or
+// cancelled matches the status predicate no more and is left untouched.
+// Every notification whose entity is the record is hard-deleted,
 // because its rendered title or body may name the person. A failure of
 // either statement rolls the erasure back; a table absent from the schema
 // (see purgeUserNotifications) is skipped.
@@ -479,10 +483,12 @@ func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) er
 			Where("entity_type = ? AND entity_id = ?", entityType, entityID).
 			Where("status IN ?", []string{models.AutomationRunPending, models.AutomationRunWaiting, models.AutomationRunRunning}).
 			Updates(map[string]interface{}{
-				"status":        models.AutomationRunCancelled,
-				"cancel_reason": models.AutomationCancelRecordDeleted,
-				"finished_at":   &now,
-				"updated_at":    now,
+				"status":         models.AutomationRunCancelled,
+				"cancel_reason":  models.AutomationCancelRecordDeleted,
+				"finished_at":    &now,
+				"owner_instance": nil,
+				"heartbeat_at":   nil,
+				"updated_at":     now,
 			}).Error
 		if err != nil {
 			return fmt.Errorf("cancelling automation runs of %s %d: %w", entityType, entityID, err)

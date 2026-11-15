@@ -1988,7 +1988,16 @@ The pieces, and why each is shaped the way it is:
     row (an earlier executor's late stamp) is not sent again and not left running: the executor
     advances past it (fenced), or fails the run when the row is `email_unconfirmed`
     (`continuePastRecordedEmail`). `CancelRun`, `CancelRunsForRule` and `CancelRunsForEntity` keep their
-    predicates and clear the lease through the shared cancel helper. `FailRun`,
+    predicates and clear the lease through the shared cancel helper. Lead erasure and ticket delete
+    cancel with their own statement (`cancelAutomationForEntity`), which since #333 also sets
+    `owner_instance` and `heartbeat_at` to NULL in the same conditional UPDATE that sets `cancelled`
+    (predicate, transaction, `HasTable` probe and ticket-row-first lock order unchanged). Every cancel
+    therefore releases the lease: the former owner's next `RenewRunLease` returns
+    `ErrAutomationRunNotOwned`, its fenced `AdvanceRun`/`ReleaseRun` match nothing, `ClaimRun` and the
+    stale sweep ignore the row, and a cancel issued after a worker's terminal transition or another
+    cancel matches nothing. Runs cancelled by an erasure or a ticket delete before #333 keep their
+    stale lease values (no backfill); nothing reads them on a cancelled run. `claimed_at` is not
+    cleared by a cancel. `FailRun`,
     `ResetRunToPending`, `UpdateRunStepOutcome` and `ListRunsByStatus` are gone.
   - *Stale sweep.* `AutomationEngine.SweepStaleRuns` replaces `Reconcile`. It runs in
     `setupDependencies` before the worker and the HTTP server start (only when `AUTOMATION_ENABLED`
@@ -2011,9 +2020,7 @@ The pieces, and why each is shaped the way it is:
     exactly there can still send once after a sweep recorded `email_unconfirmed` (outcome unknown,
     never resent). Replica clocks must agree to well under 90 s. Upgrade by stopping every replica
     before starting the new version: an older binary's boot `Reconcile` resets live runs. Several
-    processes on one SQLite file are not supported. Lead erasure and ticket delete cancel runs with
-    their own statement (`cancelAutomationForEntity`), which does not clear the two lease columns of
-    the cancelled rows; nothing reads them on a cancelled run.
+    processes on one SQLite file are not supported.
   - *Logs.* The claim, heartbeat, heartbeat-loss, pre-send, sweep, takeover and fenced-write lines
     carry operation names, ids, positions, step types, outcomes, error codes and counts (plus the
     sanitised database error of a failed renewal or recovery); never the instance id.
@@ -2192,7 +2199,15 @@ each wait seen in `information_schema.PROCESSLIST` on two consecutive polls, no 
 instance-local seams `afterRecordRead`, `beforeStep`, `beforeSend`, `afterSend` and
 `afterStaleRecover`); `TestAutomationRunLeaseProductionWiring` (`cmd`, the real wiring and clock
 over a SQLite file, observed through the `automationRuntimeBuilt` hook and
-`AutomationEngine.SetRecoveryObserver`). Registering the MySQL roots in `scripts/ci/check-go.py`
+`AutomationEngine.SetRecoveryObserver`). Cancel roots (#333), on SQLite and on a disposable
+`TEST_MYSQL_DSN` schema (skipped without it): `TestAutomationCancelReleasesLease{SQLite,MySQL}`
+(`internal/repository`: admin and non-admin lead erasure, ticket delete with a failure injected into
+the `automation_runs` UPDATE, `CancelRun`, `CancelRunsForRule` for the three rule reasons and
+`CancelRunsForEntity`, each on a run claimed by `ClaimRun`, followed by every worker write, plus a
+late cancel after a completed, failed or already-cancelled run, run sequentially) and
+`TestAutomationCancelPathsReleaseLease{SQLite,MySQL}` (`internal/service`: `CancelRun`,
+`UpdateRule`, `SetEnabled(false)` and `DeleteRule`, with the run JSON key set checked).
+Registering the MySQL roots in `scripts/ci/check-go.py`
 and the migration roots in the Database migrations workflow is an operator follow-up.
 
 Ticket roots (#242), on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
