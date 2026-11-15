@@ -303,11 +303,21 @@ func TestAuthService_RefreshAccessToken_FailuresAfterTheClaimReturnNoCredentials
 }
 
 func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {
+	// The wired login (#336): plain lookup, bcrypt, then one transaction with
+	// the locking owner read, the last-login write and the refresh insert, all
+	// on the transaction-bound repositories. The real-database roots are in
+	// auth_login_owner_lock_test.go.
 	d := newSessionAuthService(t)
+	d.expectTransactionBoundRepos()
 	user := sessionActiveUser(1, "Password123!")
+	locked := *user
 
 	d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
-	d.userRepo.On("UpdateLastLogin", uint(1)).Return(nil)
+	d.userRepo.On("GetByID", uint(1)).Return(&locked, nil)
+	d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+		_, stamped := f["last_login_at"]
+		return stamped && len(f) == 1
+	})).Return(nil)
 
 	var stored *models.RefreshToken
 	d.refreshRepo.On("Create", mock.MatchedBy(func(rt *models.RefreshToken) bool {
@@ -321,9 +331,14 @@ func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {
 	assert.NotNil(t, tokens)
 	assert.NotEmpty(t, tokens.AccessToken)
 	assert.NotEmpty(t, tokens.RefreshToken)
-	assert.Equal(t, user, tokens.User)
+	require.NotNil(t, tokens.User)
+	assert.Equal(t, user.ID, tokens.User.ID)
+	assert.NotNil(t, tokens.User.LastLoginAt)
 	assert.NotNil(t, stored)
 	assert.Equal(t, hashOpaqueToken(tokens.RefreshToken, sessionTestSecret), stored.TokenHash)
+	d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
+	d.refreshRepo.AssertCalled(t, "WithTx", mock.Anything)
+	d.userRepo.AssertNotCalled(t, "UpdateLastLogin", mock.Anything)
 }
 
 // Logout is one transaction (#236): the owner is read with the locking read,
