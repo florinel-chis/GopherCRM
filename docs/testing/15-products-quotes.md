@@ -6,6 +6,8 @@ the plaintext quote email, and the erasure and migration guarantees. The fronten
 (2026-10-28, issue #167) added the list and form pages, the quote detail with its status actions,
 the DealDetail section, the print page, the email dialog, the nav entries and the route guards;
 its cases are section 15.8. Product external-id mappings (2026-11, issue #239) are section 15.9.
+The per-line tax rate and the tax and gross totals (2026-11, issue #324, backend only) are section
+15.10.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -14,8 +16,8 @@ single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin 
 to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
 asserts the core outcome, the rest is pinned in Vitest).
 
-29 cases: 29 automated (24 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 17 P0,
-10 P1, 2 P2.
+36 cases: 36 automated (31 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 22 P0,
+12 P1, 2 P2.
 
 **Sources**
 
@@ -39,9 +41,10 @@ asserts the core outcome, the rest is pinned in Vitest).
   (admin and sales); sales sees and edits its own quotes only, and the lists are narrowed inside
   the query, so `meta.total` counts only the caller's quotes.
 - **Money is integer minor units** next to a three-letter code shared by every line of a quote.
-  The line total is `(gross × (10000 − discount_bp) + 5000) / 10000`, round half up; the gross and
-  the quote total are capped at 10^12, a quote holds at most 100 lines, and the gross is checked
-  before the discount arithmetic so nothing overflows.
+  The line total is `(gross × (10000 − discount_bp) + 5000) / 10000`, round half up; the line tax is
+  `(line_total × tax_rate_bp + 5000) / 10000`, round half up (#324); the line's gross and the
+  quote's gross total (`total_cents + tax_cents`) are capped at 10^12, a quote holds at most 100
+  lines, and the gross is checked before the discount arithmetic so nothing overflows.
 - **Only a draft is editable.** Every write to a quote or its lines starts with a locking read
   (`FOR UPDATE` on MySQL) and answers **409** `CONFLICT` outside draft. A transition is a
   conditional claim (`WHERE id = ? AND status = <from>`) plus one history row in one transaction;
@@ -167,7 +170,8 @@ asserts the core outcome, the rest is pinned in Vitest).
 - **Steps:**
   1. Add and edit lines with `quantity` 0 and 1,000,001, `discount_bp` −1 and 10001, a negative
      price and one above 10^12, a gross above 10^12, the maximal quantity times the maximal price with
-     a full discount, a line that would take the quote total over 10^12, and a 101st line.
+     a full discount, an untaxed line that would take the quote's (gross) total over 10^12, and a
+     101st line. The taxed cases of the cap are TC-PQ-031 and TC-PQ-032.
 - **Expected:** Every one is **400** `VALIDATION_ERROR` and the quote row and its lines are byte for
   byte what they were. 10^6 × 10^12 is 10^18, still an int64, and it is refused by the gross check
   before any multiplication by the discount. Exactly the bound is accepted.
@@ -279,8 +283,8 @@ asserts the core outcome, the rest is pinned in Vitest).
   `Quote Q-000042 from <general.company_name>` (the stored name read at send time, trimmed; or
   `GopherCRM` when it is blank, missing, unreadable, holds a control character or exceeds 100
   characters — #292) and a body listing the number, title, every line (description,
-  quantity, unit price, discount, line total), subtotal, discount, total with currency,
-  `valid_until` and notes; **200** with `last_emailed_at` set by a conditional update. Step 2:
+  quantity, unit price, discount, line total, tax rate and tax), subtotal, discount, net total, tax
+  and gross total with currency (#324, see TC-PQ-034), `valid_until` and notes; **200** with `last_emailed_at` set by a conditional update. Step 2:
   **409** `CONFLICT` each time and no mail. Step 3: **502** `MAIL_DELIVERY_FAILED` and
   `last_emailed_at` unchanged. No log line of the call contains the recipient, the customer's name
   or the body — a transport error that quotes the address is returned, not logged: the service
@@ -617,3 +621,121 @@ to a live product. Backend only: no UI. Sources: `internal/models/product_extern
   `TestProductExternalIDsMigrationFiles`, `TestProductExternalIDsMigration`;
   `TestProductExternalIDSQLiteUpgrade`. The MySQL root skips without a server; registering it in
   the Database migrations workflow is an operator follow-up.
+
+## 15.10 Per-line tax and gross totals (#324)
+
+Backend only: no screen changes. A line carries `tax_rate_bp` (0 to 10000, 2100 = 21 %, default 0,
+writable only while the quote is a draft) and the stored, read-only `tax_cents` =
+`(line_total_cents × tax_rate_bp + 5000) / 10000`, round half up. The quote carries `tax_cents`
+(Σ line tax) and `gross_total_cents` (`total_cents + tax_cents`); `total_cents` stays the net total
+after discount. Sources: `internal/models/quote.go` (`ComputeQuoteLineTax`, `SumQuoteTotals`,
+`QuoteTotals`), `internal/models/database.go` (`backfillQuoteGrossTotals`),
+`internal/service/quote_service.go`, `internal/service/quote_email.go`,
+`internal/repository/quote_repository.go` (`UpdateTotals`), `internal/handler/quote_handler.go`,
+`migrations/20261117120000_add_quote_tax.{up,down}.sql`.
+
+### TC-PQ-030 — Tax rounds half up per line, and is recomputed on every line write
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A draft quote.
+- **Steps:**
+  1. Add a line with `quantity` 3, `unit_price_cents` 999, `discount_bp` 1250, `tax_rate_bp` 2100.
+  2. Add two lines of 0.01 at `tax_rate_bp` 5000.
+  3. Patch the first line's `tax_rate_bp` alone to 1500, then to 0; then to 2100 and its quantity
+     to 1; delete one of the 0.01 lines.
+- **Expected:** Step 1: `line_total_cents` 2622, line `tax_cents` 551, quote `tax_cents` 551 and
+  `gross_total_cents` 3173. Step 2: each small line is taxed 1 on its own, the quote tax is 553 (per
+  line, then summed). Step 3: tax 393, then 0 (the explicit zero is stored), then 184 on the new line
+  total 874; the delete recomputes without the line. Pinned arithmetic: (1000, 2100) → 210; (1, 5000)
+  → 1; (1, 4999) → 0; (333, 1500) → 50; any total at 0 bp → 0; at 10000 bp → the total; 10^12 at
+  10000 bp → 10^12. `total_cents` is always Σ `line_total_cents`.
+- **Automation:** automated — `internal/models/quote_tax_test.go` `TestQuoteLineTaxCompute`,
+  `TestQuoteTotalsWithTax`; `internal/service/quote_tax_test.go` `TestQuoteLineTaxRounding{SQLite,MySQL}`.
+
+### TC-PQ-031 — A tax rate out of range is refused before anything is written
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** A draft quote with one line, and a sent one.
+- **Steps:**
+  1. `POST /quotes/{id}/lines` and `PUT /quotes/{id}/lines/{lineId}` with `tax_rate_bp` −1 and 10001.
+  2. Call `QuoteService.AddLine` and `UpdateLine` directly with the same values.
+  3. `POST` a line without `tax_rate_bp`; `PUT` a line without it.
+- **Expected:** Step 1: **400** `VALIDATION_ERROR` from the binding; the service is not called.
+  Step 2: `apperrors.ErrValidation` before any transaction starts (on the sent quote too, the bound
+  answers before the lock); the quote, its lines and totals are unchanged. Step 3: the add stores
+  rate 0; the update keeps the stored rate; an explicit 0 clears it.
+- **Automation:** automated — `internal/handler/quote_tax_test.go` `TestQuoteLineTaxRateBinding`;
+  `internal/service/quote_tax_test.go` `TestQuoteTaxRateBoundsRejectedWithoutWrites`.
+
+### TC-PQ-032 — The 10^12 cap is on the gross total; a refusal writes nothing
+- **Priority:** P0
+- **Type:** validation
+- **Preconditions:** A draft quote.
+- **Steps:**
+  1. Add one line: `quantity` 1, `unit_price_cents` 8×10^11, `discount_bp` 0, `tax_rate_bp` 2500.
+  2. Patch its price to 8×10^11 + 1; patch its rate alone to 2501; add another line of 0.01.
+  3. On a fresh draft, add the 8×10^11 + 1 line at 2500 bp directly.
+  4. On a draft whose untaxed net total is exactly 10^12, patch a rate to 1 bp.
+- **Expected:** Step 1: commits with tax 2×10^11 and gross exactly 10^12. Steps 2 to 4: each is
+  **400** `VALIDATION_ERROR` (`ErrValidation`): (8×10^11 + 1) × 2500 + 5000, divided by 10000, is
+  still 2×10^11, so the gross is 10^12 + 1. The quote row and every line row are byte for byte what
+  they were: no line inserted, no rate or tax changed, totals unchanged.
+- **Automation:** automated — `internal/service/quote_tax_test.go`
+  `TestQuoteGrossCapRefusalWritesNothing{SQLite,MySQL}`.
+
+### TC-PQ-033 — A tax write on a non-draft quote is a conflict
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** A quote with one line in each of sent, accepted, rejected and expired.
+- **Steps:**
+  1. Add a line with `tax_rate_bp` 2100; patch the existing line's `tax_rate_bp` alone.
+- **Expected:** `ErrQuoteLocked` (**409** `CONFLICT`) each time; nothing is written.
+- **Automation:** automated — `internal/service/quote_tax_test.go`
+  `TestQuoteTaxRateNonDraftRefused{SQLite,MySQL}`.
+
+### TC-PQ-034 — The quote email shows line tax and the net, tax and gross totals
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** A sent quote with a line at 21 % and a line at 0 %; the recording mailer.
+- **Steps:**
+  1. `POST /quotes/{id}/email`.
+- **Expected:** Each line ends with ` | tax <rate>% <tax>`, the 0 % line included
+  (` | tax 0.00% 0.00 EUR`); the totals read `Subtotal:`, `Discount:`, `Net total:` (`total_cents`),
+  `Tax:` (`tax_cents`) and `Gross total:` (`gross_total_cents`), in that order, with the currency.
+- **Automation:** automated — `internal/service/quote_tax_test.go` `TestQuoteEmailShowsTax`;
+  `internal/service/quote_email_test.go` `TestQuoteEmailDelivery`.
+
+### TC-PQ-035 — Existing quotes read tax 0 and gross = total after the upgrade
+- **Priority:** P1
+- **Type:** migration
+- **Preconditions:** A disposable MySQL/MariaDB schema (`TEST_MYSQL_DSN`) at `20261116120000` with a
+  live and a soft-deleted quote and their lines; a SQLite file whose quote tables predate the columns.
+- **Steps:**
+  1. Apply `20261117120000_add_quote_tax` (fresh, populated, with and without AutoMigrate first),
+     roll it back, reapply it; roll it back with one column already dropped.
+  2. On SQLite, run `models.MigrateDatabase` twice.
+- **Expected:** The four columns are `bigint NOT NULL DEFAULT 0` exactly as AutoMigrate creates
+  them; existing lines read rate and tax 0, existing quotes tax 0 and `gross_total_cents =
+  total_cents` (or `total_cents + tax_cents` where AutoMigrate's binary already wrote tax), soft-
+  deleted quotes included, `updated_at` unchanged; the down removes exactly the four columns and
+  keeps every row; a guarded down still succeeds with a column gone. On SQLite the second run issues
+  no `UPDATE` of `quotes`.
+- **Automation:** automated — `cmd/migrate/quote_tax_migration_test.go` `TestQuoteTaxMigrationFiles`,
+  `TestQuoteTaxMigration`; `cmd/migrate/main_test.go` `TestMigrationFresh_FullUpAndDown`,
+  `TestMigrationUpgrade_FromMainAutoMigratedSchema`; `internal/models/quote_tax_test.go`
+  `TestQuoteTaxColumnsSchemaSQLite`, `TestQuoteTaxSQLiteUpgrade`, `TestQuoteTaxJSON`;
+  `internal/repository/quote_tax_repository_test.go` `TestQuoteRepositoryUpdateTotalsWithTax{SQLite,MySQL}`.
+
+### TC-PQ-036 — A sales user taxes its own draft over HTTP
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Real middleware, repositories and SQLite; a sales user with its own draft.
+- **Steps:**
+  1. Add and edit lines with `tax_rate_bp`; `GET /quotes/{id}` and `GET /quotes`.
+  2. Send a rate out of range, a write whose gross total exceeds 10^12, and, after sending the quote,
+     a taxed add and a rate patch.
+- **Expected:** Step 1: the 201/200 bodies and both reads carry `tax_cents`, `gross_total_cents`
+  and per line `tax_rate_bp` and `tax_cents` as integers; `total_cents` is unchanged (net). Step 2:
+  **400** `VALIDATION_ERROR`, **400** `VALIDATION_ERROR` and **409** `CONFLICT`, each with the
+  `quotes` and `quote_lines` tables unchanged.
+- **Automation:** automated — `tests/quote_tax_test.go` `TestQuoteTaxAPISQLite`.

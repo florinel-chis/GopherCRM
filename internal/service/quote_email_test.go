@@ -65,11 +65,13 @@ func TestQuoteEmailDelivery(t *testing.T) {
 			"Title: Engine licences",
 			"Currency: EUR",
 			"Valid until: " + *models.FormatDealDate(quote.ValidUntil),
-			"1. Widget | quantity 2 x 10.00 EUR | discount 12.50% | line total 17.50 EUR",
-			"2. Widget | quantity 1 x 9.99 EUR | discount 0.00% | line total 9.99 EUR",
+			"1. Widget | quantity 2 x 10.00 EUR | discount 12.50% | line total 17.50 EUR | tax 0.00% 0.00 EUR",
+			"2. Widget | quantity 1 x 9.99 EUR | discount 0.00% | line total 9.99 EUR | tax 0.00% 0.00 EUR",
 			"Subtotal: 29.99 EUR",
 			"Discount: 2.50 EUR",
-			"Total: 27.49 EUR",
+			"Net total: 27.49 EUR",
+			"Tax: 0.00 EUR",
+			"Gross total: 27.49 EUR",
 			"Delivery within two weeks of acceptance.",
 		} {
 			assert.Contains(t, mail.Body, fragment)
@@ -320,7 +322,7 @@ func TestQuoteEmailRevisedDuringSend(t *testing.T) {
 
 		messages := env.mailer.messages()
 		require.Len(t, messages, 1, "the mail did go out")
-		assert.Contains(t, messages[0].Body, "Total: "+FormatMinorUnits(staleTotal, "EUR"), "with the rendering read before the revision")
+		assert.Contains(t, messages[0].Body, "Net total: "+FormatMinorUnits(staleTotal, "EUR"), "with the rendering read before the revision")
 
 		committed := env.quote(quote.ID)
 		assert.Nil(t, committed.LastEmailedAt, "last_emailed_at stays unchanged")
@@ -332,7 +334,7 @@ func TestQuoteEmailRevisedDuringSend(t *testing.T) {
 		emailed, err := env.svc.Email(quote.ID)
 		require.NoError(t, err)
 		assert.NotNil(t, emailed.LastEmailedAt)
-		assert.Contains(t, env.mailer.messages()[0].Body, "Total: "+FormatMinorUnits(committed.TotalCents, "EUR"))
+		assert.Contains(t, env.mailer.messages()[0].Body, "Net total: "+FormatMinorUnits(committed.TotalCents, "EUR"))
 	})
 }
 

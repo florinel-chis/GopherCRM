@@ -122,6 +122,9 @@ type QuoteLineRequest struct {
 	// Line text override, at most 255 characters, trimmed; the product's
 	// name when absent or blank.
 	Description *string `json:"description,omitempty" maxLength:"255" example:"Annual support plan, two sites"`
+	// Per-line tax rate in basis points, 0 to 10000 (2100 = 21 percent); 0
+	// when absent.
+	TaxRateBP int64 `json:"tax_rate_bp" binding:"min=0,max=10000" example:"2100"`
 }
 
 // QuoteLineUpdateRequest is the body of PUT /quotes/:id/lines/:lineId: a
@@ -139,6 +142,9 @@ type QuoteLineUpdateRequest struct {
 	// New 1-based display position, at least 1. Other lines are not
 	// renumbered, so positions may repeat.
 	Position *int64 `json:"position,omitempty" binding:"omitempty,min=1" example:"2"`
+	// New tax rate in basis points, 0 to 10000; absent keeps the stored rate
+	// and 0 clears it.
+	TaxRateBP *int64 `json:"tax_rate_bp,omitempty" binding:"omitempty,min=0,max=10000" example:"2100"`
 }
 
 // QuoteStatusRequest is the body of POST /quotes/:id/status.
@@ -466,7 +472,7 @@ func (h *QuoteHandler) Delete(c *gin.Context) {
 
 // AddLine godoc
 // @Summary Add a line to a draft quote
-// @Description Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is 1 to 1000000, discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), unit_price_cents 0 to 10^12; quantity x unit_price_cents and the resulting quote total may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written).
+// @Description Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is 1 to 1000000, discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
 // @Description One transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.
 // @Description The response is the whole quote with its lines and recomputed totals.
 // @Tags quotes
@@ -477,7 +483,7 @@ func (h *QuoteHandler) Delete(c *gin.Context) {
 // @Param id path int true "Quote ID"
 // @Param request body QuoteLineRequest true "The line to add"
 // @Success 201 {object} utils.APIResponse{data=models.QuoteJSON} "The quote with the new line"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): a bound, the 10^12 gross or total cap, the 100-line limit, a description over 255 characters, or a product in another currency. INVALID_REFERENCE: the product does not exist, is deleted or is inactive"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): a bound (tax_rate_bp included), the 10^12 cap on the line gross or on the quote gross total, the 100-line limit, a description over 255 characters, or a product in another currency. INVALID_REFERENCE: the product does not exist, is deleted or is inactive"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
@@ -509,6 +515,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 		DiscountBP:     req.DiscountBP,
 		UnitPriceCents: req.UnitPriceCents,
 		Description:    req.Description,
+		TaxRateBP:      req.TaxRateBP,
 	})
 	if err != nil {
 		h.respondError(c, logger, err)
@@ -521,7 +528,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 
 // UpdateLine godoc
 // @Summary Edit a line of a draft quote
-// @Description Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). Same transaction shape as adding a line, with the totals recomputed.
+// @Description Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
 // @Description The response is the whole quote with its lines and recomputed totals.
 // @Tags quotes
 // @Accept json
@@ -532,7 +539,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 // @Param lineId path int true "Line ID"
 // @Param request body QuoteLineUpdateRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.QuoteJSON} "The quote with the edited line"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id or lineId is not an unsigned integer ('Invalid quote ID', 'Invalid line ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): a bound, the 10^12 gross or total cap, or a description over 255 characters"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id or lineId is not an unsigned integer ('Invalid quote ID', 'Invalid line ID'). VALIDATION_ERROR: a binding rule failed (message 'Validation failed', error.details maps the Go field name to a message), or a rule checked by the handler or the service failed (the message names it, no details). BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'): a bound (tax_rate_bp included), the 10^12 cap on the line gross or on the quote gross total, or a description over 255 characters"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found'), or the line is not on this quote ('Quote line not found')"
@@ -567,6 +574,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 		UnitPriceCents: req.UnitPriceCents,
 		Description:    req.Description,
 		Position:       req.Position,
+		TaxRateBP:      req.TaxRateBP,
 	})
 	if err != nil {
 		h.respondError(c, logger, err)
@@ -579,7 +587,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 
 // DeleteLine godoc
 // @Summary Remove a line from a draft quote
-// @Description Hard-delete a line and recompute the totals in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.
+// @Description Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.
 // @Description The response is the whole quote with its remaining lines and recomputed totals.
 // @Tags quotes
 // @Produce json

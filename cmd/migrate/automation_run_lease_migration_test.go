@@ -33,8 +33,7 @@ var automationRunLeaseColumns = []string{"owner_instance", "heartbeat_at"}
 
 // TestAutomationRunLeaseMigrationFiles needs no database: the pair exists, has
 // its headers, every statement is guarded by an INFORMATION_SCHEMA probe, the
-// column types match the model, the migration is the newest of the directory
-// and latestMigrationVersion names it.
+// column types match the model, and a newer migration follows it (#324).
 func TestAutomationRunLeaseMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, automationRunLeaseName+".up.sql"))
@@ -69,21 +68,14 @@ func TestAutomationRunLeaseMigrationFiles(t *testing.T) {
 	assert.Equal(t, reflect.TypeOf(&time.Time{}), heartbeat.Type)
 	assert.Equal(t, "-", heartbeat.Tag.Get("json"))
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestFormTicketIntakeMigrationFiles).
-	entries, err := os.ReadDir(dir)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestQuoteTaxMigrationFiles (#324); the version is still pinned here.
+	_, err = os.Stat(filepath.Join(dir, automationRunLeaseName+".up.sql"))
 	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, automationRunLeaseName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	version, err := strconv.Atoi(strings.SplitN(automationRunLeaseName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, automationRunLeaseVersion, version)
-	assert.Equal(t, automationRunLeaseVersion, latestMigrationVersion)
+	assert.Less(t, automationRunLeaseVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, automationRunLeaseVersion, automationRunLeasePreviousVersion)
 }
 

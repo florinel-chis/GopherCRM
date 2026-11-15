@@ -477,9 +477,10 @@ type QuoteRepository interface {
 	// UpdateDraft writes every scalar column of the quote WHERE the stored
 	// status is still draft and returns the matched row count (0 or 1).
 	UpdateDraft(quote *models.Quote) (int64, error)
-	// UpdateTotals writes the three totals WHERE the status is still draft
-	// and returns the matched row count.
-	UpdateTotals(id uint, subtotal, discount, total int64) (int64, error)
+	// UpdateTotals writes the five totals (subtotal, discount, net total,
+	// tax and gross total) and updated_at WHERE the status is still draft and
+	// returns the matched row count.
+	UpdateTotals(id uint, totals models.QuoteTotals) (int64, error)
 	// ClaimStatus moves the quote from one status to another with one
 	// conditional update (WHERE id = ? AND status = from), writing the stamps
 	// with it, and returns the matched row count: exactly one row is a

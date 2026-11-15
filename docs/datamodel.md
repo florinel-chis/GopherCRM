@@ -286,8 +286,10 @@ in the same transaction and whatever the status (#245).
 | status | enum | Yes | `draft` | one of the status values below, max 20 | Lifecycle status |
 | currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`; immutable once the quote has lines | Currency of every line and total |
 | subtotal_cents | int64 | Yes | 0 | Σ quantity × unit_price_cents over the lines; never taken from a request | |
-| discount_cents | int64 | Yes | 0 | subtotal − total | |
-| total_cents | int64 | Yes | 0 | Σ line_total_cents, at most 10^12 | |
+| discount_cents | int64 | Yes | 0 | subtotal − total (both net) | |
+| total_cents | int64 | Yes | 0 | Σ line_total_cents | Net total: after the per-line discounts, before tax |
+| tax_cents | int64 | Yes | 0 (column `DEFAULT 0`) | Σ quote_lines.tax_cents; computed, read-only (#324) | 0 on quotes written before line tax existed |
+| gross_total_cents | int64 | Yes | 0 (column `DEFAULT 0`) | total_cents + tax_cents, at most 10^12; computed, read-only (#324) | Backfilled to total_cents + tax_cents for existing rows |
 | valid_until | date | No | - | `YYYY-MM-DD` on the wire, stored as local midnight (the deal date convention) | Acceptance is refused once this date has passed; expiry itself is a manual status |
 | notes | text | No | - | max 65535 bytes | Free text shown on the document and in the email |
 | sent_at | datetime | No | - | set on draft→sent, cleared on sent→draft | UTC |
@@ -333,9 +335,26 @@ overridden in the request and edited while the quote is a draft. Lines are hard-
 | unit_price_cents | int64 | Yes | 0 to 10^12, and quantity × unit_price_cents at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
 | discount_bp | int64 | Yes | 0 to 10000 | Per-line percentage in basis points (12.5 % = 1250) |
 | line_total_cents | int64 | Yes | - | `(gross × (10000 − discount_bp) + 5000) / 10000`: round half up on minor units |
+| tax_rate_bp | int64 | Yes | 0 to 10000, column `DEFAULT 0`; writable only while the quote is a draft | Per-line tax rate in basis points (21 % = 2100); 0 when not sent (#324) |
+| tax_cents | int64 | Yes | column `DEFAULT 0`; computed, read-only | `(line_total_cents × tax_rate_bp + 5000) / 10000`: round half up on minor units (#324) |
 
 A quote holds at most 100 lines, and the gross of a line is checked against the bound before the
-discount arithmetic, so nothing the server multiplies can leave an int64.
+discount arithmetic, so nothing the server multiplies can leave an int64. The 10^12 cap of a quote
+is on its gross total (`gross_total_cents`), not on the net total; a write that would take it over
+is refused and rolled back whole.
+
+**Tax (#324).** Tax is rounded per line, then summed: `quotes.tax_cents` is Σ of the stored line
+`tax_cents`, so it can differ by a few cents from tax computed once on a per-rate total (two lines of
+0.01 at 50 % give 0.02, not 0.01). There are no tax categories, reverse charge or per-country rules,
+and `subtotal_cents` and `discount_cents` stay net. The four tax columns are `NOT NULL DEFAULT 0`, a
+deliberate exception to the no-default rule of the other totals: SQLite cannot add a `NOT NULL`
+column without a default to a populated table, and the default is the zero value itself, so an
+explicit 0 still persists. MySQL/MariaDB get them from `migrations/20261117120000_add_quote_tax`
+(each column only when missing, then one `UPDATE` setting `gross_total_cents = total_cents +
+tax_cents` where it differs); SQLite from `models.MigrateDatabase`, whose `backfillQuoteGrossTotals`
+step does the same backfill on every driver, soft-deleted quotes included, by primary key in chunks
+of 500 and only for the rows that differ, without touching `updated_at`. Existing lines read a rate
+and a tax of 0, existing quotes a tax of 0 and a gross total equal to their total.
 
 ### Quote Status Change
 

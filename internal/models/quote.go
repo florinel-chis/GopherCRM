@@ -102,9 +102,21 @@ type Quote struct {
 	// subtotal_cents minus total_cents: the money taken off by the per-line
 	// discounts, in minor units. Computed; read-only.
 	DiscountCents int64 `gorm:"not null" json:"discount_cents" readonly:"true" example:"30000"`
-	// Sum of the lines' line_total_cents, in minor units, at most
-	// 1000000000000 (10^12). Computed; read-only.
+	// Net total: the sum of the lines' line_total_cents, in minor units,
+	// after the per-line discounts and before tax. Computed; read-only.
 	TotalCents int64 `gorm:"not null" json:"total_cents" readonly:"true" example:"210000"`
+
+	// The two tax totals carry DEFAULT 0 on purpose (#324): SQLite cannot add
+	// a NOT NULL column without a default to a populated table. GORM leaves a
+	// zero field out of an INSERT and the database writes the same 0.
+
+	// Sum of the lines' tax_cents, in minor units. Computed by the server on
+	// every line change; read-only. 0 on quotes written before line tax
+	// existed.
+	TaxCents int64 `gorm:"not null;default:0" json:"tax_cents" readonly:"true" example:"44100"`
+	// Gross total: total_cents plus tax_cents, in minor units, at most
+	// 1000000000000 (10^12). Computed; read-only.
+	GrossTotalCents int64 `gorm:"not null;default:0" json:"gross_total_cents" readonly:"true" example:"254100"`
 
 	// ValidUntil is a calendar date, stored as local midnight in a DATE
 	// column and exposed as YYYY-MM-DD, the deal date convention. Acceptance
@@ -279,8 +291,9 @@ type QuoteLine struct {
 	Product *Product `gorm:"foreignKey:ProductID" json:"product,omitempty"`
 
 	// Position is the 1-based display order, assigned max+1 on insert. No
-	// column default, like every bound column below: an explicit 0 would be
-	// replaced on create.
+	// column default, like every bound column below except the two tax
+	// columns (#324), whose default is the zero value itself: an explicit 0
+	// would otherwise be replaced on create.
 
 	// 1-based display order. A new line gets the highest position plus one;
 	// positions are not renumbered and need not be unique.
@@ -299,18 +312,25 @@ type QuoteLine struct {
 	// quantity x unit_price_cents x (10000 - discount_bp) / 10000, rounded half
 	// up to a whole minor unit. Computed by the server; read-only.
 	LineTotalCents int64 `gorm:"not null" json:"line_total_cents" readonly:"true" example:"210000"`
+	// Per-line tax rate in basis points, 0 to 10000 (2100 = 21 percent); 0
+	// when not set. Editable only while the quote is a draft.
+	TaxRateBP int64 `gorm:"column:tax_rate_bp;not null;default:0" json:"tax_rate_bp" minimum:"0" maximum:"10000" example:"2100"`
+	// line_total_cents x tax_rate_bp / 10000, rounded half up to a whole
+	// minor unit. Computed by the server; read-only.
+	TaxCents int64 `gorm:"not null;default:0" json:"tax_cents" readonly:"true" example:"44100"`
 }
 
 // QuoteLineInput is a line to add: the product it is priced from, the
-// quantity, the per-line discount in basis points and the optional overrides
-// of the copied price and description. It is the service's input type, kept
-// here so the shared mocks can name it.
+// quantity, the per-line discount and tax rate in basis points and the
+// optional overrides of the copied price and description. It is the service's
+// input type, kept here so the shared mocks can name it.
 type QuoteLineInput struct {
 	ProductID      uint
 	Quantity       int64
 	DiscountBP     int64
 	UnitPriceCents *int64
 	Description    *string
+	TaxRateBP      int64
 }
 
 // QuoteLinePatch is a partial edit of a line: every nil field keeps the
@@ -321,6 +341,7 @@ type QuoteLinePatch struct {
 	UnitPriceCents *int64
 	Description    *string
 	Position       *int64
+	TaxRateBP      *int64
 }
 
 // QuoteStatusChange is one row of a quote's status history: written in the
@@ -383,15 +404,17 @@ const (
 )
 
 // Bounds of the quote arithmetic. QuoteAmountCentsMax is the deal bound: a
-// line's gross (quantity × unit price) and a quote's total may not exceed it,
-// so nothing the service multiplies by a discount can leave an int64 (10^12 ×
-// 10^4 is 10^16, far below 2^63). The gross is checked before any discount
-// arithmetic for exactly that reason: a maximal quantity times a maximal unit
-// price is 10^18, still inside an int64, but times a discount it would not be.
+// line's gross (quantity × unit price) and a quote's gross total (net total
+// plus tax, #324) may not exceed it, so nothing the service multiplies by a
+// discount or a tax rate can leave an int64 (10^12 × 10^4 is 10^16, far below
+// 2^63). The gross is checked before any discount arithmetic for exactly that
+// reason: a maximal quantity times a maximal unit price is 10^18, still inside
+// an int64, but times a discount it would not be.
 const (
 	QuoteAmountCentsMax  int64 = DealAmountCentsMax
 	QuoteLineQuantityMax int64 = 1_000_000
 	QuoteDiscountBPMax   int64 = 10000
+	QuoteTaxRateBPMax    int64 = 10000
 	QuoteLinesMax              = 100
 )
 
@@ -417,4 +440,35 @@ func ComputeQuoteTotals(lines []QuoteLine) (subtotal, discount, total int64) {
 		total += line.LineTotalCents
 	}
 	return subtotal, subtotal - total, total
+}
+
+// ComputeQuoteLineTax returns a line's tax: line_total_cents × tax_rate_bp /
+// 10000, rounded half up on minor units. The line total is at most
+// QuoteAmountCentsMax and the rate at most QuoteTaxRateBPMax, so the product
+// stays below 10^16.
+func ComputeQuoteLineTax(lineTotalCents, taxRateBP int64) int64 {
+	return (lineTotalCents*taxRateBP + QuoteDiscountBPScale/2) / QuoteDiscountBPScale
+}
+
+// QuoteTotals are the five computed totals of a quote, in minor units.
+type QuoteTotals struct {
+	Subtotal int64
+	Discount int64
+	Total    int64
+	Tax      int64
+	Gross    int64
+}
+
+// SumQuoteTotals sums the lines: subtotal, discount and total exactly as
+// ComputeQuoteTotals, tax as Σ of the stored line tax_cents (each line rounded
+// on its own, so two lines of 0.01 at 50 percent give 0.02), and gross as
+// total + tax.
+func SumQuoteTotals(lines []QuoteLine) QuoteTotals {
+	var totals QuoteTotals
+	totals.Subtotal, totals.Discount, totals.Total = ComputeQuoteTotals(lines)
+	for _, line := range lines {
+		totals.Tax += line.TaxCents
+	}
+	totals.Gross = totals.Total + totals.Tax
+	return totals
 }

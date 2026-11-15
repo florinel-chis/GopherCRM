@@ -84,9 +84,9 @@ func (_m *QuoteRepository) UpdateDraft(quote *models.Quote) (int64, error) {
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
-// UpdateTotals provides a mock function with given fields: id, subtotal, discount, total
-func (_m *QuoteRepository) UpdateTotals(id uint, subtotal int64, discount int64, total int64) (int64, error) {
-	ret := _m.Called(id, subtotal, discount, total)
+// UpdateTotals provides a mock function with given fields: id, totals
+func (_m *QuoteRepository) UpdateTotals(id uint, totals models.QuoteTotals) (int64, error) {
+	ret := _m.Called(id, totals)
 
 	if len(ret) == 0 {
 		panic("no return value specified for UpdateTotals")

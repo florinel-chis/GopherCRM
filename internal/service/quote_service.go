@@ -144,6 +144,7 @@ func (s *quoteService) Create(quote *models.Quote, actorID uint, role models.Use
 	// A new quote is a draft with nothing on it, whatever the caller set.
 	quote.Status = models.QuoteStatusDraft
 	quote.SubtotalCents, quote.DiscountCents, quote.TotalCents = 0, 0, 0
+	quote.TaxCents, quote.GrossTotalCents = 0, 0
 	quote.SentAt, quote.ClosedAt, quote.LastEmailedAt = nil, nil, nil
 	quote.Lines = nil
 
@@ -335,7 +336,7 @@ func (s *quoteService) AddLine(quoteID uint, input models.QuoteLineInput) (*mode
 	if input.ProductID == 0 {
 		return nil, fmt.Errorf("product_id is required: %w", apperrors.ErrValidation)
 	}
-	if err := validateLineBounds(&input.Quantity, &input.DiscountBP, input.UnitPriceCents, input.Description); err != nil {
+	if err := validateLineBounds(&input.Quantity, &input.DiscountBP, input.UnitPriceCents, input.Description, &input.TaxRateBP); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Quote line rejected")
 		return nil, err
 	}
@@ -373,6 +374,7 @@ func (s *quoteService) AddLine(quoteID uint, input models.QuoteLineInput) (*mode
 			Quantity:       input.Quantity,
 			UnitPriceCents: product.UnitPriceCents,
 			DiscountBP:     input.DiscountBP,
+			TaxRateBP:      input.TaxRateBP,
 		}
 		if input.UnitPriceCents != nil {
 			line.UnitPriceCents = *input.UnitPriceCents
@@ -410,7 +412,7 @@ func (s *quoteService) UpdateLine(quoteID, lineID uint, patch models.QuoteLinePa
 		"line_id":  lineID,
 	}), "QuoteService", "UpdateLine")
 
-	if err := validateLineBounds(patch.Quantity, patch.DiscountBP, patch.UnitPriceCents, patch.Description); err != nil {
+	if err := validateLineBounds(patch.Quantity, patch.DiscountBP, patch.UnitPriceCents, patch.Description, patch.TaxRateBP); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Quote line rejected")
 		return nil, err
 	}
@@ -443,6 +445,9 @@ func (s *quoteService) UpdateLine(quoteID, lineID uint, patch models.QuoteLinePa
 		}
 		if patch.Position != nil {
 			line.Position = *patch.Position
+		}
+		if patch.TaxRateBP != nil {
+			line.TaxRateBP = *patch.TaxRateBP
 		}
 		if err := computeLine(line); err != nil {
 			return err
@@ -597,18 +602,20 @@ func lockDraft(repo repository.QuoteRepository, id uint) (*models.Quote, error) 
 }
 
 // recomputeTotals is the last step of every line write: the lines are re-read
-// in the transaction, summed, bounded, and written WHERE the status is still
-// draft. A total over the cap or a lost draft rolls the whole write back.
+// in the transaction, summed (net, tax and gross), bounded, and written WHERE
+// the status is still draft. A gross total over the cap or a lost draft rolls
+// the whole write back. The cap is on the gross total (#324); the net total is
+// never larger, because tax is never negative.
 func recomputeTotals(repo repository.QuoteRepository, quoteID uint) error {
 	lines, err := repo.ListLines(quoteID)
 	if err != nil {
 		return err
 	}
-	subtotal, discount, total := models.ComputeQuoteTotals(lines)
-	if total > models.QuoteAmountCentsMax {
-		return fmt.Errorf("quote total would exceed %d: %w", models.QuoteAmountCentsMax, apperrors.ErrValidation)
+	totals := models.SumQuoteTotals(lines)
+	if totals.Gross > models.QuoteAmountCentsMax {
+		return fmt.Errorf("quote gross total would exceed %d: %w", models.QuoteAmountCentsMax, apperrors.ErrValidation)
 	}
-	rows, err := repo.UpdateTotals(quoteID, subtotal, discount, total)
+	rows, err := repo.UpdateTotals(quoteID, totals)
 	if err != nil {
 		return err
 	}
@@ -620,7 +627,7 @@ func recomputeTotals(repo repository.QuoteRepository, quoteID uint) error {
 
 // validateLineBounds checks the bounds of the values a line request carries
 // (nil means "not sent"). Everything here is a validation failure.
-func validateLineBounds(quantity, discountBP, unitPriceCents *int64, description *string) error {
+func validateLineBounds(quantity, discountBP, unitPriceCents *int64, description *string, taxRateBP *int64) error {
 	if quantity != nil && (*quantity < 1 || *quantity > models.QuoteLineQuantityMax) {
 		return fmt.Errorf("quantity must be between 1 and %d: %w", models.QuoteLineQuantityMax, apperrors.ErrValidation)
 	}
@@ -633,15 +640,18 @@ func validateLineBounds(quantity, discountBP, unitPriceCents *int64, description
 	if description != nil && len([]rune(strings.TrimSpace(*description))) > models.QuoteLineDescriptionMaxLength {
 		return fmt.Errorf("description is longer than %d characters: %w", models.QuoteLineDescriptionMaxLength, apperrors.ErrValidation)
 	}
+	if taxRateBP != nil && (*taxRateBP < 0 || *taxRateBP > models.QuoteTaxRateBPMax) {
+		return fmt.Errorf("tax_rate_bp must be between 0 and %d: %w", models.QuoteTaxRateBPMax, apperrors.ErrValidation)
+	}
 	return nil
 }
 
-// computeLine re-checks the bounds on the assembled line and fills its total.
-// The gross is checked against the cap BEFORE any discount arithmetic: a
-// maximal quantity times a maximal price is 10^18 and still an int64, but
-// multiplied by a basis-point factor it would not be.
+// computeLine re-checks the bounds on the assembled line and fills its total
+// and then its tax. The gross is checked against the cap BEFORE any discount
+// arithmetic: a maximal quantity times a maximal price is 10^18 and still an
+// int64, but multiplied by a basis-point factor it would not be.
 func computeLine(line *models.QuoteLine) error {
-	if err := validateLineBounds(&line.Quantity, &line.DiscountBP, &line.UnitPriceCents, &line.Description); err != nil {
+	if err := validateLineBounds(&line.Quantity, &line.DiscountBP, &line.UnitPriceCents, &line.Description, &line.TaxRateBP); err != nil {
 		return err
 	}
 	if line.Position < 1 {
@@ -652,6 +662,7 @@ func computeLine(line *models.QuoteLine) error {
 		return fmt.Errorf("quantity × unit_price_cents must be at most %d: %w", models.QuoteAmountCentsMax, apperrors.ErrValidation)
 	}
 	_, line.LineTotalCents = models.ComputeQuoteLineTotal(line.Quantity, line.UnitPriceCents, line.DiscountBP)
+	line.TaxCents = models.ComputeQuoteLineTax(line.LineTotalCents, line.TaxRateBP)
 	return nil
 }
 

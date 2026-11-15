@@ -283,6 +283,9 @@ func (e *quoteTestEnv) assertTotalsMatchLines(id uint) *models.Quote {
 	assert.Equal(e.t, subtotal, quote.SubtotalCents, "subtotal of quote %d", id)
 	assert.Equal(e.t, discount, quote.DiscountCents, "discount of quote %d", id)
 	assert.Equal(e.t, total, quote.TotalCents, "total of quote %d", id)
+	totals := models.SumQuoteTotals(lines)
+	assert.Equal(e.t, totals.Tax, quote.TaxCents, "tax of quote %d", id)
+	assert.Equal(e.t, totals.Gross, quote.GrossTotalCents, "gross total of quote %d", id)
 	if quote.Status == models.QuoteStatusSent {
 		assert.NotEmpty(e.t, lines, "no committed sent quote may have zero lines")
 	}
@@ -363,6 +366,8 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		})
 	}
 
+	// Every line here is untaxed, so the gross total that the cap bounds
+	// (#324) equals the net total; the taxed cases are in quote_tax_test.go.
 	t.Run("the quote total may not exceed the bound", func(t *testing.T) {
 		capped := env.newQuote(models.QuoteStatusDraft, 0)
 		// One line of the bound less 500: fine on its own.
@@ -396,7 +401,7 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 			lines = append(lines, models.QuoteLine{QuoteID: full.ID, ProductID: env.product.ID, Position: int64(i + 1), Description: "Widget", Quantity: 1, UnitPriceCents: 100, LineTotalCents: total})
 		}
 		require.NoError(t, db.Create(&lines).Error)
-		rows, err := env.repo.UpdateTotals(full.ID, 100*100, 0, 100*100)
+		rows, err := env.repo.UpdateTotals(full.ID, models.QuoteTotals{Subtotal: 100 * 100, Discount: 0, Total: 100 * 100, Tax: 0, Gross: 100 * 100})
 		require.NoError(t, err)
 		require.EqualValues(t, 1, rows)
 		fullBefore := env.snapshot(full.ID)

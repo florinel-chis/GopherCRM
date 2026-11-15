@@ -61,9 +61,41 @@ func MigrateDatabase() error {
 		if err := ensureFormTicketKeyCollation(tx); err != nil {
 			return err
 		}
-		return normalizeCompanyDomains(tx)
+		if err := normalizeCompanyDomains(tx); err != nil {
+			return err
+		}
+		return backfillQuoteGrossTotals(tx)
 	})
 }
+
+// backfillQuoteGrossTotals sets quotes.gross_total_cents to total_cents +
+// tax_cents wherever it differs (#324), soft-deleted rows included. AutoMigrate
+// adds the column with DEFAULT 0, so every quote written before line tax
+// existed would otherwise read a gross total of 0; SQLite installs never run
+// the SQL migration that backfills it on MySQL/MariaDB. Like
+// normalizeCompanyDomains it discovers the rows with a plain non-locking
+// SELECT and updates only those ids, by primary key in chunks, so a backfilled
+// database takes no write and no row lock on startup. updated_at is not
+// touched: the quote did not change.
+func backfillQuoteGrossTotals(tx *gorm.DB) error {
+	var ids []uint
+	if err := tx.Raw("SELECT id FROM quotes WHERE gross_total_cents <> total_cents + tax_cents ORDER BY id").Scan(&ids).Error; err != nil {
+		return fmt.Errorf("failed to find quote gross totals to backfill: %w", err)
+	}
+	for start := 0; start < len(ids); start += quoteGrossBackfillChunk {
+		end := start + quoteGrossBackfillChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err := tx.Exec("UPDATE quotes SET gross_total_cents = total_cents + tax_cents WHERE id IN ?", ids[start:end]).Error; err != nil {
+			return fmt.Errorf("failed to backfill quote gross totals: %w", err)
+		}
+	}
+	return nil
+}
+
+// quoteGrossBackfillChunk bounds how many rows one backfill UPDATE writes.
+const quoteGrossBackfillChunk = 500
 
 // normalizeCompanyDomains lower-cases every stored company domain, soft-deleted
 // rows included. The duplicate-domain check (companyRepository.ExistsByDomain)

@@ -252,7 +252,9 @@ renewals are not modelled.
 
 ### Gaps
 
-- Quote limits, which apply to every quote recipe: no tax lines; integer quantities (1 to
+- Quote limits, which apply to every quote recipe: one tax rate per line only (no tax categories,
+  reverse charge or per-country rules; the API carries it since #324, the web UI does not show it
+  yet); integer quantities (1 to
   1,000,000, `internal/models/quote.go:203,280`); staff record acceptance, and there is no client
   accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:92-95`); no PDF, only browser print
@@ -404,9 +406,11 @@ A supplier that answers requests for quotation from business customers.
   allow an override and a percentage discount per line, and pipeline totals per currency
   (`internal/models/product.go`, `internal/models/quote.go`, `internal/models/deal_pipeline.go`).
 - **Gaps:**
-  - No VAT or tax lines (`docs/FEATURES.md`, 4d.3), which most EU business-to-business quotes need,
-    and integer quantities only (`internal/models/quote.go:203`). Both are part of #233,
-    with the other quote limits from recipe 2.
+  - VAT is one tax rate per line (`tax_rate_bp`, with the line tax and the quote's tax and gross
+    totals computed by the server, #324; `docs/FEATURES.md`, 4d.3): there are no tax categories,
+    reverse charge or per-country rules, and the web UI does not show tax yet. Quantities are
+    integers only (`internal/models/quote.go`). Both remaining limits are part of #233, with the
+    other quote limits from recipe 2.
   - Product SKUs stay indexed but not unique on purpose (`internal/models/product.go`), so do not
     key an ERP sync on them. Map the ERP's identifiers instead: `POST /products/{id}/external-ids`
     stores an exact, case-sensitive `(source, scope, external_id)` and

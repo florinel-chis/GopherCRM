@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-line tax rate and tax/gross quote totals (#324, backend).** A quote line takes
+  `tax_rate_bp` (0–10000 basis points, 2100 = 21 %, default 0, writable only while the quote is a
+  draft) on `POST /quotes/{id}/lines` and `PUT /quotes/{id}/lines/{lineId}` (absent keeps the stored
+  rate, 0 clears it; out of range is 400 `VALIDATION_ERROR`). The server stores the line's
+  `tax_cents` (`(line_total_cents × tax_rate_bp + 5000) / 10000`, rounded half up per line) and the
+  quote's `tax_cents` (Σ line tax) and `gross_total_cents` (`total_cents + tax_cents`), recomputed in
+  the same transaction as the other totals; every quote response carries the new fields and
+  `total_cents` keeps its meaning (net after discount). The 10^12 cap now applies to the gross
+  total, and a refused write changes nothing. The plaintext quote email shows each line's tax and
+  the net, tax and gross totals (`Total:` is now `Net total:`). Schema:
+  `migrations/20261117120000_add_quote_tax` (MySQL/MariaDB, each column only when missing, plus a
+  gross backfill) and AutoMigrate with an idempotent `MigrateDatabase` backfill on SQLite; existing
+  quotes read tax 0 and gross = total. No UI change yet; no tax categories, reverse charge or
+  per-country rules.
 - **One lock order for erasure, conversion, authentication and role writes (#323).**
   `docs/CONCURRENCY.md` records, for each of 13 flows, the rows locked, the order, the transaction
   helper, the retry and whether the order is implemented, plus the three lock chains, the
