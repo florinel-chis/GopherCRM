@@ -140,6 +140,7 @@ const formSchema = z
     content_url: z.string(),
     captcha_enabled: z.boolean(),
     create_lead: z.boolean(),
+    create_ticket: z.boolean(),
     default_owner_id: z.number(),
     allowed_domains: z.array(z.string()),
   })
@@ -183,6 +184,24 @@ const formSchema = z
         code: z.ZodIssueCode.custom,
         path: ['default_owner_id'],
         message: 'Choose the owner for the leads this form creates',
+      });
+    }
+
+    // The server's ticket rules: a ticket form creates no lead and only opens a
+    // ticket for a confirmed address.
+    if (values.create_ticket && values.create_lead) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['create_ticket'],
+        message: 'A form cannot both create leads and create tickets',
+      });
+    }
+
+    if (values.create_ticket && !values.double_opt_in) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['double_opt_in'],
+        message: 'A form that creates tickets needs double opt-in',
       });
     }
 
@@ -241,6 +260,7 @@ const emptyForm = (): FormBuilderValues => ({
   content_url: '',
   captcha_enabled: false,
   create_lead: true,
+  create_ticket: false,
   default_owner_id: 0,
   allowed_domains: [],
 });
@@ -271,7 +291,8 @@ const toFormValues = (form: Form): FormBuilderValues => ({
   follow_up_body: form.follow_up_body ?? '',
   content_url: form.content_url ?? '',
   captcha_enabled: Boolean(form.captcha_enabled),
-  create_lead: form.create_lead ?? true,
+  create_lead: form.create_lead ?? !form.create_ticket,
+  create_ticket: Boolean(form.create_ticket),
   default_owner_id: form.default_owner_id ?? 0,
   allowed_domains: form.allowed_domains ?? [],
 });
@@ -309,9 +330,26 @@ const toPayload = (values: FormBuilderValues): CreateFormData => ({
   content_url: values.content_url.trim(),
   captcha_enabled: values.captcha_enabled,
   create_lead: values.create_lead,
+  // Always sent: PUT replaces the whole definition and an omitted flag is
+  // stored false, which would silently turn ticket intake off.
+  create_ticket: values.create_ticket,
   default_owner_id: values.create_lead ? values.default_owner_id : 0,
   allowed_domains: values.allowed_domains.map((domain) => domain.trim().toLowerCase()),
 });
+
+// What a submission creates. The form stores two flags; the builder offers one
+// choice so the excluded combination cannot be picked.
+type SubmissionAction = 'lead' | 'ticket' | 'none';
+
+const toSubmissionAction = (createLead: boolean, createTicket: boolean): SubmissionAction => {
+  if (createTicket) {
+    return 'ticket';
+  }
+  return createLead ? 'lead' : 'none';
+};
+
+const isSubmissionAction = (value: string): value is SubmissionAction =>
+  value === 'lead' || value === 'ticket' || value === 'none';
 
 // Reads the message of an issue raised against a whole array rather than one of
 // its entries. react-hook-form parks it on `root` once the array has entries and
@@ -593,7 +631,7 @@ export const Component: React.FC = () => {
     resolver: zodResolver(formSchema),
     defaultValues: emptyForm(),
   });
-  const { control, handleSubmit, reset, setValue, watch, formState } = methods;
+  const { control, handleSubmit, reset, setValue, watch, trigger, formState } = methods;
   const fieldArray = useFieldArray({ control, name: 'fields' });
 
   const { data: form, isLoading } = useQuery({
@@ -658,6 +696,22 @@ export const Component: React.FC = () => {
     createMutation.mutate(payload);
   };
 
+  // One choice drives both flags. A ticket form needs double opt-in, so it is
+  // switched on here; no choice ever switches it off.
+  const chooseSubmissionAction = (action: SubmissionAction) => {
+    const options = { shouldDirty: true };
+    setValue('create_lead', action === 'lead', options);
+    setValue('create_ticket', action === 'ticket', options);
+    if (action === 'ticket') {
+      setValue('double_opt_in', true, options);
+    }
+    // After a failed save, re-check the rules the choice affects so stale
+    // errors clear (or new ones show) without another click.
+    if (formState.isSubmitted) {
+      void trigger(['create_ticket', 'double_opt_in', 'default_owner_id']);
+    }
+  };
+
   const addField = (type: FormFieldType) => {
     fieldArray.append(newField(type));
     setTypeMenuAnchor(null);
@@ -670,6 +724,8 @@ export const Component: React.FC = () => {
   const submitAction = watch('submit_action');
   const doubleOptIn = watch('double_opt_in');
   const createLead = watch('create_lead');
+  const createTicket = watch('create_ticket');
+  const submissionAction = toSubmissionAction(createLead, createTicket);
   const notifyEmails = watch('notify_emails') || [];
   const allowedDomains = watch('allowed_domains') || [];
   // A cross-field issue on an array lands on the array itself — as `root` once
@@ -882,7 +938,7 @@ export const Component: React.FC = () => {
             <Stack spacing={3} mt={1}>
               <FormSwitch
                 name="double_opt_in"
-                label="Require email confirmation before the lead is created"
+                label="Require email confirmation before a lead or ticket is created"
                 disabled={readOnly}
               />
               <Box sx={{ display: doubleOptIn ? 'block' : 'none' }}>
@@ -961,26 +1017,74 @@ export const Component: React.FC = () => {
 
           <Paper sx={{ p: 3, mb: 3 }}>
             <Typography variant="h6" gutterBottom>
-              Lead capture
+              Submission action
             </Typography>
             <Stack spacing={3} mt={1}>
-              <FormSwitch
-                name="create_lead"
-                label="Create a lead from every submission"
-                disabled={readOnly}
+              {/* Bound to create_ticket so the exclusivity error lands here; the
+                  choice itself sets create_lead, create_ticket and, for a
+                  ticket, double_opt_in. */}
+              <Controller
+                name="create_ticket"
+                control={control}
+                render={({ fieldState }) => (
+                  <Box>
+                    <RadioGroup
+                      aria-label="Submission action"
+                      value={submissionAction}
+                      onChange={(event) => {
+                        if (isSubmissionAction(event.target.value)) {
+                          chooseSubmissionAction(event.target.value);
+                        }
+                      }}
+                    >
+                      <FormControlLabel
+                        value="lead"
+                        control={<Radio disabled={readOnly} />}
+                        label="Create a lead"
+                      />
+                      <FormControlLabel
+                        value="ticket"
+                        control={<Radio disabled={readOnly} />}
+                        label="Create a support ticket"
+                      />
+                      <FormControlLabel
+                        value="none"
+                        control={<Radio disabled={readOnly} />}
+                        label="Create nothing"
+                      />
+                    </RadioGroup>
+                    {fieldState.error && (
+                      <FormHelperText error>{fieldState.error.message}</FormHelperText>
+                    )}
+                  </Box>
+                )}
               />
-              <Box sx={{ display: createLead ? 'block' : 'none' }}>
-                <FormSelect
-                  name="default_owner_id"
-                  label="Lead owner"
-                  options={ownerOptions}
-                  disabled={readOnly}
-                />
+              {/* Hidden rather than unmounted, like the other conditional
+                  inputs: the owner keeps its value while another action is
+                  chosen and comes back with the lead action. */}
+              <Box
+                data-testid="lead-action-settings"
+                style={{ display: createLead ? 'block' : 'none' }}
+              >
+                <Stack spacing={3}>
+                  <FormSelect
+                    name="default_owner_id"
+                    label="Lead owner"
+                    options={ownerOptions}
+                    disabled={readOnly}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    A submission from a known email address is appended to the existing lead
+                    instead of creating a second one.
+                  </Typography>
+                </Stack>
               </Box>
-              <Typography variant="body2" color="text.secondary">
-                A submission from a known email address is appended to the existing lead instead of
-                creating a second one.
-              </Typography>
+              {createTicket && (
+                <Typography variant="body2" color="text.secondary">
+                  A confirmed submission opens a ticket for the live customer with that email
+                  address; otherwise no ticket is opened.
+                </Typography>
+              )}
             </Stack>
           </Paper>
 

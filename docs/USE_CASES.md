@@ -97,7 +97,10 @@ and turns some into deals and quotes.
    emails, a default lead owner, allowed origins, double opt-in, and a follow-up mail that can carry
    a content link (`Form`, `internal/models/form.go:172-276`; screens in `gocrm-ui/src/pages/forms/`).
    The default owner must be an active admin or sales user (`checkLeadOwner`,
-   `internal/service/form_service.go:520`).
+   `internal/service/form_service.go:520`). Under **Submission action** the admin chooses what a
+   submission creates: a lead (this recipe), a support ticket for the live customer with the
+   submitted address (#213, #335), or nothing. A ticket form requires double opt-in and has no lead
+   owner; the builder switches double opt-in on and refuses to save without it.
 2. The site embeds the snippet served from `GET /api/v1/forms/public/embed.js`
    (`internal/handler/form_public_routes.go:26`; usage comment at the top of
    `internal/handler/assets/form_embed.js`). The alternatives are the hosted page at

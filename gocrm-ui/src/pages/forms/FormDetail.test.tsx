@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@/test/test-utils';
 import { Component as FormDetail } from './FormDetail';
-import { formsApi } from '@/api/endpoints/forms';
+import { formsApi, type Form } from '@/api/endpoints/forms';
 import { createMockUser } from '@/test/factories';
 
 const mockUseAuth = vi.fn();
@@ -22,6 +22,34 @@ vi.mock('@/api/endpoints/forms', () => ({
   formsApi: { get: vi.fn(), listSubmissions: vi.fn(), delete: vi.fn() },
 }));
 
+const storedForm = (overrides?: Partial<Form>): Form => ({
+  id: 1,
+  name: 'Contact us',
+  description: 'desc',
+  public_id: 'pub123',
+  status: 'published',
+  fields: [{ name: 'email', label: 'Email', type: 'email', required: true }],
+  submit_action: 'message',
+  thank_you_message: '',
+  redirect_url: '',
+  consent_text: '',
+  notify_emails: ['sales@example.com'],
+  double_opt_in: true,
+  confirmation_subject: '',
+  confirmation_body: '',
+  follow_up_subject: '',
+  follow_up_body: '',
+  content_url: '',
+  captcha_enabled: false,
+  create_lead: true,
+  create_ticket: false,
+  default_owner_id: 1,
+  allowed_domains: [],
+  created_at: '2026-08-01T10:00:00Z',
+  updated_at: '2026-08-01T10:00:00Z',
+  ...overrides,
+});
+
 describe('FormDetail', () => {
   afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
@@ -35,31 +63,7 @@ describe('FormDetail', () => {
       logout: vi.fn(),
       refreshUser: vi.fn(),
     });
-    vi.mocked(formsApi.get).mockResolvedValue({
-      id: 1,
-      name: 'Contact us',
-      description: 'desc',
-      public_id: 'pub123',
-      status: 'published',
-      fields: [{ name: 'email', label: 'Email', type: 'email', required: true }],
-      submit_action: 'message',
-      thank_you_message: '',
-      redirect_url: '',
-      consent_text: '',
-      notify_emails: ['sales@example.com'],
-      double_opt_in: true,
-      confirmation_subject: '',
-      confirmation_body: '',
-      follow_up_subject: '',
-      follow_up_body: '',
-      content_url: '',
-      captcha_enabled: false,
-      create_lead: true,
-      default_owner_id: 1,
-      allowed_domains: [],
-      created_at: '2026-08-01T10:00:00Z',
-      updated_at: '2026-08-01T10:00:00Z',
-    });
+    vi.mocked(formsApi.get).mockResolvedValue(storedForm());
     vi.mocked(formsApi.listSubmissions).mockResolvedValue({
       submissions: [
         {
@@ -108,5 +112,23 @@ describe('FormDetail', () => {
     await waitFor(() => expect(screen.getByText('Submission #5')).toBeInTheDocument());
     expect(screen.getByText('hi')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open lead #9/i })).toBeInTheDocument();
+  });
+
+  it('shows that a ticket form creates tickets', async () => {
+    vi.mocked(formsApi.get).mockResolvedValue(
+      storedForm({ create_lead: false, create_ticket: true, default_owner_id: 0 })
+    );
+
+    render(<FormDetail />);
+
+    expect(await screen.findByText('Creates tickets: yes')).toBeInTheDocument();
+    expect(screen.getByText('Creates leads: no')).toBeInTheDocument();
+  });
+
+  it('shows that a lead form creates no tickets', async () => {
+    render(<FormDetail />);
+
+    expect(await screen.findByText('Creates tickets: no')).toBeInTheDocument();
+    expect(screen.getByText('Creates leads: yes')).toBeInTheDocument();
   });
 });
