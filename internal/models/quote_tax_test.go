@@ -206,9 +206,12 @@ func TestQuoteTaxColumnsSchemaSQLite(t *testing.T) {
 	// A non-zero value is written on create as well.
 	taxed := QuoteLine{QuoteID: quote.ID, ProductID: 1, Position: 2, Description: "y", Quantity: 1, UnitPriceCents: 1000, LineTotalCents: 1000, TaxRateBP: 2100, TaxCents: 210}
 	require.NoError(t, db.Create(&taxed).Error)
-	require.NoError(t, db.First(&readLine, taxed.ID).Error)
-	assert.Equal(t, int64(2100), readLine.TaxRateBP)
-	assert.Equal(t, int64(210), readLine.TaxCents)
+	// A fresh destination: GORM adds a populated struct's primary key to the
+	// WHERE clause, so re-using readLine would query two ids at once.
+	var readTaxed QuoteLine
+	require.NoError(t, db.First(&readTaxed, taxed.ID).Error)
+	assert.Equal(t, int64(2100), readTaxed.TaxRateBP)
+	assert.Equal(t, int64(210), readTaxed.TaxCents)
 }
 
 // quoteUpdateCapture records every statement that updates the quotes table.
