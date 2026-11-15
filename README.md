@@ -61,6 +61,7 @@ MySQL 8 and MariaDB 10.11, and 5 CI workflows (measured on `4dfe404`; commands i
   server (MySQL or MariaDB) for the release-tarball deploy path.
 - [docs/USE_CASES.md](docs/USE_CASES.md) — worked recipes for concrete deployments, with their gaps.
 - [docs/EXTENDING.md](docs/EXTENDING.md) — adding or removing entities, routes, migrations and modules.
+- [docs/CONCURRENCY.md](docs/CONCURRENCY.md) — lock order and retry rule for multi-table writes.
 
 Three things catch most first runs from source (`cp .env.example .env`, then `go run ./cmd` or
 `make run`):

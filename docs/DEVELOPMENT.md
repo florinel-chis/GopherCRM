@@ -293,7 +293,7 @@ the claim, the revocation and the successor) and the logout (owner, then the rev
 `token_version` increment, #236). `refresh_tokens.user_id` references `users` with a
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
-(error 1213). New session flows must follow the same order.
+(error 1213). New session flows must follow the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
 
 **Password change** (#116) — `ChangePassword(userID, current, new, refreshToken)` verifies the
 current password and hashes the new one before any transaction, then runs one transaction: locking
@@ -927,7 +927,7 @@ full profiles (bounded and full also on MariaDB 10.11), while `make verify-backe
 deletion share one lock order: **companies** (by primary key, `CompanyRepository.LockLive`:
 `SELECT id … FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite, `gorm.ErrRecordNotFound` for a
 missing or soft-deleted company; it takes no context and runs on the `WithTx(tx)` handle) →
-**leads** (id ascending) → **customers** → **deals**.
+**leads** (id ascending) → **customers** → **deals** (see [CONCURRENCY.md](CONCURRENCY.md)).
 
 - `CompanyService.Delete` keeps its plain pre-read (the 404 fast path), then in one transaction
   locks the company first, then runs `UnlinkLeads`, `UnlinkCustomers`, `UnlinkDeals` and the soft
