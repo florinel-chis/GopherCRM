@@ -197,11 +197,16 @@ export const createMockQuoteLine = (overrides?: Partial<QuoteLine>): QuoteLine =
   unit_price_cents: 1250,
   discount_bp: 0,
   line_total_cents: 2500,
+  tax_rate_bp: 0,
+  tax_cents: 0,
   created_at: '2026-10-26T08:00:00Z',
   updated_at: '2026-10-26T08:00:00Z',
   ...overrides,
 });
 
+// Without explicit tax values the fixture is an untaxed quote: tax_cents 0 and
+// gross_total_cents equal to total_cents (plus any tax_cents override). A test
+// that needs a server value which does not add up passes gross_total_cents.
 export const createMockQuote = (overrides?: Partial<Quote>): Quote => ({
   id: 42,
   number: 'Q-000042',
@@ -211,6 +216,8 @@ export const createMockQuote = (overrides?: Partial<Quote>): Quote => ({
   subtotal_cents: 0,
   discount_cents: 0,
   total_cents: 0,
+  tax_cents: 0,
+  gross_total_cents: (overrides?.total_cents ?? 0) + (overrides?.tax_cents ?? 0),
   valid_until: null,
   notes: '',
   sent_at: null,

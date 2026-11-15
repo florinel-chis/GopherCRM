@@ -243,7 +243,9 @@ export const canEmailQuote = (status: QuoteStatus): boolean =>
   status === 'sent' || status === 'accepted';
 
 // One priced row of a quote. The discount is a percentage in basis points
-// (12.5% = 1250) and line_total_cents is computed by the server.
+// (12.5% = 1250) and line_total_cents is computed by the server. The tax rate
+// is in basis points too (21% = 2100); tax_cents is the server's rounding of
+// line_total_cents × tax_rate_bp and is never recomputed in the UI.
 export interface QuoteLine {
   id: number;
   quote_id: number;
@@ -254,6 +256,8 @@ export interface QuoteLine {
   unit_price_cents: number;
   discount_bp: number;
   line_total_cents: number;
+  tax_rate_bp: number;
+  tax_cents: number;
   created_at: string;
   updated_at: string;
 }
@@ -289,7 +293,12 @@ export interface Quote {
   currency: string;
   subtotal_cents: number;
   discount_cents: number;
+  // Net total after discount, before tax.
   total_cents: number;
+  // The sum of the lines' tax_cents.
+  tax_cents: number;
+  // total_cents + tax_cents, as the server stored it.
+  gross_total_cents: number;
   // Calendar date as YYYY-MM-DD, or null.
   valid_until: string | null;
   notes: string;

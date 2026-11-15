@@ -65,18 +65,23 @@ export interface UpdateQuoteData {
 
 // The body of POST /quotes/:id/lines. The discount is in basis points (12.5%
 // is 1250); description and unit_price_cents default to the product's.
+// tax_rate_bp is the line's tax rate in basis points (0..10000, 21% is 2100);
+// the server treats an absent rate as 0.
 export interface QuoteLineData {
   product_id: number;
   quantity: number;
   discount_bp: number;
+  tax_rate_bp?: number;
   unit_price_cents?: number;
   description?: string;
 }
 
-// PUT /quotes/:id/lines/:lineId is a partial update with the same bounds.
+// PUT /quotes/:id/lines/:lineId is a partial update with the same bounds. An
+// absent tax_rate_bp keeps the stored rate; 0 clears it.
 export interface UpdateQuoteLineData {
   quantity?: number;
   discount_bp?: number;
+  tax_rate_bp?: number;
   unit_price_cents?: number;
   description?: string;
   position?: number;

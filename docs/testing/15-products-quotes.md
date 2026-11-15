@@ -6,8 +6,8 @@ the plaintext quote email, and the erasure and migration guarantees. The fronten
 (2026-10-28, issue #167) added the list and form pages, the quote detail with its status actions,
 the DealDetail section, the print page, the email dialog, the nav entries and the route guards;
 its cases are section 15.8. Product external-id mappings (2026-11, issue #239) are section 15.9.
-The per-line tax rate and the tax and gross totals (2026-11, issue #324, backend only) are section
-15.10.
+The per-line tax rate and the tax and gross totals (2026-11, issue #324) are section 15.10; their
+web UI (issue #325) is TC-PQ-037 in that section.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -374,8 +374,8 @@ asserts the core outcome, the rest is pinned in Vitest).
 The React slice over the API above. Every call goes through `gocrm-ui/src/api/endpoints/products.ts`
 and `quotes.ts` (pinned by `products.test.ts`, 8 tests, and `quotes.test.ts`, 15 tests). Money is
 rendered from the server's integer minor units with the quote's currency; a discount is typed as a
-percentage and sent in basis points (`quoteFormat.ts`, 3 tests); the subtotal, discount and total
-are always the server's. The one Playwright test, "admin creates a product, quotes a deal from its
+percentage and sent in basis points (`quoteFormat.ts`, 3 tests), and so is a tax rate since #325
+(TC-PQ-037); the subtotal, discount, net total, tax and gross total are always the server's. The one Playwright test, "admin creates a product, quotes a deal from its
 Quotes section, sends, prints and accepts the quote" in `gocrm-ui/e2e/tests/admin-quotes.spec.ts`,
 runs on SQLite, MySQL and MariaDB like the other admin suites.
 
@@ -415,8 +415,9 @@ runs on SQLite, MySQL and MariaDB like the other admin suites.
   company), deal title, total with currency and valid-until (`—` when absent), refetching with
   `status=sent` on filter and with `offset`/`limit` and the allowlisted `sort_by` on paging and
   sorting; a row opens `/quotes/{id}`; "New Quote" opens the create dialog. The detail shows the
-  header fields, the lines table (description, qty, unit price, discount %, line total) and the
-  server's subtotal, discount and total; "Add line" opens a dialog whose product picker offers
+  header fields, the lines table (description, qty, unit price, discount %, tax rate %, tax, line
+  total) and the server's subtotal, discount, net total, tax and gross total (#325, TC-PQ-037);
+  "Add line" opens a dialog whose product picker offers
   active products in the quote's currency (`GET /products?is_active=true&currency=`), takes a
   quantity and a discount in percent and posts `POST /quotes/{id}/lines` with `discount_bp` 1250
   for `12.5`; the line Edit dialog sends the partial update with the discount in basis points;
@@ -624,7 +625,7 @@ to a live product. Backend only: no UI. Sources: `internal/models/product_extern
 
 ## 15.10 Per-line tax and gross totals (#324)
 
-Backend only: no screen changes. A line carries `tax_rate_bp` (0 to 10000, 2100 = 21 %, default 0,
+The API cases TC-PQ-030 to TC-PQ-036 are backend; the screens follow in #325 (TC-PQ-037). A line carries `tax_rate_bp` (0 to 10000, 2100 = 21 %, default 0,
 writable only while the quote is a draft) and the stored, read-only `tax_cents` =
 `(line_total_cents × tax_rate_bp + 5000) / 10000`, round half up. The quote carries `tax_cents`
 (Σ line tax) and `gross_total_cents` (`total_cents + tax_cents`); `total_cents` stays the net total
@@ -739,3 +740,37 @@ after discount. Sources: `internal/models/quote.go` (`ComputeQuoteLineTax`, `Sum
   **400** `VALIDATION_ERROR`, **400** `VALIDATION_ERROR` and **409** `CONFLICT`, each with the
   `quotes` and `quote_lines` tables unchanged.
 - **Automation:** automated — `tests/quote_tax_test.go` `TestQuoteTaxAPISQLite`.
+
+### TC-PQ-037 — The web UI edits the tax rate and shows line tax and the net, tax and gross totals (#325)
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin (or a sales owner) logged in; a draft quote in EUR and a product at 12.50 EUR.
+- **Steps:**
+  1. "Add line": quantity 2, discount 10, Tax (%) 21; then add another line leaving Tax (%) at `0`.
+  2. Edit a line: the Tax (%) field shows the stored rate (2100 → `21`, 1250 → `12.5`); change it,
+     then set it to `0`.
+  3. Enter `100.01`, `21.555`, `-1`, `abc` or nothing in Tax (%) and submit.
+  4. Submit a line while the API refuses it (409 on a quote that is no longer a draft).
+  5. Read the detail page of the draft and of a sent quote, then the print page; print a quote with
+     no lines.
+- **Expected:** Step 1: the add body is `{product_id, quantity: 2, discount_bp: 1000, tax_rate_bp:
+  2100}`, and `tax_rate_bp: 0` when the field is left at `0`. Step 2: the update body always carries
+  `tax_rate_bp` with the field's value in basis points (the stored rate when unchanged, 0 when set to
+  0) next to `description`, `quantity`, `discount_bp` and `unit_price_cents`. Step 3: the field shows
+  "Tax must be a percentage between 0 and 100 with at most two decimals" and no request is sent.
+  Step 4: the server message shows in `quote-line-error` and the dialog stays open. Step 5: the lines
+  table has "Tax rate" (`quote-line-tax-rate`, e.g. `21%`, `0%` untaxed) and "Tax"
+  (`quote-line-tax`, the line's `tax_cents`) between "Discount" and "Line total" on every status;
+  the totals read Subtotal, Discount, "Net total" (`quote-total`, `total_cents`), "Tax"
+  (`quote-tax`, `tax_cents`) and a bold "Gross total" (`quote-gross`, `gross_total_cents`), each
+  the server's value even when it does not add up; an untaxed quote shows tax 0.00 and a gross equal
+  to the net total. The print page shows the same columns (`quote-print-line-tax-rate`,
+  `quote-print-line-tax`) and totals (`quote-print-total`, `quote-print-tax`, `quote-print-gross`),
+  and its "No lines" row spans seven columns. Against the real API (2 × 12.50, 10 % off, 21 %): line
+  tax 4.73, net 22.50, tax 4.73, gross 27.23; at 0 % tax 0.00 and gross 22.50. The quotes list and
+  the deal's Quotes section still show the net total.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteLineDialog.test.tsx` ("QuoteLineDialog
+  tax rate …", 6 tests); `QuoteDetail.tax.test.tsx` ("QuoteDetail tax …", 4 tests);
+  `QuotePrint.tax.test.tsx` ("QuotePrint tax …", 3 tests); the updated `QuoteDetail.test.tsx` bodies;
+  browser: `gocrm-ui/e2e/tests/admin-quotes-tax.spec.ts` (the add, the edit to 0 and back, the sent
+  quote and its print page). `admin-quotes.spec.ts` runs unchanged.

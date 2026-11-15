@@ -111,7 +111,8 @@ describe('QuoteDetail', () => {
     expect(within(rows[0]).getByText('10%')).toBeInTheDocument();
     expect(within(rows[0]).getByText(formatMoney(2250, 'EUR'))).toBeInTheDocument();
     expect(within(rows[1]).getByText('Gadget')).toBeInTheDocument();
-    expect(within(rows[1]).getByText('0%')).toBeInTheDocument();
+    // One '0%' for the discount cell and one for the tax-rate cell.
+    expect(within(rows[1]).getAllByText('0%')).toHaveLength(2);
 
     // The totals are the server's, not a client-side sum.
     expect(screen.getByTestId('quote-subtotal')).toHaveTextContent(formatMoney(102400, 'EUR'));
@@ -142,7 +143,7 @@ describe('QuoteDetail', () => {
     fireEvent.change(within(dialog).getByLabelText(/^Discount/), { target: { value: '12.5' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
 
-    await waitFor(() => expect(quotesApi.addLine).toHaveBeenCalledWith(42, { product_id: 1, quantity: 2, discount_bp: 1250 }));
+    await waitFor(() => expect(quotesApi.addLine).toHaveBeenCalledWith(42, { product_id: 1, quantity: 2, discount_bp: 1250, tax_rate_bp: 0 }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add line' })).not.toBeInTheDocument());
     expect(screen.getAllByTestId('quote-line-row')).toHaveLength(3);
     expect(showSuccess).toHaveBeenCalledWith('Line added');
@@ -185,6 +186,7 @@ describe('QuoteDetail', () => {
         description: 'Widget',
         quantity: 3,
         discount_bp: 1000,
+        tax_rate_bp: 0,
         unit_price_cents: 1250,
       })
     );

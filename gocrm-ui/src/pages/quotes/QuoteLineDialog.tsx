@@ -37,8 +37,15 @@ interface FieldErrors {
   description?: string;
   quantity?: string;
   discount?: string;
+  tax_rate?: string;
   unit_price?: string;
 }
+
+const PERCENT_BP_MAX = 10000;
+
+/** A percentage from 0 to 100 with at most two decimals, the discount and tax rule. */
+const isValidPercent = (text: string): boolean =>
+  DECIMAL_PATTERN.test(text) && percentToBasisPoints(text) <= PERCENT_BP_MAX;
 
 type QuoteLineFormProps = Omit<QuoteLineDialogProps, 'open' | 'line'> & { line: QuoteLine | null };
 
@@ -53,6 +60,7 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
   const [description, setDescription] = useState(line?.description ?? '');
   const [quantity, setQuantity] = useState(line ? String(line.quantity) : '1');
   const [discount, setDiscount] = useState(line ? basisPointsToPercent(line.discount_bp) : '0');
+  const [taxRate, setTaxRate] = useState(line ? basisPointsToPercent(line.tax_rate_bp) : '0');
   // Add: an optional override of the product's price. Edit: the stored price.
   const [unitPrice, setUnitPrice] = useState(line ? centsToDecimal(line.unit_price_cents) : '');
   const [errors, setErrors] = useState<FieldErrors>({});
@@ -95,9 +103,11 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
     if (!/^\d+$/.test(quantity.trim()) || quantityValue < 1 || quantityValue > QUANTITY_MAX) {
       next.quantity = 'Quantity must be a whole number between 1 and 1,000,000';
     }
-    const discountText = discount.trim();
-    if (!DECIMAL_PATTERN.test(discountText) || percentToBasisPoints(discountText) > 10000) {
+    if (!isValidPercent(discount.trim())) {
       next.discount = 'Discount must be a percentage between 0 and 100 with at most two decimals';
+    }
+    if (!isValidPercent(taxRate.trim())) {
+      next.tax_rate = 'Tax must be a percentage between 0 and 100 with at most two decimals';
     }
     const priceText = unitPrice.trim();
     if (priceText !== '' || isEdit) {
@@ -117,11 +127,14 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
     setServerError(null);
     const quantityValue = Number(quantity.trim());
     const discountBP = percentToBasisPoints(discount.trim());
+    // Always sent, so an edit states the rate explicitly (0 clears it).
+    const taxRateBP = percentToBasisPoints(taxRate.trim());
     if (isEdit) {
       updateMutation.mutate({
         description: description.trim(),
         quantity: quantityValue,
         discount_bp: discountBP,
+        tax_rate_bp: taxRateBP,
         unit_price_cents: decimalToCents(unitPrice.trim()),
       });
       return;
@@ -130,6 +143,7 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
       product_id: productId as number,
       quantity: quantityValue,
       discount_bp: discountBP,
+      tax_rate_bp: taxRateBP,
     };
     if (unitPrice.trim() !== '') {
       data.unit_price_cents = decimalToCents(unitPrice.trim());
@@ -200,6 +214,18 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
             fullWidth
           />
           <TextField
+            label="Tax (%)"
+            value={taxRate}
+            onChange={(event) => {
+              setTaxRate(event.target.value);
+              setErrors((prev) => ({ ...prev, tax_rate: undefined }));
+            }}
+            inputProps={{ inputMode: 'decimal', name: 'tax_rate' }}
+            error={!!errors.tax_rate}
+            helperText={errors.tax_rate ?? 'Per line, up to two decimals; sent as basis points'}
+            fullWidth
+          />
+          <TextField
             label={isEdit ? 'Unit price' : 'Unit price override'}
             value={unitPrice}
             onChange={(event) => {
@@ -233,8 +259,9 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
 
 /**
  * Adds a line to a draft quote (a picker of the active products in the
- * quote's currency, the quantity, the discount as a percentage, an optional
- * price override) or edits one. The discount is sent in basis points.
+ * quote's currency, the quantity, the discount and the tax rate as
+ * percentages, an optional price override) or edits one. The discount and the
+ * tax rate are sent in basis points; the tax amounts are the server's.
  */
 export const QuoteLineDialog: React.FC<QuoteLineDialogProps> = ({ open, quote, line = null, onClose, onSaved }) => (
   <Dialog open={open} onClose={onClose} aria-labelledby="quote-line-dialog-title" fullWidth maxWidth="sm">
