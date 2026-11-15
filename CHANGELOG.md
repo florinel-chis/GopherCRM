@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Ticket action in the form builder (#335).** The builder's "Lead capture" panel is now
+  "Submission action", one choice between "Create a lead", "Create a support ticket" (#213) and
+  "Create nothing". The ticket action switches double opt-in on, turns lead creation off and hides
+  the lead owner and the repeat-lead note; the owner is sent as 0 unless the action is lead. Saving
+  refuses, on the field and without a request, a ticket form without double opt-in ("A form that
+  creates tickets needs double opt-in") and a stored form that both creates leads and tickets ("A
+  form cannot both create leads and create tickets"). The double opt-in switch reads "Require email
+  confirmation before a lead or ticket is created", and FormDetail shows "Creates tickets: yes/no".
+  Frontend only, no API change. Vitest: `FormBuilder.ticket.test.tsx`, `FormBuilder.test.tsx`,
+  `FormDetail.test.tsx`; browser: `e2e/tests/form-builder-ticket.spec.ts`.
 - **Quote tax in the web UI (#325).** The quote line dialog has a "Tax (%)" field (0 to 100, at
   most two decimals, the discount rule; `0` on a new line, the stored rate on an edit) that is
   always sent as `tax_rate_bp`; an invalid rate is refused on the field without a request, and a
@@ -396,6 +406,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Saving a ticket form in the builder keeps ticket intake on (#335).** The builder sent no
+  `create_ticket`, and `PUT /forms/{id}` stores an omitted flag as false, so saving a form
+  configured through the API for #213 silently turned ticket intake off. Every create and update
+  now sends the flag.
 - **A cancelled automation run releases its lease (#333).** Runs cancelled by a lead erasure
   (admin or the owning sales user) or a ticket delete no longer keep `owner_instance` and
   `heartbeat_at`: `cancelAutomationForEntity` now sets both to NULL in the same conditional update

@@ -15,7 +15,8 @@ a server they control, without per-seat licence fees.
   support, customer).
 - **Lead capture built in.** Build forms in the CRM and embed them on any website with one script
   tag. Submissions become leads, behind layered spam protection (time trap, origin allowlist,
-  honeypot, rate limits, optional reCAPTCHA v3) and an optional double opt-in.
+  honeypot, rate limits, optional reCAPTCHA v3) and an optional double opt-in. A double opt-in
+  form can instead open a support ticket for a known customer.
 - **Easy to run.** A single Go API binary and a static React UI. SQLite needs no database server;
   MySQL 8 and MariaDB 10.11 are tested in CI. Docker Compose files ship for both.
 - **AI-visibility reports (AEO).** See whether Anthropic, OpenAI, Gemini, Kimi, Perplexity or any

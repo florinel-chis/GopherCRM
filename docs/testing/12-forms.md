@@ -22,9 +22,10 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
 
 **Constraints**
 
-- **No forms Playwright spec exists yet.** Cases against the SPA are *planned* for
-  `gocrm-ui/e2e/tests/forms.spec.ts`; where a Go or Vitest test already pins the behaviour the
-  Automation line names it.
+- **Few forms Playwright specs exist.** `gocrm-ui/e2e/tests/form-builder-ticket.spec.ts` drives
+  the builder's ticket action (TC-FORM-131) and `forms-public-api.spec.ts` the public API; the
+  other cases against the SPA are *planned* for `gocrm-ui/e2e/tests/forms.spec.ts`; where a Go or
+  Vitest test already pins the behaviour the Automation line names it.
 - **`/forms` is closed to `customer`.** Group guard is `RequireRole(admin, sales, support)`;
   create/update need admin or sales, delete needs admin. The SPA mirrors this (route gate plus
   read-only rendering for support).
@@ -269,7 +270,9 @@ rows yet (a later frontend task).
 
 A double opt-in form with `create_ticket` opens a ticket for the matching live customer when a
 submission is confirmed (#213; see [DEVELOPMENT.md](../DEVELOPMENT.md#form-ticket-intake-213)).
-Backend only: the builder and the submission views show nothing of it yet. **Known issue:** the
+The builder offers it as the "Create a support ticket" submission action (#335: it forces double
+opt-in, excludes lead creation and sends no owner) and FormDetail shows "Creates tickets"; the
+submission list and detail still show no ticket outcome, link or key. **Known issue:** the
 hosted view and the embed script send no `idempotency_key`, so a browser retry is not deduplicated
 (each submission falls back to `submission-<id>`); only API clients that send a key are protected.
 
@@ -306,3 +309,25 @@ hosted view and the embed script send no `idempotency_key`, so a browser retry i
   and lead roots; a confirmation racing a customer erasure) · automated ·
   `TestFormTicketKeyErasure{SQLite,MySQL}`, `TestFormTicketIntakeVsCustomerErasure{SQLite,MySQL}`,
   `test/integration` `TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable`.
+- **TC-FORM-129 — the builder offers one submission action** (the "Submission action" panel holds
+  "Create a lead", "Create a support ticket" and "Create nothing"; a new form has lead checked and
+  the "Lead owner" select shown; the ticket action switches double opt-in on and hides the owner
+  and the repeat-lead note (still mounted) and shows the ticket note; "Create nothing" leaves double
+  opt-in as it was; the double opt-in switch reads "Require email confirmation before a lead or
+  ticket is created"; support sees the three radios disabled and no save button) · automated ·
+  `gocrm-ui/src/pages/forms/FormBuilder.ticket.test.tsx`.
+- **TC-FORM-130 — the builder mirrors the TC-FORM-120 rules before any request** (ticket action
+  with double opt-in switched off: "A form that creates tickets needs double opt-in" under the
+  switch; a stored form with both flags: "A form cannot both create leads and create tickets" under
+  the action choice; a stored ticket form switched to lead without an owner: the lead-owner error;
+  no create or update call in each case) · automated · `FormBuilder.ticket.test.tsx`.
+- **TC-FORM-131 — every save sends `create_ticket`** (a new lead form sends `false`; a sales user's
+  ticket form sends `create_ticket: true`, `create_lead: false`, `double_opt_in: true`,
+  `default_owner_id: 0`; no action sends both flags false and owner 0; a stored ticket form loads
+  with the ticket action and an unchanged update keeps the flag) · automated ·
+  `FormBuilder.test.tsx` (exact payload), `FormBuilder.ticket.test.tsx`; in a browser against the
+  real API by `gocrm-ui/e2e/tests/form-builder-ticket.spec.ts` (create, detail, unchanged update,
+  read back). Before #335 the builder omitted the flag and an update stored it false.
+- **TC-FORM-132 — FormDetail shows "Creates tickets: yes" for a ticket form, next to "Creates
+  leads: no", and "Creates tickets: no" for a lead form** · automated ·
+  `FormDetail.test.tsx`; the "yes" line also in `form-builder-ticket.spec.ts`.

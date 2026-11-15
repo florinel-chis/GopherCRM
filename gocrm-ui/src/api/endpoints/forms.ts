@@ -52,6 +52,10 @@ export interface Form {
   content_url: string;
   captcha_enabled: boolean;
   create_lead: boolean;
+  // Opens a support ticket for the matching live customer once a submission is
+  // confirmed. The server requires double_opt_in with it and refuses it next to
+  // create_lead; an omitted flag is stored false, so every update sends it.
+  create_ticket: boolean;
   default_owner_id: number;
   allowed_domains: string[];
   created_at: string;

@@ -205,6 +205,9 @@ export const Component: React.FC = () => {
             Creates leads: {form.create_lead ? 'yes' : 'no'}
           </Typography>
           <Typography variant="body2" color="text.secondary">
+            Creates tickets: {form.create_ticket ? 'yes' : 'no'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
             reCAPTCHA: {form.captcha_enabled ? 'on' : 'off'}
           </Typography>
           <Typography variant="body2" color="text.secondary">

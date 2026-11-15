@@ -220,6 +220,8 @@ describe('FormBuilder', () => {
         content_url: '',
         captcha_enabled: false,
         create_lead: true,
+        // Always sent, so an update never turns ticket intake off by omission.
+        create_ticket: false,
         // Filled in from the signed-in sales user, who cannot list users.
         default_owner_id: 7,
         allowed_domains: [],

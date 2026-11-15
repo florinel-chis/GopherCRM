@@ -1329,7 +1329,9 @@ the web UI (#312)").
 ## Tickets opened by forms (#213)
 
 A double opt-in form with `create_ticket` opens a ticket when a submission is confirmed (cases in
-`docs/testing/12-forms.md`, "Ticket intake"). These cases cover the ticket side.
+`docs/testing/12-forms.md`, "Ticket intake"). In the web client the form is configured in the form
+builder by choosing "Create a support ticket" under **Submission action** (#335); the API flag
+works the same. These cases cover the ticket side.
 
 ### TC-TICK-076 — A form-created ticket carries fixed text and starts unassigned
 - **Priority:** P1
