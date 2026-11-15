@@ -290,6 +290,8 @@ export const Component: React.FC = () => {
                 <TableCell align="right">Qty</TableCell>
                 <TableCell align="right">Unit price</TableCell>
                 <TableCell align="right">Discount</TableCell>
+                <TableCell align="right">Tax rate</TableCell>
+                <TableCell align="right">Tax</TableCell>
                 <TableCell align="right">Line total</TableCell>
                 {draft && <TableCell align="right">Actions</TableCell>}
               </TableRow>
@@ -301,6 +303,12 @@ export const Component: React.FC = () => {
                   <TableCell align="right">{line.quantity}</TableCell>
                   <TableCell align="right">{formatMoney(line.unit_price_cents, quote.currency)}</TableCell>
                   <TableCell align="right">{formatDiscountPercent(line.discount_bp)}</TableCell>
+                  <TableCell align="right" data-testid="quote-line-tax-rate">
+                    {formatDiscountPercent(line.tax_rate_bp)}
+                  </TableCell>
+                  <TableCell align="right" data-testid="quote-line-tax">
+                    {formatMoney(line.tax_cents, quote.currency)}
+                  </TableCell>
                   <TableCell align="right">{formatMoney(line.line_total_cents, quote.currency)}</TableCell>
                   {draft && (
                     <TableCell align="right">
@@ -345,10 +353,23 @@ export const Component: React.FC = () => {
                   {formatMoney(quote.discount_cents, quote.currency)}
                 </TableCell>
               </TableRow>
+              {/* Every total is the server's; nothing is added up here. */}
               <TableRow>
-                <TableCell sx={{ fontWeight: 'bold' }}>Total</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 'bold' }} data-testid="quote-total">
+                <TableCell>Net total</TableCell>
+                <TableCell align="right" data-testid="quote-total">
                   {formatMoney(quote.total_cents, quote.currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>Tax</TableCell>
+                <TableCell align="right" data-testid="quote-tax">
+                  {formatMoney(quote.tax_cents, quote.currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 'bold' }}>Gross total</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 'bold' }} data-testid="quote-gross">
+                  {formatMoney(quote.gross_total_cents, quote.currency)}
                 </TableCell>
               </TableRow>
             </TableBody>

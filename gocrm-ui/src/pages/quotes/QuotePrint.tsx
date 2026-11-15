@@ -122,13 +122,15 @@ export const Component: React.FC = () => {
               <TableCell align="right">Qty</TableCell>
               <TableCell align="right">Unit price</TableCell>
               <TableCell align="right">Discount</TableCell>
+              <TableCell align="right">Tax rate</TableCell>
+              <TableCell align="right">Tax</TableCell>
               <TableCell align="right">Line total</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {quote.lines.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5}>
+                <TableCell colSpan={7} data-testid="quote-print-empty">
                   <Typography color="text.secondary">No lines</Typography>
                 </TableCell>
               </TableRow>
@@ -139,6 +141,12 @@ export const Component: React.FC = () => {
                   <TableCell align="right">{line.quantity}</TableCell>
                   <TableCell align="right">{formatMoney(line.unit_price_cents, quote.currency)}</TableCell>
                   <TableCell align="right">{formatDiscountPercent(line.discount_bp)}</TableCell>
+                  <TableCell align="right" data-testid="quote-print-line-tax-rate">
+                    {formatDiscountPercent(line.tax_rate_bp)}
+                  </TableCell>
+                  <TableCell align="right" data-testid="quote-print-line-tax">
+                    {formatMoney(line.tax_cents, quote.currency)}
+                  </TableCell>
                   <TableCell align="right">{formatMoney(line.line_total_cents, quote.currency)}</TableCell>
                 </TableRow>
               ))
@@ -162,9 +170,21 @@ export const Component: React.FC = () => {
                 </TableCell>
               </TableRow>
               <TableRow>
-                <TableCell sx={{ fontWeight: 'bold' }}>Total</TableCell>
-                <TableCell align="right" sx={{ fontWeight: 'bold' }} data-testid="quote-print-total">
+                <TableCell>Net total</TableCell>
+                <TableCell align="right" data-testid="quote-print-total">
                   {formatMoney(quote.total_cents, quote.currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell>Tax</TableCell>
+                <TableCell align="right" data-testid="quote-print-tax">
+                  {formatMoney(quote.tax_cents, quote.currency)}
+                </TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell sx={{ fontWeight: 'bold' }}>Gross total</TableCell>
+                <TableCell align="right" sx={{ fontWeight: 'bold' }} data-testid="quote-print-gross">
+                  {formatMoney(quote.gross_total_cents, quote.currency)}
                 </TableCell>
               </TableRow>
             </TableBody>

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quote tax in the web UI (#325).** The quote line dialog has a "Tax (%)" field (0 to 100, at
+  most two decimals, the discount rule; `0` on a new line, the stored rate on an edit) that is
+  always sent as `tax_rate_bp`; an invalid rate is refused on the field without a request, and a
+  server refusal shows its message in the dialog. The quote detail and print pages gain "Tax rate"
+  and "Tax" columns per line and show "Net total" (`total_cents`, test ids `quote-total` and
+  `quote-print-total` unchanged), "Tax" and a bold "Gross total" from the server values, on every
+  status; the print page's empty row spans seven columns. The quotes list and the deal's Quotes
+  section still show the net total. Frontend only, no API change. Vitest:
+  `QuoteLineDialog.test.tsx`, `QuoteDetail.tax.test.tsx`, `QuotePrint.tax.test.tsx`; browser:
+  `e2e/tests/admin-quotes-tax.spec.ts`.
 - **Per-line tax rate and tax/gross quote totals (#324, backend).** A quote line takes
   `tax_rate_bp` (0–10000 basis points, 2100 = 21 %, default 0, writable only while the quote is a
   draft) on `POST /quotes/{id}/lines` and `PUT /quotes/{id}/lines/{lineId}` (absent keeps the stored
@@ -21,8 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the net, tax and gross totals (`Total:` is now `Net total:`). Schema:
   `migrations/20261117120000_add_quote_tax` (MySQL/MariaDB, each column only when missing, plus a
   gross backfill) and AutoMigrate with an idempotent `MigrateDatabase` backfill on SQLite; existing
-  quotes read tax 0 and gross = total. No UI change yet; no tax categories, reverse charge or
-  per-country rules.
+  quotes read tax 0 and gross = total. The web UI follows in #325; no tax categories, reverse
+  charge or per-country rules.
 - **One lock order for erasure, conversion, authentication and role writes (#323).**
   `docs/CONCURRENCY.md` records, for each of 13 flows, the rows locked, the order, the transaction
   helper, the retry and whether the order is implemented, plus the three lock chains, the
