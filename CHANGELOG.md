@@ -396,6 +396,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A cancelled automation run releases its lease (#333).** Runs cancelled by a lead erasure
+  (admin or the owning sales user) or a ticket delete no longer keep `owner_instance` and
+  `heartbeat_at`: `cancelAutomationForEntity` now sets both to NULL in the same conditional update
+  that sets `cancelled` (`record_deleted`), as the manual and rule cancels already did. The
+  predicate, the transaction and the ticket-row-first lock order are unchanged; a cancel issued
+  after a run completed, failed or was already cancelled changes nothing. No API, JSON or schema
+  change, and no backfill of runs cancelled earlier. Roots:
+  `TestAutomationCancelReleasesLease{SQLite,MySQL}` (`internal/repository`) and
+  `TestAutomationCancelPathsReleaseLease{SQLite,MySQL}` (`internal/service`).
 - **Lead conversion, lead update and bulk lead status are serialised with company deletion
   (#182).** One lock order is shared: companies (`CompanyRepository.LockLive`, `FOR UPDATE` by
   primary key on MySQL/MariaDB) → leads (id ascending) → customers → deals. `DELETE

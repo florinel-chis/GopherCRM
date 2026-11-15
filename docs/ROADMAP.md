@@ -256,8 +256,8 @@ each a candidate follow-up:
   every tick recovers runs whose lease is older than 3 minutes, so several replicas may run the
   worker against one MySQL/MariaDB database. Still open: fencing the window between the pre-send
   check and `Mailer.Send` (an executor paused exactly there can send once after a sweep recorded
-  `email_unconfirmed`), and clearing the lease columns of runs cancelled by a lead erasure or a
-  ticket delete.
+  `email_unconfirmed`). Every cancel, lead erasure and ticket delete included, clears the lease
+  columns since #333.
 - **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
   sweep is a retention decision, not an erasure one (the rows hold ids only).
 - **Wait-until-event, scoring, configurable stages, campaigns, a template editor, customer and

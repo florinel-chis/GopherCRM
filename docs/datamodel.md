@@ -916,13 +916,16 @@ JSON is unchanged, and `claimed_at` still reads as before.
 
 | Field | Type | Required | Default | Constraints | Description |
 |-------|------|----------|---------|-------------|-------------|
-| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the engine holding the claim: 32 lowercase hex characters from `crypto/rand`, generated per `AutomationEngine`. Not a foreign key; never logged. NULL on legacy rows; cleared when the run leaves `running` (see below for one exception) |
+| owner_instance | string | No | NULL | `varchar(64)` | Instance id of the engine holding the claim: 32 lowercase hex characters from `crypto/rand`, generated per `AutomationEngine`. Not a foreign key; never logged. NULL on legacy rows; cleared when the run leaves `running`, by every cancel included (#333) |
 | heartbeat_at | datetime | No | NULL | `datetime(3)` on MySQL, UTC | Set to the claim time by `ClaimRun` and renewed every 30 s by the owner while it executes. A `running` row whose value is NULL or older than now − 3 min is stale |
 
 Lifecycle: `ClaimRun` writes `running`, both columns and `claimed_at` in one conditional update.
 `RenewRunLease`, `AdvanceRun` and `ReleaseRun` match only `owner_instance = <owner>`; an advance or
-release that leaves `running` clears both columns, and so do `CancelRun`, `CancelRunsForRule` and
-`CancelRunsForEntity`. The stale sweep (boot and every worker tick) reads the stale running rows
+release that leaves `running` clears both columns, and so does every cancel: `CancelRun`,
+`CancelRunsForRule`, `CancelRunsForEntity` and, since #333, the lead erasure and ticket delete
+statement (`cancelAutomationForEntity`), each in the same conditional update that sets
+`cancelled`. A cancel matches only `pending`, `waiting` or `running`, so one issued after a
+completed, failed or cancelled row changes nothing. `claimed_at` is not cleared by a cancel. The stale sweep (boot and every worker tick) reads the stale running rows
 with a plain query and recovers each by primary key with `RecoverStaleRun`, re-checking status,
 owner and staleness: back to `pending` (attempts unchanged), or `failed`/`email_unconfirmed` when
 its last step row is a `send_email` still `sending`; both columns are cleared. No new index: the
@@ -932,7 +935,7 @@ sweep. MySQL and MariaDB get the columns from `20261116120000_add_automation_run
 when missing; the down half drops each only when present); SQLite from `MigrateDatabase`. Upgrade
 by stopping every replica first: an older binary's boot reconciliation resets live runs. Several
 processes on one SQLite file are not supported. Runs cancelled by a lead erasure or a ticket
-delete (`cancelAutomationForEntity`) keep the values of the two columns; nothing reads them on a
+delete before #333 may still hold values in the two columns (no backfill); nothing reads them on a
 cancelled run.
 
 ## API Request/Response Format
