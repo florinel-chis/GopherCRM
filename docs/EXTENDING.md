@@ -24,6 +24,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
 | Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:261`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
+| Transactions that lock rows of more than one table lock them in the one documented order and retry only the whole root | `internal/utils/transaction.go`, `internal/service/lead_service.go` | [CONCURRENCY.md](CONCURRENCY.md) |
 | A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
 | Lead visibility has one policy: admin sees all leads, sales its own, every other role none | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
 | A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
@@ -228,8 +229,9 @@ Decide first whether the new table stores personal data or only refers to people
   inherit: ticket free text, which the erasure keeps and an operator redacts first through the
   documented procedure (#214), tasks rendered from `{{deal.title}}` before an erasure (they keep
   the text; deal and quote text itself is scrubbed since #245), and the missing lock protocol between
-  erasure and conversion or authentication (#183). A new table that copies a person's email
-  without a link to the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
+  erasure and conversion or authentication (#183; current orders in
+  [CONCURRENCY.md](CONCURRENCY.md)). A new table that copies a person's email without a link to
+  the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
 
 ### 3.11 Tests at every layer
 

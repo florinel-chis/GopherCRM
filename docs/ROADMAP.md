@@ -152,14 +152,19 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 - **Login issued from an obsolete verification** — a login that verified the old password a moment
   before a password change commits still gets its session inserted after the change; login should
   re-verify the hash and the active state under the owner lock in the issuing transaction, with one
-  lock protocol shared by erasure and the auth flows (#183).
-- **Erasure vs conversion/authentication concurrency: tracked in #183.** The identity erasure
+  lock protocol shared by erasure and the auth flows (#183, see [CONCURRENCY.md](CONCURRENCY.md)).
+- **Erasure vs conversion/authentication concurrency: tracked in #183** (current orders in
+  [CONCURRENCY.md](CONCURRENCY.md)). The identity erasure
   (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
   customer/login linking, login, refresh rotation, password reset or API-key creation: a
   conversion or credential committed while an erasure is in flight can be missed, and opposite
   entry points can deadlock (an error, never a partial commit). The same holds for a deal or quote
   write racing the business-text scrub (#245): a deal linked, or a quote edited, while the erasure
   is in flight can keep its text.
+- **Unlocked completed-task check in the bulk task status batch** — the batch reads its tasks with
+  a plain `GetTasksByIDs` and locks them only at the status `UPDATE`, so its completed-task check is
+  not protected by a row lock: a task completed by another transaction between that read and the
+  `UPDATE` is moved out of `completed` (see [CONCURRENCY.md](CONCURRENCY.md), Bulk status).
 - **Deal and quote text left by the erasure (#245 follow-ups).** The erasure redacts the deal and
   quote text of the erased customers and leads, but a task a `create_task` step rendered from
   `{{deal.title}}` before the erasure keeps that text (`deal.title` stays allowed in task

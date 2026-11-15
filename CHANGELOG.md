@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One lock order for erasure, conversion, authentication and role writes (#323).**
+  `docs/CONCURRENCY.md` records, for each of 13 flows, the rows locked, the order, the transaction
+  helper, the retry and whether the order is implemented, plus the three lock chains, the
+  undecided cross-chain order (owned by C4), the retry rule (`WithTransactionAndRetry`, current for
+  lead conversion only), how the #175 failure modes are avoided and a flow → ticket map. Linked
+  from EXTENDING, DEVELOPMENT, ROADMAP and README, and pinned to the code by
+  `internal/config/concurrency_doc_test.go`. Documentation only; no behaviour changes.
 - **Lease-based automation run claims (#237).** Several API replicas may now run the follow-up
   automation worker (`AUTOMATION_ENABLED=true`) against one MySQL/MariaDB database. Each claim
   records the engine's instance id and a heartbeat in `automation_runs.owner_instance` and
