@@ -139,11 +139,20 @@ func formInvalidLinkPage() []byte {
 // the renderer for one key. The script fills in the name and the fields, so
 // nothing about the form is duplicated here — and nothing is revealed when the
 // key does not resolve.
-func formHostedViewPage(scriptSrc, key string) []byte {
+//
+// idempotencyKey is the per-render key (#340) the script tag carries as
+// data-idempotency-key; an empty value omits the attribute (the random source
+// failed). It is escaped like every other inserted value.
+func formHostedViewPage(scriptSrc, key, idempotencyKey string) []byte {
+	keyAttr := ""
+	if idempotencyKey != "" {
+		keyAttr = fmt.Sprintf(` data-idempotency-key="%s"`, html.EscapeString(idempotencyKey))
+	}
+
 	content := fmt.Sprintf(`<main>
-<script src="%s" data-form-key="%s" async></script>
+<script src="%s" data-form-key="%s"%s async></script>
 <noscript>This form needs JavaScript. Please enable it and reload the page.</noscript>
-</main>`, html.EscapeString(scriptSrc), html.EscapeString(key))
+</main>`, html.EscapeString(scriptSrc), html.EscapeString(key), keyAttr)
 
 	return formPageShell("Form", "form-page", content)
 }

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-render idempotency key on the hosted form view (#340).** Every render of
+  `GET /forms/public/{key}/view` puts one fresh random key (128 bits from `crypto/rand`, 32
+  lowercase hex characters, valid as the `idempotency_key` of the public submission) on the
+  embed script tag as `data-idempotency-key`, and the page is now served with
+  `Cache-Control: no-store` so no cache shares one render's key. If the server's random source
+  fails the page is served without the attribute and one Warn line (`operation=hosted_view_key`,
+  `error_code=random_unavailable`) is logged; the key is never logged. The embed script does not
+  send the key yet, so browser retries are still not deduplicated; that follows in a later
+  release. No API shape, route or status change. Roots (`internal/handler`):
+  `TestHostedViewRendersPerRenderIdempotencyKey`, `TestHostedViewIsNotCached`,
+  `TestHostedViewWithoutRandomnessOmitsKey`, `TestHostedFormResubmissionWithSameKeyOpensOneTicket`.
 - **Ticket action in the form builder (#335).** The builder's "Lead capture" panel is now
   "Submission action", one choice between "Create a lead", "Create a support ticket" (#213) and
   "Create nothing". The ticket action switches double opt-in on, turns lead creation off and hides
