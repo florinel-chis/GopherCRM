@@ -287,13 +287,49 @@ the still-usable token and retry; a failed COMMIT is ambiguous (the rotation may
 in which case the retry answers 401 and the session ends.
 
 **Lock order for session writes** — every transaction that writes both an account and its refresh
-tokens locks the `users` row first and the `refresh_tokens` rows second: the reset (reset token,
-owner, refresh tokens), the rotation (owner, then the claim), the password change (owner, then
-the claim, the revocation and the successor) and the logout (owner, then the revocation, then the
+tokens locks the `users` row first and the `refresh_tokens` rows second: the login (owner, then
+the last-login write, then the refresh insert, #336), the reset (reset token, owner, refresh
+tokens), the rotation (owner, then the claim), the password change (owner, then the claim, the
+revocation and the successor) and the logout (owner, then the revocation, then the
 `token_version` increment, #236). `refresh_tokens.user_id` references `users` with a
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
 (error 1213). New session flows must follow the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
+
+**Login issuing transaction (#336)** — on a service built by `NewAuthServiceWithSessions`,
+`LoginWithTokens` and `Login` keep the plain `GetByEmail` and bcrypt (against a dummy hash for an
+unknown address) before any transaction, so the timing, the generic errors and the failure
+bookkeeping of a wrong password (one `UpdateFields` outside the transaction) are unchanged. A
+verified password then starts one `WithTransactionAndRetry` transaction (`loginMaxRetries` 3) that
+locks the owner row by primary key (`FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and
+decides on that row only: a hash other than the one bcrypt verified, `is_active` false or an
+erased (soft-deleted) row is the generic `invalid credentials`, and a `locked_until` after the
+login clock is the lockout error; each refusal rolls back with nothing written. Otherwise one
+`UpdateFields` writes `last_login_at` and clears `failed_login_attempts`/`locked_until`, the
+refresh token is inserted under a savepoint (`LoginWithTokens` only; `Login` never issues one) and
+the access JWT is signed from the locked `token_version`. A non-retryable failure of the insert
+rolls back to the savepoint and the login answers an access token with an empty refresh token
+(the documented JWT-only fallback, logged with `error_code=refresh_token_insert_failed`); a
+retryable one (deadlock, lock wait, SQLite busy) comes back tagged `utils.ErrNestedRetryDeferred`
+and the whole root is replayed; a signing failure rolls everything back. A password change, reset,
+deactivation or erasure that commits before the lock therefore refuses the login, a logout lets it
+through with the incremented `token_version`, and one that commits after it ends the session it
+issued the usual way. The log lines of the transaction carry `user_id`, `operation` and
+`error_code` only. A service built by `NewAuthService` (no transaction manager) keeps the legacy
+unlocked statements and issues no refresh token. `POST /auth/login` still answers every error
+with 401 `Invalid email or password`. Roots: `TestLoginOwnerLockDecisions{SQLite,MySQL}`,
+`TestLoginOwnerLockAtomicity{SQLite,MySQL}`, `TestLoginConcurrentCredentialChanges{SQLite,MySQL}`
+(login against a password change, a reset confirmation, `UserService.Update(is_active=false)`,
+`UserService.Delete` and a logout, in both orderings), `TestRefreshRotationConcurrentCredentialChanges{SQLite,MySQL}`
+(rotation against a reset, a deactivation and an erasure, in both orderings),
+`TestLoginOwnerLockLogsOmitPersonalData` and `TestLoginUnwiredServiceUnchanged` in
+`internal/service/auth_login_owner_lock_test.go`, and, over HTTP, `TestLoginOwnerLockAPISQLite`
+(`tests/auth_login_owner_lock_test.go`). On SQLite the competing write runs through the
+instance-local `loginBeforeLock` seam, between the lookup and the transaction; the MySQL roots run
+on a disposable `TEST_MYSQL_DSN` schema built by the real migrations, see each wait in
+`information_schema.PROCESSLIST` on two consecutive polls and assert that no ordering ends in
+error 1213. They skip without the variable and fail when it is unreachable. Registering the new
+roots in `scripts/ci/check-go.py` and `scripts/ci/check-auth.py` is an operator follow-up.
 
 **Password change** (#116) — `ChangePassword(userID, current, new, refreshToken)` verifies the
 current password and hashes the new one before any transaction, then runs one transaction: locking
@@ -339,8 +375,8 @@ either rolls both back). The increment happens for Bearer and API-key callers al
 a body. **`Logout` refuses with an error, answered 500 by the handler, and writes nothing when the
 transaction manager or the refresh-token repository is not wired** (a service built with
 `NewAuthService` included); a caller the scoped locking read no longer finds (erased) gets nil and
-nothing is written. Refresh rotation and login never change the counter: the rotation signs the
-value its locking read returned, and the access token it replaces stays valid until it expires. A
+nothing is written. Refresh rotation and login never change the counter: the rotation and a wired
+login (#336) sign the value their locking read returned, and the access token it replaces stays valid until it expires. A
 role change does not increment it, API keys are not affected, and there is no per-token denylist.
 The log lines of the rejection and of the three increments carry `user_id` and `operation` only.
 MySQL and MariaDB get the column from `20261109120000_add_user_token_version` (added only when
@@ -379,11 +415,13 @@ an erasure wrote the erased name, email and hash back and cleared `deleted_at`, 
 struct could put an old password hash back. `UpdateFields(id, columns)` writes only the named
 columns (a closed allowlist) with `WHERE id = ? AND deleted_at IS NULL` and reports
 `gorm.ErrRecordNotFound` when no live row matched (MySQL reports changed rows, so a zero count is
-re-checked). Login bookkeeping, `UpdateLastLogin`, the reset, the password change and
-`UserService.Update` all go through it; a login whose account vanished underneath it is refused
-(`TestLoginErasedDuringAuthentication{SQLite,MySQL}` in
-`internal/service/auth_login_erasure_regression_test.go`). Re-verifying the password under the
-owner lock when a login issues its session is tracked in #183.
+re-checked). Login bookkeeping (the failure count, and on a wired service the last-login write
+of the issuing transaction), `UpdateLastLogin` (the unwired login), the reset, the password change
+and `UserService.Update` all go through it; a login whose account vanished underneath it is
+refused (`TestLoginErasedDuringAuthentication{SQLite,MySQL}` in
+`internal/service/auth_login_erasure_regression_test.go`). A wired login re-checks the password
+hash and the account state under the owner lock before it issues its session (#336, see *Login
+issuing transaction*).
 
 **Customer writes never upsert (#256)** — `CustomerRepository.Update` is one `UPDATE … WHERE id = ?
 AND deleted_at IS NULL` of named columns: the names, email, phone, company, website, position,
@@ -1634,9 +1672,11 @@ in the previous paragraph. It is irreversible.
 Known limits of the erasure, in one place:
 
 - **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
-  lead conversion, customer/login linking, login, refresh rotation, password reset or API-key
-  creation. A conversion, link or credential committed while an erasure is in flight can escape
-  the cascade; opposite entry points can deadlock (an error, never a partial commit). The read of
+  lead conversion, customer/login linking, password reset or API-key creation. A conversion, link
+  or credential committed while an erasure is in flight can escape the cascade; opposite entry
+  points can deadlock (an error, never a partial commit). Login (#336) and refresh rotation lock
+  the user row before they issue anything, so against a user-rooted erasure they either commit
+  first (and the erasure purges what they issued) or wait and are refused. The read of
   the original address and the read of the matching unlinked submission ids are plain snapshot
   reads, so a submission from the same address inserted concurrently can survive. Tracked in
   #183.

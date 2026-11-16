@@ -49,7 +49,8 @@ var concurrencyDocFlowsInOrder = []string{
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
 
-// concurrencyDocExpectedStatus is the status of every flow at a415cf1.
+// concurrencyDocExpectedStatus is the status of every flow at a415cf1, with
+// Login implemented by #336 (C2).
 var concurrencyDocExpectedStatus = map[string]string{
 	"User-rooted erasure":            "partial",
 	"Customer-rooted erasure":        "partial",
@@ -58,7 +59,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"Lead update":                    "implemented",
 	"Company delete":                 "implemented",
 	"Bulk status":                    "implemented",
-	"Login":                          "not implemented",
+	"Login":                          "implemented",
 	"Refresh rotation":               "implemented",
 	"Password-reset request":         "not implemented",
 	"Password-reset confirm":         "implemented",
@@ -336,18 +337,44 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Contains(t, concurrencyDocFuncBody(t, "internal/service/bulk_status_service.go", "func (s *bulkStatusService) runBulkStatusUpdate("),
 		"CompletePending(")
 
-	// Login and API-key create run without a transaction.
-	for _, name := range []string{"Login", "API-key create"} {
+	// API-key create runs without a transaction.
+	for _, name := range []string{"API-key create"} {
 		assert.Contains(t, flow(name), "no transaction", name)
 	}
 	const authService = "internal/service/auth_service.go"
 	for _, sig := range []string{
-		"func (s *authService) authenticate(",
-		"func (s *authService) LoginWithTokens(",
 		"func (s *authService) RequestPasswordReset(",
 	} {
 		assert.NotContains(t, concurrencyDocFuncBody(t, authService, sig), "WithTransaction", sig)
 	}
+
+	// Login (#336, C2): one issuing transaction under the retry rule that locks
+	// the owner row first, users → refresh_tokens.
+	login := flow("Login")
+	for _, want := range []string{
+		"users → refresh_tokens",
+		"WithTransactionAndRetry",
+		"FOR UPDATE",
+		"`GetByEmail`",
+		"bcrypt",
+		"savepoint",
+	} {
+		assert.Contains(t, login, want, "Login")
+	}
+	assert.NotContains(t, login, "no transaction", "Login")
+	assert.NotContains(t, login, "no lock held across statements", "Login")
+	authenticate := concurrencyDocFuncBody(t, authService, "func (s *authService) authenticate(")
+	assert.Contains(t, authenticate, "s.txManager.WithTransactionAndRetry(")
+	assert.Contains(t, authenticate, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, authenticate, "s.loginInTransaction(")
+	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) LoginWithTokens("), "s.authenticate(")
+	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) Login("), "s.authenticate(")
+	issuing := concurrencyDocFuncBody(t, authService, "func (s *authService) loginInTransaction(")
+	lockAt := strings.Index(issuing, "userRepo.GetByID(")
+	insertAt := strings.Index(issuing, "s.issueRefreshToken(")
+	signAt := strings.Index(issuing, "s.accessTokenFor(")
+	assert.True(t, lockAt >= 0 && insertAt > lockAt && signAt > insertAt,
+		"loginInTransaction locks the owner, then inserts the refresh token, then signs")
 	for _, sig := range []string{
 		"func (s *authService) RefreshAccessToken(",
 		"func (s *authService) ConfirmPasswordReset(",
@@ -364,7 +391,6 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	// Child inserts without a transaction: no lock is held across statements,
 	// but the foreign-key check takes a statement-long shared lock on the owner.
 	for _, fk := range []struct{ flow, constraint, migration string }{
-		{"Login", "fk_refresh_tokens_user", "migrations/20250806120000_initial_schema.up.sql"},
 		{"Password-reset request", "fk_password_reset_tokens_user", "migrations/20261001120000_v1_2_0_schema_parity.up.sql"},
 		{"API-key create", "fk_api_keys_user", "migrations/20250806120000_initial_schema.up.sql"},
 	} {
@@ -507,12 +533,14 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	for _, name := range concurrencyDocFlowsInOrder {
 		retry := fields[name]["Retry"]
-		if name == "Lead conversion" {
+		if name == "Lead conversion" || name == "Login" {
 			assert.Contains(t, retry, "WithTransactionAndRetry", name)
 		} else {
-			assert.NotContains(t, retry, "WithTransactionAndRetry", "only the Lead conversion Retry line names it; %s does", name)
+			assert.NotContains(t, retry, "WithTransactionAndRetry", "only the Lead conversion and Login Retry lines name it; %s does", name)
 		}
 	}
+	assert.Contains(t, fields["Login"]["Retry"], "loginMaxRetries", "Login Retry")
+	assert.Contains(t, readRepositoryFile(t, "internal/service/auth_service.go"), "const loginMaxRetries = 3")
 	for _, name := range []string{"Lead conversion", "Lead update"} {
 		retry := fields[name]["Retry"]
 		for _, want := range []string{"runLeadCompanyAttempts", "leadCompanyMaxRestarts", "errLeadCompanyMoved"} {
@@ -692,12 +720,17 @@ func TestConcurrencyDocCrossLinks(t *testing.T) {
 		return ""
 	}
 	for _, start := range []string{
-		"- **Login issued from an obsolete verification**",
 		"- **Erasure vs conversion/authentication concurrency",
 	} {
 		b := bulletStarting(start)
 		assert.Contains(t, b, "#183", start)
 		assert.Contains(t, b, "](CONCURRENCY.md)", start)
+	}
+	// Login issues its session under the owner lock since #336 (C2): the gap
+	// bullet is gone.
+	for _, b := range bullets {
+		assert.False(t, strings.HasPrefix(b, "- **Login issued from an obsolete verification**"),
+			"docs/ROADMAP.md still lists the closed login gap")
 	}
 
 	var gaps []string

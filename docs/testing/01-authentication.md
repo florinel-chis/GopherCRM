@@ -343,7 +343,8 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:180-184`), deliberately so the account's state is
+  the same error (`internal/service/auth_service.go:263-267`, and again under the owner lock,
+  TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
   swagger annotation. A case expecting "account disabled" would be wrong.
@@ -365,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:152-178`), so a correct password
+  password result is examined (`internal/service/auth_service.go:232-261`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -387,6 +388,42 @@ file, not by trusting the coverage matrix.
   equivalent failure responses and persisted state through the session login endpoint.
 - **Validation:** the [auth profile](../VALIDATION_RELEASE.md) runs these regressions,
   the surrounding auth/session checks, and health/login/registration browser specs.
+
+### TC-AUTH-026b — Login issues its session from the owner row locked in one transaction (#336)
+- **Priority:** P0
+- **Type:** regression (concurrency)
+- **Preconditions:** A service wired with `NewAuthServiceWithSessions` (as `cmd/main.go` does).
+- **Steps / Expected:** the email lookup and bcrypt run before the transaction; the competing write
+  below commits after that lookup and before the owner's `FOR UPDATE` read by id.
+  1. The password hash changed (a password change or reset), `is_active` was set false, or the
+     account was erased: the login answers `invalid credentials` (**401** `Invalid email or
+     password` over HTTP), inserts no `refresh_tokens` row and leaves `last_login_at`,
+     `failed_login_attempts` and `locked_until` as stored.
+  2. `locked_until` was set after the login clock: the lockout error, nothing written.
+  3. `token_version` was incremented (a logout): the login succeeds and its access JWT carries the
+     new value, which `ValidateToken` accepts.
+  4. A login that commits first: a password change, a reset or a logout that follows revokes its
+     refresh token and ends its access token (token_version mismatch); an erasure deletes the
+     refresh token row and the access token's owner is gone; a deactivation revokes nothing, but
+     the access token is refused by the `is_active` check and its refresh token answers the generic
+     refresh rejection without inserting a successor.
+  5. The refresh insert fails for a non-retryable reason: the login answers an access token with an
+     empty refresh token and commits `last_login_at`; the signing fails: an error, nothing written;
+     a deadlock, lock wait or SQLite busy on the first attempt: the login is replayed once and
+     leaves exactly one refresh token.
+  6. A refresh rotation raced against a reset, a deactivation and an erasure gives the outcomes of
+     step 1 (rejected, no successor) or step 4 (for the successor), by ordering.
+  No log line of these paths carries the email, a password, the hash or a token, and no ordering
+  ends in MySQL error 1213. A service built by `NewAuthService` keeps the unlocked login.
+- **Automation:** `internal/service/auth_login_owner_lock_test.go`
+  (`TestLoginOwnerLock{Decisions,Atomicity}{SQLite,MySQL}`,
+  `TestLoginConcurrentCredentialChanges{SQLite,MySQL}`,
+  `TestRefreshRotationConcurrentCredentialChanges{SQLite,MySQL}`,
+  `TestLoginOwnerLockLogsOmitPersonalData`, `TestLoginUnwiredServiceUnchanged`; the MySQL roots use
+  a disposable `TEST_MYSQL_DSN` schema built by the real migrations and see each wait in
+  `information_schema.PROCESSLIST` on two consecutive polls, the SQLite roots prove the same
+  outcomes sequentially through the `loginBeforeLock` seam) and, over HTTP,
+  `tests/auth_login_owner_lock_test.go` `TestLoginOwnerLockAPISQLite`.
 
 ---
 
@@ -779,8 +816,9 @@ file, not by trusting the coverage matrix.
   refresh token, and always for an API-key request, every refresh token is revoked and no
   credentials are returned. A sibling refresh racing the change never makes it fail: committed
   first, its successor is revoked by the change; arriving during the change, it is rejected.
-- **Known issue:** a login that verified the old password a moment before the change commits can
-  still be issued a session afterwards (#183).
+- **Known issue:** None for logins racing the change: a login that verified the old password a
+  moment before the change commits re-checks the hash under the owner lock and is refused, and one
+  that committed first loses its session to the change (#336, TC-AUTH-026b).
 - **Automation:** `internal/service/auth_change_password_regression_test.go`
   (`TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}`; the MySQL
   concurrency root runs on a schema built by the real migrations and forces both lock orderings);

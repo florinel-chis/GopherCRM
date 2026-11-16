@@ -149,16 +149,14 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   Without `navigator.locks` (plain HTTP) the lock is per tab and a losing refresh relies on
   re-reading the record, which adopts a successor stored first but cannot help when the losing
   tab's 401 reaches it before the winner stored the successor.
-- **Login issued from an obsolete verification** — a login that verified the old password a moment
-  before a password change commits still gets its session inserted after the change; login should
-  re-verify the hash and the active state under the owner lock in the issuing transaction, with one
-  lock protocol shared by erasure and the auth flows (#183, see [CONCURRENCY.md](CONCURRENCY.md)).
 - **Erasure vs conversion/authentication concurrency: tracked in #183** (current orders in
   [CONCURRENCY.md](CONCURRENCY.md)). The identity erasure
   (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
-  customer/login linking, login, refresh rotation, password reset or API-key creation: a
-  conversion or credential committed while an erasure is in flight can be missed, and opposite
-  entry points can deadlock (an error, never a partial commit). The same holds for a deal or quote
+  customer/login linking, password reset or API-key creation: a conversion or credential
+  committed while an erasure is in flight can be missed, and opposite entry points can deadlock (an
+  error, never a partial commit). Login (#336) and refresh rotation lock the owner's `users` row
+  before they issue anything, so against a user-rooted erasure they either commit first (and the
+  erasure purges what they issued) or wait and are refused. The same holds for a deal or quote
   write racing the business-text scrub (#245): a deal linked, or a quote edited, while the erasure
   is in flight can keep its text.
 - **Unlocked completed-task check in the bulk task status batch** — the batch reads its tasks with

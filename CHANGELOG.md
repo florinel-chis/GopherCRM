@@ -406,6 +406,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security: login issues its session from the owner row locked in one transaction (#336).** On a
+  service built by `NewAuthServiceWithSessions` (production wiring), `LoginWithTokens` and `Login`
+  keep the plain email lookup and bcrypt before any transaction, then run one
+  `WithTransactionAndRetry` transaction that locks the owner row by id (`FOR UPDATE` on
+  MySQL/MariaDB) and refuses, with nothing written, a hash other than the verified one, an inactive
+  or erased account (`invalid credentials`) or an active lock (the lockout error). It writes
+  `last_login_at` and the lockout clear, inserts the refresh token under a savepoint (a
+  non-retryable failure keeps the JWT-only fallback) and signs the access JWT from the locked
+  `token_version`, in the order users → refresh_tokens; a deadlock, lock wait or SQLite busy
+  replays the whole transaction. A password change, reset, deactivation or erasure committed while
+  a login was verifying can no longer be followed by a session minted from the stale row. No API,
+  schema or error-message change; a service built by `NewAuthService` keeps the unlocked login.
+  `docs/CONCURRENCY.md` records Login (C2) as implemented. Roots:
+  `TestLoginOwnerLock{Decisions,Atomicity}{SQLite,MySQL}`,
+  `TestLoginConcurrentCredentialChanges{SQLite,MySQL}`,
+  `TestRefreshRotationConcurrentCredentialChanges{SQLite,MySQL}`,
+  `TestLoginOwnerLockLogsOmitPersonalData`, `TestLoginUnwiredServiceUnchanged` and
+  `TestLoginOwnerLockAPISQLite`.
 - **Saving a ticket form in the builder keeps ticket intake on (#335).** The builder sent no
   `create_ticket`, and `PUT /forms/{id}` stores an omitted flag as false, so saving a form
   configured through the API for #213 silently turned ticket intake off. Every create and update
