@@ -272,10 +272,11 @@ A double opt-in form with `create_ticket` opens a ticket for the matching live c
 submission is confirmed (#213; see [DEVELOPMENT.md](../DEVELOPMENT.md#form-ticket-intake-213)).
 The builder offers it as the "Create a support ticket" submission action (#335: it forces double
 opt-in, excludes lead creation and sends no owner) and FormDetail shows "Creates tickets"; the
-submission list and detail still show no ticket outcome, link or key. **Known issue:** the
-hosted view renders one random key per page load (`data-idempotency-key`, #340), but the embed
-script does not send it yet, so a browser retry is not deduplicated (each submission falls back to
-`submission-<id>`); only API clients that send a key are protected.
+submission list and detail still show no ticket outcome, link or key. The hosted view renders one
+random key per page load (`data-idempotency-key`, #340), and the embed script (#341) sends that
+key, or one it generates per rendered form from `crypto.getRandomValues`, as `idempotency_key` on
+every submission of the render, so a resend from the same render is deduplicated at confirmation
+(TC-FORM-137 to TC-FORM-140). Leads are not deduplicated: `create_lead` forms ignore the key.
 
 - **TC-FORM-120 — definition rules** (`create_ticket` with `create_lead` true or with
   `double_opt_in` false is the 400 invalid-definition answer with nothing written; with double
@@ -352,4 +353,28 @@ script does not send it yet, so a browser retry is not deduplicated (each submis
   bodies; tickets count 1, outcomes `created` then `duplicate` with the same `ticket_id`; keys of
   two separate renders open two tickets, `created` each; two submission rows per scenario) ·
   automated · `TestHostedFormResubmissionWithSameKeyOpensOneTicket`. That a browser sends the key
-  is not covered: the embed script does not send it yet (follow-up).
+  is covered by TC-FORM-140.
+- **TC-FORM-137 — the served embed script resolves one key per rendered form and sends it on every
+  submission** (`embed.js` byte-identical to the asset; `resolveIdempotencyKey` reads
+  `data-idempotency-key`, checks `^[A-Za-z0-9._:-]{1,128}$` and the `submission-` prefix, else draws
+  `new Uint8Array(16)` from `crypto.getRandomValues`; one closure-level call after the
+  `data-form-key` check and before the first request; `handleSubmit` sets `body.idempotency_key`
+  only `if (idempotencyKey)` and never draws a key) · automated ·
+  `internal/handler/form_embed_idempotency_test.go` `TestFormEmbedScriptIdempotencyKeyContract`
+  (#341).
+- **TC-FORM-138 — no weak key source and no logged key** (neither `Math.random` nor `randomUUID`
+  anywhere in the script; no `console.*` call mentions `idempotencyKey` or `idempotency_key`) ·
+  automated · `TestFormEmbedScriptIdempotencyKeyNoWeakFallback`,
+  `TestFormEmbedScriptIdempotencyKeyNeverLogged`.
+- **TC-FORM-139 — key function behaviour in `node`** (a valid attribute is returned as read; an
+  absent, empty, padded, 129-character, `submission-x` or invalid value falls back to
+  `000102030405060708090a0b0c0d0e0f` with stubbed bytes 0..15; real randomness gives two distinct
+  32-character lowercase hex keys; no `window.crypto`, no `getRandomValues` or a throwing one gives
+  `''`) · automated · `TestFormEmbedScriptIdempotencyKeyBehaviour` (fails when `node` is absent).
+- **TC-FORM-140 — the embed script in a browser** (hosted view on SQLite: the resend after a 500
+  carries the attribute's key and both pending rows store it; with the attribute stripped and
+  deterministic randomness, the resend after an aborted POST carries
+  `000102030405060708090a0b0c0d0e0f`; two tags on one page send distinct keys; a render without any
+  key source sends no `idempotency_key` property and gets 200) · automated (SQLite browser) ·
+  `gocrm-ui/e2e/tests/form-embed-idempotency.spec.ts`. One ticket per key after confirmation is
+  TC-FORM-136, since the browser run cannot read the confirmation link.

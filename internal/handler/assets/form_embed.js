@@ -44,6 +44,11 @@
     return;
   }
 
+  /* One idempotency key per rendered form (per closure), sent on every
+   * submission of this render, a resend after an error included, so the server
+   * can tell a retry from a new enquiry. Never logged. */
+  var idempotencyKey = resolveIdempotencyKey(script);
+
   var apiBase = deriveApiBase(script.src);
   var container = document.createElement('div');
   container.className = 'gcrm-form';
@@ -88,6 +93,35 @@
     }
     candidate.gcrmClaimed = true;
     return candidate;
+  }
+
+  /* The key source, in order: the tag's data-idempotency-key (rendered by the
+   * hosted view) when it has the server's shape and is not the reserved
+   * submission- prefix; otherwise 16 random bytes from crypto.getRandomValues
+   * as 32 lowercase hex characters; otherwise no key, and the field is left
+   * out of the body. There is deliberately no weaker fallback. Self-contained:
+   * it reads only its argument, window and built-ins. */
+  function resolveIdempotencyKey(tag) {
+    var KEY_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+    var attribute = tag && tag.getAttribute ? tag.getAttribute('data-idempotency-key') : null;
+    if (typeof attribute === 'string' && KEY_PATTERN.test(attribute) && attribute.indexOf('submission-') !== 0) {
+      return attribute;
+    }
+    try {
+      var cryptoSource = window.crypto;
+      if (!cryptoSource || typeof cryptoSource.getRandomValues !== 'function') {
+        return '';
+      }
+      var bytes = new Uint8Array(16);
+      cryptoSource.getRandomValues(bytes);
+      var hex = '';
+      for (var i = 0; i < bytes.length; i++) {
+        hex += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16);
+      }
+      return hex;
+    } catch (error) {
+      return '';
+    }
   }
 
   /* The API is wherever this script was served from, so an embed keeps working
@@ -416,6 +450,9 @@
         page_url: window.location.href
       };
       body[definition.honeypot_field || DEFAULT_HONEYPOT_FIELD] = trapInput.value;
+      if (idempotencyKey) {
+        body.idempotency_key = idempotencyKey;
+      }
 
       return fetchJSON(apiBase + '/' + encodeURIComponent(formKey) + '/submissions', body);
     }).then(function (result) {

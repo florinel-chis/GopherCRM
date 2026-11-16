@@ -201,8 +201,8 @@ type PublicSubmissionRequest struct {
 	// An invalid value (an explicit empty string included) is 400
 	// VALIDATION_ERROR with error.details.idempotency_key; the value is never
 	// echoed. The hosted view renders one random key per page load
-	// (data-idempotency-key), but the embed script does not send it yet, so
-	// browser retries are not deduplicated.
+	// (data-idempotency-key), and the embed script sends that key, or one it
+	// generates per render, on every submission of the render.
 	IdempotencyKey *string `json:"idempotency_key,omitempty" example:"order-2026-1187" maxLength:"128"`
 }
 
