@@ -356,8 +356,12 @@ func TestMailProductNamePasswordReset(t *testing.T) {
 				source = tc.stub
 			}
 			d := newMailNameAuthService(t, source)
+			// The token is issued under the owner lock (#342), through the
+			// transaction-bound repositories; the name is read after the commit.
+			d.expectTransactionBoundRepos()
 			user := sessionActiveUser(1, "CurrentPass1!")
 			d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+			d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 			d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil)
 			d.resetRepo.On("Create", mock.Anything).Return(nil)
 			d.mailer.On("SendPasswordReset", user.Email, mock.MatchedBy(func(u string) bool {
@@ -500,8 +504,10 @@ func TestMailProductNameLogsOmitValue(t *testing.T) {
 		for name, value := range values {
 			output, hook := capturePrivacyLogs(t)
 			d := newMailNameAuthService(t, &mailNameStub{value: value})
+			d.expectTransactionBoundRepos()
 			user := sessionActiveUser(1, "CurrentPass1!")
 			d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+			d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 			d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil)
 			d.resetRepo.On("Create", mock.Anything).Return(nil)
 			d.mailer.On("SendPasswordReset", user.Email, mock.Anything, mock.Anything).Return(nil)

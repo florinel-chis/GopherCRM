@@ -428,6 +428,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security: reset tokens and API keys are issued only to a live, active owner under the owner
+  lock (#342).** `RequestPasswordReset` keeps its plain email lookup, then runs one
+  `WithTransactionAndRetry` transaction (3 retries) that locks the owner row by id (`FOR UPDATE` on
+  MySQL/MariaDB) and, only when that row is live and active, spends the outstanding reset tokens
+  and inserts the new one through the transaction-bound repository (users →
+  password_reset_tokens); the mail goes out once, after the commit, to the address of the locked
+  row. `apiKeyService.Generate` locks the owner the same way before it inserts the key (users →
+  api_keys). An erasure or deactivation that commits first now makes the request issue nothing; one
+  that commits after it hard-deletes the token or key (erasure) or leaves it unusable
+  (deactivation). The reset answer is unchanged (the same 200 in every case); `POST /api-keys` now
+  answers 401 `Unauthorized`, without a key, for an owner deactivated or erased mid-request
+  (`service.ErrAccountUnavailable`) and 500 for any other failure. A failed invalidation or insert
+  rolls both back and sends no mail (before, a failed invalidation was logged and the new token
+  inserted anyway). A reset request on a service without a transaction manager now issues nothing,
+  and `NewAPIKeyService` takes the user repository and the transaction manager
+  (`NewAPIKeyService(apiKeyRepo, userRepo, txManager, apiKeySecret)`; without them `Generate`
+  returns `service.ErrAPIKeyIssuanceUnavailable`). The new order inverts the reset confirm's
+  (password_reset_tokens → users): when both hold their first lock on MySQL one ends in error 1213,
+  a request is replayed and a confirm returns the error with nothing written. No schema change.
+  `docs/CONCURRENCY.md` records both C3 flows as implemented. Roots (`internal/service`):
+  `TestPasswordResetRequestOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
+  `TestPasswordResetRequestOwnerLockConcurrentMySQL`, `TestPasswordResetRequestVsConfirm{SQLite,MySQL}`,
+  `TestAPIKeyCreateOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
+  `TestAPIKeyCreateOwnerLockConcurrentMySQL`, `TestCredentialIssuanceOwnerLockLogsOmitPersonalData`;
+  `TestAPIKeyCreateOwnerUnavailableMapping` (`internal/handler`);
+  `TestCredentialIssuanceOwnerLockAPISQLite` (`tests`); `TestAPIKeyOwnerLockProductionWiring` (`cmd`).
 - **Security: login issues its session from the owner row locked in one transaction (#336).** On a
   service built by `NewAuthServiceWithSessions` (production wiring), `LoginWithTokens` and `Login`
   keep the plain email lookup and bcrypt before any transaction, then run one

@@ -698,9 +698,60 @@ file, not by trusting the coverage matrix.
   admin email, once with `ghost.email`.
 - **Expected:** Both return **200** with the same body:
   `data.message = "If an account exists for that email, a password reset link has been sent"`.
-  `RequestPasswordReset` logs internal failures and never varies the response.
+  `RequestPasswordReset` logs internal failures and never varies the response: an unknown,
+  inactive, erased or deactivated account, a rollback, an unwired service and a mail failure all
+  answer the same 200 (TC-AUTH-036a).
 - **Automation:** blocked — no UI entry point exists (TC-AUTH-034); an API-only assertion belongs in
   the Go integration suite (`tests/auth_session_integration_test.go`) rather than in Playwright
+
+### TC-AUTH-036a — A reset token is issued only to a live, active owner under the owner lock (#342)
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** An active user; an admin to deactivate or erase it.
+- **Steps:** `POST /api/v1/auth/password-reset` for the user; separately, deactivate or erase the
+  user (`DELETE /users/{id}`, or `DELETE /customers/{id}` for a customer-role login) while the
+  request is between its email lookup and its transaction, and once after it committed.
+- **Expected:** Every answer is the identical **200** with the fixed message. A deactivation or
+  erasure that commits before the request's owner lock leaves no new token and sends no mail. A
+  request that commits first stores exactly one unused token and sends exactly one mail, after the
+  commit, to the address of the locked row; a later erasure hard-deletes the token, and after a
+  later deactivation `POST /auth/password-reset/confirm` refuses the link with the generic **400**.
+  A failure of the invalidation or of the insert writes nothing and sends no mail.
+- **Automation:** Go — `internal/service/credential_issuance_owner_lock_test.go`
+  (`TestPasswordResetRequestOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
+  `TestPasswordResetRequestOwnerLockConcurrentMySQL`, which needs `TEST_MYSQL_DSN`) and, over HTTP,
+  `tests/credential_issuance_owner_lock_test.go` (`TestCredentialIssuanceOwnerLockAPISQLite`).
+  A reset request for an account whose row another transaction holds waits for that lock; the
+  timing difference is an accepted residual.
+
+### TC-AUTH-036b — A reset request racing a reset confirmation of the same user
+- **Priority:** P2
+- **Type:** concurrency
+- **Preconditions:** An active user holding a spendable reset link.
+- **Steps:** Confirm the link and request a new reset for the same user concurrently, in both
+  orders.
+- **Expected:** Confirm first: the password changes and the request then issues one new unused
+  token and one mail. Request first: the confirmation is refused (`ErrInvalidResetToken`, the
+  generic **400**), the password is unchanged and exactly one unused token remains. On MySQL, when
+  each holds its first lock, one of them ends in error 1213: a request is replayed (end state as
+  confirm first), a confirmation returns an error with nothing written (end state as request
+  first). The request always answers 200 and sends exactly one mail.
+- **Automation:** Go — `TestPasswordResetRequestVsConfirm{SQLite,MySQL}`
+  (`internal/service/credential_issuance_owner_lock_test.go`)
+
+### TC-AUTH-036c — Creating an API key for an owner deactivated or erased mid-request answers 401
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** A user authenticated by a bearer token.
+- **Steps:** `POST /api/v1/api-keys` while the user is deactivated or erased between authentication
+  and the key's issuing transaction.
+- **Expected:** **401** `UNAUTHORIZED` with the message `Unauthorized` and no key in the body; no
+  `api_keys` row is written. A key created before a later erasure is hard-deleted by it; one
+  created before a later deactivation is refused at authentication. Any other failure answers
+  **500**.
+- **Automation:** Go — `TestAPIKeyCreateOwnerUnavailableMapping` (`internal/handler`),
+  `TestAPIKeyCreateOwnerLock{Decisions,Atomicity,Concurrent}SQLite` and
+  `TestAPIKeyCreateOwnerLockConcurrentMySQL` (`internal/service`)
 
 ### TC-AUTH-037 — Complete a password reset end to end
 - **Priority:** P1

@@ -319,7 +319,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		service.WithTicketAutomationEvents(automationRepo, txManager))
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
-	apiKeyService := service.NewAPIKeyService(apiKeyRepo, cfg.API.APIKeySecret)
+	// A key is issued only inside one transaction that locks its owner's users
+	// row first (#342), so the service takes the shared userRepo and txManager.
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, userRepo, txManager, cfg.API.APIKeySecret)
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,
 		service.WithDealAutomationEvents(automationRepo))
 	// Products take the deals' default currency; quotes email through the

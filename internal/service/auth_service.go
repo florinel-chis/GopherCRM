@@ -82,6 +82,11 @@ type authService struct {
 	// transaction begins (#336). Tests commit a competing change there; nil in
 	// production.
 	loginBeforeLock func(userID uint)
+	// resetBeforeLock is an instance-local seam that runs after a password
+	// reset request has found an active account by its plain lookup and before
+	// its issuing transaction begins (#342). Tests commit a competing change
+	// there; nil in production.
+	resetBeforeLock func(userID uint)
 	// productName is the configuration read behind the product name of the
 	// password reset mail (#292), set by WithAuthProductName. Nil means
 	// "GopherCRM".
@@ -1118,51 +1123,139 @@ func (s *authService) changePasswordInTransaction(
 	return &AuthTokens{AccessToken: accessToken, RefreshToken: newRefreshToken, User: owner}, nil
 }
 
-// RequestPasswordReset starts the reset flow. It NEVER discloses whether the
-// account exists: unknown email, inactive account, storage failure and mail
-// failure all return nil, so the endpoint's response and timing stay uniform.
-// The raw token goes only into the mailed link; the store holds its hash.
-func (s *authService) RequestPasswordReset(email string) error {
-	logger := utils.Logger.WithField("handler", "AuthService.RequestPasswordReset")
+// resetRequestMaxRetries is how often the password-reset issuing transaction
+// is replayed after a deadlock, a lock wait timeout or SQLite busy/locked
+// (#183 retry rule).
+const resetRequestMaxRetries = 3
 
-	if s.resetTokenRepo == nil || s.mailer == nil {
-		logger.Warn("Password reset requested but the reset flow is not wired")
+// credentialOwnerRefusal is the refusal of a credential issuance (#342) whose
+// owner, read under the owner lock, is missing, erased (soft-deleted) or
+// inactive. It matches ErrAccountUnavailable through errors.Is; code is the
+// error_code the log line carries.
+type credentialOwnerRefusal struct {
+	code string
+}
+
+func (r *credentialOwnerRefusal) Error() string {
+	return "credential owner unavailable: " + r.code
+}
+
+func (r *credentialOwnerRefusal) Unwrap() error { return ErrAccountUnavailable }
+
+// lockLiveCredentialOwner reads the owner of a credential being issued by
+// primary key through userRepo, which the caller binds to a locking handle of
+// the issuing transaction (`SELECT ... FOR UPDATE` on MySQL/MariaDB, a plain
+// read on SQLite). The scoped read makes an erased (soft-deleted) owner a
+// not-found. A missing, erased or inactive owner is a *credentialOwnerRefusal;
+// any other failure is returned wrapped (and may be replayed by the retry
+// helper when it is retryable).
+func lockLiveCredentialOwner(userRepo repository.UserRepository, userID uint) (*models.User, error) {
+	owner, err := userRepo.GetByID(userID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, &credentialOwnerRefusal{code: "account_erased"}
+		}
+		return nil, fmt.Errorf("credential owner lookup failed: %w", err)
+	}
+	if !owner.IsActive {
+		return nil, &credentialOwnerRefusal{code: "account_inactive"}
+	}
+	return owner, nil
+}
+
+// RequestPasswordReset starts the reset flow. It NEVER discloses whether the
+// account exists: unknown email, inactive account, an owner erased or
+// deactivated under the lock, a rollback, an unwired service and a mail
+// failure all return nil, so the endpoint's response stays uniform. The raw
+// token goes only into the mailed link; the store holds its hash.
+//
+// The plain email lookup runs first, outside any transaction. The token is then
+// issued by one WithTransactionAndRetry transaction (#342,
+// resetRequestMaxRetries) that locks the owner row by primary key (`SELECT ...
+// FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and refuses, writing
+// nothing, when that row is missing, erased or inactive; otherwise the user's
+// outstanding tokens are spent and the new one inserted through the
+// transaction-bound PasswordResetTokenRepository, in the order users →
+// password_reset_tokens. The mail goes out once, after the commit, to the
+// address of the locked row. A deactivation or erasure that commits before the
+// lock therefore issues nothing, and one that commits after it ends the token
+// it issued (the erasure deletes it, the confirmation refuses an inactive
+// owner). Without a transaction manager nothing is written or sent.
+func (s *authService) RequestPasswordReset(email string) error {
+	logger := utils.Logger.WithField("operation", "RequestPasswordReset")
+
+	if s.resetTokenRepo == nil || s.mailer == nil || s.txManager == nil {
+		logger.WithField("error_code", "reset_unwired").Warn("Password reset requested but the reset flow is not wired")
 		return nil
 	}
 
 	user, err := s.userRepo.GetByEmail(email)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			logger.Info("Password reset requested for unknown email")
+			logger.WithField("error_code", "unknown_account").Info("Password reset requested for unknown email")
 		} else {
-			logger.WithError(utils.LogError(err)).Error("Password reset user lookup failed")
+			logger.WithError(utils.LogError(err)).WithField("error_code", "lookup_failed").
+				Error("Password reset user lookup failed")
 		}
 		return nil
 	}
+	logger = logger.WithField("user_id", user.ID)
 	if !user.IsActive {
-		logger.WithField("user_id", user.ID).Info("Password reset requested for inactive account; ignored")
+		logger.WithField("error_code", "account_inactive").Info("Password reset requested for inactive account; ignored")
 		return nil
-	}
-
-	// Only the newest link should work; stale outstanding tokens are spent.
-	if err := s.resetTokenRepo.InvalidateAllForUser(user.ID); err != nil {
-		logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).
-			Warn("Failed to invalidate previous reset tokens")
 	}
 
 	raw, err := generateOpaqueToken()
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to generate reset token")
+		logger.WithError(utils.LogError(err)).WithField("error_code", "token_generation_failed").
+			Error("Failed to generate reset token")
 		return nil
 	}
+	tokenHash := hashOpaqueToken(raw, s.sessionTokenSecret())
 
-	token := &models.PasswordResetToken{
-		UserID:    user.ID,
-		TokenHash: hashOpaqueToken(raw, s.sessionTokenSecret()),
-		ExpiresAt: time.Now().Add(resetTokenTTL),
+	if s.resetBeforeLock != nil {
+		s.resetBeforeLock(user.ID)
 	}
-	if err := s.resetTokenRepo.Create(token); err != nil {
-		logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).Error("Failed to store reset token")
+
+	var recipient string
+	err = s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		// Owner first, by primary key, never through the email index; a fresh
+		// Session so the locking clause does not leak into the token writes.
+		owner, err := lockLiveCredentialOwner(
+			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			user.ID)
+		if err != nil {
+			return err
+		}
+		resetRepo := s.resetTokenRepo.WithTx(tx)
+		// Only the newest link should work; stale outstanding tokens are spent
+		// in the same transaction, so a failure keeps them as they were.
+		if err := resetRepo.InvalidateAllForUser(owner.ID); err != nil {
+			return fmt.Errorf("failed to invalidate previous reset tokens: %w", err)
+		}
+		token := &models.PasswordResetToken{
+			UserID:    owner.ID,
+			TokenHash: tokenHash,
+			ExpiresAt: time.Now().Add(resetTokenTTL),
+		}
+		if err := resetRepo.Create(token); err != nil {
+			return fmt.Errorf("failed to store reset token: %w", err)
+		}
+		recipient = owner.Email
+		return nil
+	}, resetRequestMaxRetries)
+	if err != nil {
+		var refusal *credentialOwnerRefusal
+		if errors.As(err, &refusal) {
+			logger.WithField("error_code", refusal.code).Info("Password reset refused under the owner lock")
+		} else {
+			logger.WithError(utils.LogError(err)).WithField("error_code", "reset_token_rolled_back").
+				Error("Password reset issuing transaction rolled back")
+		}
 		return nil
 	}
 
@@ -1170,9 +1263,9 @@ func (s *authService) RequestPasswordReset(email string) error {
 	// The product name is read only now that a mail will go out; a failed read
 	// falls back to "GopherCRM" and never blocks the send (#292).
 	productName := ResolveMailProductName(s.productName)
-	if err := s.mailer.SendPasswordReset(user.Email, resetURL, productName); err != nil {
+	if err := s.mailer.SendPasswordReset(recipient, resetURL, productName); err != nil {
 		// Already logged (redacted) by the mailer; swallow to stay uniform.
-		logger.WithField("user_id", user.ID).Warn("Password reset mail delivery failed")
+		logger.WithField("error_code", "mail_failed").Warn("Password reset mail delivery failed")
 	}
 	return nil
 }

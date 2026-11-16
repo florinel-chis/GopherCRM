@@ -210,7 +210,8 @@ handler package, `TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits`.
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use
 `middleware.RequireRole()` for RBAC on routes. An API key whose owner has been erased or deactivated
-is rejected at authentication time.
+is rejected at authentication time, and none is issued to such an owner (#342, see *Credential
+issuance under the owner lock*).
 
 After an account lock expires, the next wrong password begins a fresh five-attempt window.
 The exact expiry is eligible; an active lock still rejects correct credentials. See the
@@ -294,7 +295,66 @@ revocation and the successor) and the logout (owner, then the revocation, then t
 `token_version` increment, #236). `refresh_tokens.user_id` references `users` with a
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
-(error 1213). New session flows must follow the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
+(error 1213). The credential-issuing transactions follow the same owner-first rule (#342): the
+password-reset request locks the owner, then spends and inserts `password_reset_tokens` (users →
+password_reset_tokens), and API-key create locks the owner, then inserts into `api_keys` (users →
+api_keys). The reset confirm (token first, then owner) inverts the request's order; see
+*Credential issuance under the owner lock* below. New session and credential flows must follow
+the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
+
+**Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
+issued only to a live, active owner.
+
+- **Reset request.** `RequestPasswordReset` keeps its plain `GetByEmail` (an unknown or inactive
+  address stops there), then runs one `WithTransactionAndRetry` transaction
+  (`resetRequestMaxRetries` 3) on `context.Background()` that reads the owner by primary key
+  through the user repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})` on a fresh
+  `Session` (`lockLiveCredentialOwner`; `FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite).
+  A missing, erased (soft-deleted) or inactive locked row writes nothing. Otherwise
+  `InvalidateAllForUser` and `Create` run through `PasswordResetTokenRepository.WithTx`; a failure
+  of either rolls both back. `SendPasswordReset` is called once, after the commit, with the address
+  of the locked row. The method returns nil in every case (unknown, inactive, refused, rolled back,
+  unwired, mail failure), so `POST /auth/password-reset` keeps its one 200 answer. A service
+  without a transaction manager now writes and sends nothing.
+- **API-key create.** `NewAPIKeyService(apiKeyRepo, userRepo, txManager, apiKeySecret)`;
+  `cmd/main.go` passes the shared `userRepo` and `txManager`. `Generate` runs one
+  `WithTransactionAndRetry` transaction (`apiKeyCreateMaxRetries` 3) on `context.Background()`
+  with the same owner lock and inserts through `apiKeyRepo.WithTx(tx).Create`. A refused owner
+  returns an error matching `service.ErrAccountUnavailable` (no row, no key), which `POST /api-keys`
+  answers 401 `UNAUTHORIZED` `Unauthorized`; without the user repository or the manager it returns
+  `service.ErrAPIKeyIssuanceUnavailable` and writes nothing (500, like every other failure).
+- **Outcome.** An erasure (user- or customer-rooted) or a deactivation that commits before the lock
+  makes the issuance write nothing; one that commits after it hard-deletes the token or key
+  (erasure) or leaves it unusable (`ConfirmPasswordReset` and `ValidateAPIKey` refuse an inactive
+  owner).
+- **Reset request vs confirm.** The request locks users → password_reset_tokens, the confirm
+  password_reset_tokens → users. Confirm first: the request waits on the users row and issues a
+  fresh token. Request first: the confirm waits on the token row and its claim is refused
+  (`ErrInvalidResetToken`). Both holding their first lock: MySQL ends one with error 1213; a
+  request victim is replayed by the retry helper, a confirm victim (plain `WithTransaction`)
+  returns the error with nothing written. Putting the confirm under the retry rule is a follow-up.
+- **Accepted residual.** A reset request for an account whose users row another transaction holds
+  waits for that lock, which a timing observer could tell apart from an unknown address. Neither
+  path moves onto the request context (the interfaces stay context-free).
+- **Logs.** The refusal, rollback and unwired lines carry `user_id`, `operation`
+  (`RequestPasswordReset`, `GenerateAPIKey`) and `error_code` only, plus the error through
+  `utils.LogError`; never the address, a name, the token or its hash, the key, its prefix or its
+  name.
+
+Roots (`internal/service/credential_issuance_owner_lock_test.go`):
+`TestPasswordResetRequestOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
+`TestPasswordResetRequestOwnerLockConcurrentMySQL`, `TestPasswordResetRequestVsConfirm{SQLite,MySQL}`,
+`TestAPIKeyCreateOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
+`TestAPIKeyCreateOwnerLockConcurrentMySQL` and `TestCredentialIssuanceOwnerLockLogsOmitPersonalData`;
+`TestAPIKeyCreateOwnerUnavailableMapping` (`internal/handler/apikey_owner_lock_test.go`);
+`TestCredentialIssuanceOwnerLockAPISQLite` (`tests`); `TestAPIKeyOwnerLockProductionWiring` (`cmd`).
+On SQLite a competitor commits through the instance-local seams `resetBeforeLock` and
+`apiKeyService.beforeLock`, between the lookup and the transaction, or after the issuance; the
+MySQL roots run on a disposable `TEST_MYSQL_DSN` schema built by the real migrations, see each
+wait in `information_schema.PROCESSLIST` on two consecutive polls and assert that no ordering
+outside the interleaved request/confirm case ends in error 1213. The acceptance run sets
+`TEST_MYSQL_DSN`; `make verify-backend` has no DSN and skips them. Registering the new roots in
+`scripts/ci/check-go.py` and `scripts/ci/check-auth.py` is an operator follow-up.
 
 **Login issuing transaction (#336)** — on a service built by `NewAuthServiceWithSessions`,
 `LoginWithTokens` and `Login` keep the plain `GetByEmail` and bcrypt (against a dummy hash for an
@@ -1672,11 +1732,11 @@ in the previous paragraph. It is irreversible.
 Known limits of the erasure, in one place:
 
 - **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
-  lead conversion, customer/login linking, password reset or API-key creation. A conversion, link
-  or credential committed while an erasure is in flight can escape the cascade; opposite entry
-  points can deadlock (an error, never a partial commit). Login (#336) and refresh rotation lock
-  the user row before they issue anything, so against a user-rooted erasure they either commit
-  first (and the erasure purges what they issued) or wait and are refused. The read of
+  lead conversion or customer/login linking. A conversion or link committed while an erasure is in
+  flight can escape the cascade; opposite entry points can deadlock (an error, never a partial
+  commit). Login (#336), refresh rotation, the password-reset request and API-key creation (#342)
+  lock the user row before they issue anything, so against a user- or customer-rooted erasure they
+  either commit first (and the erasure purges what they issued) or wait and are refused. The read of
   the original address and the read of the matching unlinked submission ids are plain snapshot
   reads, so a submission from the same address inserted concurrently can survive. Tracked in
   #183.

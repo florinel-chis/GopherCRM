@@ -80,7 +80,7 @@ func (suite *AuthSessionIntegrationTestSuite) SetupSuite() {
 		userRepo, apiKeyRepo, refreshRepo, resetRepo, utils.NewTransactionManager(db), suite.mailer,
 		jwtConfig, "http://localhost:5173", "")
 	suite.userService = service.NewUserService(userRepo)
-	suite.apiKeys = service.NewAPIKeyService(apiKeyRepo, "")
+	suite.apiKeys = service.NewAPIKeyService(apiKeyRepo, userRepo, utils.NewTransactionManager(db), "")
 
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
