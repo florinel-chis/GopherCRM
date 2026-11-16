@@ -273,8 +273,9 @@ submission is confirmed (#213; see [DEVELOPMENT.md](../DEVELOPMENT.md#form-ticke
 The builder offers it as the "Create a support ticket" submission action (#335: it forces double
 opt-in, excludes lead creation and sends no owner) and FormDetail shows "Creates tickets"; the
 submission list and detail still show no ticket outcome, link or key. **Known issue:** the
-hosted view and the embed script send no `idempotency_key`, so a browser retry is not deduplicated
-(each submission falls back to `submission-<id>`); only API clients that send a key are protected.
+hosted view renders one random key per page load (`data-idempotency-key`, #340), but the embed
+script does not send it yet, so a browser retry is not deduplicated (each submission falls back to
+`submission-<id>`); only API clients that send a key are protected.
 
 - **TC-FORM-120 — definition rules** (`create_ticket` with `create_lead` true or with
   `double_opt_in` false is the 400 invalid-definition answer with nothing written; with double
@@ -331,3 +332,24 @@ hosted view and the embed script send no `idempotency_key`, so a browser retry i
 - **TC-FORM-132 — FormDetail shows "Creates tickets: yes" for a ticket form, next to "Creates
   leads: no", and "Creates tickets: no" for a lead form** · automated ·
   `FormDetail.test.tsx`; the "yes" line also in `form-builder-ticket.spec.ts`.
+- **TC-FORM-133 — every hosted view render carries its own idempotency key** (`GET
+  /forms/public/{key}/view` answers 200 `text/html` whose script tag carries
+  `data-idempotency-key` with exactly 32 lowercase hex characters that
+  `service.ValidFormIdempotencyKey` accepts; two renders of the same key differ; the value is
+  HTML-escaped on insertion; no service call; the key is not logged) · automated ·
+  `internal/handler/form_public_handler_test.go` `TestHostedViewRendersPerRenderIdempotencyKey`
+  (#340).
+- **TC-FORM-134 — the hosted view is served `Cache-Control: no-store`**, with or without a key,
+  while `embed.js` keeps `public, max-age=3600` · automated · `TestHostedViewIsNotCached`.
+- **TC-FORM-135 — a failing random source serves the shell without the attribute** (a read error
+  and a short read through the handler's instance-local `io.Reader` seam; 200 with
+  `data-form-key` and no `data-idempotency-key`; exactly one Warn line with only
+  `operation=hosted_view_key` and `error_code=random_unavailable`; the captured log holds neither
+  the form's public key nor any key) · automated · `TestHostedViewWithoutRandomnessOmitsKey`.
+- **TC-FORM-136 — the rendered key, resubmitted and confirmed twice, opens one ticket** (real form
+  service with ticket intake on one-connection in-memory SQLite migrated by
+  `models.MigrateDatabase`; the test renders the view, extracts the key and builds both POST
+  bodies; tickets count 1, outcomes `created` then `duplicate` with the same `ticket_id`; keys of
+  two separate renders open two tickets, `created` each; two submission rows per scenario) ·
+  automated · `TestHostedFormResubmissionWithSameKeyOpensOneTicket`. That a browser sends the key
+  is not covered: the embed script does not send it yet (follow-up).

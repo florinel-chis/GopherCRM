@@ -225,11 +225,15 @@ candidate follow-up, not an accident:
 Form ticket intake ships with the form builder's "Create a support ticket" submission action
 (#335) and the FormDetail "Creates tickets" line, with these open:
 
-- **Per-render idempotency key in the embed script and hosted view** — both send no
-  `idempotency_key` today, so a browser retry falls back to `submission-<id>` and is not
-  deduplicated. Each render should generate one random key (at least 128 bits, within
-  `^[A-Za-z0-9._:-]{1,128}$`, never derived from field values) and resend it on every retry. Needs
-  an operator decision on the task profile that may change `internal/handler/assets/`.
+- **Per-render idempotency key in the embed script** — the hosted view half is done (#340): every
+  render of `GET /forms/public/{key}/view` carries one `crypto/rand` key (128 bits, 32 lowercase
+  hex characters) as `data-idempotency-key` on the script tag and is served
+  `Cache-Control: no-store`. Still open: the embed script sends no `idempotency_key` today, so a
+  browser retry falls back to `submission-<id>` and is not deduplicated. It should read the
+  attribute (validated against `^[A-Za-z0-9._:-]{1,128}$` and the `submission-` prefix), otherwise
+  generate 16 bytes with `crypto.getRandomValues` once per render, and send the same key in every
+  submission of that render. Needs an operator decision on the task profile that may change
+  `internal/handler/assets/`.
 - **Submission views** — the ticket outcome, ticket link and key on the submission list and
   detail. (The builder's ticket action shipped in #335.)
 - **Authenticated ticket import endpoint** — for integrators that do not need double opt-in (Q2).

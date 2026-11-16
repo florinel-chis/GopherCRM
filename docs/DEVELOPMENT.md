@@ -2503,8 +2503,14 @@ logic lives in `internal/service/form_ticket_intake.go` and
   checks it after binding and before any service call; a refusal is 400 `VALIDATION_ERROR` with
   `error.details.idempotency_key`, never echoing the value. Only the pending row of a
   `create_ticket` form stores it; spam and every other form store `''`. A confirmation without a
-  client key uses `submission-<submission id>`, which deduplicates that one submission only: the
-  hosted view and the embed script send no key, so their retries are **not** deduplicated yet.
+  client key uses `submission-<submission id>`, which deduplicates that one submission only. The
+  hosted view (`ViewPage`, #340) renders one key per render as `data-idempotency-key` on the
+  script tag: 16 bytes from the handler's instance-local `random` reader (`crypto/rand.Reader`,
+  read with `io.ReadFull`) as 32 lowercase hex characters, served with `Cache-Control: no-store`
+  so no cache hands one render's key to another visitor, never logged, and still without any
+  service call. When the reader fails the shell is served without the attribute and one Warn
+  line carries only `operation=hosted_view_key` and `error_code=random_unavailable`. The embed
+  script does not send the attribute yet, so browser retries are **not** deduplicated yet.
 - **Placement.** Only a confirmation opens a ticket, inside the confirmation transaction after the
   token claim. Lock order: token (claim) → customer (`LockLiveCustomerByEmail`) → ticket → key row
   → submission. Spam and never-confirmed rows open nothing.
@@ -2556,7 +2562,11 @@ logic lives in `internal/service/form_ticket_intake.go` and
 Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema (skipped without it) where
 named: `TestFormTicketTargetDefinition`, `TestFormTicketIntakeSchemaSQLite`,
 `TestFormTicketIntakeSQLiteUpgrade`, `TestFormSubmissionTicketJSON` (`internal/models`);
-`TestFormTicketFlagHandler`, `TestFormPublicSubmitIdempotencyKeyValidation` (`internal/handler`);
+`TestFormTicketFlagHandler`, `TestFormPublicSubmitIdempotencyKeyValidation`, and for the hosted
+view key (#340) `TestHostedViewRendersPerRenderIdempotencyKey`, `TestHostedViewIsNotCached`,
+`TestHostedViewWithoutRandomnessOmitsKey` and `TestHostedFormResubmissionWithSameKeyOpensOneTicket`
+(the rendered key, submitted and confirmed twice over HTTP on the real service with ticket intake
+and one-connection in-memory SQLite, opens one ticket) (`internal/handler`);
 `TestFormTicketKeyRepository{SQLite,MySQL}`, `TestFormTicketCustomerMatch{SQLite,MySQL}`,
 `TestFormTicketKeyErasure{SQLite,MySQL}`, `TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}`
 (`internal/repository`); `TestFormTicketIntakeConfirmed{SQLite,MySQL}`,
@@ -2574,7 +2584,8 @@ in `information_schema.PROCESSLIST` on two consecutive polls) and
 Operator follow-ups: register the new roots in `scripts/ci/check-go.py` and the migration roots in
 the Database migrations workflow; add the `ticket_outcome` closed set to
 `scripts/ci/check-api-docs.py`; decide which task profile may change `internal/handler/assets/` so
-the embed script and hosted view can send a per-render key.
+the embed script can read the hosted view's `data-idempotency-key` (or generate its own key per
+render) and send it; register the #340 handler roots in `scripts/ci/check-go.py`.
 
 ### AEO runtime validation and candidate inspection
 

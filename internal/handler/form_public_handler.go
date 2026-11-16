@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"crypto/rand"
 	_ "embed"
+	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -38,6 +41,15 @@ const (
 	formEmbedCacheControl = "public, max-age=3600"
 
 	formEmbedContentType = "application/javascript; charset=utf-8"
+
+	// formHostedViewCacheControl keeps every cache, shared or private, from
+	// storing the hosted view: each render carries its own idempotency key
+	// (#340), and a cached copy would hand one visitor's key to another.
+	formHostedViewCacheControl = "no-store"
+
+	// formHostedViewKeyBytes is the entropy of a hosted view's idempotency key:
+	// 128 bits, rendered as 32 lowercase hex characters.
+	formHostedViewKeyBytes = 16
 )
 
 // FormPublicHandler serves the unauthenticated half of the forms module: the
@@ -58,6 +70,12 @@ type FormPublicHandler struct {
 	// domain whatever cfg.PublicBaseURL says. The configured base URL is what
 	// the service puts in mail, where a relative link would be useless.
 	apiPrefix string
+
+	// random is where the hosted view's per-render idempotency key comes from
+	// (#340): crypto/rand.Reader, read with io.ReadFull. It is an
+	// instance-local seam so a test can make it fail without touching a
+	// global.
+	random io.Reader
 }
 
 func NewFormPublicHandler(s service.FormService, cfg config.FormsConfig, apiPrefix string) *FormPublicHandler {
@@ -65,7 +83,23 @@ func NewFormPublicHandler(s service.FormService, cfg config.FormsConfig, apiPref
 		formService: s,
 		cfg:         cfg,
 		apiPrefix:   normaliseAPIPrefix(apiPrefix),
+		random:      rand.Reader,
 	}
+}
+
+// hostedViewKey draws one idempotency key for a render of the hosted view:
+// 16 random bytes as 32 lowercase hex characters, which
+// service.ValidFormIdempotencyKey accepts.
+func (h *FormPublicHandler) hostedViewKey() (string, error) {
+	source := h.random
+	if source == nil {
+		source = rand.Reader
+	}
+	buf := make([]byte, formHostedViewKeyBytes)
+	if _, err := io.ReadFull(source, buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // normaliseAPIPrefix turns any of "", "/", "api/v1" or "/api/v1/" into the one
@@ -129,7 +163,7 @@ func (h *FormPublicHandler) Definition(c *gin.Context) {
 // @Description Checks run in a fixed order and the first that trips decides: (1) values are validated against the definition; (2) the challenge must be present and correctly signed; then the spam layers: (3) time trap - submitted less than 3 seconds or more than 24 hours after the definition was served; (4) origin - the Origin header (or Referer) host must be on the form's allowlist when it has one; (5) honeypot - the decoy input must be empty; (6) reCAPTCHA v3, only when the form enables it and the server has both keys - a missing token, a score below RECAPTCHA_MIN_SCORE or an unreachable verification service fails it.
 // @Description A submission caught by a spam layer is stored with status spam and its reason and answered with exactly the same 200 outcome a genuine one gets, so the response reveals nothing about the layers; no mail is sent and no lead is touched. This is deliberate.
 // @Description Side effects of a genuine submission: without double opt-in it is stored as received; when the form creates leads, the newest live lead with the same email gains a note (automation event lead_updated, origin form) or a new lead is created (status new, owner default_owner_id, source the form name; automation event lead_created, origin form), in the same transaction; after the commit one notification mail goes to each notify_emails address and, when follow_up_subject is set, the follow-up mail goes to the submitter. With double opt-in it is stored as pending, earlier outstanding confirmation links for the same form and address are invalidated, and a confirmation mail with a single-use link valid for 48 hours goes to the submitted address; lead, notification and follow-up wait for POST /forms/public/confirm. Mail failures are logged and never change the response.
-// @Description Idempotency key (#213): an optional idempotency_key (^[A-Za-z0-9._:-]{1,128}$, not starting with "submission-", never personal data) is checked before anything else is done; an invalid value, an explicit empty string included, is 400 VALIDATION_ERROR with error.details.idempotency_key and the value is not echoed. On a form with create_ticket it is stored on the pending submission, and confirmations carrying the same key open at most one ticket; on other forms it is ignored. The answer is identical whether the key is new, already used, absent, the submission is spam or the form is not a ticket form. The hosted view and the embed script do not send a key, so their retries are not deduplicated.
+// @Description Idempotency key (#213): an optional idempotency_key (^[A-Za-z0-9._:-]{1,128}$, not starting with "submission-", never personal data) is checked before anything else is done; an invalid value, an explicit empty string included, is 400 VALIDATION_ERROR with error.details.idempotency_key and the value is not echoed. On a form with create_ticket it is stored on the pending submission, and confirmations carrying the same key open at most one ticket; on other forms it is ignored. The answer is identical whether the key is new, already used, absent, the submission is spam or the form is not a ticket form. The hosted view renders one random key per page load (data-idempotency-key), but the embed script does not send it yet, so browser retries are not deduplicated.
 // @Description Errors: 400 VALIDATION_ERROR (message "The submission could not be accepted") with error.details mapping field names to messages - an undeclared field ("unknown field"), a missing required value, a value longer than its max_length, an invalid email, a value that is not one of a select's options, "consent" when the form has consent text and consent is not true, or "challenge" when the challenge is missing or invalid (reported only once the values are valid); 400 BAD_REQUEST ("Invalid request body") for a body that is not valid JSON; 404 NOT_FOUND for an unknown, unpublished or deleted form (an origin outside the allowlist is NOT a 404 here: it is stored as spam); 413 with code VALIDATION_ERROR ("Submission is too large") for a body over 64 KiB.
 // @Description Unauthenticated: no credentials are needed or accepted. Cross-origin calls get a permissive, credential-less CORS policy (the request Origin is echoed, methods GET, POST, OPTIONS, header Content-Type; preflights answer 204).
 // @Tags public-forms
@@ -192,19 +226,39 @@ func (h *FormPublicHandler) Submit(c *gin.Context) {
 // — the renderer's own definition request decides whether anything appears,
 // which keeps this page free of any enumeration signal.
 //
+// Each render carries its own idempotency key (#340) on the script tag and is
+// served with Cache-Control: no-store. The key is never logged; when the
+// random source fails the page is served without it and one key-free Warn
+// line is logged.
+//
 // ViewPage godoc
 // @Summary Hosted form page
 // @Description A standalone HTML page (shareable URL) that loads the embed script for this key, so a form can be used without embedding it anywhere. The key is not checked: the page is the same 200 text/html shell for any key, and only the script's own definition request decides whether a form appears (an unknown, unpublished or origin-restricted key renders nothing). The definition request from this page normally carries no Origin header but a Referer naming this server, so a form with an allowlist renders here only when this server's host is listed. The page is marked noindex, nofollow and needs JavaScript.
+// @Description Idempotency key (#340): every render puts one fresh random key (128 bits from crypto/rand, 32 lowercase hex characters, valid as the idempotency_key of POST /forms/public/{key}/submissions) on the script tag as data-idempotency-key, and the page is served with Cache-Control: no-store so no cache hands one render's key to another visitor; a reload is a new render with a new key. When the server's random source fails the page is served without the attribute. The embed script does not send the key yet, so browser retries from this page are not deduplicated.
 // @Description Unauthenticated.
 // @Tags public-forms
 // @Produce html,json
 // @Param key path string true "Public form identifier (the form's public_id)"
 // @Success 200 {string} string "HTML page (text/html; charset=utf-8)"
+// @Header 200 {string} Cache-Control "no-store"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS (JSON envelope) - generous tier: 240 requests/min, burst 40, per client IP, one bucket shared by GET embed.js, GET {key} and GET {key}/view; error.details.retry_after is '60s'; no Retry-After header"
 // @Router /forms/public/{key}/view [get]
 func (h *FormPublicHandler) ViewPage(c *gin.Context) {
+	idempotencyKey, err := h.hostedViewKey()
+	if err != nil {
+		// Neither the error, the form's key nor any idempotency key is logged.
+		if utils.Logger != nil {
+			utils.Logger.WithFields(logrus.Fields{
+				"operation":  "hosted_view_key",
+				"error_code": "random_unavailable",
+			}).Warn("Hosted form view served without an idempotency key")
+		}
+		idempotencyKey = ""
+	}
+
+	c.Header("Cache-Control", formHostedViewCacheControl)
 	c.Data(http.StatusOK, formPageContentType,
-		formHostedViewPage(h.apiPrefix+"/forms/public/embed.js", c.Param("key")))
+		formHostedViewPage(h.apiPrefix+"/forms/public/embed.js", c.Param("key"), idempotencyKey))
 }
 
 // ConfirmPage renders the button a visitor presses to confirm their address.
