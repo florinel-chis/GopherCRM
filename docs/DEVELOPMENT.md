@@ -2509,8 +2509,20 @@ logic lives in `internal/service/form_ticket_intake.go` and
   read with `io.ReadFull`) as 32 lowercase hex characters, served with `Cache-Control: no-store`
   so no cache hands one render's key to another visitor, never logged, and still without any
   service call. When the reader fails the shell is served without the attribute and one Warn
-  line carries only `operation=hosted_view_key` and `error_code=random_unavailable`. The embed
-  script does not send the attribute yet, so browser retries are **not** deduplicated yet.
+  line carries only `operation=hosted_view_key` and `error_code=random_unavailable`.
+- **Embed script key (#341).** `form_embed.js` resolves one key per script closure (one rendered
+  form), once, right after the `data-form-key` check and before the definition request
+  (`resolveIdempotencyKey`): the tag's `data-idempotency-key` when it matches
+  `^[A-Za-z0-9._:-]{1,128}$` and does not start with `submission-`; otherwise 16 bytes from
+  `crypto.getRandomValues` as 32 lowercase hex characters; otherwise (no `window.crypto`, no
+  `getRandomValues`, or it throws) no key, and the field is omitted from the body. There is no
+  `Math.random` or `crypto.randomUUID` fallback. Every submission of the render sends the same
+  `idempotency_key`, including the resend after a non-2xx answer, a 400 field correction or a
+  network failure; two forms on one page get distinct keys. The script never logs the key and
+  does not retry on its own. Deduplication happens only at confirmation on `create_ticket` forms
+  (one ticket per key); `create_lead` and no-action forms ignore the key, so duplicate leads are
+  still possible. `embed.js` keeps `Cache-Control: public, max-age=3600`, so a browser may run
+  the previous script, which sends no key, for up to an hour after an upgrade.
 - **Placement.** Only a confirmation opens a ticket, inside the confirmation transaction after the
   token claim. Lock order: token (claim) → customer (`LockLiveCustomerByEmail`) → ticket → key row
   → submission. Spam and never-confirmed rows open nothing.
@@ -2566,7 +2578,16 @@ named: `TestFormTicketTargetDefinition`, `TestFormTicketIntakeSchemaSQLite`,
 view key (#340) `TestHostedViewRendersPerRenderIdempotencyKey`, `TestHostedViewIsNotCached`,
 `TestHostedViewWithoutRandomnessOmitsKey` and `TestHostedFormResubmissionWithSameKeyOpensOneTicket`
 (the rendered key, submitted and confirmed twice over HTTP on the real service with ticket intake
-and one-connection in-memory SQLite, opens one ticket) (`internal/handler`);
+and one-connection in-memory SQLite, opens one ticket) (`internal/handler`); for the embed script
+key (#341, `internal/handler/form_embed_idempotency_test.go`, all on the script served by
+`GET /forms/public/embed.js`) `TestFormEmbedScriptIdempotencyKeyContract` (structure: one
+closure-level key, sent under `if (idempotencyKey)` in `handleSubmit`),
+`TestFormEmbedScriptIdempotencyKeyNoWeakFallback`, `TestFormEmbedScriptIdempotencyKeyNeverLogged`
+(no `console.*` call mentions the key) and `TestFormEmbedScriptIdempotencyKeyBehaviour` (runs the
+extracted `resolveIdempotencyKey` in `node`, which it requires and never skips), plus the browser
+spec `gocrm-ui/e2e/tests/form-embed-idempotency.spec.ts` (the real served script on SQLite: the
+same key on a resend after a 500 and after an aborted POST, stored on both pending rows; distinct
+keys for two tags; no `idempotency_key` on a keyless render);
 `TestFormTicketKeyRepository{SQLite,MySQL}`, `TestFormTicketCustomerMatch{SQLite,MySQL}`,
 `TestFormTicketKeyErasure{SQLite,MySQL}`, `TestTicketDeletePurgesFormTicketKeys{SQLite,MySQL}`
 (`internal/repository`); `TestFormTicketIntakeConfirmed{SQLite,MySQL}`,
@@ -2583,9 +2604,8 @@ in `information_schema.PROCESSLIST` on two consecutive polls) and
 
 Operator follow-ups: register the new roots in `scripts/ci/check-go.py` and the migration roots in
 the Database migrations workflow; add the `ticket_outcome` closed set to
-`scripts/ci/check-api-docs.py`; decide which task profile may change `internal/handler/assets/` so
-the embed script can read the hosted view's `data-idempotency-key` (or generate its own key per
-render) and send it; register the #340 handler roots in `scripts/ci/check-go.py`.
+`scripts/ci/check-api-docs.py`; register the #340 and #341 handler roots in
+`scripts/ci/check-go.py`.
 
 ### AEO runtime validation and candidate inspection
 
