@@ -50,7 +50,8 @@ var concurrencyDocFlowsInOrder = []string{
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
 
 // concurrencyDocExpectedStatus is the status of every flow at a415cf1, with
-// Login implemented by #336 (C2).
+// Login implemented by #336 (C2) and the password-reset request and API-key
+// create by #342 (C3).
 var concurrencyDocExpectedStatus = map[string]string{
 	"User-rooted erasure":            "partial",
 	"Customer-rooted erasure":        "partial",
@@ -61,10 +62,20 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"Bulk status":                    "implemented",
 	"Login":                          "implemented",
 	"Refresh rotation":               "implemented",
-	"Password-reset request":         "not implemented",
+	"Password-reset request":         "implemented",
 	"Password-reset confirm":         "implemented",
-	"API-key create":                 "not implemented",
+	"API-key create":                 "implemented",
 	"RBAC user-role and role writes": "not implemented",
+}
+
+// concurrencyDocRetryFlows are the flows whose Retry line names
+// WithTransactionAndRetry, with the retry bound constant each cites and the
+// file that defines it.
+var concurrencyDocRetryFlows = map[string]struct{ constant, file string }{
+	"Lead conversion":        {"", ""},
+	"Login":                  {"loginMaxRetries", "internal/service/auth_service.go"},
+	"Password-reset request": {"resetRequestMaxRetries", "internal/service/auth_service.go"},
+	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go"},
 }
 
 var concurrencyDocExpectedTicket = map[string]string{
@@ -337,16 +348,75 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Contains(t, concurrencyDocFuncBody(t, "internal/service/bulk_status_service.go", "func (s *bulkStatusService) runBulkStatusUpdate("),
 		"CompletePending(")
 
-	// API-key create runs without a transaction.
-	for _, name := range []string{"API-key create"} {
-		assert.Contains(t, flow(name), "no transaction", name)
-	}
 	const authService = "internal/service/auth_service.go"
-	for _, sig := range []string{
-		"func (s *authService) RequestPasswordReset(",
+	const apiKeyService = "internal/service/apikey_service.go"
+
+	// Password-reset request and API-key create (#342, C3): one issuing
+	// transaction under the retry rule that locks the owner row first,
+	// users → password_reset_tokens and users → api_keys.
+	for _, c := range []struct{ flow, chain string }{
+		{"Password-reset request", "users → password_reset_tokens"},
+		{"API-key create", "users → api_keys"},
 	} {
-		assert.NotContains(t, concurrencyDocFuncBody(t, authService, sig), "WithTransaction", sig)
+		body := flow(c.flow)
+		for _, want := range []string{c.chain, "WithTransactionAndRetry", "FOR UPDATE", "lockLiveCredentialOwner",
+			"erased", "inactive", "context.Background()"} {
+			assert.Contains(t, body, want, c.flow)
+		}
+		assert.NotContains(t, body, "no transaction", c.flow)
+		assert.NotContains(t, body, "no lock held across statements", c.flow)
 	}
+	request := flow("Password-reset request")
+	for _, want := range []string{
+		"`GetByEmail`",
+		"`InvalidateAllForUser`",
+		"after the commit",
+		"password_reset_tokens → users",
+		"`ErrInvalidResetToken`",
+		"1213",
+		"a request victim is replayed",
+		"a confirm victim (plain `WithTransaction`, no retry) returns the error with nothing written",
+	} {
+		assert.Contains(t, request, want, "Password-reset request")
+	}
+	apiKey := flow("API-key create")
+	for _, want := range []string{"apiKeyService.Generate", "`ErrAccountUnavailable`", "401",
+		"`ErrAPIKeyIssuanceUnavailable`", "`ValidateAPIKey`"} {
+		assert.Contains(t, apiKey, want, "API-key create")
+	}
+
+	owner := concurrencyDocFuncBody(t, authService, "func lockLiveCredentialOwner(")
+	assert.Contains(t, owner, "userRepo.GetByID(userID)")
+	assert.Contains(t, owner, "!owner.IsActive")
+	assert.Contains(t, owner, "apperrors.IsNotFound(err)")
+
+	reset := concurrencyDocFuncBody(t, authService, "func (s *authService) RequestPasswordReset(")
+	assert.Contains(t, reset, "s.txManager.WithTransactionAndRetry(context.Background(),")
+	assert.Contains(t, reset, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, reset, "resetRequestMaxRetries)")
+	assert.Contains(t, reset, "s.resetTokenRepo.WithTx(tx)")
+	resetLock := strings.Index(reset, "lockLiveCredentialOwner(")
+	resetSpend := strings.Index(reset, "resetRepo.InvalidateAllForUser(")
+	resetInsert := strings.Index(reset, "resetRepo.Create(")
+	resetMail := strings.Index(reset, "s.mailer.SendPasswordReset(")
+	assert.True(t, resetLock >= 0 && resetSpend > resetLock && resetInsert > resetSpend && resetMail > resetInsert,
+		"RequestPasswordReset locks the owner, spends the old tokens, inserts, then mails")
+	assert.NotContains(t, reset, "s.resetTokenRepo.Create(", "no insert outside the transaction")
+	assert.NotContains(t, reset, "s.resetTokenRepo.InvalidateAllForUser(", "no invalidation outside the transaction")
+	assert.Contains(t, readRepositoryFile(t, authService), "const resetRequestMaxRetries = 3")
+
+	generate := concurrencyDocFuncBody(t, apiKeyService, "func (s *apiKeyService) Generate(")
+	assert.Contains(t, generate, "s.txManager.WithTransactionAndRetry(context.Background(),")
+	assert.Contains(t, generate, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, generate, "apiKeyCreateMaxRetries)")
+	assert.Contains(t, generate, "ErrAPIKeyIssuanceUnavailable")
+	keyLock := strings.Index(generate, "lockLiveCredentialOwner(")
+	keyInsert := strings.Index(generate, "s.apiKeyRepo.WithTx(tx).Create(")
+	assert.True(t, keyLock >= 0 && keyInsert > keyLock, "Generate locks the owner, then inserts through WithTx")
+	assert.NotContains(t, generate, "s.apiKeyRepo.Create(", "no insert outside the transaction")
+	assert.Contains(t, readRepositoryFile(t, apiKeyService), "const apiKeyCreateMaxRetries = 3")
+	assert.Contains(t, readRepositoryFile(t, "cmd/main.go"),
+		"service.NewAPIKeyService(apiKeyRepo, userRepo, txManager, cfg.API.APIKeySecret)")
 
 	// Login (#336, C2): one issuing transaction under the retry rule that locks
 	// the owner row first, users → refresh_tokens.
@@ -383,22 +453,16 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 		assert.Contains(t, body, "s.txManager.WithTransaction(", sig)
 		assert.Contains(t, body, "clause.Locking{Strength: \"UPDATE\"}", sig)
 	}
-	assert.Contains(t, flow("API-key create"), "apiKeyService.Generate")
-	generate := concurrencyDocFuncBody(t, "internal/service/apikey_service.go", "func (s *apiKeyService) Generate(")
-	assert.NotContains(t, generate, "WithTransaction")
-	assert.Contains(t, generate, "s.apiKeyRepo.Create(")
-
-	// Child inserts without a transaction: no lock is held across statements,
-	// but the foreign-key check takes a statement-long shared lock on the owner.
+	// Child inserts under the owner lock: the foreign-key check's shared lock
+	// falls on an owner row the issuing transaction already holds.
 	for _, fk := range []struct{ flow, constraint, migration string }{
 		{"Password-reset request", "fk_password_reset_tokens_user", "migrations/20261001120000_v1_2_0_schema_parity.up.sql"},
 		{"API-key create", "fk_api_keys_user", "migrations/20250806120000_initial_schema.up.sql"},
 	} {
 		body := flow(fk.flow)
-		assert.Contains(t, body, "no lock held across statements", fk.flow)
-		assert.Contains(t, body, "the foreign-key check takes a shared lock on the owner row for the insert statement only", fk.flow)
+		assert.Contains(t, body, "takes its shared lock on an owner row this transaction already holds", fk.flow)
 		assert.Contains(t, body, "`"+fk.constraint+"`", fk.flow)
-		assert.NotContains(t, body, "neither read nor locked", fk.flow)
+		assert.NotContains(t, body, "for the insert statement only", fk.flow)
 		assert.Contains(t, readRepositoryFile(t, fk.migration),
 			"CONSTRAINT "+fk.constraint+" FOREIGN KEY (user_id) REFERENCES users(id)", fk.flow)
 	}
@@ -433,7 +497,7 @@ func concurrencyDocChainGroup(word string) (lead, session, rbac bool) {
 		return true, false, false
 	case "users":
 		return false, true, true
-	case "refresh_tokens", "password_reset_tokens":
+	case "refresh_tokens", "password_reset_tokens", "api_keys":
 		return false, true, false
 	case "set", "roles":
 		return false, false, true
@@ -456,6 +520,11 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 	}
 	assert.Contains(t, lineWith("companies → leads → customers → deals"), "#182")
 	lineWith("users → refresh_tokens")
+	// #342: the credential-issuing edges of the users chain, and the reset
+	// confirm's inversion of the request's order.
+	lineWith("users → password_reset_tokens")
+	lineWith("users → api_keys")
+	lineWith("password_reset_tokens → users")
 	rbac := lineWith("admin set → users (id ascending) → roles (id ascending)")
 	assert.Contains(t, rbac, "#259")
 	assert.Contains(t, rbac, "target")
@@ -517,6 +586,14 @@ func TestConcurrencyDocRetryRule(t *testing.T) {
 		}
 	}
 	assert.True(t, current, "a sentence says the rule is current for lead conversion")
+	var issuance bool
+	for _, s := range concurrencyDocSentences(section) {
+		if strings.Contains(s, "current") && strings.Contains(s, "the password-reset request") &&
+			strings.Contains(s, "API-key create") {
+			issuance = true
+		}
+	}
+	assert.True(t, issuance, "the same sentence names the password-reset request and API-key create (#342)")
 	assert.True(t, target, "a sentence says the rule is the #183 target")
 
 	// The rule as the code implements it.
@@ -533,14 +610,17 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	for _, name := range concurrencyDocFlowsInOrder {
 		retry := fields[name]["Retry"]
-		if name == "Lead conversion" || name == "Login" {
+		if bound, ok := concurrencyDocRetryFlows[name]; ok {
 			assert.Contains(t, retry, "WithTransactionAndRetry", name)
+			if bound.constant != "" {
+				assert.Contains(t, retry, bound.constant, "%s Retry", name)
+				assert.Contains(t, readRepositoryFile(t, bound.file), "const "+bound.constant+" = 3")
+			}
 		} else {
-			assert.NotContains(t, retry, "WithTransactionAndRetry", "only the Lead conversion and Login Retry lines name it; %s does", name)
+			assert.NotContains(t, retry, "WithTransactionAndRetry",
+				"only the Lead conversion, Login, Password-reset request and API-key create Retry lines name it; %s does", name)
 		}
 	}
-	assert.Contains(t, fields["Login"]["Retry"], "loginMaxRetries", "Login Retry")
-	assert.Contains(t, readRepositoryFile(t, "internal/service/auth_service.go"), "const loginMaxRetries = 3")
 	for _, name := range []string{"Lead conversion", "Lead update"} {
 		retry := fields[name]["Retry"]
 		for _, want := range []string{"runLeadCompanyAttempts", "leadCompanyMaxRestarts", "errLeadCompanyMoved"} {

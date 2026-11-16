@@ -551,18 +551,32 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	})
 }
 
+// The mock-based reset request cases pin the call sequence of #342: the plain
+// lookup, then one WithTransactionAndRetry transaction whose locking owner
+// read precedes the transaction-bound invalidation and insert, then the mail.
+// What concurrent callers see on SQL is proven by
+// credential_issuance_owner_lock_test.go.
 func TestAuthService_RequestPasswordReset(t *testing.T) {
 	t.Run("existing active account stores a hashed token and mails the link", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
 		user := sessionActiveUser(1, "CurrentPass1!")
+		var sequence []string
 		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
-		d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil)
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil).Run(func(mock.Arguments) {
+			sequence = append(sequence, "lock owner")
+		})
+		d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil).Run(func(mock.Arguments) {
+			sequence = append(sequence, "invalidate")
+		})
 
 		var stored *models.PasswordResetToken
 		d.resetRepo.On("Create", mock.MatchedBy(func(prt *models.PasswordResetToken) bool {
 			stored = prt
 			return prt.UserID == 1 && prt.TokenHash != ""
-		})).Return(nil)
+		})).Return(nil).Run(func(mock.Arguments) {
+			sequence = append(sequence, "insert")
+		})
 
 		var sentURL string
 		d.mailer.On("SendPasswordReset", user.Email, mock.MatchedBy(func(u string) bool {
@@ -585,6 +599,53 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 
 		// Fixed one-hour expiry.
 		assert.WithinDuration(t, time.Now().Add(time.Hour), stored.ExpiresAt, time.Minute)
+
+		assert.Equal(t, []string{"lock owner", "invalidate", "insert"}, sequence,
+			"the owner is locked before the token writes")
+		d.resetRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
+		d.mailer.AssertNumberOfCalls(t, "SendPasswordReset", 1)
+	})
+
+	t.Run("an owner inactive under the lock writes nothing and sends no mail", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		locked := *user
+		locked.IsActive = false
+		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+		d.userRepo.On("GetByID", uint(1)).Return(&locked, nil)
+
+		assert.NoError(t, d.svc.RequestPasswordReset(user.Email))
+		d.resetRepo.AssertNotCalled(t, "InvalidateAllForUser", mock.Anything)
+		d.resetRepo.AssertNotCalled(t, "Create", mock.Anything)
+		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("an owner erased under the lock writes nothing and sends no mail", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+		d.userRepo.On("GetByID", uint(1)).Return(nil, gorm.ErrRecordNotFound)
+
+		assert.NoError(t, d.svc.RequestPasswordReset(user.Email))
+		d.resetRepo.AssertNotCalled(t, "InvalidateAllForUser", mock.Anything)
+		d.resetRepo.AssertNotCalled(t, "Create", mock.Anything)
+		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("a failed invalidation inserts nothing and sends no mail", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+		d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(errors.New("database unavailable"))
+
+		assert.NoError(t, d.svc.RequestPasswordReset(user.Email))
+		d.resetRepo.AssertNotCalled(t, "Create", mock.Anything)
+		d.mailer.AssertNotCalled(t, "SendPasswordReset", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("unknown email succeeds silently without mail", func(t *testing.T) {
@@ -613,8 +674,10 @@ func TestAuthService_RequestPasswordReset(t *testing.T) {
 
 	t.Run("mailer failure is swallowed to keep responses uniform", func(t *testing.T) {
 		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
 		user := sessionActiveUser(1, "CurrentPass1!")
 		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 		d.resetRepo.On("InvalidateAllForUser", uint(1)).Return(nil)
 		d.resetRepo.On("Create", mock.Anything).Return(nil)
 		d.mailer.On("SendPasswordReset", user.Email, mock.Anything, mock.Anything).Return(errors.New("smtp down"))

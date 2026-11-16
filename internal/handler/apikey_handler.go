@@ -101,6 +101,15 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 
 	key, apiKey, err := h.apiKeyService.Generate(userID, req.Name, expiresAt)
 	if err != nil {
+		// The owner was erased, soft-deleted or deactivated after the request
+		// authenticated: the issuing transaction refused it under the owner
+		// lock (#342). That is the 401 a deactivated or erased account gets.
+		if errors.Is(err, service.ErrAccountUnavailable) {
+			logger.WithField("user_id", userID).WithField("error_code", "account_unavailable").
+				Warn("API key not issued: owner unavailable")
+			utils.RespondUnauthorized(c, "Unauthorized")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to generate API key")
 		utils.RespondInternalError(c)
 		return

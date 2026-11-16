@@ -17,9 +17,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -42,21 +42,26 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 	}
 	err := utils.InitLogger(logConfig)
 	suite.NoError(err)
-	
+
 	// Setup test database
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	suite.NoError(err)
-	
+	// Key creation runs in a transaction (#342): one connection, so every
+	// statement sees the same in-memory database.
+	sqlDB, err := db.DB()
+	suite.NoError(err)
+	sqlDB.SetMaxOpenConns(1)
+
 	// Migrate the schema
 	err = db.AutoMigrate(&models.User{}, &models.APIKey{})
 	suite.NoError(err)
-	
+
 	suite.db = db
-	
+
 	// Setup repositories
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
-	
+
 	// Setup services
 	jwtConfig := config.JWTConfig{
 		Secret:      "test-secret",
@@ -64,8 +69,8 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 	}
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig, "test-api-key-secret")
 	suite.userService = service.NewUserService(userRepo)
-	suite.apiKeyService = service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
-	
+	suite.apiKeyService = service.NewAPIKeyService(apiKeyRepo, userRepo, utils.NewTransactionManager(db), "test-api-key-secret")
+
 	// Create test user
 	suite.testUser = &models.User{
 		Email:     "testuser@example.com",
@@ -75,19 +80,19 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 	}
 	err = suite.userService.Register(suite.testUser, "password123")
 	suite.NoError(err)
-	
+
 	// Get auth token
 	suite.authToken, err = suite.authService.GenerateJWT(suite.testUser)
 	suite.NoError(err)
-	
+
 	// Setup router
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
 	suite.router.Use(middleware.ErrorHandler())
-	
+
 	// Setup handlers
 	apiKeyHandler := handler.NewAPIKeyHandler(suite.apiKeyService)
-	
+
 	// Setup routes
 	api := suite.router.Group("/api/v1")
 	protected := api.Group("")
@@ -98,7 +103,7 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 		protected.GET("/api-keys/:id", apiKeyHandler.Get)
 		protected.PUT("/api-keys/:id", apiKeyHandler.Update)
 		protected.DELETE("/api-keys/:id", apiKeyHandler.Revoke)
-		
+
 		// Test endpoint that accepts API key auth
 		protected.GET("/test-api-key", func(c *gin.Context) {
 			user, _ := c.Get("user")
@@ -147,8 +152,8 @@ func (suite *APIKeyIntegrationTestSuite) TestCreateAPIKey() {
 			},
 		},
 		{
-			name: "missing name",
-			payload: map[string]interface{}{},
+			name:           "missing name",
+			payload:        map[string]interface{}{},
 			authHeader:     "Bearer " + suite.authToken,
 			expectedStatus: http.StatusBadRequest,
 		},
@@ -178,12 +183,12 @@ func (suite *APIKeyIntegrationTestSuite) TestCreateAPIKey() {
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
-			
+
 			if tt.checkResponse != nil {
 				tt.checkResponse(suite.T(), w.Body.Bytes())
 			}
@@ -194,27 +199,27 @@ func (suite *APIKeyIntegrationTestSuite) TestCreateAPIKey() {
 func (suite *APIKeyIntegrationTestSuite) TestListAPIKeys() {
 	// Clear any existing API keys
 	suite.db.Where("user_id = ?", suite.testUser.ID).Delete(&models.APIKey{})
-	
+
 	// Create some API keys
 	key1, _, err := suite.apiKeyService.Generate(suite.testUser.ID, "Test Key 1", nil)
 	suite.NoError(err)
 	suite.NotEmpty(key1)
-	
+
 	_, apiKey2, err := suite.apiKeyService.Generate(suite.testUser.ID, "Test Key 2", nil)
 	suite.NoError(err)
-	
+
 	// Revoke one key
 	err = suite.apiKeyService.Revoke(apiKey2.ID, suite.testUser.ID)
 	suite.NoError(err)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/api-keys", nil)
 	req.Header.Set("Authorization", "Bearer "+suite.authToken)
-	
+
 	w := httptest.NewRecorder()
 	suite.router.ServeHTTP(w, req)
-	
+
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	
+
 	var apiResp utils.APIResponse
 	err = json.Unmarshal(w.Body.Bytes(), &apiResp)
 	assert.NoError(suite.T(), err)
@@ -244,7 +249,7 @@ func (suite *APIKeyIntegrationTestSuite) TestRevokeAPIKey() {
 	// Create an API key
 	_, apiKey, err := suite.apiKeyService.Generate(suite.testUser.ID, "Test Key to Revoke", nil)
 	suite.NoError(err)
-	
+
 	// Create another user and their key
 	otherUser := &models.User{
 		Email:     "other@example.com",
@@ -254,7 +259,7 @@ func (suite *APIKeyIntegrationTestSuite) TestRevokeAPIKey() {
 	}
 	err = suite.userService.Register(otherUser, "password123")
 	suite.NoError(err)
-	
+
 	_, otherKey, err := suite.apiKeyService.Generate(otherUser.ID, "Other User Key", nil)
 	suite.NoError(err)
 
@@ -296,10 +301,10 @@ func (suite *APIKeyIntegrationTestSuite) TestRevokeAPIKey() {
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
 		})
 	}
@@ -309,7 +314,7 @@ func (suite *APIKeyIntegrationTestSuite) TestAPIKeyAuthentication() {
 	// Create an API key
 	key, _, err := suite.apiKeyService.Generate(suite.testUser.ID, "Test Auth Key", nil)
 	suite.NoError(err)
-	
+
 	tests := []struct {
 		name           string
 		authHeader     string
@@ -338,10 +343,10 @@ func (suite *APIKeyIntegrationTestSuite) TestAPIKeyAuthentication() {
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
 		})
 	}

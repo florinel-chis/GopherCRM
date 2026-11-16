@@ -153,7 +153,7 @@ func (suite *BaseIntegrationTestSuite) SetupSuite() {
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(suite.db), txManager, suite.mailer))
 	taskService := service.NewTaskService(repository.NewTaskRepository(suite.db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(suite.db), repository.NewDealRepository(suite.db))
-	apiKeyService := service.NewAPIKeyService(apiKeyRepo, "test-api-key-secret")
+	apiKeyService := service.NewAPIKeyService(apiKeyRepo, userRepo, txManager, "test-api-key-secret")
 
 	// Setup handlers
 	authHandler := handler.NewAuthHandler(suite.authService, userService)

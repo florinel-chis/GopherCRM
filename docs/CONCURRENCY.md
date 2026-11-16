@@ -3,7 +3,7 @@
 One place for the row-lock order and the retry rule of every write that locks rows of more than
 one table: the erasures, lead conversion and update, company delete, bulk status, the session and
 credential flows, and RBAC writes. It records what the code does at `a415cf1` (with Login updated
-for #336) and, separately, the target that #183 (and #259 for RBAC) asks for. A flow whose order is only a target is marked
+for #336, and the password-reset request and API-key create for #342) and, separately, the target that #183 (and #259 for RBAC) asks for. A flow whose order is only a target is marked
 `not implemented` or `partial`; nothing here describes a target as current behaviour.
 
 Each flow lists five fields:
@@ -29,10 +29,13 @@ Three chains are specified. A transaction that locks rows of one chain takes the
 - `companies → leads → customers → deals` (#182, implemented): companies by primary key
   (`CompanyRepository.LockLive`, `internal/repository/company_repository.go:64`), leads by id
   ascending, then customers, then deals. Written down at `internal/service/lead_service.go:174`.
-- `users → refresh_tokens` (implemented for every session transaction): the owner's `users` row
-  first, its `refresh_tokens` rows second. Login, refresh rotation, password change, logout and
-  password-reset confirm follow it; the reset confirm claims its `password_reset_tokens` row before
-  the owner (see that flow).
+- `users → refresh_tokens`, `users → password_reset_tokens` and `users → api_keys` (implemented
+  for every session and credential-issuing transaction): the owner's `users` row first, by primary
+  key, its child rows second. Login, refresh rotation, password change and logout follow
+  `users → refresh_tokens`; the password-reset request follows `users → password_reset_tokens`
+  and API-key create `users → api_keys` (#342). The password-reset confirm is the exception: it
+  claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
+  inversion of the reset request's order (see both flows).
 - `admin set → users (id ascending) → roles (id ascending)` is the #259 target for RBAC writes (R6, R7), not implemented.
 
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several
@@ -60,8 +63,10 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
   same file): a deadlock has already destroyed the enclosing transaction, so only the enclosing
   root may replay the whole unit.
 
-The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1035`)
-and login (`internal/service/auth_service.go:279`).
+The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1035`),
+login (`internal/service/auth_service.go:284`), the password-reset request
+(`internal/service/auth_service.go:1221`) and API-key create
+(`internal/service/apikey_service.go:86`).
 For every other flow below it is the #183 target, a bounded whole-root retry, not today's
 behaviour. The lead writes also restart the whole root on `errLeadCompanyMoved`, a separate bounded
 loop (`runLeadCompanyAttempts`) described in their entries.
@@ -90,7 +95,10 @@ loop (`runLeadCompanyAttempts`) described in their entries.
 The user is locked before its customers and leads, the opposite of the `companies → leads →
 customers → deals` direction a lead-rooted erasure follows. The credential purge takes
 `password_reset_tokens` after the user, while password-reset confirm takes them in the opposite
-order, so the two can deadlock (an error and a rollback, never a partial commit).
+order, so the two can deadlock (an error and a rollback, never a partial commit). The
+password-reset request and API-key create lock the user before their child rows (#342), the
+erasure's own order: against a user-rooted or customer-rooted erasure they either commit first
+and the purge removes what they issued, or wait on the `users` row and are refused.
 
 ### Customer-rooted erasure
 
@@ -198,90 +206,122 @@ session flows, and their order depends on the root. That is why they are `partia
 ### Login
 
 - **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
-  `internal/service/auth_service.go:287`, read at `internal/service/auth_service.go:380`) and
+  `internal/service/auth_service.go:292`, read at `internal/service/auth_service.go:385`) and
   written by `UpdateFields` (`last_login_at` and the lockout clear,
-  `internal/service/auth_service.go:405`); then the inserted `refresh_tokens` row
-  (`issueRefreshToken`, `internal/service/auth_service.go:427`), whose foreign-key check
+  `internal/service/auth_service.go:410`); then the inserted `refresh_tokens` row
+  (`issueRefreshToken`, `internal/service/auth_service.go:432`), whose foreign-key check
   (`fk_refresh_tokens_user`, `migrations/20250806120000_initial_schema.up.sql:172`) takes its
   shared lock on an owner row this transaction already holds.
-- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:206`) →
+- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:211`) →
   bcrypt → `FOR UPDATE` owner read by id → `UpdateFields` → refresh token insert in a savepoint
-  (`internal/service/auth_service.go:422`) → signing of the access JWT from the locked
-  `token_version` (`internal/service/auth_service.go:452`). Lock order users → refresh_tokens. The
+  (`internal/service/auth_service.go:427`) → signing of the access JWT from the locked
+  `token_version` (`internal/service/auth_service.go:457`). Lock order users → refresh_tokens. The
   locked row must still carry the hash bcrypt verified, be active, be live (not erased) and not be
   locked, else the login is refused and nothing is written. The failure bookkeeping of a wrong
   password stays a single statement outside the transaction.
 - **Transaction:** one issuing transaction per attempt (`loginInTransaction`,
-  `internal/service/auth_service.go:367`) on a service built by `NewAuthServiceWithSessions`; a
+  `internal/service/auth_service.go:372`) on a service built by `NewAuthServiceWithSessions`; a
   service without a transaction manager (`NewAuthService`) keeps the legacy unlocked statements. A
   non-retryable failure of the refresh insert rolls back to its savepoint and the login answers an
   access token only; a signing failure rolls the whole transaction back.
 - **Retry:** `WithTransactionAndRetry` with `loginMaxRetries` 3
-  (`internal/service/auth_service.go:279`, `:162` in the same file) replays the whole root on a
+  (`internal/service/auth_service.go:284`, `:167` in the same file) replays the whole root on a
   deadlock, lock wait timeout or SQLite busy/locked, including one raised by the refresh insert
   (returned tagged `ErrNestedRetryDeferred` from its savepoint).
 - **Status:** implemented
 
 ### Refresh rotation
 
-- **Rows locked:** the owner's `users` row (`FOR UPDATE`, `internal/service/auth_service.go:713`,
-  read at `internal/service/auth_service.go:787`), the presented `refresh_tokens` row (the
-  conditional claim `ClaimForRotation`, `internal/service/auth_service.go:803`), and the inserted
-  successor (`internal/service/auth_service.go:820`).
-- **Order:** a plain lookup of the token by hash (`internal/service/auth_service.go:761`) →
+- **Rows locked:** the owner's `users` row (`FOR UPDATE`, `internal/service/auth_service.go:718`,
+  read at `internal/service/auth_service.go:792`), the presented `refresh_tokens` row (the
+  conditional claim `ClaimForRotation`, `internal/service/auth_service.go:808`), and the inserted
+  successor (`internal/service/auth_service.go:825`).
+- **Order:** a plain lookup of the token by hash (`internal/service/auth_service.go:766`) →
   users → refresh_tokens (the claim, then the successor). The owner is locked before the claim
-  (`internal/service/auth_service.go:774`). Every owner decision (active, live) is taken on the
+  (`internal/service/auth_service.go:779`). Every owner decision (active, live) is taken on the
   locked row; the token itself is re-checked by the conditional claim.
-- **Transaction:** `WithTransaction` (`internal/service/auth_service.go:701`).
+- **Transaction:** `WithTransaction` (`internal/service/auth_service.go:706`).
 - **Retry:** none today. Target (C2): the #183 retry rule.
 - **Status:** implemented
 
-Logout (`internal/service/auth_service.go:871`) and password change
-(`internal/service/auth_service.go:1009`) follow the same users → refresh_tokens order in one
+Logout (`internal/service/auth_service.go:876`) and password change
+(`internal/service/auth_service.go:1014`) follow the same users → refresh_tokens order in one
 `WithTransaction` each, and decide on the locked owner row (the password change re-checks the
 verified hash and the active flag under the lock).
 
 ### Password-reset request
 
-- **Rows locked:** no lock held across statements; no locking read of the owner. The user is read
-  plainly by `GetByEmail` (`internal/service/auth_service.go:1133`); the user's outstanding
-  `password_reset_tokens` are spent by `InvalidateAllForUser`
-  (`internal/service/auth_service.go:1148`) and a new one is inserted
-  (`internal/service/auth_service.go:1164`); for that insert the foreign-key check takes a shared
-  lock on the owner row for the insert statement only (`fk_password_reset_tokens_user`,
-  `migrations/20261001120000_v1_2_0_schema_parity.up.sql:152`). The mail goes out last.
-- **Order:** users (plain read) → password_reset_tokens (update, then insert), each statement on
-  its own.
-- **Transaction:** no transaction.
-- **Retry:** none. Target (C3): one transaction with the owner lock first, under the #183 retry
-  rule.
-- **Status:** not implemented
+- **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
+  `internal/service/auth_service.go:1229`, read by `lockLiveCredentialOwner` at
+  `internal/service/auth_service.go:1153`); then the user's outstanding `password_reset_tokens`
+  rows, spent by `InvalidateAllForUser` (`internal/service/auth_service.go:1237`), and the inserted
+  token (`internal/service/auth_service.go:1245`), both through the transaction-bound repository.
+  The insert's foreign-key check (`fk_password_reset_tokens_user`,
+  `migrations/20261001120000_v1_2_0_schema_parity.up.sql:152`) takes its shared lock on an owner
+  row this transaction already holds.
+- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:1192`;
+  an unknown or inactive address stops here) → `FOR UPDATE` owner read by id → `InvalidateAllForUser`
+  → insert → commit → mail (`internal/service/auth_service.go:1266`), sent once, after the commit,
+  to the address of the locked row. Lock order users → password_reset_tokens. A missing, erased
+  (soft-deleted) or inactive locked row refuses the request with nothing written and no mail; the
+  answer is nil in every case. An erasure or deactivation that commits before the lock therefore
+  issues nothing, and one that commits after the request ends the token it issued (the erasure
+  hard-deletes it, the confirm refuses an inactive owner).
+- **Transaction:** one `WithTransactionAndRetry` root per request
+  (`internal/service/auth_service.go:1221`) on `context.Background()`; a failure of the
+  invalidation or of the insert rolls both back and sends no mail. A service without a
+  transaction manager writes nothing and sends nothing.
+- **Retry:** `WithTransactionAndRetry` (the #183 rule) with `resetRequestMaxRetries` 3
+  (`internal/service/auth_service.go:1129`) replays the whole root on a deadlock, lock wait timeout
+  or SQLite busy/locked.
+- **Status:** implemented
+
+The request (users → password_reset_tokens) inverts the confirm's order (password_reset_tokens →
+users) on the same user. When the confirm commits first, the request waits on the `users` row and
+then issues a fresh token; when the request commits first, the confirm waits on the token row its
+`InvalidateAllForUser` spent and its claim is refused with the generic `ErrInvalidResetToken`. When
+each holds its first lock, InnoDB ends one of them with error 1213: a request victim is replayed by
+`WithTransactionAndRetry` (the end state is that of the confirm first), a confirm victim (plain
+`WithTransaction`, no retry) returns the error with nothing written (the end state is that of the
+request first). Neither ordering commits half a unit. Putting the confirm under the retry rule is a
+follow-up.
 
 ### Password-reset confirm
 
 - **Rows locked:** the `password_reset_tokens` row (the conditional claim `MarkUsed`,
-  `internal/service/auth_service.go:1275`), the owner's `users` row (`FOR UPDATE`,
-  `internal/service/auth_service.go:1233`, read at `internal/service/auth_service.go:1292`, written
-  at `internal/service/auth_service.go:1308`), and every `refresh_tokens` row of the user (revoked,
-  `internal/service/auth_service.go:1320`).
+  `internal/service/auth_service.go:1368`), the owner's `users` row (`FOR UPDATE`,
+  `internal/service/auth_service.go:1326`, read at `internal/service/auth_service.go:1385`, written
+  at `internal/service/auth_service.go:1401`), and every `refresh_tokens` row of the user (revoked,
+  `internal/service/auth_service.go:1413`).
 - **Order:** password_reset_tokens → users → refresh_tokens, after a plain lookup of the token by
-  hash (`internal/service/auth_service.go:1257`).
-- **Transaction:** `WithTransaction` (`internal/service/auth_service.go:1220`).
-- **Retry:** none today. Target (C3): the #183 retry rule.
+  hash (`internal/service/auth_service.go:1350`). This inverts the reset request's order; the
+  outcome is described under that flow.
+- **Transaction:** `WithTransaction` (`internal/service/auth_service.go:1313`).
+- **Retry:** none today; a 1213 against a concurrent reset request returns the error with nothing
+  written. Target: the #183 retry rule.
 - **Status:** implemented
 
 ### API-key create
 
-- **Rows locked:** one `api_keys` insert; no lock held across statements; the foreign-key check
-  takes a shared lock on the owner row for the insert statement only (`fk_api_keys_user`,
-  `migrations/20250806120000_initial_schema.up.sql:135`).
-- **Order:** `apiKeyService.Generate` (`internal/service/apikey_service.go:24`) runs one `Create`
-  (`internal/service/apikey_service.go:42`); the owner's `users` row is not read first, and its
-  only lock is the foreign-key check's shared lock during that insert.
-- **Transaction:** no transaction.
-- **Retry:** none. Target (C3): one transaction that locks the owner first, so an erasure in
-  flight cannot miss the new key, under the #183 retry rule.
-- **Status:** not implemented
+- **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
+  `internal/service/apikey_service.go:94`, read by `lockLiveCredentialOwner`), then the inserted
+  `api_keys` row (`internal/service/apikey_service.go:105`, through `apiKeyRepo.WithTx(tx)`), whose
+  foreign-key check (`fk_api_keys_user`, `migrations/20250806120000_initial_schema.up.sql:135`)
+  takes its shared lock on an owner row this transaction already holds.
+- **Order:** `apiKeyService.Generate` (`internal/service/apikey_service.go:64`): `FOR UPDATE` owner
+  read by id → insert. Lock order users → api_keys. A missing, erased (soft-deleted) or inactive
+  locked row is refused with an error matching `ErrAccountUnavailable` (`POST /api-keys` answers
+  401), no row and no key. An erasure or deactivation that commits first refuses the create; one
+  that commits after it hard-deletes the key (erasure) or leaves it unusable (`ValidateAPIKey`
+  refuses an inactive owner).
+- **Transaction:** one `WithTransactionAndRetry` root per create
+  (`internal/service/apikey_service.go:86`) on `context.Background()`. A service built without the
+  user repository or the transaction manager returns `ErrAPIKeyIssuanceUnavailable` and writes
+  nothing.
+- **Retry:** `WithTransactionAndRetry` (the #183 rule) with `apiKeyCreateMaxRetries` 3
+  (`internal/service/apikey_service.go:27`) replays the whole root on a deadlock, lock wait timeout
+  or SQLite busy/locked.
+- **Status:** implemented
 
 ### RBAC user-role and role writes
 
@@ -304,7 +344,7 @@ writes through a foreign key to a parent another transaction already holds inver
 when its own statements look ordered. The specified chains lock parents first: `refresh_tokens.user_id`
 references `users`, so a session transaction locks the owner before it claims or inserts a token
 (the rotation that claimed first deadlocked against a password change with error 1213, see
-`internal/service/auth_service.go:774`); in the #182 chain the company is locked before the lead,
+`internal/service/auth_service.go:779`); in the #182 chain the company is locked before the lead,
 and the lead before the customer row that names the company. The #175 inversion runs through lead
 updates: an update that locked the lead and then wrote its `company_id` took the foreign key
 check's shared lock on the company, while a company delete held the company and waited on the
@@ -339,9 +379,9 @@ same on MySQL 8 and MariaDB 10.11.
 | Bulk status | #182, #242 | implemented |
 | Login | C2 | implemented |
 | Refresh rotation | C2 | implemented |
-| Password-reset request | C3 | not implemented |
+| Password-reset request | C3 | implemented |
 | Password-reset confirm | C3 | implemented |
-| API-key create | C3 | not implemented |
+| API-key create | C3 | implemented |
 | RBAC user-role and role writes | R6, R7 | not implemented |
 
 C2–C4 and R6–R7 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the

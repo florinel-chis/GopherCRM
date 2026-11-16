@@ -271,7 +271,7 @@ These are safe to keep. Renaming any of them costs a conflict on every upstream 
 |---|---|---|
 | `gophercrm_session` (the stored session record), `gophercrm_token`, `gophercrm_refresh_token` (its mirrors, which the browser specs read) | `gocrm-ui/src/api/sessionRecord.ts` | signs every user out once; renaming the mirrors also breaks the Playwright helpers that read or remove `gophercrm_token` |
 | Web Lock name `gophercrm-session` | `gocrm-ui/src/api/sessionLock.ts` | lets tabs running the old and the new build refresh one session at the same time until they reload |
-| API-key prefix `gcrm_` | `internal/service/apikey_service.go:47`, `internal/utils/crypto.go:14-29` | breaks keys already issued |
+| API-key prefix `gcrm_` | `internal/service/apikey_service.go:123`, `internal/utils/crypto.go:14-29` | breaks keys already issued |
 | `.gcrm-form`, `gcrm-form-styles`, `--gcrm-*` | `internal/handler/assets/form_embed.js` | breaks CSS that host pages wrote against the embedded form |
 
 ### 3.3 Repository identity
@@ -344,7 +344,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `internal/service/auth_service.go:408-413`) and the UI silently trades them for new access
+>   `internal/service/auth_service.go:604-609`) and the UI silently trades them for new access
 >   tokens signed with the new secret (`gocrm-ui/src/api/client.ts:232-256`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
 >   change and a password reset revoke that user's refresh tokens and end the access tokens issued
@@ -378,7 +378,7 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:107-110`).
 - `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:302`, used at
-  `internal/service/auth_service.go:358`) and the refresh-token lifetime from
+  `internal/service/auth_service.go:574`) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:307`). `JWT_ACCESS_TOKEN_MINUTES` is read
   (`config.go:303`) but only feeds the unused cookie helper.
 

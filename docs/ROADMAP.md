@@ -151,14 +151,18 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   tab's 401 reaches it before the winner stored the successor.
 - **Erasure vs conversion/authentication concurrency: tracked in #183** (current orders in
   [CONCURRENCY.md](CONCURRENCY.md)). The identity erasure
-  (#108) is one transaction, but it does not yet share a lock protocol with lead conversion,
-  customer/login linking, password reset or API-key creation: a conversion or credential
-  committed while an erasure is in flight can be missed, and opposite entry points can deadlock (an
-  error, never a partial commit). Login (#336) and refresh rotation lock the owner's `users` row
-  before they issue anything, so against a user-rooted erasure they either commit first (and the
-  erasure purges what they issued) or wait and are refused. The same holds for a deal or quote
-  write racing the business-text scrub (#245): a deal linked, or a quote edited, while the erasure
-  is in flight can keep its text.
+  (#108) is one transaction, but it does not yet share a lock protocol with lead conversion or
+  customer/login linking: a conversion committed while an erasure is in flight can be missed, and
+  opposite entry points can deadlock (an error, never a partial commit). Login (#336), refresh
+  rotation, the password-reset request and API-key creation (#342) lock the owner's `users` row
+  before they issue anything, so against a user- or customer-rooted erasure they either commit
+  first (and the erasure purges what they issued) or wait and are refused. The reset request and
+  the reset confirm lock in opposite orders; when they deadlock the request is replayed and the
+  confirm fails with nothing written (putting the confirm under the retry rule is open), and a
+  reset request for an account whose row another transaction holds waits for it, which a timing
+  observer could tell apart from an unknown address (accepted residual). A deal or quote write
+  racing the business-text scrub (#245) can be missed like a conversion: a deal linked, or a quote
+  edited, while the erasure is in flight can keep its text.
 - **Unlocked completed-task check in the bulk task status batch** — the batch reads its tasks with
   a plain `GetTasksByIDs` and locks them only at the status `UPDATE`, so its completed-task check is
   not protected by a row lock: a task completed by another transaction between that read and the

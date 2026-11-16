@@ -84,7 +84,7 @@ func newUsersMeStack(t *testing.T) *usersMeStack {
 		db:          db,
 		router:      router,
 		userService: userService,
-		apiKeys:     service.NewAPIKeyService(apiKeyRepo, ""),
+		apiKeys:     service.NewAPIKeyService(apiKeyRepo, userRepo, utils.NewTransactionManager(db), ""),
 	}
 }
 

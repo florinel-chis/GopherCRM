@@ -98,7 +98,7 @@ func newATVAPIStack(t *testing.T) *atvAPIStack {
 	return &atvAPIStack{
 		router:      router,
 		userService: userService,
-		apiKeys:     service.NewAPIKeyService(apiKeyRepo, ""),
+		apiKeys:     service.NewAPIKeyService(apiKeyRepo, userRepo, utils.NewTransactionManager(db), ""),
 		mailer:      mail,
 	}
 }

@@ -1,27 +1,81 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"gorm.io/gorm"
 )
 
+// apiKeyGenerateDeps wires Generate's transaction-bound call sequence (#342):
+// a mocked TransactionManager that expects one WithTransactionAndRetry on
+// context.Background() with apiKeyCreateMaxRetries and runs the callback in a
+// real transaction on an empty in-memory SQLite database (the mocks never
+// touch it), and repositories that expect to be bound to it through WithTx.
+type apiKeyGenerateDeps struct {
+	keys  *mocks.APIKeyRepository
+	users *mocks.UserRepository
+	tm    *mocks.TransactionManager
+	svc   APIKeyService
+	calls []string
+}
+
+func newAPIKeyGenerateDeps(t *testing.T, owner *models.User) *apiKeyGenerateDeps {
+	t.Helper()
+	d := &apiKeyGenerateDeps{
+		keys:  &mocks.APIKeyRepository{},
+		users: &mocks.UserRepository{},
+		tm:    &mocks.TransactionManager{},
+	}
+	real := sessionTestTransactionManager(t)
+	d.tm.On("WithTransactionAndRetry", context.Background(), mock.Anything, apiKeyCreateMaxRetries).
+		Return(func(ctx context.Context, fn func(context.Context) error, retries int) error {
+			return real.WithTransactionAndRetry(ctx, fn, retries)
+		}).Once()
+	d.users.On("WithTx", mock.Anything).Return(d.users).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "users.WithTx")
+	})
+	d.users.On("GetByID", owner.ID).Return(owner, nil).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "users.GetByID")
+	})
+	d.keys.On("WithTx", mock.Anything).Return(d.keys).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "api_keys.WithTx")
+	})
+	d.svc = NewAPIKeyService(d.keys, d.users, d.tm, "test-api-key-secret")
+	return d
+}
+
+func (d *apiKeyGenerateDeps) assertExpectations(t *testing.T) {
+	t.Helper()
+	d.tm.AssertExpectations(t)
+	d.users.AssertExpectations(t)
+	d.keys.AssertExpectations(t)
+	assert.Equal(t, []string{"users.WithTx", "users.GetByID", "api_keys.WithTx", "api_keys.Create"}, d.calls,
+		"the owner is locked before the transaction-bound insert")
+}
+
+func apiKeyTestOwner() *models.User {
+	return &models.User{BaseModel: models.BaseModel{ID: 1}, IsActive: true, Role: models.RoleSales}
+}
+
 func TestAPIKeyService_Generate(t *testing.T) {
-	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+	d := newAPIKeyGenerateDeps(t, apiKeyTestOwner())
 
 	userID := uint(1)
 	name := "Test API Key"
 
-	mockAPIKeyRepo.On("Create", mock.Anything).Return(nil)
+	d.keys.On("Create", mock.Anything).Return(nil).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "api_keys.Create")
+	})
 
-	key, apiKey, err := apiKeyService.Generate(userID, name, nil)
+	key, apiKey, err := d.svc.Generate(userID, name, nil)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, key)
@@ -32,31 +86,33 @@ func TestAPIKeyService_Generate(t *testing.T) {
 	assert.NotEmpty(t, apiKey.Prefix)
 	assert.True(t, len(apiKey.Prefix) == 8)
 	assert.Contains(t, key, "gcrm_")
-	
-	mockAPIKeyRepo.AssertExpectations(t)
+
+	d.assertExpectations(t)
 }
 
 func TestAPIKeyService_Generate_CreateError(t *testing.T) {
-	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+	d := newAPIKeyGenerateDeps(t, apiKeyTestOwner())
 
 	userID := uint(1)
 	name := "Test API Key"
 
-	mockAPIKeyRepo.On("Create", mock.Anything).Return(errors.New("database error"))
+	d.keys.On("Create", mock.Anything).Return(errors.New("database error")).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "api_keys.Create")
+	})
 
-	key, apiKey, err := apiKeyService.Generate(userID, name, nil)
+	key, apiKey, err := d.svc.Generate(userID, name, nil)
 
 	assert.Error(t, err)
+	assert.False(t, errors.Is(err, ErrAccountUnavailable), "an insert failure is not an owner refusal")
 	assert.Empty(t, key)
 	assert.Nil(t, apiKey)
-	
-	mockAPIKeyRepo.AssertExpectations(t)
+
+	d.assertExpectations(t)
 }
 
 func TestAPIKeyService_GetByUser(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 	userID := uint(1)
 	expectedKeys := []models.APIKey{
@@ -81,18 +137,18 @@ func TestAPIKeyService_GetByUser(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, keys, 2)
 	assert.Equal(t, expectedKeys, keys)
-	
+
 	mockAPIKeyRepo.AssertExpectations(t)
 }
 
 func TestAPIKeyService_Revoke(t *testing.T) {
 	t.Run("successful revocation", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(1)
-		
+
 		apiKey := &models.APIKey{
 			BaseModel: models.BaseModel{ID: apiKeyID},
 			UserID:    userID,
@@ -112,11 +168,11 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 
 	t.Run("unauthorized revocation", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(2) // Different user
-		
+
 		apiKey := &models.APIKey{
 			BaseModel: models.BaseModel{ID: apiKeyID},
 			UserID:    1, // Different from requesting user
@@ -137,7 +193,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 	// layer that must translate it into something a handler can classify.
 	t.Run("api key not found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(1)
@@ -156,7 +212,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 	// must not be laundered into a not-found.
 	t.Run("lookup failure is not a not-found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		apiKeyID := uint(1)
 		userID := uint(1)
@@ -175,7 +231,7 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 func TestAPIKeyService_GetByID(t *testing.T) {
 	t.Run("owner gets their own key", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -199,7 +255,7 @@ func TestAPIKeyService_GetByID(t *testing.T) {
 
 	t.Run("another user's key is forbidden", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -219,7 +275,7 @@ func TestAPIKeyService_GetByID(t *testing.T) {
 
 	t.Run("missing key is a not-found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		mockAPIKeyRepo.On("GetByID", uint(404)).Return(nil, gorm.ErrRecordNotFound)
 
@@ -234,7 +290,7 @@ func TestAPIKeyService_GetByID(t *testing.T) {
 
 	t.Run("lookup failure is not a not-found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		mockAPIKeyRepo.On("GetByID", uint(3)).Return(nil, errors.New("connection refused"))
 
@@ -251,7 +307,7 @@ func TestAPIKeyService_GetByID(t *testing.T) {
 func TestAPIKeyService_Update(t *testing.T) {
 	t.Run("rename only leaves the active flag alone", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -275,7 +331,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 
 	t.Run("deactivate only leaves the name alone", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -301,7 +357,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 	// flip it back. Expiry is the guard that cannot be undone this way.
 	t.Run("a revoked key can be reactivated by its owner", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -324,7 +380,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 
 	t.Run("another user's key is forbidden", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -345,7 +401,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 
 	t.Run("missing key is a not-found", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		mockAPIKeyRepo.On("GetByID", uint(404)).Return(nil, gorm.ErrRecordNotFound)
 
@@ -360,7 +416,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 
 	t.Run("persist failure is surfaced", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
-		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 		stored := &models.APIKey{
 			BaseModel: models.BaseModel{ID: 3},
@@ -381,26 +437,27 @@ func TestAPIKeyService_Update(t *testing.T) {
 }
 
 func TestAPIKeyService_Generate_WithExpiry(t *testing.T) {
-	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+	d := newAPIKeyGenerateDeps(t, apiKeyTestOwner())
 
 	expires := time.Now().Add(48 * time.Hour)
-	mockAPIKeyRepo.On("Create", mock.MatchedBy(func(k *models.APIKey) bool {
+	d.keys.On("Create", mock.MatchedBy(func(k *models.APIKey) bool {
 		return k.ExpiresAt != nil && k.ExpiresAt.Equal(expires)
-	})).Return(nil)
+	})).Return(nil).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "api_keys.Create")
+	})
 
-	key, apiKey, err := apiKeyService.Generate(1, "Expiring Key", &expires)
+	key, apiKey, err := d.svc.Generate(1, "Expiring Key", &expires)
 
 	assert.NoError(t, err)
 	assert.NotEmpty(t, key)
 	assert.NotNil(t, apiKey.ExpiresAt)
 	assert.True(t, apiKey.ExpiresAt.Equal(expires))
-	mockAPIKeyRepo.AssertExpectations(t)
+	d.assertExpectations(t)
 }
 
 func TestAPIKeyService_List(t *testing.T) {
 	mockAPIKeyRepo := new(MockAPIKeyRepository)
-	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, "test-api-key-secret")
+	apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
 	userID := uint(1)
 	now := time.Now()
@@ -427,6 +484,6 @@ func TestAPIKeyService_List(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, keys, 2)
 	assert.Equal(t, expectedKeys, keys)
-	
+
 	mockAPIKeyRepo.AssertExpectations(t)
 }
