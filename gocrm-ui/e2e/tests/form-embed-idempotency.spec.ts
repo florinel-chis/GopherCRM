@@ -90,7 +90,9 @@ test.describe('Public forms - embed script idempotency key', () => {
       let html = (await response.text()).replace(/ data-idempotency-key="[^"]*"/g, '');
       const tag = html.match(/<script src="[^"]*embed\.js"[^>]*><\/script>/);
       expect(tag, 'the hosted view carries the embed tag').not.toBeNull();
-      html = html.replace(tag![0], Array(copies).fill(tag![0]).join('\n'));
+      if (!tag) throw new Error('the hosted view carries no embed tag');
+      const tagHtml = tag[0];
+      html = html.replace(tagHtml, Array(copies).fill(tagHtml).join('\n'));
       await route.fulfill({ response, body: html });
     });
   }
