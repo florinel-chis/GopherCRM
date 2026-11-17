@@ -151,9 +151,12 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   tab's 401 reaches it before the winner stored the successor.
 - **Erasure vs conversion/authentication concurrency: tracked in #183** (current orders in
   [CONCURRENCY.md](CONCURRENCY.md)). The identity erasure
-  (#108) is one transaction, but it does not yet share a lock protocol with lead conversion or
-  customer/login linking: a conversion committed while an erasure is in flight can be missed, and
-  opposite entry points can deadlock (an error, never a partial commit). Login (#336), refresh
+  (#108) is one transaction. Lead-rooted erasure against a conversion of the same lead is closed by
+  #337: the erasure cancels the lead's automation runs, then locks the lead row and decides on it,
+  so a conversion either commits first (an admin erasure erases its customer too, a non-admin one
+  is refused) or waits and answers 404. Customer- and user-rooted erasure still share no lock
+  protocol with customer/login linking, opposite entry points can deadlock (an error, never a
+  partial commit), and no erasure is under the #183 retry rule yet. Login (#336), refresh
   rotation, the password-reset request and API-key creation (#342) lock the owner's `users` row
   before they issue anything, so against a user- or customer-rooted erasure they either commit
   first (and the erasure purges what they issued) or wait and are refused. The reset request and

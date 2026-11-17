@@ -36,6 +36,10 @@ type leadService struct {
 	// lockHooks are instance-local test seams of the lead/company lock order
 	// (#182); zero in production.
 	lockHooks leadCompanyLockHooks
+	// afterDeletePreRead is an instance-local test seam of Delete (#337): it
+	// runs after the plain pre-read of the lead and before the erasure unit
+	// starts. Nil in production.
+	afterDeletePreRead func(leadID uint)
 }
 
 // WithLeadConversionRules makes ConvertToCustomer enforce the lead-conversion
@@ -705,8 +709,9 @@ func (s *leadService) Assign(ctx context.Context, leadID, ownerID uint, actor Le
 // actorRole decides how far the erasure may reach. Erasing a customer is an
 // admin action, so only an admin may erase a converted lead; any other caller
 // (an owning sales user) gets leadRepository.DeleteUnconverted, which refuses a
-// converted lead with an apperrors.ErrForbidden inside the erasure unit, before
-// anything is written. Ownership of the lead stays the handler's check.
+// converted lead with an apperrors.ErrForbidden inside the erasure unit, on the
+// locked lead row, and rolls the unit back. Ownership of the lead stays the
+// handler's check.
 //
 // Note the logging below deliberately records only the lead ID: an erasure
 // audit trail that quotes the erased email would defeat the erasure.
@@ -724,6 +729,11 @@ func (s *leadService) Delete(id uint, actorRole models.UserRole) error {
 		}
 		logger.WithError(utils.LogError(err)).Error("Failed to look up lead for erasure")
 		return err
+	}
+	// The pre-read decides nothing but the 404: whether the lead is converted
+	// is decided inside the erasure unit, on the lead row it locks (#337).
+	if s.afterDeletePreRead != nil {
+		s.afterDeletePreRead(id)
 	}
 
 	erase := s.leadRepo.DeleteUnconverted

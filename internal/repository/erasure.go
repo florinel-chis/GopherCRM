@@ -106,16 +106,16 @@ type erasurePlan struct {
 	// must not outlive the person either.
 	AfterScrub func(tx *gorm.DB, id uint) error
 
-	// BeforeScrub, when set, runs inside the SAME transaction before the row
-	// is touched. The automation cancel of a lead lives here on purpose: an
-	// automation step holds the lead row under a locking read while it runs,
-	// so an erasure that cancelled the runs only after its own UPDATE of the
-	// lead would wait on that lock, let the step commit its task, and cancel
-	// a run that had already done its work. Cancelling first means the
-	// erasure has modified rows by the time it waits on the lead, which is
-	// what makes it the survivor of the resulting MySQL deadlock: the step
-	// transaction (no rows modified yet) is rolled back, retried, and then
-	// finds the run cancelled and the lead gone.
+	// BeforeScrub runs inside the SAME transaction before the row is read or
+	// touched. The lead plan's automation cancel lives here, and eraseLead runs
+	// it itself, before its locking read of the lead (#337): an automation step
+	// holds the lead row FOR UPDATE while it runs, so an erasure that waited on
+	// the lead before cancelling would let the step commit its task. Having
+	// modified the run rows by the time it waits on the lead is what makes the
+	// erasure the survivor of the resulting MySQL deadlock: the step (no rows
+	// modified yet) is rolled back, retried, and then finds the run cancelled
+	// and the lead gone. eraseRecord still runs a plan's BeforeScrub when the
+	// caller has not cleared it.
 	BeforeScrub func(tx *gorm.DB, id uint) error
 }
 
@@ -146,15 +146,30 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 		}
 	}
 
-	erased := make(map[string]interface{}, len(plan.Scrub)+1)
+	erased := make(map[string]interface{}, len(plan.Scrub))
 	for column, value := range plan.Scrub {
 		erased[column] = value
 	}
 
-	// The original address is read before the scrub overwrites it: the
+	// The scrub of every column but the address comes first: by primary key,
+	// it takes the row lock (or waits for a writer that holds it, and then
+	// overwrites what that writer committed). Unscoped so that re-running an
+	// erasure over an already soft-deleted row — a legacy row soft-deleted
+	// before deletion became an erasure, and therefore still holding personal
+	// data — still scrubs it.
+	scrub := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased)
+	if scrub.Error != nil {
+		return scrub.Error
+	}
+	if observe := erasureScrubObserver.Load(); observe != nil {
+		(*observe)(scrub.Statement.Table, id)
+	}
+
+	// The original address is read before the placeholder overwrites it: the
 	// unlinked form submissions of the person are found by it (#214), and
-	// AfterScrub only ever sees the placeholder. A plain read; the UPDATE
-	// below takes the row lock.
+	// AfterScrub only ever sees the placeholder. readErasedEmail is a locking
+	// read by primary key (#337), so it returns the committed address, never
+	// one from a REPEATABLE READ snapshot older than the lock.
 	var original, placeholder string
 	if plan.EmailColumn != "" {
 		var err error
@@ -164,18 +179,10 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 		if placeholder, err = newAnonymizedEmail(); err != nil {
 			return err
 		}
-		erased[plan.EmailColumn] = placeholder
-	}
-
-	// Unscoped so that re-running an erasure over an already soft-deleted
-	// row — a legacy row soft-deleted before deletion became an erasure, and
-	// therefore still holding personal data — still scrubs it.
-	scrub := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).Updates(erased)
-	if scrub.Error != nil {
-		return scrub.Error
-	}
-	if observe := erasureScrubObserver.Load(); observe != nil {
-		(*observe)(scrub.Statement.Table, id)
+		if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).
+			Update(plan.EmailColumn, placeholder).Error; err != nil {
+			return err
+		}
 	}
 
 	if plan.AfterScrub != nil {
@@ -193,12 +200,14 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 	return tx.Delete(plan.newModel(), id).Error
 }
 
-// readErasedEmail returns the address stored on the row about to be erased,
-// soft-deleted rows included, or "" when the row or the value is absent. The
+// readErasedEmail returns the address stored on the row being erased,
+// soft-deleted rows included, or "" when the row or the value is absent. It
+// is a locking read by primary key (FOR UPDATE on MySQL/MariaDB; #337): the
+// row is the one the erasure scrubs, so the lock is already its own. The
 // error names the row by id only.
 func readErasedEmail(tx *gorm.DB, plan erasurePlan, id uint) (string, error) {
 	var emails []sql.NullString
-	if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).
+	if err := lockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
 		Pluck(plan.EmailColumn, &emails).Error; err != nil {
 		return "", fmt.Errorf("reading the address of row %d before erasure: %w", id, err)
 	}

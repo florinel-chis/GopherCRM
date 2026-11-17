@@ -3,7 +3,8 @@
 One place for the row-lock order and the retry rule of every write that locks rows of more than
 one table: the erasures, lead conversion and update, company delete, bulk status, the session and
 credential flows, and RBAC writes. It records what the code does at `a415cf1` (with Login updated
-for #336, and the password-reset request and API-key create for #342) and, separately, the target that #183 (and #259 for RBAC) asks for. A flow whose order is only a target is marked
+for #336, the password-reset request and API-key create for #342, and the lead-rooted erasure
+against lead conversion for #337) and, separately, the target that #183 (and #259 for RBAC) asks for. A flow whose order is only a target is marked
 `not implemented` or `partial`; nothing here describes a target as current behaviour.
 
 Each flow lists five fields:
@@ -28,7 +29,7 @@ Three chains are specified. A transaction that locks rows of one chain takes the
 
 - `companies → leads → customers → deals` (#182, implemented): companies by primary key
   (`CompanyRepository.LockLive`, `internal/repository/company_repository.go:64`), leads by id
-  ascending, then customers, then deals. Written down at `internal/service/lead_service.go:174`.
+  ascending, then customers, then deals. Written down at `internal/service/lead_service.go:178`.
 - `users → refresh_tokens`, `users → password_reset_tokens` and `users → api_keys` (implemented
   for every session and credential-issuing transaction): the owner's `users` row first, by primary
   key, its child rows second. Login, refresh rotation, password change and logout follow
@@ -43,9 +44,9 @@ chains: an erasure reaches users, customers and leads from whichever root it sta
 session and credential flows touch users while lead conversion touches leads and customers. `C4`
 (#183) owns that decision. Until then the current erasure order depends on the root: the
 user-rooted erasure locks the user before its customers and leads, the customer-rooted erasure
-locks the customer before its leads and its login, and the lead-rooted erasure locks the lead
-before the customer it was converted into. This document pins no combined sequence across the
-chains.
+locks the customer before its leads and its login, and the lead-rooted erasure cancels the lead's
+automation runs and then locks the lead before the customer it was converted into (#337). This
+document pins no combined sequence across the chains.
 
 ## Retry rule
 
@@ -63,7 +64,7 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
   same file): a deadlock has already destroyed the enclosing transaction, so only the enclosing
   root may replay the whole unit.
 
-The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1035`),
+The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1045`),
 login (`internal/service/auth_service.go:284`), the password-reset request
 (`internal/service/auth_service.go:1221`) and API-key create
 (`internal/service/apikey_service.go:86`).
@@ -76,17 +77,21 @@ loop (`runLeadCompanyAttempts`) described in their entries.
 ### User-rooted erasure
 
 - **Rows locked:** the `users` row (locking read of its role,
-  `internal/repository/erasure_cascade.go:418`, then the scrub), its `api_keys`,
-  `refresh_tokens` and `password_reset_tokens` rows (deleted by `purgeCredentials`,
-  `internal/repository/erasure.go:436`), and for a customer-role login every linked `customers`
+  `internal/repository/erasure_cascade.go:464`, then the scrub and a locking read of the address,
+  `readErasedEmail`, `internal/repository/erasure.go:208`), its `api_keys`, `refresh_tokens` and
+  `password_reset_tokens` rows (deleted by `purgeCredentials`,
+  `internal/repository/erasure.go:445`), and for a customer-role login every linked `customers`
   row and the `leads` converted into them; then the text of their deals and quotes
-  (`internal/repository/erasure_cascade.go:296`).
+  (`internal/repository/erasure_cascade.go:324`).
 - **Order:** users → api_keys, refresh_tokens, password_reset_tokens → customers (id order,
-  `internal/repository/erasure_cascade.go:439-447`) → leads converted into each customer (id
-  order) → deals and quotes text. A staff login stops after its credentials.
+  `internal/repository/erasure_cascade.go:484-493`) → leads converted into each customer (id
+  order) → deals and quotes text. Each converted lead is reached through `eraseLead`, so it
+  inherits the lead-rooted per-lead order customers → automation runs → leads: the lead's runs are
+  cancelled, then the lead is read with a locking read by id (#337). A staff login stops after its
+  credentials.
 - **Transaction:** `userRepository.Delete` → `eraseGraph`
   (`internal/repository/user_repository.go:164`) → `runErasureUnit`
-  (`internal/repository/erasure.go:335`): a `db.Transaction`, or a checked SAVEPOINT inside the
+  (`internal/repository/erasure.go:344`): a `db.Transaction`, or a checked SAVEPOINT inside the
   caller's transaction.
 - **Retry:** none today; a deadlock or lock wait timeout reaches the caller. Target (C4): the
   #183 retry rule on the whole erasure root.
@@ -102,11 +107,17 @@ and the purge removes what they issued, or wait on the `users` row and are refus
 
 ### Customer-rooted erasure
 
-- **Rows locked:** the `customers` row (plain read, the scrub takes the row lock straight away,
-  `internal/repository/erasure_cascade.go:373`), the `leads` converted into it, then its
-  customer-role login (`users`) with that login's credentials; then the deals and quotes text.
-- **Order:** customers → leads (id order, `internal/repository/erasure_cascade.go:390`) → users
-  (`internal/repository/erasure_cascade.go:403`) → deals and quotes text.
+- **Rows locked:** the `customers` row (the scrub `UPDATE` by id is the first statement on the
+  row and takes its lock, `internal/repository/erasure.go:160`; the address and then `user_id` are
+  read after it with locking reads by id, `readErasedEmail` at
+  `internal/repository/erasure.go:208` and `internal/repository/erasure_cascade.go:420`), the
+  `leads` converted into it, then its customer-role login (`users`) with that login's
+  credentials; then the deals and quotes text.
+- **Order:** customers → automation runs → leads (per converted lead, in id order: the plain
+  pluck by `customer_id`, `internal/repository/erasure_cascade.go:436-437`, then `eraseLead`
+  cancels the lead's runs and reads the lead with a locking read by id,
+  `internal/repository/erasure_cascade.go:362` and `:373` in the same file) → users
+  (`internal/repository/erasure_cascade.go:449`) → deals and quotes text.
 - **Transaction:** `customerRepository.Delete` (`internal/repository/customer_repository.go:158`)
   → `eraseGraph` → `runErasureUnit`, as for the user-rooted erasure.
 - **Retry:** none today. Target (C4): the #183 retry rule.
@@ -114,42 +125,65 @@ and the purge removes what they issued, or wait on the `users` row and are refus
 
 ### Lead-rooted erasure
 
-- **Rows locked:** the automation runs of the lead (cancelled first by the plan's `BeforeScrub`,
-  `cancelLeadAutomation`, `internal/repository/erasure_cascade.go:76`), the `leads` row (scrub,
-  then a locking re-read of `customer_id`, `internal/repository/erasure_cascade.go:349`), then the
-  customer it was converted into with that customer's leads and login.
-- **Order:** a deliberately non-locking first read of the lead
-  (`internal/repository/erasure_cascade.go:320-326`) → automation runs → leads → customers →
-  users → deals and quotes text.
-- **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:141`)
-  or `leadRepository.DeleteUnconverted` (non-admins, refused before any write when the lead was
-  converted, `internal/repository/lead_repository.go:153`) → `eraseGraph` → `runErasureUnit`.
+- **Rows locked:** the automation runs of the lead (cancelled first, `cancelLeadAutomation`, the
+  lead plan's `BeforeScrub`, `internal/repository/erasure_cascade.go:76`, run by `eraseLead` at
+  `internal/repository/erasure_cascade.go:362`), the `leads` row (locking read by id,
+  `internal/repository/erasure_cascade.go:373`, the first read of the leads row in the unit; the
+  non-admin refusal and whether `customer_id` is followed are decided on that locked row only),
+  then the customer it was converted into (`eraseCustomer`: the scrub `UPDATE` by id, then
+  locking reads by id of the address and of `user_id`, `internal/repository/erasure_cascade.go:415`
+  and `:420` in the same file) with that customer's other leads and its login.
+- **Order:** automation runs (`cancelLeadAutomation`) → leads (locking read by id,
+  `internal/repository/erasure_cascade.go:373`) → customers (locking read by id, `eraseCustomer`,
+  `internal/repository/erasure_cascade.go:420`) → users → deals and quotes text. The converted-lead
+  pluck (`WHERE customer_id = ?`, `internal/repository/erasure_cascade.go:436-437`) stays a plain
+  read: a locking read there would take next-key locks on the `leads.customer_id` index and block
+  unrelated conversions, and it is not needed, because a conversion always inserts a new customer,
+  so no lead can be converted into a customer being erased. The cancel stays ahead of the lead lock
+  so that the erasure has modified rows when it waits on a lead an automation step holds, and is
+  the survivor of that deadlock.
+- **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:159`)
+  or `leadRepository.DeleteUnconverted` (non-admins, refused with `ErrConvertedLeadNeedsAdmin` on
+  the locked lead row before the lead is written, the cancel rolled back with the unit,
+  `internal/repository/lead_repository.go:172`) → `eraseGraph` → `runErasureUnit`.
 - **Retry:** none today. Target (C4): the #183 retry rule.
 - **Status:** partial
 
-All three erasures are one transaction each, but they share no order with lead conversion or the
-session flows, and their order depends on the root. That is why they are `partial`.
+Against lead conversion (companies → leads → customers) there is no cycle: both lock the lead row
+by primary key before they touch the customer, and the erasure takes no company lock. Conversion
+first: the erasure waits on the lead's locking read, then reads the committed `customer_id`; an
+admin erasure erases the new customer too, a non-admin erasure is refused and changes nothing.
+Erasure first: the conversion waits on its `lockedLeadRead` and then finds the lead gone (see
+Lead conversion). A conversion committed between the cancel and the lead lock is seen the same
+way. Neither ordering ends in error 1213.
+
+Customer- and user-rooted erasures still share no order with lead conversion beyond the per-lead
+order above (customer/login linking races stay #183), no erasure shares one with the session
+flows, and their order depends on the root. With no retry rule yet, all three are `partial`.
 
 ### Lead conversion
 
 - **Rows locked:** the `companies` rows of the lead's stored company and of a caller-supplied
-  `company_id` (`lockLeadCompanies`, `internal/service/lead_service.go:259`), then the `leads` row
-  (`lockedLeadRead`, `internal/service/lead_service.go:1094`); the new `customers` row is inserted
-  (`internal/service/lead_service.go:1157`). No deal is touched.
+  `company_id` (`lockLeadCompanies`, `internal/service/lead_service.go:263`), then the `leads` row
+  (`lockedLeadRead`, `internal/service/lead_service.go:1104`); the new `customers` row is inserted
+  (`internal/service/lead_service.go:1167`). No deal is touched.
 - **Order:** a plain read of the lead outside the transaction
-  (`internal/service/lead_service.go:990`); in each attempt a plain read of `company_id`
-  (`internal/service/lead_service.go:1073`) → companies, ascending id
-  (`internal/service/lead_service.go:272`) → the locked lead → customers. A locked lead that names
+  (`internal/service/lead_service.go:1000`); in each attempt a plain read of `company_id`
+  (`internal/service/lead_service.go:1083`) → companies, ascending id
+  (`internal/service/lead_service.go:276`) → the locked lead → customers. A locked lead that names
   another company ends the attempt with `errLeadCompanyMoved`; at most `leadCompanyMaxRestarts`
-  restarts (`internal/service/lead_service.go:198`).
+  restarts (`internal/service/lead_service.go:202`). A conversion queued behind a lead erasure
+  finds the lead gone: its `lockedLeadRead` returns not found (`gorm.ErrRecordNotFound`, which
+  `apperrors.IsNotFound` matches, so `POST /leads/{id}/convert` answers 404) and nothing is written
+  (#337, see Lead-rooted erasure).
 - **Transaction:** a transaction root (an enclosing transaction is refused with
   `utils.ErrTransactionRootRequired`); `runLeadCompanyAttempts`
-  (`internal/service/lead_service.go:1034`) around one root transaction per attempt.
-- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1035`,
-  `:1043` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
-  busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:318`) restarts
+  (`internal/service/lead_service.go:1044`) around one root transaction per attempt.
+- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1045`,
+  `:1053` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
+  busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:322`) restarts
   the whole root at most `leadCompanyMaxRestarts` (3) times, on `errLeadCompanyMoved` only and only
-  after a clean rollback (`shouldRestartLeadCompanyAttempt`, `internal/service/lead_service.go:211`),
+  after a clean rollback (`shouldRestartLeadCompanyAttempt`, `internal/service/lead_service.go:215`),
   then returns `ErrLeadCompanyContended`.
 - **Status:** implemented
 
@@ -157,13 +191,13 @@ session flows, and their order depends on the root. That is why they are `partia
 
 - **Rows locked:** the `companies` rows of the stored and of the sent `company_id`, the `leads`
   row (`lockedLeadRead`) and, when `owner_id` changes, the new owner's `users` row (`lockedUserRead`,
-  `internal/service/lead_service.go:147`).
-- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:504`)
-  → companies, ascending id (`internal/service/lead_service.go:515`) → the locked lead and the
-  locked owner (`internal/service/lead_service.go:536`). Same chain and the same
+  `internal/service/lead_service.go:151`).
+- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:508`)
+  → companies, ascending id (`internal/service/lead_service.go:519`) → the locked lead and the
+  locked owner (`internal/service/lead_service.go:540`). Same chain and the same
   `errLeadCompanyMoved` check as the conversion, bounded by `leadCompanyMaxRestarts`.
-- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:491`) inside
-  `runLeadCompanyAttempts` (`internal/service/lead_service.go:490`).
+- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:495`) inside
+  `runLeadCompanyAttempts` (`internal/service/lead_service.go:494`).
 - **Retry:** `runLeadCompanyAttempts` restarts the whole root at most `leadCompanyMaxRestarts` times,
   on `errLeadCompanyMoved` only; each attempt is a plain `WithTransaction`, so there is no deadlock
   retry: error 1213 or 1205 reaches the caller.
