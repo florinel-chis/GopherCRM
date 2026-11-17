@@ -1685,9 +1685,9 @@ What happens on `DELETE`:
   customer soft delete on `idx_customers_deleted_at` that made an unrelated conversion's
   `INSERT INTO customers` wait for the erasure to commit (MySQL 8 never waited); with the
   primary-key-only soft delete QA recorded `TestLeadErasureUnrelatedConversionNotBlockedMySQL`
-  passing: as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0, and in the Delete-chain form
-  used now on MariaDB 10.11 (with `TestIdentityErasureMySQL`); the Delete-chain form still has to
-  be recorded on MySQL 8.
+  passing as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0; the root also passed in the
+  Delete-chain form used now, together with `TestIdentityErasureMySQL`, on MariaDB 10.11 (QA) and
+  on MySQL 8.0 (the #355 acceptance run).
   Lock order: automation runs → leads → customers, the
   same lead-before-customer direction as conversion (companies → leads → customers), so the two
   never form a cycle. Outcomes: a conversion that holds the lead lock commits first and the
@@ -1716,7 +1716,7 @@ What happens on `DELETE`:
   `TestLeadErasureHooksDefaultUnset` (`internal/repository/lead_erasure_lock_order_test.go`, the
   statements captured through GORM callbacks registered only for the repository call);
   `TestLeadErasureHooksNotWiredInProduction` (`cmd`); `TestConcurrencyDocLeadErasureVsConversion`
-  (`internal/config`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, see each wait in
+  and `TestErasureSoftDeleteRecordedDocs` (`internal/config`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, see each wait in
   `information_schema.PROCESSLIST` on two consecutive polls, assert that no ordering ends in error
   1213, skip without the variable and fail when it is unreachable; `make verify-backend` has no DSN
   and skips them. They must pass on MySQL 8 and MariaDB 10.11 alike: `scripts/ci/check-go.py

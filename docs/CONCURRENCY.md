@@ -149,11 +149,11 @@ and the purge removes what they issued, or wait on the `users` row and are refus
   seen holding a gap lock on `idx_customers_deleted_at` on MariaDB 10.11 (not on MySQL 8), which
   blocked an unrelated conversion's customer `INSERT` until the erasure committed.
   QA recorded `TestLeadErasureUnrelatedConversionNotBlockedMySQL` passing with the
-  primary-key-only soft delete: as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0, and as
-  the Delete-chain form used now on MariaDB 10.11 (with `TestIdentityErasureMySQL`); the
-  Delete-chain form still has to be recorded on MySQL 8. The cancel stays ahead of the lead lock
-  so that the erasure has modified rows when it waits on a lead an automation step holds, and is
-  the survivor of that deadlock.
+  primary-key-only soft delete as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0; the root
+  also passed in the Delete-chain form used now, together with `TestIdentityErasureMySQL`, on
+  MariaDB 10.11 (QA) and on MySQL 8.0 (the #355 acceptance run). The cancel stays ahead of the
+  lead lock so that the erasure has modified rows when it waits on a lead an automation step
+  holds, and is the survivor of that deadlock.
 - **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:159`)
   or `leadRepository.DeleteUnconverted` (non-admins, refused with `ErrConvertedLeadNeedsAdmin` on
   the locked lead row before the lead is written, the cancel rolled back with the unit,
