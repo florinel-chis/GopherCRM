@@ -7,7 +7,8 @@ the plaintext quote email, and the erasure and migration guarantees. The fronten
 the DealDetail section, the print page, the email dialog, the nav entries and the route guards;
 its cases are section 15.8. Product external-id mappings (2026-11, issue #239) are section 15.9.
 The per-line tax rate and the tax and gross totals (2026-11, issue #324) are section 15.10; their
-web UI (issue #325) is TC-PQ-037 in that section.
+web UI (issue #325) is TC-PQ-037 in that section. The web UI for fractional line quantities
+(issue #346, over the API of #343) is TC-PQ-038 in section 15.11.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -16,8 +17,7 @@ single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin 
 to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
 asserts the core outcome, the rest is pinned in Vitest).
 
-36 cases: 36 automated (31 Go, 5 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 22 P0,
-12 P1, 2 P2.
+38 cases: 38 automated (31 Go, 7 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 22 P0, 14 P1, 2 P2.
 
 **Sources**
 
@@ -168,7 +168,9 @@ asserts the core outcome, the rest is pinned in Vitest).
 - **Type:** validation
 - **Preconditions:** A draft quote with one line.
 - **Steps:**
-  1. Add and edit lines with `quantity` 0 and 1,000,001, `discount_bp` −1 and 10001, a negative
+  1. Add and edit lines with `quantity` 0, 0.0001, 1.2345 and 1,000,001 (since #343 a quantity is
+     an exact decimal from 0.001 to 1,000,000 with at most three decimals; a refusal carries
+     `error.details.quantity`), `discount_bp` −1 and 10001, a negative
      price and one above 10^12, a gross above 10^12, the maximal quantity times the maximal price with
      a full discount, an untaxed line that would take the quote's (gross) total over 10^12, and a
      101st line. The taxed cases of the cap are TC-PQ-031 and TC-PQ-032.
@@ -176,7 +178,9 @@ asserts the core outcome, the rest is pinned in Vitest).
   byte what they were. 10^6 × 10^12 is 10^18, still an int64, and it is refused by the gross check
   before any multiplication by the discount. Exactly the bound is accepted.
 - **Automation:** automated — `quote_service_test.go` `TestQuoteLineLimitsRejectedWithoutWrites`;
-  `quote_handler_test.go` `TestQuoteLineBindingTagsMatchTheModel`, `TestQuoteHandlerMapsServiceErrors`.
+  `quote_handler_test.go` `TestQuoteLineBindingTagsMatchTheModel`, `TestQuoteHandlerMapsServiceErrors`;
+  for the fractional bounds (#343) `TestQuoteFractionalQuantityBoundsRejectedWithoutWrites`
+  (`internal/service`) and `TestQuoteLineQuantityBinding` (`internal/handler`).
 
 ### TC-PQ-008 — Outside draft every write is a conflict
 - **Priority:** P0
@@ -374,7 +378,8 @@ asserts the core outcome, the rest is pinned in Vitest).
 The React slice over the API above. Every call goes through `gocrm-ui/src/api/endpoints/products.ts`
 and `quotes.ts` (pinned by `products.test.ts`, 8 tests, and `quotes.test.ts`, 15 tests). Money is
 rendered from the server's integer minor units with the quote's currency; a discount is typed as a
-percentage and sent in basis points (`quoteFormat.ts`, 3 tests), and so is a tax rate since #325
+percentage and sent in basis points (`quoteFormat.ts`, 6 tests with the three quantity tests of
+#346), and so is a tax rate since #325
 (TC-PQ-037); the subtotal, discount, net total, tax and gross total are always the server's. The one Playwright test, "admin creates a product, quotes a deal from its
 Quotes section, sends, prints and accepts the quote" in `gocrm-ui/e2e/tests/admin-quotes.spec.ts`,
 runs on SQLite, MySQL and MariaDB like the other admin suites.
@@ -416,7 +421,8 @@ runs on SQLite, MySQL and MariaDB like the other admin suites.
   `status=sent` on filter and with `offset`/`limit` and the allowlisted `sort_by` on paging and
   sorting; a row opens `/quotes/{id}`; "New Quote" opens the create dialog. The detail shows the
   header fields, the lines table (description, qty, unit price, discount %, tax rate %, tax, line
-  total) and the server's subtotal, discount, net total, tax and gross total (#325, TC-PQ-037);
+  total; the quantity without trailing zeros, `1.5`, `2`, `0.001`, since #346, TC-PQ-038) and the
+  server's subtotal, discount, net total, tax and gross total (#325, TC-PQ-037);
   "Add line" opens a dialog whose product picker offers
   active products in the quote's currency (`GET /products?is_active=true&currency=`), takes a
   quantity and a discount in percent and posts `POST /quotes/{id}/lines` with `discount_bp` 1250
@@ -774,3 +780,68 @@ after discount. Sources: `internal/models/quote.go` (`ComputeQuoteLineTax`, `Sum
   `QuotePrint.tax.test.tsx` ("QuotePrint tax …", 3 tests); the updated `QuoteDetail.test.tsx` bodies;
   browser: `gocrm-ui/e2e/tests/admin-quotes-tax.spec.ts` (the add, the edit to 0 and back, the sent
   quote and its print page). `admin-quotes.spec.ts` runs unchanged.
+
+## 15.11 Fractional line quantities in the web UI (#346)
+
+Since #343 the API takes a line quantity as an exact decimal from 0.001 to 1,000,000 with at most
+three decimals and answers a refused one with 400 `VALIDATION_ERROR`, `error.details.quantity`.
+The web UI follows in #346: the line dialog checks the text with `isValidQuoteQuantity` and sends
+`Number(text)`; the detail and print pages render `formatQuantity` (`quoteFormat.ts`). Line and
+quote totals are always the server's; the browser computes none of them.
+
+### TC-PQ-038 — The web UI adds and edits fractional quantities and shows them without trailing zeros (#346)
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Admin (or a sales owner) logged in; a draft quote (id 42) in EUR and a product
+  (id 1) at 12.50 EUR.
+- **Steps:**
+  1. Open "Add line": read the Quantity field. Pick the product, type `1.5`, leave discount and tax
+     at `0`, add.
+  2. Add lines with `0.001`, `1000000`, `1000000.000` and `999999.999`.
+  3. In "Add line" and in "Edit line", type `0`, `0.000`, `0.0001`, `1.2345`, `1.5000`,
+     `1000000.001`, `1000001`, `-1`, `+1`, `.5`, `1.`, `1e3`, `1,5`, `abc` or nothing and submit.
+  4. Open "Edit line" on a stored line with quantity 2.5; change it to `0.125` and save.
+  5. Submit an add and an edit while the API answers 400 `VALIDATION_ERROR` with a string
+     `error.details.quantity`; then edit the field.
+  6. Submit while the API answers 400 `VALIDATION_ERROR` keyed on another field, or another code
+     (409 `CONFLICT`).
+  7. Read the detail and print pages of a quote whose lines hold 1.5, 0.001 and 2.
+- **Expected:** Step 1: the input is `type="text"`, `inputmode="decimal"`, `name="quantity"`, with
+  no `min`, `max` or `step`, and its helper text reads "From 0.001 to 1,000,000, up to three
+  decimals"; the add body is exactly `{product_id: 1, quantity: 1.5, discount_bp: 0, tax_rate_bp:
+  0}`. Step 2: the bodies carry `quantity` 0.001, 1000000, 1000000 and 999999.999 (JSON numbers;
+  surrounding spaces are trimmed). Step 3: no request is sent; the field is invalid and its helper
+  text is exactly "Quantity must be a number from 0.001 to 1,000,000 with at most three decimals".
+  Only a dot is a decimal separator, no thousands separator, sign or exponent is accepted, and
+  trailing zeros past the third decimal (`1.5000`) are refused locally although the API accepts
+  them by value. Step 4: the field is prefilled `2.5`; the `PUT /quotes/42/lines/{lineId}` body
+  carries `quantity` 0.125 next to `description`, `discount_bp`, `tax_rate_bp` and
+  `unit_price_cents`. Step 5: on POST and on PUT the API's message is the Quantity helper text, the
+  field is invalid, `quote-line-error` does not render and the dialog stays open; editing the field
+  clears the message and restores the default hint. Step 6: `quote-line-error` shows the API
+  message (`Validation failed`, `quote is not a draft`) and the Quantity field is not invalid.
+  Step 7: the quantity cells (`quote-line-quantity`, `quote-print-line-quantity`) read `1.5`,
+  `0.001` and `2` (shortest decimal, no trailing zeros, no exponent, no thousands separator); the
+  line totals (`quote-line-total`, `quote-print-line-total`), subtotal, discount, net, tax and gross
+  totals are the server's values even when they differ from any client-side product. The quotes
+  list and the deal's Quotes section show no line quantity and are unchanged.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteLineDialog.test.tsx` ("QuoteLineDialog
+  quantity …", 7 tests: "sends quantity 1.5 when adding a line", "accepts the bounds 0.001 and
+  1000000 and sends them as numbers", "refuses a quantity outside 0.001 to 1,000,000 or with more
+  than three decimals without calling the API", "prefills the edit form with the stored fractional
+  quantity and sends the changed value", "shows the API quantity message on the Quantity field
+  instead of the alert", "keeps a refusal without details.quantity in the alert", "uses a text input
+  with decimal input mode named quantity and shows the range hint"); `quoteFormat.test.ts`
+  ("quoteFormat formats a quantity without trailing zeros", "quoteFormat validates quantity text
+  from 0.001 to 1000000 with at most three decimals", "quoteFormat keeps a three-decimal quantity
+  exact through Number and JSON"); `QuoteDetail.test.tsx` ("QuoteDetail shows fractional line
+  quantities without trailing zeros and the server's line and quote totals", and "QuoteDetail
+  refuses an invalid discount and quantity locally" with the new message); `QuotePrint.test.tsx`
+  ("QuotePrint prints fractional line quantities without trailing zeros and the server's totals").
+  Local SQLite browser validation (not a frozen acceptance check):
+  `gocrm-ui/e2e/tests/admin-quotes-fractional-quantity.spec.ts`, "Admin - Quote fractional
+  quantities" › "admin adds and edits a fractional line quantity and sees it without trailing zeros
+  on the detail and print pages" (add 1.5, edit to 0.125, a local refusal of `1.2345` with no
+  request, a fulfilled 400 with `details.quantity` on the field, and the print page).
+  `admin-quotes.spec.ts` and `admin-quotes-tax.spec.ts`, which fill whole quantities, run
+  unchanged.

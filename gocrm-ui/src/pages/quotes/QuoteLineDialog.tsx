@@ -15,7 +15,12 @@ import type { Product, Quote, QuoteLine } from '@/types';
 import { ProductAutocomplete } from '@/components/ProductAutocomplete';
 import { centsToDecimal, decimalToCents } from '@/pages/deals/dealFormat';
 import { getAPIError } from '@/utils/apiError';
-import { basisPointsToPercent, formatMoney, percentToBasisPoints } from './quoteFormat';
+import {
+  basisPointsToPercent,
+  formatMoney,
+  isValidQuoteQuantity,
+  percentToBasisPoints,
+} from './quoteFormat';
 
 export interface QuoteLineDialogProps {
   open: boolean;
@@ -28,7 +33,9 @@ export interface QuoteLineDialogProps {
 }
 
 const DECIMAL_PATTERN = /^\d+(\.\d{1,2})?$/;
-const QUANTITY_MAX = 1_000_000;
+const QUANTITY_HINT = 'From 0.001 to 1,000,000, up to three decimals';
+const QUANTITY_ERROR =
+  'Quantity must be a number from 0.001 to 1,000,000 with at most three decimals';
 const PRICE_CENTS_MAX = 1_000_000_000_000;
 const DESCRIPTION_MAX_LENGTH = 255;
 
@@ -72,7 +79,15 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
     onSaved(updated);
   };
   const fail = (error: unknown, fallback: string) => {
-    setServerError(getAPIError(error)?.message || fallback);
+    const apiError = getAPIError(error);
+    // The API's quantity refusal (#343) belongs on the Quantity field.
+    const quantityMessage = apiError?.code === 'VALIDATION_ERROR' ? apiError.details?.quantity : undefined;
+    if (typeof quantityMessage === 'string' && quantityMessage !== '') {
+      setServerError(null);
+      setErrors((prev) => ({ ...prev, quantity: quantityMessage }));
+      return;
+    }
+    setServerError(apiError?.message || fallback);
   };
 
   const addMutation = useMutation({
@@ -99,9 +114,8 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
     } else if (description.trim().length > DESCRIPTION_MAX_LENGTH) {
       next.description = `Description must be ${DESCRIPTION_MAX_LENGTH} characters or fewer`;
     }
-    const quantityValue = Number(quantity.trim());
-    if (!/^\d+$/.test(quantity.trim()) || quantityValue < 1 || quantityValue > QUANTITY_MAX) {
-      next.quantity = 'Quantity must be a whole number between 1 and 1,000,000';
+    if (!isValidQuoteQuantity(quantity)) {
+      next.quantity = QUANTITY_ERROR;
     }
     if (!isValidPercent(discount.trim())) {
       next.discount = 'Discount must be a percentage between 0 and 100 with at most two decimals';
@@ -190,15 +204,15 @@ const QuoteLineForm: React.FC<QuoteLineFormProps> = ({ quote, line, onClose, onS
           />
           <TextField
             label="Quantity"
-            type="number"
+            type="text"
             value={quantity}
             onChange={(event) => {
               setQuantity(event.target.value);
               setErrors((prev) => ({ ...prev, quantity: undefined }));
             }}
-            inputProps={{ min: 1, max: QUANTITY_MAX, step: 1, name: 'quantity' }}
+            inputProps={{ inputMode: 'decimal', name: 'quantity' }}
             error={!!errors.quantity}
-            helperText={errors.quantity}
+            helperText={errors.quantity ?? QUANTITY_HINT}
             fullWidth
           />
           <TextField

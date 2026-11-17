@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fractional quantities in the quote line dialog (#346).** The web UI's Add line and Edit line
+  dialogs accept a quantity from 0.001 to 1,000,000 with up to three decimals (a dot as the decimal
+  separator, no thousands separator); anything else is refused on the spot with "Quantity must be
+  a number from 0.001 to 1,000,000 with at most three decimals" and nothing is sent. When the API
+  refuses the quantity, its message shows on the Quantity field instead of the generic error. The
+  quote detail and print pages show quantities without trailing zeros (`1.5`, `2`, `0.001`); line
+  and quote totals are still exactly the server's.
 - **Fractional quote line quantities (#343).** A quote line quantity may now have up to three
   decimal places, from 0.001 to 1,000,000 (1.5 hours, 0.25 kg). `POST /quotes/{id}/lines` and
   `PUT /quotes/{id}/lines/{lineId}` take and return `quantity` as a JSON number (`1.5`, `2`,
@@ -18,8 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BAD_REQUEST`. The line total is unit price × quantity after the discount, rounded half up to the
   cent once and computed exactly (no floating point); the quote subtotal sums the rounded line
   amounts; whole quantities give the same totals as before. The quote email prints the quantity
-  without trailing zeros (`quantity 1.5 x 9.99 EUR`). The web UI keeps editing whole quantities
-  until its own ticket.
+  without trailing zeros (`quantity 1.5 x 9.99 EUR`).
   **Schema:** `quote_lines.quantity` is replaced by `quote_lines.quantity_milli` (thousandths of a
   unit), through migration `20261118120000_store_quote_line_quantity_milli` on MySQL/MariaDB and the
   application's startup migration on every driver; existing quantities keep their value. **Upgrade:**

@@ -414,8 +414,8 @@ A supplier that answers requests for quotation from business customers.
     line tax and the net, tax and gross totals on the detail and print pages (#325). This
     remaining limit is part of #233, with the other quote limits from recipe 2. Line quantities
     accept up to three decimal places through the API since #343 (0.001 to 1,000,000,
-    `docs/FEATURES.md`, 4d.11); the web UI line dialog still takes whole quantities until its
-    frontend ticket.
+    `docs/FEATURES.md`, 4d.11); the web UI line dialog takes them too, and the detail and print
+    pages show them without trailing zeros (#346).
   - Product SKUs stay indexed but not unique on purpose (`internal/models/product.go`), so do not
     key an ERP sync on them. Map the ERP's identifiers instead: `POST /products/{id}/external-ids`
     stores an exact, case-sensitive `(source, scope, external_id)` and
@@ -482,7 +482,7 @@ planning around an issue number.
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_engine.go`; `docs/DEVELOPMENT.md`, "Run leases (#237)" | #237 |
-| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI in a later frontend ticket). Still open: tax categories, reverse charge, per-country rules, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343 |
+| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346). Still open: tax categories, reverse charge, per-country rules, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346 |
 | Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |

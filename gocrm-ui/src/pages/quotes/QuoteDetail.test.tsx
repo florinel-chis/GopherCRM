@@ -124,6 +124,34 @@ describe('QuoteDetail', () => {
     expect(historyRows[0]).toHaveTextContent('Created as Draft');
   });
 
+  it("shows fractional line quantities without trailing zeros and the server's line and quote totals", async () => {
+    // The server's values deliberately differ from any client-side product
+    // (1.5 x 10.00 would be 15.00; 0.001 x 999.00 would be 1.00).
+    vi.mocked(quotesApi.getQuote).mockResolvedValue({
+      ...draft,
+      subtotal_cents: 12345,
+      discount_cents: 678,
+      total_cents: 11667,
+      lines: [
+        createMockQuoteLine({ id: 7, position: 1, description: 'Cable', quantity: 1.5, unit_price_cents: 1000, discount_bp: 0, line_total_cents: 1499 }),
+        createMockQuoteLine({ id: 8, position: 2, description: 'Bolt', quantity: 0.001, unit_price_cents: 99900, discount_bp: 0, line_total_cents: 7 }),
+      ],
+    });
+    render(<QuoteDetail />);
+    await screen.findByTestId('quote-number');
+
+    const rows = screen.getAllByTestId('quote-line-row');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByTestId('quote-line-quantity')).toHaveTextContent(/^1\.5$/);
+    expect(within(rows[1]).getByTestId('quote-line-quantity')).toHaveTextContent(/^0\.001$/);
+    expect(within(rows[0]).getByTestId('quote-line-total')).toHaveTextContent(formatMoney(1499, 'EUR'));
+    expect(within(rows[1]).getByTestId('quote-line-total')).toHaveTextContent(formatMoney(7, 'EUR'));
+
+    expect(screen.getByTestId('quote-subtotal')).toHaveTextContent(formatMoney(12345, 'EUR'));
+    expect(screen.getByTestId('quote-discount')).toHaveTextContent(formatMoney(678, 'EUR'));
+    expect(screen.getByTestId('quote-total')).toHaveTextContent(formatMoney(11667, 'EUR'));
+  });
+
   it('offers Add line on a draft and submits discount_bp 1250 for 12.5 percent', async () => {
     const withLine = { ...draft, lines: [...lines, createMockQuoteLine({ id: 9, position: 3, description: 'Widget' })] };
     vi.mocked(quotesApi.addLine).mockResolvedValue(withLine);
@@ -160,7 +188,9 @@ describe('QuoteDetail', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add' }));
 
     expect(await within(dialog).findByText('Pick a product')).toBeInTheDocument();
-    expect(within(dialog).getByText('Quantity must be a whole number between 1 and 1,000,000')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Quantity must be a number from 0.001 to 1,000,000 with at most three decimals')
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByText('Discount must be a percentage between 0 and 100 with at most two decimals')
     ).toBeInTheDocument();

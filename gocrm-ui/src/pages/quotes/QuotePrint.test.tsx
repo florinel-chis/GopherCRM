@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@/test/test-utils';
+import { render, screen, fireEvent, within } from '@/test/test-utils';
 import { Component as QuotePrint } from './QuotePrint';
 import { quotesApi } from '@/api/endpoints';
 import { createMockQuote, createMockQuoteLine } from '@/test/factories';
@@ -71,6 +71,35 @@ describe('QuotePrint', () => {
     expect(screen.getByTestId('quote-print-discount')).toHaveTextContent(formatMoney(250, 'EUR'));
     expect(screen.getByTestId('quote-print-total')).toHaveTextContent(formatMoney(2250, 'EUR'));
     expect(screen.getByTestId('quote-print-notes')).toHaveTextContent('Payment within 30 days');
+  });
+
+  it("prints fractional line quantities without trailing zeros and the server's totals", async () => {
+    vi.mocked(quotesApi.getQuote).mockResolvedValue({
+      ...quote,
+      subtotal_cents: 4321,
+      discount_cents: 21,
+      total_cents: 4300,
+      tax_cents: 903,
+      gross_total_cents: 5203,
+      lines: [
+        createMockQuoteLine({ id: 7, description: 'Cable', quantity: 1.5, unit_price_cents: 1000, discount_bp: 0, line_total_cents: 1501 }),
+        createMockQuoteLine({ id: 8, description: 'Bolt', quantity: 2, unit_price_cents: 1400, discount_bp: 0, line_total_cents: 2799 }),
+      ],
+    });
+    render(<QuotePrint />);
+
+    const lines = await screen.findAllByTestId('quote-print-line');
+    expect(lines).toHaveLength(2);
+    expect(within(lines[0]).getByTestId('quote-print-line-quantity')).toHaveTextContent(/^1\.5$/);
+    expect(within(lines[1]).getByTestId('quote-print-line-quantity')).toHaveTextContent(/^2$/);
+    expect(within(lines[0]).getByTestId('quote-print-line-total')).toHaveTextContent(formatMoney(1501, 'EUR'));
+    expect(within(lines[1]).getByTestId('quote-print-line-total')).toHaveTextContent(formatMoney(2799, 'EUR'));
+
+    expect(screen.getByTestId('quote-print-subtotal')).toHaveTextContent(formatMoney(4321, 'EUR'));
+    expect(screen.getByTestId('quote-print-discount')).toHaveTextContent(formatMoney(21, 'EUR'));
+    expect(screen.getByTestId('quote-print-total')).toHaveTextContent(formatMoney(4300, 'EUR'));
+    expect(screen.getByTestId('quote-print-tax')).toHaveTextContent(formatMoney(903, 'EUR'));
+    expect(screen.getByTestId('quote-print-gross')).toHaveTextContent(formatMoney(5203, 'EUR'));
   });
 
   it('calls window.print when Print is clicked', async () => {

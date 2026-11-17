@@ -20,7 +20,7 @@ import { quoteStatusLabel } from '@/types';
 import { useProductName } from '@/hooks/useProductName';
 import { formatDate } from '@/utils/date';
 import { formatCalendarDate } from '@/pages/deals/dealFormat';
-import { formatDiscountPercent, formatMoney, quoteCustomerName } from './quoteFormat';
+import { formatDiscountPercent, formatMoney, formatQuantity, quoteCustomerName } from './quoteFormat';
 
 /**
  * The printable quote: a print-styled route, not a PDF. The application
@@ -138,7 +138,9 @@ export const Component: React.FC = () => {
               quote.lines.map((line) => (
                 <TableRow key={line.id} data-testid="quote-print-line">
                   <TableCell>{line.description}</TableCell>
-                  <TableCell align="right">{line.quantity}</TableCell>
+                  <TableCell align="right" data-testid="quote-print-line-quantity">
+                    {formatQuantity(line.quantity)}
+                  </TableCell>
                   <TableCell align="right">{formatMoney(line.unit_price_cents, quote.currency)}</TableCell>
                   <TableCell align="right">{formatDiscountPercent(line.discount_bp)}</TableCell>
                   <TableCell align="right" data-testid="quote-print-line-tax-rate">
@@ -147,7 +149,9 @@ export const Component: React.FC = () => {
                   <TableCell align="right" data-testid="quote-print-line-tax">
                     {formatMoney(line.tax_cents, quote.currency)}
                   </TableCell>
-                  <TableCell align="right">{formatMoney(line.line_total_cents, quote.currency)}</TableCell>
+                  <TableCell align="right" data-testid="quote-print-line-total">
+                    {formatMoney(line.line_total_cents, quote.currency)}
+                  </TableCell>
                 </TableRow>
               ))
             )}

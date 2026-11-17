@@ -44,7 +44,13 @@ import { QuoteHistory } from './QuoteHistory';
 import { QuoteLineDialog } from './QuoteLineDialog';
 import { QuoteEditDialog } from './QuoteEditDialog';
 import { QuoteEmailDialog } from './QuoteEmailDialog';
-import { formatDiscountPercent, formatMoney, quoteCustomerName, quoteOwnerName } from './quoteFormat';
+import {
+  formatDiscountPercent,
+  formatMoney,
+  formatQuantity,
+  quoteCustomerName,
+  quoteOwnerName,
+} from './quoteFormat';
 
 interface FieldProps {
   icon: React.ReactNode;
@@ -300,7 +306,9 @@ export const Component: React.FC = () => {
               {quote.lines.map((line) => (
                 <TableRow key={line.id} hover data-testid="quote-line-row">
                   <TableCell>{line.description}</TableCell>
-                  <TableCell align="right">{line.quantity}</TableCell>
+                  <TableCell align="right" data-testid="quote-line-quantity">
+                    {formatQuantity(line.quantity)}
+                  </TableCell>
                   <TableCell align="right">{formatMoney(line.unit_price_cents, quote.currency)}</TableCell>
                   <TableCell align="right">{formatDiscountPercent(line.discount_bp)}</TableCell>
                   <TableCell align="right" data-testid="quote-line-tax-rate">
@@ -309,7 +317,9 @@ export const Component: React.FC = () => {
                   <TableCell align="right" data-testid="quote-line-tax">
                     {formatMoney(line.tax_cents, quote.currency)}
                   </TableCell>
-                  <TableCell align="right">{formatMoney(line.line_total_cents, quote.currency)}</TableCell>
+                  <TableCell align="right" data-testid="quote-line-total">
+                    {formatMoney(line.line_total_cents, quote.currency)}
+                  </TableCell>
                   {draft && (
                     <TableCell align="right">
                       <IconButton
