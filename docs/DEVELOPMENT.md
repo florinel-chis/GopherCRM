@@ -506,9 +506,7 @@ of these restores anything on an erased row, and `customerService` still has no 
 `TestCustomerLostWriteLogsOmitPersonalData`; `TestCustomerHandlerUpdateMapsServiceErrors`
 (`internal/handler/customer_update_errors_test.go`). The MySQL roots use a disposable schema on
 `TEST_MYSQL_DSN`, skip without it and fail when it is unreachable. CI limit: those MySQL roots are
-discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded
-and full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN
-and skips them, so a `contextual` PR's CI does not execute them.
+discovered by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them.
 
 **Web client session** (#115, #184, `gocrm-ui/src/api/client.ts`) — the `ApiClient` owns the
 stored session.
@@ -1202,8 +1200,7 @@ RevalidatesUnchangedOwner,ConvertedLead}SQLite`, `TestLeadUpdateUnchangedOwnerNo
 `TestLeadOwnerCheckRefusedWhenUnwired`, `TestLeadOwnerSeesDeactivationCommittedAfterLeadLockMySQL` and
 `TestLeadAssignIsAtomicSQLite` (`internal/service/lead_owner_validation_test.go`);
 `TestLeadOwnerProductionWiring` (`cmd/lead_owner_wiring_test.go`). CI limit: the MySQL roots above are
-discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the transaction, bounded and
-full profiles (bounded and full also on MariaDB 10.11), while `make verify-backend` has no DSN and skips them.
+discovered by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them.
 
 **Lead and company lock order (#182)** — lead conversion, lead update, bulk lead status and company
 deletion share one lock order: **companies** (by primary key, `CompanyRepository.LockLive`:
@@ -1331,9 +1328,7 @@ looping sweeps with no error 1213) (`internal/repository`); `TestBulkOperationSt
 (`internal/models`); `TestBulkOperationRecoveryProductionWiring` (`cmd`, the real wiring over a
 SQLite file); `TestBulkOperationStatusIndexMigrationFiles` and `TestBulkOperationStatusIndexMigration`
 (`cmd/migrate`). CI limit: the MySQL roots in `internal/service` and `internal/repository`
-`bulk*_test.go` are discovered by `scripts/ci/check-go.py transaction`, which CI runs only on the
-transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
-`make verify-backend` has no DSN and skips them. Registering the migration roots in the Database
+`bulk*_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them. Registering the migration roots in the Database
 migrations workflow is an operator follow-up.
 
 **Rate limiting** — all three tiers are wired, in `cmd/main.go` and in `SetupFormPublicRoutes`:
@@ -1419,29 +1414,93 @@ go test -run TestFunctionName ./internal/service/
 
 Use current command output for test counts and coverage; historical counts are not release gates.
 `make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
-The bounded transaction profile runs API build/vet, transaction and affected-caller race
-regressions, named acceptance checks, configured migration checks and health smoke on SQLite
-and MySQL. CI adds MariaDB transaction checks and health smoke. It avoids unrelated feature
-browsers and frontend unit tests; see the same policy for its exact scope and known gap.
-The bounded auth profile replaces the full core checks with targeted auth/session race tests,
-API/frontend build checks, and health/login/registration browsers; it does not run frontend
-lint or unit tests. Other application profiles include ESLint as a required, passing gate.
-Since 11 November 2026 CI runs no browser spec for a pull request, a merge-queue group or a push to
-`main`: the complete browser matrix on MySQL, MariaDB and SQLite runs only when the release workflow
-calls CI with `full: true`. Pull-request CI runs hygiene, backend, frontend and the database gates job
-(the profile-specific MariaDB regressions). Browser coverage before publication comes from the
-remediation runner's local validation (the changed feature's specs on SQLite), which is a separate
-scope. Runner-only changes use hygiene and runner/probe tests and API/frontend build checks rather
-than unrelated application suites. Local `make e2e` still defaults to the full suite. See [validation and releases](VALIDATION_RELEASE.md)
+The runner's local validation picks a profile from the changed paths; its bounded profiles
+(`auth`, `auth-persistence`, `transaction`, `migration`, `aeo`, `mailer`) replace `make verify` with
+their `scripts/ci/check-auth.py` / `scripts/ci/check-go.py` race roots on SQLite and MySQL, named
+acceptance checks and health smoke; see [validation and releases](VALIDATION_RELEASE.md) for each scope.
+
+**CI outside a release runs targeted Go tests (#365).** For a pull request, a merge-queue group and a
+push to `main`, CI runs hygiene, backend, frontend and the database gates job:
+
+- **Backend** builds and vets the whole module, runs `python3 scripts/ci/check-api-docs.py`, and
+  runs `python3 scripts/ci/check-changed-go.py` on the plan job's changed paths: one
+  `go test -count=1 -timeout 10m` over the selected packages, without `-race` and without a
+  database server (MySQL-backed tests skip there).
+- **Database gates (MariaDB 10.11)** runs the same selection with `--tests-only` and
+  `TEST_MYSQL_DSN` pointing at a MariaDB 10.11 service, so the MySQL-backed tests of the selected
+  packages run there. Nothing rejects a skip in this job.
+- A documentation-only change (`*.md`, anything under `docs/`, `LICENSE`) runs no Go test at all.
+- The race detector (`make verify-backend`), `make verify-api-docs`, the no-skip checkers
+  (`check-go.py transaction`, `check-auth.py --persistence`), MySQL 8, the Database migrations
+  matrix and the browser matrix run only when CI is called with `full: true`: the release workflow,
+  or a manual dispatch of CI with the `full` input (which runs everything but the browsers).
+- A manual dispatch has no base to compare with, so with `full: false` it tests every package
+  without `-race`.
+
+What `check-changed-go.py` selects, from a universe of every package outside `gocrm-ui/` and `docs/`:
+
+1. A plan without changed paths, an empty change set, or a change to `go.mod`/`go.sum`: every package.
+2. A `.go` file whose directory is not a package at the head (a deleted package): every package.
+3. Documentation selects nothing.
+4. Any other path selects the nearest directory (its own included) that is a package, so files
+   behind a build tag, `testdata` and embedded assets resolve to their package.
+5. Every package that imports one of those, transitively, through its sources or its tests.
+6. Packages whose tests read the changed files from disk without importing them (added as they
+   are, without their importers):
+
+   | Changed path | Also selects |
+   |---|---|
+   | `migrations/` | `cmd/migrate`, `internal/service`, `internal/config` |
+   | `api/` | `internal/models`, `tests`, `scripts/ci/apiroutes` |
+   | `internal/handler/`, `internal/utils/`, `cmd/` | `scripts/ci/apiroutes` |
+   | `scripts/ci/check-api-docs.py` | `scripts/ci/apiroutes` |
+   | `internal/`, `cmd/` | `cmd` |
+   | `internal/models/`, `internal/service/`, `internal/utils/`, `internal/repository/`, `cmd/`, `scripts/release/` | `internal/config` |
+   | `.github/workflows/release.yml` | `scripts/release` |
+
+7. Any other non-documentation path that is in no package and matches no row (`.env.example`, the
+   compose files, `Dockerfile`, `Makefile`, `gocrm-ui/`, `scripts/deploy/`, `scripts/ci/*.py`, other
+   workflows) selects `internal/config` alone.
+
+When `internal/middleware` or `internal/aeo` is selected, a second run adds `-tags=gophercrm_e2e`
+for those two. The log starts with `Go tests: <n> of <total> packages selected` and the package
+directories, `Go tests: none selected (documentation-only change)` or
+`Go tests: every package (<reason>)`, and prints each command before running it.
+
+```bash
+python3 scripts/ci/check-changed-go.py --base origin/main          # what CI will build, vet and test
+python3 scripts/ci/check-changed-go.py --base origin/main --list   # the selection only
+```
+
+`--base` compares that revision with `HEAD`, so it sees committed changes only: on a tree with
+uncommitted edits a "none selected" is not a pass. Two consequences to know:
+
+- **A new test that reads files outside its own package needs a row** in `EXTERNAL_READERS`
+  (`scripts/ci/check-changed-go.py`), with a case in `scripts/ci/tests/test_changed_go.py`. Until it
+  has one, only a full run exercises it when those files change.
+- **`internal/config` pins documentation text** (`README.md`, `CHANGELOG.md`, `SERVER_PROVISIONING.md`
+  and `docs/{DEVELOPMENT,FORKING,DOCKER,USE_CASES,ROADMAP,EXTENDING,SETUP}.md`). A documentation-only
+  pull request runs no Go test, so it can break one of those pins and still be green; the next change
+  that selects `internal/config` then fails for a reason outside its diff. Run
+  `go test -count=1 ./internal/config` after editing those files.
+
+Since 11 November 2026 CI runs no browser spec outside a release: the complete browser matrix on
+MySQL, MariaDB and SQLite runs only when the release workflow calls CI with `full: true`. Browser
+coverage before publication comes from the remediation runner's local validation (the changed
+feature's specs on SQLite), which is a separate scope. Local `make e2e` still defaults to the full
+suite. See [validation and releases](VALIDATION_RELEASE.md)
 for selection, full-suite overrides, version preparation, rehearsals and publication.
 Production deployment follows a published full-validation release, rather than every main push.
 
 The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs focused
-fresh/upgrade/rollback checks on disposable MySQL 8 and MariaDB 10.11 services for every PR,
-merge group and main push. Both jobs retain the existing SQLite upgrade fixtures and reject
-missing or skipped required coverage. Their artifacts include the tested revision and Go JSON
-results, and the required Backend check depends on both jobs. Changes confined to this workflow
-and its checker use targeted migration regressions and health smoke; see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
+fresh/upgrade/rollback checks on disposable MySQL 8 and MariaDB 10.11 services. CI calls it only
+on a `full` run (a release, or a manual dispatch with `full: true`); it is skipped for a pull request,
+a merge-queue group and a push to `main`, and it can be dispatched by itself for diagnosis. Both jobs
+retain the existing SQLite upgrade fixtures and reject missing or skipped required coverage. Their
+artifacts include the tested revision and Go JSON results, and on a full run the required Backend
+check fails unless both jobs succeeded. On a pull request a change under `migrations/` runs the
+`cmd/migrate`, `internal/service` and `internal/config` tests through the selection above (on
+MariaDB in the database gates job); see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
 
 The same runner also hosts the feature analysis workflow (`gophercrm-runner analyze`, see the
 [runner guide](../automation/langflow/README.md#analyse-a-feature-request)), which writes a
@@ -2036,8 +2095,13 @@ documenting goes to [ROADMAP.md](ROADMAP.md), never into the spec as intended be
 
 ### API docs gate
 
-`make verify-api-docs` (part of `make verify`, an unconditional CI step, and in every bounded
-validation profile) fails when the reference is stale or incomplete. It regenerates the three
+`make verify-api-docs` (part of `make verify` and of every runner validation profile) fails when the
+reference is stale or incomplete. It is two commands: `go test ./scripts/ci/apiroutes` (the route
+extractor's own tests), then `python3 scripts/ci/check-api-docs.py`. CI runs the make target only on
+a `full` run. Every other CI run executes `python3 scripts/ci/check-api-docs.py` directly, on every
+change (documentation-only included), and tests the extractor only when
+`scripts/ci/check-changed-go.py` selects `scripts/ci/apiroutes` (a change to the extractor, to
+`check-api-docs.py`, to `internal/handler/`, `internal/utils/`, `cmd/` or `api/`). The check regenerates the three
 artifacts into a temporary directory and compares them byte for byte; matches routes and
 operations in both directions (the route list comes from `scripts/ci/apiroutes`, a go/ast reader
 that follows `setupRouter`, the `Setup*Routes` calls, group prefixes and aliases, and refuses
@@ -2714,9 +2778,7 @@ LateConfirmationLink,CutoffClockBasis,ConcurrentResubmission}{SQLite,MySQL}`,
 (`cmd`, which parks a chunk to prove the drain handle joins it); `TestLoadFormRetentionDays` (`internal/config`). The MySQL concurrency roots confirm each
 wait in `information_schema.PROCESSLIST` on two consecutive polls; SQLite's single connection cannot
 overlap two transactions, so its roots prove the same outcomes in sequence. CI limit: the MySQL roots
-are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`, which CI runs only on
-the transaction, bounded and full profiles (bounded and full also on MariaDB 10.11), while
-`make verify-backend` has no DSN and skips them, so a `contextual` PR's CI does not execute them.
+are discovered through `form*_test.go` by `scripts/ci/check-go.py transaction`. CI runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs these roots on MariaDB 10.11 only when `scripts/ci/check-changed-go.py` selects their package, without `-race` and without rejecting a skip, and the backend job has no DSN and skips them.
 
 ### Form mail delivery (#216)
 

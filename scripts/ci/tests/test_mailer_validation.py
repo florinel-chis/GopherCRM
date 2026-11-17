@@ -139,8 +139,9 @@ class MailerValidationTests(unittest.TestCase):
 
     def test_ci_uses_same_check_and_keeps_migration_and_release_gates(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertIn("if: needs.plan.outputs.profile == 'mailer'\n        run: python3 scripts/ci/check-go.py mailer", workflow)
-        self.assertEqual(workflow.count("if: needs.plan.outputs.profile != 'mailer' &&"), 2)
+        # CI no longer runs the mailer checker (the runner still does); the frontend job keeps its narrow branch.
+        self.assertNotIn('check-go.py mailer', workflow)
+        self.assertEqual(workflow.count("if: needs.plan.outputs.profile != 'mailer' &&"), 1)
         self.assertIn("if: needs.plan.outputs.profile == 'mailer' || needs.plan.outputs.profile == 'runner'", workflow)
         self.assertIn('uses: ./.github/workflows/migrations.yml', workflow)
         self.assertIn('name: E2E (Playwright on ${{ matrix.db.name }})', workflow)

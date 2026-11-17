@@ -27,10 +27,13 @@ Historical totals from the baseline audit:
 ## Continuous integration
 
 [CI](../.github/workflows/ci.yml) runs on pull requests, merge-queue groups and pushes to `main`.
-Application changes run repository hygiene; Go build, vet and race tests; frontend build,
-lint and unit tests; and selected Playwright specs on MySQL 8, MariaDB 10.11 and SQLite.
-PRs select health smoke and affected feature specs, with full coverage for shared or unmapped
-application changes. Runner-only changes use hygiene, runner/probe tests, API/frontend build
+Outside a release they run repository hygiene; a Go build and vet of the module, the API reference
+check and `go test -count=1` (no race detector) on the changed packages, their importers and the
+packages that read the changed files (`scripts/ci/check-changed-go.py`), repeated against MariaDB
+10.11 in the database gates job; and the frontend build, lint and unit tests. A documentation-only
+change runs no Go test. The race suite, the migrations matrix and Playwright on MySQL 8, MariaDB 10.11
+and SQLite run only for a release (a manual CI run with `full: true` runs all but the browsers).
+The profiles below are what the remediation runner validates locally before a pull request. Runner-only changes use hygiene, runner/probe tests, API/frontend build
 health checks and browser health smoke. The bounded auth profile uses auth/session race tests,
 API/frontend builds and health/login/registration browsers. The auth-persistence profile adds
 real SQLite/MySQL rotation and transaction boundaries, migrations and auth browsers, with
@@ -39,22 +42,23 @@ shared-interface edits also need proof that only the refresh-token interface bod
 The bounded mailer profile uses SMTP deadline/header/TLS/privacy race tests, focused
 password-reset/form/quote/automation delivery callers, API/frontend builds and health smoke; no full frontend
 unit suite or unrelated feature browser is selected. Missing or skipped required roots fail.
-It changes no database behavior; the existing migration gates and all-engine CI health remain.
+It changes no database behavior; the migration gates remain part of every full run.
 Other shared repository/schema/mixed changes retain full fallback. The bounded transaction-helper profile uses API build/vet, transaction
 and caller race regressions, configured migration checks and browser health smoke, with
-SQLite/MySQL locally and additional MariaDB boundaries in CI. The existing empty lead-conversion
+SQLite/MySQL locally and additional MariaDB boundaries in a full CI run. The existing empty lead-conversion
 concurrency placeholder remains a reported gap. `make verify` runs the complete non-browser checks
 locally; unfiltered `make e2e` runs the full browser suite. The manual
 [Release workflow](../.github/workflows/release.yml) always runs full validation before tagging
 and publishing verified artifacts. Production deploys consume those published artifacts.
-The bounded migration-workflow profile runs SQL/SQLite migration checks and health smoke; its
-two database CI jobs feed the existing required Backend check. See the [validation and release runbook](VALIDATION_RELEASE.md).
+The bounded migration-workflow profile runs SQL/SQLite migration checks and health smoke; the
+two database migration CI jobs feed the required Backend check on a full run. See the [validation and release runbook](VALIDATION_RELEASE.md).
 The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs fresh,
 populated-upgrade and rollback/reapply SQL regressions on MySQL 8 and MariaDB 10.11, alongside
-the SQLite upgrade fixtures, on every PR, merge group and main push. Required roots and their
+the SQLite upgrade fixtures, on every full CI run (a release, or a manual run with `full: true`). Required roots and their
 descendants cannot be skipped; revision-bound JSON artifacts retain the results.
-CI also checks the API reference: `make verify-api-docs` (an unconditional Backend-job step and
-part of `make verify`) regenerates `api/swagger.json`, `api/swagger.yaml` and the static HTML
+CI also checks the API reference on every change: `scripts/ci/check-api-docs.py` (a Backend-job
+step; `make verify-api-docs`, part of `make verify` and of a full CI run, adds the route extractor's
+Go tests, which a pull request runs only when it touches the reference's sources) regenerates `api/swagger.json`, `api/swagger.yaml` and the static HTML
 reference `api/index.html` and requires them to match the committed files, every routed endpoint
 to have an operation (and the reverse) with security matching the route's authentication, every
 query parameter, form field and body the handler reads to be documented, every operation,

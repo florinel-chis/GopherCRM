@@ -439,6 +439,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI runs targeted backend tests outside a release (#365, CI).** For a pull request, a merge-queue
+  group and a push to `main`, the Backend job builds and vets the module, runs the API reference
+  check (`scripts/ci/check-api-docs.py`) and runs `go test -count=1` without `-race` only on the Go
+  packages the change touches, the packages that import them and the few whose tests read the
+  changed files from disk; the new `scripts/ci/check-changed-go.py` makes that selection from the
+  plan job's changed paths (`--base origin/main` reproduces it locally). A documentation-only change
+  runs no Go tests. The Database gates job runs the same selection against MariaDB 10.11, without
+  rejecting skipped tests. The full suite with `-race`, MySQL 8, the two-engine migrations matrix,
+  `make verify-api-docs` and the no-skip checkers run only when CI is called with `full: true`: the
+  release workflow, or a manual dispatch, which gains a `full` input (default off; without it a
+  manual run tests every package without `-race`). The four required check names, the release
+  workflow and `make verify` are unchanged.
 - **Roadmap: scheduled AEO client reports are a deliberate cut (#320, docs).** docs/ROADMAP.md
   records scheduled or emailed client reports as a deliberate cut and names its prerequisites: a
   single scheduling owner across replicas (#229), a mail delivery record without false success

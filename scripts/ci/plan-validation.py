@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Use main's policy, or an operator-reviewed policy pinned to this exact PR head.
 
-The complete browser suite runs only for a release, which asks for it with
-FORCE_FULL. A change the policy cannot narrow gets the 'bounded' profile: every
-backend and database gate of full, with only the browser specs it affects.
+The complete suite runs only for a release or a manual run that asks for it with
+FORCE_FULL. A change the policy cannot narrow gets the 'bounded' profile: like every
+other profile but full, CI then tests the changed Go packages (check-changed-go.py).
 """
 
 import importlib.util

@@ -506,32 +506,98 @@ class ValidationSelectionTests(unittest.TestCase):
             selected = json.loads((root / 'validation-plan.json').read_text())
             self.assertEqual((selected['profile'], selected['specs']), ('full', []))
 
-    def test_only_a_release_asks_ci_for_the_full_suite(self):
+    @staticmethod
+    def ci_jobs():
+        """The workflow text and each job's body, keyed by job id."""
         ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertNotIn('default: true', ci)
-        dispatch = ci.split('workflow_dispatch:')[1].split('pull_request:')[0]
-        self.assertNotIn('full', dispatch)
-        # A bounded run keeps the database gates a full run has.
-        for line in [l for l in ci.splitlines() if "profile == 'full'" in l]:
-            self.assertIn("profile == 'bounded'", line)
-        self.assertEqual(ci.count('[ "$VALIDATION_PROFILE" = full ]'), ci.count('[ "$VALIDATION_PROFILE" = bounded ]'))
-        self.assertIn('[ "$VALIDATION_PROFILE" = bounded ]', ci)
-
-    def test_browser_jobs_never_run_in_pull_request_ci_and_the_required_names_agree(self):
-        # 11 November 2026: end-to-end tests run for releases only, never in pull-request CI.
-        ci = (ROOT / '.github/workflows/ci.yml').read_text()
-        jobs = ci.split('\njobs:\n', 1)[1]
         blocks, current = {}, None
-        for line in jobs.splitlines():
+        for line in ci.split('\njobs:\n', 1)[1].splitlines():
             top = re.fullmatch(r'  ([a-z0-9-]+):', line)
             if top:
                 current = top.group(1)
                 blocks[current] = ''
             elif current is not None:
                 blocks[current] += line + '\n'
+        return ci, blocks
+
+    @staticmethod
+    def steps(job):
+        """(condition, text) of each step in a job body."""
+        found = []
+        for step in re.split(r'\n(?=      - )', job.split('\n    steps:\n', 1)[1]):
+            condition = re.search(r'^        if: (.*)$', step, re.MULTILINE)
+            found.append((condition.group(1) if condition else '', step))
+        return found
+
+    def test_only_a_release_asks_ci_for_the_full_suite(self):
+        ci, blocks = self.ci_jobs()
+        # A manual run may ask for the full gates; nothing asks for them by default.
+        self.assertNotIn('default: true', ci)
+        dispatch = ci.split('workflow_dispatch:')[1].split('pull_request:')[0]
+        self.assertRegex(dispatch, r'inputs:\n      full:\n        type: boolean\n        default: false\n')
+        self.assertIn('    if: ${{ inputs.full == true }}\n', blocks['migrations'])
+        self.assertIn('uses: ./.github/workflows/migrations.yml', blocks['migrations'])
+        # The race-detector suite, the make targets and the no-skip checkers are full-only.
+        full_only = re.compile(r'verify-backend|verify-api-docs|check-go\.py|check-auth\.py|\bgo test\b')
+        for name in ('backend', 'db-gates'):
+            steps = self.steps(blocks[name])
+            commands = '\n'.join(line for _, step in steps for line in step.splitlines()
+                                 if not line.lstrip().startswith('#'))
+            guarded = [step for condition, step in steps if full_only.search(
+                '\n'.join(l for l in step.splitlines() if not l.lstrip().startswith('#')))]
+            self.assertTrue(guarded, name)
+            for condition, step in steps:
+                if step in guarded:
+                    self.assertIn("profile == 'full'", condition, step)
+            targeted = [(condition, step) for condition, step in steps if 'check-changed-go.py' in step]
+            self.assertEqual(len(targeted), 1, name)
+            self.assertIn("profile != 'full'", targeted[0][0])
+            self.assertEqual(commands.count('check-changed-go.py'), 1, name)
+            # The changed paths come from the plan job's artifact.
+            self.assertTrue(any("profile != 'full'" in condition and 'actions/download-artifact@' in step
+                                and 'validation-plan-${{ github.run_id }}' in step
+                                for condition, step in steps), name)
+        backend = self.steps(blocks['backend'])
+        for wanted in ('make verify-api-docs', 'make verify-backend', 'python3 scripts/ci/check-go.py transaction',
+                       'python3 scripts/ci/check-auth.py --persistence'):
+            self.assertTrue(any(wanted in step and "profile == 'full'" in condition
+                                for condition, step in backend), wanted)
+        self.assertTrue(any('run: python3 scripts/ci/check-api-docs.py\n' in step + '\n'
+                            and "profile != 'full'" in condition for condition, step in backend))
+        self.assertTrue(any('check-changed-go.py --plan' in step and '--tests-only' not in step
+                            and 'TEST_MYSQL_DSN' not in step for _, step in backend))
+        self.assertIn("image: ${{ needs.plan.outputs.profile == 'full' && 'mysql:8.0' || '' }}", blocks['backend'])
+        # Skipped migrations must not skip or fail the required backend check.
+        self.assertIn('    needs: [plan, migrations]\n    if: ${{ !cancelled() }}\n', blocks['backend'])
+        self.assertTrue(any('MIGRATION_RESULT' in step and "profile == 'full'" in condition
+                            for condition, step in backend))
+        gates = self.steps(blocks['db-gates'])
+        self.assertTrue(any('check-changed-go.py --plan' in step and '--tests-only' in step
+                            and 'TEST_MYSQL_DSN' in step for _, step in gates))
+        self.assertTrue(any('python3 scripts/ci/check-go.py transaction' in step
+                            and "profile == 'full'" in condition for condition, step in gates))
+        # The reference check itself starts no Go test, so a documentation-only run has none.
+        self.assertNotIn("'go', 'test'", (ROOT / 'scripts/ci/check-api-docs.py').read_text())
+        self.assertNotIn('bounded', ci)
+        self.assertNotIn('-race', ci)
+        # The full path keeps what it ran before.
+        self.assertIn('full: true', (ROOT / '.github/workflows/release.yml').read_text())
+        self.assertIn('-race', (ROOT / '.github/workflows/migrations.yml').read_text())
+        makefile = (ROOT / 'Makefile').read_text()
+        self.assertIn('verify-backend:\n\tgo build $(GO_BUILD_PKGS)\n\tgo vet $(GO_PKGS)\n\tgo test -race $(GO_PKGS)\n'
+                      '\tgo test -race -tags=gophercrm_e2e ./internal/middleware ./internal/aeo\n', makefile)
+        self.assertIn('verify-api-docs:\n\tgo test ./scripts/ci/apiroutes\n\tpython3 scripts/ci/check-api-docs.py\n',
+                      makefile)
+
+    def test_browser_jobs_never_run_in_pull_request_ci_and_the_required_names_agree(self):
+        # 11 November 2026: end-to-end tests run for releases only, never in pull-request CI.
+        ci, blocks = self.ci_jobs()
         e2e = blocks['e2e']
-        self.assertIn('if: ${{ !cancelled() && inputs.full == true }}', e2e)
-        self.assertNotIn('inputs.full', ci.split('workflow_dispatch:')[1].split('pull_request:')[0])
+        # `revision` comes only from a calling workflow, so a manual run with full: true has no browser job.
+        self.assertIn("    if: ${{ !cancelled() && inputs.full == true && inputs.revision != '' }}\n", e2e)
+        dispatch = ci.split('workflow_dispatch:')[1].split('pull_request:')[0]
+        self.assertNotIn('revision', dispatch)
+        self.assertIn('default: false', dispatch)
         # Playwright appears in no other job, and no other job carries an E2E name.
         for name, body in blocks.items():
             if name != 'e2e':

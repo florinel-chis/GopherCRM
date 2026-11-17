@@ -199,13 +199,18 @@ role (#211).
 make verify            # hygiene + Go build/vet/test -race + frontend build/lint/unit tests
 ```
 
-This is what core CI runs for a general application change (`Makefile`, target `verify`). Two
-caveats:
+This is what a release runs for the backend and frontend, and the check to run before pushing
+(`Makefile`, target `verify`). Pull-request CI is narrower: it builds and vets the module and tests
+only the Go packages a change touches, their importers and the packages that read the changed
+files, without `-race` (`python3 scripts/ci/check-changed-go.py --base origin/main --list` shows
+the selection for committed changes). Two caveats:
 
 - The MySQL regression tests (for example `internal/utils/transaction_regression_test.go`) read
   `TEST_MYSQL_DSN` (`user:pass@tcp(host:port)/`, no database name) and **skip** without it. A green
-  local run without that variable proves only the SQLite half. CI rejects skips only for the roots
-  a named gate selects: the migration roots in `.github/workflows/migrations.yml` (through
+  local run without that variable proves only the SQLite half. Pull-request CI runs them on
+  MariaDB 10.11 in the database gates job when their package is selected, and does not reject a
+  skip there. A `full` CI run (a release, or a manual dispatch with `full: true`) rejects skips only
+  for the roots a named gate selects: the migration roots in `.github/workflows/migrations.yml` (through
   `scripts/release/check-sql-tests.py --migrations-only`), the roots `scripts/ci/check-auth.py`
   and `scripts/ci/check-go.py` pick for the auth, transaction and AEO profiles (a `full` run also
   executes `check-go.py transaction` and `check-auth.py --persistence`), and, in the Release
@@ -507,12 +512,13 @@ start attempt. Requirements:
 ## 6. CI on a fork
 
 - **No secrets are needed for CI.** The workflows start throwaway databases in service containers
-  and generate `JWT_SECRET` at runtime (`.github/workflows/ci.yml:298`). Deploy secrets are needed
+  and generate `JWT_SECRET` at runtime (`.github/workflows/ci.yml:334`). Deploy secrets are needed
   only for section 5.2.
 - **Keep the `gophercrm_runner` Python package.** Ordinary CI imports it:
   `scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13` (used by `check-go.py`),
-  `scripts/ci/check-go.py:7`, `scripts/ci/plan-documentation.py:10`, and
-  `scripts/ci/plan-validation.py:49`, which reads `validation.py` from the base commit. You may
+  `scripts/ci/check-go.py:7`, `scripts/ci/check-changed-go.py:23` (through `go_checks.py`),
+  `scripts/ci/plan-documentation.py:10`, and
+  `scripts/ci/plan-validation.py:77`, which reads `validation.py` from the base commit. You may
   drop the Langflow graphs (`automation/langflow/flows/`) and the runner runtime, but not
   `automation/langflow/gophercrm_runner/`. `.github/workflows/remediation-runner.yml` is also a
   reusable workflow that Release calls as its `runner-validation` job
@@ -528,11 +534,14 @@ start attempt. Requirements:
     --base "$(git rev-parse origin/main)" --head "$(git rev-parse HEAD)"
   ```
 
-  Shared code, schema, dependency and API-contract changes fall back to `full`
-  (`make verify` plus the whole browser matrix). `docs/VALIDATION_RELEASE.md` has the profile table.
+  For the runner's local validation, shared code, schema, dependency and API-contract changes fall
+  back to `full` (`make verify` plus the whole browser matrix). CI does not: outside a release every
+  profile runs the targeted Go tests (`scripts/ci/check-changed-go.py`), and the race detector, the
+  migrations matrix and the browser matrix run only when CI is called with `full: true`.
+  `docs/VALIDATION_RELEASE.md` has the profile table.
 - **Simplifying.** If you do not want contextual selection, make the `plan` job always emit
-  `profile=full`, which is what `scripts/ci/plan-validation.py:51-58` writes when it has no trusted
-  selector. Do not delete the planner import chain without replacing it.
+  `profile=full`, which is what `scripts/ci/plan-validation.py:79-84` writes for a release when it
+  has no trusted selector. Do not delete the planner import chain without replacing it.
 - **The hygiene hook.** It runs only after `git config core.hooksPath scripts/git-hooks`
   (`scripts/git-hooks/pre-commit:15`). It refuses new folders under `docs/` other than `img`,
   `screenshots` and `testing` (line 19), and two reserved working-paper paths (lines 37-38); keep
@@ -627,7 +636,8 @@ Each step has an observable result. Do them in order on a new fork before you ta
    header; the lead appears. If you also use the hosted form page or an iframe, the CRM's own
    origin must be on the allowlist too. With double opt-in, the confirmation link points at your
    `PUBLIC_BASE_URL`.
-5. **Your CI is green** on a pull request in your repository, including the `migrations` job.
+5. **Your CI is green** on a pull request in your repository. The `migrations` job is skipped
+   there; run CI by hand with the `full` input once to exercise it and the race detector.
 6. **A restored backup.** Restore last night's backup into a scratch install with the same
    secrets, start it, and sign in.
 7. **An upstream merge rehearsal.** `git merge upstream/main` on a branch, `make verify`, and the

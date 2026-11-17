@@ -44,7 +44,7 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 ## Backend and delivery
 
 - **Serve the OpenAPI spec** — the spec and a static HTML reference are generated into `api/`
-  (`make swagger`) and gated in CI (`make verify-api-docs`); serving them from the backend (e.g. a
+  (`make swagger`) and gated in CI (`scripts/ci/check-api-docs.py`, locally `make verify-api-docs`); serving them from the backend (e.g. a
   Swagger UI route) is deliberately not done
 - **Cross-process AEO coordination: follow-ups** — run ownership is delivered (#229): every
   run has a database owner and heartbeat, admission is one insert guarded by the unique
