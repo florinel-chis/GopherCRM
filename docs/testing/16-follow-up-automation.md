@@ -239,10 +239,13 @@ Priorities: 22 P0, 17 P1, 2 P2.
 - **Expected:** Two runs, one per enabled matching rule, each with the rule version, `pending`,
   `next_position 1`, the event id and `evt:<event_id>:rule:<rule_id>`; `processed_at` is set and
   the second dispatch starts nothing; the duplicate insert is no error and no row (`ON CONFLICT DO
-  NOTHING` on SQLite, `ON DUPLICATE KEY UPDATE id=id` on MySQL, asserted on the rendered SQL); the
+  NOTHING` on SQLite, `ON DUPLICATE KEY UPDATE id=id` on MySQL, asserted on the rendered SQL) and
+  it reports no insert and leaves the passed run's id 0 on MySQL, MariaDB and SQLite; the
   automation-originated event is claimed and starts nothing; every race starts exactly two runs.
 - **Automation:** automated — `internal/service/automation_dispatch_test.go`:
-  `TestAutomationDispatchSQLite`, `TestAutomationDispatchMySQL`.
+  `TestAutomationDispatchSQLite`, `TestAutomationDispatchMySQL`;
+  `internal/repository/automation_run_dedupe_test.go`: `TestAutomationRunDedupeSQLite`,
+  `TestAutomationRunDedupeMySQL`.
 
 ## 16.3 Execution
 
