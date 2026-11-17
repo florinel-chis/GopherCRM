@@ -35,10 +35,22 @@ func countGroupedByColumn(query *gorm.DB, column string) (map[string]int64, erro
 
 type leadRepository struct {
 	db *gorm.DB
+	// erasureSeams are the test seams of the lead erasure (#337), set only by
+	// the test option in lead_erasure_hooks.go and copied by WithTx; nil in
+	// production.
+	erasureSeams *leadErasureSeams
 }
 
-func NewLeadRepository(db *gorm.DB) LeadRepository {
-	return &leadRepository{db: db}
+// LeadRepositoryOption configures NewLeadRepository beyond its handle.
+// Production wiring passes none.
+type LeadRepositoryOption func(*leadRepository)
+
+func NewLeadRepository(db *gorm.DB, opts ...LeadRepositoryOption) LeadRepository {
+	r := &leadRepository{db: db}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *leadRepository) Create(lead *models.Lead) error {
@@ -138,20 +150,28 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 //
 // The unit is a savepoint of the caller's transaction when this repository was
 // obtained through WithTx, and a fresh transaction otherwise.
+//
+// Against a concurrent conversion of the same lead (#337) the unit cancels the
+// lead's automation runs, then locks the lead row by primary key and follows
+// the customer_id it reads under that lock: a conversion that committed first
+// has its new customer erased too, and one that comes later waits for the unit
+// and then finds the lead gone (not found).
 func (r *leadRepository) Delete(id uint) error {
 	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
+		c.hooks = r.erasureSeams
 		return c.eraseLead(tx, id)
 	})
 }
 
 // DeleteUnconverted erases a lead that was never converted. A converted lead
 // is refused with ErrConvertedLeadNeedsAdmin (an apperrors.ErrForbidden),
-// decided inside the erasure unit before anything is written and re-checked
-// once the lead row is locked; a refusal changes nothing. It is the erasure a
-// non-admin caller gets: erasing a converted lead erases a customer, which only
-// an admin may do.
+// decided inside the erasure unit on the locked lead row, before the lead is
+// written; the unit rolls back, the automation cancel included, so a refusal
+// changes nothing. It is the erasure a non-admin caller gets: erasing a
+// converted lead erases a customer, which only an admin may do.
 func (r *leadRepository) DeleteUnconverted(id uint) error {
 	return eraseGraph(r.db, false, func(c *erasureCascade, tx *gorm.DB) error {
+		c.hooks = r.erasureSeams
 		return c.eraseLead(tx, id)
 	})
 }
@@ -320,7 +340,7 @@ func (r *leadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
 }
 
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
-	return &leadRepository{db: tx}
+	return &leadRepository{db: tx, erasureSeams: r.erasureSeams}
 }
 
 // LeadExportFilter narrows the leads ListAllForExport reads. Every field is

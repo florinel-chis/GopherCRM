@@ -269,6 +269,34 @@ type erasureCascade struct {
 	// unconverted lead (a non-admin caller): reaching a customer is refused
 	// before anything is written.
 	allowCustomers bool
+
+	// hooks are the test seams of the lead path, copied from the lead
+	// repository that started the unit; nil everywhere in production.
+	hooks *leadErasureSeams
+}
+
+// leadErasureSeams are the instance-local test seams of eraseLead (#337). They
+// are set only through the test option in lead_erasure_hooks.go, which a
+// production file never calls; a nil set or a nil func does nothing.
+type leadErasureSeams struct {
+	// afterAutomationCancel runs after the lead's automation runs are
+	// cancelled and before the locking read of the lead, with the unit's tx.
+	afterAutomationCancel func(tx *gorm.DB, leadID uint)
+	// afterLeadLock runs right after the locking read of the lead found it,
+	// while the unit holds the lead's row lock and before any decision.
+	afterLeadLock func(leadID uint)
+}
+
+func (s *leadErasureSeams) runAfterAutomationCancel(tx *gorm.DB, leadID uint) {
+	if s != nil && s.afterAutomationCancel != nil {
+		s.afterAutomationCancel(tx, leadID)
+	}
+}
+
+func (s *leadErasureSeams) runAfterLeadLock(leadID uint) {
+	if s != nil && s.afterLeadLock != nil {
+		s.afterLeadLock(leadID)
+	}
 }
 
 func newErasureCascade(allowCustomers bool) *erasureCascade {
@@ -307,59 +335,74 @@ func lockingRead(tx *gorm.DB) *gorm.DB {
 
 // eraseLead erases the lead and, if the lead was converted, the customer it
 // became.
+//
+// Order (#337): the lead's automation runs are cancelled first, then the lead
+// is read with a locking read by primary key, and every decision — the
+// non-admin refusal and whether customer_id is followed — is taken on that
+// locked row only. The lock is what makes the erasure safe against a
+// concurrent LeadService.ConvertToCustomer, which locks the same row
+// (companies -> leads -> customers): a conversion that holds it commits first
+// and its customer_id is seen here; one that comes later waits for this unit
+// and then finds the lead gone. A plain read here would answer from the
+// REPEATABLE READ snapshot and could miss a conversion that committed after
+// it.
+//
+// The cancel stays ahead of the lead lock on purpose: an automation step holds
+// the lead row FOR UPDATE while it runs, and an erasure that has modified the
+// run rows by the time it waits on the lead is the survivor of the resulting
+// deadlock (see erasurePlan.BeforeScrub). A refusal returns an error and the
+// unit rolls everything back, the cancel included, so a refusal changes
+// nothing.
 func (c *erasureCascade) eraseLead(tx *gorm.DB, id uint) error {
 	if _, done := c.leads[id]; done {
 		return nil
 	}
 
+	plan := leadErasurePlan()
+	if err := plan.BeforeScrub(tx, id); err != nil {
+		return fmt.Errorf("erasing lead %d: %w", id, err)
+	}
+	plan.BeforeScrub = nil
+	c.hooks.runAfterAutomationCancel(tx, id)
+
 	// Unscoped: a lead soft-deleted before deletion became an erasure still
 	// holds the person's data and still has to be scrubbed. A row that is not
 	// there at all is not an error here — the service layer tells a caller
 	// that there was nobody to erase.
-	//
-	// This first read is deliberately NOT a locking read. An automation step
-	// holds the lead row under FOR UPDATE while it runs, and the lead plan
-	// cancels the lead's runs before touching the row (see
-	// erasurePlan.BeforeScrub); waiting on the lead here, before anything is
-	// modified, would undo that ordering.
 	var lead models.Lead
-	err := tx.Unscoped().Select("id", "customer_id").First(&lead, id).Error
+	err := lockingRead(tx).Unscoped().Select("id", "status", "customer_id").First(&lead, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("loading lead %d for erasure: %w", id, err)
 	}
+	c.hooks.runAfterLeadLock(id)
+
 	// A caller that may erase only unconverted leads is refused before the
-	// first write of the unit.
+	// first write to the lead.
 	if lead.CustomerID != nil && !c.allowCustomers {
 		return ErrConvertedLeadNeedsAdmin
 	}
 
 	c.leads[id] = struct{}{}
-	if err := eraseRecord(tx, id, leadErasurePlan()); err != nil {
+	if err := eraseRecord(tx, id, plan); err != nil {
 		return fmt.Errorf("erasing lead %d: %w", id, err)
 	}
-
-	// The scrub holds the row lock now, so this read is current: a
-	// conversion committed after the first read is seen here. A refused
-	// erasure returns an error and the unit rolls everything back, the
-	// automation cancel included, so a refusal changes nothing.
-	var current models.Lead
-	if err := lockingRead(tx).Unscoped().Select("id", "customer_id").First(&current, id).Error; err != nil {
-		return fmt.Errorf("re-reading erased lead %d: %w", id, err)
-	}
-	if current.CustomerID == nil {
+	if lead.CustomerID == nil {
 		return nil
 	}
-	if !c.allowCustomers {
-		return ErrConvertedLeadNeedsAdmin
-	}
-	return c.eraseCustomer(tx, *current.CustomerID)
+	return c.eraseCustomer(tx, *lead.CustomerID)
 }
 
 // eraseCustomer erases the customer, every lead converted into it and, when
 // it is a customer-role account, its login.
+//
+// The scrub (eraseRecord) is the first statement on the customer row and
+// takes its row lock; the address and then id and user_id are read after it
+// with locking reads by primary key (#337), so neither answers from a
+// REPEATABLE READ snapshot taken before a conversion that created the
+// customer committed. A customer id that names no row scrubs nothing.
 func (c *erasureCascade) eraseCustomer(tx *gorm.DB, id uint) error {
 	if _, done := c.customers[id]; done {
 		return nil
@@ -368,9 +411,13 @@ func (c *erasureCascade) eraseCustomer(tx *gorm.DB, id uint) error {
 		return ErrConvertedLeadNeedsAdmin
 	}
 
-	// Read plainly: the scrub below takes the row lock straight away.
+	c.customers[id] = struct{}{}
+	if err := eraseRecord(tx, id, customerErasurePlan()); err != nil {
+		return fmt.Errorf("erasing customer %d: %w", id, err)
+	}
+
 	var customer models.Customer
-	err := tx.Unscoped().Select("id", "user_id").First(&customer, id).Error
+	err := lockingRead(tx).Unscoped().Select("id", "user_id").First(&customer, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil
 	}
@@ -378,14 +425,13 @@ func (c *erasureCascade) eraseCustomer(tx *gorm.DB, id uint) error {
 		return fmt.Errorf("loading customer %d for erasure: %w", id, err)
 	}
 
-	c.customers[id] = struct{}{}
-	if err := eraseRecord(tx, id, customerErasurePlan()); err != nil {
-		return fmt.Errorf("erasing customer %d: %w", id, err)
-	}
-
 	// Unscoped, and a list rather than a single row: nothing stops two leads
 	// from having been converted into the same customer, and a lead that was
-	// soft-deleted earlier still holds personal data.
+	// soft-deleted earlier still holds personal data. A plain read on purpose:
+	// a locking read through the leads.customer_id index would take next-key
+	// locks there and block unrelated conversions, and it is not needed —
+	// a conversion always inserts a new customer, so no lead can be converted
+	// into a customer this unit is erasing.
 	var leadIDs []uint
 	if err := tx.Unscoped().Model(&models.Lead{}).
 		Where("customer_id = ?", id).Order("id").Pluck("id", &leadIDs).Error; err != nil {

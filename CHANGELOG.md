@@ -428,6 +428,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Privacy: a lead erasure no longer misses the customer of a concurrent conversion (#337).**
+  `leadRepository.Delete` and `DeleteUnconverted` still cancel the lead's automation runs first,
+  then read the lead with a locking read by primary key (`FOR UPDATE` on MySQL/MariaDB) and take the
+  non-admin refusal and the decision to follow `customer_id` on that locked row only. The address
+  read before the scrub (`readErasedEmail`) and `eraseCustomer`'s read of the customer are locking
+  reads by primary key too, and every erased row is now scrubbed with its address read after the
+  scrub's row lock; the converted-lead pluck stays a plain read. A conversion that commits while an
+  erasure is in flight is therefore either seen (an admin erasure erases the new customer too, a
+  non-admin erasure is refused with `ErrConvertedLeadNeedsAdmin`, 403, and changes nothing) or
+  waits behind it and answers 404; a non-admin erasure can no longer pass the "unconverted" check
+  on stale state. Every erased lead, customer and user is now soft-deleted by an `UPDATE` that
+  filters by primary key only (GORM's soft delete, still through its Delete callback chain, with
+  the `AND deleted_at IS NULL` predicate suppressed, so `UPDATE … SET deleted_at = ? WHERE id = ?`,
+  after a locking read of whether the row is still live): MariaDB 10.11 was seen serving that
+  predicate as a locking scan of the `deleted_at` index, blocking an unrelated conversion's
+  customer insert until the erasure committed.
+  Customer- and user-rooted erasures inherit the per-lead order. No route, status
+  code or schema changes; lead-rooted erasure still has no retry. Test-only seams:
+  `repository.WithLeadErasureHooks` (never wired in production) and a lead service seam after
+  `Delete`'s pre-read. The stale-snapshot root (`TestLeadErasureConversionCommittedAfterCancelMySQL`)
+  opens the erasure's REPEATABLE READ snapshot with a plain read of the lead before the conversion
+  commits, and asserts that snapshot is still stale when the erasure resumes, so it fails when the
+  locking discovery reads are reverted to plain reads. See [docs/CONCURRENCY.md](docs/CONCURRENCY.md).
 - **Security: reset tokens and API keys are issued only to a live, active owner under the owner
   lock (#342).** `RequestPasswordReset` keeps its plain email lookup, then runs one
   `WithTransactionAndRetry` transaction (3 retries) that locks the owner row by id (`FOR UPDATE` on

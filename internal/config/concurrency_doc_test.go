@@ -826,6 +826,87 @@ func TestConcurrencyDocCrossLinks(t *testing.T) {
 	}
 }
 
+// TestConcurrencyDocLeadErasureVsConversion pins the #337 order of the
+// lead-rooted erasure — automation runs, then a locking read of the lead by
+// id, then the customer by id, with a plain converted-lead pluck — to the
+// document and to the code, and the inherited per-lead order of the customer-
+// and user-rooted erasures.
+func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
+	const cascade = "internal/repository/erasure_cascade.go"
+	bodies := concurrencyDocFlowBodies(t)
+	fields := concurrencyDocFlowFields(t)
+	lead := concurrencyDocNormalize(bodies["Lead-rooted erasure"])
+	order := fields["Lead-rooted erasure"]["Order"]
+
+	for _, want := range []string{
+		"automation runs (`cancelLeadAutomation`) → leads (locking read by id",
+		"→ customers (locking read by id",
+		"→ users → deals and quotes text",
+		"The converted-lead pluck (`WHERE customer_id = ?`",
+		"stays a plain read",
+		"a conversion always inserts a new customer",
+	} {
+		assert.Contains(t, order, want, "Lead-rooted erasure Order")
+	}
+	for _, gone := range []string{"non-locking first read", "deliberately non-locking"} {
+		assert.NotContains(t, lead, gone, "the unlocked first read is gone")
+	}
+	assert.Contains(t, lead, "`ErrConvertedLeadNeedsAdmin`")
+	assert.Contains(t, lead, "Neither ordering ends in error 1213")
+
+	// The lead lock the Order line cites is the locking read in eraseLead.
+	cite := regexp.MustCompile("`" + regexp.QuoteMeta(cascade) + `:([0-9]+)` + "`")
+	leadAt := strings.Index(order, "leads (locking read by id")
+	require.GreaterOrEqual(t, leadAt, 0)
+	m := cite.FindStringSubmatch(order[leadAt:])
+	require.NotNil(t, m, "the lead lock is cited with file:line")
+	n, err := strconv.Atoi(m[1])
+	require.NoError(t, err)
+	lines := strings.Split(readRepositoryFile(t, cascade), "\n")
+	require.LessOrEqual(t, n, len(lines))
+	assert.Contains(t, lines[n-1], `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`,
+		"%s:%d is the locking read of the lead", cascade, n)
+
+	// Customer- and user-rooted erasures inherit the per-lead order.
+	for _, flow := range []string{"Customer-rooted erasure", "User-rooted erasure"} {
+		assert.Contains(t, concurrencyDocNormalize(bodies[flow]), "customers → automation runs → leads", flow)
+		assert.Contains(t, concurrencyDocNormalize(bodies[flow]), "`readErasedEmail`", flow)
+	}
+
+	// Lead conversion queued behind an erasure: not found, 404.
+	conversion := concurrencyDocNormalize(bodies["Lead conversion"])
+	assert.Contains(t, conversion, "A conversion queued behind a lead erasure finds the lead gone")
+	assert.Contains(t, conversion, "404")
+
+	// The "no shared order with lead conversion" statement is narrowed.
+	flowsSection := concurrencyDocNormalize(concurrencyDocSectionBody(t, "Flows"))
+	assert.NotContains(t, flowsSection, "All three erasures are one transaction each, but they share no order with lead conversion")
+	assert.Contains(t, flowsSection, "Customer- and user-rooted erasures still share no order with lead conversion")
+
+	// The code behind it.
+	eraseLead := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) eraseLead(")
+	cancelAt := strings.Index(eraseLead, "plan.BeforeScrub(tx, id)")
+	lockAt := strings.Index(eraseLead, `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`)
+	refuseAt := strings.Index(eraseLead, "return ErrConvertedLeadNeedsAdmin")
+	scrubAt := strings.Index(eraseLead, "eraseRecord(tx, id, plan)")
+	assert.True(t, cancelAt >= 0 && lockAt > cancelAt && refuseAt > lockAt && scrubAt > refuseAt,
+		"eraseLead cancels the runs, locks the lead, decides, then scrubs")
+	assert.Equal(t, 1, strings.Count(eraseLead, "First(&"), "eraseLead reads the lead once, under the lock")
+	assert.Contains(t, leadErasurePlanBody(t, cascade), "BeforeScrub: cancelLeadAutomation")
+
+	eraseCustomer := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) eraseCustomer(")
+	assert.Contains(t, eraseCustomer, `lockingRead(tx).Unscoped().Select("id", "user_id")`)
+	assert.Contains(t, eraseCustomer, "tx.Unscoped().Model(&models.Lead{}).\n\t\tWhere(\"customer_id = ?\", id)",
+		"the converted-lead pluck is a plain read")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/erasure.go", "func readErasedEmail("),
+		"lockingRead(tx).Unscoped()")
+}
+
+func leadErasurePlanBody(t *testing.T, rel string) string {
+	t.Helper()
+	return concurrencyDocFuncBody(t, rel, "func leadErasurePlan(")
+}
+
 func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	var listed bool
 	for _, b := range concurrencyDocBullets(readRepositoryFile(t, "README.md")) {

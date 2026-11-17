@@ -1449,9 +1449,9 @@ What happens on `DELETE`:
   `DELETE /leads/{id}` admits the admin and the owning sales user, but a converted lead reaches a
   customer, so only an admin may erase one: `LeadService.Delete(id, actorRole)` gives any other
   role `LeadRepository.DeleteUnconverted`, which refuses a converted lead
-  (`ErrConvertedLeadNeedsAdmin`, an `apperrors.ErrForbidden`, 403) inside the erasure transaction
-  before anything is written, and again once the lead row is locked by the scrub. A refusal
-  changes nothing.
+  (`ErrConvertedLeadNeedsAdmin`, an `apperrors.ErrForbidden`, 403) inside the erasure transaction,
+  on the lead row it has locked, before the lead is written (#337). The unit rolls back, the
+  automation cancel included, so a refusal changes nothing.
 - Every personal field is overwritten in place. The email is replaced with a unique, non-routable
   placeholder in the reserved `.invalid` domain (RFC 2606) that is generated from `crypto/rand` and
   is **not** derived from the original address, so it cannot be reversed or linked back.
@@ -1489,8 +1489,8 @@ What happens on `DELETE`:
   `utils.ErrTransactionPoisoned`). Nothing is retried inside; a deadlock reaches the caller. The
   traversal remembers every row it has visited, checked before any read, so each row is scrubbed
   once and the cycle user → customer → lead → customer → user terminates.
-- The lead's automation state ends in the same transaction, *before* the scrub
-  (`erasurePlan.BeforeScrub`): every pending, waiting or running run on the lead is cancelled with
+- The lead's automation state ends in the same transaction, *before* the lead is even read
+  (`erasurePlan.BeforeScrub`, run by `eraseLead` ahead of its locking read of the lead): every pending, waiting or running run on the lead is cancelled with
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification
   whose entity is the lead is hard-deleted, because a rendered title or body may name the person.
   Run logs hold ids only and stay. The tasks a `create_task` step created stay too, as every task
@@ -1509,6 +1509,68 @@ What happens on `DELETE`:
   lock and let the step commit its task; cancelling the runs first means the erasure has modified
   rows by the time it waits, which makes it the survivor of the resulting deadlock — the step
   (nothing modified yet) is rolled back, retried, and finds the run cancelled and the lead gone.
+- **Lead erasure against lead conversion (#337).** After the cancel, `eraseLead` reads the lead
+  with a locking read by primary key (`FOR UPDATE` on MySQL/MariaDB), the first read of the leads
+  row in the unit, and takes the non-admin refusal and the decision to follow `customer_id` on that
+  locked row only. Every erased row (lead, customer, user) is scrubbed first, by primary key, which
+  takes its row lock; its original address is then read by `readErasedEmail`, a locking read by
+  primary key, and only then replaced by the placeholder. `eraseCustomer` reads `id` and `user_id`
+  with a locking read by primary key after its scrub. None of them answers from a REPEATABLE READ
+  snapshot older than a conversion that committed meanwhile. The converted-lead pluck
+  (`WHERE customer_id = ?`) stays a plain read, so no lock is taken through the
+  `leads.customer_id` index: a conversion always inserts a new customer, so no lead can be
+  converted into a customer being erased. Every erased row is soft-deleted by `softDeleteErased`:
+  a locking read by primary key of whether the row is still live (a row soft-deleted earlier keeps
+  its deletion time and gets no further write), then GORM's own soft delete,
+  `UPDATE … SET deleted_at = ? WHERE id = ?`, with its `deleted_at IS NULL` predicate suppressed
+  (the unexported `primaryKeyOnlySoftDelete` marker sets GORM's `soft_delete_enabled` clause,
+  gorm v1.30.0). It still runs through GORM's Delete callback chain, so Delete callbacks and
+  hooks keep firing (the erasure-atomicity tests inject their soft-delete fault there). GORM's
+  missing-WHERE guard counts the suppressed predicate as a condition and would refuse the single
+  `id = ?` with `gorm.ErrMissingWhereClause`, so that one statement runs in a
+  `Session{AllowGlobalUpdate: true}`; `softDeleteErased` refuses a zero id instead, and
+  `TestLeadErasureLockOrderSQLite` asserts that every erased table's soft delete carries exactly
+  `WHERE id = ?`. With GORM's predicate, QA observed on MariaDB 10.11 a gap lock of the erasure's
+  customer soft delete on `idx_customers_deleted_at` that made an unrelated conversion's
+  `INSERT INTO customers` wait for the erasure to commit (MySQL 8 never waited); with the
+  primary-key-only soft delete QA recorded `TestLeadErasureUnrelatedConversionNotBlockedMySQL`
+  passing: as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0, and in the Delete-chain form
+  used now on MariaDB 10.11 (with `TestIdentityErasureMySQL`); the Delete-chain form still has to
+  be recorded on MySQL 8.
+  Lock order: automation runs → leads → customers, the
+  same lead-before-customer direction as conversion (companies → leads → customers), so the two
+  never form a cycle. Outcomes: a conversion that holds the lead lock commits first and the
+  erasure sees its `customer_id` — an admin erasure (`Delete`) erases the new customer too, a
+  non-admin one (`DeleteUnconverted`) is refused and changes nothing, automation runs included;
+  a conversion that comes second waits on its `lockedLeadRead` and then finds the lead gone
+  (`gorm.ErrRecordNotFound`, which `apperrors.IsNotFound` matches, so `POST /leads/{id}/convert`
+  answers 404 as before). The service's plain pre-read in `LeadService.Delete` decides only the
+  404. Customer- and user-rooted erasures inherit the per-lead order (customers → automation runs
+  → leads) and the locking `readErasedEmail`; a customer root still waits on its scrub `UPDATE`.
+  Test-only seams: `repository.WithLeadErasureHooks` (a variadic option of `NewLeadRepository`
+  with `AfterAutomationCancel`, called with the unit's transaction handle and the lead id, and
+  `AfterLeadLock`, called with the lead id; copied by `WithTx`, never wired in production) and the
+  instance-local `leadService.afterDeletePreRead`, between `Delete`'s pre-read and the erasure
+  unit. `TestLeadErasureConversionCommittedAfterCancelMySQL` uses the handle to issue a plain read
+  of the lead before it parks, as the pre-#337 discovery read did: that read opens the unit's
+  REPEATABLE READ snapshot (the probes, the cancel `UPDATE` and the notification `DELETE` open
+  none), the conversion commits after it, and the root asserts that a plain read of the new
+  customer on the same transaction still finds nothing when the erasure resumes. Only the locking
+  discovery reads see past that snapshot, so the root fails when they are reverted to plain reads.
+  Roots: `TestLeadErasureConversionFirstMySQL`,
+  `TestLeadErasureErasureFirstMySQL`, `TestLeadErasureConversionCommittedAfterCancelMySQL`,
+  `TestLeadErasureUnrelatedConversionNotBlockedMySQL` and `TestLeadErasureVsConversionSQLite`
+  (`internal/service/lead_erasure_conversion_lock_test.go`); `TestLeadErasureLockOrderSQLite`,
+  `TestLeadErasureDiscoveryReadsLockMySQL`, `TestLeadErasureSurvivesAutomationStepMySQL` and
+  `TestLeadErasureHooksDefaultUnset` (`internal/repository/lead_erasure_lock_order_test.go`, the
+  statements captured through GORM callbacks registered only for the repository call);
+  `TestLeadErasureHooksNotWiredInProduction` (`cmd`); `TestConcurrencyDocLeadErasureVsConversion`
+  (`internal/config`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, see each wait in
+  `information_schema.PROCESSLIST` on two consecutive polls, assert that no ordering ends in error
+  1213, skip without the variable and fail when it is unreachable; `make verify-backend` has no DSN
+  and skips them. They must pass on MySQL 8 and MariaDB 10.11 alike: `scripts/ci/check-go.py
+  transaction` already discovers them through its `lead*_test.go` globs and runs them on MariaDB
+  in CI's database gates. See [CONCURRENCY.md](CONCURRENCY.md), Lead-rooted erasure.
 
 What the erasure touches, and what it keeps on purpose:
 
@@ -1731,15 +1793,18 @@ in the previous paragraph. It is irreversible.
 
 Known limits of the erasure, in one place:
 
-- **Concurrency.** The erasure is one transaction, but it does not yet share a lock protocol with
-  lead conversion or customer/login linking. A conversion or link committed while an erasure is in
-  flight can escape the cascade; opposite entry points can deadlock (an error, never a partial
-  commit). Login (#336), refresh rotation, the password-reset request and API-key creation (#342)
-  lock the user row before they issue anything, so against a user- or customer-rooted erasure they
-  either commit first (and the erasure purges what they issued) or wait and are refused. The read of
-  the original address and the read of the matching unlinked submission ids are plain snapshot
-  reads, so a submission from the same address inserted concurrently can survive. Tracked in
-  #183.
+- **Concurrency.** The erasure is one transaction. A lead-rooted erasure locks the lead after
+  cancelling its automation runs and decides on the locked row, so a conversion of that lead either
+  commits first (the erasure erases its customer, or refuses a non-admin caller) or waits and
+  answers 404 (#337, see *Lead erasure against lead conversion*). Customer- and user-rooted
+  erasures still share no lock protocol with customer/login linking: a link committed while such an
+  erasure is in flight can escape the cascade, and opposite entry points can deadlock (an error,
+  never a partial commit). No erasure is retried yet. Login (#336), refresh rotation, the
+  password-reset request and API-key creation (#342) lock the user row before they issue anything,
+  so against a user- or customer-rooted erasure they either commit first (and the erasure purges
+  what they issued) or wait and are refused. The original address is read with a locking read of
+  the erased row (#337), but the read of the matching unlinked submission ids is a plain snapshot
+  read, so a submission from the same address inserted concurrently can survive. Tracked in #183.
 - **History.** Deploying a new erasure rule does not repair graphs erased under an older one (see
   above); fully soft-deleted graphs have no supported path yet.
 - **Retained content.** Business free text (tickets, tasks, company notes, staff-written comments,

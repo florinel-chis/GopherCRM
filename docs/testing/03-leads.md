@@ -426,7 +426,7 @@ the frontend gating.
   4. Create a **new** lead reusing the exact same email address.
 - **Expected:** Step 3 returns no rows — the search runs `LIKE` over
   `first_name, last_name, email, company, phone, notes`
-  (`lead_repository.go:186`) and the erasure has overwritten all of them with a random
+  (`lead_repository.go:206`) and the erasure has overwritten all of them with a random
   `.invalid` address and placeholder names before soft-deleting the row
   (`erasure_cascade.go`, `erasure.go`). Step 4 returns **201**: the address is reusable because it
   no longer exists anywhere in the table.
@@ -446,6 +446,16 @@ the frontend gating.
   (`erasure_cascade.go`, `eraseLead`), which follows `leads.customer_id` and erases both halves in
   one transaction, together with the customer's customer-role login if it has one (#108). Only an
   admin may do this: see TC-LEAD-065 for the owning sales user.
+- **Concurrency (#337):** the erasure cancels the lead's automation runs, then locks the lead row
+  and follows the `customer_id` it reads under that lock. A conversion of the same lead racing the
+  delete therefore ends one of two ways: the conversion commits first and the admin's erasure also
+  erases the customer it just created (no live customer is left), or the conversion waits behind
+  the erasure and then answers **404** (the lead is gone; no customer is created). Go roots:
+  `TestLeadErasureConversionFirstMySQL`, `TestLeadErasureErasureFirstMySQL`,
+  `TestLeadErasureConversionCommittedAfterCancelMySQL`, `TestLeadErasureVsConversionSQLite`,
+  `TestLeadErasureUnrelatedConversionNotBlockedMySQL` (`internal/service`);
+  `TestLeadErasureLockOrderSQLite`, `TestLeadErasureDiscoveryReadsLockMySQL`,
+  `TestLeadErasureSurvivesAutomationStepMySQL` (`internal/repository`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; requires the customers
   page object for the verification step)
 
@@ -461,8 +471,10 @@ the frontend gating.
   customer it became". Nothing changed: the lead and the customer are live with their original
   data. Erasing a converted lead erases a customer, and deleting a customer is admin-only, so
   `LeadService.Delete` gives a non-admin `DeleteUnconverted`, which refuses inside the erasure
-  transaction before any write (#108). The same sales user can still delete an unconverted lead it
-  owns (204).
+  transaction on the locked lead row and rolls the whole unit back (#108, #337). A conversion that
+  commits while the sales user's delete is in flight is seen too: the delete is then refused the
+  same way, with the lead, the new customer and the lead's automation runs unchanged. The same
+  sales user can still delete an unconverted lead it owns (204).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (needs the sales login
   helper). Go coverage: `tests/lead_integration_test.go`
   `TestDeleteConvertedLead_SalesOwnerForbiddenAndNothingChanges`,
@@ -494,7 +506,7 @@ the frontend gating.
 - **Expected:** `GET /api/v1/leads?...&search=<email>` returns 200 and the table shows the matching
   lead. The search is a case-insensitive `LIKE` across first_name, last_name, email, company, phone
   and notes; `total` in the response reflects the filtered count (`CountSearch`,
-  `lead_repository.go:202`).
+  `lead_repository.go:222`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search for a
   lead by email"
 
@@ -541,7 +553,7 @@ the frontend gating.
   1. Search for a distinctive word from the lead's notes.
   2. Search for a fragment of the lead's phone number.
 - **Expected:** Both searches return the lead — `notes` and `phone` are in the `LIKE` clause
-  (`lead_repository.go:186`), even though neither is presented as a searchable column in the UI.
+  (`lead_repository.go:206`), even though neither is presented as a searchable column in the UI.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended)
 
 ### TC-LEAD-032 — Search and sort combine
@@ -553,7 +565,7 @@ the frontend gating.
   2. Click the "Created" column header.
 - **Expected:** The request carries both `search` and `sort_by=created_at`; 200. The search branch
   (`lead_handler.go:227`) forwards `sortBy`/`sortOrder` to `leadService.Search`, which builds the
-  ORDER BY through `utils.SafeOrderClause` (`lead_repository.go:190`).
+  ORDER BY through `utils.SafeOrderClause` (`lead_repository.go:210`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search and
   sort together"
 
@@ -686,7 +698,7 @@ the frontend gating.
   2. Set the Classification dropdown to "Spam".
 - **Expected:** `GET /api/v1/leads?...&classification=spam` returns 200; only leads with that
   classification are listed and `total` is the per-classification count
-  (`GetByClassification` + `CountByClassification`, `lead_repository.go:110`/`:218`). With no spam
+  (`GetByClassification` + `CountByClassification`, `lead_repository.go:122`/`:238`). With no spam
   leads present the table is empty and the total is 0 — verified live.
 - **Known issue:** Gap **G17** in `docs/FEATURES.md` — this dropdown has no E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; closes G17)
@@ -729,7 +741,7 @@ the frontend gating.
 - **Expected:** `POST /api/v1/leads/{id}/convert` returns **200** with the new customer object
   (`{id, first_name, last_name, email, …}`). A "Lead converted to customer successfully" snackbar
   shows. The lead's status becomes `converted` and `leads.customer_id` is set
-  (`lead_service.go:326`); the lead row remains in the list with a green "Converted" chip.
+  (`lead_service.go:1173`); the lead row remains in the list with a green "Converted" chip.
   The browser then navigates to **`/customers/undefined`**, which leaves the customer detail page
   on its loading spinner rather than showing the new customer.
 - **Known issue:** `endpoints/leads.ts convertLead` types the response as `{customer_id: number}`,
@@ -802,7 +814,7 @@ the frontend gating.
      button is hidden once the status is `converted`, per TC-LEAD-043).
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
-  transaction (`lead_service.go:272`, `:298`), and the handler classifies it with `errors.Is`
+  transaction (`lead_service.go:1008`, `:1117`), and the handler classifies it with `errors.Is`
   (`lead_handler.go:528`). No second customer is created. Driven through the UI the conversion dialog
   stays open and shows the server's message above the form, and the page re-reads the lead (since
   #117; from 1.2.0 a snackbar showed it, before that it read "Failed to convert lead"). The same 400

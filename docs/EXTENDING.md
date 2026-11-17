@@ -317,7 +317,7 @@ origins (lines 49-55) and six step types (lines 58-65).
    owner checks as the email step: the locking check of the run row in its first transaction and
    the plain read just before the call.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
-   (`internal/repository/erasure.go:471`) must reach it.
+   (`internal/repository/erasure.go:551`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,
    `automationFormat.ts`, and the types in `gocrm-ui/src/types/automation.ts`.
 7. Tests: execution and dry run (`automation_step_execution_test.go`,
@@ -329,7 +329,7 @@ origins (lines 49-55) and six step types (lines 58-65).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 214-216, 310-315).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:51`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:59`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
@@ -500,9 +500,9 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:450-494`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:363`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
 | Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:251`) |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.
