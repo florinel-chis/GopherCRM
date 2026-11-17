@@ -21,6 +21,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestFormAttributionMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestUserTokenVersionMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestBulkOperationStatusIndexMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteTaxMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteQuantityMigration'),
     }
     migration_roots = len(required)
     if migrations_only:
