@@ -29,9 +29,9 @@ func (e *quoteTestEnv) sentQuoteWithLines(t *testing.T) *models.Quote {
 		q.ValidUntil = dateDaysFromNow(t, 30)
 		q.Notes = "Delivery within two weeks of acceptance."
 	})
-	_, err := e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: 2, DiscountBP: 1250})
+	_, err := e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: models.QuoteQuantityFromUnits(2), DiscountBP: 1250})
 	require.NoError(t, err)
-	_, err = e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(999)})
+	_, err = e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(999)})
 	require.NoError(t, err)
 	_, err = e.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, e.owner.ID)
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestQuoteEmailRevisedDuringSend(t *testing.T) {
 		hooked.revise = func() {
 			_, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusDraft, env.owner.ID)
 			require.NoError(t, err)
-			_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 5})
+			_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(5)})
 			require.NoError(t, err)
 			_, err = env.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, env.owner.ID)
 			require.NoError(t, err)

@@ -96,8 +96,9 @@ type Quote struct {
 	// recomputed from the lines by the service on every line change and never
 	// taken from a request.
 
-	// Sum of quantity x unit_price_cents over the lines, in minor units.
-	// Computed by the server on every line change; read-only.
+	// Sum of the lines' gross amounts (quantity x unit_price_cents, each
+	// rounded half up to a whole minor unit), in minor units. Computed by the
+	// server on every line change; read-only.
 	SubtotalCents int64 `gorm:"not null" json:"subtotal_cents" readonly:"true" example:"240000"`
 	// subtotal_cents minus total_cents: the money taken off by the per-line
 	// discounts, in minor units. Computed; read-only.
@@ -270,7 +271,7 @@ type QuoteJSON struct {
 // price when it is added, so the quote reads the same whatever happens to the
 // catalogue afterwards; both copies are editable while the quote is a draft.
 // The discount is a percentage in basis points (12.5% = 1250) applied per
-// line, and line_total_cents is the rounded result of ComputeQuoteLineTotal.
+// line, and line_total_cents is the rounded result of ComputeQuoteLineAmounts.
 //
 // Product is the only declared side of the line/product association, so
 // AutoMigrate creates exactly one constraint (fk_quote_lines_product). The
@@ -301,8 +302,14 @@ type QuoteLine struct {
 	// Line text: the product name at the time the line was added unless
 	// overridden. Trimmed, 1 to 255 characters.
 	Description string `gorm:"not null;type:varchar(255)" json:"description" example:"Annual support plan"`
-	// Number of units, 1 to 1000000.
-	Quantity int64 `gorm:"not null" json:"quantity" minimum:"1" maximum:"1000000" example:"2"`
+	// Quantity is stored as integer thousandths in quote_lines.quantity_milli
+	// (#343). DEFAULT 0 exists only so SQLite can add the NOT NULL column to
+	// a populated table; a written line always holds 1..10^9.
+
+	// Number of units, a decimal from 0.001 to 1000000 with at most 3
+	// decimal places, written as a JSON number without trailing zeros (1.5,
+	// 2, 0.001).
+	Quantity QuoteQuantity `gorm:"column:quantity_milli;type:bigint;not null;default:0" json:"quantity" swaggertype:"number" minimum:"0.001" maximum:"1000000" example:"1.5"`
 	// Price per unit in minor units of the quote's currency, 0 to
 	// 1000000000000: the product's price at the time the line was added
 	// unless overridden.
@@ -310,7 +317,7 @@ type QuoteLine struct {
 	// Per-line discount in basis points, 0 to 10000 (1250 = 12.5 percent).
 	DiscountBP int64 `gorm:"column:discount_bp;not null" json:"discount_bp" minimum:"0" maximum:"10000" example:"1250"`
 	// quantity x unit_price_cents x (10000 - discount_bp) / 10000, rounded half
-	// up to a whole minor unit. Computed by the server; read-only.
+	// up once to a whole minor unit. Computed by the server; read-only.
 	LineTotalCents int64 `gorm:"not null" json:"line_total_cents" readonly:"true" example:"210000"`
 	// Per-line tax rate in basis points, 0 to 10000 (2100 = 21 percent); 0
 	// when not set. Editable only while the quote is a draft.
@@ -326,7 +333,7 @@ type QuoteLine struct {
 // input type, kept here so the shared mocks can name it.
 type QuoteLineInput struct {
 	ProductID      uint
-	Quantity       int64
+	Quantity       QuoteQuantity
 	DiscountBP     int64
 	UnitPriceCents *int64
 	Description    *string
@@ -336,7 +343,7 @@ type QuoteLineInput struct {
 // QuoteLinePatch is a partial edit of a line: every nil field keeps the
 // stored value.
 type QuoteLinePatch struct {
-	Quantity       *int64
+	Quantity       *QuoteQuantity
 	DiscountBP     *int64
 	UnitPriceCents *int64
 	Description    *string
@@ -404,12 +411,12 @@ const (
 )
 
 // Bounds of the quote arithmetic. QuoteAmountCentsMax is the deal bound: a
-// line's gross (quantity × unit price) and a quote's gross total (net total
-// plus tax, #324) may not exceed it, so nothing the service multiplies by a
-// discount or a tax rate can leave an int64 (10^12 × 10^4 is 10^16, far below
-// 2^63). The gross is checked before any discount arithmetic for exactly that
-// reason: a maximal quantity times a maximal unit price is 10^18, still inside
-// an int64, but times a discount it would not be.
+// line's rounded gross (quantity × unit price) and a quote's gross total (net
+// total plus tax, #324) may not exceed it. The line amounts are computed in
+// 128-bit integer arithmetic (ComputeQuoteLineAmounts), so thousandths times a
+// maximal price times a discount factor never overflow; the tax on a line
+// total of at most 10^12 stays below 10^16. QuoteLineQuantityMax is the
+// largest quantity in whole units (QuoteLineQuantityMilliMax in thousandths).
 const (
 	QuoteAmountCentsMax  int64 = DealAmountCentsMax
 	QuoteLineQuantityMax int64 = 1_000_000
@@ -421,22 +428,25 @@ const (
 // QuoteDiscountBPScale is 100% in basis points.
 const QuoteDiscountBPScale int64 = 10000
 
-// ComputeQuoteLineTotal returns a line's gross (quantity × unit price) and its
-// total after the per-line discount: gross × (10000 − discount_bp) / 10000,
-// rounded half up on minor units. The caller holds gross within
-// QuoteAmountCentsMax before calling, so the multiplication cannot overflow.
+// ComputeQuoteLineTotal returns the gross (quantity × unit price) and the
+// total after the per-line discount of a line of whole units: gross × (10000 −
+// discount_bp) / 10000, rounded half up on minor units. The caller holds gross
+// within QuoteAmountCentsMax before calling, so the multiplication cannot
+// overflow. Lines with fractional quantities use ComputeQuoteLineAmounts,
+// which gives the same results for whole quantities.
 func ComputeQuoteLineTotal(quantity, unitPriceCents, discountBP int64) (gross, lineTotal int64) {
 	gross = quantity * unitPriceCents
 	lineTotal = (gross*(QuoteDiscountBPScale-discountBP) + QuoteDiscountBPScale/2) / QuoteDiscountBPScale
 	return gross, lineTotal
 }
 
-// ComputeQuoteTotals sums the lines: subtotal is Σ gross, total is Σ
-// line_total_cents and discount is the difference. The stored line totals are
-// trusted; a line is recomputed only when it is written.
+// ComputeQuoteTotals sums the lines: subtotal is Σ of the rounded line gross
+// values (ComputeQuoteLineAmounts), total is Σ line_total_cents and discount
+// is the difference. The stored line totals are trusted; a line is recomputed
+// only when it is written.
 func ComputeQuoteTotals(lines []QuoteLine) (subtotal, discount, total int64) {
 	for _, line := range lines {
-		subtotal += line.Quantity * line.UnitPriceCents
+		subtotal += quoteLineGross(line)
 		total += line.LineTotalCents
 	}
 	return subtotal, subtotal - total, total

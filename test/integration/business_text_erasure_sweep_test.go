@@ -56,7 +56,7 @@ func seedNamedDealAndQuote(t *testing.T, db *gorm.DB, subject erasureSubject, ow
 	}
 	require.NoError(t, quotes.Create(quote, owner.ID, models.RoleSales))
 	description := "Plan for " + subject.FirstName + " " + subject.Phone
-	_, err := quotes.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: 3, DiscountBP: 500, Description: &description})
+	_, err := quotes.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: models.QuoteQuantityFromUnits(3), DiscountBP: 500, Description: &description})
 	require.NoError(t, err)
 	_, err = quotes.ChangeStatus(quote.ID, models.QuoteStatusSent, owner.ID)
 	require.NoError(t, err)
@@ -97,7 +97,7 @@ func assertBusinessTextRedacted(t *testing.T, db *gorm.DB, seeded namedBusinessT
 	assert.Equal(t, seeded.quote.SubtotalCents, quote.SubtotalCents)
 	require.Len(t, quote.Lines, 1)
 	assert.Equal(t, seeded.product.Name, quote.Lines[0].Description)
-	assert.Equal(t, int64(3), quote.Lines[0].Quantity)
+	assert.Equal(t, models.QuoteQuantityFromUnits(3), quote.Lines[0].Quantity)
 
 	var history int64
 	require.NoError(t, db.Model(&models.QuoteStatusChange{}).Where("quote_id = ?", seeded.quote.ID).Count(&history).Error)

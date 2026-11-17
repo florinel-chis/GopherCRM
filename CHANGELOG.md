@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fractional quote line quantities (#343).** A quote line quantity may now have up to three
+  decimal places, from 0.001 to 1,000,000 (1.5 hours, 0.25 kg). `POST /quotes/{id}/lines` and
+  `PUT /quotes/{id}/lines/{lineId}` take and return `quantity` as a JSON number (`1.5`, `2`,
+  `0.001`, never a string); whole numbers work and read exactly as before. Zero, a negative value,
+  a value above 1,000,000 or a fourth non-zero decimal is 400 `VALIDATION_ERROR` with
+  `error.details.quantity`, and nothing is written; a quantity sent as a string is 400
+  `BAD_REQUEST`. The line total is unit price × quantity after the discount, rounded half up to the
+  cent once and computed exactly (no floating point); the quote subtotal sums the rounded line
+  amounts; whole quantities give the same totals as before. The quote email prints the quantity
+  without trailing zeros (`quantity 1.5 x 9.99 EUR`). The web UI keeps editing whole quantities
+  until its own ticket.
+  **Schema:** `quote_lines.quantity` is replaced by `quote_lines.quantity_milli` (thousandths of a
+  unit), through migration `20261118120000_store_quote_line_quantity_milli` on MySQL/MariaDB and the
+  application's startup migration on every driver; existing quantities keep their value. **Upgrade:**
+  stop every replica before starting the new version. **Rollback:** an older binary started on the
+  upgraded database reads every quantity as 0, so first run the down migration on MySQL/MariaDB
+  (whole quantities restored, fractional ones rounded half up, at least 1) or restore the pre-upgrade
+  backup on SQLite.
 - **The embed script sends an idempotency key (#341).** `embed.js` now resolves one key per
   rendered form: the hosted view's `data-idempotency-key` when it is valid, otherwise 16 bytes from
   `crypto.getRandomValues` as 32 lowercase hex characters, otherwise none (the field is then

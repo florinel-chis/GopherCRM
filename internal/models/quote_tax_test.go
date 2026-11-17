@@ -52,12 +52,12 @@ func TestQuoteTotalsWithTax(t *testing.T) {
 	assert.Equal(t, QuoteTotals{}, SumQuoteTotals(nil), "no lines, all zero")
 
 	lines := []QuoteLine{
-		{Quantity: 3, UnitPriceCents: 999, DiscountBP: 1250, TaxRateBP: 2100},
-		{Quantity: 1, UnitPriceCents: 1000, DiscountBP: 0, TaxRateBP: 0},
-		{Quantity: 7, UnitPriceCents: 1000, DiscountBP: 10000, TaxRateBP: 2100},
+		{Quantity: QuoteQuantityFromUnits(3), UnitPriceCents: 999, DiscountBP: 1250, TaxRateBP: 2100},
+		{Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 1000, DiscountBP: 0, TaxRateBP: 0},
+		{Quantity: QuoteQuantityFromUnits(7), UnitPriceCents: 1000, DiscountBP: 10000, TaxRateBP: 2100},
 	}
 	for i := range lines {
-		_, lines[i].LineTotalCents = ComputeQuoteLineTotal(lines[i].Quantity, lines[i].UnitPriceCents, lines[i].DiscountBP)
+		_, lines[i].LineTotalCents = ComputeQuoteLineTotal(lines[i].Quantity.Milli()/QuoteQuantityScale, lines[i].UnitPriceCents, lines[i].DiscountBP)
 		lines[i].TaxCents = ComputeQuoteLineTax(lines[i].LineTotalCents, lines[i].TaxRateBP)
 	}
 	require.Equal(t, int64(2622), lines[0].LineTotalCents)
@@ -76,8 +76,8 @@ func TestQuoteTotalsWithTax(t *testing.T) {
 	// two lines of 0.01 at 50 percent round to 0.01 each, 0.02 in all, where
 	// rounding the summed 0.02 at 50 percent would give 0.01.
 	perLine := []QuoteLine{
-		{Quantity: 1, UnitPriceCents: 1, LineTotalCents: 1, TaxRateBP: 5000, TaxCents: ComputeQuoteLineTax(1, 5000)},
-		{Quantity: 1, UnitPriceCents: 1, LineTotalCents: 1, TaxRateBP: 5000, TaxCents: ComputeQuoteLineTax(1, 5000)},
+		{Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 1, LineTotalCents: 1, TaxRateBP: 5000, TaxCents: ComputeQuoteLineTax(1, 5000)},
+		{Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 1, LineTotalCents: 1, TaxRateBP: 5000, TaxCents: ComputeQuoteLineTax(1, 5000)},
 	}
 	pinned := SumQuoteTotals(perLine)
 	assert.Equal(t, int64(2), pinned.Tax, "per-line rounding")
@@ -85,7 +85,7 @@ func TestQuoteTotalsWithTax(t *testing.T) {
 	assert.Equal(t, int64(4), pinned.Gross)
 
 	// The stored line tax is trusted, as the stored line total is.
-	stored := SumQuoteTotals([]QuoteLine{{Quantity: 1, UnitPriceCents: 100, LineTotalCents: 100, TaxRateBP: 2100, TaxCents: 7}})
+	stored := SumQuoteTotals([]QuoteLine{{Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 100, LineTotalCents: 100, TaxRateBP: 2100, TaxCents: 7}})
 	assert.Equal(t, int64(7), stored.Tax)
 	assert.Equal(t, int64(107), stored.Gross)
 }
@@ -94,7 +94,7 @@ func TestQuoteTaxJSON(t *testing.T) {
 	quote := Quote{
 		BaseModel: BaseModel{ID: 42}, Title: "Taxed", Status: QuoteStatusDraft, Currency: "EUR",
 		SubtotalCents: 2997, DiscountCents: 375, TotalCents: 2622, TaxCents: 551, GrossTotalCents: 3173,
-		Lines: []QuoteLine{{ID: 1, QuoteID: 42, Quantity: 3, UnitPriceCents: 999, DiscountBP: 1250, LineTotalCents: 2622, TaxRateBP: 2100, TaxCents: 551}},
+		Lines: []QuoteLine{{ID: 1, QuoteID: 42, Quantity: QuoteQuantityFromUnits(3), UnitPriceCents: 999, DiscountBP: 1250, LineTotalCents: 2622, TaxRateBP: 2100, TaxCents: 551}},
 	}
 	encoded, err := json.Marshal(quote)
 	require.NoError(t, err)
@@ -181,7 +181,7 @@ func TestQuoteTaxColumnsSchemaSQLite(t *testing.T) {
 	// through Save (the full-row write the line update uses).
 	quote := Quote{Title: "Zero", Currency: "EUR", OwnerID: 1}
 	require.NoError(t, db.Create(&quote).Error)
-	line := QuoteLine{QuoteID: quote.ID, ProductID: 1, Position: 1, Description: "x", Quantity: 1, UnitPriceCents: 100, LineTotalCents: 100}
+	line := QuoteLine{QuoteID: quote.ID, ProductID: 1, Position: 1, Description: "x", Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 100, LineTotalCents: 100}
 	require.NoError(t, db.Create(&line).Error)
 	var readQuote Quote
 	require.NoError(t, db.First(&readQuote, quote.ID).Error)
@@ -204,7 +204,7 @@ func TestQuoteTaxColumnsSchemaSQLite(t *testing.T) {
 	assert.Zero(t, readLine.TaxCents)
 
 	// A non-zero value is written on create as well.
-	taxed := QuoteLine{QuoteID: quote.ID, ProductID: 1, Position: 2, Description: "y", Quantity: 1, UnitPriceCents: 1000, LineTotalCents: 1000, TaxRateBP: 2100, TaxCents: 210}
+	taxed := QuoteLine{QuoteID: quote.ID, ProductID: 1, Position: 2, Description: "y", Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 1000, LineTotalCents: 1000, TaxRateBP: 2100, TaxCents: 210}
 	require.NoError(t, db.Create(&taxed).Error)
 	// A fresh destination: GORM adds a populated struct's primary key to the
 	// WHERE clause, so re-using readLine would query two ids at once.
@@ -300,7 +300,7 @@ func TestQuoteTaxSQLiteUpgrade(t *testing.T) {
 		require.NoError(t, DB.Raw("SELECT id FROM quotes WHERE title = ?", q.title).Scan(&id).Error)
 		ids = append(ids, id)
 		require.NoError(t, DB.Exec(
-			"INSERT INTO quote_lines (created_at, updated_at, quote_id, product_id, position, description, quantity, unit_price_cents, discount_bp, line_total_cents) VALUES (?, ?, ?, ?, 1, 'Widget', 1, ?, 0, ?)",
+			"INSERT INTO quote_lines (created_at, updated_at, quote_id, product_id, position, description, quantity_milli, unit_price_cents, discount_bp, line_total_cents) VALUES (?, ?, ?, ?, 1, 'Widget', 1000, ?, 0, ?)",
 			stamp, stamp, id, product.ID, q.total, q.total,
 		).Error)
 	}

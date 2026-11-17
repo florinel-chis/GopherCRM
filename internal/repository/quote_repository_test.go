@@ -48,7 +48,7 @@ func (f quoteFixture) line(t *testing.T, repo QuoteRepository, quoteID uint, pos
 	t.Helper()
 	_, total := models.ComputeQuoteLineTotal(quantity, f.product.UnitPriceCents, 0)
 	line := &models.QuoteLine{QuoteID: quoteID, ProductID: f.product.ID, Position: position, Description: f.product.Name,
-		Quantity: quantity, UnitPriceCents: f.product.UnitPriceCents, LineTotalCents: total}
+		Quantity: models.QuoteQuantityFromUnits(quantity), UnitPriceCents: f.product.UnitPriceCents, LineTotalCents: total}
 	require.NoError(t, repo.CreateLine(line))
 	return line
 }
@@ -252,14 +252,14 @@ func TestQuoteRepository_LinesBelongToTheirQuote(t *testing.T) {
 
 	line, err := repo.GetLine(first.ID, a.ID)
 	require.NoError(t, err)
-	line.Quantity, line.DiscountBP = 4, 1250
-	_, line.LineTotalCents = models.ComputeQuoteLineTotal(line.Quantity, line.UnitPriceCents, line.DiscountBP)
+	line.Quantity, line.DiscountBP = models.QuoteQuantityFromUnits(4), 1250
+	_, line.LineTotalCents = models.ComputeQuoteLineTotal(4, line.UnitPriceCents, line.DiscountBP)
 	require.NoError(t, repo.UpdateLine(line))
 	line.DiscountBP = 0
 	require.NoError(t, repo.UpdateLine(line), "Save writes a zero discount back")
 	stored, err := repo.GetLine(first.ID, a.ID)
 	require.NoError(t, err)
-	assert.EqualValues(t, 4, stored.Quantity)
+	assert.Equal(t, models.QuoteQuantityFromUnits(4), stored.Quantity)
 	assert.Zero(t, stored.DiscountBP)
 
 	require.NoError(t, repo.DeleteLine(first.ID, a.ID))

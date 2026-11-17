@@ -219,7 +219,7 @@ func (e *quoteTestEnv) newQuote(status models.QuoteStatus, lines int, opts ...fu
 	}
 	require.NoError(e.t, e.svc.Create(quote, e.owner.ID, models.RoleSales))
 	for i := 0; i < lines; i++ {
-		_, err := e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: int64(i + 2)})
+		_, err := e.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: e.product.ID, Quantity: models.QuoteQuantityFromUnits(int64(i + 2))})
 		require.NoError(e.t, err)
 	}
 	if status != models.QuoteStatusDraft {
@@ -294,6 +294,12 @@ func (e *quoteTestEnv) assertTotalsMatchLines(id uint) *models.Quote {
 
 func int64Ptr(v int64) *int64 { return &v }
 
+// quantityPtr is a quantity of n whole units for a QuoteLinePatch.
+func quantityPtr(n int64) *models.QuoteQuantity {
+	q := models.QuoteQuantityFromUnits(n)
+	return &q
+}
+
 // dateDaysFromNow is a valid_until value `days` from today, as the API stores it.
 func dateDaysFromNow(t *testing.T, days int) *time.Time {
 	t.Helper()
@@ -328,15 +334,15 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		name  string
 		input models.QuoteLineInput
 	}{
-		{"quantity below 1", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 0}},
-		{"quantity above the bound", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteLineQuantityMax + 1}},
-		{"negative discount", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, DiscountBP: -1}},
-		{"discount above 100%", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, DiscountBP: models.QuoteDiscountBPMax + 1}},
-		{"negative price override", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(-1)}},
-		{"price override above the bound", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax + 1)}},
-		{"gross above the bound", models.QuoteLineInput{ProductID: expensive.ID, Quantity: 2}},
-		{"gross just above the bound through an override", models.QuoteLineInput{ProductID: env.product.ID, Quantity: 2, UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax/2 + 1)}},
-		{"maximal quantity times maximal price with a full discount", models.QuoteLineInput{ProductID: expensive.ID, Quantity: models.QuoteLineQuantityMax, DiscountBP: models.QuoteDiscountBPMax}},
+		{"quantity below 1", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(0)}},
+		{"quantity above the bound", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(models.QuoteLineQuantityMax + 1)}},
+		{"negative discount", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), DiscountBP: -1}},
+		{"discount above 100%", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), DiscountBP: models.QuoteDiscountBPMax + 1}},
+		{"negative price override", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(-1)}},
+		{"price override above the bound", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax + 1)}},
+		{"gross above the bound", models.QuoteLineInput{ProductID: expensive.ID, Quantity: models.QuoteQuantityFromUnits(2)}},
+		{"gross just above the bound through an override", models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax/2 + 1)}},
+		{"maximal quantity times maximal price with a full discount", models.QuoteLineInput{ProductID: expensive.ID, Quantity: models.QuoteQuantityFromUnits(models.QuoteLineQuantityMax), DiscountBP: models.QuoteDiscountBPMax}},
 	} {
 		t.Run("add: "+tc.name, func(t *testing.T) {
 			_, err := env.svc.AddLine(quote.ID, tc.input)
@@ -349,15 +355,15 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		name  string
 		patch models.QuoteLinePatch
 	}{
-		{"quantity below 1", models.QuoteLinePatch{Quantity: int64Ptr(0)}},
-		{"quantity above the bound", models.QuoteLinePatch{Quantity: int64Ptr(models.QuoteLineQuantityMax + 1)}},
+		{"quantity below 1", models.QuoteLinePatch{Quantity: quantityPtr(0)}},
+		{"quantity above the bound", models.QuoteLinePatch{Quantity: quantityPtr(models.QuoteLineQuantityMax + 1)}},
 		{"negative discount", models.QuoteLinePatch{DiscountBP: int64Ptr(-1)}},
 		{"discount above 100%", models.QuoteLinePatch{DiscountBP: int64Ptr(models.QuoteDiscountBPMax + 1)}},
 		{"negative price", models.QuoteLinePatch{UnitPriceCents: int64Ptr(-1)}},
 		{"price above the bound", models.QuoteLinePatch{UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax + 1)}},
 		{"position below 1", models.QuoteLinePatch{Position: int64Ptr(0)}},
-		{"gross above the bound", models.QuoteLinePatch{Quantity: int64Ptr(2), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax)}},
-		{"maximal quantity times maximal price with a full discount", models.QuoteLinePatch{Quantity: int64Ptr(models.QuoteLineQuantityMax), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax), DiscountBP: int64Ptr(models.QuoteDiscountBPMax)}},
+		{"gross above the bound", models.QuoteLinePatch{Quantity: quantityPtr(2), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax)}},
+		{"maximal quantity times maximal price with a full discount", models.QuoteLinePatch{Quantity: quantityPtr(models.QuoteLineQuantityMax), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax), DiscountBP: int64Ptr(models.QuoteDiscountBPMax)}},
 	} {
 		t.Run("update: "+tc.name, func(t *testing.T) {
 			_, err := env.svc.UpdateLine(quote.ID, lineID, tc.patch)
@@ -371,13 +377,13 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 	t.Run("the quote total may not exceed the bound", func(t *testing.T) {
 		capped := env.newQuote(models.QuoteStatusDraft, 0)
 		// One line of the bound less 500: fine on its own.
-		_, err := env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: expensive.ID, Quantity: 1, UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax - 500)})
+		_, err := env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: expensive.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax - 500)})
 		require.NoError(t, err)
 		assert.Equal(t, models.QuoteAmountCentsMax-500, env.quote(capped.ID).TotalCents)
 		cappedBefore := env.snapshot(capped.ID)
 
 		// A second line whose own gross is tiny but takes the total over.
-		_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1})
+		_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1)})
 		refused(t, err)
 		assert.Equal(t, cappedBefore, env.snapshot(capped.ID))
 
@@ -387,7 +393,7 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, models.QuoteAmountCentsMax, env.quote(capped.ID).TotalCents)
 		atBound := env.snapshot(capped.ID)
-		_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(1)})
+		_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(1)})
 		refused(t, err)
 		assert.Equal(t, atBound, env.snapshot(capped.ID))
 		env.assertTotalsMatchLines(capped.ID)
@@ -398,7 +404,7 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		lines := make([]models.QuoteLine, 0, models.QuoteLinesMax)
 		for i := 0; i < models.QuoteLinesMax; i++ {
 			_, total := models.ComputeQuoteLineTotal(1, 100, 0)
-			lines = append(lines, models.QuoteLine{QuoteID: full.ID, ProductID: env.product.ID, Position: int64(i + 1), Description: "Widget", Quantity: 1, UnitPriceCents: 100, LineTotalCents: total})
+			lines = append(lines, models.QuoteLine{QuoteID: full.ID, ProductID: env.product.ID, Position: int64(i + 1), Description: "Widget", Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: 100, LineTotalCents: total})
 		}
 		require.NoError(t, db.Create(&lines).Error)
 		rows, err := env.repo.UpdateTotals(full.ID, models.QuoteTotals{Subtotal: 100 * 100, Discount: 0, Total: 100 * 100, Tax: 0, Gross: 100 * 100})
@@ -406,13 +412,13 @@ func TestQuoteLineLimitsRejectedWithoutWrites(t *testing.T) {
 		require.EqualValues(t, 1, rows)
 		fullBefore := env.snapshot(full.ID)
 
-		_, err = env.svc.AddLine(full.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1})
+		_, err = env.svc.AddLine(full.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1)})
 		refused(t, err)
 		assert.Equal(t, fullBefore, env.snapshot(full.ID))
 		assert.Len(t, env.lines(full.ID), models.QuoteLinesMax)
 
 		// Editing one of the hundred is still allowed: the limit is on the count.
-		_, err = env.svc.UpdateLine(full.ID, lines[0].ID, models.QuoteLinePatch{Quantity: int64Ptr(2)})
+		_, err = env.svc.UpdateLine(full.ID, lines[0].ID, models.QuoteLinePatch{Quantity: quantityPtr(2)})
 		require.NoError(t, err)
 		env.assertTotalsMatchLines(full.ID)
 	})
@@ -538,7 +544,7 @@ func TestQuoteStatusTransitionMatrix(t *testing.T) {
 		assert.Len(t, env.history(empty.ID), 1, "only the create row")
 
 		// With a line it goes through.
-		_, err = env.svc.AddLine(empty.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1})
+		_, err = env.svc.AddLine(empty.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1)})
 		require.NoError(t, err)
 		_, err = env.svc.ChangeStatus(empty.ID, models.QuoteStatusSent, env.owner.ID)
 		require.NoError(t, err)

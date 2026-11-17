@@ -626,10 +626,13 @@ func recomputeTotals(repo repository.QuoteRepository, quoteID uint) error {
 }
 
 // validateLineBounds checks the bounds of the values a line request carries
-// (nil means "not sent"). Everything here is a validation failure.
-func validateLineBounds(quantity, discountBP, unitPriceCents *int64, description *string, taxRateBP *int64) error {
-	if quantity != nil && (*quantity < 1 || *quantity > models.QuoteLineQuantityMax) {
-		return fmt.Errorf("quantity must be between 1 and %d: %w", models.QuoteLineQuantityMax, apperrors.ErrValidation)
+// (nil means "not sent"). Everything here is a validation failure. The
+// quantity must lie within 0.001..1,000,000 (1..10^9 thousandths); the
+// handler checks the same bound when it decodes the JSON number, but a
+// QuoteQuantity built with QuoteQuantityFromMilli carries no check.
+func validateLineBounds(quantity *models.QuoteQuantity, discountBP, unitPriceCents *int64, description *string, taxRateBP *int64) error {
+	if quantity != nil && !quantity.InBounds() {
+		return fmt.Errorf("quantity must be from 0.001 to %d: %w", models.QuoteLineQuantityMax, apperrors.ErrValidation)
 	}
 	if discountBP != nil && (*discountBP < 0 || *discountBP > models.QuoteDiscountBPMax) {
 		return fmt.Errorf("discount_bp must be between 0 and %d: %w", models.QuoteDiscountBPMax, apperrors.ErrValidation)
@@ -647,9 +650,9 @@ func validateLineBounds(quantity, discountBP, unitPriceCents *int64, description
 }
 
 // computeLine re-checks the bounds on the assembled line and fills its total
-// and then its tax. The gross is checked against the cap BEFORE any discount
-// arithmetic: a maximal quantity times a maximal price is 10^18 and still an
-// int64, but multiplied by a basis-point factor it would not be.
+// and then its tax. models.ComputeQuoteLineAmounts computes the rounded gross
+// and the line total in 128-bit integer arithmetic (#343) and reports a
+// rounded gross above the cap, which is refused before anything is written.
 func computeLine(line *models.QuoteLine) error {
 	if err := validateLineBounds(&line.Quantity, &line.DiscountBP, &line.UnitPriceCents, &line.Description, &line.TaxRateBP); err != nil {
 		return err
@@ -657,11 +660,11 @@ func computeLine(line *models.QuoteLine) error {
 	if line.Position < 1 {
 		return fmt.Errorf("position must be at least 1: %w", apperrors.ErrValidation)
 	}
-	gross := line.Quantity * line.UnitPriceCents
-	if gross > models.QuoteAmountCentsMax {
+	_, lineTotal, ok := models.ComputeQuoteLineAmounts(line.Quantity, line.UnitPriceCents, line.DiscountBP)
+	if !ok {
 		return fmt.Errorf("quantity × unit_price_cents must be at most %d: %w", models.QuoteAmountCentsMax, apperrors.ErrValidation)
 	}
-	_, line.LineTotalCents = models.ComputeQuoteLineTotal(line.Quantity, line.UnitPriceCents, line.DiscountBP)
+	line.LineTotalCents = lineTotal
 	line.TaxCents = models.ComputeQuoteLineTax(line.LineTotalCents, line.TaxRateBP)
 	return nil
 }

@@ -62,7 +62,7 @@ func TestQuoteLineTaxRateBinding(t *testing.T) {
 	taxed := func() *models.Quote {
 		quote := ownedQuote(1, models.QuoteStatusDraft)
 		quote.TotalCents, quote.TaxCents, quote.GrossTotalCents = 2622, 551, 3173
-		quote.Lines = []models.QuoteLine{{ID: 9, QuoteID: 1, ProductID: 2, Position: 1, Description: "Widget", Quantity: 3, UnitPriceCents: 999, DiscountBP: 1250, LineTotalCents: 2622, TaxRateBP: 2100, TaxCents: 551}}
+		quote.Lines = []models.QuoteLine{{ID: 9, QuoteID: 1, ProductID: 2, Position: 1, Description: "Widget", Quantity: models.QuoteQuantityFromUnits(3), UnitPriceCents: 999, DiscountBP: 1250, LineTotalCents: 2622, TaxRateBP: 2100, TaxCents: 551}}
 		return quote
 	}
 
@@ -80,7 +80,7 @@ func TestQuoteLineTaxRateBinding(t *testing.T) {
 			svc := new(mocks.QuoteService)
 			svc.On("GetByID", uint(1)).Return(ownedQuote(1, models.QuoteStatusDraft), nil)
 			svc.On("AddLine", uint(1), mock.MatchedBy(func(input models.QuoteLineInput) bool {
-				return input.TaxRateBP == tc.want && input.ProductID == 2 && input.Quantity == 3
+				return input.TaxRateBP == tc.want && input.ProductID == 2 && input.Quantity == models.QuoteQuantityFromUnits(3)
 			})).Return(taxed(), nil)
 			router := newQuoteTestRouter(svc, 1, models.RoleAdmin)
 			status, envelope := doJSON(t, router, http.MethodPost, "/quotes/1/lines", tc.body)

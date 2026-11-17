@@ -52,9 +52,8 @@ func withoutQuoteTaxColumns(tables map[string]tableSchema) map[string]tableSchem
 
 // TestQuoteTaxMigrationFiles needs no database: the pair exists, has its
 // headers, every ADD and DROP is guarded by an INFORMATION_SCHEMA probe, the
-// up half has exactly one backfill UPDATE and no index, the model declares the
-// same columns, the migration is the newest of the directory and
-// latestMigrationVersion names it.
+// up half has exactly one backfill UPDATE and no index, and the model declares
+// the same columns. It is no longer the newest migration (#343).
 func TestQuoteTaxMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, quoteTaxName+".up.sql"))
@@ -108,22 +107,14 @@ func TestQuoteTaxMigrationFiles(t *testing.T) {
 		assert.NotContainsf(t, tag, "type:", "%T.%s takes GORM's int64 type, bigint on MySQL", tc.model, tc.field)
 	}
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAutomationRunLeaseMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, quoteTaxName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The version is the one its file names, after the previous head; the
+	// newest-migration assertion has moved to TestQuoteQuantityMigrationFiles
+	// (#343).
+	version, err := strconv.Atoi(strings.SplitN(quoteTaxName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, quoteTaxVersion, version)
-	assert.Equal(t, quoteTaxVersion, latestMigrationVersion)
 	assert.Greater(t, quoteTaxVersion, quoteTaxPreviousVersion)
+	assert.Greater(t, latestMigrationVersion, quoteTaxVersion, "a later migration is the newest")
 }
 
 // quoteTaxSchema is the part of the quote tables this migration owns.
@@ -137,13 +128,15 @@ func quoteTaxSchema(t *testing.T, tdb *migrationTestDB) map[string][]string {
 }
 
 // quoteTaxRest is everything of the quote tables this migration does not own.
+// The quantity columns of the later 20261118120000 migration (#343) are left
+// out too: AutoMigrate adds quantity_milli and MigrateDatabase drops quantity.
 func quoteTaxRest(t *testing.T, tdb *migrationTestDB) map[string]tableSchema {
 	t.Helper()
 	out := map[string]tableSchema{}
 	for table, columns := range quoteTaxColumns {
 		out[table] = withoutColumns(snapshotTable(t, tdb, table), columns)
 	}
-	return out
+	return withoutQuoteQuantityColumns(out)
 }
 
 // seedQuoteTaxRows writes an owner and a product through GORM, then a live and

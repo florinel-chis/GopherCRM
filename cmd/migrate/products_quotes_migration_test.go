@@ -181,7 +181,10 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 	// The tax columns (#324) belong to 20261117120000_add_quote_tax, a later
 	// migration that AutoMigrate knows about; they are left out of every
 	// comparison here and checked by TestQuoteTaxMigration.
-	want := withoutQuoteTaxColumns(snapshotQuoteTables(t, reference.sql, reference.name))
+	// Likewise the quantity columns (#343): AutoMigrate creates quantity_milli,
+	// which 20261118120000_store_quote_line_quantity_milli owns, and this
+	// migration creates the legacy quantity, which MigrateDatabase drops.
+	want := withoutQuoteQuantityColumns(withoutQuoteTaxColumns(snapshotQuoteTables(t, reference.sql, reference.name)))
 	for _, table := range quoteMigrationTables {
 		require.NotEmpty(t, want[table].Columns, "AutoMigrate must have created %s", table)
 	}
@@ -218,7 +221,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			assert.False(t, dirty)
 			assert.Equal(t, uint(quotesMigrationVersion), version)
 
-			got := withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name))
+			got := withoutQuoteQuantityColumns(withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name)))
 			for _, table := range quoteMigrationTables {
 				assert.Equalf(t, want[table], got[table], "%s differs between the SQL migration and AutoMigrate", table)
 			}
@@ -234,7 +237,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 			// model), so the rollback below is compared against this list.
 			models.DB = appDB
 			require.NoError(t, models.MigrateDatabase())
-			assert.Equal(t, got, withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name)), "MigrateDatabase must not alter the migrated tables")
+			assert.Equal(t, got, withoutQuoteQuantityColumns(withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name))), "MigrateDatabase must not alter the migrated tables")
 			tablesMigrated := listTables(t, tdb.sql, tdb.name)
 			assert.Subset(t, tablesMigrated, tablesBefore, "MigrateDatabase drops nothing")
 
@@ -262,7 +265,7 @@ func TestProductsAndQuotesMigration(t *testing.T) {
 
 			// And it applies again from there.
 			require.NoError(t, tdb.m.Migrate(quotesMigrationVersion))
-			assert.Equal(t, got, withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name)))
+			assert.Equal(t, got, withoutQuoteQuantityColumns(withoutQuoteTaxColumns(snapshotQuoteTables(t, tdb.sql, tdb.name))))
 		})
 	}
 }

@@ -64,9 +64,54 @@ func MigrateDatabase() error {
 		if err := normalizeCompanyDomains(tx); err != nil {
 			return err
 		}
+		if err := migrateLegacyQuoteLineQuantity(tx); err != nil {
+			return err
+		}
 		return backfillQuoteGrossTotals(tx)
 	})
 }
+
+// migrateLegacyQuoteLineQuantity moves quote line quantities from the legacy
+// whole-unit column quote_lines.quantity into quantity_milli (#343), on every
+// driver, and then drops the legacy column. AutoMigrate has already added
+// quantity_milli (DEFAULT 0, the "not yet converted" marker) and never drops a
+// column. When quantity is absent the step issues nothing, so a migrated
+// database takes no write and no DDL on startup.
+//
+// Discovery is a plain SELECT; the rows are converted by primary key in chunks
+// of quoteQuantityBackfillChunk, without touching updated_at. The column is
+// dropped with the native ALTER TABLE ... DROP COLUMN (SQLite 3.35+ and
+// MySQL/MariaDB alike), never with Migrator().DropColumn: with a table name
+// the glebarez/sqlite migrator dereferences a nil schema and panics, and with
+// a model it rebuilds the table and loses idx_quote_lines_quote_id and
+// idx_quote_lines_product_id. The legacy column carries no index, constraint
+// or foreign key, so the native drop needs no table rebuild.
+func migrateLegacyQuoteLineQuantity(tx *gorm.DB) error {
+	if !tx.Migrator().HasColumn("quote_lines", "quantity") {
+		return nil
+	}
+	var ids []uint
+	if err := tx.Raw("SELECT id FROM quote_lines WHERE quantity_milli = 0 ORDER BY id").Scan(&ids).Error; err != nil {
+		return fmt.Errorf("failed to find quote line quantities to convert: %w", err)
+	}
+	for start := 0; start < len(ids); start += quoteQuantityBackfillChunk {
+		end := start + quoteQuantityBackfillChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err := tx.Exec("UPDATE quote_lines SET quantity_milli = quantity * 1000 WHERE id IN ? AND quantity_milli = 0", ids[start:end]).Error; err != nil {
+			return fmt.Errorf("failed to convert quote line quantities: %w", err)
+		}
+	}
+	if err := tx.Exec("ALTER TABLE quote_lines DROP COLUMN quantity").Error; err != nil {
+		return fmt.Errorf("failed to drop quote_lines.quantity: %w", err)
+	}
+	return nil
+}
+
+// quoteQuantityBackfillChunk bounds how many rows one quantity conversion
+// UPDATE writes.
+const quoteQuantityBackfillChunk = 500
 
 // backfillQuoteGrossTotals sets quotes.gross_total_cents to total_cents +
 // tax_cents wherever it differs (#324), soft-deleted rows included. AutoMigrate

@@ -43,12 +43,12 @@ func TestQuoteTotalsSumLines(t *testing.T) {
 	assert.Zero(t, total)
 
 	lines := []QuoteLine{
-		{Quantity: 3, UnitPriceCents: 999, DiscountBP: 0, LineTotalCents: 2997},
-		{Quantity: 1, UnitPriceCents: 1000, DiscountBP: 1250, LineTotalCents: 875},
-		{Quantity: 7, UnitPriceCents: 1000, DiscountBP: 10000, LineTotalCents: 0},
+		{Quantity: QuoteQuantityFromUnits(3), UnitPriceCents: 999, DiscountBP: 0, LineTotalCents: 2997},
+		{Quantity: QuoteQuantityFromUnits(1), UnitPriceCents: 1000, DiscountBP: 1250, LineTotalCents: 875},
+		{Quantity: QuoteQuantityFromUnits(7), UnitPriceCents: 1000, DiscountBP: 10000, LineTotalCents: 0},
 	}
 	for i := range lines {
-		_, lines[i].LineTotalCents = ComputeQuoteLineTotal(lines[i].Quantity, lines[i].UnitPriceCents, lines[i].DiscountBP)
+		_, lines[i].LineTotalCents = ComputeQuoteLineTotal(lines[i].Quantity.Milli()/QuoteQuantityScale, lines[i].UnitPriceCents, lines[i].DiscountBP)
 	}
 	subtotal, discount, total = ComputeQuoteTotals(lines)
 	assert.Equal(t, int64(2997+1000+7000), subtotal)
@@ -85,9 +85,13 @@ func TestQuoteColumnWidthsMatchConstants(t *testing.T) {
 	for _, field := range []string{"SubtotalCents", "DiscountCents", "TotalCents"} {
 		assert.Empty(t, columnDefault(t, &Quote{}, field), "Quote.%s", field)
 	}
-	for _, field := range []string{"Position", "Quantity", "UnitPriceCents", "DiscountBP", "LineTotalCents"} {
+	for _, field := range []string{"Position", "UnitPriceCents", "DiscountBP", "LineTotalCents"} {
 		assert.Empty(t, columnDefault(t, &QuoteLine{}, field), "QuoteLine.%s", field)
 	}
+	// quantity_milli (#343) carries DEFAULT 0 so SQLite can add it NOT NULL
+	// to a populated table; 0 is never a valid written quantity.
+	assert.Equal(t, "0", columnDefault(t, &QuoteLine{}, "Quantity"), "QuoteLine.Quantity")
+	assert.Equal(t, "bigint", columnType(t, &QuoteLine{}, "Quantity"))
 	// The four tax columns (#324) are the deliberate exception: SQLite cannot
 	// add a NOT NULL column without a default to a populated table, and their
 	// default is the zero value itself, so an explicit 0 still persists.

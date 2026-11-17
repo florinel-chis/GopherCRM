@@ -92,7 +92,7 @@ func seedProductDeleteQuote(t *testing.T, db *gorm.DB, product *models.Product) 
 		SubtotalCents: 500, TotalCents: 500, OwnerID: owner.ID}
 	require.NoError(t, db.Omit(clause.Associations).Create(quote).Error)
 	line := &models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: product.Name,
-		Quantity: 2, UnitPriceCents: 250, LineTotalCents: 500}
+		Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: 250, LineTotalCents: 500}
 	require.NoError(t, db.Omit(clause.Associations).Create(line).Error)
 	return line
 }

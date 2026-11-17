@@ -62,12 +62,26 @@ func TestQuoteLineBindingTagsMatchTheModel(t *testing.T) {
 	}
 	add := reflect.TypeOf(QuoteLineRequest{})
 	patch := reflect.TypeOf(QuoteLineUpdateRequest{})
-	assert.Equal(t, fmt.Sprintf("required,min=1,max=%d", models.QuoteLineQuantityMax), tag(add, "Quantity"))
 	assert.Equal(t, fmt.Sprintf("min=0,max=%d", models.QuoteDiscountBPMax), tag(add, "DiscountBP"))
 	assert.Equal(t, fmt.Sprintf("omitempty,min=0,max=%d", models.QuoteAmountCentsMax), tag(add, "UnitPriceCents"))
-	assert.Equal(t, fmt.Sprintf("omitempty,min=1,max=%d", models.QuoteLineQuantityMax), tag(patch, "Quantity"))
 	assert.Equal(t, fmt.Sprintf("omitempty,min=0,max=%d", models.QuoteDiscountBPMax), tag(patch, "DiscountBP"))
 	assert.Equal(t, fmt.Sprintf("omitempty,min=0,max=%d", models.QuoteAmountCentsMax), tag(patch, "UnitPriceCents"))
+
+	// The quantity (#343) is bounded by models.QuoteQuantity when it is
+	// decoded, not by a binding tag: required on add, nothing on patch.
+	quantityType := reflect.TypeOf((*models.QuoteQuantity)(nil))
+	for _, typ := range []reflect.Type{add, patch} {
+		field, ok := typ.FieldByName("Quantity")
+		require.Truef(t, ok, "%s has no Quantity field", typ.Name())
+		assert.Equalf(t, quantityType, field.Type, "%s.Quantity is *models.QuoteQuantity", typ.Name())
+		assert.Equalf(t, "number", field.Tag.Get("swaggertype"), "%s.Quantity is documented as a number", typ.Name())
+		assert.Equalf(t, "0.001", field.Tag.Get("minimum"), "%s.Quantity minimum", typ.Name())
+		assert.Equalf(t, fmt.Sprint(models.QuoteLineQuantityMax), field.Tag.Get("maximum"), "%s.Quantity maximum", typ.Name())
+	}
+	assert.Equal(t, "required", tag(add, "Quantity"))
+	assert.Empty(t, tag(patch, "Quantity"))
+	assert.Equal(t, models.QuoteLineQuantityMax*models.QuoteQuantityScale, models.QuoteLineQuantityMilliMax)
+	assert.Equal(t, int64(1), models.QuoteLineQuantityMilliMin)
 }
 
 // newQuoteTestRouter mounts the real quote routes, with their role guards and

@@ -106,7 +106,8 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 }
 
 // RenderQuoteEmail is the plaintext body: the number, the title, every line
-// with its description, quantity, unit price, discount, total, tax rate and
+// with its description, quantity (without trailing zeros), unit price,
+// discount, total, tax rate and
 // tax (also on a 0 percent line), then the subtotal, the discount, the net
 // total, the tax and the gross total with the currency (#324), the validity
 // date and the notes. It is a rendering of the quote, not the printable
@@ -127,8 +128,9 @@ func RenderQuoteEmail(quote *models.Quote) string {
 		b.WriteString("(no lines)\n")
 	}
 	for i, line := range quote.Lines {
-		fmt.Fprintf(&b, "%d. %s | quantity %d x %s | discount %s%% | line total %s | tax %s%% %s\n",
-			i+1, line.Description, line.Quantity,
+		// The quantity prints without trailing zeros (#343): 3, 1.5, 0.001.
+		fmt.Fprintf(&b, "%d. %s | quantity %s x %s | discount %s%% | line total %s | tax %s%% %s\n",
+			i+1, line.Description, line.Quantity.String(),
 			FormatMinorUnits(line.UnitPriceCents, quote.Currency),
 			FormatBasisPoints(line.DiscountBP),
 			FormatMinorUnits(line.LineTotalCents, quote.Currency),
