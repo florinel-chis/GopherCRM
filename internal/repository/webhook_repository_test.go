@@ -91,10 +91,13 @@ func captureWebhookStatements(t *testing.T, db *gorm.DB, name string) (func() []
 		mu.Unlock()
 	}
 	require.NoError(t, db.Callback().Query().After("gorm:query").Register(name+":query", record))
+	// Scan, Pluck-style and Rows reads go through the Row chain, not Query.
+	require.NoError(t, db.Callback().Row().After("gorm:row").Register(name+":row", record))
 	require.NoError(t, db.Callback().Update().After("gorm:update").Register(name+":update", record))
 	require.NoError(t, db.Callback().Delete().After("gorm:delete").Register(name+":delete", record))
 	stop := func() {
 		_ = db.Callback().Query().Remove(name + ":query")
+		_ = db.Callback().Row().Remove(name + ":row")
 		_ = db.Callback().Update().Remove(name + ":update")
 		_ = db.Callback().Delete().Remove(name + ":delete")
 	}

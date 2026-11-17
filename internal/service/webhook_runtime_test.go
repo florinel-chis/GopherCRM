@@ -546,7 +546,9 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 		oldSucceeded := seed(models.WebhookDeliverySucceeded, old)
 		oldFailed := seed(models.WebhookDeliveryFailed, old)
 		oldPending := seed(models.WebhookDeliveryPending, old)
-		recent := seed(models.WebhookDeliverySucceeded, now.Add(-WebhookDeliveryRetention+time.Hour))
+		// The clock advances 1 h 10 min below; keep recent younger than the
+		// retention for the whole subtest.
+		recent := seed(models.WebhookDeliverySucceeded, now.Add(-WebhookDeliveryRetention+3*time.Hour))
 
 		result, err := rt.RunOnce(ctx)
 		require.NoError(t, err)
@@ -569,6 +571,7 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 		assert.EqualValues(t, 1, result.Pruned)
 		assert.False(t, exists(another))
 		assert.True(t, exists(oldPending))
+		assert.True(t, exists(recent), "rows younger than 30 days stay")
 	})
 }
 

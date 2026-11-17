@@ -1,7 +1,7 @@
 -- Migration: Outbound webhooks
 -- #345: the admin endpoint registry and the delivery outbox/log. Both tables
 -- hold ids, event types, statuses and timestamps only (no personal data); the
--- endpoint secret is stored sealed. No foreign keys: an endpoint delete
+-- endpoint secret is stored sealed. No referential constraints: an endpoint delete
 -- removes its delivery rows in the same transaction. Each table is created
 -- only when missing, with the shape models.MigrateDatabase builds.
 

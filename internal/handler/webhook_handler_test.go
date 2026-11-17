@@ -115,7 +115,7 @@ func (webhookAuth) userFor(credential string) (*models.User, error) {
 	if !ok {
 		return nil, errors.New("invalid credential")
 	}
-	return &models.User{ID: 7, Role: models.UserRole(role), IsActive: true}, nil
+	return &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.UserRole(role), IsActive: true}, nil
 }
 
 func (a webhookAuth) ValidateToken(token string) (*models.User, error) { return a.userFor(token) }
