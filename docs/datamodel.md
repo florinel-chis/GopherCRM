@@ -285,7 +285,7 @@ in the same transaction and whatever the status (#245).
 | title | string | Yes | - | max 200, trimmed | Free text; `[redacted]` after an erasure that reaches the quote |
 | status | enum | Yes | `draft` | one of the status values below, max 20 | Lifecycle status |
 | currency | string | Yes | `deals.default_currency` (EUR) | `^[A-Z]{3}$`; immutable once the quote has lines | Currency of every line and total |
-| subtotal_cents | int64 | Yes | 0 | Σ quantity × unit_price_cents over the lines; never taken from a request | |
+| subtotal_cents | int64 | Yes | 0 | Σ of the rounded line gross values, round_half_up(quantity × unit_price_cents) per line (#343); never taken from a request | |
 | discount_cents | int64 | Yes | 0 | subtotal − total (both net) | |
 | total_cents | int64 | Yes | 0 | Σ line_total_cents | Net total: after the per-line discounts, before tax |
 | tax_cents | int64 | Yes | 0 (column `DEFAULT 0`) | Σ quote_lines.tax_cents; computed, read-only (#324) | 0 on quotes written before line tax existed |
@@ -331,15 +331,16 @@ overridden in the request and edited while the quote is a draft. Lines are hard-
 | product_id | uint | Yes | FK to products, indexed; a soft-deleted product still resolves | The product it was priced from |
 | position | int64 | Yes | 1-based, assigned max+1 on insert | Display order |
 | description | string | Yes | max 255 | Copied from `products.name` unless overridden; reset to `products.name` by an erasure that reaches the quote |
-| quantity | int64 | Yes | 1 to 1,000,000 | |
-| unit_price_cents | int64 | Yes | 0 to 10^12, and quantity × unit_price_cents at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
+| quantity_milli | bigint (`models.QuoteQuantity`) | Yes | thousandths of a unit, 1 to 10^9 (0.001 to 1,000,000); column `NOT NULL DEFAULT 0` | JSON key `quantity`, a decimal number without trailing zeros (`1.5`, `2`, `0.001`). Replaces the whole-unit `quantity` column (#343); the default exists only so SQLite can add the column to a populated table and is never written by the service |
+| unit_price_cents | int64 | Yes | 0 to 10^12, and round_half_up(quantity × unit_price_cents) at most 10^12 | Copied from `products.unit_price_cents` unless overridden |
 | discount_bp | int64 | Yes | 0 to 10000 | Per-line percentage in basis points (12.5 % = 1250) |
-| line_total_cents | int64 | Yes | - | `(gross × (10000 − discount_bp) + 5000) / 10000`: round half up on minor units |
+| line_total_cents | int64 | Yes | - | round_half_up(quantity × unit_price_cents × (10000 − discount_bp) / 10000), rounded once from the exact product (128-bit integer arithmetic, no floating point); for whole quantities the same as `(gross × (10000 − discount_bp) + 5000) / 10000` |
 | tax_rate_bp | int64 | Yes | 0 to 10000, column `DEFAULT 0`; writable only while the quote is a draft | Per-line tax rate in basis points (21 % = 2100); 0 when not sent (#324) |
 | tax_cents | int64 | Yes | column `DEFAULT 0`; computed, read-only | `(line_total_cents × tax_rate_bp + 5000) / 10000`: round half up on minor units (#324) |
 
-A quote holds at most 100 lines, and the gross of a line is checked against the bound before the
-discount arithmetic, so nothing the server multiplies can leave an int64. The 10^12 cap of a quote
+A quote holds at most 100 lines. The line amounts are computed by `models.ComputeQuoteLineAmounts`
+in 128-bit integer arithmetic, so thousandths × price × a discount factor never overflow, and a line
+whose rounded gross exceeds 10^12 is refused. The 10^12 cap of a quote
 is on its gross total (`gross_total_cents`), not on the net total; a write that would take it over
 is refused and rolled back whole.
 
@@ -355,6 +356,25 @@ tax_cents` where it differs); SQLite from `models.MigrateDatabase`, whose `backf
 step does the same backfill on every driver, soft-deleted quotes included, by primary key in chunks
 of 500 and only for the rows that differ, without touching `updated_at`. Existing lines read a rate
 and a tax of 0, existing quotes a tax of 0 and a gross total equal to their total.
+
+**Fractional quantities (#343).** `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`)
+replaces the whole-unit `quantity bigint NOT NULL`. MySQL/MariaDB get it from
+`migrations/20261118120000_store_quote_line_quantity_milli`: the column is added when missing,
+`quantity_milli = quantity × 1000` is copied where it is still 0 while `quantity` exists, and
+`quantity` is dropped when present, every step guarded by an `INFORMATION_SCHEMA` probe. The down
+half re-adds `quantity bigint NOT NULL` (no default), sets it to `GREATEST(1, (quantity_milli + 500)
+DIV 1000)` (half up to whole units, at least 1; the stored totals are not recomputed) and drops
+`quantity_milli`. `models.MigrateDatabase` performs the same conversion on every driver, which is
+the only path on SQLite: AutoMigrate adds `quantity_milli`, then `migrateLegacyQuoteLineQuantity`
+(only while `quantity` exists) finds the rows still at 0 with a plain `SELECT`, converts them by
+primary key in chunks of 500 without touching `updated_at`, and drops the legacy column with the
+native `ALTER TABLE quote_lines DROP COLUMN quantity`. GORM's `Migrator().DropColumn` is not used:
+on SQLite it rebuilds the table (losing `idx_quote_lines_quote_id` and `idx_quote_lines_product_id`)
+or panics when given a table name. A migrated database takes no write and no DDL on startup. Whole
+quantities keep their line and quote totals; nothing is recomputed. Stop every replica before
+upgrading: an older binary cannot write lines once `quantity` is gone, and an older binary started
+after the upgrade re-adds `quantity` empty, so roll back only after the down migration (MySQL/MariaDB)
+or by restoring the pre-upgrade backup (SQLite).
 
 ### Quote Status Change
 

@@ -647,11 +647,81 @@ without touching `updated_at`, so a backfilled database takes no write. Regressi
 `TestQuoteLineTaxRounding{SQLite,MySQL}`, `TestQuoteGrossCapRefusalWritesNothing{SQLite,MySQL}`,
 `TestQuoteTaxRateNonDraftRefused{SQLite,MySQL}`, `TestQuoteEmailShowsTax` (`internal/service`);
 `TestQuoteRepositoryUpdateTotalsWithTax{SQLite,MySQL}` (`internal/repository`);
-`TestQuoteTaxMigrationFiles` (now holding the newest-migration assertion, moved from
-`TestAutomationRunLeaseMigrationFiles`), `TestQuoteTaxMigration` (`cmd/migrate`); and, over HTTP,
+`TestQuoteTaxMigrationFiles` (it held the newest-migration assertion until #343 moved it to
+`TestQuoteQuantityMigrationFiles`), `TestQuoteTaxMigration` (`cmd/migrate`); and, over HTTP,
 `TestQuoteTaxAPISQLite` (`tests/quote_tax_test.go`). The MySQL roots skip without
 `TEST_MYSQL_DSN`; registering them in `scripts/ci/check-go.py` and the migration roots in the
 Database migrations workflow is an operator follow-up.
+
+**Quote quantities (#343).** A line quantity is an exact decimal from 0.001 to 1,000,000 with no
+non-zero digit beyond the third decimal place.
+
+- **The type.** `models.QuoteQuantity` (`internal/models/quote_quantity.go`) holds integer
+  thousandths (`Milli()`); it implements `json.Marshaler`/`Unmarshaler`, `driver.Valuer` and
+  `sql.Scanner`, and maps to `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`, JSON key
+  `quantity`). `ParseQuoteQuantity` and `UnmarshalJSON` read the JSON number literal exactly, never
+  through a float64: exponent forms and trailing zeros are judged by value (`1e-3`, `1.5000`,
+  `1000000.000` are accepted); zero, `-0`, a negative, a value above 1,000,000, a non-zero digit past
+  the third decimal, a literal over 64 bytes or an exponent magnitude above 30 is a
+  `*models.QuoteQuantityError` (checked before any digit is converted); a string, boolean, array or
+  object is another error. `MarshalJSON` and `String()` write the shortest decimal (`1.5`, `2`,
+  `0.001`), so a whole number round-trips byte-identical. `QuoteQuantityFromMilli` and
+  `QuoteQuantityFromUnits` are unchecked constructors (tests and the scanner); the constants are
+  `QuoteQuantityScale` (1000), `QuoteLineQuantityMilliMin` (1) and `QuoteLineQuantityMilliMax`
+  (10^9); `QuoteLineQuantityMax` (10^6 units) is kept.
+- **The handler.** `QuoteLineRequest.Quantity` and `QuoteLineUpdateRequest.Quantity` are
+  `*models.QuoteQuantity` (`binding:"required"` on add only). When `ShouldBindJSON` fails with a
+  `*models.QuoteQuantityError`, `respondQuoteLineBindError` answers 400 `VALIDATION_ERROR`, message
+  `Validation failed`, `error.details.quantity` = `models.QuoteQuantityBoundsMessage`, before any
+  read; every other bind error goes to the error middleware as before (a string quantity is 400
+  `BAD_REQUEST`, a missing or null one on POST 400 `VALIDATION_ERROR` keyed `Quantity`). An absent
+  or null quantity on PUT keeps the stored value.
+- **The arithmetic.** `models.ComputeQuoteLineAmounts(quantity, unitPriceCents, discountBP)`
+  returns `gross = round_half_up(milli × price / 1000)` and `lineTotal = round_half_up(milli × price ×
+  (10000 − bp) / 10^7)` in 128-bit integer arithmetic (`math/bits`), exact up to milli 10^9 and price
+  10^12; `ok` is false when the rounded gross exceeds `QuoteAmountCentsMax`. The line total is
+  rounded once from the exact product, so `discount_cents` can differ by a cent from rounding the
+  gross first. `ComputeQuoteTotals` and `SumQuoteTotals` take the subtotal as the sum of the rounded
+  line gross values. For whole quantities every result equals the former integer formula, which
+  `ComputeQuoteLineTotal(int64 units, …)` keeps. `validateLineBounds` refuses a quantity outside
+  1..10^9 thousandths with `apperrors.ErrValidation` before any transaction starts; `computeLine`
+  refuses a rounded gross above 10^12 inside it.
+- **The email.** `RenderQuoteEmail` prints `quantity 1.5 x …`; a whole quantity renders exactly as
+  before (`quantity 3 x 9.99 EUR`).
+- **The schema.** MySQL/MariaDB: `migrations/20261118120000_store_quote_line_quantity_milli` adds
+  `quantity_milli` when missing, copies `quantity × 1000` where it is still 0 while `quantity`
+  exists, and drops `quantity`, each step behind an `INFORMATION_SCHEMA` probe; its down half
+  re-adds `quantity bigint NOT NULL` (no default), sets it to `GREATEST(1, (quantity_milli + 500)
+  DIV 1000)` and drops `quantity_milli`. Every driver: after AutoMigrate (which adds
+  `quantity_milli` and never drops a column), `MigrateDatabase` runs
+  `migrateLegacyQuoteLineQuantity`, which does nothing when `quantity` is absent and otherwise
+  converts the rows still at 0 by primary key in chunks of 500 (plain `SELECT` discovery,
+  `updated_at` untouched) and then issues the native `ALTER TABLE quote_lines DROP COLUMN quantity`
+  (SQLite 3.35+, MySQL, MariaDB). Never use `Migrator().DropColumn` for it: with a table name the
+  glebarez/sqlite migrator dereferences a nil schema and panics, and with a model it rebuilds the
+  table through `recreateTable` and loses `idx_quote_lines_quote_id` and
+  `idx_quote_lines_product_id`. The legacy column has no index, constraint or foreign key, so the
+  native drop needs no rebuild. The parity reference of the migration is the schema
+  `MigrateDatabase` builds on the previous head, not plain AutoMigrate; the earlier quote migration
+  roots filter both quantity columns (`withoutQuoteQuantityColumns`).
+- **Upgrade and rollback.** Stop every replica before starting the new version: an old binary
+  cannot write quote lines once `quantity` is dropped. An older binary's AutoMigrate re-adds
+  `quantity bigint NOT NULL` without the values, so every line would read 0: before starting one,
+  run the down migration (MySQL/MariaDB) or restore the pre-upgrade backup (SQLite, which has no
+  down path). The down rounds fractional quantities and leaves the stored totals as they are.
+
+Regression roots: `TestQuoteQuantityParse`, `TestQuoteQuantityJSON`, `TestQuoteLineAmounts`,
+`TestQuoteQuantitySQLiteUpgrade` (`internal/models`); `TestQuoteLineQuantityBinding` and the edited
+`TestQuoteLineBindingTagsMatchTheModel` (`internal/handler`);
+`TestQuoteFractionalQuantityBoundsRejectedWithoutWrites`,
+`TestQuoteFractionalQuantityTotals{SQLite,MySQL}`, `TestQuoteEmailFractionalQuantity`
+(`internal/service`); `TestQuoteLineQuantityStorage{SQLite,MySQL}` (`internal/repository`);
+`TestQuoteQuantityMigrationFiles` (now holding the newest-migration assertion) and
+`TestQuoteQuantityMigration` (`cmd/migrate`); and, over HTTP, `TestQuoteFractionalQuantityAPISQLite`
+(`tests/quote_quantity_test.go`). The existing quote tests changed only how they build quantities
+(`models.QuoteQuantityFromUnits`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the
+new roots in `scripts/ci/check-go.py` and the migration roots in the Database migrations workflow
+is an operator follow-up.
 
 **Quote email: no transaction during SMTP, a conditional stamp after it** — `QuoteService.Email`
 reads the latest `quote_status_changes` id *first*, then the quote and the customer's *current*

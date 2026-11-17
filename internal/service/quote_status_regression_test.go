@@ -117,7 +117,7 @@ func runQuoteConcurrencyScenarios(t *testing.T, db *gorm.DB) {
 
 			addErr, sendErr := raceTwo(t,
 				func() error {
-					_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: other.ID, Quantity: 3, DiscountBP: 1250})
+					_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: other.ID, Quantity: models.QuoteQuantityFromUnits(3), DiscountBP: 1250})
 					return err
 				},
 				func() error {

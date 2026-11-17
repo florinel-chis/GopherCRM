@@ -3563,8 +3563,9 @@ definitions:
         example: draft
       subtotal_cents:
         description: |-
-          Sum of quantity x unit_price_cents over the lines, in minor units.
-          Computed by the server on every line change; read-only.
+          Sum of the lines' gross amounts (quantity x unit_price_cents, each
+          rounded half up to a whole minor unit), in minor units. Computed by the
+          server on every line change; read-only.
         example: 240000
         readOnly: true
         type: integer
@@ -3627,7 +3628,7 @@ definitions:
       line_total_cents:
         description: |-
           quantity x unit_price_cents x (10000 - discount_bp) / 10000, rounded half
-          up to a whole minor unit. Computed by the server; read-only.
+          up once to a whole minor unit. Computed by the server; read-only.
         example: 210000
         readOnly: true
         type: integer
@@ -3649,11 +3650,14 @@ definitions:
         example: 9
         type: integer
       quantity:
-        description: Number of units, 1 to 1000000.
-        example: 2
+        description: |-
+          Number of units, a decimal from 0.001 to 1000000 with at most 3
+          decimal places, written as a JSON number without trailing zeros (1.5,
+          2, 0.001).
+        example: 1.5
         maximum: 1000000
-        minimum: 1
-        type: integer
+        minimum: 0.001
+        type: number
       quote_id:
         description: The quote the line belongs to.
         example: 42
@@ -6486,11 +6490,16 @@ definitions:
         minimum: 1
         type: integer
       quantity:
-        description: Number of units, 1 to 1000000. Required.
-        example: 2
+        description: |-
+          Number of units: a JSON number from 0.001 to 1000000 with no non-zero
+          digit beyond the third decimal place (1.5, 2, 0.25; exponent forms such
+          as 1e-3 are judged by value). Required. A value out of these bounds is
+          400 VALIDATION_ERROR with error.details.quantity; a string is 400
+          BAD_REQUEST.
+        example: 1.5
         maximum: 1000000
-        minimum: 1
-        type: integer
+        minimum: 0.001
+        type: number
       tax_rate_bp:
         description: |-
           Per-line tax rate in basis points, 0 to 10000 (2100 = 21 percent); 0
@@ -6534,11 +6543,13 @@ definitions:
         minimum: 1
         type: integer
       quantity:
-        description: New number of units, 1 to 1000000.
-        example: 3
+        description: |-
+          New number of units: a JSON number from 0.001 to 1000000 with at most 3
+          decimal places, as on POST. Absent or null keeps the stored quantity.
+        example: 2
         maximum: 1000000
-        minimum: 1
-        type: integer
+        minimum: 0.001
+        type: number
       tax_rate_bp:
         description: |-
           New tax rate in basis points, 0 to 10000; absent keeps the stored rate
@@ -19854,7 +19865,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is 1 to 1000000, discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
+        Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
         One transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.
         The response is the whole quote with its lines and recomputed totals.
       parameters:
@@ -19884,13 +19895,17 @@ paths:
         "400":
           description: 'BAD_REQUEST: id is not an unsigned integer (''Invalid quote
             ID''). VALIDATION_ERROR: a binding rule failed (message ''Validation failed'',
-            error.details maps the Go field name to a message), or a rule checked
-            by the handler or the service failed (the message names it, no details).
-            BAD_REQUEST: the body is not valid JSON for the schema (''Invalid request
-            format''): a bound (tax_rate_bp included), the 10^12 cap on the line gross
-            or on the quote gross total, the 100-line limit, a description over 255
-            characters, or a product in another currency. INVALID_REFERENCE: the product
-            does not exist, is deleted or is inactive'
+            error.details maps the Go field name to a message; a missing or null quantity
+            is keyed Quantity), quantity is zero, negative, above 1000000 or has a
+            non-zero digit beyond the third decimal place (message ''Validation failed'',
+            error.details.quantity ''quantity must be a number from 0.001 to 1000000
+            with at most 3 decimal places''), or a rule checked by the handler or
+            the service failed (the message names it, no details). BAD_REQUEST: the
+            body is not valid JSON for the schema (''Invalid request format''; quantity
+            sent as a string included): a bound (tax_rate_bp included), the 10^12
+            cap on the line gross or on the quote gross total, the 100-line limit,
+            a description over 255 characters, or a product in another currency. INVALID_REFERENCE:
+            the product does not exist, is deleted or is inactive'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -20081,7 +20096,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
+        Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
         The response is the whole quote with its lines and recomputed totals.
       parameters:
       - description: Quote ID
@@ -20116,11 +20131,14 @@ paths:
           description: 'BAD_REQUEST: id or lineId is not an unsigned integer (''Invalid
             quote ID'', ''Invalid line ID''). VALIDATION_ERROR: a binding rule failed
             (message ''Validation failed'', error.details maps the Go field name to
-            a message), or a rule checked by the handler or the service failed (the
+            a message), quantity is zero, negative, above 1000000 or has a non-zero
+            digit beyond the third decimal place (message ''Validation failed'', error.details.quantity
+            ''quantity must be a number from 0.001 to 1000000 with at most 3 decimal
+            places''), or a rule checked by the handler or the service failed (the
             message names it, no details). BAD_REQUEST: the body is not valid JSON
-            for the schema (''Invalid request format''): a bound (tax_rate_bp included),
-            the 10^12 cap on the line gross or on the quote gross total, or a description
-            over 255 characters'
+            for the schema (''Invalid request format''; quantity sent as a string
+            included): a bound (tax_rate_bp included), the 10^12 cap on the line gross
+            or on the quote gross total, or a description over 255 characters'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

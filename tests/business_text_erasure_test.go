@@ -150,7 +150,7 @@ func TestBusinessTextErasureAPISQLite(t *testing.T) {
 		quote := &models.Quote{Title: "Workshop offer for " + last, Notes: "Dear " + first, Currency: "EUR", DealID: &deal.ID, OwnerID: admin.ID}
 		require.NoError(t, quoteService.Create(quote, admin.ID, models.RoleAdmin))
 		description := "Workshop for " + first + " " + last
-		_, err := quoteService.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: 2, DiscountBP: 1000, Description: &description})
+		_, err := quoteService.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: models.QuoteQuantityFromUnits(2), DiscountBP: 1000, Description: &description})
 		require.NoError(t, err)
 		_, err = quoteService.ChangeStatus(quote.ID, models.QuoteStatusSent, admin.ID)
 		require.NoError(t, err)

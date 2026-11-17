@@ -121,7 +121,7 @@ func (f *businessTextFixture) quote(t *testing.T, label string, ownerID uint, cu
 	require.NoError(t, f.db.Create(q).Error)
 	for i, p := range products {
 		require.NoError(t, f.db.Create(&models.QuoteLine{QuoteID: q.ID, ProductID: p.ID, Position: int64(i + 1),
-			Description: fmt.Sprintf("Line %d of %s naming Bt %s", i+1, label, f.tag), Quantity: 2, UnitPriceCents: 1000,
+			Description: fmt.Sprintf("Line %d of %s naming Bt %s", i+1, label, f.tag), Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: 1000,
 			DiscountBP: 500, LineTotalCents: 1900}).Error)
 	}
 	require.NoError(t, f.db.Create(&models.QuoteStatusChange{QuoteID: q.ID, ToStatus: status, ChangedByID: ownerID, ChangedAt: now}).Error)

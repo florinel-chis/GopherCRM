@@ -50,7 +50,7 @@ func TestQuoteTaxRateBoundsRejectedWithoutWrites(t *testing.T) {
 		before := env.snapshot(quote.ID)
 		for _, rate := range []int64{-1, models.QuoteTaxRateBPMax + 1, -10000, 1_000_000} {
 			counter.Store(0)
-			_, err := svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, TaxRateBP: rate})
+			_, err := svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), TaxRateBP: rate})
 			require.Error(t, err)
 			assert.Truef(t, errors.Is(err, apperrors.ErrValidation), "%s add %d: %v", status, rate, err)
 			assert.Falsef(t, errors.Is(err, apperrors.ErrQuoteLocked), "%s add %d: a bound failure is not a lock", status, rate)
@@ -68,7 +68,7 @@ func TestQuoteTaxRateBoundsRejectedWithoutWrites(t *testing.T) {
 	// transaction: the counter does see one.
 	quote := env.newQuote(models.QuoteStatusDraft, 0)
 	counter.Store(0)
-	_, err := svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, TaxRateBP: models.QuoteTaxRateBPMax})
+	_, err := svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), TaxRateBP: models.QuoteTaxRateBPMax})
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, counter.Load())
 	line := env.lines(quote.ID)[0]
@@ -95,7 +95,7 @@ func runQuoteLineTaxRounding(t *testing.T, db *gorm.DB) {
 	quote := env.newQuote(models.QuoteStatusDraft, 0)
 
 	// quantity 3, unit 9.99, 12.5 percent off, 21 percent tax.
-	created, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 3, UnitPriceCents: int64Ptr(999), DiscountBP: 1250, TaxRateBP: 2100})
+	created, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(3), UnitPriceCents: int64Ptr(999), DiscountBP: 1250, TaxRateBP: 2100})
 	require.NoError(t, err)
 	assert.Equal(t, int64(551), created.TaxCents, "the response carries the recomputed tax")
 	assert.Equal(t, int64(3173), created.GrossTotalCents)
@@ -114,7 +114,7 @@ func runQuoteLineTaxRounding(t *testing.T, db *gorm.DB) {
 
 	// Two lines of 0.01 at 50 percent: each rounds up on its own.
 	for i := 0; i < 2; i++ {
-		_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(1), TaxRateBP: 5000})
+		_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(1), TaxRateBP: 5000})
 		require.NoError(t, err)
 	}
 	lines = env.lines(quote.ID)
@@ -151,7 +151,7 @@ func runQuoteLineTaxRounding(t *testing.T, db *gorm.DB) {
 	// line total.
 	_, err = env.svc.UpdateLine(quote.ID, first.ID, models.QuoteLinePatch{TaxRateBP: int64Ptr(2100)})
 	require.NoError(t, err)
-	_, err = env.svc.UpdateLine(quote.ID, first.ID, models.QuoteLinePatch{Quantity: int64Ptr(1)})
+	_, err = env.svc.UpdateLine(quote.ID, first.ID, models.QuoteLinePatch{Quantity: quantityPtr(1)})
 	require.NoError(t, err)
 	patched = env.lines(quote.ID)[0]
 	assert.Equal(t, int64(2100), patched.TaxRateBP, "an absent rate keeps the stored one")
@@ -200,7 +200,7 @@ func runQuoteGrossCapRefusal(t *testing.T, db *gorm.DB) {
 
 	// Exactly at the cap: 8x10^11 net plus 2x10^11 tax.
 	capped := env.newQuote(models.QuoteStatusDraft, 0)
-	_, err := env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(unit), TaxRateBP: 2500})
+	_, err := env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(unit), TaxRateBP: 2500})
 	require.NoError(t, err, "a gross total of exactly 10^12 commits")
 	committed := env.assertTotalsMatchLines(capped.ID)
 	assert.Equal(t, unit, committed.TotalCents)
@@ -222,7 +222,7 @@ func runQuoteGrossCapRefusal(t *testing.T, db *gorm.DB) {
 	assert.Equal(t, atCap, env.snapshot(capped.ID), "the rate patch wrote nothing")
 
 	// Another line, however small, is refused once the gross is at the cap.
-	_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(1)})
+	_, err = env.svc.AddLine(capped.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(1)})
 	refused(t, err)
 	assert.Equal(t, atCap, env.snapshot(capped.ID), "no line was inserted")
 	assert.Len(t, env.lines(capped.ID), 1)
@@ -230,7 +230,7 @@ func runQuoteGrossCapRefusal(t *testing.T, db *gorm.DB) {
 	// The same add with 8x10^11 + 1 on a fresh quote: nothing is inserted.
 	fresh := env.newQuote(models.QuoteStatusDraft, 0)
 	freshBefore := env.snapshot(fresh.ID)
-	_, err = env.svc.AddLine(fresh.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(unit + 1), TaxRateBP: 2500})
+	_, err = env.svc.AddLine(fresh.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(unit + 1), TaxRateBP: 2500})
 	refused(t, err)
 	assert.Equal(t, freshBefore, env.snapshot(fresh.ID))
 	assert.Empty(t, env.lines(fresh.ID))
@@ -241,7 +241,7 @@ func runQuoteGrossCapRefusal(t *testing.T, db *gorm.DB) {
 
 	// The net total alone at the cap is fine while untaxed.
 	untaxed := env.newQuote(models.QuoteStatusDraft, 0)
-	_, err = env.svc.AddLine(untaxed.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax)})
+	_, err = env.svc.AddLine(untaxed.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(models.QuoteAmountCentsMax)})
 	require.NoError(t, err)
 	assert.Equal(t, models.QuoteAmountCentsMax, env.assertTotalsMatchLines(untaxed.ID).GrossTotalCents)
 	untaxedLine := env.lines(untaxed.ID)[0]
@@ -270,7 +270,7 @@ func runQuoteTaxRateNonDraftRefused(t *testing.T, db *gorm.DB) {
 			lineID := quote.Lines[0].ID
 			before := env.snapshot(quote.ID)
 
-			_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, TaxRateBP: 2100})
+			_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), TaxRateBP: 2100})
 			require.Error(t, err)
 			assert.Truef(t, errors.Is(err, apperrors.ErrQuoteLocked), "add on %s: %v", status, err)
 			assert.Equal(t, before, env.snapshot(quote.ID), "the add on a %s quote wrote nothing", status)
@@ -294,9 +294,9 @@ func TestQuoteEmailShowsTax(t *testing.T) {
 	env.mailer.reset(nil, nil)
 
 	quote := env.newQuote(models.QuoteStatusDraft, 0)
-	_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 3, UnitPriceCents: int64Ptr(999), DiscountBP: 1250, TaxRateBP: 2100})
+	_, err := env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(3), UnitPriceCents: int64Ptr(999), DiscountBP: 1250, TaxRateBP: 2100})
 	require.NoError(t, err)
-	_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: 1, UnitPriceCents: int64Ptr(999)})
+	_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: int64Ptr(999)})
 	require.NoError(t, err)
 	_, err = env.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, env.owner.ID)
 	require.NoError(t, err)
@@ -339,7 +339,7 @@ func TestQuoteEmailShowsTax(t *testing.T) {
 	rendered := RenderQuoteEmail(&models.Quote{
 		BaseModel: models.BaseModel{ID: 7}, Title: "T", Currency: "RON",
 		SubtotalCents: 1000, DiscountCents: 0, TotalCents: 1000, TaxCents: 190, GrossTotalCents: 1190,
-		Lines: []models.QuoteLine{{Description: "D", Quantity: 1, UnitPriceCents: 1000, LineTotalCents: 1000, TaxRateBP: 1900, TaxCents: 190}},
+		Lines: []models.QuoteLine{{Description: "D", Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: 1000, LineTotalCents: 1000, TaxRateBP: 1900, TaxCents: 190}},
 	})
 	assert.Contains(t, rendered, "1. D | quantity 1 x 10.00 RON | discount 0.00% | line total 10.00 RON | tax 19.00% 1.90 RON\n")
 	assert.Contains(t, rendered, "Net total: 10.00 RON\nTax: 1.90 RON\nGross total: 11.90 RON\n")

@@ -268,7 +268,7 @@ func seedIdentityGraph(t *testing.T, db *gorm.DB) *identityGraph {
 		TotalCents: 42000, Notes: "Send to " + liveEmail, DealID: &g.deal.ID, CustomerID: &g.customerLive.ID, OwnerID: g.sales.ID}
 	require.NoError(t, db.Create(g.quote).Error)
 	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: g.quote.ID, ProductID: g.product.ID, Position: 1,
-		Description: "Lease for " + first + " " + last, Quantity: 2, UnitPriceCents: 21000, LineTotalCents: 42000}).Error)
+		Description: "Lease for " + first + " " + last, Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: 21000, LineTotalCents: 42000}).Error)
 
 	// The rows soft-deleted before deletion became an erasure: hidden from
 	// every ordinary query, still holding the person.
@@ -529,7 +529,7 @@ func assertIdentityBusinessTextRedacted(t *testing.T, db *gorm.DB, g *identityGr
 	assert.Equal(t, int64(42000), quote.TotalCents)
 	require.Len(t, quote.Lines, 1)
 	assert.Equal(t, g.product.Name, quote.Lines[0].Description)
-	assert.Equal(t, int64(2), quote.Lines[0].Quantity)
+	assert.Equal(t, models.QuoteQuantityFromUnits(2), quote.Lines[0].Quantity)
 	assert.Equal(t, int64(42000), quote.Lines[0].LineTotalCents)
 }
 

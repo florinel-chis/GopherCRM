@@ -740,7 +740,9 @@ authentication and live on the moderate tier:
 - `DELETE /api/v1/quotes/:id` - Soft-delete *(sales: its own drafts only, 409 on a non-draft; admin:
   any quote; lines and history stay)*
 - `POST /api/v1/quotes/:id/lines` - Add a line `{product_id, quantity, discount_bp?, unit_price_cents?, description?, tax_rate_bp?}`
-  *(copies the product's name and price unless overridden; `quantity` 1–1,000,000, `discount_bp`
+  *(copies the product's name and price unless overridden; `quantity` a JSON number from 0.001 to
+  1,000,000 with up to 3 decimal places (out of range: 400 `VALIDATION_ERROR` with
+  `error.details.quantity`), `discount_bp`
   0–10000, `tax_rate_bp` 0–10000 (2100 = 21 %, 0 when absent), the line's gross and the quote's
   gross total at most 10^12, at most 100 lines; another currency is 400; an inactive or deleted
   product is 400 `INVALID_REFERENCE`; returns the quote with its recomputed totals; 409 when not a

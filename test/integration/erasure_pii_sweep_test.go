@@ -343,7 +343,7 @@ func TestThePersonalDataSweepCoversQuoteTables(t *testing.T) {
 	require.NoError(t, db.Create(product).Error)
 	quote := &models.Quote{Title: "Quote for " + canary.LastName, Status: models.QuoteStatusDraft, Currency: "EUR", Notes: canary.Email, OwnerID: owner.ID}
 	require.NoError(t, db.Create(quote).Error)
-	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: canary.FirstName, Quantity: 1, UnitPriceCents: 100, LineTotalCents: 100}).Error)
+	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: canary.FirstName, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: 100, LineTotalCents: 100}).Error)
 	from := models.QuoteStatusDraft
 	require.NoError(t, db.Create(&models.QuoteStatusChange{QuoteID: quote.ID, FromStatus: &from, ToStatus: models.QuoteStatus(canary.LastName), ChangedByID: owner.ID, ChangedAt: time.Now()}).Error)
 	require.NoError(t, db.Delete(product).Error, "a soft-deleted product is still read")
@@ -381,7 +381,7 @@ func TestCustomerErasureWithQuotesLeavesNoPersonalData(t *testing.T) {
 	quote := &models.Quote{Title: "Engine upgrade quote", Currency: "EUR", DealID: &deal.ID, OwnerID: owner.ID}
 	require.NoError(t, quoteService.Create(quote, owner.ID, models.RoleSales))
 	require.Equal(t, &customer.ID, quote.CustomerID, "the customer comes from the deal")
-	_, err = quoteService.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: 2, DiscountBP: 1000})
+	_, err = quoteService.AddLine(quote.ID, models.QuoteLineInput{ProductID: product.ID, Quantity: models.QuoteQuantityFromUnits(2), DiscountBP: 1000})
 	require.NoError(t, err)
 	_, err = quoteService.ChangeStatus(quote.ID, models.QuoteStatusSent, owner.ID)
 	require.NoError(t, err)
