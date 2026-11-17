@@ -211,7 +211,7 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
 - `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:302-307`.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:292-297`.
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 

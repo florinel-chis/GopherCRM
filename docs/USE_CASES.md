@@ -151,7 +151,7 @@ and turns some into deals and quotes.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
    opt-in. Embed it and submit once from a real browser.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
-   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:363`). Several API
+   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:350`). Several API
    instances sharing one MySQL/MariaDB database may all run it: run claims carry a heartbeat
    lease (#237, `docs/DEVELOPMENT.md`, "Run leases"). Keep replica clocks in sync and stop every
    instance before an upgrade; a SQLite deployment stays one process.
@@ -303,10 +303,10 @@ engines describe its product against competitors.
   `API_KEY_SECRET` (or `JWT_SECRET`, which it falls back to) orphans them
   (`docs/ROADMAP.md`, "Sensitive settings — follow-ups").
 - Review the scheduler: `AEO_SCHEDULE_ENABLED` defaults to `true` and `AEO_SCHEDULE_HOUR` to 6
-  (`internal/config/config.go:350-351`). Scheduled runs spend provider credit.
+  (`internal/config/config.go:337-338`). Scheduled runs spend provider credit.
 - `AEO_QUERY_TIMEOUT_SECONDS` (default 60) needs raising for a slow self-hosted engine. A model
   server on your LAN needs an `AEO_EGRESS_LOCAL_ORIGINS` entry (`docs/AEO_SECURITY.md`).
-- Review the default model IDs (`internal/config/config.go:330-348`). Pinned IDs get retired, so
+- Review the default model IDs (`internal/config/config.go:317-335`). Pinned IDs get retired, so
   prefer rolling aliases where the provider offers them.
 - Add reCAPTCHA keys if the forms attract spam (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`).
 

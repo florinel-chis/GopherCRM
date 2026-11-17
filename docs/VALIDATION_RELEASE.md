@@ -72,7 +72,7 @@ application path retains the full fallback unless it qualifies for the separate
 
 For this profile, local and CI run `python3 scripts/ci/check-auth.py`: API compilation,
 vet for the selected Go packages, then uncached race tests selected from auth/session,
-CSRF, service logging-privacy, middleware, token-repository, password, HTTP integration and
+service logging-privacy, middleware, token-repository, password, HTTP integration and
 `test/integration/erasure_test.go` files. The logging-privacy and erasure tests cover login
 log redaction and API-key rejection for erased or deactivated owners; both exercise
 `auth_service.go` directly. Test roots are discovered from those files, so newly added auth regressions are

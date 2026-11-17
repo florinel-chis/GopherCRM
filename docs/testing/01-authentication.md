@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:122-145`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:121-144`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:263-267`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go:262-266`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:232-261`), so a correct password
+  password result is examined (`internal/service/auth_service.go:231-260`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
