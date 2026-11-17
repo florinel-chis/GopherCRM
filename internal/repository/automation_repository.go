@@ -250,17 +250,47 @@ func (r *automationRepository) ClaimEvent(id uint, now time.Time) (int64, error)
 
 // CreateRunIgnoringDuplicate inserts the run with GORM's
 // clause.OnConflict{DoNothing: true}, which renders ON CONFLICT DO NOTHING on
-// SQLite and ON DUPLICATE KEY UPDATE id=id on MySQL: a duplicate dedupe_key is
-// neither an error nor a row. It reports whether a row was inserted.
+// SQLite and ON DUPLICATE KEY UPDATE id=id on MySQL and MariaDB: a duplicate
+// dedupe_key is neither an error nor a row. It reports whether a row was
+// inserted.
+//
+// GORM renders the statement from the model, but it is executed here without
+// a RETURNING clause, through Exec. MariaDB 10.5 and later would otherwise
+// get RETURNING appended by the driver and answer a duplicate with the
+// existing row, which reads as an insert. The result is the driver's
+// affected-row count: 1 for an insert, 0 for a duplicate on MySQL, MariaDB and
+// SQLite alike. That relies on the connection not setting
+// clientFoundRows=true, under which the no-op update of a duplicate would
+// count as 1. The run's id is taken from the insert id only after an insert;
+// on a duplicate it is left 0, because the drivers do not agree on what the
+// last insert id is there.
 func (r *automationRepository) CreateRunIgnoringDuplicate(run *models.AutomationRun) (bool, error) {
-	result := r.db.Clauses(clause.OnConflict{DoNothing: true}).Omit("Rule", "Steps").Create(run)
-	if result.Error != nil {
-		return false, result.Error
+	tx := r.db.Session(&gorm.Session{DryRun: true}).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Omit("Rule", "Steps")
+	tx.Statement.BuildClauses = []string{"INSERT", "VALUES", "ON CONFLICT"}
+	stmt := tx.Create(run).Statement
+	if stmt.Error != nil {
+		return false, stmt.Error
 	}
-	if result.RowsAffected == 0 {
+
+	res, err := r.db.Statement.ConnPool.ExecContext(r.db.Statement.Context, stmt.SQL.String(), stmt.Vars...)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected != 1 {
 		run.ID = 0
 		return false, nil
 	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return false, err
+	}
+	run.ID = uint(id)
 	return true, nil
 }
 
