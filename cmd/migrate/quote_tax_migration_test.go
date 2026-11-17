@@ -149,7 +149,8 @@ func seedQuoteTaxRows(t *testing.T, tdb *migrationTestDB, tag string) {
 	require.NoError(t, err)
 	defer pool.Close()
 	owner := models.User{Email: "quote-tax-" + tag + "@example.com", Password: "x", FirstName: "Q", LastName: "T", Role: models.RoleSales, IsActive: true}
-	require.NoError(t, appDB.Create(&owner).Error)
+	// users.role_id (#344) belongs to a later migration.
+	require.NoError(t, appDB.Omit("role_id").Create(&owner).Error)
 	_, err = tdb.sql.Exec("INSERT INTO products (name, unit_price_cents, currency, is_active) VALUES ('Widget', 999, 'EUR', 1)")
 	require.NoError(t, err)
 	var productID uint

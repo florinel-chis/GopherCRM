@@ -114,21 +114,13 @@ func TestQuoteQuantityMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, tag, "column:quantity_milli;type:bigint;not null;default:0")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestQuoteTaxMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, quoteQuantityName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestRoleMigrationFiles when 20261119120000_add_roles_and_permissions
+	// (#344) followed this pair.
+	version, err := strconv.Atoi(strings.SplitN(quoteQuantityName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, quoteQuantityVersion, version)
-	assert.Equal(t, quoteQuantityVersion, latestMigrationVersion)
+	assert.Less(t, quoteQuantityVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, quoteQuantityVersion, quoteQuantityPreviousVersion)
 }
 
@@ -149,7 +141,8 @@ func seedQuoteQuantityRows(t *testing.T, tdb *migrationTestDB, tag string) quote
 	require.NoError(t, err)
 	defer pool.Close()
 	owner := models.User{Email: "quote-quantity-" + tag + "@example.com", Password: "x", FirstName: "Q", LastName: "Q", Role: models.RoleSales, IsActive: true}
-	require.NoError(t, appDB.Create(&owner).Error)
+	// users.role_id (#344) belongs to a later migration.
+	require.NoError(t, appDB.Omit("role_id").Create(&owner).Error)
 	_, err = tdb.sql.Exec("INSERT INTO products (name, unit_price_cents, currency, is_active) VALUES ('Widget', 999, 'EUR', 1)")
 	require.NoError(t, err)
 	var productID int64

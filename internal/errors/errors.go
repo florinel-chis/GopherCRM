@@ -167,6 +167,16 @@ var (
 	// product or to another one (#239). It is answered with 409 CONFLICT; the
 	// message never carries the triple.
 	ErrProductExternalIDTaken = errors.New("external id is already mapped to a product")
+
+	// ErrRoleNameTaken refuses a role whose name, trimmed and lower-cased
+	// (models.RoleNameKey), equals the name of another role, system roles
+	// included (#259 S2, #344). The repository maps a duplicate key on
+	// idx_roles_name_key to it; the message never carries the name.
+	ErrRoleNameTaken = errors.New("a role with this name already exists")
+	// ErrRoleInUse refuses deleting a role that a user, live or erased, still
+	// references through users.role_id (fk_users_custom_role, ON DELETE
+	// RESTRICT). The role and its permissions are kept.
+	ErrRoleInUse = errors.New("the role is still assigned to a user")
 )
 
 // Error codes

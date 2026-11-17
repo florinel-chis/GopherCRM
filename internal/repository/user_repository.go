@@ -7,6 +7,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type userRepository struct {
@@ -32,11 +33,24 @@ func (r *userRepository) Create(user *models.User) error {
 	return nil
 }
 
+// GetByID reads one live user. A user with role_id NULL costs exactly one
+// SELECT, against users; a custom-role user also gets CustomRole with its
+// permissions (ordered by permission_key) filled (#344).
 func (r *userRepository) GetByID(id uint) (*models.User, error) {
 	var user models.User
 	err := r.db.First(&user, id).Error
 	if err != nil {
 		return nil, err
+	}
+	if user.RoleID != nil {
+		var role models.Role
+		err := r.db.Preload("Permissions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("permission_key ASC")
+		}).First(&role, *user.RoleID).Error
+		if err != nil {
+			return nil, fmt.Errorf("load custom role of user %d: %w", user.ID, err)
+		}
+		user.CustomRole = &role
 	}
 	return &user, nil
 }
@@ -78,6 +92,8 @@ var userUpdatableColumns = map[string]struct{}{
 	// token_version is the access-token generation (#236); logout, the
 	// password change and the reset write it under the users-row lock.
 	"token_version": {},
+	// role_id names a custom role (#344); nil clears it.
+	"role_id": {},
 }
 
 // UpdateFields writes exactly the named columns of one live user and nothing
@@ -254,4 +270,47 @@ func (r *userRepository) CountSearch(query string) (int64, error) {
 
 func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
 	return &userRepository{db: tx}
+}
+
+var _ UserRoleMaintenance = (*userRepository)(nil)
+
+// LockActiveAdmins implements UserRoleMaintenance. Discovery is a plain
+// SELECT (a consistent non-locking read on MySQL/MariaDB); the lock is then
+// taken by primary key only (WHERE id IN (...) ORDER BY id, FOR UPDATE on
+// MySQL/MariaDB, a plain read on SQLite), Unscoped so the locking statement
+// carries no other predicate, and the predicate is re-checked on the locked
+// rows. Locking through a role predicate would lock idx_users_role entries
+// before the primary key, the reverse of every other users-row lock.
+func (r *userRepository) LockActiveAdmins() ([]models.User, error) {
+	var ids []uint
+	if err := r.db.Raw("SELECT id FROM users WHERE role = ? AND is_active = ? AND deleted_at IS NULL ORDER BY id",
+		string(models.RoleAdmin), true).Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("discover active admins: %w", err)
+	}
+	admins := []models.User{}
+	if len(ids) == 0 {
+		return admins, nil
+	}
+	var locked []models.User
+	if err := r.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id").Find(&locked).Error; err != nil {
+		return nil, fmt.Errorf("lock active admins: %w", err)
+	}
+	for _, user := range locked {
+		if user.Role == models.RoleAdmin && user.IsActive && !user.DeletedAt.Valid {
+			admins = append(admins, user)
+		}
+	}
+	return admins, nil
+}
+
+// ClearRoleIDOfErased implements UserRoleMaintenance: one UPDATE that sets
+// role_id NULL on the soft-deleted users referencing roleID, so the role can
+// be deleted afterwards. updated_at is not touched.
+func (r *userRepository) ClearRoleIDOfErased(roleID uint) (int64, error) {
+	result := r.db.Exec("UPDATE users SET role_id = NULL WHERE role_id = ? AND deleted_at IS NOT NULL", roleID)
+	if result.Error != nil {
+		return 0, fmt.Errorf("clear role of erased users: %w", result.Error)
+	}
+	return result.RowsAffected, nil
 }
