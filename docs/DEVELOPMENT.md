@@ -1521,13 +1521,16 @@ What happens on `DELETE`:
   `leads.customer_id` index: a conversion always inserts a new customer, so no lead can be
   converted into a customer being erased. Every erased row is soft-deleted by `softDeleteErased`:
   a locking read by primary key of whether the row is still live (a row soft-deleted earlier keeps
-  its deletion time and gets no further write), then GORM's soft delete (its Delete callbacks
-  still run) with the `AND deleted_at IS NULL` predicate suppressed, so the `UPDATE … SET
-  deleted_at = ? WHERE id = ?` filters by primary key only. With that predicate, QA observed on
-  MariaDB 10.11 a gap lock of the erasure's customer soft delete on `idx_customers_deleted_at`
-  that made an unrelated conversion's `INSERT INTO customers` wait for the erasure to commit
-  (MySQL 8 never waited); a lock on that secondary index means the predicate was served through
-  it. Lock order: automation runs → leads → customers, the
+  its deletion time and gets no further write), then an explicit `Unscoped` `UPDATE … SET
+  deleted_at = ? WHERE id = ?` (`UpdateColumn`, the handle's `NowFunc`), which filters by primary
+  key only. It does not go through GORM's `Delete`: a soft delete with its `deleted_at IS NULL`
+  predicate suppressed trips GORM's missing-WHERE guard and returns `gorm.ErrMissingWhereClause`
+  without executing. User, customer and lead models declare no Delete or Update hooks, so nothing
+  is skipped. With GORM's predicate, QA observed on MariaDB 10.11 a gap lock of the erasure's
+  customer soft delete on `idx_customers_deleted_at` that made an unrelated conversion's
+  `INSERT INTO customers` wait for the erasure to commit (MySQL 8 never waited); that the
+  primary-key-only `UPDATE` removes that wait on MariaDB 10.11 is not yet recorded by a run there.
+  Lock order: automation runs → leads → customers, the
   same lead-before-customer direction as conversion (companies → leads → customers), so the two
   never form a cycle. Outcomes: a conversion that holds the lead lock commits first and the
   erasure sees its `customer_id` — an admin erasure (`Delete`) erases the new customer too, a

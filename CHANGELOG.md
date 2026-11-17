@@ -439,9 +439,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-admin erasure is refused with `ErrConvertedLeadNeedsAdmin`, 403, and changes nothing) or
   waits behind it and answers 404; a non-admin erasure can no longer pass the "unconverted" check
   on stale state. Every erased lead, customer and user is now soft-deleted by an `UPDATE` that
-  filters by primary key only (GORM's `AND deleted_at IS NULL` is suppressed after a locking read
-  of whether the row is still live): MariaDB 10.11 could serve that predicate as a locking scan of
-  the `deleted_at` index and so block an unrelated conversion's customer insert until the erasure
+  filters by primary key only (an `Unscoped` `UPDATE … SET deleted_at = ? WHERE id = ?` after a
+  locking read of whether the row is still live, instead of GORM's soft delete with its
+  `AND deleted_at IS NULL`): MariaDB 10.11 was seen serving that predicate as a locking scan of the
+  `deleted_at` index, blocking an unrelated conversion's customer insert until the erasure
   committed.
   Customer- and user-rooted erasures inherit the per-lead order. No route, status
   code or schema changes; lead-rooted erasure still has no retry. Test-only seams:
