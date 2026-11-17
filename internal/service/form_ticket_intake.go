@@ -122,8 +122,10 @@ func formTicketDescription(form *models.Form, submission *models.FormSubmission)
 // applySubmissionTicket decides and records the ticket outcome of a confirmed
 // submission of a create_ticket form on submission (TicketOutcome, TicketID);
 // the caller's UpdateSubmission persists it. Any error rolls the whole
-// confirmation back, token claim included.
-func (s *formService) applySubmissionTicket(ticketRepo repository.FormTicketRepository, events repository.AutomationRepository, form *models.Form, submission *models.FormSubmission) error {
+// confirmation back, token claim included. hooks (nil without webhooks)
+// enqueues ticket.created for the outcome created only, never for a duplicate
+// (#345).
+func (s *formService) applySubmissionTicket(ctx context.Context, ticketRepo repository.FormTicketRepository, events repository.AutomationRepository, hooks repository.WebhookRepository, form *models.Form, submission *models.FormSubmission) error {
 	submission.TicketID = nil
 	if ticketRepo == nil {
 		submission.TicketOutcome = models.FormTicketOutcomeUnavailable
@@ -180,6 +182,9 @@ func (s *formService) applySubmissionTicket(ticketRepo repository.FormTicketRepo
 		return err
 	}
 	if err := s.ticketSeam(formTicketStageAfterEvent); err != nil {
+		return err
+	}
+	if err := enqueueWebhookEvent(ctx, hooks, models.WebhookEventTicketCreated, ticket.ID); err != nil {
 		return err
 	}
 

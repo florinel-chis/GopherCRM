@@ -36,8 +36,9 @@ func sqlLiteral(value string) string {
 
 // TestRoleMigrationFiles needs no database: the pair exists, the up creates
 // the three tables with their keys and seeds #259's four rows verbatim, the
-// down demotes custom-role users before it drops anything, and the pair is
-// the newest of the directory.
+// down demotes custom-role users before it drops anything, and a newer
+// migration follows it (the newest-migration assertion now lives in
+// TestWebhookMigrationFiles, #345).
 func TestRoleMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, rolesMigrationName+".up.sql"))
@@ -115,21 +116,12 @@ func TestRoleMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, tag, "index:idx_users_role")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestQuoteQuantityMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, rolesMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestWebhookMigrationFiles (#345).
+	version, err := strconv.Atoi(strings.SplitN(rolesMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, rolesVersion, version)
-	assert.Equal(t, rolesVersion, latestMigrationVersion)
+	assert.Less(t, rolesVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, rolesVersion, rolesPreviousVersion)
 }
 

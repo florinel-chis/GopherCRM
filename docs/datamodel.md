@@ -1056,6 +1056,50 @@ processes on one SQLite file are not supported. Runs cancelled by a lead erasure
 delete before #333 may still hold values in the two columns (no backfill); nothing reads them on a
 cancelled run.
 
+## Outbound Webhooks
+
+Two tables (#345) hold the admin's webhook endpoints and the delivery outbox/log. Neither has a
+foreign key or a `deleted_at`: deleting an endpoint deletes its delivery rows in the same
+transaction (endpoint row locked first). Neither holds personal data: an endpoint stores an
+admin-typed URL, a sealed secret and event types; a delivery stores ids, the event type, a status,
+counters and timestamps, and the record id is the only record datum sent. The erasure of a person
+and the delete of a ticket therefore leave delivery rows in place (ids only); finished rows are
+pruned 30 days after their last change.
+
+### webhook_endpoints
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)` | GORM timestamps |
+| url | string | Yes | | `varchar(2048)` | https, no userinfo, query or fragment; never logged |
+| event_types | string | Yes | | `varchar(255)` | canonical comma-separated sorted subset of `customer.created`, `lead.created`, `ticket.created`; JSON array |
+| secret_sealed | string | Yes | | `varchar(255)` | `utils.SecretBox` (context `webhook-endpoint-secret`) of `whsec_` + base64(32 bytes); `json:"-"` |
+| is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
+
+### webhook_deliveries
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)`; `idx_webhook_deliveries_updated_at` | `updated_at` is the prune cutoff |
+| endpoint_id | uint | Yes | | `idx_webhook_deliveries_endpoint_event` (unique, with `event_id`) | |
+| event_id | string | Yes | | `varchar(64)` | `evt_` + 32 hex, shared by every endpoint's row of one event |
+| event_type | string | Yes | | `varchar(32)` | `lead.created`, `customer.created`, `ticket.created` |
+| record_id | uint | Yes | | | id of the created lead, customer or ticket |
+| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating transaction |
+| status | string | Yes | `pending` | `varchar(20)`; `idx_webhook_deliveries_status_next (status, next_attempt_at)` | `pending`, `sending`, `succeeded`, `failed` |
+| attempts | int | Yes | 0 | | at most 10 |
+| next_attempt_at | datetime | No | NULL | `datetime(3)` | due time while pending (`occurred_at` at enqueue); NULL once finished |
+| last_attempt_at | datetime | No | NULL | `datetime(3)` | set by the claim |
+| lease_until | datetime | No | NULL | `datetime(3)` | claim lease; `json:"-"` |
+| last_http_status | int | No | NULL | | status code of the last answer |
+| error_code | string | Yes | `''` | `varchar(50)` | `http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`, `endpoint_inactive`, `secret_unavailable`, `lease_expired` |
+
+The status index serves only plain (non-locking) discovery reads; every write is by primary key.
+MySQL and MariaDB get both tables from `20261120120000_add_outbound_webhooks` (created only when
+missing; the down drops both); SQLite from `MigrateDatabase`.
+
 ## API Request/Response Format
 
 ### Frontend to Backend Field Mapping

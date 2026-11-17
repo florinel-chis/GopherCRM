@@ -41,6 +41,17 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   The #344 persistence has no caller yet; its locking methods follow this chain, with a role's
   `role_permissions` rows after its `roles` row (see the RBAC flow below).
 
+**Outbound webhooks (#345), a self-contained order.** The endpoint delete
+(`internal/repository/webhook_repository.go`, `DeleteEndpoint`) takes `webhook_endpoints →
+webhook_deliveries`: a locking read of the endpoint by primary key, then the delete of its delivery
+rows, then the endpoint. The delivery runtime (`internal/service/webhook_runtime.go`) never takes a
+locking read: it discovers due rows, expired leases and prunable rows with plain `SELECT`s and
+writes each row by primary key with a conditional `UPDATE` or `DELETE` that re-checks the
+discovered state, so it never locks through `idx_webhook_deliveries_status_next` or
+`idx_webhook_deliveries_updated_at`. The outbox rows a create path writes are inserts into its own
+transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
+the chains above.
+
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several
 chains: an erasure reaches users, customers and leads from whichever root it starts at, and the
 session and credential flows touch users while lead conversion touches leads and customers. `C4`

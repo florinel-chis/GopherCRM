@@ -665,7 +665,8 @@ Regression roots: `TestRoleSchemaSQLite`, `TestRoleSQLiteUpgradeFromV120`, `Test
 `TestRoleRepository{SQLite,MySQL}`, `TestForeignKeyRefusalClassifier`,
 `TestSystemRoleSeed{SQLite,MySQL}` (statements captured by GORM callbacks; the MySQL root also
 starts two pools at once), `TestUserRepositoryRoleColumns{SQLite,MySQL}` (`internal/repository`);
-`TestRoleMigrationFiles` (now holding the newest-migration assertion),
+`TestRoleMigrationFiles` (it held the newest-migration assertion until #345 moved it to
+`TestWebhookMigrationFiles`),
 `TestMigrationRolesSchema` and `TestMigrationRolesDownDemotesCustomUsers` (`cmd/migrate`). The
 SQLite roots use the production connector over a file under `t.TempDir()`; the MySQL roots a
 disposable `TEST_MYSQL_DSN` schema, skipped without the variable (the acceptance run sets it and
@@ -2213,9 +2214,9 @@ Follow-up automation (#164) is the second owner of background work. `internal/se
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
 (`combineStops`) that `main` runs — automation first, then the form retention purge, then the
-stale bulk operation sweep (#196), then AEO — before `models.CloseDatabase`. That order describes
-the code and is not a contract: no handle depends on another, all four share one deadline, and no
-test asserts the order.
+stale bulk operation sweep (#196), then the webhook sender (#345), then AEO — before
+`models.CloseDatabase`. That order describes the code and is not a contract: no handle depends on
+another, all five share one deadline, and no test asserts the order.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
@@ -2544,6 +2545,98 @@ Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up
 `AutomationScheduleFilter` `ticket_status` row of the closed-set table in
 `scripts/ci/check-api-docs.py`.
 
+### Outbound webhooks (#345)
+
+Signed, thin events for `lead.created`, `customer.created` and `ticket.created`, delivered after
+the creating transaction commits. Code: `internal/models/webhook.go`,
+`internal/repository/webhook_repository.go`, `internal/service/webhook_{outbox,signing,endpoint_service,runtime}.go`,
+`internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
+
+- **Registry.** `/webhooks/endpoints` (list, create, read, update, delete) and
+  `/webhooks/deliveries` sit behind `RequireRole(admin)`. The handler validates every input before
+  calling `WebhookService` (400 `VALIDATION_ERROR`, `error.details` keyed by `url`, `event_types`,
+  `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
+  `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
+  characters, and refuses a non-public IP literal (`aeo.CheckPublicURL`); a host name is judged at
+  every connection. `event_types` is stored canonical (deduplicated, sorted, comma-separated) and
+  answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
+  and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
+  answer carries the secret or `secret_sealed` (`json:"-"`). `is_active` has **no GORM default**
+  (GORM substitutes a column default for a zero-value bool, so an explicit false would be lost); the
+  service writes true when the request omits it, and `UpdateEndpoint` writes the column
+  explicitly. Delete is one `WithTransaction`: a locking read of the endpoint (`FOR UPDATE` on
+  MySQL), `DELETE webhook_deliveries WHERE endpoint_id = ?`, then the endpoint.
+- **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
+  txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
+  passes one `WebhookRepository` and the shared `txManager`. After the record insert,
+  `enqueueWebhookEvent` reads the active endpoints subscribed to the type (a plain read) and inserts
+  one `pending` row per endpoint, all with one `evt_<32 hex>` id, `attempts` 0 and `next_attempt_at
+  = occurred_at` (UTC, ms), so the row is due at once. Paths: `LeadService.Create`, the form
+  create_lead path for a new lead (never a repeat enquiry), `CustomerService.Create` (now one
+  transaction when wired), `LeadService.ConvertToCustomer` (inside each retry attempt, so a replay
+  commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
+  `duplicate`). A failure after the record insert rolls back the record and every row. Without the
+  options every path is unchanged.
+- **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
+  (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
+  with `lease_expired` at the cap), a plain `SELECT id … WHERE status = 'pending' AND
+  next_attempt_at <= now`, then per row a conditional claim by primary key (`pending → sending`,
+  `attempts + 1`, `last_attempt_at`, `lease_until = now + WebhookSendLease` 2 min), one POST, and a
+  finish fenced on `status = 'sending' AND attempts = <claimed>`. A missing or inactive endpoint
+  fails the row with `endpoint_inactive`, an unopenable secret with `secret_unavailable`; neither
+  sends. 2xx: `succeeded`, `last_http_status`, `next_attempt_at` NULL, `error_code` ''. Otherwise
+  (`http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`) the row goes back
+  to `pending` at `now + min(WebhookRetryBase 1 min × 2^(attempts−1), WebhookRetryMax 6 h)`, or
+  `failed` when `attempts` reached `models.WebhookMaxAttempts` (10). Finished rows whose
+  `updated_at` is older than `WebhookDeliveryRetention` (30 days) are pruned at most once per
+  `WebhookPruneInterval` (1 h), by primary key in chunks of 500. Every MySQL zero-changed-row count
+  is re-checked with a read of the write's own predicate: the claim, the finish and the lease
+  recovery always change `status` or `lease_until`, so a row that no longer matches is a lost race
+  (`ErrWebhookDeliveryNotClaimed`, `ErrWebhookDeliveryNotSending`, or skipped), never an identical
+  write. Re-checking against the written values instead would let a second claimer with the same
+  clock reading count the first claimer's row as its own. The constants are package constants, not
+  settings.
+- **Signing.** `service.SignWebhook(secret, eventID, unixSeconds, body)` returns `v1,` +
+  base64(HMAC-SHA256(base64decode(secret minus whsec_), id + "." + timestamp + "." + body)). Each
+  attempt is re-signed with its own `webhook-timestamp`. Headers: `webhook-id`,
+  `webhook-timestamp`, `webhook-signature`, `Content-Type: application/json`, `User-Agent:
+  GopherCRM-Webhooks/1`. Body: exactly `{"id","type","occurred_at","record_id"}`.
+- **Egress.** Requests go through `(*aeo.EgressGuard).PublicHTTPClient(url)` (see
+  [AEO_SECURITY.md](AEO_SECURITY.md#public-only-egress-for-webhooks)), 10 s per attempt
+  (`WebhookRequestTimeout`), response bodies read up to 4 KiB and discarded. `cmd/webhook_runtime.go`
+  builds it from `aeo.NewEgressGuard(config.AEOEgressPolicy{})`, the real resolver and dialer.
+- **Drain.** `Stop` cancels the loop: no further claim starts, an attempt already claimed runs to
+  its end (request timeout plus a 5 s finish bound), then the goroutine joins. After `Stop`
+  returns nil nothing is written. Order in `combineStops`: automation, form retention, bulk sweep,
+  webhooks, AEO.
+- **Replicas.** Safe on every replica: claims are conditional, and a crashed sender's lease
+  expires and is recovered. Delivery is at least once (a crash between the POST and the finish
+  resends after the lease) and unordered; consumers deduplicate on `webhook-id`.
+- **Privacy.** Rows hold ids, the event type, a status and timestamps; erasure and ticket delete
+  leave them (a non-goal). Log lines of the registry, the outbox, the runtime and the handler carry
+  `operation`, `endpoint_id`, `delivery_id`, `event_type`, `record_id`, `attempts`, `status`,
+  `http_status` and `error_code` only (plus a sanitised database error); never the URL, host,
+  secret, sealed value, signature or a body. Transport errors, which quote the URL, are classified
+  and never logged.
+- **Schema.** `webhook_endpoints` and `webhook_deliveries` (see
+  [datamodel.md](datamodel.md#outbound-webhooks)) from `MigrateDatabase` on SQLite and
+  `migrations/20261120120000_add_outbound_webhooks` (created only when missing) on MySQL/MariaDB.
+
+Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`);
+`TestEgressPublicClient` (`internal/aeo`); `TestWebhookRepository{SQLite,MySQL}`
+(`internal/repository`); `TestWebhookSignature`, `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`,
+`TestWebhookDeliveryAfterCommit`, `TestWebhookRetryBackoffAndCap`, `TestWebhookUndeliverableEndpoint`,
+`TestWebhookRuntimeLifecycle`, `TestWebhookEgressRefusal`, `TestWebhookRequestTimeout`,
+`TestWebhookEndpointService`, `TestWebhookDeliveryLogAndPrune`, `TestWebhookLogsOmitSecrets`
+(`internal/service`); `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation`
+(`internal/handler`); `TestWebhookAPISQLite` (`tests`); `TestWebhookProductionWiring` (`cmd`);
+`TestWebhookMigrationFiles` (now holding the newest-migration assertion), `TestWebhookMigration`
+(`cmd/migrate`); `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
+(`test/integration`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, skip without it
+and fail when it is unreachable. Operator follow-ups: register the roots in
+`scripts/ci/check-go.py`, the new enums (`event_type`, delivery `status`, `error_code`) in
+`scripts/ci/check-api-docs.py`, and the migration roots in `.github/workflows/migrations.yml`.
+
 ### Form retention purge
 
 Spam and never-confirmed submissions hold visitor values and IP addresses. With
@@ -2600,8 +2693,9 @@ the setting is off, so no goroutine runs and no row is read.
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
-  drains after the automation worker and before the stale bulk operation sweep and AEO:
-  `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)`.
+  drains after the automation worker and before the stale bulk operation sweep, the webhook sender
+  and AEO:
+  `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)`.
 - **Replicas.** The purge is safe on every replica, like the automation worker (#237): extra sweeps only
   compete for the same rows.
 - **Logs.** A sweep logs `spam_removed`, `pending_removed`, `tokens_removed` and `chunks`, and a

@@ -455,6 +455,61 @@ time; a second request is refused with 409.
 `scripts/aeo_live_smoke.sh` walks the whole module against real providers for manual verification.
 It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-aeo.md`.
 
+## Integrations: webhooks
+
+Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint with
+`POST /api/v1/webhooks/endpoints` and picks any of three event types:
+
+| Event | Sent when |
+|---|---|
+| `lead.created` | a lead is created through the API, or a form creates a new lead (a repeat enquiry to an existing lead sends nothing) |
+| `customer.created` | a customer is created through the API or by converting a lead |
+| `ticket.created` | a ticket is created through the API, or a confirmed form submission opens one (a duplicate key sends nothing) |
+
+**Thin payloads.** The body is exactly
+`{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
+no name, address or other personal data. Fetch the record through the API with your own
+credentials; visibility and erasure apply at that moment, so nothing personal leaves after a
+person is erased.
+
+**Delivery.** The event row is written in the same transaction as the record, so a create that
+rolls back sends nothing. A background sender delivers committed events about every 5 seconds as a
+`POST` with `Content-Type: application/json` and `User-Agent: GopherCRM-Webhooks/1`. Any 2xx answer
+is success. A non-2xx answer, a redirect (never followed), a timeout (10 seconds), a connection
+failure or a refused destination is retried after 1, 2, 4, … minutes (at most 6 hours apart) until
+10 attempts have been made (about 8.5 hours); the event is then marked failed. Delivery is at least
+once and unordered: deduplicate on `webhook-id`.
+
+**Verifying the signature** (Standard Webhooks). Each request carries `webhook-id` (the event id),
+`webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`
+(`v1,<base64>`). Recompute it with the secret returned when the endpoint was created:
+
+```python
+import base64, hashlib, hmac, time
+
+def verify(secret, headers, body: bytes, tolerance=300):
+    key = base64.b64decode(secret.removeprefix("whsec_"))
+    msg_id, ts = headers["webhook-id"], headers["webhook-timestamp"]
+    if abs(time.time() - int(ts)) > tolerance:      # refuse replays older than 5 minutes
+        return False
+    signed = f"{msg_id}.{ts}.".encode() + body
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+    return any(hmac.compare_digest(expected, s.split(",", 1)[1])
+               for s in headers["webhook-signature"].split() if s.startswith("v1,"))
+```
+
+**Egress rules.** The URL must be `https`, at most 2048 characters, without credentials, query
+string or fragment. Every connection resolves the host again and refuses private, loopback, CGNAT,
+unique-local, link-local, metadata, multicast and unspecified addresses; proxy variables are
+ignored. The AEO egress allowlists do not apply to webhooks. The secret is stored encrypted with
+`API_KEY_SECRET` (or `JWT_SECRET`); changing that secret makes existing endpoints fail with
+`secret_unavailable` until they are re-created.
+
+**Delivery log.** `GET /api/v1/webhooks/deliveries` shows each event per endpoint with its status
+(`pending`, `sending`, `succeeded`, `failed`), attempts, last HTTP status, error code and next
+attempt. Finished rows are deleted 30 days after their last change. The routes are listed under
+[API Documentation](#webhooks-admin-only-sales-support-and-customer-get-403).
+
 ## Privacy: deleting a person erases their data
 
 Deleting a **user, customer or lead** is an erasure under GDPR Art. 17, not a recoverable soft
@@ -915,6 +970,18 @@ expired, or if its owner has been deactivated or erased.
   else's is 404)*
 - `POST /api/v1/notifications/read-all` - Mark every unread notification of the caller read;
   returns `{marked}`
+
+### Webhooks *(admin only; sales, support and customer get 403)*
+- `GET /api/v1/webhooks/endpoints` - Registered endpoints, paginated (`sort_by` `id`, `created_at`
+  or `updated_at`); never the secret
+- `POST /api/v1/webhooks/endpoints` - Register `{url, event_types, is_active?}`; the 201 carries the
+  signing `secret`, shown only here
+- `GET /api/v1/webhooks/endpoints/:id` - One endpoint
+- `PUT /api/v1/webhooks/endpoints/:id` - Change `url`, `event_types` or `is_active` (the secret
+  never changes)
+- `DELETE /api/v1/webhooks/endpoints/:id` - Delete the endpoint and its delivery log
+- `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
+  `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
 
 ### Bulk operations
 

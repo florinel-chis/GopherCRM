@@ -266,6 +266,13 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		// #213: the idempotency keys of form ticket intake; every erasure that
 		// reaches the customer or the submission removes them.
 		"form_ticket_keys",
+		// #345: outbound webhooks. Endpoints hold an admin-typed URL, a sealed
+		// secret and event types; deliveries hold ids, an event type, a status
+		// and timestamps (the record id, never a record's field), so neither
+		// holds personal data and the erasure leaves them in place. The sweep
+		// still reads both, so a personal value ever written there would show.
+		"webhook_endpoints",
+		"webhook_deliveries",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)

@@ -655,3 +655,23 @@ type FormService interface {
 	// ConfirmSubmission spends a confirmation token exactly once.
 	ConfirmSubmission(ctx context.Context, rawToken string) error
 }
+
+// WebhookService is the admin registry of outbound webhook endpoints and the
+// delivery log (#345). Invalid input is a *WebhookValidationError (it unwraps
+// to apperrors.ErrValidation), an unknown id apperrors.ErrNotFound, and a
+// service built without its repository or secret box ErrWebhooksUnavailable.
+type WebhookService interface {
+	// CreateEndpoint validates the URL and event types, generates the signing
+	// secret, stores it sealed and returns it this once.
+	CreateEndpoint(ctx context.Context, input WebhookEndpointInput) (*models.WebhookEndpointCreated, error)
+	GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error)
+	ListEndpoints(ctx context.Context, offset, limit int, sortBy, sortOrder string) ([]models.WebhookEndpoint, int64, error)
+	// UpdateEndpoint writes the fields the patch carries; the secret never
+	// changes.
+	UpdateEndpoint(ctx context.Context, id uint, patch WebhookEndpointPatch) (*models.WebhookEndpoint, error)
+	// DeleteEndpoint hard-deletes the endpoint and its delivery rows in one
+	// transaction, endpoint row locked first.
+	DeleteEndpoint(ctx context.Context, id uint) error
+	// ListDeliveries returns one page of the delivery log, newest first.
+	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
+}

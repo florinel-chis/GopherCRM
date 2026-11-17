@@ -40,6 +40,17 @@ type leadService struct {
 	// runs after the plain pre-read of the lead and before the erasure unit
 	// starts. Nil in production.
 	afterDeletePreRead func(leadID uint)
+	// webhooks is the outbound webhook outbox (#345): Create enqueues
+	// lead.created and ConvertToCustomer customer.created in their own
+	// transaction. Nil means no webhooks.
+	webhooks repository.WebhookRepository
+}
+
+// WithLeadWebhooks makes Create enqueue lead.created and ConvertToCustomer
+// enqueue customer.created (inside each attempt) in the transaction that
+// commits the record (#345).
+func WithLeadWebhooks(repo repository.WebhookRepository) LeadServiceOption {
+	return func(s *leadService) { s.webhooks = repo }
 }
 
 // WithLeadConversionRules makes ConvertToCustomer enforce the lead-conversion
@@ -79,16 +90,16 @@ func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.
 // recorded for a write that rolled back and the insert follows a locking read
 // of its owner. Without a transaction manager the write runs directly, with a
 // plain owner read and no events.
-func (s *leadService) createInTransaction(write func(leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository) error) error {
+func (s *leadService) createInTransaction(write func(ctx context.Context, leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error) error {
 	if s.txManager == nil {
-		return write(s.leadRepo, s.userRepo, nil)
+		return write(context.Background(), s.leadRepo, s.userRepo, nil, s.webhooks)
 	}
 	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
 		}
-		return write(s.leadRepo.WithTx(tx), s.lockedUserRead(tx), automationTx(s.automation, tx))
+		return write(ctx, s.leadRepo.WithTx(tx), s.lockedUserRead(tx), automationTx(s.automation, tx), webhooksTx(s.webhooks, tx))
 	})
 }
 
@@ -348,15 +359,22 @@ func (s *leadService) Create(lead *models.Lead) error {
 		return err
 	}
 
-	err := s.createInTransaction(func(leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository) error {
+	err := s.createInTransaction(func(ctx context.Context, leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error {
 		if err := checkLeadOwner(logger, users, 0, lead.OwnerID); err != nil {
 			return err
 		}
 		if err := leads.Create(lead); err != nil {
 			return err
 		}
-		return automationLeadCreated(events, lead.ID, models.AutomationOriginUser, nil)
+		if err := automationLeadCreated(events, lead.ID, models.AutomationOriginUser, nil); err != nil {
+			return err
+		}
+		return enqueueWebhookEvent(ctx, hooks, models.WebhookEventLeadCreated, lead.ID)
 	})
+	if err != nil && s.webhooks != nil {
+		// The insert rolled back with the outbox rows.
+		lead.ID = 0
+	}
 	if err != nil {
 		// A refused owner was logged, as a warning, by the check.
 		if !errors.Is(err, apperrors.ErrInvalidLeadOwner) {
@@ -1178,6 +1196,13 @@ func (s *leadService) convertAttempt(ctx context.Context, logger *logrus.Entry, 
 	// The conversion's events ride in the same transaction: lead_updated
 	// and the status change into converted, origin conversion.
 	if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, txLead.Status, models.LeadStatusConverted, models.AutomationOriginConversion, nil); err != nil {
+		return err
+	}
+
+	// The new customer's customer.created outbox rows (#345), written inside
+	// this attempt: a rolled-back attempt takes its rows with it, so a replay
+	// commits exactly one set.
+	if err := enqueueWebhookEvent(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventCustomerCreated, customerData.ID); err != nil {
 		return err
 	}
 

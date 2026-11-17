@@ -48,8 +48,8 @@ wiring is in `setupDependencies` (`cmd/main.go:257`).
 
 Checked by searching the tracked tree on `4dfe404`:
 
-- No outbound webhooks (`git ls-files internal cmd | xargs grep -liE webhook` finds nothing;
-  #232).
+- Outbound webhooks cover only `lead.created`, `customer.created` and `ticket.created` (#345, the
+  first cut of #232): no update, delete or other events, and no web UI for the registry yet.
 - No MCP server.
 - API keys have no scopes: a key acts with its owner's full role (`internal/models/apikey.go`
   holds only name, hash, prefix, owner, expiry and an active flag). Least-privilege credentials

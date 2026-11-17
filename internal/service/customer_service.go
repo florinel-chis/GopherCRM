@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -13,14 +14,37 @@ type customerService struct {
 	customerRepo repository.CustomerRepository
 	userRepo     repository.UserRepository
 	companyRepo  repository.CompanyRepository
+
+	// webhooks and txManager, set together by WithCustomerWebhooks (#345),
+	// make Create one transaction that inserts the customer and its
+	// customer.created outbox rows. Without them Create is unchanged.
+	webhooks  repository.WebhookRepository
+	txManager *utils.TransactionManager
 }
 
-func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository, companyRepo repository.CompanyRepository) CustomerService {
-	return &customerService{
+// CustomerServiceOption configures NewCustomerService.
+type CustomerServiceOption func(*customerService)
+
+// WithCustomerWebhooks makes Create insert the customer and enqueue
+// customer.created in one transaction run by txManager (#345). Both must be
+// non-nil; otherwise Create behaves as without the option.
+func WithCustomerWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) CustomerServiceOption {
+	return func(s *customerService) {
+		s.webhooks = repo
+		s.txManager = txManager
+	}
+}
+
+func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository, companyRepo repository.CompanyRepository, opts ...CustomerServiceOption) CustomerService {
+	s := &customerService{
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
 		companyRepo:  companyRepo,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // checkCompanyLink rejects a company_id that matches no live company with
@@ -58,6 +82,28 @@ func (s *customerService) Create(customer *models.Customer) error {
 	if err := s.checkCompanyLink(customer.CompanyID); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Customer rejected")
 		return err
+	}
+
+	if s.webhooks != nil && s.txManager != nil {
+		// The customer and its customer.created outbox rows commit together
+		// or not at all (#345).
+		err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+			tx, ok := utils.GetTxFromContext(ctx)
+			if !ok {
+				return utils.ErrNoTransaction
+			}
+			if err := s.customerRepo.WithTx(tx).Create(customer); err != nil {
+				return err
+			}
+			return enqueueWebhookEvent(ctx, s.webhooks.WithTx(tx), models.WebhookEventCustomerCreated, customer.ID)
+		})
+		if err != nil {
+			customer.ID = 0
+			logger.WithError(utils.LogError(err)).Error("Failed to create customer")
+			return err
+		}
+		logger.WithField("customer_id", customer.ID).Info("Customer created successfully")
+		return nil
 	}
 
 	if err := s.customerRepo.Create(customer); err != nil {

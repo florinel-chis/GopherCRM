@@ -292,6 +292,81 @@ type TicketMailDeliveryRepository interface {
 	WithTx(tx *gorm.DB) TicketMailDeliveryRepository
 }
 
+// WebhookDeliveryOutcome is what FinishDelivery writes on a claimed (sending)
+// webhook delivery (#345).
+type WebhookDeliveryOutcome struct {
+	// Status is pending (a retry), succeeded or failed.
+	Status string
+	// NextAttemptAt is the due time of a retry; nil for succeeded and failed.
+	NextAttemptAt *time.Time
+	// LastHTTPStatus is the status code of the answer, nil when none came.
+	LastHTTPStatus *int
+	// ErrorCode is empty after a success.
+	ErrorCode string
+	// Now is written as updated_at, in UTC.
+	Now time.Time
+}
+
+// WebhookDeliveryFilter narrows the delivery log. Zero values do not filter.
+type WebhookDeliveryFilter struct {
+	EndpointID uint
+	Status     string
+	EventType  string
+}
+
+// WebhookRepository stores the outbound webhook endpoints and their delivery
+// rows (#345). Discovery reads are plain (non-locking) SELECTs; every write of
+// the runtime is a conditional UPDATE or DELETE by primary key. Every method
+// binds its statements to ctx.
+type WebhookRepository interface {
+	WithTx(tx *gorm.DB) WebhookRepository
+
+	// CreateEndpoint inserts an endpoint, is_active included as given.
+	CreateEndpoint(ctx context.Context, endpoint *models.WebhookEndpoint) error
+	// GetEndpoint reads one endpoint, or gorm.ErrRecordNotFound.
+	GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error)
+	// ListEndpoints returns a page and the total, ordered by a column of
+	// utils.AllowedSortColumns["webhook_endpoints"] then id, or by id.
+	ListEndpoints(ctx context.Context, offset, limit int, sortBy, sortOrder string) ([]models.WebhookEndpoint, int64, error)
+	// UpdateEndpoint writes the named columns (url, event_types, is_active)
+	// and updated_at, or returns gorm.ErrRecordNotFound.
+	UpdateEndpoint(ctx context.Context, id uint, columns map[string]interface{}) error
+	// DeleteEndpoint locks the endpoint row (FOR UPDATE on MySQL), deletes its
+	// delivery rows and then the endpoint, in one transaction (a savepoint
+	// under WithTx). A missing endpoint is gorm.ErrRecordNotFound.
+	DeleteEndpoint(ctx context.Context, id uint) error
+	// ListActiveEndpointsFor reads, without a lock, the active endpoints
+	// subscribed to eventType, in id order.
+	ListActiveEndpointsFor(ctx context.Context, eventType string) ([]models.WebhookEndpoint, error)
+
+	// EnqueueDeliveries inserts outbox rows (the caller's transaction).
+	EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error
+	// ListDueDeliveryIDs is a plain SELECT of the ids whose status is pending
+	// and next_attempt_at <= now, oldest due first, at most limit.
+	ListDueDeliveryIDs(ctx context.Context, now time.Time, limit int) ([]uint, error)
+	// ClaimDelivery moves one due pending row to sending (attempts + 1,
+	// last_attempt_at, lease_until) by primary key and returns it, or
+	// ErrWebhookDeliveryNotClaimed when another claimer won or the row is not
+	// due any more.
+	ClaimDelivery(ctx context.Context, id uint, now, leaseUntil time.Time) (*models.WebhookDelivery, error)
+	// FinishDelivery writes the outcome of a claimed row, fenced on
+	// status = 'sending' and the claimed attempts, or returns
+	// ErrWebhookDeliveryNotSending.
+	FinishDelivery(ctx context.Context, id uint, claimedAttempts int, outcome WebhookDeliveryOutcome) error
+	// RecoverExpiredLeases returns sending rows whose lease_until has passed
+	// to pending, or fails them with lease_expired when they reached
+	// maxAttempts. Rows re-claimed or finished since discovery are untouched.
+	RecoverExpiredLeases(ctx context.Context, now time.Time, maxAttempts int) (recovered, failed int64, err error)
+	// PruneFinished deletes succeeded and failed rows whose updated_at is
+	// before cutoff, by primary key in chunks of WebhookPruneChunk.
+	PruneFinished(ctx context.Context, cutoff time.Time) (int64, error)
+	// GetDelivery reads one row, or gorm.ErrRecordNotFound.
+	GetDelivery(ctx context.Context, id uint) (*models.WebhookDelivery, error)
+	// ListDeliveries returns a page of the log, newest first (id desc), and
+	// the total.
+	ListDeliveries(ctx context.Context, filter WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
+}
+
 type TaskRepository interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)

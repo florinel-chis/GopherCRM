@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Signed outbound webhooks for created leads, customers and tickets (#345).** Admins register
+  HTTPS endpoints under `/webhooks/endpoints` (list, create, read, update, delete) with a subset of
+  `lead.created`, `customer.created` and `ticket.created` and an active flag; each endpoint gets a
+  signing secret (`whsec_…`) that is shown once, in the create response, and stored encrypted. Every
+  create path (the API, lead conversion, form lead and form ticket intake) writes one delivery row
+  per active subscribed endpoint inside its own transaction, so a rolled-back create sends nothing.
+  A background sender delivers the committed rows every 5 seconds as a thin JSON body (`id`, `type`,
+  `occurred_at`, `record_id`; no personal data) with Standard Webhooks headers (`webhook-id`,
+  `webhook-timestamp`, `webhook-signature` = HMAC-SHA256 over `id.timestamp.body`), through the
+  public-only egress guard (no private, loopback, link-local or metadata destinations, no redirects,
+  10-second timeout). Failures are retried with exponential backoff (1 minute doubling, at most 6
+  hours) up to 10 attempts. `GET /webhooks/deliveries` lists the delivery log; finished rows are
+  pruned after 30 days. `POST /customers` now inserts the customer and its outbox rows in one
+  transaction. **Schema:** migration `20261120120000_add_outbound_webhooks` on MySQL/MariaDB,
+  `MigrateDatabase` on SQLite; rollback drops the two tables. **Operator follow-up:** register the
+  new test roots in the CI gate files.
 - **Role storage for custom roles (#344, RBAC slice S2 of #259).** New tables `roles`,
   `role_permissions` and `role_audit_log`, and `users.role_id` (with `idx_users_role`,
   `idx_users_role_id` and the foreign key `fk_users_custom_role`, ON DELETE RESTRICT). Every start
