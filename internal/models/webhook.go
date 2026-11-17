@@ -190,6 +190,10 @@ type WebhookEndpointCreated struct {
 // delivery log entry. It holds ids, the event type, a status, counters, an
 // HTTP status code, an error code and timestamps only.
 //
+// attempts and last_http_status carry size:32, not type:int: GORM reads the
+// tag "int" as its generic integer type and the MySQL dialector then emits
+// bigint, while a 32-bit size gives int, the type the SQL migration creates.
+//
 // @Description One outbound webhook delivery (one event for one endpoint) and its outcome. Holds ids, the event type, the status, counters and timestamps; never a URL, a secret or a payload.
 type WebhookDelivery struct {
 	// Unique identifier, assigned by the server. Read-only.
@@ -211,7 +215,7 @@ type WebhookDelivery struct {
 	// Delivery state: pending (due at next_attempt_at), sending (claimed by the sender), succeeded (a 2xx answer) or failed (the attempt cap was reached, or the endpoint or its secret is unusable).
 	Status string `gorm:"type:varchar(20);not null;default:'pending';index:idx_webhook_deliveries_status_next,priority:1" json:"status" enums:"pending,sending,succeeded,failed" example:"succeeded" readonly:"true"`
 	// Attempts made so far (at most 10).
-	Attempts int `gorm:"type:int;not null;default:0" json:"attempts" example:"1" readonly:"true"`
+	Attempts int `gorm:"size:32;not null;default:0" json:"attempts" example:"1" readonly:"true"`
 	// When the next attempt is due (RFC 3339); null once the row is finished.
 	NextAttemptAt *time.Time `gorm:"index:idx_webhook_deliveries_status_next,priority:2" json:"next_attempt_at" extensions:"x-nullable" example:"2026-11-20T09:31:00Z" readonly:"true"`
 	// When the last attempt started (RFC 3339); null before the first.
@@ -219,7 +223,7 @@ type WebhookDelivery struct {
 	// Claim lease of the sender; never serialised.
 	LeaseUntil *time.Time `json:"-" swaggerignore:"true"`
 	// HTTP status code of the last answer; null when none was received.
-	LastHTTPStatus *int `gorm:"type:int" json:"last_http_status" extensions:"x-nullable" example:"200" readonly:"true"`
+	LastHTTPStatus *int `gorm:"size:32" json:"last_http_status" extensions:"x-nullable" example:"200" readonly:"true"`
 	// Why the last attempt failed: http_status (a non-2xx answer), redirect (a 3xx answer, not followed), timeout, connection_failed, destination_refused (the host resolved to a non-public address), endpoint_inactive, secret_unavailable or lease_expired. Empty after a success.
 	ErrorCode string `gorm:"type:varchar(50);not null;default:''" json:"error_code" enums:",http_status,redirect,timeout,connection_failed,destination_refused,endpoint_inactive,secret_unavailable,lease_expired" example:"" readonly:"true"`
 }
