@@ -9,8 +9,14 @@ on:
       full:
         type: boolean
         default: false
-  # A manual run cannot ask for the complete browser suite: only a release can.
+  # A manual run has no base to compare with, so full: false tests every Go
+  # package without the race detector; full: true runs the release-grade
+  # backend and database gates. The browser matrix stays release-only.
   workflow_dispatch:
+    inputs:
+      full:
+        type: boolean
+        default: false
   pull_request:
   # The merge queue runs the suite on its temporary branch before merging, so
   # a pull request that went green on a stale base still has to pass on top
@@ -79,8 +85,11 @@ jobs:
       - name: Size guard and e2e runner self-test
         run: make verify-hygiene
 
+  # The two-engine migration matrix is release-grade: it runs for a release
+  # and for a manual run that asks for full: true.
   migrations:
     needs: plan
+    if: ${{ inputs.full == true }}
     uses: ./.github/workflows/migrations.yml
     with:
       revision: ${{ inputs.revision || github.sha }}
@@ -92,7 +101,7 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       db:
-        image: ${{ (needs.plan.outputs.profile == 'aeo' || needs.plan.outputs.profile == 'auth' || needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded') && 'mysql:8.0' || '' }}
+        image: ${{ needs.plan.outputs.profile == 'full' && 'mysql:8.0' || '' }}
         env:
           MYSQL_ROOT_PASSWORD: transaction-test-password
         ports: ['3306:3306']
@@ -108,70 +117,52 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
         run: test "$PLAN_RESULT" = success
+      # The migrations job is skipped outside a full run.
       - name: Require SQL migration and SQLite upgrade coverage
+        if: needs.plan.outputs.profile == 'full'
         env:
           MIGRATION_RESULT: ${{ needs.migrations.result }}
         run: test "$MIGRATION_RESULT" = success
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Every profile: api/ must match a fresh `make swagger` and document
-      # every route (scripts/ci/check-api-docs.py).
-      - name: API reference is current and complete
+      # Every run: api/ must match a fresh `make swagger` and document every
+      # route (scripts/ci/check-api-docs.py). A full run goes through the make
+      # target, which tests the route extractor first; any other run tests the
+      # extractor only when the selection below includes it.
+      - name: API reference is current and complete, with the extractor tests
+        if: needs.plan.outputs.profile == 'full'
         run: make verify-api-docs
-      # The Makefile and shared profile checkers own the commands used both
-      # locally and in CI.
+      - name: API reference is current and complete
+        if: needs.plan.outputs.profile != 'full'
+        run: python3 scripts/ci/check-api-docs.py
+      # Full run: the whole suite with the race detector, then the MySQL roots
+      # that the make target leaves skipped because it has no TEST_MYSQL_DSN (#230).
       - name: Build, vet, test
-        if: needs.plan.outputs.profile != 'mailer' && needs.plan.outputs.profile != 'aeo' && needs.plan.outputs.profile != 'runner' && needs.plan.outputs.profile != 'auth' && needs.plan.outputs.profile != 'auth-persistence' && needs.plan.outputs.profile != 'transaction' && needs.plan.outputs.profile != 'migration'
+        if: needs.plan.outputs.profile == 'full'
         run: make verify-backend
-      - name: SMTP transport and mail caller regressions
-        if: needs.plan.outputs.profile == 'mailer'
-        run: python3 scripts/ci/check-go.py mailer
-      - name: AEO runtime and persistence regressions on SQLite and MySQL
-        if: needs.plan.outputs.profile == 'aeo'
+      - name: Transaction boundaries and auth persistence on SQLite and MySQL
+        if: needs.plan.outputs.profile == 'full'
         env:
           TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py aeo
-      - name: Auth API build, vet and race regressions
-        if: needs.plan.outputs.profile == 'auth'
-        env:
-          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-auth.py
-      - name: Auth persistence on SQLite and MySQL
-        if: needs.plan.outputs.profile == 'auth-persistence'
-        env:
-          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-auth.py --persistence
-      - name: Transaction boundaries and affected callers
-        if: needs.plan.outputs.profile == 'transaction'
-        env:
-          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py transaction
-      - name: Auth persistence and full validation transaction boundaries
-        if: needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded' || needs.plan.outputs.profile == 'auth-persistence'
-        env:
-          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/
-          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
         run: |
-          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
-            python3 scripts/ci/check-go.py transaction
-            # make verify-backend runs without TEST_MYSQL_DSN, so the auth MySQL
-            # roots would otherwise skip on every general PR (#230).
-            python3 scripts/ci/check-auth.py --persistence
-          else
-            python3 scripts/ci/check-go.py transaction --storage-only
-          fi
-      - name: Migration-profile API build and vet
-        if: needs.plan.outputs.profile == 'migration'
-        run: |
-          go build ./cmd/...
-          go vet ./cmd/migrate ./internal/models
-      - name: Runner-only API build and affected Go probe checks
-        if: needs.plan.outputs.profile == 'runner'
-        run: |
-          go build ./cmd/...
-          go vet ./automation/langflow/probes/mysql
-          go test ./automation/langflow/probes/mysql
+          python3 scripts/ci/check-go.py transaction
+          python3 scripts/ci/check-auth.py --persistence
+      # Any other run: build and vet the module, then test the packages the
+      # change touches, their importers and the packages whose tests read the
+      # changed files. No database server, so the MySQL-backed tests skip here
+      # and run in the database gates job.
+      - name: Fetch the changed paths
+        if: needs.plan.outputs.profile != 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: validation-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/validation-plan
+      - name: Build, vet and test the changed packages
+        if: needs.plan.outputs.profile != 'full'
+        env:
+          VALIDATION_PLAN: ${{ runner.temp }}/validation-plan/validation-plan.json
+        run: python3 scripts/ci/check-changed-go.py --plan "$VALIDATION_PLAN"
 
   frontend:
     name: Frontend (build, lint, test)
@@ -202,11 +193,13 @@ jobs:
         run: npm ci && npm run build
 
   db-gates:
-    # The profile-specific database regressions that used to run inside the
-    # browser jobs: on every event, on MariaDB 10.11 (what production runs),
-    # so a pull request keeps its database gates while the browser suite
-    # itself is release-only (founder decision, 11 November 2026: end-to-end
-    # tests run for releases, never in pull-request CI).
+    # The database half of the backend job, on MariaDB 10.11 (what production
+    # runs) and on every event: the tests of the changed packages with
+    # TEST_MYSQL_DSN set, so the MySQL-backed tests that skip in the backend
+    # job run here. A full run executes the transaction checker instead, which
+    # rejects a skipped root. The browser suite is release-only (founder
+    # decision, 11 November 2026: end-to-end tests run for releases, never in
+    # pull-request CI).
     name: Database gates (MariaDB 10.11)
     needs: plan
     if: ${{ !cancelled() }}
@@ -238,41 +231,38 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: AEO runtime and persistence regressions on MariaDB
-        if: needs.plan.outputs.profile == 'aeo'
-        env:
-          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-go.py aeo
-      - name: Auth persistence on MariaDB
-        if: needs.plan.outputs.profile == 'auth-persistence'
-        env:
-          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-        run: python3 scripts/ci/check-auth.py --persistence
       - name: Transaction boundaries on MariaDB
-        if: needs.plan.outputs.profile == 'transaction' || needs.plan.outputs.profile == 'auth-persistence' || needs.plan.outputs.profile == 'full' || needs.plan.outputs.profile == 'bounded'
+        if: needs.plan.outputs.profile == 'full'
         env:
           TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
-          VALIDATION_PROFILE: ${{ needs.plan.outputs.profile }}
-        run: |
-          if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then
-            python3 scripts/ci/check-go.py transaction
-          else
-            python3 scripts/ci/check-go.py transaction --storage-only
-          fi
+        run: python3 scripts/ci/check-go.py transaction
+      - name: Fetch the changed paths
+        if: needs.plan.outputs.profile != 'full'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: validation-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/validation-plan
+      - name: Test the changed packages on MariaDB
+        if: needs.plan.outputs.profile != 'full'
+        env:
+          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/
+          VALIDATION_PLAN: ${{ runner.temp }}/validation-plan/validation-plan.json
+        run: python3 scripts/ci/check-changed-go.py --plan "$VALIDATION_PLAN" --tests-only
 
   e2e:
     # One leg per database engine: MySQL 8; MariaDB 10.11, which is what
     # production runs; and SQLite, a supported production backend since 1.2.0.
-    # Release-only: this job runs only when the workflow is called with
-    # full: true, which release.yml does before publication. A pull request, a
-    # merge-queue group, a push to main or a manual dispatch has no `full`
-    # input, so the job is skipped there and never runs Playwright (founder
-    # decision, 11 November 2026). Skipped here means no check run with this
-    # name exists, so it must not be a required check; the database gates job
-    # above is.
+    # Release-only: this job runs only when another workflow calls this one
+    # with full: true and a revision, which release.yml does before
+    # publication. A pull request, a merge-queue group and a push to main have
+    # no `full` input and a manual dispatch has no `revision`, even with
+    # full: true, so the job is skipped there and never runs Playwright
+    # (founder decision, 11 November 2026). Skipped here means no check run
+    # with this name exists, so it must not be a required check; the database
+    # gates job above is.
     name: E2E (Playwright on ${{ matrix.db.name }})
     needs: plan
-    if: ${{ !cancelled() && inputs.full == true }}
+    if: ${{ !cancelled() && inputs.full == true && inputs.revision != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:

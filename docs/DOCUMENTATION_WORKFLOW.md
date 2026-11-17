@@ -96,7 +96,7 @@ Large assessments are bounded and require splitting the PR. The generated API re
 (`api/swagger.json`, `api/swagger.yaml` and the HTML page `api/index.html`) is flagged for changes
 to its sources: handlers, models, services, `internal/utils/response.go`, the general block in
 `cmd/main.go` and the renderer. The annotations remain authoritative: use `make swagger` when they
-change, and `make verify-api-docs` (also run by CI) fails while the committed files are stale. Agents do not acquire shell permission through this workflow; if generator
+change, and `make verify-api-docs` (CI runs its checker, `scripts/ci/check-api-docs.py`, on every change) fails while the committed files are stale. Agents do not acquire shell permission through this workflow; if generator
 work cannot be completed within the registered execution, a maintainer must prepare the output
 before approval. A textual claim does not prove a generator ran.
 

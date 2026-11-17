@@ -18,15 +18,39 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 | Gate | Every PR / contextual runner | Full release |
 |---|---|---|
-| Hygiene and core checks | Auth/transaction/migration/AEO/mailer profiles: hygiene + API docs gate + targeted Go checks + build/health; runner-only: hygiene + API docs gate + runner tests + build/health; other application changes: `make verify` | Complete `make verify` |
-| API reference gate | `make verify-api-docs` in every profile (CI: unconditional step of the Backend job) | Same |
+| Hygiene and core checks | Runner (local): auth/transaction/migration/AEO/mailer profiles: hygiene + API docs gate + targeted Go checks + build/health; runner-only: hygiene + API docs gate + runner tests + build/health; other application changes: `make verify`. CI: hygiene, frontend, and module build + vet + `go test -count=1` on the changed Go packages, their importers and the packages that read the changed files (`scripts/ci/check-changed-go.py`, no `-race`; none for a documentation-only change) | Complete `make verify`, then `check-go.py transaction` and `check-auth.py --persistence` |
+| API reference gate | Runner: `make verify-api-docs` in every profile. CI: `python3 scripts/ci/check-api-docs.py` on every change; the extractor's Go tests only when selected | `make verify-api-docs` |
 | Frozen issue acceptance tests | All named checks, before browsers | Their ordinary suites plus SQL integration |
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
-| CI database engines | MySQL 8, MariaDB 10.11, SQLite | MySQL 8, MariaDB 10.11, SQLite |
+| CI database engines | SQLite (backend job) and MariaDB 10.11 (database gates job: the selected packages, `-count=1`, no `-race`, skips not rejected) | MySQL 8, MariaDB 10.11, SQLite |
 | Local runner database engines | SQLite; also MySQL for persistence/full fallback | CI owns the release matrix |
-| Migration coverage | Dedicated MySQL/MariaDB migration and SQLite upgrade CI on every PR; local persistence/full fallback also requires migration checks; skips rejected | Fresh, upgrade, rollback on MySQL and MariaDB; skips rejected |
+| Migration coverage | CI: no migrations matrix; a change under `migrations/` or `cmd/migrate` runs the `cmd/migrate` tests on MariaDB through the selection. Runner: local persistence/full fallback also requires migration checks; skips rejected | Dedicated MySQL/MariaDB migration and SQLite upgrade CI: fresh, upgrade, rollback; skips rejected |
 | Runner tests | Required when the workflow changes | Always |
 | Independent review and exact-head merge checks | Required | Release uses the already-reviewed main commit |
+
+### What CI runs outside a release (#365)
+
+The profile the selector picks decides what the **runner** executes locally and which frontend
+branch CI takes. For the Go side, CI has two modes only:
+
+- **Not `full`** (every pull request, merge-queue group and push to `main`, whatever the profile):
+  the Backend job builds and vets the module, runs `python3 scripts/ci/check-api-docs.py`, and runs
+  `python3 scripts/ci/check-changed-go.py --plan <validation-plan.json>`: `go test -count=1` without
+  `-race` on the packages the change touches, their transitive importers and the packages whose
+  tests read the changed files. The Database gates job runs the same selection with `--tests-only`
+  against MariaDB 10.11 (`TEST_MYSQL_DSN` set, skips not rejected). A documentation-only change runs
+  no Go test. The migrations matrix and the browser matrix are skipped. The selection rules and the
+  external-readers table are in [DEVELOPMENT.md](DEVELOPMENT.md#testing).
+- **`full`** (the release workflow, or a manual dispatch of CI with the `full` input): the two-engine
+  migrations matrix, `make verify-api-docs`, `make verify-backend` (`-race`), then
+  `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8, and
+  `check-go.py transaction` on MariaDB 10.11. The browser matrix additionally needs a calling
+  workflow, so only a release runs it.
+
+The profile checkers (`scripts/ci/check-auth.py`, `scripts/ci/check-go.py <profile>`) therefore run
+in CI only on `full`; the per-profile paragraphs below describe the runner's local validation.
+A manual dispatch has no base commit, so its plan records no changed paths: with `full: false` it
+tests every package without `-race`.
 
 [Documentation maintenance](DOCUMENTATION_WORKFLOW.md) adds a commit-bound impact plan and
 explicit documentation decisions to the existing independent review call. The runner verifies
@@ -40,8 +64,9 @@ changes take the union. Unmapped shared infrastructure, schema, dependencies, ha
 unknown application paths select the complete browser suite. Runner-only changes under
 `automation/langflow/`, `scripts/ci/`, and the CI/runner workflow definitions select the
 `runner` profile: local `make verify-hygiene`, `make verify-api-docs`, `make verify-runner`, all frozen acceptance
-checks, and SQLite health smoke. CI runs API/frontend build health checks, the affected Go
-probe checks and runner tests; since 11 November 2026 browser specs run in CI only for a release. It does
+checks, and SQLite health smoke. CI runs the frontend build health check, the targeted Go run
+described above (the Go probe under `automation/langflow/probes/mysql` when it changes, otherwise
+`internal/config`) and runner tests; since 11 November 2026 browser specs run in CI only for a release. It does
 not run unrelated application unit/race suites or the full feature-browser matrix for
 this profile. Mixed runner/application changes retain the application's core and relevant
 feature coverage. Operator and developer tools that the server, the CI gates and
@@ -70,7 +95,7 @@ and the auth-check script itself. Docs and runner changes may accompany them; an
 application path retains the full fallback unless it qualifies for the separate
 `auth-persistence` profile below. This is a scope rule, not a claim that all auth changes are low risk.
 
-For this profile, local and CI run `python3 scripts/ci/check-auth.py`: API compilation,
+For this profile, local validation runs `python3 scripts/ci/check-auth.py` (CI runs it only on `full`): API compilation,
 vet for the selected Go packages, then uncached race tests selected from auth/session,
 service logging-privacy, middleware, token-repository, password, HTTP integration and
 `test/integration/erasure_test.go` files. The logging-privacy and erasure tests cover login
@@ -80,9 +105,9 @@ included. Every root must report an exact pass; missing, duplicate or skipped ro
 skipped descendants fail. The file patterns are explicit: a new test location must be added
 to the check policy. Retained password-reset and rotation sources include SQL regressions,
 so service-only auth changes must exercise them too: discovery of any MySQL root requires
-`TEST_MYSQL_DSN` before compilation, and CI provisions disposable MySQL for both auth profiles.
+`TEST_MYSQL_DSN` before compilation.
 Local browser coverage is health smoke, login and registration on SQLite; CI builds the frontend
-and runs the database gates, and runs browser specs only for a release (11 November 2026). Frozen issue checks remain
+and runs the targeted backend and database gates, and runs browser specs only for a release (11 November 2026). Frozen issue checks remain
 mandatory. Workflow changes also run runner tests. No full frontend unit suite or unrelated
 feature-browser suite is added by this profile. An explicitly frozen database profile still
 requires its MySQL/migration checks; explicit full and releases retain the complete matrix.
@@ -104,9 +129,9 @@ boundaries via `python3 scripts/ci/check-go.py transaction --storage-only`, all 
 acceptance checks, configured migrations, and health/login/registration browsers on SQLite
 and MySQL. The auth checker requires a disposable SQL server and all six exact rotation
 atomicity, concurrency and validation roots across SQLite/MySQL; missing or skipped roots
-and descendants fail. CI adds the same persistence and transaction boundaries on MariaDB (the
-database gates job) and keeps migration gates on both SQL engines; browser specs run in CI only for a
-release (11 November 2026).
+and descendants fail. CI runs the changed packages' tests on MariaDB (the database gates job,
+no `-race`, skips not rejected); the checkers and the migration gates on both SQL engines run in CI
+only on `full`, and browser specs only for a release (11 November 2026).
 Frontend build health remains required in CI; unrelated frontend units and entity browsers
 are excluded. Explicit full validation and releases remain complete.
 
@@ -141,8 +166,8 @@ fix, not this policy prerequisite. The checker also rejects missing or skipped r
 defense in depth; they do not silently reduce coverage. The source boundary has
 no persistence change, so local browsers need only SQLite health smoke. SMTP behavior is
 covered by protocol fixtures, and no login/form browser pretends to test a real SMTP relay.
-CI keeps the frontend build, the database gates and the existing MySQL/MariaDB migration gates;
-browser specs run in CI only for a release (11 November 2026). Every frozen named acceptance
+CI keeps the frontend build and the targeted backend and database gates; the MySQL/MariaDB
+migration gates and browser specs run in CI only for a release (11 November 2026). Every frozen named acceptance
 command still runs; explicit full/release coverage remains unchanged.
 
 The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
@@ -169,8 +194,8 @@ browsers on SQLite/MySQL. The checker builds the API, vets selected packages and
 uncached race roots from all cmd/AEO engine tests, AEO service/repository/handler tests,
 configuration tests, AEO model tests and transaction boundaries. A disposable
 `TEST_MYSQL_DSN` is mandatory; missing, skipped or duplicate required roots and skipped
-descendants fail. CI runs this checker on MySQL and MariaDB, retains migration jobs and
-frontend build health, and runs the two browser specs on all three engines. The provider
+descendants fail. CI runs this checker only on `full`; for a pull request it keeps frontend build
+health and runs the changed packages' tests on SQLite and MariaDB. The provider
 browser covers runtime credentials but does not replace scheduled-start acceptance.
 No unrelated entity browsers or full frontend unit suite is added. Explicit full/release
 gates remain complete: explicit full local validation and full/release CI run the
@@ -188,8 +213,9 @@ unavailable SQL, skipped or duplicate required roots and incomplete package outp
 One existing empty `TestLeadConversionTransaction/concurrent_conversion_attempts` placeholder
 is explicitly reported as a coverage gap; any other skip still fails. It does not exempt
 transaction acceptance tests or claim lead-conversion concurrency coverage.
-CI runs the same Go profile against SQLite/MySQL, the transaction boundaries additionally on
-MariaDB, frontend build health, and health smoke on all three engines. The configured local
+CI runs this Go profile only on `full` (SQLite/MySQL, and the transaction boundaries on MariaDB);
+for a pull request it runs frontend build health and the changed packages' tests on SQLite and
+MariaDB. The configured local
 migration checks remain required. There are no full frontend unit or unrelated feature-browser
 runs in this profile. Other application changes in the same diff retain full fallback;
 explicit full and release runs retain the complete matrix and execute these transaction
@@ -230,13 +256,16 @@ branch tip must match both merge parents; the selector still comes from the revi
 The retained plan records the policy commit and its source. Remove the
 variable after the policy merges. Explicit full/release validation overrides this narrow
 profile even when the policy pin matches. Ordinary PRs cannot authorize their own policy
-through a tracked file. All six existing required job names remain active;
+through a tracked file. The four required job names remain active;
 selection failure fails them rather than leaving required checks skipped or pending.
-Manual CI defaults to full coverage. To inspect a local plan:
+A manual CI run has no base commit: with the default `full: false` it tests every Go package without
+`-race`, and with `full: true` it runs the release-grade backend, database and migration gates (never
+the browser matrix). To inspect a local plan:
 
 ```bash
 python3 automation/langflow/gophercrm_runner/validation.py \
   --base "$(git rev-parse origin/main)" --head "$(git rev-parse HEAD)"
+python3 scripts/ci/check-changed-go.py --base origin/main --list   # the Go packages CI will test
 make verify
 make e2e E2E_DB_DRIVER=sqlite SPECS='e2e/tests/health-smoke.spec.ts e2e/tests/admin-tickets.spec.ts'
 ```
@@ -268,9 +297,12 @@ schemes name the `Authorization` header and show their `Authorization: Bearer <.
 Go constants. The checker's rule-by-rule mutation tests and the renderer's tests run in
 `make verify-hygiene`.
 
-The gate is part of `make verify`, runs as an unconditional step of the CI Backend job (after Go
-setup, for every profile, without adding a job), and is the second command of every bounded and
-runner command set in `validation.py`. Because the gate proves the three generated files
+The gate is part of `make verify` and is the second command of every bounded and
+runner command set in `validation.py`. In CI the Backend job runs the make target only on `full`.
+Every other run executes `python3 scripts/ci/check-api-docs.py` directly, on every change
+(documentation-only included, after Go setup, without adding a job), and runs the extractor's Go
+tests only when `scripts/ci/check-changed-go.py` selects `scripts/ci/apiroutes`: for a change to the
+extractor, to `check-api-docs.py`, to `internal/handler/`, `internal/utils/`, `cmd/` or `api/`. Because the gate proves the three generated files
 (`api/swagger.json`, `api/swagger.yaml`, `api/index.html`) equal a fresh `make swagger`, they
 select no coverage of their own: the annotated Go sources, `cmd/main.go`, `scripts/docs/` and
 the Makefile that produce them are classified as usual. A lead handler annotation change runs
@@ -279,10 +311,13 @@ the lead suites, not the full browser matrix. Any other path under `api/` select
 
 ## Migration CI
 
-[Database migrations](../.github/workflows/migrations.yml) is called by CI on every PR,
-merge group and main push, and supports a manual trigger for diagnosis. The existing required
-Backend job depends on both database jobs succeeding, so migration failures block that check
-without requiring new branch-protection names. The reusable call checks out the same revision
+[Database migrations](../.github/workflows/migrations.yml) is called by CI only on a `full` run
+(a release, or a manual dispatch of CI with `full: true`) and supports a manual trigger for
+diagnosis; it is skipped for a pull request, a merge group and a main push (#365). On a full run the
+required Backend job fails unless both database jobs succeeded, so migration failures block that check
+without requiring new branch-protection names. Outside a full run a change under `migrations/` or
+`cmd/migrate` runs the `cmd/migrate` tests through `scripts/ci/check-changed-go.py`, on MariaDB
+10.11 in the database gates job, where a skip is not rejected. The reusable call checks out the same revision
 as the rest of CI, including releases. Its two jobs use disposable MySQL 8
 and MariaDB 10.11 services. They run only the migration, SQLite upgrade and repository SQL regressions:
 fresh SQL up/down, a populated prior schema, AutoMigrate-first upgrades, website-column
@@ -308,8 +343,8 @@ Changes confined to this workflow and the SQL evidence checker/tests select the 
 `migration` profile. Local validation runs hygiene (including checker failure-path tests),
 `python3 scripts/ci/check-go.py migration` against disposable MySQL plus SQLite upgrade fixtures,
 all frozen acceptance checks and SQLite health smoke. Accompanying runner changes also run
-runner checks. CI runs the two-engine migration gate, API build/vet, frontend build health and
-health smoke on all three engines. Schema, migration SQL, application code and unrelated release
+runner checks. CI runs the module build and vet, the targeted Go tests and frontend build health;
+the two-engine migration gate runs in CI only on `full`. Schema, migration SQL, application code and unrelated release
 machinery remain outside this profile and retain their full fallback. Explicit full/release
 validation remains complete. This is shared profile data and checker code, not a per-ticket helper.
 

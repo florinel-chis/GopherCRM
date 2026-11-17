@@ -991,7 +991,7 @@ generic bulk create, update, delete or action API.
 The reference in `api/` (`swagger.json`, `swagger.yaml` and the HTML page `index.html`) is built
 from the swag annotations on the handlers, their request/response types and the general block in
 `cmd/main.go`. Regenerate it with `make swagger` after changing a handler, a documented type or a
-route; `make verify-api-docs` (part of `make verify` and CI) fails when the committed files are
+route; `make verify-api-docs` (part of `make verify`; CI runs its checker on every change) fails when the committed files are
 stale, a route has no operation, a parameter or body the registered handler reads is undocumented
 (or documented with the wrong type), a status its route middleware can return (401, 403, 429) is
 missing, an operation's security alternatives are wrong, or a description is missing. Nothing is **served** by the

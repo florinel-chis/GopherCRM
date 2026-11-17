@@ -114,8 +114,15 @@ class AEOSelectionTests(unittest.TestCase):
         self.assertEqual(checks, [('make', 'verify'), ('python3', 'scripts/ci/check-go.py', 'transaction'),
                                   ('python3', 'scripts/ci/check-auth.py', '--persistence')])
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
-        self.assertEqual(workflow.count('if [ "$VALIDATION_PROFILE" = full ] || [ "$VALIDATION_PROFILE" = bounded ]; then'), 2)
-        self.assertEqual(workflow.count('            python3 scripts/ci/check-go.py transaction\n'), 2)
+        # CI runs the same three commands, and only on the full profile.
+        self.assertIn("        if: needs.plan.outputs.profile == 'full'\n        run: make verify-backend\n", workflow)
+        self.assertIn("        if: needs.plan.outputs.profile == 'full'\n        env:\n"
+                      "          TEST_MYSQL_DSN: root:transaction-test-password@tcp(127.0.0.1:3306)/\n        run: |\n"
+                      "          python3 scripts/ci/check-go.py transaction\n"
+                      "          python3 scripts/ci/check-auth.py --persistence\n", workflow)
+        self.assertIn("        if: needs.plan.outputs.profile == 'full'\n        env:\n"
+                      "          TEST_MYSQL_DSN: root:e2e-root-password@tcp(127.0.0.1:3306)/\n"
+                      "        run: python3 scripts/ci/check-go.py transaction\n", workflow)
         self.assertIn("full: true", (ROOT / '.github/workflows/release.yml').read_text())
         # Legacy callers remain registered exactly as before.
         self.assertEqual(v.core_commands([], selected), [('make', 'verify')])
