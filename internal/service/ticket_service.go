@@ -36,6 +36,27 @@ type ticketService struct {
 	// the transaction manager. Nil keeps the unwired behaviour: no transaction
 	// and no event.
 	automation repository.AutomationRepository
+
+	// webhooks is the outbound webhook outbox (#345), set with the
+	// transaction manager by WithTicketWebhooks: Create then enqueues
+	// ticket.created in the ticket's transaction. Nil means no webhooks.
+	webhooks repository.WebhookRepository
+}
+
+// WithTicketWebhooks makes Create insert the ticket and enqueue
+// ticket.created in one transaction run by txManager (#345).
+func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) TicketServiceOption {
+	return func(s *ticketService) {
+		s.webhooks = repo
+		if txManager != nil {
+			s.txManager = txManager
+		}
+	}
+}
+
+// ticketWebhooksWired reports whether Create enqueues ticket.created.
+func (s *ticketService) ticketWebhooksWired() bool {
+	return s.webhooks != nil && s.txManager != nil
 }
 
 // WithTicketAutomationEvents makes Create and Update record their automation
@@ -128,7 +149,7 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		}
 	}
 
-	if !s.ticketEventsWired() {
+	if !s.ticketEventsWired() && !s.ticketWebhooksWired() {
 		if err := s.ticketRepo.Create(ticket); err != nil {
 			logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
 			return err
@@ -137,7 +158,8 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		return nil
 	}
 
-	// The ticket and its ticket_created event commit together or not at all.
+	// The ticket, its ticket_created event and its ticket.created webhook
+	// outbox rows (#345) commit together or not at all.
 	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
@@ -146,7 +168,10 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		if err := s.ticketRepo.WithTx(tx).Create(ticket); err != nil {
 			return err
 		}
-		return automationTicketCreated(s.automation.WithTx(tx), ticket.ID, ticket.Status, models.AutomationOriginUser, nil)
+		if err := automationTicketCreated(automationTx(s.automation, tx), ticket.ID, ticket.Status, models.AutomationOriginUser, nil); err != nil {
+			return err
+		}
+		return enqueueWebhookEvent(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketCreated, ticket.ID)
 	})
 	if err != nil {
 		ticket.ID = 0

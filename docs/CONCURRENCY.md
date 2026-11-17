@@ -29,7 +29,7 @@ Three chains are specified. A transaction that locks rows of one chain takes the
 
 - `companies → leads → customers → deals` (#182, implemented): companies by primary key
   (`CompanyRepository.LockLive`, `internal/repository/company_repository.go:64`), leads by id
-  ascending, then customers, then deals. Written down at `internal/service/lead_service.go:178`.
+  ascending, then customers, then deals. Written down at `internal/service/lead_service.go:189`.
 - `users → refresh_tokens`, `users → password_reset_tokens` and `users → api_keys` (implemented
   for every session and credential-issuing transaction): the owner's `users` row first, by primary
   key, its child rows second. Login, refresh rotation, password change and logout follow
@@ -40,6 +40,17 @@ Three chains are specified. A transaction that locks rows of one chain takes the
 - `admin set → users (id ascending) → roles (id ascending)` is the #259 target for RBAC writes (R6, R7), not implemented.
   The #344 persistence has no caller yet; its locking methods follow this chain, with a role's
   `role_permissions` rows after its `roles` row (see the RBAC flow below).
+
+**Outbound webhooks (#345), a self-contained order.** The endpoint delete
+(`internal/repository/webhook_repository.go`, `DeleteEndpoint`) takes `webhook_endpoints →
+webhook_deliveries`: a locking read of the endpoint by primary key, then the delete of its delivery
+rows, then the endpoint. The delivery runtime (`internal/service/webhook_runtime.go`) never takes a
+locking read: it discovers due rows, expired leases and prunable rows with plain `SELECT`s and
+writes each row by primary key with a conditional `UPDATE` or `DELETE` that re-checks the
+discovered state, so it never locks through `idx_webhook_deliveries_status_next` or
+`idx_webhook_deliveries_updated_at`. The outbox rows a create path writes are inserts into its own
+transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
+the chains above.
 
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several
 chains: an erasure reaches users, customers and leads from whichever root it starts at, and the
@@ -66,7 +77,7 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
   same file): a deadlock has already destroyed the enclosing transaction, so only the enclosing
   root may replay the whole unit.
 
-The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1045`),
+The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1063`),
 login (`internal/service/auth_service.go:283`), the password-reset request
 (`internal/service/auth_service.go:1220`) and API-key create
 (`internal/service/apikey_service.go:86`).
@@ -176,26 +187,26 @@ flows, and their order depends on the root. With no retry rule yet, all three ar
 ### Lead conversion
 
 - **Rows locked:** the `companies` rows of the lead's stored company and of a caller-supplied
-  `company_id` (`lockLeadCompanies`, `internal/service/lead_service.go:263`), then the `leads` row
-  (`lockedLeadRead`, `internal/service/lead_service.go:1104`); the new `customers` row is inserted
-  (`internal/service/lead_service.go:1167`). No deal is touched.
+  `company_id` (`lockLeadCompanies`, `internal/service/lead_service.go:274`), then the `leads` row
+  (`lockedLeadRead`, `internal/service/lead_service.go:1122`); the new `customers` row is inserted
+  (`internal/service/lead_service.go:1185`). No deal is touched.
 - **Order:** a plain read of the lead outside the transaction
-  (`internal/service/lead_service.go:1000`); in each attempt a plain read of `company_id`
-  (`internal/service/lead_service.go:1083`) → companies, ascending id
-  (`internal/service/lead_service.go:276`) → the locked lead → customers. A locked lead that names
+  (`internal/service/lead_service.go:1018`); in each attempt a plain read of `company_id`
+  (`internal/service/lead_service.go:1101`) → companies, ascending id
+  (`internal/service/lead_service.go:287`) → the locked lead → customers. A locked lead that names
   another company ends the attempt with `errLeadCompanyMoved`; at most `leadCompanyMaxRestarts`
-  restarts (`internal/service/lead_service.go:202`). A conversion queued behind a lead erasure
+  restarts (`internal/service/lead_service.go:213`). A conversion queued behind a lead erasure
   finds the lead gone: its `lockedLeadRead` returns not found (`gorm.ErrRecordNotFound`, which
   `apperrors.IsNotFound` matches, so `POST /leads/{id}/convert` answers 404) and nothing is written
   (#337, see Lead-rooted erasure).
 - **Transaction:** a transaction root (an enclosing transaction is refused with
   `utils.ErrTransactionRootRequired`); `runLeadCompanyAttempts`
-  (`internal/service/lead_service.go:1044`) around one root transaction per attempt.
-- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1045`,
+  (`internal/service/lead_service.go:1062`) around one root transaction per attempt.
+- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1063`,
   `:1053` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
-  busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:322`) restarts
+  busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:333`) restarts
   the whole root at most `leadCompanyMaxRestarts` (3) times, on `errLeadCompanyMoved` only and only
-  after a clean rollback (`shouldRestartLeadCompanyAttempt`, `internal/service/lead_service.go:215`),
+  after a clean rollback (`shouldRestartLeadCompanyAttempt`, `internal/service/lead_service.go:226`),
   then returns `ErrLeadCompanyContended`.
 - **Status:** implemented
 
@@ -203,13 +214,13 @@ flows, and their order depends on the root. With no retry rule yet, all three ar
 
 - **Rows locked:** the `companies` rows of the stored and of the sent `company_id`, the `leads`
   row (`lockedLeadRead`) and, when `owner_id` changes, the new owner's `users` row (`lockedUserRead`,
-  `internal/service/lead_service.go:151`).
-- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:508`)
-  → companies, ascending id (`internal/service/lead_service.go:519`) → the locked lead and the
-  locked owner (`internal/service/lead_service.go:540`). Same chain and the same
+  `internal/service/lead_service.go:162`).
+- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:526`)
+  → companies, ascending id (`internal/service/lead_service.go:537`) → the locked lead and the
+  locked owner (`internal/service/lead_service.go:558`). Same chain and the same
   `errLeadCompanyMoved` check as the conversion, bounded by `leadCompanyMaxRestarts`.
-- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:495`) inside
-  `runLeadCompanyAttempts` (`internal/service/lead_service.go:494`).
+- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:513`) inside
+  `runLeadCompanyAttempts` (`internal/service/lead_service.go:512`).
 - **Retry:** `runLeadCompanyAttempts` restarts the whole root at most `leadCompanyMaxRestarts` times,
   on `errLeadCompanyMoved` only; each attempt is a plain `WithTransaction`, so there is no deadlock
   retry: error 1213 or 1205 reaches the caller.

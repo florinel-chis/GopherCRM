@@ -21,7 +21,7 @@ moves faster than this page.
 
 Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:257`).
+wiring is in `setupDependencies` (`cmd/main.go:259`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -48,8 +48,8 @@ wiring is in `setupDependencies` (`cmd/main.go:257`).
 
 Checked by searching the tracked tree on `4dfe404`:
 
-- No outbound webhooks (`git ls-files internal cmd | xargs grep -liE webhook` finds nothing;
-  #232).
+- Outbound webhooks cover only `lead.created`, `customer.created` and `ticket.created` (#345, the
+  first cut of #232): no update, delete or other events, and no web UI for the registry yet.
 - No MCP server.
 - API keys have no scopes: a key acts with its owner's full role (`internal/models/apikey.go`
   holds only name, hash, prefix, owner, expiry and an active flag). Least-privilege credentials
@@ -314,12 +314,12 @@ Configuration comes from three places:
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
 | `JWT_SECRET` | none (required) | `config.go:261` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:305`, `internal/service/form_service.go:333` | see the rotation callout below |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:305`, `internal/service/form_service.go:346` | see the rotation callout below |
 | `DB_DRIVER` | `mysql` | `config.go:274` | `mysql` or `sqlite`; anything else stops startup |
 | `DB_PATH` | `gophercrm.db` | `config.go:275` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:276-280` | MySQL only |
 | `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:284-285` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:286` | `production` switches Gin to release mode (`cmd/main.go:217-219`) |
+| `SERVER_MODE` | `development` | `config.go:286` | `production` switches Gin to release mode (`cmd/main.go:219-221`) |
 | `TRUSTED_PROXIES` | trust none | `config.go:287` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:288` | every browser origin of your UI |
 | `APP_BASE_URL` | `http://localhost:5173` | `config.go:315` | the UI origin; password-reset links |
@@ -338,9 +338,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:309`), refresh and password-reset tokens (`cmd/main.go:291`), form confirmation
->   tokens and time-trap signatures (`internal/service/form_service.go:327-338`), and the
->   encryption of sensitive settings (`cmd/main.go:294`, `internal/utils/secretbox.go`). Rotating
+>   (`cmd/main.go:318`), refresh and password-reset tokens (`cmd/main.go:300`), form confirmation
+>   tokens and time-trap signatures (`internal/service/form_service.go:340-351`), and the
+>   encryption of sensitive settings (`cmd/main.go:303`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
@@ -574,7 +574,7 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:257` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` in `cmd/main.go:259` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
 | the AutoMigrate list in `internal/models/database.go:114-156` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |

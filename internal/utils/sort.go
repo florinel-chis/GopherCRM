@@ -56,6 +56,11 @@ var AllowedSortColumns = map[string]map[string]bool{
 	"roles": {
 		"id": true, "name": true, "created_at": true, "updated_at": true,
 	},
+	// Outbound webhook endpoints (#345): WebhookRepository.ListEndpoints
+	// orders by one of these and then by webhook_endpoints.id.
+	"webhook_endpoints": {
+		"id": true, "created_at": true, "updated_at": true,
+	},
 }
 
 // ValidateSort checks that sortBy is in the allowlist for the given entity and

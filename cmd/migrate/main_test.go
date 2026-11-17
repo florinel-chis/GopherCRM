@@ -122,6 +122,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"automation_rules", "automation_steps", "automation_events", "automation_runs", "automation_run_steps", "notifications",
 		"customer_external_ids", "product_external_ids", "ticket_mail_deliveries", "form_ticket_keys",
 		"roles", "role_permissions", "role_audit_log",
+		"webhook_endpoints", "webhook_deliveries",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())

@@ -107,6 +107,8 @@ import (
 // @tag.description Answer-engine visibility tracking: profile, prompts, runs, reports.
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
+// @tag.name webhooks
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of lead.created, customer.created and ticket.created events.
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 
@@ -253,8 +255,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 
 // setupDependencies wires every repository, service and handler onto the API
 // group and returns the function that drains the automation worker, the form
-// retention purge, the bulk operation sweep and the AEO runtime at shutdown,
-// in that order, before main closes the database.
+// retention purge, the bulk operation sweep, the webhook sender and the AEO
+// runtime at shutdown, in that order, before main closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)
@@ -284,6 +286,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 	txManager := utils.NewTransactionManager(models.DB)
 
+	// Outbound webhooks (#345): one repository is the outbox of every create
+	// path (lead, customer, ticket, form) and the store of the registry and the
+	// delivery log. Endpoint secrets are sealed under their own SecretBox
+	// context.
+	webhookRepo := repository.NewWebhookRepository(models.DB)
+	webhookBox := utils.NewSecretBox(cfg.API.APIKeySecret, service.WebhookSecretContext)
+
 	// The configuration service is built first: the password reset, quote and
 	// ticket reply mails read their product name from general.company_name
 	// through it on every send (#292).
@@ -305,8 +314,12 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// or assignment names is checked against the users (issue #255).
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager,
 		service.WithLeadAutomationEvents(automationRepo),
-		service.WithLeadConversionRules(configService))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
+		service.WithLeadConversionRules(configService),
+		service.WithLeadWebhooks(webhookRepo))
+	// Customer create is one transaction with its customer.created outbox
+	// rows (#345).
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo,
+		service.WithCustomerWebhooks(webhookRepo, txManager))
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail
@@ -316,7 +329,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer),
 		service.WithTicketProductName(configService),
-		service.WithTicketAutomationEvents(automationRepo, txManager))
+		service.WithTicketAutomationEvents(automationRepo, txManager),
+		service.WithTicketWebhooks(webhookRepo, txManager))
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
 	labelService := service.NewLabelService(labelRepo)
 	// A key is issued only inside one transaction that locks its owner's users
@@ -370,7 +384,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	formTicketRepo := repository.NewFormTicketRepository(models.DB)
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
 		txManager, cfg.Forms, cfg.API.Prefix, service.WithFormAutomationEvents(automationRepo),
-		service.WithFormTicketIntake(formTicketRepo, txManager))
+		service.WithFormTicketIntake(formTicketRepo, txManager),
+		service.WithFormWebhooks(webhookRepo))
 
 	// Follow-up automation. The engine executes rules behind locking reads
 	// and conditional advances; the runtime owns the worker goroutine and is
@@ -413,6 +428,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	formPublicHandler := handler.NewFormPublicHandler(formService, cfg.Forms, cfg.API.Prefix)
 	automationHandler := handler.NewAutomationHandler(automationService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
+	webhookHandler := handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, webhookBox))
 
 	// Recover the automation runs whose lease went stale before the worker and
 	// the HTTP server start (#237). Each claim records this engine's instance
@@ -529,6 +545,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupFormRoutes(protected, formHandler)
 		handler.SetupAutomationRoutes(protected, automationHandler)
 		handler.SetupNotificationRoutes(protected, notificationHandler)
+		handler.SetupWebhookRoutes(protected, webhookHandler)
 
 		protectedAuth := protected.Group("/auth")
 		{
@@ -543,8 +560,16 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo)
 	bulkRecovery.start(backgroundCtx)
 
+	// The outbound webhook sender (#345) runs on every replica: every
+	// service.WebhookPollInterval it delivers the committed outbox rows through
+	// the public-only egress guard.
+	webhooks := newWebhookBackground(webhookRepo, webhookBox)
+	webhooks.start(backgroundCtx)
+
 	// One drain handle for every runtime: the automation worker first (its step
 	// transactions are short), then the form retention purge (a chunk in flight
-	// rolls back), then the bulk operation sweep, then the AEO runs.
-	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)
+	// rolls back), then the bulk operation sweep, then the webhook sender (an
+	// attempt in flight finishes, bounded by its request timeout), then the AEO
+	// runs.
+	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)
 }

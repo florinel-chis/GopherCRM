@@ -133,6 +133,29 @@ and both the run engine and prompt generation. For each request:
    configured host, not the dialed literal. Context cancellation and the per-query timeout behave
    as before.
 
+## Public-only egress for webhooks
+
+The outbound webhook sender (#345) reaches URLs an administrator typed, so it reuses the
+connection-time checks above but none of the AEO trust. `(*aeo.EgressGuard).PublicHTTPClient(url)`
+(`internal/aeo/egress_public.go`):
+
+- accepts only an `https` URL with a host and without userinfo, query (not even a bare `?`) or
+  fragment; anything else is `ErrEndpointNotPermitted` before any lookup;
+- resolves the host on every connection and refuses the connection when any answer is non-public
+  (loopback, RFC 1918, CGNAT, unique-local), link-local, a metadata address, multicast or
+  unspecified, judging IPv4-mapped IPv6 as the IPv4 address it carries; only the validated literal
+  is dialled;
+- ignores `HTTP_PROXY`/`HTTPS_PROXY`, never follows a redirect (a 3xx is a terminal failure of the
+  attempt, recorded as `redirect`), disables keep-alive, and keeps TLS verification on.
+
+`AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` and the engines' official origins never
+apply to it: a local exception for `10.0.0.0/8` does not let a webhook reach `10.x`. Endpoint
+create and update also refuse a non-public IP literal up front (`aeo.CheckPublicURL`). A refused
+delivery records `destination_refused` and is retried with the usual backoff. Regression root:
+`TestEgressPublicClient` (`internal/aeo`); end to end, `TestWebhookEgressRefusal`
+(`internal/service`) and `TestWebhookProductionWiring` (`cmd`, a `localhost` endpoint on the real
+guard).
+
 ## Sanitized failure diagnostics
 
 Provider error bodies are attacker-influenced. They can reflect the API key, the prompt or

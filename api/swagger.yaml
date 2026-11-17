@@ -4274,6 +4274,204 @@ definitions:
     - RoleSales
     - RoleSupport
     - RoleCustomer
+  github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery:
+    description: One outbound webhook delivery (one event for one endpoint) and its
+      outcome. Holds ids, the event type, the status, counters and timestamps; never
+      a URL, a secret or a payload.
+    properties:
+      attempts:
+        description: Attempts made so far (at most 10).
+        example: 1
+        readOnly: true
+        type: integer
+      created_at:
+        description: When the row was enqueued (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      endpoint_id:
+        description: The endpoint the event is delivered to.
+        example: 4
+        readOnly: true
+        type: integer
+      error_code:
+        description: 'Why the last attempt failed: http_status (a non-2xx answer),
+          redirect (a 3xx answer, not followed), timeout, connection_failed, destination_refused
+          (the host resolved to a non-public address), endpoint_inactive, secret_unavailable
+          or lease_expired. Empty after a success.'
+        enum:
+        - ""
+        - http_status
+        - redirect
+        - timeout
+        - connection_failed
+        - destination_refused
+        - endpoint_inactive
+        - secret_unavailable
+        - lease_expired
+        example: ""
+        readOnly: true
+        type: string
+      event_id:
+        description: Event id (evt_ followed by 32 hex characters), shared by every
+          endpoint's row of one event; sent as webhook-id and as the body's id.
+        example: evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9
+        readOnly: true
+        type: string
+      event_type:
+        description: Event type.
+        enum:
+        - lead.created
+        - customer.created
+        - ticket.created
+        example: lead.created
+        readOnly: true
+        type: string
+      id:
+        description: Unique identifier, assigned by the server. Read-only.
+        example: 91
+        readOnly: true
+        type: integer
+      last_attempt_at:
+        description: When the last attempt started (RFC 3339); null before the first.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+        x-nullable: true
+      last_http_status:
+        description: HTTP status code of the last answer; null when none was received.
+        example: 200
+        readOnly: true
+        type: integer
+        x-nullable: true
+      next_attempt_at:
+        description: When the next attempt is due (RFC 3339); null once the row is
+          finished.
+        example: "2026-11-20T09:31:00Z"
+        readOnly: true
+        type: string
+        x-nullable: true
+      occurred_at:
+        description: When the record was created (RFC 3339, UTC).
+        example: "2026-11-20T09:30:00.123Z"
+        readOnly: true
+        type: string
+      record_id:
+        description: 'Id of the created lead, customer or ticket: the only record
+          datum sent.'
+        example: 42
+        readOnly: true
+        type: integer
+      status:
+        description: 'Delivery state: pending (due at next_attempt_at), sending (claimed
+          by the sender), succeeded (a 2xx answer) or failed (the attempt cap was
+          reached, or the endpoint or its secret is unusable).'
+        enum:
+        - pending
+        - sending
+        - succeeded
+        - failed
+        example: succeeded
+        readOnly: true
+        type: string
+      updated_at:
+        description: When the row last changed (RFC 3339); finished rows are pruned
+          30 days after it. Read-only.
+        example: "2026-11-20T09:30:01Z"
+        readOnly: true
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint:
+    description: A registered outbound webhook endpoint (admin only). Never carries
+      the signing secret; it is returned once, by POST /webhooks/endpoints.
+    properties:
+      created_at:
+        description: When the endpoint was registered (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      event_types:
+        description: Subscribed event types, deduplicated and sorted.
+        example:
+        - lead.created
+        - ticket.created
+        items:
+          enum:
+          - customer.created
+          - lead.created
+          - ticket.created
+          type: string
+        type: array
+      id:
+        description: Unique identifier, assigned by the server. Read-only.
+        example: 4
+        readOnly: true
+        type: integer
+      is_active:
+        description: Whether new events are enqueued for this endpoint. An inactive
+          endpoint's pending deliveries fail with endpoint_inactive.
+        example: true
+        type: boolean
+      updated_at:
+        description: When the endpoint last changed (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      url:
+        description: 'Target URL: https, no credentials, query string or fragment,
+          at most 2048 characters; the host must resolve to public addresses only.'
+        example: https://hooks.example.com/gophercrm
+        maxLength: 2048
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointCreated:
+    description: A newly registered webhook endpoint with its signing secret. This
+      is the only response that ever carries the secret.
+    properties:
+      created_at:
+        description: When the endpoint was registered (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      event_types:
+        description: Subscribed event types, deduplicated and sorted.
+        example:
+        - lead.created
+        - ticket.created
+        items:
+          enum:
+          - customer.created
+          - lead.created
+          - ticket.created
+          type: string
+        type: array
+      id:
+        description: Unique identifier, assigned by the server. Read-only.
+        example: 4
+        readOnly: true
+        type: integer
+      is_active:
+        description: Whether new events are enqueued for this endpoint. An inactive
+          endpoint's pending deliveries fail with endpoint_inactive.
+        example: true
+        type: boolean
+      secret:
+        description: 'Signing secret: whsec_ followed by the base64 of 32 random bytes.
+          Shown only in this response; store it now.'
+        example: whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw
+        type: string
+      updated_at:
+        description: When the endpoint last changed (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      url:
+        description: 'Target URL: https, no credentials, query string or fragment,
+          at most 2048 characters; the host must resolve to public addresses only.'
+        example: https://hooks.example.com/gophercrm
+        maxLength: 2048
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_service.PublicFormDefinition:
     properties:
       challenge:
@@ -7415,6 +7613,61 @@ definitions:
         - support
         - customer
         example: support
+    type: object
+  internal_handler.WebhookEndpointCreateRequest:
+    properties:
+      event_types:
+        description: 'Event types to subscribe to: 1 to 3 of lead.created, customer.created
+          and ticket.created; duplicates collapse.'
+        example:
+        - lead.created
+        - ticket.created
+        items:
+          enum:
+          - lead.created
+          - customer.created
+          - ticket.created
+          type: string
+        type: array
+      is_active:
+        description: Whether events are enqueued for the endpoint; absent means true.
+        example: true
+        type: boolean
+      url:
+        description: 'Target URL: https, no credentials, query string or fragment,
+          at most 2048 characters; an IP-literal host must be public, and a host name
+          must resolve to public addresses only when a delivery connects.'
+        example: https://hooks.example.com/gophercrm
+        maxLength: 2048
+        type: string
+    required:
+    - event_types
+    - url
+    type: object
+  internal_handler.WebhookEndpointUpdateRequest:
+    properties:
+      event_types:
+        description: 'New subscribed subset: 1 to 3 of lead.created, customer.created
+          and ticket.created.'
+        example:
+        - lead.created
+        items:
+          enum:
+          - lead.created
+          - customer.created
+          - ticket.created
+          type: string
+        type: array
+      is_active:
+        description: Activate or deactivate the endpoint. Pending deliveries of an
+          inactive endpoint fail with endpoint_inactive when they are claimed.
+        example: false
+        type: boolean
+      url:
+        description: New target URL, under the same rules as on create.
+        example: https://hooks.example.com/gophercrm
+        maxLength: 2048
+        type: string
     type: object
 info:
   contact: {}
@@ -22827,6 +23080,569 @@ paths:
       summary: Update the caller's account
       tags:
       - users
+  /webhooks/deliveries:
+    get:
+      description: |-
+        One page of the outbound webhook delivery log, newest first (id descending). Each row is one event for one endpoint: ids, the event type, the status, the attempt count, the last HTTP status, the error code and the attempt times; never a URL, a secret or a payload. Succeeded and failed rows are pruned 30 days after their last change.
+        Filters: endpoint_id, status and event_type; an empty value is ignored. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
+        Roles: admin.
+      parameters:
+      - default: 0
+        description: Pagination offset
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: Only deliveries of this endpoint (positive integer; otherwise
+          400)
+        in: query
+        minimum: 1
+        name: endpoint_id
+        type: integer
+      - description: 'Only rows with this status (unknown value: 400)'
+        enum:
+        - pending
+        - sending
+        - succeeded
+        - failed
+        in: query
+        name: status
+        type: string
+      - description: 'Only rows of this event type (unknown value: 400)'
+        enum:
+        - lead.created
+        - customer.created
+        - ticket.created
+        in: query
+        name: event_type
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Deliveries retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - endpoint_id is not a positive integer, or
+            status or event_type is unknown (error.details keyed by the parameter;
+            the value is not echoed)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List webhook deliveries
+      tags:
+      - webhooks
+  /webhooks/endpoints:
+    get:
+      description: |-
+        One page of the registered outbound webhook endpoints. The signing secret is never part of the answer.
+        Ordered by sort_by (id, created_at or updated_at) and then by id in the same direction, or by id ascending without sort_by. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
+        Roles: admin.
+      parameters:
+      - default: 0
+        description: Pagination offset
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: 'Sort column (another value: 400)'
+        enum:
+        - id
+        - created_at
+        - updated_at
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort direction; anything but asc sorts descending
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Endpoints retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - sort_by is not id, created_at or updated_at
+            (error.details.sort_by)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List webhook endpoints
+      tags:
+      - webhooks
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.
+        From then on every lead, customer or ticket created (through the API, a lead conversion or a form) enqueues one delivery per active endpoint subscribed to its event type, in the creating transaction. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
+        The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
+        Roles: admin.
+      parameters:
+      - description: Endpoint to register
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.WebhookEndpointCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Endpoint registered; data.secret is shown only here
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointCreated'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - an invalid url or event_types, or an empty
+            body (error.details keyed by url, event_types or body; the value is not
+            echoed); BAD_REQUEST - malformed JSON ('Invalid request format')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Register a webhook endpoint
+      tags:
+      - webhooks
+  /webhooks/endpoints/{id}:
+    delete:
+      description: |-
+        Permanently deletes the endpoint and every delivery row of it (pending ones included, which are then never sent), in one transaction.
+        Roles: admin.
+      parameters:
+      - description: Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: Endpoint and its deliveries deleted
+        "400":
+          description: VALIDATION_ERROR - the id is not a positive integer (error.details.id)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - no endpoint with that id
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a webhook endpoint
+      tags:
+      - webhooks
+    get:
+      description: |-
+        One registered webhook endpoint, without its signing secret.
+        Roles: admin.
+      parameters:
+      - description: Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Endpoint retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - the id is not a positive integer (error.details.id)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - no endpoint with that id
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a webhook endpoint
+      tags:
+      - webhooks
+    put:
+      consumes:
+      - application/json
+      description: |-
+        Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret never changes and is not returned.
+        Deliveries already enqueued keep their endpoint: those of an endpoint set inactive fail with endpoint_inactive when they are claimed, and those of an endpoint whose URL changed are sent to the new URL.
+        Roles: admin.
+      parameters:
+      - description: Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.WebhookEndpointUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Endpoint updated
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - a bad id, an invalid url or event_types,
+            or a body with none of the fields (error.details keyed by id, url, event_types
+            or body; the value is not echoed); BAD_REQUEST - malformed JSON ('Invalid
+            request format')
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - no endpoint with that id
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a webhook endpoint
+      tags:
+      - webhooks
 securityDefinitions:
   ApiKeyAuth:
     description: 'Personal API key from POST /api-keys, sent in the same Authorization
@@ -22881,6 +23697,9 @@ tags:
   name: aeo
 - description: Embeddable lead-capture forms and their submissions (staff side).
   name: forms
+- description: 'Outbound webhooks (admin): endpoint registry with signing secrets,
+    and the delivery log of lead.created, customer.created and ticket.created events.'
+  name: webhooks
 - description: 'Unauthenticated endpoints reached by visitors of the sites a form
     is embedded on: definition, submission, embed script, view page and double opt-in
     confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS

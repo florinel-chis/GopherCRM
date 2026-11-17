@@ -297,3 +297,19 @@ func SetupCustomerExternalIDRoutes(router *gin.RouterGroup, handler *CustomerHan
 	router.POST("/customers/:id/external-ids", writers, handler.CreateExternalID)
 	router.DELETE("/customers/:id/external-ids/:mappingId", writers, handler.DeleteExternalID)
 }
+
+// SetupWebhookRoutes mounts the outbound webhook registry and delivery log
+// (#345). Every route is admin only: the guard answers 403 to sales, support
+// and customer callers before the handler runs.
+func SetupWebhookRoutes(router *gin.RouterGroup, handler *WebhookHandler) {
+	webhooks := router.Group("/webhooks")
+	webhooks.Use(middleware.RequireRole(models.RoleAdmin))
+	{
+		webhooks.GET("/endpoints", handler.ListEndpoints)
+		webhooks.POST("/endpoints", handler.CreateEndpoint)
+		webhooks.GET("/endpoints/:id", handler.GetEndpoint)
+		webhooks.PUT("/endpoints/:id", handler.UpdateEndpoint)
+		webhooks.DELETE("/endpoints/:id", handler.DeleteEndpoint)
+		webhooks.GET("/deliveries", handler.ListDeliveries)
+	}
+}

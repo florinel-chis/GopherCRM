@@ -42,7 +42,7 @@ file, not by trusting the coverage matrix.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData()`) or `fixtures/test-data.ts` (`generateTestUser()`). Never hardcode an email.
 - `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`internal/middleware/rate_limit.go:124`,
-  applied at `cmd/main.go:183`). Any case that issues more than five auth requests in quick
+  applied at `cmd/main.go:185`). Any case that issues more than five auth requests in quick
   succession must space them out (≈6 s per extra token) or run the backend with
   `DISABLE_RATE_LIMIT=true`, which bypasses the strict tier only.
 - Deleting a user is irreversible GDPR erasure (`internal/repository/erasure.go`). Only delete
@@ -478,7 +478,7 @@ file, not by trusting the coverage matrix.
   removed at once, without waiting for a refresh another tab may be running under the session lock;
   that refresh then stores nothing (#184). Navigating back to `/` redirects to `/login`.
 - **Known issue:** FEATURES.md row 1.4 still says "There is no server-side logout endpoint"; that row
-  is superseded by section 10b — the route is registered at `cmd/main.go:211` behind the auth
+  is superseded by section 10b — the route is registered at `cmd/main.go:213` behind the auth
   middleware. Closes gap **G11**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new logout describe block)
 

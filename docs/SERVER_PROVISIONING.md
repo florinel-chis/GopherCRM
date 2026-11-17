@@ -341,7 +341,7 @@ first start with `journalctl -u gophercrm -f`.
 
 ## Schema migrations
 
-The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`cmd/main.go:140`),
+The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`cmd/main.go:142`),
 so the first start creates the tables and later starts add new columns and tables.
 
 The release tarball carries the SQL half as well: `bin/migrate` and the `migrations/` directory

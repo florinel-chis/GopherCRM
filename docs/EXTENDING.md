@@ -280,7 +280,7 @@ schema). A root that skipped proves nothing.
 
 - Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:264`) with key, type,
   category, default and description. `configRepo.InitializeDefaults()` runs at every start
-  (`cmd/main.go:146`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
+  (`cmd/main.go:148`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
   value (`BulkUpsert`, `internal/repository/configuration_repository.go:62`). Changing a default
   therefore does not touch existing installations.
 - A secret gets `IsSensitive: true` (the AEO keys, `configuration.go:367-404`): encrypted at rest by
@@ -329,7 +329,7 @@ origins (lines 49-55) and six step types (lines 58-65).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 214-216, 310-315).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:59`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:70`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
@@ -373,7 +373,7 @@ missing (see the roadmap).
 ## 7. Add a form field type
 
 Constant and `validateFieldType` in `internal/models/form.go:54-62,365`; submitted-value validation
-in `validateValues` (`internal/service/form_service.go:767`, called from `SubmitPublic` at line
+in `validateValues` (`internal/service/form_service.go:780`, called from `SubmitPublic` at line
 713); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
@@ -488,7 +488,7 @@ it is the cleanest removal.
 | Layer | Remove or change |
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
-| Wiring | `cmd/main.go` (import line 12; construction lines 338-363; handler line 401; reconcile and scheduler lines 428-460; route line 518); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, aeoRuntime.Stop)` (line 539) and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge and the stale bulk operation sweep. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
+| Wiring | `cmd/main.go` (import line 12; construction lines 352-377; handler line 416; reconcile and scheduler lines 444-476; route line 534); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)` and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge, the stale bulk operation sweep and the webhook sender. The outbound webhook sender (#345) uses the AEO egress guard (`internal/aeo/egress.go`, `egress_public.go`: `(*aeo.EgressGuard).PublicHTTPClient`, `aeo.CheckPublicURL`); keep those two files, or move them to a package of their own, when removing the module. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
 | Configuration | `AEOConfig` and its block (`internal/config/config.go:135,317`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
@@ -501,8 +501,8 @@ it is the cleanest removal.
 | Module | Prefer | Coupling to watch |
 |---|---|---|
 | Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:350`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:270-271,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:235-236`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:272-273,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:237-238`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.

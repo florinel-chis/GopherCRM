@@ -24976,6 +24976,970 @@
                     }
                 }
             }
+        },
+        "/webhooks/deliveries": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One page of the outbound webhook delivery log, newest first (id descending). Each row is one event for one endpoint: ids, the event type, the status, the attempt count, the last HTTP status, the error code and the attempt times; never a URL, a secret or a payload. Succeeded and failed rows are pruned 30 days after their last change.\nFilters: endpoint_id, status and event_type; an empty value is ignored. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nRoles: admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "List webhook deliveries",
+                "parameters": [
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size, capped at 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Only deliveries of this endpoint (positive integer; otherwise 400)",
+                        "name": "endpoint_id",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "pending",
+                            "sending",
+                            "succeeded",
+                            "failed"
+                        ],
+                        "type": "string",
+                        "description": "Only rows with this status (unknown value: 400)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "lead.created",
+                            "customer.created",
+                            "ticket.created"
+                        ],
+                        "type": "string",
+                        "description": "Only rows of this event type (unknown value: 400)",
+                        "name": "event_type",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Deliveries retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - endpoint_id is not a positive integer, or status or event_type is unknown (error.details keyed by the parameter; the value is not echoed)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/webhooks/endpoints": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One page of the registered outbound webhook endpoints. The signing secret is never part of the answer.\nOrdered by sort_by (id, created_at or updated_at) and then by id in the same direction, or by id ascending without sort_by. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nRoles: admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "List webhook endpoints",
+                "parameters": [
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size, capped at 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "id",
+                            "created_at",
+                            "updated_at"
+                        ],
+                        "type": "string",
+                        "description": "Sort column (another value: 400)",
+                        "name": "sort_by",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "description": "Sort direction; anything but asc sorts descending",
+                        "name": "sort_order",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Endpoints retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - sort_by is not id, created_at or updated_at (error.details.sort_by)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.\nFrom then on every lead, customer or ticket created (through the API, a lead conversion or a form) enqueues one delivery per active endpoint subscribed to its event type, in the creating transaction. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Register a webhook endpoint",
+                "parameters": [
+                    {
+                        "description": "Endpoint to register",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.WebhookEndpointCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Endpoint registered; data.secret is shown only here",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointCreated"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - an invalid url or event_types, or an empty body (error.details keyed by url, event_types or body; the value is not echoed); BAD_REQUEST - malformed JSON ('Invalid request format')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "/webhooks/endpoints/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One registered webhook endpoint, without its signing secret.\nRoles: admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Get a webhook endpoint",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Endpoint ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Endpoint retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - the id is not a positive integer (error.details.id)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND - no endpoint with that id",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret never changes and is not returned.\nDeliveries already enqueued keep their endpoint: those of an endpoint set inactive fail with endpoint_inactive when they are claimed, and those of an endpoint whose URL changed are sent to the new URL.\nRoles: admin.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Update a webhook endpoint",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Endpoint ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.WebhookEndpointUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Endpoint updated",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - a bad id, an invalid url or event_types, or a body with none of the fields (error.details keyed by id, url, event_types or body; the value is not echoed); BAD_REQUEST - malformed JSON ('Invalid request format')",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND - no endpoint with that id",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Permanently deletes the endpoint and every delivery row of it (pending ones included, which are then never sent), in one transaction.\nRoles: admin.",
+                "tags": [
+                    "webhooks"
+                ],
+                "summary": "Delete a webhook endpoint",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Endpoint ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Endpoint and its deliveries deleted"
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - the id is not a positive integer (error.details.id)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - role is not admin",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "NOT_FOUND - no endpoint with that id",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -29373,6 +30337,228 @@
                 "RoleCustomer"
             ]
         },
+        "github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery": {
+            "description": "One outbound webhook delivery (one event for one endpoint) and its outcome. Holds ids, the event type, the status, counters and timestamps; never a URL, a secret or a payload.",
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "description": "Attempts made so far (at most 10).",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 1
+                },
+                "created_at": {
+                    "description": "When the row was enqueued (RFC 3339). Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "endpoint_id": {
+                    "description": "The endpoint the event is delivered to.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 4
+                },
+                "error_code": {
+                    "description": "Why the last attempt failed: http_status (a non-2xx answer), redirect (a 3xx answer, not followed), timeout, connection_failed, destination_refused (the host resolved to a non-public address), endpoint_inactive, secret_unavailable or lease_expired. Empty after a success.",
+                    "type": "string",
+                    "enum": [
+                        "",
+                        "http_status",
+                        "redirect",
+                        "timeout",
+                        "connection_failed",
+                        "destination_refused",
+                        "endpoint_inactive",
+                        "secret_unavailable",
+                        "lease_expired"
+                    ],
+                    "readOnly": true,
+                    "example": ""
+                },
+                "event_id": {
+                    "description": "Event id (evt_ followed by 32 hex characters), shared by every endpoint's row of one event; sent as webhook-id and as the body's id.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9"
+                },
+                "event_type": {
+                    "description": "Event type.",
+                    "type": "string",
+                    "enum": [
+                        "lead.created",
+                        "customer.created",
+                        "ticket.created"
+                    ],
+                    "readOnly": true,
+                    "example": "lead.created"
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 91
+                },
+                "last_attempt_at": {
+                    "description": "When the last attempt started (RFC 3339); null before the first.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "last_http_status": {
+                    "description": "HTTP status code of the last answer; null when none was received.",
+                    "type": "integer",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": 200
+                },
+                "next_attempt_at": {
+                    "description": "When the next attempt is due (RFC 3339); null once the row is finished.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-20T09:31:00Z"
+                },
+                "occurred_at": {
+                    "description": "When the record was created (RFC 3339, UTC).",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00.123Z"
+                },
+                "record_id": {
+                    "description": "Id of the created lead, customer or ticket: the only record datum sent.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 42
+                },
+                "status": {
+                    "description": "Delivery state: pending (due at next_attempt_at), sending (claimed by the sender), succeeded (a 2xx answer) or failed (the attempt cap was reached, or the endpoint or its secret is unusable).",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "sending",
+                        "succeeded",
+                        "failed"
+                    ],
+                    "readOnly": true,
+                    "example": "succeeded"
+                },
+                "updated_at": {
+                    "description": "When the row last changed (RFC 3339); finished rows are pruned 30 days after it. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:01Z"
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint": {
+            "description": "A registered outbound webhook endpoint (admin only). Never carries the signing secret; it is returned once, by POST /webhooks/endpoints.",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "When the endpoint was registered (RFC 3339). Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "event_types": {
+                    "description": "Subscribed event types, deduplicated and sorted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "customer.created",
+                            "lead.created",
+                            "ticket.created"
+                        ]
+                    },
+                    "example": [
+                        "lead.created",
+                        "ticket.created"
+                    ]
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 4
+                },
+                "is_active": {
+                    "description": "Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "updated_at": {
+                    "description": "When the endpoint last changed (RFC 3339). Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "url": {
+                    "description": "Target URL: https, no credentials, query string or fragment, at most 2048 characters; the host must resolve to public addresses only.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "example": "https://hooks.example.com/gophercrm"
+                }
+            }
+        },
+        "github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointCreated": {
+            "description": "A newly registered webhook endpoint with its signing secret. This is the only response that ever carries the secret.",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "When the endpoint was registered (RFC 3339). Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "event_types": {
+                    "description": "Subscribed event types, deduplicated and sorted.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "customer.created",
+                            "lead.created",
+                            "ticket.created"
+                        ]
+                    },
+                    "example": [
+                        "lead.created",
+                        "ticket.created"
+                    ]
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 4
+                },
+                "is_active": {
+                    "description": "Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "secret": {
+                    "description": "Signing secret: whsec_ followed by the base64 of 32 random bytes. Shown only in this response; store it now.",
+                    "type": "string",
+                    "example": "whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"
+                },
+                "updated_at": {
+                    "description": "When the endpoint last changed (RFC 3339). Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-11-20T09:30:00Z"
+                },
+                "url": {
+                    "description": "Target URL: https, no credentials, query string or fragment, at most 2048 characters; the host must resolve to public addresses only.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "example": "https://hooks.example.com/gophercrm"
+                }
+            }
+        },
         "github_com_florinel-chis_gophercrm_internal_service.PublicFormDefinition": {
             "type": "object",
             "properties": {
@@ -32586,6 +33772,73 @@
                     "example": "support"
                 }
             }
+        },
+        "internal_handler.WebhookEndpointCreateRequest": {
+            "type": "object",
+            "required": [
+                "event_types",
+                "url"
+            ],
+            "properties": {
+                "event_types": {
+                    "description": "Event types to subscribe to: 1 to 3 of lead.created, customer.created and ticket.created; duplicates collapse.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "lead.created",
+                            "customer.created",
+                            "ticket.created"
+                        ]
+                    },
+                    "example": [
+                        "lead.created",
+                        "ticket.created"
+                    ]
+                },
+                "is_active": {
+                    "description": "Whether events are enqueued for the endpoint; absent means true.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "url": {
+                    "description": "Target URL: https, no credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name must resolve to public addresses only when a delivery connects.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "example": "https://hooks.example.com/gophercrm"
+                }
+            }
+        },
+        "internal_handler.WebhookEndpointUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "event_types": {
+                    "description": "New subscribed subset: 1 to 3 of lead.created, customer.created and ticket.created.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "lead.created",
+                            "customer.created",
+                            "ticket.created"
+                        ]
+                    },
+                    "example": [
+                        "lead.created"
+                    ]
+                },
+                "is_active": {
+                    "description": "Activate or deactivate the endpoint. Pending deliveries of an inactive endpoint fail with endpoint_inactive when they are claimed.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "url": {
+                    "description": "New target URL, under the same rules as on create.",
+                    "type": "string",
+                    "maxLength": 2048,
+                    "example": "https://hooks.example.com/gophercrm"
+                }
+            }
         }
     },
     "securityDefinitions": {
@@ -32674,6 +33927,10 @@
         {
             "description": "Embeddable lead-capture forms and their submissions (staff side).",
             "name": "forms"
+        },
+        {
+            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of lead.created, customer.created and ticket.created events.",
+            "name": "webhooks"
         },
         {
             "description": "Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.",

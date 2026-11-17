@@ -741,7 +741,7 @@ the frontend gating.
 - **Expected:** `POST /api/v1/leads/{id}/convert` returns **200** with the new customer object
   (`{id, first_name, last_name, email, …}`). A "Lead converted to customer successfully" snackbar
   shows. The lead's status becomes `converted` and `leads.customer_id` is set
-  (`lead_service.go:1173`); the lead row remains in the list with a green "Converted" chip.
+  (`lead_service.go:1191`); the lead row remains in the list with a green "Converted" chip.
   The browser then navigates to **`/customers/undefined`**, which leaves the customer detail page
   on its loading spinner rather than showing the new customer.
 - **Known issue:** `endpoints/leads.ts convertLead` types the response as `{customer_id: number}`,
@@ -814,7 +814,7 @@ the frontend gating.
      button is hidden once the status is `converted`, per TC-LEAD-043).
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
-  transaction (`lead_service.go:1008`, `:1117`), and the handler classifies it with `errors.Is`
+  transaction (`lead_service.go:1026`, `:1117`), and the handler classifies it with `errors.Is`
   (`lead_handler.go:528`). No second customer is created. Driven through the UI the conversion dialog
   stays open and shows the server's message above the form, and the page re-reads the lead (since
   #117; from 1.2.0 a snackbar showed it, before that it read "Failed to convert lead"). The same 400

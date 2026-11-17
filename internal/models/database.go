@@ -257,5 +257,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&AutomationRun{},
 		&AutomationRunStep{},
 		&Notification{},
+		// Outbound webhooks (#345): ids only, no foreign key.
+		&WebhookEndpoint{},
+		&WebhookDelivery{},
 	)
 }

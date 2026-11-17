@@ -218,7 +218,11 @@ candidate follow-up, not an accident:
 - **File-upload fields** — text-shaped field types only.
 - **HTML email templates** — confirmation/follow-up/notification mail is plaintext, like the
   password-reset mail it reuses.
-- **CSV export of submissions, webhooks** — submissions are viewable in the UI and via the API.
+- **CSV export of submissions, form-submission webhooks** — submissions are viewable in the UI and
+  via the API. Outbound webhooks for created leads, customers and tickets ship with #345 (a form
+  that creates a lead or opens a ticket sends `lead.created` / `ticket.created`); still open:
+  a submission event of its own, update and delete events, secret rotation, manual redelivery,
+  an endpoint test ping, retry jitter and a web UI for the registry and the delivery log.
 - **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing
   else.
 - **Per-form or per-status retention, and a settings screen** — the retention purge has one age,
