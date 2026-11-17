@@ -256,8 +256,10 @@ func TestQuoteLineAmounts(t *testing.T) {
 	gross, lineTotal, ok = ComputeQuoteLineAmounts(QuoteQuantityFromMilli(QuoteLineQuantityMilliMax-1), QuoteAmountCentsMax-1, 9999)
 	assert.False(t, ok)
 	// (10^9-1)(10^12-1) = 999999998999000000001 thousandths of a cent.
+	// Line total: that product × (10000-9999) / 10^7 = 99999999899900.0000001,
+	// rounded half up to 99999999899900.
 	assert.Equal(t, int64(999_999_998_999_000_000), gross)
-	assert.Equal(t, int64(99_999_999_899_900_000), lineTotal)
+	assert.Equal(t, int64(99_999_999_899_900), lineTotal)
 
 	// The cap is on the rounded gross.
 	_, _, ok = ComputeQuoteLineAmounts(QuoteQuantityFromUnits(1), QuoteAmountCentsMax, 0)
