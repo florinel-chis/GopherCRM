@@ -23,6 +23,9 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestBulkOperationStatusIndexMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteTaxMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteQuantityMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestRoleMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesSchema'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesDownDemotesCustomUsers'),
     }
     migration_roots = len(required)
     if migrations_only:
@@ -32,6 +35,7 @@ def check(output, root, *, migrations_only=False):
             'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
             'TestCustomerWebsiteUpgradeFromSQLiteFixture',
             'TestTaskDealLinkSQLiteUpgradeFromV120',
+            'TestRoleSQLiteUpgradeFromV120',
         ))
         required.update(('github.com/florinel-chis/gophercrm/internal/repository', name) for name in (
             'TestLookupIndexesServeLookupsSQLite',
@@ -39,6 +43,8 @@ def check(output, root, *, migrations_only=False):
             'TestPaginationDeterminismMySQL',
             'TestCompanyDomainNormalizationSQLite',
             'TestCompanyDomainNormalizationMySQL',
+            'TestSystemRoleSeedSQLite',
+            'TestSystemRoleSeedMySQL',
         ))
     else:
         for path in (root / 'internal/integration').glob('*_test.go'):

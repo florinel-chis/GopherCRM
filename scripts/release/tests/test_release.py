@@ -181,7 +181,9 @@ class ReleaseTests(unittest.TestCase):
                    'TestTaskDealLinkMigration', 'TestFormMailDeliveriesMigration', 'TestTicketSLAFieldsMigration',
                    'TestCustomerExternalIDsMigration', 'TestFormAttributionMigration',
                    'TestUserTokenVersionMigration', 'TestBulkOperationStatusIndexMigration',
-                   'TestQuoteTaxMigration', 'TestQuoteQuantityMigration']]
+                   'TestQuoteTaxMigration', 'TestQuoteQuantityMigration',
+                   'TestRoleMigrationFiles', 'TestMigrationRolesSchema',
+                   'TestMigrationRolesDownDemotesCustomUsers']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})
