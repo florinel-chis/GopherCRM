@@ -35,7 +35,15 @@ type User struct {
 	// Family name.
 	LastName string `gorm:"not null;type:varchar(100)" json:"last_name" example:"Doe"`
 	// Role of the account; only an admin can change it (PUT /users/{id}, POST /users).
-	Role UserRole `gorm:"not null;default:'customer';type:varchar(20)" json:"role" example:"sales"`
+	Role UserRole `gorm:"not null;default:'customer';type:varchar(20);index:idx_users_role" json:"role" example:"sales"`
+	// RoleID names the custom role of an account whose role is RoleCustom
+	// (#259 S2, #344); NULL for every system-role account. Omitted from the
+	// JSON when NULL, so current responses are unchanged, and kept out of the
+	// API reference until the role API slice.
+	RoleID *uint `gorm:"index:idx_users_role_id" json:"role_id,omitempty" swaggerignore:"true"`
+	// CustomRole is the role RoleID names (fk_users_custom_role, ON DELETE
+	// RESTRICT). Filled by UserRepository.GetByID; never serialised.
+	CustomRole *Role `gorm:"foreignKey:RoleID;constraint:OnDelete:RESTRICT" json:"-"`
 	// False for a deactivated account: it cannot log in, and its bearer tokens and
 	// API keys are rejected. Changed only by an admin.
 	IsActive bool `gorm:"default:true" json:"is_active" example:"true"`

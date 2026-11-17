@@ -48,7 +48,14 @@ func CloseDatabase() error {
 // call for SQLite, where adding a foreign key rebuilds the table and has to run
 // with enforcement off; on MySQL and MariaDB it is a plain AutoMigrate.
 func MigrateDatabase() error {
-	return database.Migrate(DB, func(tx *gorm.DB) error {
+	return MigrateDatabaseWith(DB)
+}
+
+// MigrateDatabaseWith is MigrateDatabase on an explicit handle instead of the
+// global DB, so two pools (two replicas booting at once) can be exercised in
+// one test process.
+func MigrateDatabaseWith(db *gorm.DB) error {
+	return database.Migrate(db, func(tx *gorm.DB) error {
 		if err := autoMigrateModels(tx); err != nil {
 			return err
 		}
@@ -62,6 +69,10 @@ func MigrateDatabase() error {
 			return err
 		}
 		if err := normalizeCompanyDomains(tx); err != nil {
+			return err
+		}
+		// The four system roles (#344): inserts only the missing rows.
+		if err := seedSystemRoles(tx); err != nil {
 			return err
 		}
 		if err := migrateLegacyQuoteLineQuantity(tx); err != nil {
@@ -196,6 +207,10 @@ const companyDomainNormalizeChunk = 500
 // autoMigrateModels is the AutoMigrate half of MigrateDatabase.
 func autoMigrateModels(tx *gorm.DB) error {
 	return tx.AutoMigrate(
+		// RBAC roles (#344) before User: users.role_id references roles.
+		&Role{},
+		&RolePermission{},
+		&RoleAuditEntry{},
 		&User{},
 		&Company{},
 		&Lead{},

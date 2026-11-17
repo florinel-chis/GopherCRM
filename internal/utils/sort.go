@@ -51,6 +51,11 @@ var AllowedSortColumns = map[string]map[string]bool{
 	"automation_runs": {
 		"id": true, "created_at": true, "updated_at": true, "status": true, "resume_at": true,
 	},
+	// RBAC roles (#344): RoleRepository.List orders by one of these and then
+	// by roles.id in the same direction.
+	"roles": {
+		"id": true, "name": true, "created_at": true, "updated_at": true,
+	},
 }
 
 // ValidateSort checks that sortBy is in the allowlist for the given entity and

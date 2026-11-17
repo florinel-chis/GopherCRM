@@ -38,6 +38,8 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
   inversion of the reset request's order (see both flows).
 - `admin set → users (id ascending) → roles (id ascending)` is the #259 target for RBAC writes (R6, R7), not implemented.
+  The #344 persistence has no caller yet; its locking methods follow this chain, with a role's
+  `role_permissions` rows after its `roles` row (see the RBAC flow below).
 
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several
 chains: an erasure reaches users, customers and leads from whichever root it starts at, and the
@@ -369,14 +371,24 @@ follow-up.
 
 ### RBAC user-role and role writes
 
-- **Rows locked:** none by a locking read. `UserService.Update`
+- **Rows locked:** none by a locking read on the routed path. `UserService.Update`
   (`internal/service/user_service.go:55`) reads the user plainly and writes the role with one
-  conditional `UpdateFields` (`internal/service/user_service.go:107`). There is no `roles` table:
-  a role is the string column `role` of `users` (the `Role` field, `internal/models/user.go:38`),
-  typed by the `UserRole` string type (`internal/models/user.go:14`).
-- **Order:** users only, one statement. The #259 target is admin set → users (id ascending) →
-  roles (id ascending).
-- **Transaction:** no transaction today.
+  conditional `UpdateFields` (`internal/service/user_service.go:107`); it reads and writes no
+  `roles` table row: the routed role is still the string column `role` of `users` (the `Role`
+  field, `internal/models/user.go:38`), typed by the `UserRole` string type
+  (`internal/models/user.go:14`). The #344 persistence (`roles`, `role_permissions`,
+  `users.role_id`) has no caller yet. Its locking methods: `LockActiveAdmins`
+  (`internal/repository/user_repository.go`, optional interface `UserRoleMaintenance`) discovers
+  the admin ids with a plain read and then locks those `users` rows by primary key in id order,
+  never through `idx_users_role`; `RoleRepository.ReplacePermissions` and `Delete`
+  (`internal/repository/role_repository.go`) lock the `roles` row by primary key, then delete its
+  `role_permissions` rows (and, for `Delete`, the role).
+- **Order:** users only, one statement, on the routed path. The #344 methods are written for the
+  #259 target admin set → users (id ascending) → roles (id ascending), with a role's
+  `role_permissions` rows after its `roles` row; a caller (S3) must take the users rows before any
+  roles row.
+- **Transaction:** no transaction today on the routed path. `ReplacePermissions` and `Delete` each
+  run one transaction (a savepoint under `WithTx`).
 - **Retry:** none. Target (R6, R7): one root transaction under the #183 retry rule.
 - **Status:** not implemented
 

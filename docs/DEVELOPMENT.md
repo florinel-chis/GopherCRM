@@ -592,6 +592,86 @@ any client-supplied role. Elevated roles are only assignable via the admin-guard
 the `create-admin` CLI. Never add a client-controlled role to a public endpoint. E2E admin accounts
 are seeded by `gocrm-ui/e2e/global-setup.ts`, which shells out to `cmd/create-admin`.
 
+**RBAC persistence (#259 S2, #344)** — the storage of custom roles, with no route, guard, handler,
+service or answer change: nothing calls the new repository methods yet.
+
+- **Models and order.** `models.Role`, `RolePermission` and `RoleAuditEntry` (`roles`,
+  `role_permissions`, `role_audit_log`, see [datamodel.md](datamodel.md#role-model)) are registered
+  in `autoMigrateModels` ahead of `User`, because `users.role_id` references `roles`
+  (`fk_users_custom_role`, ON DELETE RESTRICT; plus `idx_users_role` and `idx_users_role_id`). On
+  SQLite the foreign key rebuilds `users` under `database.Migrate`; the indexes survive.
+- **The JSON is unchanged.** `User.RoleID` is `json:"role_id,omitempty"` and `swaggerignore`, so a
+  NULL value adds no key and the checked-in API reference stays byte-identical; `CustomRole` is
+  `json:"-"`. `models.RoleCustom` (`"custom"`) is an untyped constant on purpose: a typed `UserRole`
+  constant would enter the swag enum and the closed set of `scripts/ci/check-api-docs.py`, both of
+  which stay admin, sales, support, customer until the role API slice. A `custom` user would match
+  no `RequireRole` today, but nothing can create one.
+- **The seed.** `seedSystemRoles` runs in `MigrateDatabase` after `normalizeCompanyDomains` on every
+  start and driver. It reads `SELECT system_key FROM roles WHERE system_key IS NOT NULL` (plain,
+  non-locking) and inserts only the missing rows of `models.SystemRoleSeeds` (#259's names and
+  descriptions, the same literals as the SQL up) with `ON CONFLICT DO NOTHING`, so a replica booting
+  at the same time is not an error (an insert that fails, for example as the victim of a lock
+  conflict with that replica, is accepted when a re-read then finds the row). An up-to-date database takes that one SELECT and no write; an
+  existing system row is never updated, so its name and description are not rewritten. It logs
+  nothing. When a custom role already holds the `name_key` of a missing system row, the start fails
+  before writing anything with `seed system roles: roles.name_key "<key>" is held by a custom role;
+  rename that role and restart`. Recovery: rename that custom role, for example `UPDATE roles SET
+  name = 'Sales team', name_key = 'sales team' WHERE id = <id>`, and restart.
+  `models.MigrateDatabaseWith(db)` runs the same steps on an explicit handle (tests of two pools).
+- **`RoleRepository`** (`internal/repository/role_repository.go`). `Create` and `Update` trim the
+  name, refuse a blank one, one over 100 characters or a description over 500 with
+  `apperrors.ErrValidation` before any statement, and set `name_key = models.RoleNameKey(name)`
+  (trimmed, lower-cased). `Create` refuses a non-nil `SystemKey` (`ErrValidation`), so
+  `idx_roles_name_key` is the only unique index a repository write can hit and a duplicate key is
+  `apperrors.ErrRoleNameTaken`. `Update` writes `name`, `name_key`, `description` and `updated_at`
+  only, never `system_key`; refusing writes to system rows is the S3 service's job (owner
+  decision 2). `ReplacePermissions(roleID, permissions)` locks the role (`FOR UPDATE` on
+  MySQL/MariaDB), deletes its rows and inserts the new set in one transaction (a savepoint under
+  `WithTx`): a failure after the delete keeps the previous set, an empty slice leaves none, a
+  missing role is `gorm.ErrRecordNotFound`. `GetByID` returns the permissions ordered by
+  `permission_key`. `List(offset, limit, sortBy, sortOrder)` returns a page and the total from the
+  same predicate, ordered by `utils.AllowedSortColumns["roles"]` (`id`, `name`, `created_at`,
+  `updated_at`) and then `roles.id` in the same direction (`orderPage`), or by id ascending; another
+  column is an error before any query. `Delete(id)` locks the role, deletes its permissions and then
+  the role in one transaction; the foreign-key refusal of a role still referenced by a user, live or
+  erased (MySQL 1451, SQLite `FOREIGN KEY constraint failed`, classified by `isForeignKeyRefusal` in
+  `foreign_key.go`), is `apperrors.ErrRoleInUse` and rolls the permission delete back.
+- **User repository.** `UpdateFields` accepts `role_id` (a value or nil). `GetByID` of a user with
+  `role_id` NULL is still exactly one SELECT; a custom-role user also gets `CustomRole` with its
+  permissions. The optional interface `repository.UserRoleMaintenance` (the `TicketLockingReader`
+  pattern, so the hand-written mocks are unchanged) adds `LockActiveAdmins`, which discovers ids with
+  a plain `SELECT id … WHERE role = 'admin' AND is_active AND deleted_at IS NULL ORDER BY id`, then
+  locks those rows by primary key only (`WHERE id IN (…) ORDER BY id`, `FOR UPDATE` on MySQL/MariaDB)
+  and returns the locked rows that still match, in id order: no locking statement filters on role,
+  so no lock is taken through `idx_users_role`. `ClearRoleIDOfErased(roleID)` sets `role_id` NULL on
+  the soft-deleted users of that role and returns the count, after which the role can be deleted.
+- **Migration.** `20261119120000_add_roles_and_permissions` (#259 planned `20261101120000`, which
+  `add_task_deal_link` already holds). Its down half sets `role = 'support'` and `is_active = 0` on
+  every live custom-role user before it drops anything (owner decision 8): irreversible for those
+  users, so take a backup before rolling back on MySQL/MariaDB. SQLite has no down path: roll back by
+  restoring the pre-upgrade backup. An older binary started on the upgraded file would keep the role
+  tables and `fk_users_custom_role` (its AutoMigrate drops nothing), and every `custom` user would
+  match no `RequireRole` and get 403 on every guarded route.
+- **Erasure.** `roles`, `role_permissions` and `role_audit_log` are not touched by the erasure:
+  role names carry no personal text by rule, and audit rows hold ids, role names, permission keys
+  and scopes only (an obligation on the S3 writer). An erased user keeps its `role_id`, which keeps
+  the role in use until `ClearRoleIDOfErased` runs.
+- **Collation.** On MySQL/MariaDB `roles.name_key` keeps `utf8mb4_unicode_ci`, so names differing
+  only by accents or trailing spaces also collide there; SQLite compares binary. No collation guard
+  is added (pending the owner's answer).
+
+Regression roots: `TestRoleSchemaSQLite`, `TestRoleSQLiteUpgradeFromV120`, `TestUserRoleIDJSON`,
+`TestRoleNameKey`, `TestRoleFieldsKeepAPIReferenceUnchanged` (`internal/models`);
+`TestRoleRepository{SQLite,MySQL}`, `TestForeignKeyRefusalClassifier`,
+`TestSystemRoleSeed{SQLite,MySQL}` (statements captured by GORM callbacks; the MySQL root also
+starts two pools at once), `TestUserRepositoryRoleColumns{SQLite,MySQL}` (`internal/repository`);
+`TestRoleMigrationFiles` (now holding the newest-migration assertion),
+`TestMigrationRolesSchema` and `TestMigrationRolesDownDemotesCustomUsers` (`cmd/migrate`). The
+SQLite roots use the production connector over a file under `t.TempDir()`; the MySQL roots a
+disposable `TEST_MYSQL_DSN` schema, skipped without the variable (the acceptance run sets it and
+fails on a skip). Operator follow-up (owner decision 9): register the migration and seed roots in
+`.github/workflows/migrations.yml` and the repository roots in `scripts/ci/check-go.py`.
+
 **Account security** — account lockout after 5 failed login attempts (15 min), password complexity
 validation (min 10 chars, upper + lower + digit + special), and a cookie `Secure` flag that defaults
 to true in production.
@@ -716,7 +796,8 @@ Regression roots: `TestQuoteQuantityParse`, `TestQuoteQuantityJSON`, `TestQuoteL
 `TestQuoteFractionalQuantityBoundsRejectedWithoutWrites`,
 `TestQuoteFractionalQuantityTotals{SQLite,MySQL}`, `TestQuoteEmailFractionalQuantity`
 (`internal/service`); `TestQuoteLineQuantityStorage{SQLite,MySQL}` (`internal/repository`);
-`TestQuoteQuantityMigrationFiles` (now holding the newest-migration assertion) and
+`TestQuoteQuantityMigrationFiles` (it held the newest-migration assertion until #344 moved it to
+`TestRoleMigrationFiles`) and
 `TestQuoteQuantityMigration` (`cmd/migrate`); and, over HTTP, `TestQuoteFractionalQuantityAPISQLite`
 (`tests/quote_quantity_test.go`). The existing quote tests changed only how they build quantities
 (`models.QuoteQuantityFromUnits`). The MySQL roots skip without `TEST_MYSQL_DSN`; registering the
@@ -1661,6 +1742,7 @@ What the erasure touches, and what it keeps on purpose:
 | `quote_lines` of those quotes | `description` → the name of the line's product (soft-deleted products included) | product, quantity, prices, discount, total, position |
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `companies` (`notes`), staff-written ticket comments, deals and quotes reached only through `owner_id` | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*). A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
+| `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys and scopes only, by contract (an obligation on the S3 writer). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |

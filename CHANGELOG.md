@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Role storage for custom roles (#344, RBAC slice S2 of #259).** New tables `roles`,
+  `role_permissions` and `role_audit_log`, and `users.role_id` (with `idx_users_role`,
+  `idx_users_role_id` and the foreign key `fk_users_custom_role`, ON DELETE RESTRICT). Every start
+  seeds the four built-in roles when missing (Admin "Full access. Cannot be edited or deleted.",
+  Sales "Built-in sales access. Cannot be edited or deleted.", Support "Built-in support access.
+  Cannot be edited or deleted.", Customer "A customer's own login. Cannot be edited, deleted or
+  cloned into portal access.") and never rewrites an existing one; a start fails, naming the
+  system key, when a custom role already holds the name of a missing built-in role. No API
+  change: no route reads the new tables yet, and every response is unchanged.
+  **Schema:** migration `20261119120000_add_roles_and_permissions` on MySQL/MariaDB,
+  `MigrateDatabase` on SQLite (which rebuilds `users` to add the foreign key). **Rollback:** the
+  MySQL/MariaDB down turns every live custom-role user into an inactive support user before it
+  drops the role objects, so take a backup first; SQLite has no down path, so a rollback restores
+  the pre-upgrade backup.
 - **Fractional quantities in the quote line dialog (#346).** The web UI's Add line and Edit line
   dialogs accept a quantity from 0.001 to 1,000,000 with up to three decimals (a dot as the decimal
   separator, no thousands separator); anything else is refused on the spot with "Quantity must be

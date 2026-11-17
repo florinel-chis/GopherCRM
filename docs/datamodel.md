@@ -25,7 +25,8 @@ Represents system users with different roles and permissions.
 | password | string | Yes | - | max 255 | Hashed password (hidden in API responses) |
 | first_name | string | Yes | - | max 100 | User's first name |
 | last_name | string | Yes | - | max 100 | User's last name |
-| role | enum | Yes | 'customer' | max 20 | User role (see below) |
+| role | enum | Yes | 'customer' | max 20, index `idx_users_role` | User role (see below) |
+| role_id | bigint unsigned | No | NULL | index `idx_users_role_id`, foreign key `fk_users_custom_role` → `roles.id` ON DELETE RESTRICT | The custom role of an account whose role is `custom` (#344); NULL for every system-role account. Omitted from the JSON while NULL and not in the API reference yet. MySQL gets it from `20261119120000_add_roles_and_permissions`, SQLite from `MigrateDatabase`; existing accounts read NULL |
 | is_active | boolean | Yes | true | - | Account active status |
 | last_login_at | timestamp | No | - | - | Last login timestamp |
 | token_version | bigint unsigned | Yes | 0 | not null | Session generation (#236), hidden in API responses. Every access JWT carries it as the `token_version` claim and is refused once it differs; logout, a password change and a password reset increment it. MySQL gets it from `20261109120000_add_user_token_version`, SQLite from `MigrateDatabase`; existing accounts read 0 |
@@ -35,11 +36,108 @@ Represents system users with different roles and permissions.
 - `sales` - Access to leads and customers
 - `support` - Access to tickets and customer support
 - `customer` - Limited access to own data
+- `custom` - Reserved for the role API of #259 (`models.RoleCustom`, an untyped constant): the
+  account's permissions come from `role_id`. Nothing assigns it yet and no handler accepts it; the
+  API reference and the request bindings still list the four values above.
 
 ### Relationships
 - Has many Leads (as owner)
 - Has many Tasks (as assignee)
 - Has many APIKeys
+- Belongs to a custom Role through `role_id` (optional)
+
+## Role Model
+
+RBAC persistence of #259 slice S2 (#344): three tables, the `users.role_id` link and four seeded
+system rows. No route, service or check reads them yet; every API answer is unchanged.
+
+```mermaid
+erDiagram
+  roles ||--o{ role_permissions : "fk_roles_permissions"
+  roles |o--o{ users : "fk_users_custom_role ON DELETE RESTRICT"
+  roles {
+    bigint id PK
+    varchar system_key UK "NULL on custom roles"
+    varchar name "no personal text"
+    varchar name_key UK "lower(trim(name))"
+    varchar description "seeded text on system rows"
+  }
+  role_permissions {
+    bigint role_id PK
+    varchar permission_key PK
+    varchar scope "all|own"
+  }
+  users {
+    bigint id PK
+    varchar role "idx_users_role; +custom"
+    bigint role_id FK "NULL; idx_users_role_id"
+  }
+  role_audit_log {
+    bigint id PK
+    datetime created_at
+    bigint actor_user_id "no FK"
+    bigint role_id "no FK"
+    bigint target_user_id "no FK"
+  }
+```
+
+### roles
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | - | Set by the writer |
+| system_key | varchar(20) | Yes | NULL | Unique (`idx_roles_system_key`). `admin`, `sales`, `support` or `customer` on the four system rows, NULL on custom roles. Written only by the seed; the repository never writes it |
+| name | varchar(100) | No | - | At most 100 characters, not blank. **Must not carry personal text**, like an automation rule name: in later slices it reaches run logs, audit snapshots and every staff screen |
+| name_key | varchar(100) | No | - | Unique (`idx_roles_name_key`). `models.RoleNameKey(name)`: trimmed and lower-cased, so `Field Ops` and ` field ops ` collide, and so does a custom role named `ADMIN`. Hidden from JSON. On MySQL/MariaDB the column keeps the table's `utf8mb4_unicode_ci` collation, so accent and trailing-space variants also collide there (not on SQLite) |
+| description | varchar(500) | No | '' | |
+
+There is no `deleted_at`: a role is hard-deleted, and `fk_users_custom_role` refuses deleting one
+that a user, live or erased, still references.
+
+The four system rows (`models.SystemRoleSeeds`, the same literal values as the SQL up migration):
+
+| system_key | name | name_key | description |
+|---|---|---|---|
+| admin | Admin | admin | Full access. Cannot be edited or deleted. |
+| sales | Sales | sales | Built-in sales access. Cannot be edited or deleted. |
+| support | Support | support | Built-in support access. Cannot be edited or deleted. |
+| customer | Customer | customer | A customer's own login. Cannot be edited, deleted or cloned into portal access. |
+
+### role_permissions
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| role_id | bigint unsigned | No | - | Primary key part 1; `fk_roles_permissions` → `roles.id` (no ON DELETE clause) |
+| permission_key | varchar(100) | No | - | Primary key part 2; the catalogue arrives in a later slice |
+| scope | varchar(10) | No | 'all' | `all` or `own` |
+
+### role_audit_log
+
+Append-only; nothing writes it in this slice. No column has a foreign key, so an audit row never
+blocks a role or user delete.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
+| actor_user_id | bigint unsigned | Yes | NULL | |
+| auth_method | varchar(20) | No | '' | |
+| action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
+| role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
+| role_name | varchar(100) | No | '' | Snapshot of the name |
+| target_user_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_target_user_id` |
+| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data (an obligation on the S3 writer). That is why the erasure does not touch the table |
+
+### Schema sources
+
+MySQL/MariaDB: `migrations/20261119120000_add_roles_and_permissions` (tables created only when
+missing, every `users` change behind an `INFORMATION_SCHEMA` probe, `idx_users_role_id` before the
+foreign key). Its down half first sets `role = 'support'` and `is_active = 0` on every live user
+whose role is `custom` (erased rows untouched), then drops the foreign key, both indexes, the
+column and the three tables. SQLite: `MigrateDatabase`, which adds the foreign key by rebuilding
+`users` with enforcement off (the indexes survive). On every driver `MigrateDatabase` seeds the
+missing system rows (see *RBAC persistence* in [DEVELOPMENT.md](DEVELOPMENT.md)).
 
 ## Lead Model
 

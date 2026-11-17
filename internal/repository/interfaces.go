@@ -37,6 +37,45 @@ type UserRepository interface {
 	WithTx(tx *gorm.DB) UserRepository
 }
 
+// UserRoleMaintenance is the role half of the user repository (#259 S2,
+// #344). The production userRepository implements it; it is kept apart from
+// UserRepository (the TicketLockingReader pattern) so the hand-written mocks
+// need no change. Nothing calls it yet; the role service (S3) will, inside its
+// transaction through WithTx.
+type UserRoleMaintenance interface {
+	// LockActiveAdmins discovers the live, active admin ids with a plain,
+	// non-locking SELECT, then locks those rows by primary key in id order
+	// (FOR UPDATE on MySQL/MariaDB, a plain read on SQLite) and returns the
+	// locked rows that still match, in id order. No locking statement filters
+	// on role, so no lock is taken through idx_users_role.
+	LockActiveAdmins() ([]models.User, error)
+	// ClearRoleIDOfErased sets role_id NULL on the soft-deleted users that
+	// reference roleID and returns how many rows it changed. Live users are
+	// never touched.
+	ClearRoleIDOfErased(roleID uint) (int64, error)
+}
+
+// RoleRepository is the persistence of RBAC roles (#259 S2, #344). Nothing
+// calls it yet. Role names are unique regardless of letter case and
+// surrounding whitespace (ErrRoleNameTaken); a role still referenced by a
+// user cannot be deleted (ErrRoleInUse).
+type RoleRepository interface {
+	// Create inserts a custom role (SystemKey must be nil) without its
+	// permissions.
+	Create(role *models.Role) error
+	// GetByID reads the role with its permissions ordered by permission_key.
+	GetByID(id uint) (*models.Role, error)
+	// Update writes name, name_key, description and updated_at only.
+	Update(role *models.Role) error
+	// Delete removes the role and its permissions in one transaction.
+	Delete(id uint) error
+	// List returns a page in a total order and the total count.
+	List(offset, limit int, sortBy, sortOrder string) ([]models.Role, int64, error)
+	// ReplacePermissions replaces the role's permissions atomically.
+	ReplacePermissions(roleID uint, permissions []models.RolePermission) error
+	WithTx(tx *gorm.DB) RoleRepository
+}
+
 type LeadRepository interface {
 	Create(lead *models.Lead) error
 	GetByID(id uint) (*models.Lead, error)
