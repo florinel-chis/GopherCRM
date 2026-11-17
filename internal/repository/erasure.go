@@ -45,6 +45,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // anonymizedEmailDomain is the domain used for the placeholder addresses that
@@ -212,16 +213,25 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 //
 // Whether the row is live is read first, by primary key under the row lock
 // the scrub already holds; a row soft-deleted earlier keeps its deletion time,
-// exactly as GORM's predicate kept it. The live row is then soft-deleted by
-// an explicit Unscoped `UPDATE … SET deleted_at = ? WHERE id = ?`, the same
-// column and the same NowFunc timestamp GORM's soft delete writes. It is not
-// issued through GORM's Delete: a soft delete whose deleted_at predicate is
-// suppressed trips GORM's missing-WHERE guard (checkMissingWhereConditions
-// counts that predicate as one of the conditions) and returns
-// gorm.ErrMissingWhereClause without executing. User, Customer and Lead
-// declare no Delete or Update hooks, so UpdateColumn (which skips hooks and
-// updated_at, as GORM's soft delete does) changes nothing else.
+// exactly as GORM's predicate kept it. The live row is then soft-deleted
+// through GORM's own Delete (so the Delete callback chain, its hooks and every
+// registered Delete callback still run; the erasure-atomicity tests inject
+// their soft-delete fault there) with the deleted_at predicate suppressed by
+// primaryKeyOnlySoftDelete. The statement is
+// `UPDATE … SET deleted_at = ? WHERE id = ?`.
+//
+// GORM's missing-WHERE guard (checkMissingWhereConditions, gorm v1.30.0)
+// counts the deleted_at predicate as one of the conditions whenever the
+// soft_delete_enabled marker is present, so with the predicate suppressed it
+// would refuse the single id condition with gorm.ErrMissingWhereClause. The
+// statement therefore runs in a Session with AllowGlobalUpdate for this one
+// call; the guard is replaced by the explicit check below that the id is
+// non-zero, and the WHERE always carries `id = ?`
+// (TestLeadErasureLockOrderSQLite asserts it on every erased table).
 func softDeleteErased(tx *gorm.DB, plan erasurePlan, id uint) error {
+	if id == 0 {
+		return errors.New("soft-deleting an erased row: refusing a zero id")
+	}
 	var live []int64
 	if err := lockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
 		Pluck("deleted_at IS NULL", &live).Error; err != nil {
@@ -230,12 +240,28 @@ func softDeleteErased(tx *gorm.DB, plan erasurePlan, id uint) error {
 	if len(live) == 0 || live[0] == 0 {
 		return nil
 	}
-	if err := tx.Unscoped().Model(plan.newModel()).Where("id = ?", id).
-		UpdateColumn("deleted_at", tx.NowFunc()).Error; err != nil {
+	if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).
+		Clauses(primaryKeyOnlySoftDelete{}).
+		Where("id = ?", id).
+		Delete(plan.newModel()).Error; err != nil {
 		return fmt.Errorf("soft-deleting row %d after erasure: %w", id, err)
 	}
 	return nil
 }
+
+// primaryKeyOnlySoftDelete stores the soft_delete_enabled marker on the
+// statement before GORM's SoftDeleteDeleteClause runs. gorm.SoftDeleteQueryClause
+// (gorm v1.30.0, soft_delete.go) adds `deleted_at IS NULL` only when that
+// marker is absent, so its presence keeps the predicate, and with it any
+// locking scan of the deleted_at index, out of the soft delete. The marker is
+// never built into SQL: it is not in any clause build list.
+type primaryKeyOnlySoftDelete struct{}
+
+func (primaryKeyOnlySoftDelete) Name() string { return "soft_delete_enabled" }
+
+func (primaryKeyOnlySoftDelete) Build(clause.Builder) {}
+
+func (primaryKeyOnlySoftDelete) MergeClause(*clause.Clause) {}
 
 // readErasedEmail returns the address stored on the row being erased,
 // soft-deleted rows included, or "" when the row or the value is absent. It

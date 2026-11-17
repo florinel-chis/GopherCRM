@@ -78,9 +78,9 @@ loop (`runLeadCompanyAttempts`) described in their entries.
 
 - **Rows locked:** the `users` row (locking read of its role,
   `internal/repository/erasure_cascade.go:464`, then the scrub and a locking read of the address,
-  `readErasedEmail`, `internal/repository/erasure.go:245`), its `api_keys`, `refresh_tokens` and
+  `readErasedEmail`, `internal/repository/erasure.go:271`), its `api_keys`, `refresh_tokens` and
   `password_reset_tokens` rows (deleted by `purgeCredentials`,
-  `internal/repository/erasure.go:482`), and for a customer-role login every linked `customers`
+  `internal/repository/erasure.go:508`), and for a customer-role login every linked `customers`
   row and the `leads` converted into them; then the text of their deals and quotes
   (`internal/repository/erasure_cascade.go:324`).
 - **Order:** users → api_keys, refresh_tokens, password_reset_tokens → customers (id order,
@@ -91,7 +91,7 @@ loop (`runLeadCompanyAttempts`) described in their entries.
   credentials.
 - **Transaction:** `userRepository.Delete` → `eraseGraph`
   (`internal/repository/user_repository.go:164`) → `runErasureUnit`
-  (`internal/repository/erasure.go:381`): a `db.Transaction`, or a checked SAVEPOINT inside the
+  (`internal/repository/erasure.go:407`): a `db.Transaction`, or a checked SAVEPOINT inside the
   caller's transaction.
 - **Retry:** none today; a deadlock or lock wait timeout reaches the caller. Target (C4): the
   #183 retry rule on the whole erasure root.
@@ -108,9 +108,9 @@ and the purge removes what they issued, or wait on the `users` row and are refus
 ### Customer-rooted erasure
 
 - **Rows locked:** the `customers` row (the scrub `UPDATE` by id is the first statement on the
-  row and takes its lock, `internal/repository/erasure.go:160`; the address and then `user_id` are
+  row and takes its lock, `internal/repository/erasure.go:161`; the address and then `user_id` are
   read after it with locking reads by id, `readErasedEmail` at
-  `internal/repository/erasure.go:245` and `internal/repository/erasure_cascade.go:420`), the
+  `internal/repository/erasure.go:271` and `internal/repository/erasure_cascade.go:420`), the
   `leads` converted into it, then its customer-role login (`users`) with that login's
   credentials; then the deals and quotes text.
 - **Order:** customers → automation runs → leads (per converted lead, in id order: the plain
@@ -140,14 +140,16 @@ and the purge removes what they issued, or wait on the `users` row and are refus
   read: a locking read there would take next-key locks on the `leads.customer_id` index and block
   unrelated conversions, and it is not needed, because a conversion always inserts a new customer,
   so no lead can be converted into a customer being erased. Every erased row is soft-deleted by
-  primary key only (`softDeleteErased`, `internal/repository/erasure.go:224`: a locking read of
-  whether the row is live, then an `Unscoped` `UPDATE … SET deleted_at = ? WHERE id = ?`), never
-  with GORM's `AND deleted_at IS NULL`: with that predicate the customer soft delete was seen
-  holding a gap lock on `idx_customers_deleted_at` on MariaDB 10.11 (not on MySQL 8), which
-  blocked an unrelated conversion's customer `INSERT` until the erasure committed. That the
-  primary-key-only form removes the wait on MariaDB 10.11 is the intent of
-  `TestLeadErasureUnrelatedConversionNotBlockedMySQL` run against MariaDB; it is not yet recorded
-  as passed there. The cancel stays ahead of the lead lock
+  primary key only (`softDeleteErased`, `internal/repository/erasure.go:231`: a locking read of
+  whether the row is live, then GORM's soft delete with its `deleted_at` predicate suppressed,
+  `UPDATE … SET deleted_at = ? WHERE id = ?`, still issued through the Delete callback chain),
+  never with GORM's `AND deleted_at IS NULL`: with that predicate the customer soft delete was
+  seen holding a gap lock on `idx_customers_deleted_at` on MariaDB 10.11 (not on MySQL 8), which
+  blocked an unrelated conversion's customer `INSERT` until the erasure committed.
+  QA recorded `TestLeadErasureUnrelatedConversionNotBlockedMySQL` passing with the
+  primary-key-only soft delete: as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0, and as
+  the Delete-chain form used now on MariaDB 10.11 (with `TestIdentityErasureMySQL`); the
+  Delete-chain form still has to be recorded on MySQL 8. The cancel stays ahead of the lead lock
   so that the erasure has modified rows when it waits on a lead an automation step holds, and is
   the survivor of that deadlock.
 - **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:159`)

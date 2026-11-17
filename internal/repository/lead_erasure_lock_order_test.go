@@ -92,6 +92,7 @@ var (
 	erasureLeadsUpdate   = regexp.MustCompile("^UPDATE `leads` SET ")
 	erasureCustomerRead  = regexp.MustCompile("^SELECT `id`,`user_id` FROM `customers` WHERE `customers`.`id` = \\?")
 	erasureCustomersUpd  = regexp.MustCompile("^UPDATE `customers` SET ")
+	erasureUsersUpdate   = regexp.MustCompile("^UPDATE `users` SET ")
 	erasureConvertedPick = regexp.MustCompile("^SELECT `id` FROM `leads` WHERE customer_id = \\?")
 	erasureLeadEmailRead = regexp.MustCompile("^SELECT `email` FROM `leads` WHERE id = \\?")
 	erasureCustEmailRead = regexp.MustCompile("^SELECT `email` FROM `customers` WHERE id = \\?")
@@ -209,12 +210,15 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 // `AND deleted_at IS NULL`, which MariaDB 10.11 may serve through the
 // deleted_at index as a locking range scan: next-key locks on every live row
 // and a gap lock that blocks an unrelated conversion's customer INSERT (#337,
-// AC-9). The erasure soft-deletes by primary key only (softDeleteErased).
+// AC-9). The erasure soft-deletes by primary key only (softDeleteErased),
+// through GORM's Delete with AllowGlobalUpdate for that one statement, so the
+// check also pins that the soft delete of every erased table (leads, customers,
+// users) carries exactly the `id = ?` predicate and never an empty WHERE.
 func assertWritesByPrimaryKeyOnly(t *testing.T, statements []string) {
 	t.Helper()
 	softDeletes := 0
 	for _, s := range statements {
-		if !erasureLeadsUpdate.MatchString(s) && !erasureCustomersUpd.MatchString(s) {
+		if !erasureLeadsUpdate.MatchString(s) && !erasureCustomersUpd.MatchString(s) && !erasureUsersUpdate.MatchString(s) {
 			continue
 		}
 		at := strings.Index(s, " WHERE ")
@@ -223,6 +227,7 @@ func assertWritesByPrimaryKeyOnly(t *testing.T, statements []string) {
 		}
 		assert.NotContains(t, s[at:], "deleted_at", "an erasure UPDATE filters by primary key only: %q", s)
 		if strings.Contains(s[:at], "`deleted_at`=") {
+			assert.Equal(t, " WHERE id = ?", strings.TrimRight(s[at:], " "), "a soft delete names the primary key only: %q", s)
 			softDeletes++
 		}
 	}

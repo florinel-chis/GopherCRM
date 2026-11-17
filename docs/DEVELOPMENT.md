@@ -1521,15 +1521,22 @@ What happens on `DELETE`:
   `leads.customer_id` index: a conversion always inserts a new customer, so no lead can be
   converted into a customer being erased. Every erased row is soft-deleted by `softDeleteErased`:
   a locking read by primary key of whether the row is still live (a row soft-deleted earlier keeps
-  its deletion time and gets no further write), then an explicit `Unscoped` `UPDATE … SET
-  deleted_at = ? WHERE id = ?` (`UpdateColumn`, the handle's `NowFunc`), which filters by primary
-  key only. It does not go through GORM's `Delete`: a soft delete with its `deleted_at IS NULL`
-  predicate suppressed trips GORM's missing-WHERE guard and returns `gorm.ErrMissingWhereClause`
-  without executing. User, customer and lead models declare no Delete or Update hooks, so nothing
-  is skipped. With GORM's predicate, QA observed on MariaDB 10.11 a gap lock of the erasure's
+  its deletion time and gets no further write), then GORM's own soft delete,
+  `UPDATE … SET deleted_at = ? WHERE id = ?`, with its `deleted_at IS NULL` predicate suppressed
+  (the unexported `primaryKeyOnlySoftDelete` marker sets GORM's `soft_delete_enabled` clause,
+  gorm v1.30.0). It still runs through GORM's Delete callback chain, so Delete callbacks and
+  hooks keep firing (the erasure-atomicity tests inject their soft-delete fault there). GORM's
+  missing-WHERE guard counts the suppressed predicate as a condition and would refuse the single
+  `id = ?` with `gorm.ErrMissingWhereClause`, so that one statement runs in a
+  `Session{AllowGlobalUpdate: true}`; `softDeleteErased` refuses a zero id instead, and
+  `TestLeadErasureLockOrderSQLite` asserts that every erased table's soft delete carries exactly
+  `WHERE id = ?`. With GORM's predicate, QA observed on MariaDB 10.11 a gap lock of the erasure's
   customer soft delete on `idx_customers_deleted_at` that made an unrelated conversion's
-  `INSERT INTO customers` wait for the erasure to commit (MySQL 8 never waited); that the
-  primary-key-only `UPDATE` removes that wait on MariaDB 10.11 is not yet recorded by a run there.
+  `INSERT INTO customers` wait for the erasure to commit (MySQL 8 never waited); with the
+  primary-key-only soft delete QA recorded `TestLeadErasureUnrelatedConversionNotBlockedMySQL`
+  passing: as an explicit `UPDATE` on MariaDB 10.11.19 and MySQL 8.0, and in the Delete-chain form
+  used now on MariaDB 10.11 (with `TestIdentityErasureMySQL`); the Delete-chain form still has to
+  be recorded on MySQL 8.
   Lock order: automation runs → leads → customers, the
   same lead-before-customer direction as conversion (companies → leads → customers), so the two
   never form a cycle. Outcomes: a conversion that holds the lead lock commits first and the
