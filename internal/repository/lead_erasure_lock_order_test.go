@@ -357,8 +357,13 @@ func TestLeadErasureHooksDefaultUnset(t *testing.T) {
 	var mu sync.Mutex
 	var cancelled, locked []uint
 	hooked := NewLeadRepository(db, WithLeadErasureHooks(LeadErasureHooks{
-		AfterAutomationCancel: func(id uint) { mu.Lock(); cancelled = append(cancelled, id); mu.Unlock() },
-		AfterLeadLock:         func(id uint) { mu.Lock(); locked = append(locked, id); mu.Unlock() },
+		AfterAutomationCancel: func(tx *gorm.DB, id uint) {
+			require.NotNil(t, tx, "the hook receives the erasure unit's handle")
+			mu.Lock()
+			cancelled = append(cancelled, id)
+			mu.Unlock()
+		},
+		AfterLeadLock: func(id uint) { mu.Lock(); locked = append(locked, id); mu.Unlock() },
 	})).(*leadRepository)
 	require.NotNil(t, hooked.erasureSeams)
 	copied := hooked.WithTx(db).(*leadRepository)

@@ -1530,9 +1530,16 @@ What happens on `DELETE`:
   404. Customer- and user-rooted erasures inherit the per-lead order (customers → automation runs
   → leads) and the locking `readErasedEmail`; a customer root still waits on its scrub `UPDATE`.
   Test-only seams: `repository.WithLeadErasureHooks` (a variadic option of `NewLeadRepository`
-  with `AfterAutomationCancel` and `AfterLeadLock`, called with the lead id, copied by `WithTx`,
-  never wired in production) and the instance-local `leadService.afterDeletePreRead`, between
-  `Delete`'s pre-read and the erasure unit. Roots: `TestLeadErasureConversionFirstMySQL`,
+  with `AfterAutomationCancel`, called with the unit's transaction handle and the lead id, and
+  `AfterLeadLock`, called with the lead id; copied by `WithTx`, never wired in production) and the
+  instance-local `leadService.afterDeletePreRead`, between `Delete`'s pre-read and the erasure
+  unit. `TestLeadErasureConversionCommittedAfterCancelMySQL` uses the handle to issue a plain read
+  of the lead before it parks, as the pre-#337 discovery read did: that read opens the unit's
+  REPEATABLE READ snapshot (the probes, the cancel `UPDATE` and the notification `DELETE` open
+  none), the conversion commits after it, and the root asserts that a plain read of the new
+  customer on the same transaction still finds nothing when the erasure resumes. Only the locking
+  discovery reads see past that snapshot, so the root fails when they are reverted to plain reads.
+  Roots: `TestLeadErasureConversionFirstMySQL`,
   `TestLeadErasureErasureFirstMySQL`, `TestLeadErasureConversionCommittedAfterCancelMySQL`,
   `TestLeadErasureUnrelatedConversionNotBlockedMySQL` and `TestLeadErasureVsConversionSQLite`
   (`internal/service/lead_erasure_conversion_lock_test.go`); `TestLeadErasureLockOrderSQLite`,

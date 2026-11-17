@@ -280,16 +280,16 @@ type erasureCascade struct {
 // production file never calls; a nil set or a nil func does nothing.
 type leadErasureSeams struct {
 	// afterAutomationCancel runs after the lead's automation runs are
-	// cancelled and before the locking read of the lead.
-	afterAutomationCancel func(leadID uint)
+	// cancelled and before the locking read of the lead, with the unit's tx.
+	afterAutomationCancel func(tx *gorm.DB, leadID uint)
 	// afterLeadLock runs right after the locking read of the lead found it,
 	// while the unit holds the lead's row lock and before any decision.
 	afterLeadLock func(leadID uint)
 }
 
-func (s *leadErasureSeams) runAfterAutomationCancel(leadID uint) {
+func (s *leadErasureSeams) runAfterAutomationCancel(tx *gorm.DB, leadID uint) {
 	if s != nil && s.afterAutomationCancel != nil {
-		s.afterAutomationCancel(leadID)
+		s.afterAutomationCancel(tx, leadID)
 	}
 }
 
@@ -363,7 +363,7 @@ func (c *erasureCascade) eraseLead(tx *gorm.DB, id uint) error {
 		return fmt.Errorf("erasing lead %d: %w", id, err)
 	}
 	plan.BeforeScrub = nil
-	c.hooks.runAfterAutomationCancel(id)
+	c.hooks.runAfterAutomationCancel(tx, id)
 
 	// Unscoped: a lead soft-deleted before deletion became an erasure still
 	// holds the person's data and still has to be scrubbed. A row that is not

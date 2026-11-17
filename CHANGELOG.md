@@ -441,7 +441,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on stale state. Customer- and user-rooted erasures inherit the per-lead order. No route, status
   code or schema changes; lead-rooted erasure still has no retry. Test-only seams:
   `repository.WithLeadErasureHooks` (never wired in production) and a lead service seam after
-  `Delete`'s pre-read. See [docs/CONCURRENCY.md](docs/CONCURRENCY.md).
+  `Delete`'s pre-read. The stale-snapshot root (`TestLeadErasureConversionCommittedAfterCancelMySQL`)
+  opens the erasure's REPEATABLE READ snapshot with a plain read of the lead before the conversion
+  commits, and asserts that snapshot is still stale when the erasure resumes, so it fails when the
+  locking discovery reads are reverted to plain reads. See [docs/CONCURRENCY.md](docs/CONCURRENCY.md).
 - **Security: reset tokens and API keys are issued only to a live, active owner under the owner
   lock (#342).** `RequestPasswordReset` keeps its plain email lookup, then runs one
   `WithTransactionAndRetry` transaction (3 retries) that locks the owner row by id (`FOR UPDATE` on

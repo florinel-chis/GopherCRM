@@ -255,6 +255,18 @@ func TestLeadErasureErasureFirstMySQL(t *testing.T) {
 // case: the erasure is parked after its automation cancel and before its lead
 // lock, and a conversion of the same lead commits in between without waiting.
 // The erasure must see it.
+//
+// Before parking, the hook issues a plain (consistent, non-locking) read of
+// the lead on the erasure's own transaction, as the pre-#337 discovery read
+// did. On InnoDB REPEATABLE READ that read opens the unit's snapshot; nothing
+// before it does (the HasTable probes, the automation_runs UPDATE and the
+// notifications DELETE establish no read view). The conversion therefore
+// commits after the snapshot, and after the release the hook proves the
+// snapshot is still stale: a plain read of the new customer by id on the same
+// transaction finds nothing. Only the erasure's locking reads (the lead,
+// readErasedEmail, eraseCustomer's customer read) see past it, so with those
+// reads reverted to plain reads the admin case leaves the new customer live
+// and this root fails.
 func TestLeadErasureConversionCommittedAfterCancelMySQL(t *testing.T) {
 	for _, tc := range leadErasureRoles {
 		t.Run(tc.name, func(t *testing.T) {
@@ -262,11 +274,25 @@ func TestLeadErasureConversionCommittedAfterCancelMySQL(t *testing.T) {
 			lead := f.lead(nil)
 			run := seedPendingLeadRun(t, f.db, lead.ID)
 
+			var (
+				snapshotLead     models.Lead
+				snapshotErr      error
+				newCustomerID    uint
+				staleCustomers   int64 = -1
+				staleCustomerErr error
+			)
 			gate := newParkGate()
-			withLeadErasureHooks(f, repository.LeadErasureHooks{AfterAutomationCancel: func(id uint) {
-				if id == lead.ID {
-					gate.park()
+			withLeadErasureHooks(f, repository.LeadErasureHooks{AfterAutomationCancel: func(tx *gorm.DB, id uint) {
+				if id != lead.ID {
+					return
 				}
+				// The pre-#337 discovery read: plain, so it opens the snapshot.
+				snapshotErr = tx.Unscoped().Select("id", "customer_id").First(&snapshotLead, id).Error
+				gate.park()
+				// newCustomerID was written before the release (happens-before
+				// through the gate's channel).
+				staleCustomerErr = tx.Unscoped().Model(&models.Customer{}).
+					Where("id = ?", newCustomerID).Count(&staleCustomers).Error
 			}})
 
 			eraseDone := make(chan error, 1)
@@ -277,13 +303,26 @@ func TestLeadErasureConversionCommittedAfterCancelMySQL(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			customer, convertErr := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 			cancel()
+			if convertErr != nil || customer == nil {
+				close(gate.release)
+				_ = awaitDone(t, "erasure", eraseDone)
+			}
 			assertNotDeadlock(t, convertErr)
 			require.NoError(t, convertErr, "the conversion commits while the erasure is parked")
 			require.NotNil(t, customer)
+			newCustomerID = customer.ID
 
 			close(gate.release)
 			eraseErr := awaitDone(t, "erasure", eraseDone)
 			assertNotDeadlock(t, eraseErr)
+
+			// The snapshot was opened before the conversion and is still stale
+			// when the erasure resumes: this is what makes the root fail
+			// without the locking discovery reads.
+			require.NoError(t, snapshotErr, "the snapshot-opening read")
+			assert.Nil(t, snapshotLead.CustomerID, "the snapshot was taken before the conversion committed")
+			require.NoError(t, staleCustomerErr, "the stale-snapshot probe")
+			assert.Zero(t, staleCustomers, "a plain read in the erasure unit misses the new customer (the snapshot is stale)")
 
 			if tc.admin {
 				require.NoError(t, eraseErr)

@@ -329,7 +329,7 @@ origins (lines 49-55) and six step types (lines 58-65).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 214-216, 310-315).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:55`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:59`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
