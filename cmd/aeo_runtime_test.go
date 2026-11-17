@@ -210,7 +210,7 @@ func bootAEOAt(t *testing.T, scheduleEnabled bool, path string, seed func(t *tes
 		},
 		Server: config.ServerConfig{Mode: "development"},
 		JWT: config.JWTConfig{
-			Secret: aeoBootSecret, ExpiryHours: 24, AccessTokenMinutes: 15, RefreshTokenDays: 30, CookieSameSite: "Lax",
+			Secret: aeoBootSecret, ExpiryHours: 24, AccessTokenMinutes: 15, RefreshTokenDays: 30,
 		},
 		Logging: config.LoggingConfig{Level: "debug", Format: "json"},
 		API:     config.APIConfig{Prefix: "/api/v1", APIKeySecret: aeoBootSecret},

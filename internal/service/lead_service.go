@@ -89,10 +89,10 @@ func NewLeadService(leadRepo repository.LeadRepository, customerRepo repository.
 // owner check and the automation events it produces, so an event is never
 // recorded for a write that rolled back and the insert follows a locking read
 // of its owner. Without a transaction manager the write runs directly, with a
-// plain owner read and no events.
+// plain owner read, no events and no webhook outbox rows.
 func (s *leadService) createInTransaction(write func(ctx context.Context, leads repository.LeadRepository, users repository.UserRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error) error {
 	if s.txManager == nil {
-		return write(context.Background(), s.leadRepo, s.userRepo, nil, s.webhooks)
+		return write(context.Background(), s.leadRepo, s.userRepo, nil, nil)
 	}
 	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -371,7 +371,7 @@ func (s *leadService) Create(lead *models.Lead) error {
 		}
 		return enqueueWebhookEvent(ctx, hooks, models.WebhookEventLeadCreated, lead.ID)
 	})
-	if err != nil && s.webhooks != nil {
+	if err != nil && s.webhooks != nil && s.txManager != nil {
 		// The insert rolled back with the outbox rows.
 		lead.ID = 0
 	}

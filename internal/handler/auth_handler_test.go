@@ -102,16 +102,6 @@ func (m *MockAuthService) ConfirmPasswordReset(token, newPassword string) error 
 	return args.Error(0)
 }
 
-func (m *MockAuthService) GenerateCSRFToken() (string, error) {
-	args := m.Called()
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockAuthService) ValidateCSRFToken(token string) bool {
-	args := m.Called(token)
-	return args.Bool(0)
-}
-
 type MockUserService struct {
 	mock.Mock
 }

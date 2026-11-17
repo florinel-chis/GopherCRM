@@ -211,7 +211,7 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
 - `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:302-307`.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:292-297`.
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 
@@ -411,7 +411,7 @@ Restore with the backend stopped, and match the restore to the backup:
 - **Offline copy (option 1):** put back `gophercrm.db` together with the
   `gophercrm.db-wal` and `gophercrm.db-shm` copied with it, replacing all
   three. The WAL can hold committed transactions that are not yet in the main
-  file — the backend can exit without a final checkpoint (`cmd/main.go:194-204`)
+  file — the backend can exit without a final checkpoint (`cmd/main.go:196-206`)
   — so deleting it, or mixing it with another backup's main file, loses data.
 - **`VACUUM INTO` snapshot (option 2):** it is one self-contained file. Put it
   back as `/data/gophercrm.db` and delete any `-wal`/`-shm` left in the

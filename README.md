@@ -68,7 +68,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 `make run`):
 
 - **Replace the example `JWT_SECRET`.** The placeholder is refused at startup, so a copied
-  `.env.example` does not start until the secret is replaced (`internal/config/config.go:270-280`).
+  `.env.example` does not start until the secret is replaced (`internal/config/config.go:260-270`).
 - **Set `CORS_ALLOWED_ORIGINS`** for any cross-origin UI other than localhost on 5173, 3000 or 8080
   (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
 - **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
@@ -1123,9 +1123,8 @@ gophercrm/
   `AEO_SCHEDULE_HOUR`, replica clocks must be synchronised to well under 90 seconds, and an
   upgrade stops every replica before starting the new version (mixed versions are not supported).
   Several processes on one SQLite file are not supported.
-- **CSRF middleware is not wired.** `internal/middleware/csrf.go` implements HMAC-SHA256 tokens with
-  a 24h expiry and is unit-tested, but `cmd/main.go` never installs it, so no route currently
-  requires a CSRF token.
+- Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
+  not apply. Any future cookie session must ship with session-bound CSRF protection (see #261).
 - **Rate limiting does not distinguish reads from writes on authenticated routes.**
   `RateLimitModerate` (120/min, burst 30) is applied once to the whole protected group in
   `setupDependencies` (`cmd/main.go`) and covers reads and writes alike.

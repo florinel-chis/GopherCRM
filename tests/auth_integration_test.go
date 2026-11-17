@@ -404,3 +404,68 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint_GatedByConfiguration
 	router.ServeHTTP(w, req)
 	suite.Equal(http.StatusCreated, w.Code, "enabling the configuration must open registration")
 }
+
+// Authentication is header-only: the middleware reads the Authorization (or
+// ApiKey) header and nothing else. A browser attaches cookies to cross-site
+// requests on its own, so a credential accepted from a cookie would open the
+// API to forged requests. This test pins that a perfectly valid access token
+// presented only in would-be session cookies is refused, and that the very
+// same token is accepted once it travels in the Authorization header.
+func (suite *AuthIntegrationTestSuite) TestProtectedRoute_CookieOnlyCredentialIsRejected() {
+	credentials := map[string]interface{}{
+		"email":      "cookie-only@example.com",
+		"password":   "Password123!",
+		"first_name": "Cookie",
+		"last_name":  "Only",
+	}
+	body, err := json.Marshal(credentials)
+	suite.Require().NoError(err)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	suite.router.ServeHTTP(w, req)
+	suite.Require().Equal(http.StatusCreated, w.Code)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	suite.router.ServeHTTP(w, req)
+	suite.Require().Equal(http.StatusOK, w.Code)
+
+	var login utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &login))
+	suite.Require().True(login.Success)
+	authData, ok := login.Data.(map[string]interface{})
+	suite.Require().True(ok, "login response carries no data object")
+	token, ok := authData["token"].(string)
+	suite.Require().True(ok, "login response carries no access token")
+	suite.Require().NotEmpty(token)
+
+	// The token only in cookies, no Authorization header.
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/protected", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: token})
+	suite.Require().Empty(req.Header.Get("Authorization"))
+	suite.router.ServeHTTP(w, req)
+
+	suite.Equal(http.StatusUnauthorized, w.Code, "a cookie must never authenticate a request")
+	var rejected utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &rejected))
+	suite.False(rejected.Success)
+	suite.Require().NotNil(rejected.Error)
+	suite.Contains(rejected.Error.Message, "Missing or invalid authorization header")
+
+	// Control: the same token in the Authorization header is accepted, so the
+	// rejection above is about where the credential travelled, not the token.
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	suite.router.ServeHTTP(w, req)
+
+	suite.Equal(http.StatusOK, w.Code, "the same token must authenticate as a Bearer header")
+	var accepted map[string]interface{}
+	suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &accepted))
+	suite.Equal("Protected route accessed", accepted["message"])
+}

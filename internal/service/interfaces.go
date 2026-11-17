@@ -43,8 +43,6 @@ type AuthService interface {
 	// and lookup failures are swallowed by design (anti-enumeration).
 	RequestPasswordReset(email string) error
 	ConfirmPasswordReset(token, newPassword string) error
-	GenerateCSRFToken() (string, error)
-	ValidateCSRFToken(token string) bool
 }
 
 type UserService interface {

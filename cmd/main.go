@@ -255,8 +255,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 
 // setupDependencies wires every repository, service and handler onto the API
 // group and returns the function that drains the automation worker, the form
-// retention purge, the bulk operation sweep and the AEO runtime at shutdown,
-// in that order, before main closes the database.
+// retention purge, the bulk operation sweep, the webhook sender and the AEO
+// runtime at shutdown, in that order, before main closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	userRepo := repository.NewUserRepository(models.DB)
 	leadRepo := repository.NewLeadRepository(models.DB)

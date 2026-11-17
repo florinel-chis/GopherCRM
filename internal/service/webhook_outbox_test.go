@@ -276,3 +276,23 @@ func runWebhookOutboxFanOut(t *testing.T, db *gorm.DB) {
 	// The rows are only ever read by the runtime once committed.
 	var _ repository.WebhookRepository = env.repo
 }
+
+// A lead service built without a transaction manager has no transaction to
+// put the outbox rows in, so webhooks are off there: the lead commits, keeps
+// its id, and the webhook repository is never called.
+func TestWebhookLeadCreateWithoutTransactionManager(t *testing.T) {
+	db := openTicketIntakeDB(t, false)
+	env := newWebhookEnv(t, db, nil)
+	env.endpoint("https://example.com/hook", true, models.WebhookEventLeadCreated)
+	failing := newFailingWebhookRepository(env.repo, injectedFailure, 0)
+	leads := NewLeadService(repository.NewLeadRepository(db), repository.NewCustomerRepository(db),
+		repository.NewCompanyRepository(db), repository.NewUserRepository(db), nil, WithLeadWebhooks(failing))
+
+	lead := env.newLead()
+	require.NoError(t, leads.Create(lead))
+
+	assert.NotZero(t, lead.ID, "the committed lead keeps its id")
+	assert.EqualValues(t, 1, env.count(&models.Lead{}, "email = ?", lead.Email))
+	assert.Zero(t, failing.calls.Load(), "no outbox write outside a transaction")
+	assert.Zero(t, env.allDeliveries())
+}

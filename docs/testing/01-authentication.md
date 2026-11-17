@@ -42,7 +42,7 @@ file, not by trusting the coverage matrix.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData()`) or `fixtures/test-data.ts` (`generateTestUser()`). Never hardcode an email.
 - `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`internal/middleware/rate_limit.go:124`,
-  applied at `cmd/main.go:183`). Any case that issues more than five auth requests in quick
+  applied at `cmd/main.go:185`). Any case that issues more than five auth requests in quick
   succession must space them out (≈6 s per extra token) or run the backend with
   `DISABLE_RATE_LIMIT=true`, which bypasses the strict tier only.
 - Deleting a user is irreversible GDPR erasure (`internal/repository/erasure.go`). Only delete
@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:122-145`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:121-144`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:263-267`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go:262-266`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:232-261`), so a correct password
+  password result is examined (`internal/service/auth_service.go:231-260`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -478,7 +478,7 @@ file, not by trusting the coverage matrix.
   removed at once, without waiting for a refresh another tab may be running under the session lock;
   that refresh then stores nothing (#184). Navigating back to `/` redirects to `/login`.
 - **Known issue:** FEATURES.md row 1.4 still says "There is no server-side logout endpoint"; that row
-  is superseded by section 10b — the route is registered at `cmd/main.go:211` behind the auth
+  is superseded by section 10b — the route is registered at `cmd/main.go:213` behind the auth
   middleware. Closes gap **G11**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new logout describe block)
 

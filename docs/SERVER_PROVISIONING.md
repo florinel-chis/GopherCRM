@@ -132,7 +132,7 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
 ```
 
 - **The secrets.** `JWT_SECRET` must be at least 32 characters; any value starting with
-  `CHANGE_THIS` is refused and the backend does not start (`internal/config/config.go:270-280`).
+  `CHANGE_THIS` is refused and the backend does not start (`internal/config/config.go:260-270`).
   Use `openssl rand -base64 32`. For `DB_PASSWORD` pick a value without quotes, backslash, `$` or
   backtick (for example `openssl rand -hex 24`); `DB_PASSWORD` itself is not checked at startup,
   so a forgotten placeholder only shows up as a database login with a known password. The same
@@ -144,7 +144,7 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
   one active line and the values plain. A wrong `DB_*` value fails the backup, which stops the
   deploy before anything changes.
 - **Why `EnvironmentFile=`.** The backend loads only a `.env` file in its working directory
-  (`config.Load`, `internal/config/config.go:264`); the unit's working directory holds none, so
+  (`config.Load`, `internal/config/config.go:254`); the unit's working directory holds none, so
   every setting comes from this file through systemd. Do not add a `.env` to
   `/var/lib/gophercrm`: it would only fill keys the environment file leaves unset.
 - **`TRUSTED_PROXIES`.** The rate limiter keys on the client address. Behind nginx on the same
@@ -341,7 +341,7 @@ first start with `journalctl -u gophercrm -f`.
 
 ## Schema migrations
 
-The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`cmd/main.go:140`),
+The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`cmd/main.go:142`),
 so the first start creates the tables and later starts add new columns and tables.
 
 The release tarball carries the SQL half as well: `bin/migrate` and the `migrations/` directory

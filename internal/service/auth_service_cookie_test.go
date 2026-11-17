@@ -106,47 +106,6 @@ func TestAuthService_RefreshAccessToken(t *testing.T) {
 	})
 }
 
-func TestAuthService_GenerateCSRFToken(t *testing.T) {
-	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
-
-	t.Run("generates valid CSRF token", func(t *testing.T) {
-		mockUserRepo := &mocks.UserRepository{}
-		mockAPIKeyRepo := &mocks.APIKeyRepository{}
-		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
-
-		token, err := authService.GenerateCSRFToken()
-
-		assert.NoError(t, err)
-		assert.NotEmpty(t, token)
-		assert.True(t, len(token) > 0)
-	})
-}
-
-func TestAuthService_ValidateCSRFToken(t *testing.T) {
-	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
-
-	t.Run("validates non-empty token", func(t *testing.T) {
-		mockUserRepo := &mocks.UserRepository{}
-		mockAPIKeyRepo := &mocks.APIKeyRepository{}
-		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
-
-		token, err := authService.GenerateCSRFToken()
-		assert.NoError(t, err)
-
-		valid := authService.ValidateCSRFToken(token)
-		assert.True(t, valid)
-	})
-
-	t.Run("rejects empty token", func(t *testing.T) {
-		mockUserRepo := &mocks.UserRepository{}
-		mockAPIKeyRepo := &mocks.APIKeyRepository{}
-		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
-
-		valid := authService.ValidateCSRFToken("")
-		assert.False(t, valid)
-	})
-}
-
 func TestAuthService_InvalidateRefreshToken(t *testing.T) {
 	jwtConfig := config.JWTConfig{Secret: "test-secret", ExpiryHours: 24}
 
