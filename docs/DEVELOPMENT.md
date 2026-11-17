@@ -2233,8 +2233,12 @@ The pieces, and why each is shaped the way it is:
 - **Three conditional claims.** The dispatcher claims an event with `UPDATE … SET processed_at
   WHERE id = ? AND processed_at IS NULL` (exactly one row) and, in the same transaction, inserts
   one run per enabled matching rule with `clause.OnConflict{DoNothing: true}` on the unique
-  `dedupe_key` — `ON CONFLICT DO NOTHING` on SQLite, `ON DUPLICATE KEY UPDATE id=id` on MySQL, no
-  error and no row for a duplicate on either. The executor claims a run with `UPDATE … SET status =
+  `dedupe_key` — `ON CONFLICT DO NOTHING` on SQLite, `ON DUPLICATE KEY UPDATE id=id` on
+  MySQL/MariaDB, no error and no row for a duplicate on either. The insert is executed without
+  `RETURNING` and reports insertion from the driver's affected-row count (1 insert, 0 duplicate),
+  because MariaDB 10.5 and later would otherwise return the existing row for a duplicate and read
+  as an insert (#367; `automation_run_dedupe_test.go`: `TestAutomationRunDedupe{SQLite,MySQL}`).
+  The executor claims a run with `UPDATE … SET status =
   'running' WHERE id = ? AND status = <pending|waiting>` (a waiting run only once `resume_at <=
   now`). A schedule batch advances the rule's cursor with `UPDATE … WHERE id = ? AND
   schedule_cursor = ?` plus `schedule_pass_on IS NULL` before the first pass or `schedule_pass_on

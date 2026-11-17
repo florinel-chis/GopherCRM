@@ -482,6 +482,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Automation: a duplicate run dedupe key is no longer reported as a started run on MariaDB
+  10.5+ (#367).** On MariaDB the driver appended `RETURNING` to the dedupe insert
+  (`ON DUPLICATE KEY UPDATE id=id`), so a duplicate `dedupe_key` came back with the existing row
+  and `CreateRunIgnoringDuplicate` answered "inserted" with that row's id; event dispatch and the
+  schedule trigger then over-counted started runs. No duplicate row was ever stored, and MySQL 8
+  and SQLite were not affected. The same statement is now executed without `RETURNING` and the
+  result is the driver's affected-row count (1 insert, 0 duplicate) on MySQL, MariaDB and SQLite;
+  the passed run keeps id 0 on a duplicate. No schema change.
 - **Privacy: a lead erasure no longer misses the customer of a concurrent conversion (#337).**
   `leadRepository.Delete` and `DeleteUnconverted` still cancel the lead's automation runs first,
   then read the lead with a locking read by primary key (`FOR UPDATE` on MySQL/MariaDB) and take the
