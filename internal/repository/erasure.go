@@ -45,6 +45,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // anonymizedEmailDomain is the domain used for the placeholder addresses that
@@ -197,8 +198,48 @@ func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 		}
 	}
 
-	return tx.Delete(plan.newModel(), id).Error
+	return softDeleteErased(tx, plan, id)
 }
+
+// softDeleteErased soft-deletes the erased row with an UPDATE whose only
+// predicate is the primary key. GORM's own soft delete adds
+// `AND deleted_at IS NULL`, and MariaDB 10.11 may serve that predicate through
+// the deleted_at secondary index (idx_customers_deleted_at,
+// idx_leads_deleted_at, idx_users_deleted_at): a locking scan of the live
+// range, which takes next-key locks on every live row of the table and a gap
+// lock past its end. Held until the erasure commits, that gap lock made an
+// unrelated conversion's INSERT INTO customers wait (#337, seen on MariaDB
+// 10.11, not on MySQL 8).
+//
+// Whether the row is live is read first, by primary key under the row lock
+// the scrub already holds; a row soft-deleted earlier keeps its deletion time,
+// exactly as GORM's predicate kept it. The live row is then soft-deleted
+// through GORM's Delete (its callbacks still run), with the soft-delete
+// predicate suppressed by primaryKeyOnlySoftDelete.
+func softDeleteErased(tx *gorm.DB, plan erasurePlan, id uint) error {
+	var live []int64
+	if err := lockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
+		Pluck("deleted_at IS NULL", &live).Error; err != nil {
+		return fmt.Errorf("reading the deletion state of row %d before erasure: %w", id, err)
+	}
+	if len(live) == 0 || live[0] == 0 {
+		return nil
+	}
+	return tx.Clauses(primaryKeyOnlySoftDelete{}).Delete(plan.newModel(), id).Error
+}
+
+// primaryKeyOnlySoftDelete marks a statement as already carrying GORM's
+// soft-delete condition (the "soft_delete_enabled" clause GORM records once it
+// has added `deleted_at IS NULL`), so GORM's soft delete adds no deleted_at
+// predicate and the UPDATE filters by primary key only. It builds nothing.
+// TestLeadErasureLockOrderSQLite asserts the resulting statements.
+type primaryKeyOnlySoftDelete struct{}
+
+func (primaryKeyOnlySoftDelete) Name() string { return "soft_delete_enabled" }
+
+func (primaryKeyOnlySoftDelete) Build(clause.Builder) {}
+
+func (primaryKeyOnlySoftDelete) MergeClause(*clause.Clause) {}
 
 // readErasedEmail returns the address stored on the row being erased,
 // soft-deleted rows included, or "" when the row or the value is absent. It

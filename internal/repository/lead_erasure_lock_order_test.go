@@ -165,6 +165,7 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 		assert.Less(t, leadRead, customerRead, "the customer read follows the lead read")
 		assert.Less(t, leadRead, pluck, "the converted-lead pluck follows the lead read")
 		assert.Equal(t, 1, countMatches(statements, erasureLeadLockRead), "the lead is read once")
+		assertWritesByPrimaryKeyOnly(t, statements)
 
 		var erased models.Customer
 		require.NoError(t, db.Unscoped().First(&erased, seed.customer.ID).Error)
@@ -201,6 +202,31 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 		assert.Less(t, leadRead, leadScrub)
 		assert.Equal(t, -1, firstMatch(statements, erasureCustomerRead), "no customer is reached")
 	})
+}
+
+// assertWritesByPrimaryKeyOnly checks that no UPDATE of leads or customers in
+// the erasure names deleted_at in its WHERE clause. GORM's own soft delete adds
+// `AND deleted_at IS NULL`, which MariaDB 10.11 may serve through the
+// deleted_at index as a locking range scan: next-key locks on every live row
+// and a gap lock that blocks an unrelated conversion's customer INSERT (#337,
+// AC-9). The erasure soft-deletes by primary key only (softDeleteErased).
+func assertWritesByPrimaryKeyOnly(t *testing.T, statements []string) {
+	t.Helper()
+	softDeletes := 0
+	for _, s := range statements {
+		if !erasureLeadsUpdate.MatchString(s) && !erasureCustomersUpd.MatchString(s) {
+			continue
+		}
+		at := strings.Index(s, " WHERE ")
+		if !assert.GreaterOrEqual(t, at, 0, "an erasure UPDATE has a WHERE clause: %q", s) {
+			continue
+		}
+		assert.NotContains(t, s[at:], "deleted_at", "an erasure UPDATE filters by primary key only: %q", s)
+		if strings.Contains(s[:at], "`deleted_at`=") {
+			softDeletes++
+		}
+	}
+	assert.Equal(t, 2, softDeletes, "the lead and the customer are soft-deleted by primary key: %q", statements)
 }
 
 func countMatches(statements []string, re *regexp.Regexp) int {

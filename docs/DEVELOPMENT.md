@@ -1519,7 +1519,15 @@ What happens on `DELETE`:
   snapshot older than a conversion that committed meanwhile. The converted-lead pluck
   (`WHERE customer_id = ?`) stays a plain read, so no lock is taken through the
   `leads.customer_id` index: a conversion always inserts a new customer, so no lead can be
-  converted into a customer being erased. Lock order: automation runs → leads → customers, the
+  converted into a customer being erased. Every erased row is soft-deleted by `softDeleteErased`:
+  a locking read by primary key of whether the row is still live (a row soft-deleted earlier keeps
+  its deletion time and gets no further write), then GORM's soft delete (its Delete callbacks
+  still run) with the `AND deleted_at IS NULL` predicate suppressed, so the `UPDATE … SET
+  deleted_at = ? WHERE id = ?` filters by primary key only. With that predicate, QA observed on
+  MariaDB 10.11 a gap lock of the erasure's customer soft delete on `idx_customers_deleted_at`
+  that made an unrelated conversion's `INSERT INTO customers` wait for the erasure to commit
+  (MySQL 8 never waited); a lock on that secondary index means the predicate was served through
+  it. Lock order: automation runs → leads → customers, the
   same lead-before-customer direction as conversion (companies → leads → customers), so the two
   never form a cycle. Outcomes: a conversion that holds the lead lock commits first and the
   erasure sees its `customer_id` — an admin erasure (`Delete`) erases the new customer too, a
@@ -1550,8 +1558,9 @@ What happens on `DELETE`:
   (`internal/config`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, see each wait in
   `information_schema.PROCESSLIST` on two consecutive polls, assert that no ordering ends in error
   1213, skip without the variable and fail when it is unreachable; `make verify-backend` has no DSN
-  and skips them. Registering them in `scripts/ci/check-go.py` is an operator follow-up. See
-  [CONCURRENCY.md](CONCURRENCY.md), Lead-rooted erasure.
+  and skips them. They must pass on MySQL 8 and MariaDB 10.11 alike: `scripts/ci/check-go.py
+  transaction` already discovers them through its `lead*_test.go` globs and runs them on MariaDB
+  in CI's database gates. See [CONCURRENCY.md](CONCURRENCY.md), Lead-rooted erasure.
 
 What the erasure touches, and what it keeps on purpose:
 
