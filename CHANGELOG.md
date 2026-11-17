@@ -1023,6 +1023,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The unused CSRF middleware and cookie-session helpers (#362).** Authentication is header-only
+  (Bearer or ApiKey) and no cookie credential is accepted, so CSRF does not apply; the code that
+  prepared a cookie session was never installed and is gone: `internal/middleware/csrf.go`
+  (`CSRF`, `CSRFToken`), the `GenerateCSRFToken`/`ValidateCSRFToken` token codec on `AuthService`,
+  `config.CSRFConfig`, the whole of `internal/utils/cookie.go` (`SetAuthCookies`,
+  `ClearAuthCookies`, `SetSecureCookie`, `ClearCookie`, `GetTokenFromCookie`, `SetCSRFCookie`,
+  `IsCookieSecureContext`, `ParseSameSite`, `ValidateCookieConfig`, `GetCookieMaxAge`,
+  `GenerateSecureToken`, `HashToken` and the cookie-name constants) and
+  `JWTConfig.CookieSameSite`/`CookieDomain`/`CookieSecure` with the production warning about the
+  `Secure` flag. `JWT_COOKIE_SECURE`, `JWT_COOKIE_DOMAIN` and `JWT_COOKIE_SAMESITE` are no longer
+  read; setting them is harmless. No route, response or behaviour changes. A new integration test
+  pins that a valid access token sent only in cookies answers 401 on a protected route. Any
+  future cookie session must ship with session-bound CSRF protection (#261).
 - **Two settings that did nothing.** `security.session_timeout_hours` and
   `tickets.auto_assign_support` were seeded and never read: session length comes from
   `JWT_EXPIRY_HOURS` and `REFRESH_TOKEN_EXPIRY_DAYS`, and tickets are not distributed among support

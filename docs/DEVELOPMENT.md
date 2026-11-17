@@ -578,14 +578,14 @@ Tests drive the real interceptors through an injected adapter: `src/api/client.r
 the record write and the mirror write), `src/api/client.crossTab.test.ts` (two clients sharing
 storage and one memory lock, in both response orders) and `src/api/sessionLock.test.ts`.
 
-**CSRF is not shipped** — `internal/middleware/csrf.go` implements a `CSRF` middleware and a
-`CSRFToken` endpoint, and the HMAC-SHA256 token codec in `internal/service/auth_service.go` is unit
-tested, but `middleware.CSRF` is never installed in `cmd/main.go` and no route requires a token. It
-is dead code today: treat it as an unfinished feature, not a protection you can rely on. There is no
-live CSRF exposure in the current design either — authentication is Bearer/API-key only and the
-frontend stores its token in `localStorage`/`sessionStorage` and sends it in the `Authorization`
-header, so no credential is attached ambiently by the browser. That changes the moment any
-cookie-borne session is introduced, and the middleware would then have to be wired up.
+**Authentication is header-only** — `middleware.Auth` reads the `Authorization: Bearer` header or
+the `ApiKey` header and nothing else. No cookie credential is accepted, so the browser attaches no
+credential on its own and CSRF does not apply; the server therefore ships no CSRF protection, and
+the unused middleware, token codec and cookie helpers that once sat in the tree were removed. The
+frontend keeps its token in `localStorage`/`sessionStorage` and sends it in the `Authorization`
+header. `tests/auth_integration_test.go` pins the position: a valid access token sent only in
+cookies answers 401. Any future cookie session must ship with session-bound CSRF protection (see
+#261).
 
 **Role assignment** — `POST /auth/register` is public and always creates a `customer`; it ignores
 any client-supplied role. Elevated roles are only assignable via the admin-guarded `POST /users` or
@@ -672,9 +672,8 @@ disposable `TEST_MYSQL_DSN` schema, skipped without the variable (the acceptance
 fails on a skip). Operator follow-up (owner decision 9): register the migration and seed roots in
 `.github/workflows/migrations.yml` and the repository roots in `scripts/ci/check-go.py`.
 
-**Account security** — account lockout after 5 failed login attempts (15 min), password complexity
-validation (min 10 chars, upper + lower + digit + special), and a cookie `Secure` flag that defaults
-to true in production.
+**Account security** — account lockout after 5 failed login attempts (15 min) and password
+complexity validation (min 10 chars, upper + lower + digit + special).
 
 **Sort validation** — all repository sort queries validate `sortBy` against per-entity column
 allowlists via `utils.ValidateSort()` to prevent SQL injection.

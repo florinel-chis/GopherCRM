@@ -227,7 +227,7 @@ func cfgForBoot(t *testing.T, enabled bool) *config.Config {
 	return &config.Config{
 		Database: config.DatabaseConfig{Driver: config.DriverSQLite, Path: filepath.Join(t.TempDir(), "unused.db"), LogLevel: "warn"},
 		Server:   config.ServerConfig{Mode: "development"},
-		JWT:      config.JWTConfig{Secret: aeoBootSecret, ExpiryHours: 24, AccessTokenMinutes: 15, RefreshTokenDays: 30, CookieSameSite: "Lax"},
+		JWT:      config.JWTConfig{Secret: aeoBootSecret, ExpiryHours: 24, AccessTokenMinutes: 15, RefreshTokenDays: 30},
 		Logging:  config.LoggingConfig{Level: "debug", Format: "json"},
 		API:      config.APIConfig{Prefix: "/api/v1", APIKeySecret: aeoBootSecret},
 		SMTP:     config.SMTPConfig{From: "no-reply@localhost"},
