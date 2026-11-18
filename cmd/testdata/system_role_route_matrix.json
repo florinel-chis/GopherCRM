@@ -1,0 +1,4225 @@
+{
+  "base_commit": "cddaf741dc84e690735a2d39d7b572946f7c8f34",
+  "generator": "go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/citations",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/dashboard",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/export",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/profile",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/aeo/profile",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/prompts",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/aeo/prompts",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/aeo/prompts/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/aeo/prompts/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/prompts/:id/answers",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/aeo/prompts/:id/run",
+      "note": "Admin own is 503 PROVIDERS_UNAVAILABLE: the harness pins every AEO provider key empty, so nothing leaves the process and no engine can run the prompt.",
+      "cells": {
+        "admin": {
+          "own": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "foreign": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "missing": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "malformed": {"status": 400, "code": "VALIDATION_ERROR"}
+        },
+        "sales": {
+          "own": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "foreign": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "missing": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"},
+          "malformed": {"status": 400, "code": "VALIDATION_ERROR"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/aeo/prompts/generate",
+      "note": "Admin own is 503 PROVIDER_NOT_CONFIGURED: the harness pins every AEO provider key empty, so nothing leaves the process and the generation engine has no key.",
+      "cells": {
+        "admin": {
+          "own": {"status": 503, "code": "PROVIDER_NOT_CONFIGURED"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 503, "code": "PROVIDER_NOT_CONFIGURED"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/providers",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/runs",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/aeo/runs",
+      "note": "Admin own is 503 PROVIDERS_UNAVAILABLE: the harness pins every AEO provider key empty, so nothing leaves the process and no engine can start a run.",
+      "cells": {
+        "admin": {
+          "own": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"}
+        },
+        "sales": {
+          "own": {"status": 503, "code": "PROVIDERS_UNAVAILABLE"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/aeo/runs/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/api-keys",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/api-keys",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/api-keys/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/api-keys/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/api-keys/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/change-password",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/auth/logout",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/rules",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/rules",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/automation/rules/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/rules/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/automation/rules/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/rules/:id/disable",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/rules/:id/dry-run",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/rules/:id/enable",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/rules/dry-run",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/runs",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/automation/runs/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/automation/runs/:id/cancel",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/companies",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/companies",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/companies/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/companies/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/companies/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/companies/:id/customers",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/companies/:id/deals",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/companies/:id/leads",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/configurations",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/configurations/:key",
+      "note": "The parameter is a configuration key, not a record id: own is an existing key (general.company_name), foreign a second existing key (ui.theme.primary_color), missing a well-formed key no row has, malformed a key with characters no key uses; the handler rejects no key by its form, so malformed is looked up like missing.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 404, "code": "NOT_FOUND"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/configurations/:key",
+      "note": "The parameter is a configuration key, not a record id: own is an existing key (general.company_name), foreign a second existing key (ui.theme.primary_color), missing a well-formed key no row has, malformed a key with characters no key uses; the handler rejects no key by its form, so malformed is looked up like missing.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 404, "code": "NOT_FOUND"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/configurations/:key/reset",
+      "note": "The parameter is a configuration key, not a record id: own is an existing key (general.company_name), foreign a second existing key (ui.theme.primary_color), missing a well-formed key no row has, malformed a key with characters no key uses; the handler rejects no key by its form, so malformed is looked up like missing.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 404, "code": "NOT_FOUND"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/configurations/category/:category",
+      "note": "The parameter is a category name, not a record id: own is an existing category (general), foreign a second one (leads), missing a well-formed name no entry has, malformed a name with characters no category uses; the handler rejects no name and an unknown category is an empty list.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 200, "code": ""},
+          "malformed": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/configurations/ui",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customers/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/:id/assign",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/deals",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/:id/external-ids",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 201, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 201, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id/external-ids/:mappingId",
+      "note": "Two parameters: the customer is the caller's own customer record in every case and the mapping id varies; foreign is an existing mapping of another customer.",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/quotes",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/tickets",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 200, "code": ""},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 200, "code": ""},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 200, "code": ""},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/export",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/activities",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/leads-by-status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/new-leads",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/pipeline",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/recent-tickets",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/sales-performance",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/stats",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/tasks-by-status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/tickets-by-priority",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/dashboard/upcoming-tasks",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/deals",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/deals/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/deals/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals/:id/history",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals/:id/quotes",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/deals/:id/stage",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals/:id/tasks",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/deals/pipeline",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/forms",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/forms",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/forms/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/forms/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/forms/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/forms/:id/submissions",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/forms/deliveries",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/forms/deliveries/:id/retry",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/forms/submissions/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/labels",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/labels",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/labels/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/labels/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/leads",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/leads",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/leads/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/leads/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/leads/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/leads/:id/assign",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/leads/:id/convert",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/leads/bulk/status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/leads/export",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications/:id/read",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications/read-all",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications/unread-count",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/products",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/products",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/products/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/products/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/products/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/products/:id/external-ids",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 201, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/products/:id/external-ids/:mappingId",
+      "note": "Two parameters: the product is the first seeded product in every case (products have no owner) and the mapping id varies; foreign is an existing mapping of the second product.",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/quotes",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/quotes",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/quotes/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/quotes/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/quotes/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/quotes/:id/email",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/quotes/:id/history",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/quotes/:id/lines",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 201, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/quotes/:id/lines/:lineId",
+      "note": "Two parameters: the quote is the caller's own quote in every case and the line id varies; foreign is an existing line of another user's quote.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/quotes/:id/lines/:lineId",
+      "note": "Two parameters: the quote is the caller's own quote in every case and the line id varies; foreign is an existing line of another user's quote.",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 404, "code": "NOT_FOUND"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/quotes/:id/status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tasks",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/tasks/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/tasks/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tasks/bulk/status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/my",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tasks/upcoming",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tickets",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tickets",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/tickets/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tickets/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/tickets/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tickets/:id/comments",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tickets/:id/comments",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 201, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 201, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/tickets/bulk/status",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/tickets/my",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/:id",
+      "note": "Admin own is 400: own is the caller's own account and an administrator cannot delete itself; admin foreign shows the route succeeding.",
+      "cells": {
+        "admin": {
+          "own": {"status": 400, "code": "BAD_REQUEST"},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/:id/activate",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/:id/deactivate",
+      "note": "Admin own is 400: own is the caller's own account and an administrator cannot deactivate itself; admin foreign shows the route succeeding.",
+      "cells": {
+        "admin": {
+          "own": {"status": 400, "code": "BAD_REQUEST"},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/me",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/me",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "support": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "customer": {
+          "own": {"status": 200, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhooks/deliveries",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhooks/endpoints",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/webhooks/endpoints",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 201, "code": ""},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/webhooks/endpoints/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 204, "code": ""},
+          "foreign": {"status": 204, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "VALIDATION_ERROR"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/webhooks/endpoints/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "VALIDATION_ERROR"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/webhooks/endpoints/:id",
+      "note": "",
+      "cells": {
+        "admin": {
+          "own": {"status": 200, "code": ""},
+          "foreign": {"status": 200, "code": ""},
+          "missing": {"status": 404, "code": "NOT_FOUND"},
+          "malformed": {"status": 400, "code": "VALIDATION_ERROR"},
+          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+        },
+        "sales": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "support": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        },
+        "customer": {
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "foreign": {"status": 403, "code": "FORBIDDEN"},
+          "missing": {"status": 403, "code": "FORBIDDEN"},
+          "malformed": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
+        }
+      }
+    }
+  ]
+}

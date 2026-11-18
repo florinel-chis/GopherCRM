@@ -174,6 +174,13 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   `protected` group (line 487). There is no container; the wiring is plain code.
 - If a static path sits next to a `/:id` route, extend `TestAllRouteSetupsCoexist`
   (`internal/handler/routes_test.go:16`).
+- Every protected route is recorded in the system-role route matrix,
+  `cmd/testdata/system_role_route_matrix.json`. Declare each new route in `matrixRequests`
+  (`cmd/system_role_route_matrix_test.go`: fixture kind, valid body, note), seed a fixture kind for
+  the entity in `seedRouteMatrix`, and regenerate in the same pull request:
+  `go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix`. A route that is neither
+  recorded nor on the test's public list fails `TestRouteMatrixCoversEveryProtectedRoute`
+  (DEVELOPMENT.md, "System-role route matrix").
 
 ### 3.8 Mocks
 
@@ -270,7 +277,11 @@ schema). A root that skipped proves nothing.
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
   Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:279`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 755).
+  per-item authorization (DEVELOPMENT.md line 755). A new or changed protected route also goes
+  into the system-role route matrix: add or adjust its `matrixRequests` entry and regenerate
+  `cmd/testdata/system_role_route_matrix.json` with
+  `go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix`, then review the diff of
+  the golden (section 3.7).
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
   are a to-do list, not dead code: implement the route instead of deleting the function, as
