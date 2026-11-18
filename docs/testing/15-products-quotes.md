@@ -941,10 +941,13 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
 - **Steps:**
   1. Start two `RespondPublic` calls with the same token behind one barrier (accept against decline, and accept twice).
   2. Race one `RespondPublic` against a staff `ChangeStatus` to rejected.
+  3. Email two different sent quotes at the same moment, each for the first time and then both again.
 - **Expected:** Step 1: one call succeeds, the other is `ErrQuoteResponseRejected`; one committed
   history row; the token row carries the winner's decision; the deal is unchanged. Step 2: exactly
   one of the two commits; when staff wins the token is stamped with `decision` NULL and the client
-  is rejected; when the client wins staff gets `INVALID_STATUS_TRANSITION`.
+  is rejected; when the client wins staff gets `INVALID_STATUS_TRANSITION`. Step 3: both emails
+  succeed on every engine (no deadlock between the token writes of two quotes) and each quote ends
+  with exactly one unused token row.
 - **Automation:** automated — `internal/service/quote_response_regression_test.go`
   `TestQuoteResponseConcurrent{SQLite,MySQL}`.
 

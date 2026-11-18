@@ -75,10 +75,32 @@ func (r *quoteResponseTokenRepository) Claim(id uint, decision string, now time.
 // InvalidateForQuote stamps used_at on the quote's unused rows and leaves
 // decision NULL: a newer email or a staff status change killed the link, the
 // client did not answer.
+//
+// It reads the ids with a plain SELECT and stamps them by primary key, and
+// issues no UPDATE when there is none. An UPDATE filtered on quote_id would
+// go through idx_quote_response_tokens_quote_id and, under REPEATABLE READ on
+// MySQL and MariaDB, lock the gap around the quote's entries (always on a
+// first email, which has no row yet); two transactions of two different
+// quotes can hold the same gap, and each one's insert then waits on the
+// other's: a deadlock (error 1213). Primary-key record locks leave the gaps
+// free. The plain read is complete because the caller holds the lock on the
+// quotes row before the first read of its transaction, and every writer of
+// the quote's token rows takes that lock first.
 func (r *quoteResponseTokenRepository) InvalidateForQuote(quoteID uint, now time.Time) error {
+	var ids []uint
+	err := r.db.Model(&models.QuoteResponseToken{}).
+		Where("quote_id = ? AND used_at IS NULL", quoteID).
+		Order("id ASC").
+		Pluck("id", &ids).Error
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
 	stamp := now.UTC()
 	return r.db.Model(&models.QuoteResponseToken{}).
-		Where("quote_id = ? AND used_at IS NULL", quoteID).
+		Where("id IN ? AND used_at IS NULL", ids).
 		Updates(map[string]interface{}{
 			"used_at":    &stamp,
 			"updated_at": stamp,

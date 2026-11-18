@@ -920,7 +920,10 @@ error text.
   shape of the form confirmation and the password reset; do not pre-check then update.
 - **Invalidation.** `ChangeStatus` stamps the quote's unused rows in its own transaction whenever
   it leaves `sent` (`InvalidateForQuote`, `decision` stays NULL), so a link stays dead after
-  sent → draft → sent until the next email mints a new one.
+  sent → draft → sent until the next email mints a new one. `InvalidateForQuote` reads the ids
+  with a plain `SELECT` and stamps them by primary key (no statement when there is none): an
+  `UPDATE` filtered on `quote_id` gap-locks the index on MySQL and MariaDB and deadlocked the
+  first emails of two different quotes. Call it only after the locking read of the quote.
 - **HTTP.** `SetupQuotePublicRoutes` mounts `GET` and `POST /quotes/public/response` on the public
   group with one shared `RateLimitStrict()` instance and no Auth. The body is validated before any
   token lookup (400 `VALIDATION_ERROR`); every `ErrQuoteResponseRejected` is 400 `BAD_REQUEST`

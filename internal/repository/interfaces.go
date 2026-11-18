@@ -698,7 +698,10 @@ type QuoteResponseTokenRepository interface {
 	// gorm.ErrRecordNotFound.
 	Claim(id uint, decision string, now time.Time) error
 	// InvalidateForQuote stamps used_at on every unused row of the quote and
-	// leaves decision NULL.
+	// leaves decision NULL. It writes by primary key only (no lock on the
+	// quote_id index, so transactions of different quotes never wait on each
+	// other); the caller must hold the lock on the quotes row before the
+	// first read of its transaction.
 	InvalidateForQuote(quoteID uint, now time.Time) error
 	WithTx(tx *gorm.DB) QuoteResponseTokenRepository
 }

@@ -65,7 +65,14 @@ the transaction, then claims it with one conditional `UPDATE` by primary key
 (`internal/repository/quote_response_token_repository.go`, `Claim`: unused, unexpired, quote live
 and sent, all in the statement), claims the status (`WHERE status = 'sent'`) and inserts the
 history row. Two answers with one token serialise on the quote lock (on the single connection on
-SQLite) and the second claims nothing. No flow reads `users`, `customers`, `leads` or `deals` under
+SQLite) and the second claims nothing. Transactions of two different quotes share no quote lock, so
+the token writes must not meet in the table either: `InvalidateForQuote` reads the ids of the
+quote's unused rows with a plain `SELECT` (complete, because every writer of those rows holds the
+quote lock before the first read of its transaction) and stamps them by primary key, with no
+`UPDATE` at all when there is none. No statement locks through
+`idx_quote_response_tokens_quote_id`, so no gap lock is held when the mint inserts; an `UPDATE`
+filtered on `quote_id` took one under REPEATABLE READ on MySQL and MariaDB and two first emails of
+two quotes deadlocked (error 1213). No flow reads `users`, `customers`, `leads` or `deals` under
 these locks, so they add no lock edge to the chains above.
 
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several

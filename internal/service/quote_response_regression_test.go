@@ -108,6 +108,58 @@ func runQuoteResponseConcurrencyScenario(t *testing.T, db *gorm.DB) {
 		t.Logf("outcomes over %d rounds: %v", quoteRaceRounds, outcomes)
 	})
 
+	// Two different quotes share no quotes row, so nothing serialises their
+	// mints. An invalidation that locked through the quote_id index took a
+	// gap lock on MySQL and MariaDB, and the two inserts then deadlocked
+	// (error 1213) on a first email of each quote.
+	t.Run("two emails of two quotes at once both mint", func(t *testing.T) {
+		for round := 0; round < quoteRaceRounds*4; round++ {
+			first := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.ValidUntil = dateDaysFromNow(t, 0) })
+			second := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.ValidUntil = dateDaysFromNow(t, 0) })
+			env.mailer.reset(nil, nil)
+
+			firstErr, secondErr := raceTwo(t,
+				func() error {
+					_, err := env.svc.Email(first.ID)
+					return err
+				},
+				func() error {
+					_, err := env.svc.Email(second.ID)
+					return err
+				},
+			)
+			require.NoErrorf(t, firstErr, "round %d: the first quote's email", round)
+			require.NoErrorf(t, secondErr, "round %d: the second quote's email", round)
+			require.Len(t, env.mailer.messages(), 2, "both mails went out")
+			for _, id := range []uint{first.ID, second.ID} {
+				rows := env.tokenRows(id)
+				require.Lenf(t, rows, 1, "quote %d has the one row of its email", id)
+				assert.Nil(t, rows[0].UsedAt, "and it is unused")
+			}
+
+			// Odd rounds email both again at once: each invalidation now
+			// stamps an existing row while the other transaction inserts.
+			if round%2 == 1 {
+				firstErr, secondErr = raceTwo(t,
+					func() error {
+						_, err := env.svc.Email(first.ID)
+						return err
+					},
+					func() error {
+						_, err := env.svc.Email(second.ID)
+						return err
+					},
+				)
+				require.NoErrorf(t, firstErr, "round %d: the first quote's second email", round)
+				require.NoErrorf(t, secondErr, "round %d: the second quote's second email", round)
+				for _, id := range []uint{first.ID, second.ID} {
+					require.Lenf(t, env.tokenRows(id), 2, "quote %d has two rows", id)
+					require.Lenf(t, env.unusedTokenRows(id), 1, "quote %d has exactly one usable link", id)
+				}
+			}
+		}
+	})
+
 	t.Run("a client answer racing a staff transition commits exactly one", func(t *testing.T) {
 		for round := 0; round < quoteRaceRounds; round++ {
 			quote := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.ValidUntil = dateDaysFromNow(t, 0) })
