@@ -131,6 +131,7 @@ func SetupQuoteRoutes(router *gin.RouterGroup, handler *QuoteHandler) {
 		quotes.DELETE("/:id/lines/:lineId", middleware.RequirePermission(permissions.QuotesUpdate), handler.DeleteLine)
 		quotes.POST("/:id/status", middleware.RequirePermission(permissions.QuotesUpdate), handler.ChangeStatus)
 		quotes.GET("/:id/history", guard, handler.History)
+		quotes.GET("/:id/pdf", guard, handler.PDF)
 		quotes.POST("/:id/email", middleware.RequirePermission(permissions.QuotesUpdate), handler.Email)
 	}
 	router.GET("/deals/:id/quotes", guard, handler.ListByDeal)

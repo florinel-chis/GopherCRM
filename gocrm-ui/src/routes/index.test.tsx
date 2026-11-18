@@ -219,6 +219,37 @@ vi.mock('@/api/endpoints/quotes', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/quoteRender', () => ({
+  quoteRenderApi: {
+    getQuoteRender: vi.fn().mockResolvedValue({
+      quote: {
+        id: 42,
+        number: 'Q-000042',
+        title: 'Rendered quote',
+        status: 'sent',
+        currency: 'EUR',
+        subtotal_cents: 0,
+        discount_cents: 0,
+        total_cents: 0,
+        tax_cents: 0,
+        gross_total_cents: 0,
+        valid_until: null,
+        notes: '',
+        owner_id: 1,
+        deal_id: null,
+        customer_id: null,
+        sent_at: null,
+        closed_at: null,
+        last_emailed_at: null,
+        lines: [],
+        created_at: '2026-10-26T08:00:00Z',
+        updated_at: '2026-10-26T08:00:00Z',
+      },
+      product_name: 'Acme CRM',
+    }),
+  },
+}));
+
 vi.mock('@/api/endpoints/quoteResponse', () => ({
   quoteResponseApi: {
     getQuoteResponse: vi.fn().mockResolvedValue({
@@ -788,6 +819,35 @@ describe('quote response route', () => {
     // Outside the shell: the mocked MainLayout and the sign-in page are absent.
     expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
     expect(view.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument();
+    view.unmount();
+  }, 30000);
+});
+
+// The page the server prints to PDF is public as well (#384): its visitor is
+// a headless browser without a session, so the route sits outside
+// ProtectedRoute and the shell, and it shows the document without a toolbar.
+describe('quote render route', () => {
+  it('renders the document for a signed-out visitor and stays on /quote-render', async () => {
+    setAuth(null, false);
+    window.location.hash = '#render-credential';
+    const memoryRouter = createMemoryRouter(router.routes as unknown as RouteObject[], {
+      initialEntries: ['/quote-render'],
+    });
+    const view = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={memoryRouter} />
+      </QueryClientProvider>
+    );
+
+    expect(await view.findByTestId('quote-print-number', {}, { timeout: 15000 })).toHaveTextContent('Quote Q-000042');
+    expect(view.getByTestId('quote-print-title')).toHaveTextContent('Rendered quote');
+    expect(view.getByRole('heading', { level: 1 })).toHaveTextContent('Acme CRM');
+    expect(memoryRouter.state.location.pathname).toBe('/quote-render');
+    // No print toolbar, no shell, no sign-in page.
+    expect(view.queryByTestId('quote-print-toolbar')).not.toBeInTheDocument();
+    expect(view.queryByRole('button')).not.toBeInTheDocument();
+    expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+    window.location.hash = '';
     view.unmount();
   }, 30000);
 });

@@ -3,6 +3,7 @@ import React from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigurationProvider } from './ConfigurationContext';
+import { ConfigurationContext, isQuotePdfAvailable } from './configuration-context';
 import { AuthContext, type AuthContextType } from './auth-context';
 import { AuthProvider } from './AuthContext';
 import { useConfiguration } from '@/hooks/useConfiguration';
@@ -456,5 +457,89 @@ describe('ConfigurationProvider under AuthProvider', () => {
     await waitFor(() => expect(text('company')).toBe('GopherCRM'));
     expect(text('conversion')).toBe('unavailable');
     expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(1);
+  });
+});
+
+// isQuotePdfAvailable reads the read-only quotes.pdf_available entry the
+// provider serves: true only on the server's word.
+describe('isQuotePdfAvailable', () => {
+  const PdfProbe: React.FC = () => {
+    const context = React.useContext(ConfigurationContext);
+    return <span data-testid="pdf">{String(isQuotePdfAvailable(context))}</span>;
+  };
+  const renderProbe = (auth: AuthContextType) =>
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: APP_QUERY_DEFAULTS })}>
+        <AuthContext.Provider value={auth}>
+          <ConfigurationProvider>
+            <PdfProbe />
+          </ConfigurationProvider>
+        </AuthContext.Provider>
+      </QueryClientProvider>
+    );
+  const signedIn = (): AuthContextType => {
+    const user = createMockUser({ id: 1 });
+    return {
+      user,
+      permissions: permissionsOf(user),
+      isLoading: false,
+      isAuthenticated: true,
+      login: vi.fn(),
+      register: vi.fn(),
+      logout: vi.fn(),
+      refreshUser: vi.fn(),
+    };
+  };
+  const pdf = () => screen.getByTestId('pdf').textContent;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    session.generation = 0;
+    session.token = null;
+  });
+
+  it('is true when the entry is the boolean true', async () => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue([
+      entry('general.company_name', 'Acme CRM'),
+      entry('quotes.pdf_available', 'true', 'boolean'),
+    ]);
+    renderProbe(signedIn());
+
+    // Nothing is offered before the server has answered.
+    expect(pdf()).toBe('false');
+    await waitFor(() => expect(pdf()).toBe('true'));
+  });
+
+  it.each([
+    ['false', [entry('quotes.pdf_available', 'false', 'boolean')]],
+    ['missing', [entry('general.company_name', 'Acme CRM')]],
+    ['not a boolean entry', [entry('quotes.pdf_available', 'true', 'string')]],
+    ['a malformed value', [entry('quotes.pdf_available', '1', 'boolean')]],
+  ])('is false when the entry is %s', async (_name, configurations) => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue(configurations);
+    renderProbe(signedIn());
+
+    await waitFor(() => expect(configurationsApi.getUIConfigurations).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(pdf()).toBe('false');
+  });
+
+  it('is false when the load fails, without a session and outside a provider', async () => {
+    vi.mocked(configurationsApi.getUIConfigurations).mockRejectedValue(new Error('Server unavailable'));
+    const failed = renderProbe(signedIn());
+    await waitFor(() => expect(configurationsApi.getUIConfigurations).toHaveBeenCalled());
+    await act(async () => {});
+    expect(pdf()).toBe('false');
+    failed.unmount();
+
+    vi.mocked(configurationsApi.getUIConfigurations).mockResolvedValue([entry('quotes.pdf_available', 'true', 'boolean')]);
+    const signedOut = renderProbe({ ...signedIn(), user: null, permissions: permissionsOf(null), isAuthenticated: false });
+    await act(async () => {});
+    expect(pdf()).toBe('false');
+    signedOut.unmount();
+
+    render(<PdfProbe />);
+    expect(pdf()).toBe('false');
+    expect(isQuotePdfAvailable(undefined)).toBe(false);
   });
 });

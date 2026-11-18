@@ -8,6 +8,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { Quote, User } from '@/types';
 import { formatMoney } from './quoteFormat';
 import { permissionsOf } from '@/test/permissions';
+import { ConfigurationContext, type ConfigurationContextType } from '@/contexts/configuration-context';
+import type { Configuration } from '@/api/endpoints/configurations';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -23,6 +25,7 @@ vi.mock('@/api/endpoints', () => ({
     deleteLine: vi.fn(),
     changeStatus: vi.fn(),
     emailQuote: vi.fn(),
+    downloadQuotePdf: vi.fn(),
     updateQuote: vi.fn(),
     deleteQuote: vi.fn(),
   },
@@ -330,5 +333,121 @@ describe('QuoteDetail', () => {
     expect(await screen.findByText('Quote not found')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Back to quotes' }));
     expect(mockNavigate).toHaveBeenCalledWith('/quotes');
+  });
+
+  describe('Download PDF', () => {
+    const pdfEntry = (value: string, type: Configuration['type'] = 'boolean'): Configuration => ({
+      id: 0,
+      key: 'quotes.pdf_available',
+      value,
+      type,
+      category: 'ui',
+      description: '',
+      default_value: '',
+      is_system: false,
+      is_read_only: true,
+      valid_values: '',
+      created_at: '0001-01-01T00:00:00Z',
+      updated_at: '0001-01-01T00:00:00Z',
+    });
+    const configuration = (configurations: Configuration[]): ConfigurationContextType => ({
+      configurations,
+      isLoading: false,
+      error: null,
+      getLeadConversion: () => ({ status: 'unavailable' }),
+      getCompanyName: () => 'GopherCRM',
+      getPrimaryColor: () => '#1976d2',
+      refreshConfigurations: vi.fn(async () => {}),
+    });
+    const renderWith = (configurations: Configuration[]) =>
+      render(
+        <ConfigurationContext.Provider value={configuration(configurations)}>
+          <QuoteDetail />
+        </ConfigurationContext.Provider>
+      );
+
+    it('offers the button when quotes.pdf_available is true', async () => {
+      renderWith([pdfEntry('true')]);
+      await screen.findByTestId('quote-number');
+      expect(screen.getByRole('button', { name: 'Download PDF' })).toBeInTheDocument();
+      // Print stays next to it.
+      expect(screen.getByRole('link', { name: 'Print' })).toHaveAttribute('href', '/quotes/42/print');
+      expect(quotesApi.downloadQuotePdf).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['false', [pdfEntry('false')]],
+      ['missing', []],
+      ['not a boolean entry', [pdfEntry('true', 'string')]],
+      ['a malformed value', [pdfEntry('yes')]],
+    ])('does not offer the button when the entry is %s', async (_name, configurations) => {
+      renderWith(configurations);
+      await screen.findByTestId('quote-number');
+      expect(screen.queryByRole('button', { name: 'Download PDF' })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Print' })).toBeInTheDocument();
+    });
+
+    it('does not offer the button outside a configuration provider', async () => {
+      render(<QuoteDetail />);
+      await screen.findByTestId('quote-number');
+      expect(screen.queryByRole('button', { name: 'Download PDF' })).not.toBeInTheDocument();
+    });
+
+    it('requests the PDF of the quote and saves it as Quote-<number>.pdf', async () => {
+      const blob = new Blob(['%PDF-1.7 test'], { type: 'application/pdf' });
+      vi.mocked(quotesApi.downloadQuotePdf).mockResolvedValue(blob);
+      const createObjectURL = vi.fn(() => 'blob:quote-pdf');
+      const revokeObjectURL = vi.fn();
+      Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true, writable: true });
+      Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true, writable: true });
+      const saved: { href: string; download: string }[] = [];
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push({ href: this.href, download: this.download });
+      });
+
+      renderWith([pdfEntry('true')]);
+      await screen.findByTestId('quote-number');
+      fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }));
+
+      await waitFor(() => expect(saved).toHaveLength(1));
+      expect(quotesApi.downloadQuotePdf).toHaveBeenCalledTimes(1);
+      expect(quotesApi.downloadQuotePdf).toHaveBeenCalledWith(42);
+      expect(createObjectURL).toHaveBeenCalledWith(blob);
+      expect(saved[0]).toEqual({ href: 'blob:quote-pdf', download: 'Quote-Q-000042.pdf' });
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:quote-pdf');
+      expect(showError).not.toHaveBeenCalled();
+      click.mockRestore();
+    });
+
+    it("shows the server's message when the download fails with one", async () => {
+      vi.mocked(quotesApi.downloadQuotePdf).mockRejectedValue({
+        response: { status: 503, data: { code: 'PDF_RENDER_FAILED', message: 'The PDF could not be produced' } },
+      });
+      renderWith([pdfEntry('true')]);
+      await screen.findByTestId('quote-number');
+      fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }));
+
+      await waitFor(() => expect(showError).toHaveBeenCalledWith('The PDF could not be produced'));
+      expect(showError).toHaveBeenCalledTimes(1);
+      // The button is usable again for a retry.
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled());
+    });
+
+    it('shows Failed to download the PDF when the error carries no message', async () => {
+      // What downloadQuotePdf leaves behind for a body it could not parse.
+      vi.mocked(quotesApi.downloadQuotePdf).mockRejectedValue({ response: { status: 503, data: {} } });
+      renderWith([pdfEntry('true')]);
+      await screen.findByTestId('quote-number');
+      fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }));
+
+      await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to download the PDF'));
+
+      // And for an error that is no API answer at all (a timeout, say).
+      showError.mockClear();
+      vi.mocked(quotesApi.downloadQuotePdf).mockRejectedValue(new Error('timeout of 55000ms exceeded'));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled());
+      fireEvent.click(screen.getByRole('button', { name: 'Download PDF' }));
+      await waitFor(() => expect(showError).toHaveBeenCalledWith('Failed to download the PDF'));
+    });
   });
 });

@@ -3792,6 +3792,21 @@ definitions:
         example: "2026-12-31"
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.QuoteRenderViewJSON:
+    properties:
+      product_name:
+        description: |-
+          The stored general.company_name, trimmed; empty when it is blank or
+          could not be read, in which case the page uses its built-in name.
+        example: Acme CRM
+        type: string
+      quote:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteJSON'
+        description: |-
+          The quote with its lines, totals, number and summaries, as GET
+          /quotes/{id} returns it.
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.QuoteStatus:
     enum:
     - draft
@@ -7071,6 +7086,15 @@ definitions:
         minimum: 0
         type: integer
     type: object
+  internal_handler.QuotePublicRenderRequest:
+    properties:
+      token:
+        description: |-
+          The render credential from the fragment of the render page's URL.
+          Required. Every other field of the body is ignored.
+        example: 3q2-7wEXAMPLEtokenEXAMPLEtokenEXAMPLEtoken0
+        type: string
+    type: object
   internal_handler.QuotePublicResponseRequest:
     properties:
       decision:
@@ -8191,7 +8215,7 @@ info:
     - 422 EXPORT_TOO_LARGE: an AEO export (GET /aeo/export) that selects more than 10,000 answers; error.details.max_answers carries the cap.
     - 429 TOO_MANY_REQUESTS: see Rate limits.
     - 500 INTERNAL_ERROR: an unexpected failure ("An unexpected error occurred"); details are logged server-side, never returned.
-    - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).
+    - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO), 503 PDF_UNAVAILABLE and PDF_RENDER_FAILED (downloading a quote as PDF).
     Each operation lists the codes it can return and the condition behind each.
 
     ## Pagination, sorting and filtering
@@ -13142,14 +13166,18 @@ paths:
     get:
       description: 'Any authenticated role. Returns, in data.configurations and in
         this order: every entry of the ui category, general.company_name, deals.default_currency
-        (the currency a new deal takes when none is sent), and three synthetic read-only
+        (the currency a new deal takes when none is sent), three synthetic read-only
         lead-conversion entries holding the values the convert endpoint enforces:
         leads.conversion.allowed_statuses (array), leads.conversion.require_notes
-        (boolean) and leads.conversion.auto_assign_owner (boolean). The synthetic
-        entries are not stored rows: their id is 0, their timestamps are the zero
-        time (0001-01-01T00:00:00Z) and is_read_only is true. An entry whose setting
-        cannot be read is left out instead of failing the request (except the ui category
-        itself). A sensitive entry would be masked, but none of these is sensitive.'
+        (boolean) and leads.conversion.auto_assign_owner (boolean), and last the synthetic
+        read-only quotes.pdf_available (boolean, category ui): true when the server
+        can produce quote PDFs (GET /quotes/{id}/pdf and the attachment of the quote
+        email), false when PDF output is switched off. The synthetic entries are not
+        stored rows: their id is 0, their timestamps are the zero time (0001-01-01T00:00:00Z)
+        and is_read_only is true. An entry whose setting cannot be read is left out
+        instead of failing the request (except the ui category itself); quotes.pdf_available
+        is always present. A sensitive entry would be masked, but none of these is
+        sensitive.'
       produces:
       - application/json
       responses:
@@ -20486,9 +20514,10 @@ paths:
   /quotes/{id}/email:
     post:
       description: |-
-        Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
+        Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address, with the quote's PDF attached when PDF output is on. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
         Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
         The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each email of a sent quote invalidates the link of the previous one, and any status change away from sent invalidates the current one. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent.
+        The attachment is one file, Quote-Q-000042.pdf (application/pdf) for quote 42: the document GET /quotes/{id}/pdf returns, rendered before the response link is stored, with no transaction held, in at most 15 seconds. When PDF output is off (GET /configurations/ui reports quotes.pdf_available false), or the render fails or runs out of time, the mail goes out as plain text only, exactly as without PDF output, and the request still succeeds; the fallback is logged, not reported. The response does not say whether a PDF was attached. Worst-case duration: 15 seconds for the render plus 30 seconds for the SMTP delivery, 45 seconds; a client should allow more than that (the web app allows 55) and a reverse proxy in front at least 60.
       parameters:
       - description: Quote ID
         in: path
@@ -21053,6 +21082,109 @@ paths:
       summary: Edit a line of a draft quote
       tags:
       - quotes
+  /quotes/{id}/pdf:
+    get:
+      description: |-
+        The quote as a PDF file: the same document as the print page of the web app, printed by a headless Chrome or Chromium on the server. Roles: admin (any quote) and sales (only the quotes it owns; another owner's quote is 403, not 404). The id, the caller's permission and the quote are checked first, with the answers of GET /quotes/{id}; nothing is rendered for a refused request. Any status can be downloaded.
+        PDF output is on when the server has a browser binary (QUOTE_PDF_CHROME_PATH) and an APP_BASE_URL; GET /configurations/ui reports it as quotes.pdf_available. Off is 503 PDF_UNAVAILABLE. One render runs at a time per server process and a render, its wait for a turn included, is bounded at 15 seconds: a render that fails, runs out of time, does not get its turn, or whose page never loaded the quote is 503 PDF_RENDER_FAILED and can be retried. The success answer is the raw file, not the JSON envelope; errors are the JSON envelope. The request writes nothing.
+      parameters:
+      - description: Quote ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/pdf
+      - application/json
+      responses:
+        "200":
+          description: The PDF, with Content-Type application/pdf and Content-Disposition
+            attachment; filename='Quote-Q-000042.pdf' (double quotes on the wire)
+            for quote 42
+          schema:
+            type: file
+        "400":
+          description: 'BAD_REQUEST: id is not an unsigned integer (''Invalid quote
+            ID'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: the Authorization header is missing or is neither
+            Bearer <jwt> nor ApiKey <key> (''Missing or invalid authorization header''),
+            or the credential is invalid, expired or belongs to a deactivated account
+            (''Invalid credentials'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN ''Insufficient permissions'': the caller is not
+            admin or sales; or FORBIDDEN ''You can only view your own quotes'': a
+            sales user addressed a quote it does not own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: no live quote has this id (''Quote not found'')'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: more than 120 requests per minute (burst
+            30) from this client IP, one bucket shared by every authenticated endpoint;
+            error.details.retry_after is ''60s'' and no Retry-After or X-RateLimit
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: unexpected failure; the message is always
+            ''An unexpected error occurred'''
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "503":
+          description: 'PDF_UNAVAILABLE ''PDF output is switched off'': the server
+            has no browser binary or no APP_BASE_URL. PDF_RENDER_FAILED ''The PDF
+            could not be produced'': the render failed or did not finish within 15
+            seconds'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Download a quote as PDF
+      tags:
+      - quotes
   /quotes/{id}/status:
     post:
       consumes:
@@ -21170,6 +21302,68 @@ paths:
       summary: Move a quote to another status
       tags:
       - quotes
+  /quotes/public/render:
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Unauthenticated. Called by the render page of the web app (APP_BASE_URL/quote-render) while the server prints a quote to PDF: it returns the quote a render credential was minted for, exactly as GET /quotes/{id} returns it, and the product name that heads the document. It is a POST so that the credential travels in the body and never in a URL a proxy logs; it writes nothing.
+        A render credential is 32 random bytes the server mints for one render and keeps, as a hash, in the memory of the process that renders. It opens exactly one quote, read-only, while that render runs: at most 15 seconds. It is not a session: sent as a Bearer token to any other route it is 401. The quote returned is always the credential's own; an id or any other field in the body is ignored. A missing or empty token, or a body that is not a JSON object, is 400 VALIDATION_ERROR; an unknown or expired credential, one whose render has finished, or one presented to another server process is the same 400 'Invalid or expired render link'. With PDF output off every credential is refused. Rate limit: the generous tier, its own bucket per client IP.
+      parameters:
+      - description: The render credential
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.QuotePublicRenderRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The quote of the credential and the product name
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteRenderViewJSON'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: malformed JSON, or token missing or empty
+            (details names the field). BAD_REQUEST ''Invalid or expired render link'':
+            the credential is unknown or expired, its render has finished, or its
+            quote no longer exists'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: generous tier, 240 requests per minute,
+            burst 40, per client IP, a bucket of this route alone; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: unexpected failure; the message is always
+            ''An unexpected error occurred'''
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Load the quote for the PDF render page
+      tags:
+      - public-quotes
   /quotes/public/response:
     get:
       description: |-
@@ -25224,7 +25418,8 @@ tags:
     confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS
     is open to any origin without credentials.'
   name: public-forms
-- description: 'Unauthenticated endpoints behind the client response link of a quote
-    email: show the quote and accept or decline it with the single-use token of the
-    link.'
+- description: 'Unauthenticated quote endpoints: behind the client response link of
+    a quote email, show the quote and accept or decline it with the single-use token
+    of the link; and the read the PDF render page makes with the short-lived credential
+    of one render.'
   name: public-quotes

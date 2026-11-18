@@ -257,3 +257,126 @@ func TestQuotePublicRespond(t *testing.T) {
 	require.NotEmpty(t, output.String(), "the requests were logged")
 	assert.NotContains(t, output.String(), quotePublicTestToken, "no log line carries the token of the body")
 }
+
+// POST /quotes/public/render (#384) with the real service: the credential of
+// a running render returns that render's quote and nothing the body names;
+// afterwards, and for every other token, it is one generic 400.
+func TestQuotePublicRender(t *testing.T) {
+	chain := newQuotePDFChain(t)
+	numberA := fmt.Sprintf("Q-%06d", chain.quoteA.ID)
+
+	var credential string
+	t.Run("the credential of a running render returns its quote and the product name", func(t *testing.T) {
+		var during *httptest.ResponseRecorder
+		chain.renderer.during = func(token string) {
+			credential = token
+			during = chain.post(fmt.Sprintf(`{"token":%q}`, token))
+		}
+		pdf, err := chain.svc.RenderPDF(chain.quoteA.ID)
+		require.NoError(t, err)
+		assert.Equal(t, quotePDFHandlerBytes, pdf)
+		require.NotEmpty(t, credential)
+
+		require.NotNil(t, during)
+		require.Equal(t, http.StatusOK, during.Code, during.Body.String())
+		envelope := decodeQuoteRender(t, during)
+		assert.True(t, envelope.Success)
+		assert.Equal(t, chain.quoteA.ID, envelope.Data.Quote.ID)
+		assert.Equal(t, numberA, envelope.Data.Quote.Number)
+		require.Len(t, envelope.Data.Quote.Lines, 1)
+		assert.Equal(t, "Line of quote A", envelope.Data.Quote.Lines[0].Description)
+		require.NotNil(t, envelope.Data.ProductName, "product_name is always present")
+		assert.Empty(t, *envelope.Data.ProductName, "empty without a stored company name")
+
+		// The same JSON as GET /quotes/:id: the keys of the quote object.
+		var raw struct {
+			Data map[string]json.RawMessage `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(during.Body.Bytes(), &raw))
+		assert.Equal(t, []string{"product_name", "quote"}, sortedKeys(raw.Data))
+		stored, err := chain.svc.GetByID(chain.quoteA.ID)
+		require.NoError(t, err)
+		want, err := json.Marshal(stored)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(want), string(raw.Data["quote"]))
+	})
+
+	t.Run("id and quote_id of another quote in the body still answer quote A", func(t *testing.T) {
+		var during *httptest.ResponseRecorder
+		chain.renderer.during = func(token string) {
+			during = chain.post(fmt.Sprintf(`{"token":%q,"id":%d,"quote_id":%d,"number":"Q-%06d"}`,
+				token, chain.quoteB.ID, chain.quoteB.ID, chain.quoteB.ID))
+		}
+		_, err := chain.svc.RenderPDF(chain.quoteA.ID)
+		require.NoError(t, err)
+		require.NotNil(t, during)
+		require.Equal(t, http.StatusOK, during.Code, during.Body.String())
+		envelope := decodeQuoteRender(t, during)
+		assert.Equal(t, chain.quoteA.ID, envelope.Data.Quote.ID)
+		assert.Equal(t, numberA, envelope.Data.Quote.Number)
+		assert.Equal(t, "Line of quote A", envelope.Data.Quote.Lines[0].Description)
+		assert.NotContains(t, during.Body.String(), "Quote B")
+		assert.NotContains(t, during.Body.String(), "Line of quote B")
+	})
+
+	t.Run("after the render finished, and for an unknown token, it is the generic 400", func(t *testing.T) {
+		for name, token := range map[string]string{"finished": credential, "unknown": "no-such-credential"} {
+			w := chain.post(fmt.Sprintf(`{"token":%q}`, token))
+			assert.Equal(t, http.StatusBadRequest, w.Code, name)
+			envelope := decodeQuoteRender(t, w)
+			require.NotNil(t, envelope.Error, name)
+			assert.Equal(t, utils.ErrCodeBadRequest, envelope.Error.Code, name)
+			assert.Equal(t, "Invalid or expired render link", envelope.Error.Message, name)
+			assert.NotContains(t, w.Body.String(), token, name)
+		}
+	})
+
+	t.Run("an empty token or a malformed body is a validation error", func(t *testing.T) {
+		for _, body := range []string{`{}`, `{"token":""}`, `{"token":123}`, `not json`, ``, `{"id":1}`} {
+			w := chain.post(body)
+			assert.Equal(t, http.StatusBadRequest, w.Code, body)
+			envelope := decodeQuoteRender(t, w)
+			require.NotNil(t, envelope.Error, body)
+			assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code, body)
+		}
+	})
+
+	t.Run("the route does not write and does not log the credential", func(t *testing.T) {
+		output := captureQuotePublicLogs(t)
+		before := chain.quoteA.UpdatedAt
+		var token string
+		chain.renderer.during = func(tok string) {
+			token = tok
+			require.Equal(t, http.StatusOK, chain.post(fmt.Sprintf(`{"token":%q}`, tok)).Code)
+		}
+		_, err := chain.svc.RenderPDF(chain.quoteA.ID)
+		require.NoError(t, err)
+		var stored models.Quote
+		require.NoError(t, chain.db.First(&stored, chain.quoteA.ID).Error)
+		assert.True(t, stored.UpdatedAt.Equal(before), "the quote row is untouched")
+		assert.Equal(t, models.QuoteStatusSent, stored.Status)
+		require.NotEmpty(t, token)
+		assert.NotContains(t, output.String(), token)
+		assert.NotContains(t, output.String(), "quote-render")
+	})
+
+	t.Run("the handler maps the service's rejection and hides an unexpected failure", func(t *testing.T) {
+		ensureHandlerTestLogger(t)
+		svc := new(mocks.QuoteService)
+		svc.On("GetRenderView", "expired").Return(nil, fmt.Errorf("the credential of quote 7 has expired: %w", apperrors.ErrQuoteRenderRejected)).Once()
+		svc.On("GetRenderView", "boom").Return(nil, errors.New("database canary exploded")).Once()
+		router := newQuotePublicRouter(svc)
+
+		w, envelope := doQuotePublic(t, router, http.MethodPost, "/api/v1/quotes/public/render", `{"token":"expired"}`)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, "Invalid or expired render link", envelope.Error.Message)
+		assert.NotContains(t, w.Body.String(), "quote 7")
+
+		w, envelope = doQuotePublic(t, router, http.MethodPost, "/api/v1/quotes/public/render", `{"token":"boom"}`)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		require.NotNil(t, envelope.Error)
+		assert.NotContains(t, w.Body.String(), "canary")
+		svc.AssertExpectations(t)
+	})
+}

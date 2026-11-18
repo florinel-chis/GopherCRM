@@ -267,3 +267,47 @@ func (_m *QuoteService) RespondPublic(token string, decision string) (*models.Qu
 	}
 	return r0, ret.Error(1)
 }
+
+// PDFAvailable provides a mock function with no fields
+func (_m *QuoteService) PDFAvailable() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for PDFAvailable")
+	}
+
+	return ret.Bool(0)
+}
+
+// RenderPDF provides a mock function with given fields: id
+func (_m *QuoteService) RenderPDF(id uint) ([]byte, error) {
+	ret := _m.Called(id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RenderPDF")
+	}
+
+	var r0 []byte
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]byte)
+	}
+	return r0, ret.Error(1)
+}
+
+// GetRenderView provides a mock function with given fields: token
+func (_m *QuoteService) GetRenderView(token string) (*models.QuoteRenderView, error) {
+	ret := _m.Called(token)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetRenderView")
+	}
+
+	var r0 *models.QuoteRenderView
+	if rf, ok := ret.Get(0).(func(string) (*models.QuoteRenderView, error)); ok {
+		return rf(token)
+	}
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.QuoteRenderView)
+	}
+	return r0, ret.Error(1)
+}

@@ -1001,6 +1001,7 @@ Represents system configuration settings that control application behavior.
 - `leads.conversion.require_notes` - Whether non-blank conversion notes are required (enforced; also on `GET /configurations/ui`)
 - `leads.conversion.auto_assign_owner` - Make the lead owner the customer's `assigned_to_id` on conversion (enforced; also on `GET /configurations/ui`)
 - `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
+- `quotes.pdf_available` - Not a stored row: a synthetic read-only boolean that `GET /configurations/ui` appends last (id 0, zero timestamps, category `ui`), `true` when the server can produce quote PDFs (`QUOTE_PDF_CHROME_PATH` names an executable browser and `APP_BASE_URL` is set), `false` otherwise; always present. The quote page shows its Download PDF button only when it is `true` (#384)
 
 `security.session_timeout_hours` and `tickets.auto_assign_support` were seeded by earlier releases and never read. They are retired (#224): startup deletes them on every driver (`models.RetiredConfigurationKeys`), and `migrations/20261031120000_retire_inert_configurations` does the same on MySQL and MariaDB. Session length comes from `JWT_EXPIRY_HOURS` (access token) and `REFRESH_TOKEN_EXPIRY_DAYS`. A ticket created without `assigned_to_id` is assigned to the user who created it (`internal/handler/ticket_handler.go:108-111`); nothing distributes tickets among support users.
 

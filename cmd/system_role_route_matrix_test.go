@@ -95,10 +95,11 @@ var routeMatrixPublic = map[string]bool{
 	"POST /api/v1/forms/public/:key/submissions": true,
 	"GET /api/v1/quotes/public/response":         true,
 	"POST /api/v1/quotes/public/response":        true,
+	"POST /api/v1/quotes/public/render":          true,
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was
-// frozen: the role API of #348. These routes are served and guarded, but the
+// frozen: the role API of #348 and the quote PDF download of #384. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
@@ -111,6 +112,7 @@ var routeMatrixAfterFreeze = map[string]bool{
 	"PUT /api/v1/roles/:id":             true,
 	"DELETE /api/v1/roles/:id":          true,
 	"POST /api/v1/roles/:id/clone":      true,
+	"GET /api/v1/quotes/:id/pdf":        true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -515,7 +517,11 @@ var matrixRequests = map[string]matrixRequest{
 	"DELETE /quotes/:id/lines/:lineId": {kind: "quote", child: "quote_line", note: noteQuoteLine},
 	"POST /quotes/:id/status":          {kind: "quote", body: fixedBody(matrixBody{"status": "sent"})},
 	"GET /quotes/:id/history":          {kind: "quote"},
-	"POST /quotes/:id/email":           {kind: "quote_sent"},
+	// After the freeze (see routeMatrixAfterFreeze). The matrix server runs
+	// with PDF output off, so a caller the guard and the visibility rule let
+	// through is answered 503 PDF_UNAVAILABLE.
+	"GET /quotes/:id/pdf":    {kind: "quote"},
+	"POST /quotes/:id/email": {kind: "quote_sent"},
 
 	// tickets
 	"POST /tickets": {body: func(c matrixCtx) interface{} {
@@ -1335,7 +1341,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 8)
+	assert.Len(t, routeMatrixAfterFreeze, 9)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {

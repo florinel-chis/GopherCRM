@@ -12,6 +12,8 @@ run", instead of repeating it here. Docker users read [DOCKER.md](DOCKER.md).
 - Either MySQL 8.0+ / MariaDB 10.11 (the default driver), or nothing at all for SQLite
   (`DB_DRIVER=sqlite`, see step 3).
 - Git.
+- Optional, for quote PDF output: Chrome or Chromium and at least one font (see
+  `QUOTE_PDF_CHROME_PATH` in step 3). Without it everything else works.
 
 ### 2. Database (MySQL only)
 
@@ -44,6 +46,23 @@ Then edit `.env`. The settings that matter for a first run (all read in `interna
 - SQLite: `DB_PATH` (default `gophercrm.db`; it must not contain `?`).
 - `SERVER_PORT` (default 8080) and `SERVER_HOST` (empty = every interface; `127.0.0.1` behind a reverse
   proxy).
+
+- `QUOTE_PDF_CHROME_PATH` (optional, default empty): the Chrome or Chromium binary the backend runs
+  headless to print a quote to PDF, for example `/usr/bin/chromium` or, on macOS,
+  `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Empty, or a path that is not an
+  executable file, switches PDF output off: the server starts as usual (one warning for a path
+  that does not resolve), quote emails go out as text only, `GET /quotes/:id/pdf` answers 503
+  `PDF_UNAVAILABLE` and the quote page shows no Download PDF button. With it set, the browser opens
+  `APP_BASE_URL/quote-render` and that page calls the API, so two things must hold or every render
+  fails and the email falls back to text:
+  - `APP_BASE_URL` (default `http://localhost:5173`, the Vite dev server) is reachable from the
+    machine the backend runs on, and the frontend is running there;
+  - when the API is on another origin than `APP_BASE_URL` (the usual development setup: UI on
+    5173, API on 8080), that origin is admitted by `CORS_ALLOWED_ORIGINS`. The localhost origins
+    5173, 3000 and 8080 are admitted by default; any other origin must be listed, or the page's
+    call gets a bare 403 that the backend does not log.
+
+  One render runs at a time and is bounded at 15 seconds.
 
 `.env.example` is the commented reference for every other variable.
 
@@ -170,7 +189,7 @@ The two schemes are parsed in `internal/middleware/auth.go`.
    `Origin` header and the backend answers 403 for origins it does not list, unless the `Origin` is
    the request's own scheme and `Host` (same-origin; `github.com/gin-contrib/cors` v1.7.5, `go.mod:7`).
    `http://localhost:5173`, `:3000` and `:8080` are allowed by default (`internal/middleware/cors.go`);
-   add any other origin to `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:288`).
+   add any other origin to `CORS_ALLOWED_ORIGINS` (comma-separated, `internal/config/config.go:295`).
    Do not edit the source.
 
 ### Frontend

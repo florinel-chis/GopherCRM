@@ -21,7 +21,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:569,617`), the lead CSV export (`lead_handler.go:935,987`), and deletes that answer an empty 204 (`customer_handler.go:534`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 459) |
-| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
+| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:152`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
 | Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:261`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
 | Transactions that lock rows of more than one table lock them in the one documented order and retry only the whole root | `internal/utils/transaction.go`, `internal/service/lead_service.go` | [CONCURRENCY.md](CONCURRENCY.md) |
@@ -173,7 +173,7 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   (line 270), the service (line 314), the handler (line 378), and register the routes in the
   `protected` group (line 487). There is no container; the wiring is plain code.
 - If a static path sits next to a `/:id` route, extend `TestAllRouteSetupsCoexist`
-  (`internal/handler/routes_test.go:16`).
+  (`internal/handler/routes_test.go:17`).
 - Every protected route is recorded in the system-role route matrix,
   `cmd/testdata/system_role_route_matrix.json`. Declare each new route in `matrixRequests`
   (`cmd/system_role_route_matrix_test.go`: fixture kind, valid body, note), seed a fixture kind for
@@ -279,7 +279,7 @@ schema). A root that skipped proves nothing.
 - **Endpoint.** Handler method with annotations, route in the entity's `Setup...Routes` with its
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
-  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:279`): at most 100 ids, all or nothing,
+  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:280`): at most 100 ids, all or nothing,
   per-item authorization (DEVELOPMENT.md line 755). A new protected route also goes into the
   route tests of `cmd`: the system-role golden is frozen and is not regenerated, so list the route
   on `routeMatrixAfterFreeze`, give it a `matrixRequests` entry and add its key to
@@ -301,7 +301,7 @@ schema). A root that skipped proves nothing.
   `internal/utils/secretbox.go`, blanked in responses, read only through `GetSecret`. The key derives
   from `API_KEY_SECRET` (falling back to `JWT_SECRET`); rotating it orphans stored secrets.
 - Everything in category `ui` reaches every authenticated user through `GET /configurations/ui`
-  (`GetUIConfigurations`, `internal/handler/configuration_handler.go:394`). Never put a sensitive
+  (`GetUIConfigurations`, `internal/handler/configuration_handler.go:409`). Never put a sensitive
   key there.
 - Ship the consumer and its test in the same change. A seeded setting nobody reads is a defect.
   To retire one, remove it from `DefaultConfigurations`, add its key to
@@ -413,7 +413,7 @@ If a new named engine is still required:
 2. Register it in `LoadProvidersWithGuard` and `ProviderStatusesFor` in the same file.
 3. Add an egress key in `internal/config/aeo_egress.go` (constants and `aeoEgressKeys`, lines
    17-28) and the engine's official HTTPS origin in `officialOrigins` (`internal/aeo/egress.go:50`).
-4. Environment variables in `AEOConfig` (`internal/config/config.go:135`, defaults at line 317).
+4. Environment variables in `AEOConfig` (`internal/config/config.go:142`, defaults at line 317).
 5. Admin settings: the sensitive key in `DefaultConfigurations()` (next to the five existing keys),
    the model/base-URL overrides via `aeoConfigProviders` (`internal/models/aeo_configuration.go:11`),
    and the overlay in `EffectiveAEOConfig` (`internal/service/aeo_credentials.go:41`).
@@ -518,7 +518,7 @@ it is the cleanest removal.
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
 | Wiring | `cmd/main.go` (import line 12; construction lines 352-377; handler line 416; reconcile and scheduler lines 444-476; route line 534); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)` and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge, the stale bulk operation sweep and the webhook sender. The outbound webhook sender (#345) uses the AEO egress guard (`internal/aeo/egress.go`, `egress_public.go`: `(*aeo.EgressGuard).PublicHTTPClient`, `aeo.CheckPublicURL`); keep those two files, or move them to a package of their own, when removing the module. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
-| Configuration | `AEOConfig` and its block (`internal/config/config.go:135,317`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
+| Configuration | `AEOConfig` and its block (`internal/config/config.go:142,325`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:466-491`, the `aeo.view` guard), the AEO nav group (`MainLayout.tsx`, from line 169), the AEO case in `ConfigurationSettings.test.tsx` |
@@ -529,8 +529,8 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:350`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:275-276,355-357,429-430,546-547`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:358`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:275-276,355-357,441-442,558-559`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
 | Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:239-240`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of

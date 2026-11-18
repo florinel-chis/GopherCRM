@@ -424,14 +424,15 @@ func TestComposeUIDocCitations(t *testing.T) {
 	mysql := readComposeCitationLines(t, composeMySQLFile, false)
 	sqlite := readComposeCitationLines(t, composeSQLiteFile, true)
 
-	// The expected lines after the +3-line ui build block.
+	// The expected lines after the +3-line ui build block and the +5-line
+	// QUOTE_PDF_CHROME_PATH entry of the backend environment.
 	assert.Equal(t, composeCitationLines{
-		envFrom: 41, envTo: 60, backendPorts: 61, backendIt: 62, uiPorts: 78, uiItem: 79,
-		networks: 84, subnet: 88,
+		envFrom: 41, envTo: 65, backendPorts: 66, backendIt: 67, uiPorts: 83, uiItem: 84,
+		networks: 89, subnet: 93,
 	}, mysql, composeMySQLFile)
 	assert.Equal(t, composeCitationLines{
-		envFrom: 25, envTo: 43, backendPorts: 46, backendIt: 47, uiPorts: 63, uiItem: 64,
-		name: 20, networks: 69, subnet: 76,
+		envFrom: 25, envTo: 48, backendPorts: 51, backendIt: 52, uiPorts: 68, uiItem: 69,
+		name: 20, networks: 74, subnet: 81,
 	}, sqlite, composeSQLiteFile)
 
 	portsMySQL := fmt.Sprintf("%s:%d-%d,%d-%d", composeMySQLFile, mysql.backendPorts, mysql.backendIt, mysql.uiPorts, mysql.uiItem)

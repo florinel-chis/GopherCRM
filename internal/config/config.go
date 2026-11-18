@@ -126,6 +126,13 @@ type SMTPConfig struct {
 // backend must build absolute links into the frontend (e.g. reset links).
 type AppConfig struct {
 	BaseURL string
+	// QuotePDFChromePath is QUOTE_PDF_CHROME_PATH, trimmed: the Chrome or
+	// Chromium binary that prints quotes to PDF. Empty (the default), or a
+	// path that is not an executable file, means PDF output is off: the
+	// quote email goes out as text only and GET /quotes/:id/pdf answers 503.
+	// The browser opens BaseURL + /quote-render, so BaseURL must be
+	// reachable from this host.
+	QuotePDFChromePath string
 }
 
 // AEOConfig holds the answer-engine credentials and the daily-run schedule for
@@ -312,7 +319,8 @@ func Load() (*Config, error) {
 			From:     getEnv("SMTP_FROM", "no-reply@localhost"),
 		},
 		App: AppConfig{
-			BaseURL: strings.TrimRight(getEnv("APP_BASE_URL", "http://localhost:5173"), "/"),
+			BaseURL:            strings.TrimRight(getEnv("APP_BASE_URL", "http://localhost:5173"), "/"),
+			QuotePDFChromePath: strings.TrimSpace(getEnv("QUOTE_PDF_CHROME_PATH", "")),
 		},
 		AEO: AEOConfig{
 			AnthropicAPIKey:     getEnv("ANTHROPIC_API_KEY", ""),

@@ -12,11 +12,13 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
+	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"gorm.io/gorm"
 )
@@ -536,6 +538,93 @@ func (suite *ConfigurationHandlerTestSuite) TestGetUIConfigurations_CarriesTheLe
 	suite.NotContains(body, "leads.conversion.allowed_statuses")
 	suite.NotContains(body, "leads.conversion.require_notes")
 	suite.Contains(body, "leads.conversion.auto_assign_owner")
+}
+
+// GET /configurations/ui always carries the synthetic read-only
+// quotes.pdf_available entry (#384): false on a handler that was given no
+// read and when PDF output is off, true when it is on.
+func TestUIConfigurationsQuotePDFAvailable(t *testing.T) {
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	gin.SetMode(gin.TestMode)
+
+	entryOf := func(t *testing.T, build func(*ConfigurationHandler) *ConfigurationHandler, failing bool) map[string]interface{} {
+		t.Helper()
+		svc := new(mockConfigurationService)
+		svc.On("GetByCategory", models.CategoryUI).Return([]models.Configuration{}, nil)
+		if failing {
+			// Every optional read fails: the entry is still there.
+			svc.On("GetByCategory", models.CategoryGeneral).Return(nil, errors.New("connection refused"))
+			svc.On("GetByKey", "deals.default_currency").Return(nil, errors.New("connection refused"))
+			svc.On("GetLeadConversionStatuses").Return(nil, errors.New("connection refused"))
+			svc.On("IsLeadConversionRequireNotes").Return(false, errors.New("connection refused"))
+			svc.On("IsLeadConversionAutoAssignOwner").Return(false, errors.New("connection refused"))
+		} else {
+			svc.On("GetByCategory", models.CategoryGeneral).Return([]models.Configuration{}, nil)
+			svc.On("GetByKey", "deals.default_currency").Return(nil, gorm.ErrRecordNotFound)
+			svc.On("GetLeadConversionStatuses").Return([]string{"qualified"}, nil)
+			svc.On("IsLeadConversionRequireNotes").Return(false, nil)
+			svc.On("IsLeadConversionAutoAssignOwner").Return(true, nil)
+		}
+		router := gin.New()
+		router.Use(middleware.ErrorHandler())
+		router.GET("/configurations/ui", build(NewConfigurationHandler(svc)).GetUIConfigurations)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/configurations/ui", nil))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var envelope struct {
+			Data struct {
+				Configurations []map[string]interface{} `json:"configurations"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		var found []map[string]interface{}
+		for _, entry := range envelope.Data.Configurations {
+			if entry["key"] == "quotes.pdf_available" {
+				found = append(found, entry)
+			}
+		}
+		require.Len(t, found, 1, "quotes.pdf_available is present exactly once")
+		last := envelope.Data.Configurations[len(envelope.Data.Configurations)-1]
+		assert.Equal(t, "quotes.pdf_available", last["key"], "it is the last entry")
+		return found[0]
+	}
+	assertShape := func(t *testing.T, entry map[string]interface{}, want string) {
+		t.Helper()
+		assert.Equal(t, want, entry["value"])
+		assert.Equal(t, "boolean", entry["type"])
+		assert.Equal(t, true, entry["is_read_only"])
+		assert.Equal(t, float64(0), entry["id"], "synthetic: no stored row")
+		assert.Equal(t, "0001-01-01T00:00:00Z", entry["created_at"])
+		assert.Equal(t, "0001-01-01T00:00:00Z", entry["updated_at"])
+		assert.NotEqual(t, true, entry["is_sensitive"])
+	}
+
+	t.Run("off: a handler without the read reports false", func(t *testing.T) {
+		assertShape(t, entryOf(t, func(h *ConfigurationHandler) *ConfigurationHandler { return h }, false), "false")
+	})
+	t.Run("off: PDF output switched off reports false", func(t *testing.T) {
+		assertShape(t, entryOf(t, func(h *ConfigurationHandler) *ConfigurationHandler {
+			return h.WithQuotePDFAvailable(func() bool { return false })
+		}, false), "false")
+	})
+	t.Run("on reports true", func(t *testing.T) {
+		assertShape(t, entryOf(t, func(h *ConfigurationHandler) *ConfigurationHandler {
+			return h.WithQuotePDFAvailable(func() bool { return true })
+		}, false), "true")
+	})
+	t.Run("present when every optional read fails", func(t *testing.T) {
+		assertShape(t, entryOf(t, func(h *ConfigurationHandler) *ConfigurationHandler {
+			return h.WithQuotePDFAvailable(func() bool { return true })
+		}, true), "true")
+	})
+	t.Run("the service's own answer is what the entry follows", func(t *testing.T) {
+		quotes := new(mocks.QuoteService)
+		quotes.On("PDFAvailable").Return(true).Once()
+		assertShape(t, entryOf(t, func(h *ConfigurationHandler) *ConfigurationHandler {
+			return h.WithQuotePDFAvailable(quotes.PDFAvailable)
+		}, false), "true")
+		quotes.AssertExpectations(t)
+	})
 }
 
 // A write answers with the same masked shape, so a saved key is never echoed.

@@ -78,6 +78,12 @@ const (
 	// ErrCodeMailDeliveryFailed is answered with 502 when the mailer refused
 	// or failed to deliver a message the request asked for.
 	ErrCodeMailDeliveryFailed = "MAIL_DELIVERY_FAILED"
+	// ErrCodePDFUnavailable is answered with 503 when quote PDF output is
+	// switched off on this server.
+	ErrCodePDFUnavailable = "PDF_UNAVAILABLE"
+	// ErrCodePDFRenderFailed is answered with 503 (not 502, so the body
+	// survives a proxy) when a quote PDF could not be produced in time.
+	ErrCodePDFRenderFailed = "PDF_RENDER_FAILED"
 )
 
 // RespondSuccess sends a successful response

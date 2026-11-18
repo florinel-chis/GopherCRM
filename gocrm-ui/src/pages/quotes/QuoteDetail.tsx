@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -26,11 +26,13 @@ import {
   CalendarToday as CalendarIcon,
   Email as EmailIcon,
   Print as PrintIcon,
+  PictureAsPdf as PdfIcon,
   History as HistoryIcon,
   Notes as NotesIcon,
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { ConfigurationContext, isQuotePdfAvailable } from '@/contexts/configuration-context';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { quotesApi } from '@/api/endpoints';
@@ -58,6 +60,18 @@ interface FieldProps {
   children: React.ReactNode;
 }
 
+// Hands the browser a file to save under the given name.
+const saveBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
 const Field: React.FC<FieldProps> = ({ icon, label, children }) => (
   <Box display="flex" alignItems="center" gap={1}>
     {icon}
@@ -79,6 +93,9 @@ export const Component: React.FC = () => {
 
   const quoteId = Number(id);
   const deleteScope = scopeOf('quotes.delete');
+  // The download is offered only when the server says it can produce a PDF.
+  // The context is read directly: the page also renders outside a provider.
+  const pdfAvailable = isQuotePdfAvailable(useContext(ConfigurationContext));
 
   const [editOpen, setEditOpen] = useState(false);
   const [lineDialog, setLineDialog] = useState<{ open: boolean; line: QuoteLine | null }>({ open: false, line: null });
@@ -127,6 +144,16 @@ export const Component: React.FC = () => {
     onError: (error) => {
       showError(getAPIError(error)?.message || 'Failed to delete quote');
       setDeleteDialog(false);
+    },
+  });
+
+  const downloadPdfMutation = useMutation({
+    mutationFn: () => quotesApi.downloadQuotePdf(quoteId),
+    onSuccess: (blob) => {
+      saveBlob(blob, `Quote-${quote?.number ?? quoteId}.pdf`);
+    },
+    onError: (error) => {
+      showError(getAPIError(error)?.message || 'Failed to download the PDF');
     },
   });
 
@@ -180,6 +207,16 @@ export const Component: React.FC = () => {
           >
             Print
           </Button>
+          {pdfAvailable && (
+            <Button
+              variant="outlined"
+              startIcon={<PdfIcon />}
+              onClick={() => downloadPdfMutation.mutate()}
+              disabled={downloadPdfMutation.isPending}
+            >
+              Download PDF
+            </Button>
+          )}
           {canEmailQuote(quote.status) && (
             <Button variant="outlined" startIcon={<EmailIcon />} onClick={() => setEmailOpen(true)}>
               Email quote

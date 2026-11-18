@@ -17,6 +17,21 @@ import (
 
 type ConfigurationHandler struct {
 	configService service.ConfigurationService
+	// quotePDFAvailable answers the synthetic quotes.pdf_available entry of
+	// GET /configurations/ui; nil reports false.
+	quotePDFAvailable func() bool
+}
+
+// ConfigQuotesPDFAvailable is the key of the synthetic read-only entry of GET
+// /configurations/ui that says whether this server can produce quote PDFs.
+// It is not a stored setting: it follows QUOTE_PDF_CHROME_PATH.
+const ConfigQuotesPDFAvailable = "quotes.pdf_available"
+
+// WithQuotePDFAvailable gives the handler the read behind quotes.pdf_available
+// (QuoteService.PDFAvailable) and returns it. Without it the entry is false.
+func (h *ConfigurationHandler) WithQuotePDFAvailable(available func() bool) *ConfigurationHandler {
+	h.quotePDFAvailable = available
+	return h
 }
 
 func NewConfigurationHandler(configService service.ConfigurationService) *ConfigurationHandler {
@@ -407,7 +422,7 @@ func (h *ConfigurationHandler) leadConversionUIConfigurations(logger *logrus.Ent
 // GetUIConfigurations returns configurations that are safe for UI consumption
 // GetUIConfigurations godoc
 // @Summary List the UI-safe configurations
-// @Description Any authenticated role. Returns, in data.configurations and in this order: every entry of the ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), and three synthetic read-only lead-conversion entries holding the values the convert endpoint enforces: leads.conversion.allowed_statuses (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner (boolean). The synthetic entries are not stored rows: their id is 0, their timestamps are the zero time (0001-01-01T00:00:00Z) and is_read_only is true. An entry whose setting cannot be read is left out instead of failing the request (except the ui category itself). A sensitive entry would be masked, but none of these is sensitive.
+// @Description Any authenticated role. Returns, in data.configurations and in this order: every entry of the ui category, general.company_name, deals.default_currency (the currency a new deal takes when none is sent), three synthetic read-only lead-conversion entries holding the values the convert endpoint enforces: leads.conversion.allowed_statuses (array), leads.conversion.require_notes (boolean) and leads.conversion.auto_assign_owner (boolean), and last the synthetic read-only quotes.pdf_available (boolean, category ui): true when the server can produce quote PDFs (GET /quotes/{id}/pdf and the attachment of the quote email), false when PDF output is switched off. The synthetic entries are not stored rows: their id is 0, their timestamps are the zero time (0001-01-01T00:00:00Z) and is_read_only is true. An entry whose setting cannot be read is left out instead of failing the request (except the ui category itself); quotes.pdf_available is always present. A sensitive entry would be masked, but none of these is sensitive.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -456,6 +471,18 @@ func (h *ConfigurationHandler) GetUIConfigurations(c *gin.Context) {
 	// rows, whose metadata is admin business. A failed read drops the entry
 	// instead of failing the endpoint; the server enforces the rule anyway.
 	configs = append(configs, h.leadConversionUIConfigurations(logger)...)
+
+	// Whether quote PDF output is on (#384): the quote page offers the
+	// download only then. Synthetic like the entries above, and always
+	// present.
+	configs = append(configs, models.Configuration{
+		Key:         ConfigQuotesPDFAvailable,
+		Value:       strconv.FormatBool(h.quotePDFAvailable != nil && h.quotePDFAvailable()),
+		Type:        models.ConfigTypeBoolean,
+		Category:    models.CategoryUI,
+		Description: "Whether this server can produce quote PDFs",
+		IsReadOnly:  true,
+	})
 
 	payload := gin.H{"configurations": newConfigurationResponses(configs)}
 	utils.LogHandlerResponse(logger, http.StatusOK, payload)

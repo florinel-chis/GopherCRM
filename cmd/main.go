@@ -47,7 +47,7 @@ import (
 // @description - 422 EXPORT_TOO_LARGE: an AEO export (GET /aeo/export) that selects more than 10,000 answers; error.details.max_answers carries the cap.
 // @description - 429 TOO_MANY_REQUESTS: see Rate limits.
 // @description - 500 INTERNAL_ERROR: an unexpected failure ("An unexpected error occurred"); details are logged server-side, never returned.
-// @description - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO).
+// @description - 502 MAIL_DELIVERY_FAILED (sending a quote by email), 503 SESSION_REFRESH_UNAVAILABLE (refresh), 503 PROVIDER_NOT_CONFIGURED, PROVIDER_REJECTED, PROVIDERS_UNAVAILABLE and SHUTTING_DOWN (AEO), 503 PDF_UNAVAILABLE and PDF_RENDER_FAILED (downloading a quote as PDF).
 // @description Each operation lists the codes it can return and the condition behind each.
 // @description
 // @description ## Pagination, sorting and filtering
@@ -112,7 +112,7 @@ import (
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
-// @tag.description Unauthenticated endpoints behind the client response link of a quote email: show the quote and accept or decline it with the single-use token of the link.
+// @tag.description Unauthenticated quote endpoints: behind the client response link of a quote email, show the quote and accept or decline it with the single-use token of the link; and the read the PDF render page makes with the short-lived credential of one render.
 
 // revision is the commit the binary was built from, set by the release build
 // (-ldflags "-X main.revision=<sha>"). The deploy pipeline waits for /health to
@@ -366,6 +366,18 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	}
 	quoteService := service.NewQuoteServiceWithResponseLinks(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager,
 		repository.NewQuoteResponseTokenRepository(models.DB), cfg.App.BaseURL, quoteTokenSecret)
+	// Quote PDF output (#384): a headless Chrome prints APP_BASE_URL/quote-render.
+	// Without QUOTE_PDF_CHROME_PATH, or with a path that is no executable
+	// file, the server runs with PDF output off: text-only quote emails and
+	// 503 PDF_UNAVAILABLE on GET /quotes/:id/pdf.
+	quotePDFRenderer, err := service.NewChromeQuotePDFRenderer(cfg.App.QuotePDFChromePath)
+	if err != nil {
+		utils.Logger.WithField("quote_pdf_chrome_path", cfg.App.QuotePDFChromePath).
+			Warn("QUOTE_PDF_CHROME_PATH is not an executable file; quote PDF output is off")
+	}
+	if quotePDFRenderer != nil {
+		quoteService = service.WithQuotePDF(quoteService, quotePDFRenderer)
+	}
 	bulkService := service.NewBulkStatusService(
 		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
 		service.WithBulkAutomationEvents(automationRepo),
@@ -441,7 +453,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	quoteHandler := handler.NewQuoteHandler(quoteService)
 	quotePublicHandler := handler.NewQuotePublicHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
-	configHandler := handler.NewConfigurationHandler(configService)
+	configHandler := handler.NewConfigurationHandler(configService).WithQuotePDFAvailable(quoteService.PDFAvailable)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
 		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(models.DB)))
 	bulkHandler := handler.NewBulkHandler(bulkService)
@@ -542,8 +554,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		// on submits and confirms).
 		handler.SetupFormPublicRoutes(public, formPublicHandler)
 
-		// The client response link of a quote email (#382): show the quote
-		// and accept or decline it, both on one strict tier.
+		// The client response link of a quote email (#382, one strict tier)
+		// and the read of the PDF render page (#384, its own generous tier).
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 

@@ -56,8 +56,8 @@ These caveats apply to every recipe that takes in leads through forms.
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1153`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1164`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1268`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md:1279`). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -143,7 +143,7 @@ and turns some into deals and quotes.
 2. Set `SMTP_*`, `PUBLIC_BASE_URL` (confirmation links), `APP_BASE_URL` (password-reset links),
    `TRUSTED_PROXIES` and `CORS_ALLOWED_ORIGINS`. The shipped Compose files do not forward SMTP,
    `PUBLIC_BASE_URL`, automation or reCAPTCHA variables, and they hard-code localhost URLs
-   (`docker-compose.yml:54-60`, `docker-compose.sqlite.yml:37-43`). If you deploy with Compose,
+   (`docker-compose.yml:54-65`, `docker-compose.sqlite.yml:37-48`). If you deploy with Compose,
    apply `docker-compose.production.example.yml` with a second `-f` (see "Production override
    example" in [DOCKER.md](DOCKER.md)).
 3. Create the first admin with `create-admin` (`cmd/create-admin`), then create sales users from
@@ -151,7 +151,7 @@ and turns some into deals and quotes.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
    opt-in. Embed it and submit once from a real browser.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
-   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:350`). Several API
+   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:358`). Several API
    instances sharing one MySQL/MariaDB database may all run it: run claims carry a heartbeat
    lease (#237, `docs/DEVELOPMENT.md`, "Run leases"). Keep replica clocks in sync and stop every
    instance before an upgrade; a SQLite deployment stays one process.
@@ -244,7 +244,7 @@ lost deal.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
   `gocrm-ui/src/routes/index.tsx:53,213`), both admin and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
-  (`internal/handler/routes.go:225`).
+  (`internal/handler/routes.go:226`).
 - The quote email subject reads "Quote Q-… from" followed by the `general.company_name` setting,
   or `GopherCRM` when it is blank (`internal/service/quote_email.go`, #292). The printed quote's
   heading shows the same setting (#291).
@@ -260,7 +260,9 @@ renewals are not modelled.
   edits it since #325); the email of a sent quote carries a single-use
   client accept/decline link that opens a public page of the web application (#382, #383; staff
   can still record the answer); acceptance does not move the deal; expiry is a manual status (acceptance is refused
-  once `valid_until` has passed, `internal/models/quote.go:92-95`); no PDF, only browser print
+  once `valid_until` has passed, `internal/models/quote.go:92-95`); a PDF of the quote (download and email
+  attachment) exists when the server has a Chrome or Chromium binary (`QUOTE_PDF_CHROME_PATH`,
+  #384), otherwise browser print only
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
 - A task's `deal_id` (set by a deal rule, through the API, or with the task form's deal picker by
   admin and sales) is shown on task detail and listed in the deal detail Tasks section from
@@ -305,10 +307,10 @@ engines describe its product against competitors.
   `API_KEY_SECRET` (or `JWT_SECRET`, which it falls back to) orphans them
   (`docs/ROADMAP.md`, "Sensitive settings — follow-ups").
 - Review the scheduler: `AEO_SCHEDULE_ENABLED` defaults to `true` and `AEO_SCHEDULE_HOUR` to 6
-  (`internal/config/config.go:337-338`). Scheduled runs spend provider credit.
+  (`internal/config/config.go:345-346`). Scheduled runs spend provider credit.
 - `AEO_QUERY_TIMEOUT_SECONDS` (default 60) needs raising for a slow self-hosted engine. A model
   server on your LAN needs an `AEO_EGRESS_LOCAL_ORIGINS` entry (`docs/AEO_SECURITY.md`).
-- Review the default model IDs (`internal/config/config.go:317-335`). Pinned IDs get retired, so
+- Review the default model IDs (`internal/config/config.go:325-343`). Pinned IDs get retired, so
   prefer rolling aliases where the provider offers them.
 - Add reCAPTCHA keys if the forms attract spam (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`).
 
@@ -345,7 +347,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:129-134`). `GET /tickets` and `GET /tickets/my`
   refuse customers (`ticket_handler.go:154,316`), but `GET /customers/:id/tickets` lists the
   tickets of the customer record linked to the caller's account and refuses any other id
-  (`internal/handler/routes.go:150`, `ticket_handler.go:248-258`; tested in
+  (`internal/handler/routes.go:151`, `ticket_handler.go:248-258`; tested in
   `internal/integration/ticket_visibility_integration_test.go:560`). The UI has no customer
   ticket navigation, create form or comment form.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
@@ -382,7 +384,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   tickets, can be mapped to an external system's ids (delivered, #212): `POST
   /customers/{id}/external-ids` and the exact lookup `GET /customers?source=&scope=&external_id=`.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1161`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md:1276`). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - Ticket automation triggers are delivered (#242, rule screens #312): an admin rule, built in the
@@ -470,10 +472,10 @@ planning around an issue number.
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
 | Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1170-1240`; `internal/models/form.go:503-524` | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1153,1161,1164` | #214 |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1268,1276,1279` | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
-| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-60`; `docker-compose.sqlite.yml:25-43`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
+| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-65`; `docker-compose.sqlite.yml:25-48`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
 | Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `internal/models/apikey.go:9` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
@@ -483,7 +485,7 @@ planning around an issue number.
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_engine.go`; `docs/DEVELOPMENT.md`, "Run leases (#237)" | #237 |
-| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346); a single-use client accept/decline link in the quote email with its two public API routes (#382) and the public page that answers it (#383). Still open: tax categories, reverse charge, per-country rules, PDF quotes | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346, #382, #383 |
+| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346); a single-use client accept/decline link in the quote email with its two public API routes (#382) and the public page that answers it (#383); the quote as a PDF, downloadable and attached to the quote email, when the server has a Chrome or Chromium binary (#384). Still open: tax categories, reverse charge, per-country rules | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346, #382, #383, #384 |
 | Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |

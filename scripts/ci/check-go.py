@@ -27,6 +27,7 @@ MAILER_CALLER_ROOTS = {
     'TestQuoteEmailLogsOmitPersonalData',
     'TestQuoteEmailRevisedDuringSend',
     'TestQuoteEmailResponseLink',
+    'TestQuoteEmailPDFAttachment',
     # The SQLite half covers send_email; the MySQL twin needs a SQL server this profile omits.
     'TestAutomationStepExecutionSQLite',
     'TestAutomationLogsOmitPersonalData',

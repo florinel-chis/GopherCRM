@@ -9,6 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quote PDF output (#384).** A quote can be downloaded as a PDF and the quote email carries
+  it as an attachment. The server prints the document with a headless Chrome or Chromium: the
+  same document as the print page, served by a new public page of the web application,
+  `APP_BASE_URL/quote-render`.
+  - **`QUOTE_PDF_CHROME_PATH`** (new, default empty) names the browser binary. Empty, or a
+    path that is not an executable file, switches PDF output off without stopping the server:
+    quote emails go out as text only, `GET /quotes/{id}/pdf` answers 503 `PDF_UNAVAILABLE` and
+    the web application hides its Download PDF button. The browser opens
+    `APP_BASE_URL/quote-render`, so `APP_BASE_URL` must be reachable from the backend host,
+    and when the API is on another origin than `APP_BASE_URL` that origin must be in
+    `CORS_ALLOWED_ORIGINS`; otherwise every render fails and the email falls back to text.
+  - **`GET /quotes/{id}/pdf`** (admin and sales, the permission and the refusals of
+    `GET /quotes/{id}`) answers the raw file, `Content-Type: application/pdf`,
+    `Content-Disposition: attachment; filename="Quote-Q-000042.pdf"`. PDF output off is 503
+    `PDF_UNAVAILABLE`; a render that fails or runs out of time is 503 `PDF_RENDER_FAILED`.
+    The quote page of the web application has a **Download PDF** button next to Print when
+    `GET /configurations/ui` reports the new read-only entry `quotes.pdf_available` as `true`.
+  - **Attachment on the quote email.** `POST /quotes/{id}/email` attaches
+    `Quote-<number>.pdf` (`multipart/mixed`, the text part unchanged). When PDF output is
+    off, the render fails or it runs out of time, the mail goes out as text only, exactly as
+    before, and the request still succeeds. `mailer.AttachmentSender` is a new optional
+    interface (`SMTPMailer` and `LogMailer` implement it); the `Mailer` interface is unchanged.
+  - **`POST /quotes/public/render`** (no authentication, generous rate tier) is the read the
+    render page makes with a render credential: 32 random bytes minted for one render, kept
+    only as a hash in the memory of the rendering process, valid for that one quote, read-only,
+    until the render returns (at most 15 seconds). It travels in the URL fragment and in a
+    request body, never in a URL a server receives. Any unusable credential is one generic 400.
+  - **Time budget.** One render runs at a time per process and is bounded at 15 seconds, the
+    wait for its turn included; with the 30-second SMTP bound the email call takes at most
+    45 seconds. The web application now gives `POST /quotes/{id}/email` and the PDF download a
+    55-second request timeout (the default stays 30 seconds), so it no longer reports a failure
+    for a mail the server still delivers. A reverse proxy in front needs a read timeout of 60
+    seconds or more (the nginx default).
+  - **Docker image.** The runtime image now installs `chromium` and `font-liberation` and sets
+    `QUOTE_PDF_CHROME_PATH=/usr/bin/chromium-browser`, so PDF output is on by default in the
+    image, which grows from about 53 MiB to about 655 MiB (`docs/DOCKER.md`). The image also
+    installs `tini` and starts the server under it (`ENTRYPOINT ["/sbin/tini", "--", "gophercrm"]`),
+    so the browser's orphaned helper processes are reaped; a deployment that replaces the
+    entrypoint should keep an init. `docker-compose.yml` and
+    `docker-compose.sqlite.yml` set the variable empty: their `APP_BASE_URL`
+    (`http://localhost:<UI_PORT>`) is not reachable from the backend container, so the
+    development stacks ship with PDF output off.
+  - The browser process gets a built environment (`PATH`, locale, `TZ` and directories inside
+    the render's temporary directory), never the server's: no secret of the server reaches it.
+    `scripts/e2e/quote-pdf-smoke.sh` is a manual check of the whole chain against a local
+    backend (`docs/DEVELOPMENT.md`). No schema change, no new dependency of the Go module or
+    the web application. Known limits are in `docs/ROADMAP.md`.
+
 - **Public accept/decline page for the quote link (#383).** The link of a quote email (#382)
   now opens a page of the web application, `/quote-response?token=...`, that needs no account:
   it shows the quote number, the validity date, the lines and the subtotal, discount, net, tax

@@ -581,3 +581,135 @@ func TestQuoteEmailResponseLink(t *testing.T) {
 		assert.Empty(t, env.tokenRows(quote.ID))
 	})
 }
+
+// The quote email attaches the PDF when PDF output is on and the mailer can
+// carry one (#384); a failed or late render sends the same mail without it,
+// stamps as before, returns no error, and logs nothing personal.
+func TestQuoteEmailPDFAttachment(t *testing.T) {
+	t.Run("attached", func(t *testing.T) {
+		renderer := &fakeQuotePDFRenderer{pdf: quotePDFTestBytes, redeem: true}
+		env, attaching := newQuotePDFEnv(t, renderer, 5*time.Second)
+		quote := env.sentQuoteWithLines(t)
+		attaching.resetAll()
+
+		emailed, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		require.NotNil(t, emailed.LastEmailedAt)
+
+		require.Len(t, env.mailer.messages(), 1, "one mail")
+		sent := attaching.attached()
+		require.Len(t, sent, 1, "through SendWithAttachment, with exactly one attachment")
+		mail := sent[0]
+		assert.Equal(t, env.customer.Email, mail.To)
+		assert.Equal(t, QuoteEmailSubject(quote.ID, DefaultMailProductName), mail.Subject)
+		assert.Equal(t, fmt.Sprintf("Quote-Q-%06d.pdf", quote.ID), mail.Attachment.Filename)
+		assert.Equal(t, "application/pdf", mail.Attachment.ContentType)
+		assert.Equal(t, quotePDFTestBytes, mail.Attachment.Data, "the renderer's bytes")
+
+		// The text body is the one a service without PDF output sends: the
+		// rendering, then the response link.
+		assert.True(t, strings.HasPrefix(mail.Body, RenderQuoteEmail(env.quote(quote.ID))), "the unchanged rendering")
+		token := responseTokenFromBody(t, mail.Body)
+		assert.Equal(t, RenderQuoteEmail(env.quote(quote.ID))+renderQuoteResponseLink(quoteResponseLinkPrefix+token), mail.Body)
+		assert.NotContains(t, mail.Body, "quote-render", "the render URL is not part of the mail")
+		assert.EqualValues(t, 1, renderer.calls.Load())
+	})
+
+	t.Run("a mailer without attachment support sends the plain mail and renders nothing", func(t *testing.T) {
+		renderer := &fakeQuotePDFRenderer{pdf: quotePDFTestBytes, redeem: true}
+		env, attaching := newQuotePDFEnv(t, renderer, 5*time.Second)
+		env.svc.mailer = env.mailer // Mailer only
+		quote := env.sentQuoteWithLines(t)
+		attaching.resetAll()
+
+		emailed, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		require.NotNil(t, emailed.LastEmailedAt)
+		assert.Len(t, env.mailer.messages(), 1)
+		assert.Empty(t, attaching.attached())
+		assert.Zero(t, renderer.calls.Load())
+	})
+
+	fallback := func(t *testing.T, renderer *fakeQuotePDFRenderer, bound time.Duration, wantReason string) {
+		env, attaching := newQuotePDFEnv(t, renderer, bound)
+		quote := env.sentQuoteWithLines(t)
+		attaching.resetAll()
+		output, hook := capturePrivacyLogs(t)
+
+		started := time.Now()
+		emailed, err := env.svc.Email(quote.ID)
+		elapsed := time.Since(started)
+		require.NoError(t, err, "a failed render is not an error of the email")
+		require.NotNil(t, emailed.LastEmailedAt, "last_emailed_at is stamped")
+		assert.NotNil(t, env.quote(quote.ID).LastEmailedAt)
+		assert.Less(t, elapsed, bound+3*time.Second)
+
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1, "the mail is still sent once")
+		assert.Empty(t, attaching.attached(), "without an attachment")
+		assert.Equal(t, env.customer.Email, messages[0].To)
+		assert.True(t, strings.HasPrefix(messages[0].Body, RenderQuoteEmail(env.quote(quote.ID))))
+		responseTokenFromBody(t, messages[0].Body)
+
+		urls := renderer.pageURLs()
+		require.Len(t, urls, 1)
+		credential := quoteRenderTokenFromURL(urls[0])
+		require.NotEmpty(t, credential)
+		logs := output.String()
+		for _, needle := range []string{urls[0], credential, "quote-render", env.customer.Email, env.customer.FirstName, env.customer.LastName} {
+			assert.NotContains(t, logs, needle)
+		}
+
+		var warned []*logrus.Entry
+		for _, entry := range hook.AllEntries() {
+			if entry.Message == "Quote emailed without a PDF attachment" {
+				warned = append(warned, entry)
+			}
+		}
+		require.Len(t, warned, 1, "one warn line for the fallback")
+		assert.Equal(t, logrus.WarnLevel, warned[0].Level)
+		assert.Equal(t, quote.ID, warned[0].Data["quote_id"])
+		assert.Equal(t, env.customer.ID, warned[0].Data["customer_id"])
+		assert.Equal(t, wantReason, warned[0].Data["reason"])
+	}
+
+	t.Run("renderer error", func(t *testing.T) {
+		renderer := &fakeQuotePDFRenderer{redeem: true, err: errors.New("browser crashed")}
+		fallback(t, renderer, 5*time.Second, quotePDFReasonRenderer)
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		renderer := &fakeQuotePDFRenderer{pdf: quotePDFTestBytes, redeem: true, block: make(chan struct{})}
+		defer close(renderer.block)
+		fallback(t, renderer, 300*time.Millisecond, quotePDFReasonTimeout)
+	})
+
+	t.Run("PDF off logs the fallback once and sends through Send", func(t *testing.T) {
+		env := newQuoteResponseEnv(t, openQuoteTestSQLite(t))
+		quote := env.sentQuoteWithLines(t)
+		env.mailer.reset(nil, nil)
+		_, hook := capturePrivacyLogs(t)
+		_, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		assert.Len(t, env.mailer.messages(), 1)
+		var reasons []interface{}
+		for _, entry := range hook.AllEntries() {
+			if entry.Message == "Quote emailed without a PDF attachment" {
+				reasons = append(reasons, entry.Data["reason"])
+				assert.Equal(t, quote.ID, entry.Data["quote_id"])
+			}
+		}
+		assert.Equal(t, []interface{}{"pdf_off"}, reasons)
+	})
+
+	t.Run("a refused email renders nothing", func(t *testing.T) {
+		renderer := &fakeQuotePDFRenderer{pdf: quotePDFTestBytes, redeem: true}
+		env, attaching := newQuotePDFEnv(t, renderer, 5*time.Second)
+		draft := env.newQuote(models.QuoteStatusDraft, 1)
+		attaching.resetAll()
+		_, err := env.svc.Email(draft.ID)
+		require.ErrorIs(t, err, apperrors.ErrQuoteNotSent)
+		assert.Zero(t, renderer.calls.Load())
+		assert.Empty(t, env.mailer.messages())
+	})
+}

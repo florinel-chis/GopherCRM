@@ -121,3 +121,25 @@ func NewQuotePublicView(quote *Quote) *QuotePublicView {
 	}
 	return view
 }
+
+// QuoteRenderView is what the render page of the quote PDF loads with its
+// render credential: the quote exactly as GET /quotes/:id returns it, and the
+// product name the document is headed with.
+type QuoteRenderView struct {
+	// The quote with its lines, totals, number and summaries.
+	Quote *Quote `json:"quote"`
+	// The stored general.company_name, trimmed; empty when it is blank or
+	// could not be read, in which case the page uses its built-in name.
+	ProductName string `json:"product_name" example:"Acme CRM"`
+}
+
+// QuoteRenderViewJSON documents the JSON form of a QuoteRenderView for the API
+// specification only (see QuoteJSON); it is never instantiated.
+type QuoteRenderViewJSON struct {
+	// The quote with its lines, totals, number and summaries, as GET
+	// /quotes/{id} returns it.
+	Quote QuoteJSON `json:"quote"`
+	// The stored general.company_name, trimmed; empty when it is blank or
+	// could not be read, in which case the page uses its built-in name.
+	ProductName string `json:"product_name" example:"Acme CRM"`
+}

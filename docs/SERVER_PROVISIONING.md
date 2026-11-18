@@ -60,6 +60,11 @@ for tool in flock rsync mysqldump gzip curl tar systemctl nginx certbot; do
 done
 ```
 
+Optional, for quote PDF output (see [Quote PDF output](#quote-pdf-output)): a Chromium or Chrome
+package and at least one font package, for example `apt-get install chromium fonts-liberation`
+on Debian (the browser package is `chromium-browser`, a snap, on Ubuntu; verify the name and the
+path of the binary for your release). `bootstrap.sh` neither checks for nor installs them.
+
 ## Service user
 
 The backend runs as an unprivileged system account with no login shell:
@@ -124,6 +129,8 @@ LOG_FORMAT=json
 # SMTP_FROM=no-reply@example.com
 # FORM_RETENTION_DAYS=30
 # AUTOMATION_ENABLED=true
+# Quote PDF output: the Chromium or Chrome binary; leave unset to keep it off.
+# QUOTE_PDF_CHROME_PATH=/usr/bin/chromium
 ```
 
 ```bash
@@ -132,7 +139,7 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
 ```
 
 - **The secrets.** `JWT_SECRET` must be at least 32 characters; any value starting with
-  `CHANGE_THIS` is refused and the backend does not start (`internal/config/config.go:260-270`).
+  `CHANGE_THIS` is refused and the backend does not start (`internal/config/config.go:267-277`).
   Use `openssl rand -base64 32`. For `DB_PASSWORD` pick a value without quotes, backslash, `$` or
   backtick (for example `openssl rand -hex 24`); `DB_PASSWORD` itself is not checked at startup,
   so a forgotten placeholder only shows up as a database login with a known password. The same
@@ -144,7 +151,7 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
   one active line and the values plain. A wrong `DB_*` value fails the backup, which stops the
   deploy before anything changes.
 - **Why `EnvironmentFile=`.** The backend loads only a `.env` file in its working directory
-  (`config.Load`, `internal/config/config.go:254`); the unit's working directory holds none, so
+  (`config.Load`, `internal/config/config.go:261`); the unit's working directory holds none, so
   every setting comes from this file through systemd. Do not add a `.env` to
   `/var/lib/gophercrm`: it would only fill keys the environment file leaves unset.
 - **`TRUSTED_PROXIES`.** The rate limiter keys on the client address. Behind nginx on the same
@@ -158,6 +165,52 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
   three are the public URL.
 
 Every key in the block is documented in `.env.example`.
+
+### Quote PDF output
+
+Optional. With `QUOTE_PDF_CHROME_PATH` unset, or naming a file that is not executable, the backend
+runs with PDF output off: quote emails go out as text only, `GET /api/v1/quotes/:id/pdf` answers
+503 `PDF_UNAVAILABLE` and the web application shows no Download PDF button. The backend still
+starts; a path that does not resolve is one warning in the journal.
+
+To switch it on:
+
+1. Install Chromium (or Chrome) and at least one font package (see *Packages*). Without a font
+   the PDF is a valid file with no readable text.
+2. Uncomment `QUOTE_PDF_CHROME_PATH` in the environment file and set it to the binary, then
+   restart the service.
+3. Check the two conditions of a render. The backend starts the browser headless, the browser
+   opens `APP_BASE_URL/quote-render`, and that page loads the quote from the API with a
+   short-lived, single-quote, read-only credential:
+   - `APP_BASE_URL` must be reachable **from the server itself** (the public host name must
+     resolve and connect from the host, through the same nginx);
+   - when the API is on another origin than `APP_BASE_URL`, that origin must be listed in
+     `CORS_ALLOWED_ORIGINS`. With the UI and the API on one origin, as in this guide, nothing is
+     needed. A missing origin shows as a bare 403 on `POST /api/v1/quotes/public/render` that the
+     backend does not log, and every render then fails: the download answers 503
+     `PDF_RENDER_FAILED` and the email falls back to text.
+
+**The unit needs no change.** The renderer writes only below one temporary directory per render
+(the browser profile, `HOME`, `TMPDIR`, the XDG directories and the output file), which
+`PrivateTmp=yes` provides, and removes it afterwards; `ProtectHome=yes` and `ProtectSystem=strict`
+stay as they are. The browser process does not inherit the service's environment: it gets `PATH`,
+the locale, `TZ` and those directories, so no value of the environment file reaches it. The
+backend never passes `--no-sandbox`; if your Chromium cannot start its sandbox as the service
+user, point `QUOTE_PDF_CHROME_PATH` at a small wrapper script that adds the flag, and treat that
+as your own decision. The browser's helper processes that lose their parent when a render ends
+are reaped by the host's init, as for any service.
+
+**Not verified on a systemd host.** For this feature the systemd deployment was not run on a real
+host. What was verified is the nearest equivalent: the Docker image running as an unprivileged
+user with a read-only root file system and only `/tmp` and the data directory writable. Check a
+download after switching it on.
+
+**Time budget.** One render runs at a time per backend process and is bounded at 15 s, the wait
+for its turn included. `POST /api/v1/quotes/:id/email` therefore takes at most 15 s for the render
+plus 30 s for the SMTP delivery, 45 s; the web application waits 55 s for that call and for the
+download. Keep the reverse proxy's read timeout at 60 s or more: `proxy_read_timeout` defaults to
+60 s in nginx and the site below does not lower it. A shorter timeout makes the proxy answer 504
+for a mail the backend still delivers.
 
 ## Systemd unit
 

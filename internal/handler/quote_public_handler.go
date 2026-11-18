@@ -17,6 +17,10 @@ import (
 // token, or a quote that is no longer sent.
 const quoteResponseRejectedMessage = "Invalid or expired quote link"
 
+// quoteRenderRejectedMessage is the one message of every refused render
+// credential: unknown, expired, or of a render that has finished.
+const quoteRenderRejectedMessage = "Invalid or expired render link"
+
 // QuotePublicHandler serves the unauthenticated client response link of a
 // quote email (#382). It reads no credential and discloses only
 // models.QuotePublicView. The token is never logged: the access log omits
@@ -37,11 +41,22 @@ type QuotePublicResponseRequest struct {
 	Decision string `json:"decision" enums:"accept,decline" example:"accept"`
 }
 
+// QuotePublicRenderRequest is the body of POST /quotes/public/render.
+type QuotePublicRenderRequest struct {
+	// The render credential from the fragment of the render page's URL.
+	// Required. Every other field of the body is ignored.
+	Token string `json:"token" example:"3q2-7wEXAMPLEtokenEXAMPLEtokenEXAMPLEtoken0"`
+}
+
 // respondError maps a service failure: the single generic rejection, or an
 // internal error whose cause stays in the log.
 func (h *QuotePublicHandler) respondError(c *gin.Context, err error, logMessage string) {
 	if errors.Is(err, apperrors.ErrQuoteResponseRejected) {
 		utils.RespondBadRequest(c, quoteResponseRejectedMessage)
+		return
+	}
+	if errors.Is(err, apperrors.ErrQuoteRenderRejected) {
+		utils.RespondBadRequest(c, quoteRenderRejectedMessage)
 		return
 	}
 	utils.GetLogger(c).WithError(utils.LogError(err)).Error(logMessage)
@@ -106,6 +121,42 @@ func (h *QuotePublicHandler) Respond(c *gin.Context) {
 	view, err := h.quoteService.RespondPublic(req.Token, req.Decision)
 	if err != nil {
 		h.respondError(c, err, "Quote response failed")
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, nil)
+	utils.RespondSuccess(c, http.StatusOK, view)
+}
+
+// Render godoc
+// @Summary Load the quote for the PDF render page
+// @Description Unauthenticated. Called by the render page of the web app (APP_BASE_URL/quote-render) while the server prints a quote to PDF: it returns the quote a render credential was minted for, exactly as GET /quotes/{id} returns it, and the product name that heads the document. It is a POST so that the credential travels in the body and never in a URL a proxy logs; it writes nothing.
+// @Description A render credential is 32 random bytes the server mints for one render and keeps, as a hash, in the memory of the process that renders. It opens exactly one quote, read-only, while that render runs: at most 15 seconds. It is not a session: sent as a Bearer token to any other route it is 401. The quote returned is always the credential's own; an id or any other field in the body is ignored. A missing or empty token, or a body that is not a JSON object, is 400 VALIDATION_ERROR; an unknown or expired credential, one whose render has finished, or one presented to another server process is the same 400 'Invalid or expired render link'. With PDF output off every credential is refused. Rate limit: the generous tier, its own bucket per client IP.
+// @Tags public-quotes
+// @Accept json
+// @Produce json
+// @Param request body QuotePublicRenderRequest true "The render credential"
+// @Success 200 {object} utils.APIResponse{data=models.QuoteRenderViewJSON} "The quote of the credential and the product name"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: malformed JSON, or token missing or empty (details names the field). BAD_REQUEST 'Invalid or expired render link': the credential is unknown or expired, its render has finished, or its quote no longer exists"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: generous tier, 240 requests per minute, burst 40, per client IP, a bucket of this route alone; error.details.retry_after is '60s'; no Retry-After header"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
+// @Router /quotes/public/render [post]
+func (h *QuotePublicHandler) Render(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "QuotePublicHandler.Render")
+
+	var req QuotePublicRenderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.RespondValidationError(c, map[string]string{"body": "must be a JSON object with token"})
+		return
+	}
+	if req.Token == "" {
+		utils.RespondValidationError(c, map[string]string{"token": "is required"})
+		return
+	}
+
+	view, err := h.quoteService.GetRenderView(req.Token)
+	if err != nil {
+		h.respondError(c, err, "Quote render view failed")
 		return
 	}
 
