@@ -702,6 +702,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Frontend unit tests hold up better on a busy machine (#403).** `make verify-frontend` runs
+  Vitest on three workers (`npm test -- --run --maxWorkers=3`) and `make verify` runs the frontend
+  gate before the race-enabled Go tests. Every test in `src/routes/index.test.tsx`,
+  `src/pages/forms/FormBuilder.test.tsx` and `src/layouts/MainLayout.test.tsx` has an explicit
+  test timeout and every `findBy*`/`waitFor` call in them an explicit per-call timeout, so these
+  files no longer depend on the 5 s test default or the 1 s query default. Test infrastructure
+  only; no application code changed. The rest of the suite keeps the default timeouts
+  (`docs/ROADMAP.md`).
 - **Go sources are gofmt-formatted and the Backend check keeps them so (#405).** Twelve Go files
   that `gofmt -l` reported were reformatted (whitespace only, no behaviour change). The new
   `python3 scripts/ci/check-go-format.py` runs `gofmt -l` on every tracked Go file and fails with

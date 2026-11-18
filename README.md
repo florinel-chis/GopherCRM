@@ -594,8 +594,11 @@ npm run build
 # Preview production build
 npm run preview
 
-# Run unit tests
+# Run unit tests (watch mode)
 npm run test
+
+# Run unit tests once, on three workers (what make verify-frontend runs)
+npm test -- --run --maxWorkers=3
 
 # Run end-to-end tests (requires the backend and frontend running)
 npm run test:e2e

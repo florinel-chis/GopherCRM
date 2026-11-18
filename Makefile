@@ -12,7 +12,7 @@ help:
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
 	@echo "  make test         - Run Go tests"
-	@echo "  make verify       - Core CI checks: hygiene, gofmt, Go build/vet/test -race, frontend build/lint/test, API docs"
+	@echo "  make verify       - Core CI checks: hygiene, frontend build/lint/test, gofmt, Go build/vet/test -race, API docs"
 	@echo "  make verify-runner - Runner tests, workflow export parity, and database probe tests"
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
@@ -42,7 +42,7 @@ test:
 # Core CI jobs call these targets. Browser and runner checks have separate
 # targets below. Run make verify before pushing a branch.
 .PHONY: verify verify-hygiene verify-backend verify-frontend
-verify: verify-hygiene verify-backend verify-frontend verify-api-docs
+verify: verify-hygiene verify-frontend verify-backend verify-api-docs
 
 verify-hygiene:
 	scripts/ci/check-file-sizes.sh
@@ -59,7 +59,7 @@ verify-backend:
 	go test -race -tags=gophercrm_e2e ./internal/middleware ./internal/aeo
 
 verify-frontend:
-	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run
+	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run --maxWorkers=3
 
 # e2e resets the gocrm_e2e database, starts the backend on a free port and runs
 # Playwright against it; CI runs the same script. SPECS narrows the run (paths

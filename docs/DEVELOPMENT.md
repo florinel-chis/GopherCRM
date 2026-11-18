@@ -38,7 +38,8 @@ npm run dev            # Vite dev server (expects the backend on :8080)
 npm run build          # tsc -b && vite build
 npm run lint           # ESLint (lint:fix to auto-fix)
 npm run format         # Prettier over src/
-npm test               # Vitest unit tests
+npm test               # Vitest unit tests (watch mode)
+npm test -- --run --maxWorkers=3   # one run on three workers (what make verify-frontend runs)
 npm run test:coverage  # Vitest with coverage
 npm run test:e2e       # Playwright E2E tests
 npm run test:e2e:admin # Admin CRUD suites (uses playwright.config.slow.ts)
@@ -1659,7 +1660,7 @@ no browser assertion or retry setting is relaxed.
 |-------|----------|--------|
 | Backend unit | colocated `*_test.go` | `go test ./...` — testify suites, mocks from `internal/mocks/` |
 | Backend integration | `test/integration/`, `tests/` | `go test ./...` — in-memory SQLite |
-| Frontend unit | `gocrm-ui/src/**/*.test.tsx` | `npm test` — Vitest + React Testing Library |
+| Frontend unit | `gocrm-ui/src/**/*.test.tsx` | `npm test -- --run --maxWorkers=3` — Vitest + React Testing Library, one run on three workers |
 | E2E | `gocrm-ui/e2e/tests/` | `npm run test:e2e` — Playwright, Chromium |
 
 ```bash
@@ -1670,7 +1671,9 @@ go test -run TestFunctionName ./internal/service/
 ```
 
 Use current command output for test counts and coverage; historical counts are not release gates.
-`make verify` runs hygiene checks, the Go formatting check, Go build/vet/race tests, and frontend build/lint/unit tests.
+`make verify` runs hygiene checks, then frontend build/lint/unit tests (Vitest on three workers), then the Go
+formatting check and Go build/vet/race tests, then the API reference check. The frontend gate runs before the
+race-enabled Go tests so the two do not compete for the processor.
 The runner's local validation picks a profile from the changed paths; its bounded profiles
 (`auth`, `auth-persistence`, `transaction`, `migration`, `aeo`, `mailer`) replace `make verify` with
 their `scripts/ci/check-auth.py` / `scripts/ci/check-go.py` race roots on SQLite and MySQL, named
