@@ -1,0 +1,277 @@
+package permissions
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/florinel-chis/gophercrm/internal/models"
+)
+
+// The guide tests pin docs/AUTHORIZATION.md to this package: the catalogue
+// and matrix tables are compared with Leaves and ForSystemRole, the phase 2
+// design note with the seam list of #259, and the pointers in README,
+// docs/FEATURES.md and CHANGELOG with the guide's path.
+
+const (
+	guideRepoRoot = "../.."
+	guidePath     = "docs/AUTHORIZATION.md"
+)
+
+func readGuideFile(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(guideRepoRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
+}
+
+// guideSection returns the lines below the H2 heading up to the next H2, and
+// whether the heading exists exactly once.
+func guideSection(doc, heading string) ([]string, bool) {
+	var out []string
+	found, inside := 0, false
+	for _, line := range strings.Split(doc, "\n") {
+		switch {
+		case line == heading:
+			found++
+			inside = true
+		case strings.HasPrefix(line, "## "):
+			inside = false
+		case inside:
+			out = append(out, line)
+		}
+	}
+	return out, found == 1
+}
+
+func mustGuideSection(t *testing.T, doc, heading string) []string {
+	t.Helper()
+	lines, ok := guideSection(doc, heading)
+	if !ok {
+		t.Fatalf("%s must have the heading %q exactly once", guidePath, heading)
+	}
+	return lines
+}
+
+// guideKeyRows returns the table rows whose first cell is a backticked
+// permission key, as the trimmed cells of each row.
+func guideKeyRows(lines []string) [][]string {
+	var rows [][]string
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
+
+// guideRowsByKey indexes rows by their key and reports duplicated keys and
+// keys the catalogue does not have.
+func guideRowsByKey(t *testing.T, table string, rows [][]string) map[string][]string {
+	t.Helper()
+	byKey := map[string][]string{}
+	for _, cells := range rows {
+		key := strings.Trim(cells[0], "`")
+		if _, dup := byKey[key]; dup {
+			t.Errorf("%s: key %s has more than one row", table, key)
+			continue
+		}
+		byKey[key] = cells
+		if _, known := Leaf(key); !known {
+			t.Errorf("%s: key %s is not in the catalogue", table, key)
+		}
+	}
+	for _, node := range Leaves() {
+		if _, ok := byKey[node.Key]; !ok {
+			t.Errorf("%s: catalogue key %s has no row", table, node.Key)
+		}
+	}
+	return byKey
+}
+
+func TestAuthorizationGuideCoversPhase2Seams(t *testing.T) {
+	doc := readGuideFile(t, guidePath)
+
+	for _, heading := range []string{
+		"## Phased plan",
+		"## Permission catalogue",
+		"## System-role matrix",
+		"## Phase 2 design note",
+	} {
+		if _, ok := guideSection(doc, heading); !ok {
+			t.Errorf("%s must have the heading %q exactly once", guidePath, heading)
+		}
+	}
+
+	plan := strings.Join(mustGuideSection(t, doc, "## Phased plan"), "\n")
+	for _, ticket := range []string{"322", "344", "347", "348", "349", "260", "261"} {
+		if !regexp.MustCompile(`#` + ticket + `\b`).MatchString(plan) {
+			t.Errorf("the Phased plan section must name #%s", ticket)
+		}
+	}
+
+	note := strings.Join(mustGuideSection(t, doc, "## Phase 2 design note"), "\n")
+	for _, token := range []string{
+		"OIDC",
+		"PKCE",
+		"user_identities",
+		"(iss, sub)",
+		"JIT provisioning",
+		"group",
+		"app role",
+		"SCIM 2.0",
+		"break-glass",
+		"session-bound CSRF",
+		"not implemented",
+	} {
+		t.Run(token, func(t *testing.T) {
+			if !strings.Contains(note, token) {
+				t.Errorf("the Phase 2 design note must contain %q", token)
+			}
+		})
+	}
+}
+
+func TestAuthorizationGuideMatchesCatalogue(t *testing.T) {
+	doc := readGuideFile(t, guidePath)
+
+	t.Run("catalogue", func(t *testing.T) {
+		rows := guideKeyRows(mustGuideSection(t, doc, "## Permission catalogue"))
+		byKey := guideRowsByKey(t, "Permission catalogue", rows)
+		for _, node := range Leaves() {
+			cells, ok := byKey[node.Key]
+			if !ok {
+				continue
+			}
+			if len(cells) != 3 {
+				t.Errorf("catalogue row %s has %d cells, want key, title and scopes", node.Key, len(cells))
+				continue
+			}
+			if cells[1] != node.Title {
+				t.Errorf("catalogue row %s: title %q, the catalogue says %q", node.Key, cells[1], node.Title)
+			}
+			want := "all"
+			if node.AllowsOwn {
+				want = "all, own"
+			}
+			if node.SystemOnly {
+				want += " (system-only)"
+			}
+			if cells[2] != want {
+				t.Errorf("catalogue row %s: scopes %q, want %q", node.Key, cells[2], want)
+			}
+		}
+	})
+
+	t.Run("matrix", func(t *testing.T) {
+		lines := mustGuideSection(t, doc, "## System-role matrix")
+		const header = "| Permission | admin | sales | support | customer |"
+		hasHeader := false
+		for _, line := range lines {
+			if line == header {
+				hasHeader = true
+			}
+		}
+		if !hasHeader {
+			t.Errorf("the System-role matrix must have the header %q", header)
+		}
+		roles := []models.UserRole{models.RoleAdmin, models.RoleSales, models.RoleSupport, models.RoleCustomer}
+		byKey := guideRowsByKey(t, "System-role matrix", guideKeyRows(lines))
+		for _, node := range Leaves() {
+			cells, ok := byKey[node.Key]
+			if !ok {
+				continue
+			}
+			if len(cells) != 1+len(roles) {
+				t.Errorf("matrix row %s has %d cells, want %d", node.Key, len(cells), 1+len(roles))
+				continue
+			}
+			for i, role := range roles {
+				want := string(ForSystemRole(string(role)).Scope(node.Key))
+				if want == "" {
+					want = "-"
+				}
+				if cells[i+1] != want {
+					t.Errorf("matrix row %s, role %s: %q, the code says %q", node.Key, role, cells[i+1], want)
+				}
+			}
+		}
+	})
+}
+
+func TestAuthorizationGuideIsLinked(t *testing.T) {
+	hasLine := func(doc string, match func(string) bool) bool {
+		for _, line := range strings.Split(doc, "\n") {
+			if match(line) {
+				return true
+			}
+		}
+		return false
+	}
+
+	readme := readGuideFile(t, "README.md")
+	const link = "[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)"
+	if !hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "- "+link) }) {
+		t.Errorf("README.md must have a bullet starting %q", "- "+link)
+	}
+	if !hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "| "+link+" |") }) {
+		t.Errorf("README.md must have a Documentation-table row starting %q", "| "+link+" |")
+	}
+
+	features := readGuideFile(t, "docs/FEATURES.md")
+	if !hasLine(features, func(l string) bool {
+		return strings.HasPrefix(l, "| 11.1 |") && strings.Contains(l, "](AUTHORIZATION.md)")
+	}) {
+		t.Error("row 11.1 of docs/FEATURES.md must link ](AUTHORIZATION.md)")
+	}
+
+	// The Unreleased section, cut into bullets: a top-level "- " line with
+	// its continuation lines.
+	var bullets []string
+	inside := false
+	for _, line := range strings.Split(readGuideFile(t, "CHANGELOG.md"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "## [Unreleased]"):
+			inside = true
+		case strings.HasPrefix(line, "## ["):
+			inside = false
+		case !inside:
+		case strings.HasPrefix(line, "- "):
+			bullets = append(bullets, line)
+		case strings.HasPrefix(line, "#"):
+			bullets = append(bullets, "")
+		case len(bullets) > 0:
+			bullets[len(bullets)-1] += "\n" + line
+		}
+	}
+	named := false
+	for _, bullet := range bullets {
+		if strings.Contains(bullet, guidePath) && regexp.MustCompile(`#349\b`).MatchString(bullet) {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("CHANGELOG.md needs an [Unreleased] bullet naming %s and #349", guidePath)
+	}
+
+	guide := readGuideFile(t, guidePath)
+	targets := regexp.MustCompile(`\]\(([A-Za-z0-9_./-]+\.md)`).FindAllStringSubmatch(guide, -1)
+	if len(targets) == 0 {
+		t.Errorf("%s links no other guide", guidePath)
+	}
+	for _, target := range targets {
+		rel := "docs/" + target[1]
+		if _, err := os.Stat(filepath.Join(guideRepoRoot, filepath.FromSlash(rel))); err != nil {
+			t.Errorf("%s links %s, which does not exist: %v", guidePath, target[1], err)
+		}
+	}
+}

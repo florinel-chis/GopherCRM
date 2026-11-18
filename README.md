@@ -63,6 +63,7 @@ MySQL 8 and MariaDB 10.11, and 5 CI workflows (measured on `4dfe404`; commands i
 - [docs/USE_CASES.md](docs/USE_CASES.md) — worked recipes for concrete deployments, with their gaps.
 - [docs/EXTENDING.md](docs/EXTENDING.md) — adding or removing entities, routes, migrations and modules.
 - [docs/CONCURRENCY.md](docs/CONCURRENCY.md) — lock order and retry rule for multi-table writes.
+- [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) — permission catalogue, system-role matrix, custom roles and the phase 2 sign-in design note.
 
 Three things catch most first runs from source (`cp .env.example .env`, then `go run ./cmd` or
 `make run`):
@@ -95,7 +96,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 - 📝 **Forms**: Build contact, quote-request and lead-capture forms in the CRM and embed them on any website with one script tag — submissions land in the CRM, create leads, and can require double opt-in email confirmation before delivering gated content; layered spam protection (honeypot, time trap, rate limits, optional invisible reCAPTCHA v3). A double opt-in form can instead open a support ticket for the customer whose email matches the confirmed address (fixed ticket text, no submitted value), deduplicated by an `idempotency_key` that API clients send with the submission (the embed script sends one key per rendered form on every submission of the render: the hosted view's per-render key, or one it generates)
 - 🎨 **Modern UI**: React TypeScript frontend with Material-UI
 - 📊 **Dashboard**: Analytics and activity overview
-- 👤 **Role-Based Access**: Admin, Sales, Support, and Customer roles
+- 👤 **Role-Based Access**: four system roles (Admin, Sales, Support, Customer) plus custom roles built from the permission catalogue through the role API ([docs/AUTHORIZATION.md](docs/AUTHORIZATION.md))
 - 🔌 **RESTful API**: Clean architecture with comprehensive endpoints
 
 </details>
@@ -1073,6 +1074,7 @@ gophercrm/
 | [docs/SETUP.md](docs/SETUP.md) | Backend and frontend setup walkthrough |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |
 | [docs/datamodel.md](docs/datamodel.md) | Entity model and relationships |
+| [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) | Permission catalogue, system-role matrix, custom roles, role-change rules and the phase 2 sign-in design note |
 | [docs/ADMIN_TESTING.md](docs/ADMIN_TESTING.md) | Admin E2E page objects and fixtures |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Ideas that are not implemented yet |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |

@@ -95,7 +95,7 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:1040`). Everything under `[Unreleased]`
+The latest release is 1.2.0 (`CHANGELOG.md:1638`). Everything under `[Unreleased]`
 (`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
