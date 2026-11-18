@@ -79,7 +79,7 @@ system roles holding the key are named in brackets.
 | `/tickets`, `/tickets/:id` | any of `tickets.view`, `tickets.view_own_customer` [all four] (#380) | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
 | `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`routes/index.tsx:396,413`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:299`); `/configurations` is admin except `/configurations/ui` |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:300`); `/configurations` is admin except `/configurations/ui` |
 | `/settings/profile`, `/settings/api-keys` | authenticated only (no key) | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
 
@@ -773,7 +773,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:466`) — not a 403.
+  account" (`user_handler.go:473`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4

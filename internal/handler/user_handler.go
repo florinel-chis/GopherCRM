@@ -281,8 +281,9 @@ func (h *UserHandler) List(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID (not an unsigned 32-bit integer; 0 is not rejected here)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a non-admin asked for another account (You can only view your own profile)"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id. Any lookup failure, a database error included, is answered this way"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be read"
 // @Router /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Get")
@@ -303,8 +304,14 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 	user, err := h.userService.GetByID(uint(id))
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Warn("User not found")
-		utils.RespondNotFound(c, "User not found")
+		// Only a missing record is a 404; a failed read is the server's.
+		if apperrors.IsNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("User not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to look up user")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -498,8 +505,9 @@ func (h *UserHandler) Delete(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=MeResponse} "The caller's account with role_name and permissions"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account could not be read (erased after authentication, or a database error)"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account was erased after authentication"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the account could not be read"
 // @Router /users/me [get]
 func (h *UserHandler) GetMe(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.GetMe")
@@ -508,8 +516,14 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 	user, err := h.userService.GetByID(userID)
 	if err != nil {
+		// The account can be erased between authentication and this read.
+		if apperrors.IsNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Current user not found")
+			utils.RespondNotFound(c, "User not found")
+			return
+		}
 		logger.WithError(utils.LogError(err)).Error("Failed to get current user")
-		utils.RespondNotFound(c, "User not found")
+		utils.RespondInternalError(c)
 		return
 	}
 

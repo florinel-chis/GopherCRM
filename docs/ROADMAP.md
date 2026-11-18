@@ -234,8 +234,13 @@ included. Found by reading the code path unless noted.
 - **Registration and `POST /users` answer 400 with the raw service error text** for any failure,
   database errors included. A password over bcrypt's 72-byte limit is a 400 there but a 500 on
   change-password and reset confirm; no endpoint checks the byte length first.
-- **Database failures reported as 404** — `GET /users/{id}`, `GET /users/me` and the user lookup of
-  `POST /customers/{id}/assign` map every lookup error to not found.
+- **Database failures reported as 404** — these lookups report every lookup error, a database
+  failure included, as a missing record or reference:
+  - `GET`, `PUT` and `DELETE /leads/{id}` and the pre-read of `POST /leads/{id}/convert` answer
+    404 `Lead not found` (the convert pre-read answers 500 only when the request was cancelled);
+  - the assignee and customer lookups of `POST /tasks` and `PUT /tasks/{id}` answer 404;
+  - the customer lookup of `POST /tickets` answers 404, and the assignee lookups of
+    `POST /tickets` and `PUT /tickets/{id}` answer 400.
 - **A client's answer to a quote is attributed to the quote owner in the history (#382).**
   `quote_status_changes.changed_by_id` is NOT NULL with a foreign key to `users`, so the row a
   client writes through the response link names the quote owner; that the client answered is

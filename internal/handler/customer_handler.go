@@ -710,7 +710,7 @@ func isNumericLike(value string) bool {
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is neither admin nor sales (Insufficient permissions)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: Customer not found, or User not found (no live user with user_id)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer could not be read or stored"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the customer or the user could not be read, or the customer could not be stored"
 // @Router /customers/{id}/assign [post]
 func (h *CustomerHandler) Assign(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Assign")

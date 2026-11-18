@@ -797,6 +797,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Users: a database failure on a user lookup answers 500, not 404 (#399).** `GET /users/{id}`,
+  `GET /users/me` and the user lookup of `POST /customers/{id}/assign` answered 404
+  `User not found` for every lookup error. Only a missing user is a 404 now; a read that fails
+  is logged at error level and answered with 500 `INTERNAL_ERROR` and the generic message, with
+  no driver text. On the assign route the customer is not updated.
 - **Privacy: two erasures of one person no longer end in a deadlock error (#385).** An erasure
   started from a user, from a customer and from a lead locked the same rows in different orders
   and was never retried: on MySQL 8 and MariaDB 10.11 a user-rooted erasure against a
