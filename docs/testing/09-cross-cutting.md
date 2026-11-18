@@ -123,7 +123,7 @@ support and customer from the customer edit form.
 - **Steps:** Navigate to `/no-such-page`.
 - **Expected:** The URL stays `/no-such-page` and the 404 page renders (`404`, "Page Not Found",
   "Go to Dashboard"). The catch-all `*` route is declared **outside** the `ProtectedRoute` branch
-  (`routes/index.tsx:590`), so an unknown path is never authentication-gated.
+  (`routes/index.tsx:622`), so an unknown path is never authentication-gated.
 - **Known issue:** The 404 page leaks the existence of the SPA shell to anonymous visitors and its
   "Go to Dashboard" button navigates to `/`, which then bounces to `/login`. Harmless, but the
   two-hop journey is easy to mistake for a bug.

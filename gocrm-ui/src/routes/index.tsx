@@ -574,6 +574,38 @@ export const router = createBrowserRouter([
           },
         ],
       },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="roles.manage">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Static segment: ranks above settings/roles/:id.
+            path: 'settings/roles/new',
+            lazy: () => import('@/pages/settings/RoleEditor'),
+          },
+        ],
+      },
+      {
+        // The editor shows a role read-only to a caller without roles.manage.
+        element: (
+          <ProtectedRoute requiredPermission="roles.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/roles',
+            lazy: () => import('@/pages/settings/RoleList'),
+          },
+          {
+            path: 'settings/roles/:id',
+            lazy: () => import('@/pages/settings/RoleEditor'),
+          },
+        ],
+      },
       // The dashboard above, the profile and the caller's own API keys need no
       // key: every signed-in user reaches them.
       {

@@ -221,6 +221,13 @@ const navItems: NavItem[] = [
         icon: <Tune />,
         permission: 'settings.view',
       },
+      {
+        // The role list; the screens narrow the writes by roles.manage.
+        title: 'Roles',
+        path: '/settings/roles',
+        icon: <People />,
+        permission: 'roles.view',
+      },
     ],
   },
 ];

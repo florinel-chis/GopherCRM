@@ -30,7 +30,7 @@ FEATURES = {
              "customer-website", "admin-companies"),
     "task": ("admin-tasks", "labels", "admin-entity-suite"),
     "ticket": ("admin-tickets", "admin-entity-suite"),
-    "user": ("admin-users", "settings", "login", "registration", "admin-entity-suite"),
+    "user": ("admin-users", "settings", "login", "registration", "admin-entity-suite", "roles"),
 }
 PAGE_FEATURES = {
     "aeo": "aeo", "companies": "company", "customers": "customer", "deals": "deal",

@@ -3,11 +3,13 @@ export interface User {
   email: string;
   first_name: string;
   last_name: string;
-  role: 'admin' | 'sales' | 'support' | 'customer';
+  role: 'admin' | 'sales' | 'support' | 'customer' | 'custom';
   is_active: boolean;
   created_at: string;
   updated_at: string;
   last_login_at?: string;
+  // The custom role of the account; present only when role is 'custom'.
+  role_id?: number;
 }
 
 // One effective permission of the signed-in user, as GET /users/me lists it.

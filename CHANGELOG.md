@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Role screens in Settings and a role picker on the user form (#381, second part of S6 of
+  #260).** Settings gains "Roles" (`/settings/roles`, shown with `roles.view`): the four system
+  roles and the custom ones with their user and permission counts. With `roles.manage` a system
+  role can be cloned, and a custom role edited, cloned and deleted; a role that users still hold
+  is not deleted and the confirmation names how many hold it. The role editor
+  (`/settings/roles/new`, `/settings/roles/:id`) takes a name, a description and the permission
+  tree of `GET /permissions/catalogue`: a tri-state checkbox per group, an All/Own choice beside
+  each ticked permission that can be limited to own records, and no entry for a permission only
+  a system role holds. A system role, and any role for a caller without `roles.manage`, opens
+  read-only. A change to a custom role applies to its holders on their next request. Frontend
+  only: no route, schema or API change.
+  - **User form.** The role select lists the roles of `GET /roles` (system and custom) instead
+    of four fixed values and sends `role: "custom"` with `role_id` for a custom role. An edit
+    that does not touch the picker sends the stored role back unchanged, also when that role is
+    past the 100 roles the list returns (shown as `Role #<id>`). A customer login is offered the
+    system roles only. Without `users.assign_role` the picker is no longer rendered (it used to
+    be shown disabled): a new account is created as a customer and an update sends no role. The
+    refusals `LAST_ADMIN`, `CUSTOMER_LOGIN_ROLE` and `ROLE_ESCALATION` each show their own
+    sentence in the form. The role label of a custom-role user on the Users list and detail
+    pages is unchanged (the raw value).
+  - **Tests.** `pages/settings/RoleList.test.tsx`, `pages/settings/RoleEditor.test.tsx`,
+    `pages/users/UserForm.roles.test.tsx`, added cases in `routes/index.permissions.test.tsx`
+    and `layouts/MainLayout.permissions.test.tsx`, and the browser spec
+    `gocrm-ui/e2e/tests/roles.spec.ts` (clone Sales, take the deal permissions out, assign the
+    role, sign in as its holder, grant "View deals" again and see it arrive on window focus).
+    The spec selector adds `roles` to the `user` spec set; a change under `pages/settings/`
+    still selects the whole browser suite.
 - **Permission-driven routes, navigation and buttons in the SPA (#380, first part of S6 of
   #259).** The SPA no longer decides by role name. `AuthProvider` publishes the effective
   permissions of `GET /users/me` on session restore, after a login, after a registration and
@@ -29,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     else is unchanged for admin, sales, support and customer; the customer Delete controls stay
     as they were (shown, and refused by the API for support).
   - **Not in this change.** The role screens in Settings, the role picker of the user form and
-    the browser spec for custom roles belong to the second part of #260; until then a custom
-    role is created and assigned through the API and its user's role label shows the raw value.
+    the browser spec for custom roles came with the second part of #260 (#381, above); the role
+    label of a custom-role user still shows the raw value.
   - **Tests.** `usePermissions.test.tsx`, `ProtectedRoute.permissions.test.tsx`,
     `MainLayout.permissions.test.tsx`, `AuthContext.permissions.test.tsx`,
     `routes/index.permissions.test.tsx`, `TicketDetail.permissions.test.tsx`,

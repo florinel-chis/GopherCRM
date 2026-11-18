@@ -46,6 +46,7 @@ const ROLE_COLORS: Record<User['role'], 'error' | 'primary' | 'info' | 'default'
   sales: 'primary',
   support: 'info',
   customer: 'default',
+  custom: 'default',
 };
 
 /**

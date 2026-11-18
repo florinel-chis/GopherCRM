@@ -343,7 +343,8 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** The zod resolver blocks the submit: no network request is made, the URL stays
   `/users/new`, and the Email, Password, First Name and Last Name fields show inline errors
   ("Invalid email address", "Password must be at least 8 characters", "First name is required",
-  "Last name is required"). The Role select defaults to "Sales" and therefore never errors.
+  "Last name is required"). The Role select defaults to "Sales" and therefore never errors; its
+  options are the roles of `GET /roles` (#381), and the form is shown once they have loaded.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin sees validation errors
   for invalid user data"
 
@@ -450,7 +451,9 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** `PUT /users/<id>` carries `role: "sales"` and returns 200; the handler applies `role`
   only because the caller's role is admin (it silently drops `role` and `is_active` for anyone
   else). The list row shows the Sales chip. On the user's next request the auth middleware reads the
-  role from the database, so the change takes effect immediately without re-login.
+  role from the database, so the change takes effect immediately without re-login. Since #381 the
+  option list comes from `GET /roles`: a system role's option value is its key (`sales`), a custom
+  role's is `custom:<id>` (see TC-USER-041); a system role is sent without a `role_id` key.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can manage user
   permissions through roles" (since 2026-09-23 it changes only its own user's role and asserts
   `sales` is shown; it used to promote whichever user was in row 1)
@@ -474,9 +477,54 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Known issue:** An admin can still demote itself here while another active admin remains (the
   case's precondition); `POST /users/{id}/deactivate` refuses the caller's own account, this route
   does not (ROADMAP.md). The last active admin is protected since #348: the same request answers
-  409 `LAST_ADMIN` and writes nothing.
+  409 `LAST_ADMIN` and writes nothing. Since #381 the form stays open on that answer and shows
+  "The last active administrator cannot be given another role or be deactivated." above its
+  buttons instead of only a snackbar (Vitest `src/pages/users/UserForm.roles.test.tsx`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended; needs the login
   helper for arbitrary credentials)
+
+### TC-USER-041 — Give a user a custom role in the user form
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Admin logged in; a custom role "Field Sales" (cloned from Sales in
+  `/settings/roles`, see TC-SET-035).
+- **Steps:**
+  1. Open `/users/new`, fill the account fields and open the Role select.
+  2. Choose "Field Sales" and submit.
+  3. Open the new user's edit form, change only the first name and submit.
+- **Expected:** The Role select lists the roles of `GET /roles?limit=100` by name: the four system
+  roles and the custom ones. Step 2: `POST /users` carries `role: "custom"` and `role_id: <the
+  role's id>` → 201; a system role would be sent as its key with no `role_id` key. Step 3: the
+  picker shows "Field Sales" and `PUT /users/<id>` carries `role: "custom"` with the same
+  `role_id`: an edit that leaves the picker alone sends the stored role back, also when that role
+  is past the 100 roles the list returns (it is then shown as "Role #<id>"). Moving the user to a
+  system role sends that key without `role_id`. A caller without `users.assign_role` gets no Role
+  select at all: the create form says "New account is created as a customer" and sends
+  `role: "customer"`, and an update sends neither `role` nor `role_id`.
+- **Known issue:** The Users list and the user detail page show the raw value `custom` as the role
+  label of such a user, not the role's name; the role filter is TC-USER-013.
+- **Automation:** automated — `gocrm-ui/e2e/tests/roles.spec.ts` "a cloned role decides what its
+  holder sees, and a re-granted permission arrives on focus" (steps 1 and 2 and the request body);
+  Vitest `src/pages/users/UserForm.roles.test.tsx` (the bodies of create and update, the stored
+  role kept on a name-only edit, the unlisted role, the form without `users.assign_role`)
+
+### TC-USER-042 — A customer login cannot be given a custom role
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** Admin logged in; a `customer` user created in-test; at least one custom role.
+- **Steps:**
+  1. Open `/users/<id>/edit` and open the Role select.
+  2. Send `PUT /users/<id>` with `{"role": "custom", "role_id": <a custom role's id>}` through the
+     API.
+- **Expected:** Step 1: the select lists the four system roles only, no custom role; the customer
+  can still be moved to a system role (TC-USER-025). Step 2: 409 `CUSTOMER_LOGIN_ROLE`, nothing is
+  written. When the form receives that code (the user became a customer login after the form
+  loaded) it stays open and shows "A customer login cannot be given a custom role."; 403
+  `ROLE_ESCALATION` likewise shows "You cannot edit an account or give a role whose permissions
+  are above your own.".
+- **Automation:** planned — `gocrm-ui/e2e/tests/roles.spec.ts` (extended). Vitest
+  `src/pages/users/UserForm.roles.test.tsx` covers the option list and the three sentences; Go
+  coverage of the refusal: `internal/service` governed user writes.
 
 ### TC-USER-027 — Deactivate a user with the Active Account switch
 - **Priority:** P0
@@ -517,7 +565,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Inspect the "Active Account" switch and the Role select.
 - **Expected:** The switch is rendered but disabled (`canEditActiveStatus = isAdmin && user?.id !==
   currentUser?.id`), so an admin cannot deactivate themselves from the form. The Role select stays
-  enabled — see TC-USER-026 for what that allows. Submitting without changes returns 200.
+  enabled — see TC-USER-026 for what that allows. Submitting without changes returns 200 and
+  sends the stored role back unchanged. For a caller without `users.assign_role` the Role select
+  is not shown at all since #381 (before, it was shown greyed out).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-030 — Confirm there is no password reset in the edit form
