@@ -639,8 +639,9 @@ Each step has an observable result. Do them in order on a new fork before you ta
    header; the lead appears. If you also use the hosted form page or an iframe, the CRM's own
    origin must be on the allowlist too. With double opt-in, the confirmation link points at your
    `PUBLIC_BASE_URL`.
-5. **Your CI is green** on a pull request in your repository. The `migrations` job is skipped
-   there; run CI by hand with the `full` input once to exercise it and the race detector.
+5. **Your CI is green** on a pull request in your repository. The `migrations` job runs
+   there only when the pull request changes migration code, and then on MySQL 8 alone; run CI by
+   hand with the `full` input once to exercise both engines and the race detector.
 6. **A restored backup.** Restore last night's backup into a scratch install with the same
    secrets, start it, and sign in.
 7. **An upstream merge rehearsal.** `git merge upstream/main` on a branch, `make verify`, and the
