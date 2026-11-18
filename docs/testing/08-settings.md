@@ -11,6 +11,8 @@ blocked until the page is built.
 ## Sources
 
 - `gocrm-ui/src/pages/settings/APIKeys.tsx`, `gocrm-ui/src/pages/settings/ConfigurationSettings.tsx`
+- `gocrm-ui/src/pages/settings/RoleList.tsx`, `gocrm-ui/src/pages/settings/RoleEditor.tsx`,
+  `gocrm-ui/src/api/endpoints/roles.ts` (the role screens, TC-SET-035)
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
   `gocrm-ui/src/api/endpoints/apikeys.test.ts`, `gocrm-ui/src/api/client.ts`
 - `gocrm-ui/src/contexts/ConfigurationContext.tsx`
@@ -574,7 +576,7 @@ blocked until the page is built.
   2. Expand the "Settings" nav group.
   3. Navigate directly to `/settings/configuration`.
 - **Expected:** The "Configuration" nav item is absent for all three (`permission: 'settings.view'` in
-  `MainLayout.tsx`), while "Profile" and "API Keys" remain. The deep link redirects to
+  `MainLayout.tsx`), and so is "Roles" (`roles.view`, TC-SET-035), while "Profile" and "API Keys" remain. The deep link redirects to
   `/unauthorized` — `settings/configuration` is a child of the pathless
   `ProtectedRoute requiredPermission="settings.view"` route, and `ProtectedRoute` issues
   `<Navigate to="/unauthorized" replace />`. The Configuration Settings heading never renders and no
@@ -661,3 +663,35 @@ blocked until the page is built.
   `src/pages/settings/ConfigurationSettings.test.tsx` (refresh after save and reset); the browser
   path in `gocrm-ui/e2e/tests/leads-convert-api.spec.ts` "a contacted lead converts only with notes
   when the settings say so" (settings saved through the API, then a fresh sign-in)
+
+## Roles
+
+### TC-SET-035 — Clone a system role, edit it and see the change reach its holder
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** Seeded admin; no role named "Field Sales".
+- **Steps:**
+  1. Open `/settings/roles` and press Clone on the Sales row; name the copy "Field Sales".
+  2. In the editor that opens, untick the "Deals" group and save.
+  3. Create a user with the role "Field Sales" (TC-USER-041) and sign in as that user in a second
+     browser context.
+  4. As the admin, open the role again, tick "View deals" and save.
+  5. Give the user's window the focus again.
+- **Expected:** The list shows the four system roles (type System, only a Clone action) and the
+  custom ones (type Custom; Edit, Clone and Delete) with their user and permission counts; the
+  entry and the pages need `roles.view`, every action and `/settings/roles/new` need
+  `roles.manage`, and without it the list shows no action and the editor opens read-only. Step 1:
+  `POST /roles/<id>/clone` → 201 and the editor of the copy opens with what Sales holds ("View
+  deals" at scope Own, the "Deals" parent partly ticked). Step 2: `PUT /roles/<id>` carries
+  `name`, `description` and `permissions` (one `{key, scope}` per ticked permission, no group
+  key) and no deal key. Step 3: the user sees Leads in the navigation and no Deals, and `/deals`
+  lands on `/unauthorized`. Step 5: without a reload or a new sign-in the Deals entry appears:
+  the focus refetches `GET /users/me`, and a role change applies on the holder's next request
+  (the editor says so on a custom role). A system role opens read-only with a Clone button; a
+  permission only a system role holds (`tickets.view_own_customer`) is not offered. Deleting a
+  role that users still hold answers 409 `ROLE_IN_USE` and the confirmation stays open with the
+  number of holders; a name another role has answers 409 `ROLE_NAME_TAKEN` on the name field.
+- **Automation:** automated — `gocrm-ui/e2e/tests/roles.spec.ts` "a cloned role decides what its
+  holder sees, and a re-granted permission arrives on focus"; Vitest
+  `src/pages/settings/RoleList.test.tsx`, `src/pages/settings/RoleEditor.test.tsx`,
+  `src/routes/index.permissions.test.tsx` and `src/layouts/MainLayout.permissions.test.tsx`

@@ -8,7 +8,7 @@ export const permissionsForRole = (role: SystemRole): Permission[] => systemRole
 
 /** The permissions of a mocked signed-in user: those of its system role, none when signed out. */
 export const permissionsOf = (user: Pick<User, 'role'> | null | undefined): Permission[] =>
-  user ? (systemRolePermissions[user.role] ?? NONE) : NONE;
+  user ? (systemRolePermissions[user.role as SystemRole] ?? NONE) : NONE;
 
 /** A custom role: every listed key at scope all unless a scope is given. */
 export const customPermissions = (

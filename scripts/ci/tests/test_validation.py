@@ -27,6 +27,17 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(browser_command(("go", "test", "./cmd/migrate"), selected),
                          ("go", "test", "./cmd/migrate"))
 
+    def test_role_screens_select_the_roles_spec(self):
+        # The user form carries the role picker, so a change to it runs the role journey.
+        selected = plan(["gocrm-ui/src/pages/users/UserForm.tsx"])
+        self.assertEqual(selected["profile"], "contextual")
+        self.assertIn("e2e/tests/roles.spec.ts", selected["specs"])
+        # pages/settings/ has no feature of its own: the role screens and the
+        # other settings pages alike keep the whole suite.
+        for path in ("gocrm-ui/src/pages/settings/RoleList.tsx",
+                     "gocrm-ui/src/pages/settings/ConfigurationSettings.tsx"):
+            self.assertEqual(plan([path])["profile"], "full", path)
+
     def test_known_reverse_consumers_and_cross_entity_journeys_are_selected(self):
         cases = {
             "internal/repository/lead_repository.go": ["forms-public-api", "admin-tasks", "admin-entity-suite", "customer-website", "admin-companies"],

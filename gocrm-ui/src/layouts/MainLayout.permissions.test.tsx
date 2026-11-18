@@ -67,6 +67,23 @@ describe('MainLayout permission gating', () => {
     expect(navigation().getByText('Profile')).toBeInTheDocument();
     expect(navigation().getByText('API Keys')).toBeInTheDocument();
     expect(navigation().queryByText('Configuration')).not.toBeInTheDocument();
+    expect(navigation().queryByText('Roles')).not.toBeInTheDocument();
+  });
+
+  it('shows Roles under Settings only to a caller holding roles.view', async () => {
+    signedInWith('customer', customPermissions('roles.view'));
+    const held = render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Roles')).toBeInTheDocument();
+    expect(navigation().queryByText('Configuration')).not.toBeInTheDocument();
+    held.unmount();
+
+    // The settings key and the managing key alone do not show the entry.
+    signedInWith('admin', customPermissions('settings.view', 'roles.manage'));
+    render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Configuration')).toBeInTheDocument();
+    expect(navigation().queryByText('Roles')).not.toBeInTheDocument();
   });
 
   it('shows the Automation group with only the child whose key is held', async () => {

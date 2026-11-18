@@ -62,6 +62,8 @@ vi.mock('@/pages/labels/LabelList', () => ({ Component: () => <div>Label List Pa
 vi.mock('@/pages/customers/CustomerList', () => ({ Component: () => <div>Customer List Page</div> }));
 vi.mock('@/pages/customers/CustomerDetail', () => ({ Component: () => <div>Customer Detail Page</div> }));
 vi.mock('@/pages/customers/CustomerForm', () => ({ Component: () => <div>Customer Form Page</div> }));
+vi.mock('@/pages/settings/RoleList', () => ({ Component: () => <div>Role List Page</div> }));
+vi.mock('@/pages/settings/RoleEditor', () => ({ Component: () => <div>Role Editor Page</div> }));
 
 import { router } from './index';
 
@@ -143,5 +145,22 @@ describe('routes', () => {
     // The read key does not open the edit form.
     signedInWith(customPermissions('customers.view'));
     expect(await landOn('/customers/1/edit', 'Access Denied')).toBe('/unauthorized');
+  }, 120000);
+
+  it('open the role list and a role with roles.view and the new-role form only with roles.manage', async () => {
+    signedInWith(customPermissions('roles.view'));
+    expect(await landOn('/settings/roles', 'Role List Page')).toBe('/settings/roles');
+    expect(await landOn('/settings/roles/7', 'Role Editor Page')).toBe('/settings/roles/7');
+    // "new" is its own route, not an id of the read route.
+    expect(await landOn('/settings/roles/new', 'Access Denied')).toBe('/unauthorized');
+
+    signedInWith(customPermissions('roles.view', 'roles.manage'));
+    expect(await landOn('/settings/roles/new', 'Role Editor Page')).toBe('/settings/roles/new');
+
+    // Other keys, the settings one included, open none of the three.
+    signedInWith(customPermissions('settings.view', 'users.view', 'users.assign_role'));
+    for (const path of ['/settings/roles', '/settings/roles/7', '/settings/roles/new']) {
+      expect(await landOn(path, 'Access Denied'), path).toBe('/unauthorized');
+    }
   }, 120000);
 });

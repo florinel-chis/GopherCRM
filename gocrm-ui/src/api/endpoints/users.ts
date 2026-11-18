@@ -15,14 +15,17 @@ export interface CreateUserData {
   password: string;
   first_name: string;
   last_name: string;
-  role: 'admin' | 'sales' | 'support' | 'customer';
+  role: 'admin' | 'sales' | 'support' | 'customer' | 'custom';
+  // The id of a custom role; sent with role 'custom' and with no other role.
+  role_id?: number;
 }
 
 export interface UpdateUserData {
   email?: string;
   first_name?: string;
   last_name?: string;
-  role?: 'admin' | 'sales' | 'support' | 'customer';
+  role?: 'admin' | 'sales' | 'support' | 'customer' | 'custom';
+  role_id?: number;
   is_active?: boolean;
 }
 

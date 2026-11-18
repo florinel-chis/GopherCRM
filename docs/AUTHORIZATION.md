@@ -20,13 +20,14 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S3 | #347 | The permission catalogue, the system-role matrices, `permissions.RouteKeys` and deny-by-default enforcement on every protected route | Merged as #370 |
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
-| S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role screens are open |
+| S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
 | Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open, design only |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
-and buttons by permission key, so a user on a custom role sees what its role grants. The SPA
-still has no screen for custom roles: until the second part of S6 they are created and assigned
-through the API.
+and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
+custom roles are created, cloned, edited and deleted in Settings > Roles (`/settings/roles`,
+shown with `roles.view`, written with `roles.manage`) and assigned in the user form, whose role
+picker lists the roles of `GET /roles`; the role API stays available for the same operations.
 
 ## Permission catalogue
 
