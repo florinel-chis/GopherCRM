@@ -395,6 +395,24 @@ func (suite *CustomerServiceTestSuite) TestAssign_AssigneeNotFound() {
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrAssigneeNotFound))
 }
 
+// A failed read of the assignee is not a missing assignee: the error comes
+// back as it is, so the handler answers 500 and not 404.
+func (suite *CustomerServiceTestSuite) TestAssign_AssigneeLookupFailureIsNotAMiss() {
+	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
+	dbErr := errors.New("dial tcp 127.0.0.1:3306: connect: connection refused")
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
+	suite.mockUserRepo.On("GetByID", uint(7)).Return(nil, dbErr)
+
+	updated, err := suite.service.Assign(1, 7)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), updated)
+	assert.True(suite.T(), errors.Is(err, dbErr))
+	assert.False(suite.T(), errors.Is(err, apperrors.ErrAssigneeNotFound))
+	assert.False(suite.T(), apperrors.IsNotFound(err))
+	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
+}
+
 func (suite *CustomerServiceTestSuite) TestAssign_InactiveAssigneeRejected() {
 	customer := &models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}
 	assignee := &models.User{BaseModel: models.BaseModel{ID: 7}, Role: models.RoleSales, IsActive: false}

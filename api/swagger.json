@@ -9471,7 +9471,7 @@
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR: the customer could not be read or stored",
+                        "description": "INTERNAL_ERROR: the customer or the user could not be read, or the customer could not be stored",
                         "schema": {
                             "allOf": [
                                 {
@@ -25816,7 +25816,7 @@
                         }
                     },
                     "404": {
-                        "description": "NOT_FOUND: the account could not be read (erased after authentication, or a database error)",
+                        "description": "NOT_FOUND: the account was erased after authentication",
                         "schema": {
                             "allOf": [
                                 {
@@ -25835,6 +25835,24 @@
                     },
                     "429": {
                         "description": "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: the account could not be read",
                         "schema": {
                             "allOf": [
                                 {
@@ -26115,7 +26133,7 @@
                         }
                     },
                     "404": {
-                        "description": "NOT_FOUND: no live user with this id. Any lookup failure, a database error included, is answered this way",
+                        "description": "NOT_FOUND: no live user with this id",
                         "schema": {
                             "allOf": [
                                 {
@@ -26134,6 +26152,24 @@
                     },
                     "429": {
                         "description": "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: the user could not be read",
                         "schema": {
                             "allOf": [
                                 {

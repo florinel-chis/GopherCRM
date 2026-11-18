@@ -341,8 +341,12 @@ func (s *customerService) Assign(customerID, userID uint) (*models.Customer, err
 
 	assignee, err := s.userRepo.GetByID(userID)
 	if err != nil {
-		logger.WithError(utils.LogError(err)).Warn("Assignee not found")
-		return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
+			return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to look up assignee for assignment")
+		return nil, err
 	}
 
 	if !assignee.IsActive {
