@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -138,6 +139,30 @@ func (m *MockUserService) Update(id uint, updates map[string]interface{}) (*mode
 func (m *MockUserService) Delete(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)
+}
+
+func (m *MockUserService) CreateAs(ctx context.Context, actor service.Actor, user *models.User, password string) error {
+	return m.Called(ctx, actor, user, password).Error(0)
+}
+
+func (m *MockUserService) UpdateAs(ctx context.Context, actor service.Actor, id uint, updates map[string]interface{}) (*models.User, error) {
+	args := m.Called(ctx, actor, id, updates)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) SetActiveAs(ctx context.Context, actor service.Actor, id uint, active bool) (*models.User, error) {
+	args := m.Called(ctx, actor, id, active)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) DeleteAs(ctx context.Context, actor service.Actor, id uint) error {
+	return m.Called(ctx, actor, id).Error(0)
 }
 
 func (m *MockUserService) List(offset, limit int) ([]models.User, int64, error) {

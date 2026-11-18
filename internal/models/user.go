@@ -6,11 +6,12 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// UserRole is an account's role. It decides which operations and records the
-// account may reach; every operation lists the roles it admits. Accounts
-// created through public registration are always customer.
+// UserRole is an account's role: one of the four system roles, whose
+// permissions are fixed in code, or custom for an account whose permissions
+// come from a custom role (users.role_id). Accounts created through public
+// registration are always customer.
 //
-// @Description Role of an account. It decides which operations and records the account may reach; every operation lists the roles it admits. Public registration always creates customer accounts.
+// @Description Role of an account: one of the four system roles (admin, sales, support, customer), whose permissions are fixed, or custom for an account whose permissions come from the custom role its role_id names. Public registration always creates customer accounts.
 type UserRole string
 
 const (
@@ -18,6 +19,10 @@ const (
 	RoleSales    UserRole = "sales"
 	RoleSupport  UserRole = "support"
 	RoleCustomer UserRole = "customer"
+	// RoleCustom is the role of an account on a custom role. It is a typed
+	// constant, so the API reference lists it with the four system roles;
+	// POST /users and PUT /users/{id} accept it together with role_id.
+	RoleCustom UserRole = "custom"
 )
 
 // User is a login account: staff (admin, sales, support) or a customer's own
@@ -34,18 +39,18 @@ type User struct {
 	FirstName string `gorm:"not null;type:varchar(100)" json:"first_name" example:"Jane"`
 	// Family name.
 	LastName string `gorm:"not null;type:varchar(100)" json:"last_name" example:"Doe"`
-	// Role of the account; only an admin can change it (PUT /users/{id}, POST /users).
+	// Role of the account: a system role, or custom for an account on a custom
+	// role (see role_id). Changed through PUT /users/{id} and set by POST /users,
+	// by a caller holding users.assign_role.
 	Role UserRole `gorm:"not null;default:'customer';type:varchar(20);index:idx_users_role" json:"role" example:"sales"`
-	// RoleID names the custom role of an account whose role is RoleCustom
-	// (#259 S2, #344); NULL for every system-role account. Omitted from the
-	// JSON when NULL, so current responses are unchanged, and kept out of the
-	// API reference until the role API slice.
-	RoleID *uint `gorm:"index:idx_users_role_id" json:"role_id,omitempty" swaggerignore:"true"`
+	// Id of the account's custom role. Present exactly when role is custom;
+	// omitted for an account on a system role.
+	RoleID *uint `gorm:"index:idx_users_role_id" json:"role_id,omitempty" example:"7"`
 	// CustomRole is the role RoleID names (fk_users_custom_role, ON DELETE
 	// RESTRICT). Filled by UserRepository.GetByID; never serialised.
 	CustomRole *Role `gorm:"foreignKey:RoleID;constraint:OnDelete:RESTRICT" json:"-"`
 	// False for a deactivated account: it cannot log in, and its bearer tokens and
-	// API keys are rejected. Changed only by an admin.
+	// API keys are rejected. Changed by a caller holding users.activate.
 	IsActive bool `gorm:"default:true" json:"is_active" example:"true"`
 	// Time of the last successful password login (RFC 3339). Absent when the
 	// account has never logged in. Server-maintained, read-only.

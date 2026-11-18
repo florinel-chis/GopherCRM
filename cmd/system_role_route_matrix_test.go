@@ -10,12 +10,15 @@ package main
 // seeded rows from the database and checks a hand-written table of documented
 // ownership rules, without opening the golden.
 //
-// Regenerate after adding or changing a protected route:
+// The golden is frozen: its generator
 //
 //	go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix
 //
-// Generation refuses once a route file uses a permission guard; the replay
-// keeps running against the frozen golden.
+// refuses once a route file uses a permission guard (#347), and the replay
+// keeps running against the recorded cells. A protected route added after the
+// freeze is therefore not recorded. It goes on routeMatrixAfterFreeze, gets
+// its matrixRequests entry and its permissions.RouteKeys entry, and is covered
+// by the deny-by-default and the own-key tests instead of the replay.
 
 import (
 	"bytes"
@@ -41,6 +44,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -89,6 +93,32 @@ var routeMatrixPublic = map[string]bool{
 	"GET /api/v1/forms/public/:key":              true,
 	"GET /api/v1/forms/public/:key/view":         true,
 	"POST /api/v1/forms/public/:key/submissions": true,
+}
+
+// routeMatrixAfterFreeze is every protected route added after the golden was
+// frozen: the role API of #348. These routes are served and guarded, but the
+// golden cannot record them, so the replay and the recorded-versus-served
+// comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
+// the list to the router, the golden and permissions.RouteKeys.
+var routeMatrixAfterFreeze = map[string]bool{
+	"GET /api/v1/permissions/catalogue": true,
+	"GET /api/v1/roles":                 true,
+	"POST /api/v1/roles":                true,
+	"GET /api/v1/roles/audit":           true,
+	"GET /api/v1/roles/:id":             true,
+	"PUT /api/v1/roles/:id":             true,
+	"DELETE /api/v1/roles/:id":          true,
+	"POST /api/v1/roles/:id/clone":      true,
+}
+
+// matrixRoleNameCounter makes every role name a request creates unique, so no
+// cell answers ROLE_NAME_TAKEN whatever ran before it.
+var matrixRoleNameCounter atomic.Uint32
+
+// newMatrixRoleName is a role name no other request used: the calling
+// principal's label plus a counter.
+func newMatrixRoleName(c matrixCtx) string {
+	return fmt.Sprintf("Matrix role %s %d", c.role, matrixRoleNameCounter.Add(1))
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +412,25 @@ var matrixRequests = map[string]matrixRequest{
 	"POST /users/:id/activate": {kind: "user"},
 	"POST /users/:id/deactivate": {kind: "user",
 		note: "Admin own is 400: own is the caller's own account and an administrator cannot deactivate itself; admin foreign shows the route succeeding."},
+
+	// roles (after the freeze, see routeMatrixAfterFreeze). The role fixture
+	// is an unassigned custom role without permissions, and every body asks
+	// for no permission, so the escalation rule has nothing to refuse: a
+	// caller holding roles.manage alone passes all four writes.
+	"GET /permissions/catalogue": {},
+	"GET /roles":                 {},
+	"POST /roles": {body: func(c matrixCtx) interface{} {
+		return matrixBody{"name": newMatrixRoleName(c), "permissions": []matrixBody{}}
+	}},
+	"GET /roles/audit": {},
+	"GET /roles/:id":   {kind: "role"},
+	"PUT /roles/:id": {kind: "role", body: func(c matrixCtx) interface{} {
+		return matrixBody{"name": newMatrixRoleName(c), "permissions": []matrixBody{}}
+	}},
+	"DELETE /roles/:id": {kind: "role"},
+	"POST /roles/:id/clone": {kind: "role", body: func(c matrixCtx) interface{} {
+		return matrixBody{"name": newMatrixRoleName(c)}
+	}},
 
 	// leads
 	// An admin must name the owner; every role names itself.
@@ -911,6 +960,17 @@ func seedRouteMatrix(t *testing.T) *matrixFixtures {
 	create(hookTwo)
 	shared("webhook_endpoint", uid(hookOne.ID), uid(hookTwo.ID))
 
+	// roles: two unassigned custom roles without permissions. They are part
+	// of the snapshot, so the restore after a cell that renamed or deleted
+	// one puts it back under the same id, and removes every role a cell
+	// created or cloned.
+	roleRepo := repository.NewRoleRepository(db)
+	roleOne := &models.Role{Name: "Matrix role fixture one", Description: "Seeded by the route matrix"}
+	roleTwo := &models.Role{Name: "Matrix role fixture two", Description: "Seeded by the route matrix"}
+	require.NoError(t, roleRepo.Create(roleOne))
+	require.NoError(t, roleRepo.Create(roleTwo))
+	shared("role", uid(roleOne.ID), uid(roleTwo.ID))
+
 	// configurations: keys and categories, not record ids.
 	keys := newMatrixFixtureSet()
 	categories := newMatrixFixtureSet()
@@ -1177,11 +1237,15 @@ func requestFor(t *testing.T, route gin.RouteInfo) matrixRequest {
 	return request
 }
 
-// observe runs every cell of every protected route.
+// observe runs every cell of every protected route the golden can record:
+// the routes added after the freeze are left out.
 func (h *matrixHarness) observe() matrixFile {
 	h.t.Helper()
 	file := matrixFile{BaseCommit: routeMatrixBaseCommit, Generator: routeMatrixGenerator}
 	for _, route := range h.protectedRoutes() {
+		if routeMatrixAfterFreeze[route.Method+" "+route.Path] {
+			continue
+		}
 		request := requestFor(h.t, route)
 		entry := matrixRoute{Method: route.Method, Path: route.Path, Note: request.note, Cells: map[string]map[string]matrixCell{}}
 		for _, role := range matrixRoles {
@@ -1235,15 +1299,41 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 	h := bootRouteMatrix(t)
 	golden := loadRouteMatrixGolden(t)
 
+	// served is every protected route the golden records; afterFreeze the
+	// protected routes added since, which every one of them still has a
+	// request-table entry for.
 	served := map[string]matrixRequest{}
+	afterFreeze := map[string]bool{}
 	for _, route := range h.protectedRoutes() {
-		served[route.Method+" "+route.Path] = requestFor(t, route)
+		request := requestFor(t, route)
+		if key := route.Method + " " + route.Path; routeMatrixAfterFreeze[key] {
+			afterFreeze[key] = true
+		} else {
+			served[key] = request
+		}
 	}
 	for key := range matrixRequests {
 		method, path, _ := strings.Cut(key, " ")
-		_, ok := served[method+" "+routeMatrixPrefix+path]
-		assert.True(t, ok, "matrixRequests declares %s, which the router does not serve", key)
+		full := method + " " + routeMatrixPrefix + path
+		_, ok := served[full]
+		assert.True(t, ok || afterFreeze[full], "matrixRequests declares %s, which the router does not serve", key)
 	}
+
+	// The after-freeze list names served, guarded routes the golden does not
+	// hold: each has a permissions.RouteKeys entry, so the own-key test and
+	// the deny-by-default test cover it.
+	goldenKeys := map[string]bool{}
+	for _, route := range golden.Routes {
+		goldenKeys[route.key()] = true
+	}
+	for key := range routeMatrixAfterFreeze {
+		assert.True(t, afterFreeze[key], "routeMatrixAfterFreeze names %s, which is not a protected route of the router", key)
+		assert.False(t, goldenKeys[key], "%s is on routeMatrixAfterFreeze and in the golden: a route belongs to one of them", key)
+		method, path, _ := strings.Cut(key, " ")
+		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
+		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
+	}
+	assert.Len(t, routeMatrixAfterFreeze, 8)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {
@@ -1392,6 +1482,7 @@ func TestRouteMatrixFixtureAnchors(t *testing.T) {
 			"label": "labels", "api_key": "api_keys", "notification": "notifications", "aeo_prompt": "aeo_prompts",
 			"aeo_run": "aeo_runs", "form": "forms", "form_submission": "form_submissions", "form_delivery": "form_mail_deliveries",
 			"automation_rule": "automation_rules", "automation_run": "automation_runs", "webhook_endpoint": "webhook_endpoints",
+			"role": "roles",
 		}
 		for kind, set := range fx.sets {
 			table, numeric := tables[kind]

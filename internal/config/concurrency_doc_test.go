@@ -65,7 +65,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"Password-reset request":         "implemented",
 	"Password-reset confirm":         "implemented",
 	"API-key create":                 "implemented",
-	"RBAC user-role and role writes": "not implemented",
+	"RBAC user-role and role writes": "implemented",
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
@@ -76,6 +76,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file string }{
 	"Login":                  {"loginMaxRetries", "internal/service/auth_service.go"},
 	"Password-reset request": {"resetRequestMaxRetries", "internal/service/auth_service.go"},
 	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go"},
+	// #348: every governed user write and role write is one replayed root.
+	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go"},
 }
 
 var concurrencyDocExpectedTicket = map[string]string{
@@ -91,7 +93,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"Password-reset request":         "C3",
 	"Password-reset confirm":         "C3",
 	"API-key create":                 "C3",
-	"RBAC user-role and role writes": "R6, R7",
+	"RBAC user-role and role writes": "#348",
 }
 
 type concurrencyDocSection struct {
@@ -470,23 +472,80 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Contains(t, flow("Refresh rotation"), "users → refresh_tokens")
 	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → refresh_tokens")
 
-	// RBAC: one UpdateFields in UserService.Update, and no roles table.
+	// RBAC (#348): every governed write is one replayed root that takes the
+	// admin set, then users, then roles, and decides after the locks.
 	rbac := flow("RBAC user-role and role writes")
-	assert.Contains(t, rbac, "UserService.Update")
-	assert.Contains(t, rbac, "no `roles` table")
+	for _, want := range []string{
+		"`LockActiveAdmins`", "`LockLiveByIDs`", "`RoleRepository.LockByIDs`", "`LockLiveRoleHolders`",
+		"admin set → users (id ascending) → roles (id ascending)",
+		"users before roles",
+		"decided after the locks",
+		"`role_audit_log`",
+	} {
+		assert.Contains(t, rbac, want, "RBAC flow")
+	}
+	assert.NotContains(t, rbac, "has no caller")
+	assert.NotContains(t, rbac, "Target")
+
+	// The root: WithTransactionAndRetry with the bound the Retry line cites.
+	run := concurrencyDocFuncBody(t, "internal/service/role_governance.go", "func (g *roleGovernance) run(")
+	assert.Contains(t, run, "g.txManager.WithTransactionAndRetry(")
+	assert.Contains(t, run, "roleWriteMaxRetries")
+
+	// The governed user writes: admin set, then users, then roles, inside it.
+	inOrder := func(body string, statements ...string) {
+		t.Helper()
+		last := -1
+		for _, statement := range statements {
+			at := strings.Index(body, statement)
+			if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+				assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+				last = at
+			}
+		}
+	}
+	for _, signature := range []string{"func (s *userService) governedWrite(", "func (s *userService) CreateAs("} {
+		body := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", signature)
+		inOrder(body, "s.governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(", "tx.actor(",
+			"acting.requireKeys(", "checkEscalation(")
+	}
+	governed := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) governedWrite(")
+	inOrder(governed, "checkEscalation(", "apperrors.ErrCustomerLoginRole", "apperrors.ErrLastAdmin", "tx.users.Delete(id)",
+		"tx.users.UpdateFields(id, fields)", "tx.record(")
+	// The plain update stays plain: it is the non-HTTP writer.
 	update := concurrencyDocFuncBody(t, "internal/service/user_service.go", "func (s *userService) Update(")
 	assert.NotContains(t, update, "WithTransaction")
 	assert.Contains(t, update, "s.userRepo.UpdateFields(")
-	modelsDir := filepath.Join(repositoryRoot(t), "internal", "models")
-	entries, err := os.ReadDir(modelsDir)
-	require.NoError(t, err)
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		src := readRepositoryFile(t, "internal/models/"+e.Name())
-		assert.NotContains(t, src, `"roles"`, "internal/models/%s names a roles table", e.Name())
+
+	// The role writes lock users before roles.
+	roleService := "internal/service/role_service.go"
+	for _, signature := range []string{
+		"func (s *roleService) Create(", "func (s *roleService) Update(", "func (s *roleService) Delete(", "func (s *roleService) Clone(",
+	} {
+		body := concurrencyDocFuncBody(t, roleService, signature)
+		inOrder(body, "s.governance.run(ctx,", "lockActor(tx, actor)", "tx.lockRoles(", "tx.actor(", "acting.requireKeys(", "checkEscalation(")
 	}
+	assert.Contains(t, concurrencyDocFuncBody(t, roleService, "func lockActor("), "tx.lockUsers(actor.UserID)")
+	remove := concurrencyDocFuncBody(t, roleService, "func (s *roleService) Delete(")
+	inOrder(remove, "lockActor(tx, actor)", "tx.userRoles.LockLiveRoleHolders(id)", "tx.lockRoles(", "checkEscalation(")
+	assert.Equal(t, 3, strings.Count(remove, "tx.userRoles.LockLiveRoleHolders(id)"),
+		"the holders are read before the role lock, after it, and once more after a foreign-key refusal")
+	inOrder(remove[strings.Index(remove, "checkEscalation("):], "tx.userRoles.LockLiveRoleHolders(id)",
+		"tx.userRoles.ClearRoleIDOfErased(id)", "tx.roles.Delete(id)", "tx.record(")
+
+	// The locking reads the flow names.
+	users := readRepositoryFile(t, "internal/repository/user_repository.go")
+	for _, signature := range []string{
+		"func (r *userRepository) LockActiveAdmins() ([]models.User, error)",
+		"func (r *userRepository) LockLiveByIDs(ids []uint) ([]models.User, error)",
+		"func (r *userRepository) LockLiveRoleHolders(roleID uint) ([]uint, error)",
+	} {
+		assert.Contains(t, users, signature)
+	}
+	lockByIDs := concurrencyDocFuncBody(t, "internal/repository/role_repository.go", "func (r *roleRepository) LockByIDs(")
+	assert.Equal(t, 2, strings.Count(lockByIDs, `clause.Locking{Strength: "UPDATE"}`),
+		"the roles and their permissions are both read with a locking read")
+	inOrder(lockByIDs, `Where("id IN ?", ids).Order("id")`, `Where("role_id IN ?", found)`)
 }
 
 // concurrencyDocChainGroup classifies a table word of a lock chain. "set" is
@@ -527,7 +586,9 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 	lineWith("password_reset_tokens → users")
 	rbac := lineWith("admin set → users (id ascending) → roles (id ascending)")
 	assert.Contains(t, rbac, "#259")
-	assert.Contains(t, rbac, "target")
+	assert.Contains(t, rbac, "#348")
+	assert.NotContains(t, rbac, "target")
+	assert.NotContains(t, rbac, "not implemented")
 
 	cross := concurrencyDocNormalize(concurrencyDocParagraph(t, section, "**Cross-chain order (undecided).**", concurrencyDocFile))
 	for _, want := range []string{
@@ -618,7 +679,7 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 			}
 		} else {
 			assert.NotContains(t, retry, "WithTransactionAndRetry",
-				"only the Lead conversion, Login, Password-reset request and API-key create Retry lines name it; %s does", name)
+				"only the Lead conversion, Login, Password-reset request, API-key create and RBAC Retry lines name it; %s does", name)
 		}
 	}
 	for _, name := range []string{"Lead conversion", "Lead update"} {
@@ -740,7 +801,10 @@ func TestConcurrencyDocTicketMap(t *testing.T) {
 	assert.Len(t, seen, len(concurrencyDocFlowsInOrder), "one row per flow")
 
 	after := concurrencyDocNormalize(strings.Join(lines[end:], "\n"))
-	assert.Contains(t, after, "C2–C4 and R6–R7 are Paperclip ids with no GitHub issue yet")
+	assert.Contains(t, after, "C2–C4 are Paperclip ids with no GitHub issue yet")
+	assert.Contains(t, after, "The RBAC lock order of #259 is implemented by #348")
+	assert.NotContains(t, concurrencyDocText(t), "R6")
+	assert.NotContains(t, concurrencyDocText(t), "R7")
 	assert.Contains(t, after, "C2–C4 follow the family order of the #183 comment of 14 Nov 2026")
 }
 

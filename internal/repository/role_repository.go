@@ -18,8 +18,8 @@ type roleRepository struct {
 	db *gorm.DB
 }
 
-// NewRoleRepository returns the role persistence of #344. Nothing calls it yet;
-// the role API arrives in a later slice of #259.
+// NewRoleRepository returns the role persistence of #344. The role service
+// and the governed user writes (#348) are its callers.
 func NewRoleRepository(db *gorm.DB) RoleRepository {
 	return &roleRepository{db: db}
 }
@@ -193,7 +193,8 @@ func (r *roleRepository) Delete(id uint) error {
 	})
 }
 
-// List returns one page of roles and the total. Rows are ordered by the
+// List returns one page of roles, each with its permissions ordered by
+// permission_key, and the total. Rows are ordered by the
 // validated column (utils.AllowedSortColumns["roles"]) and then by roles.id in
 // the same direction, or by id ascending without a sort column, so every page
 // walks one total order. A column outside the allowlist is an error and no
@@ -208,8 +209,49 @@ func (r *roleRepository) List(offset, limit int, sortBy, sortOrder string) ([]mo
 		return nil, 0, err
 	}
 	var roles []models.Role
-	if err := ordered.Offset(offset).Limit(limit).Find(&roles).Error; err != nil {
+	err = ordered.Preload("Permissions", func(db *gorm.DB) *gorm.DB {
+		return db.Order("permission_key ASC")
+	}).Offset(offset).Limit(limit).Find(&roles).Error
+	if err != nil {
 		return nil, 0, err
 	}
 	return roles, total, nil
+}
+
+// LockByIDs locks the role rows by primary key in ascending id order, then
+// reads their permissions with a locking read as well. On MySQL/MariaDB a
+// locking read returns the latest committed rows whatever the transaction's
+// snapshot, which a plain read after a lock wait would not: a role widened
+// while this transaction waited is read as widened. SQLite drops the clause.
+// Ids without a row are simply absent from the result.
+func (r *roleRepository) LockByIDs(ids []uint) ([]models.Role, error) {
+	roles := []models.Role{}
+	if len(ids) == 0 {
+		return roles, nil
+	}
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id").Find(&roles).Error; err != nil {
+		return nil, fmt.Errorf("lock roles: %w", err)
+	}
+	if len(roles) == 0 {
+		return roles, nil
+	}
+	found := make([]uint, 0, len(roles))
+	for _, role := range roles {
+		found = append(found, role.ID)
+	}
+	var permissions []models.RolePermission
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("role_id IN ?", found).Order("role_id, permission_key").Find(&permissions).Error; err != nil {
+		return nil, fmt.Errorf("read permissions of locked roles: %w", err)
+	}
+	for i := range roles {
+		roles[i].Permissions = []models.RolePermission{}
+		for _, permission := range permissions {
+			if permission.RoleID == roles[i].ID {
+				roles[i].Permissions = append(roles[i].Permissions, permission)
+			}
+		}
+	}
+	return roles, nil
 }

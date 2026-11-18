@@ -586,24 +586,25 @@ cookies answers 401. Any future cookie session must ship with session-bound CSRF
 #261).
 
 **Role assignment** — `POST /auth/register` is public and always creates a `customer`; it ignores
-any client-supplied role. Elevated roles are only assignable via the admin-guarded `POST /users` or
-the `create-admin` CLI. Never add a client-controlled role to a public endpoint. E2E admin accounts
+any client-supplied role. Elevated roles are only assignable via `POST /users` and `PUT /users/{id}`
+by a caller holding `users.assign_role` (the admin system role does), or the `create-admin` CLI. Never add a client-controlled role to a public endpoint. E2E admin accounts
 are seeded by `gocrm-ui/e2e/global-setup.ts`, which shells out to `cmd/create-admin`.
 
-**RBAC persistence (#259 S2, #344)** — the storage of custom roles, with no route, guard, handler,
-service or answer change: nothing calls the new repository methods yet.
+**RBAC persistence (#259 S2, #344)** — the storage of custom roles. The permission catalogue and
+its enforcement read it since #347; the role API and the governed user writes of #348 (next
+paragraph) are the callers of its repository methods.
 
 - **Models and order.** `models.Role`, `RolePermission` and `RoleAuditEntry` (`roles`,
   `role_permissions`, `role_audit_log`, see [datamodel.md](datamodel.md#role-model)) are registered
   in `autoMigrateModels` ahead of `User`, because `users.role_id` references `roles`
   (`fk_users_custom_role`, ON DELETE RESTRICT; plus `idx_users_role` and `idx_users_role_id`). On
   SQLite the foreign key rebuilds `users` under `database.Migrate`; the indexes survive.
-- **The JSON is unchanged.** `User.RoleID` is `json:"role_id,omitempty"` and `swaggerignore`, so a
-  NULL value adds no key and the checked-in API reference stays byte-identical; `CustomRole` is
-  `json:"-"`. `models.RoleCustom` (`"custom"`) is an untyped constant on purpose: a typed `UserRole`
-  constant would enter the swag enum and the closed set of `scripts/ci/check-api-docs.py`, both of
-  which stay admin, sales, support, customer until the role API slice. A `custom` user holds only
-  the permissions of its role row (#347); no API creates one yet.
+- **The JSON.** `User.RoleID` is `json:"role_id,omitempty"`, so a NULL value adds no key and a
+  system-role user's answer is unchanged; `CustomRole` is `json:"-"`. Since #348 `role_id` is a
+  documented property and `models.RoleCustom` (`"custom"`) is a typed `UserRole` constant, the
+  fifth value of the swag enum and of the closed set `scripts/ci/check-api-docs.py` collects by
+  type. A `custom` user holds only the permissions of its role row (#347); `POST /users` and
+  `PUT /users/{id}` create one (`role = custom` with `role_id`).
 - **The seed.** `seedSystemRoles` runs in `MigrateDatabase` after `normalizeCompanyDomains` on every
   start and driver. It reads `SELECT system_key FROM roles WHERE system_key IS NOT NULL` (plain,
   non-locking) and inserts only the missing rows of `models.SystemRoleSeeds` (#259's names and
@@ -622,12 +623,13 @@ service or answer change: nothing calls the new repository methods yet.
   (trimmed, lower-cased). `Create` refuses a non-nil `SystemKey` (`ErrValidation`), so
   `idx_roles_name_key` is the only unique index a repository write can hit and a duplicate key is
   `apperrors.ErrRoleNameTaken`. `Update` writes `name`, `name_key`, `description` and `updated_at`
-  only, never `system_key`; refusing writes to system rows is the S3 service's job (owner
-  decision 2). `ReplacePermissions(roleID, permissions)` locks the role (`FOR UPDATE` on
+  only, never `system_key`; refusing writes to system rows is the role service's job (owner
+  decision 2, `SYSTEM_ROLE_IMMUTABLE`). `ReplacePermissions(roleID, permissions)` locks the role (`FOR UPDATE` on
   MySQL/MariaDB), deletes its rows and inserts the new set in one transaction (a savepoint under
   `WithTx`): a failure after the delete keeps the previous set, an empty slice leaves none, a
   missing role is `gorm.ErrRecordNotFound`. `GetByID` returns the permissions ordered by
-  `permission_key`. `List(offset, limit, sortBy, sortOrder)` returns a page and the total from the
+  `permission_key`. `LockByIDs(ids)` (#348) locks role rows by primary key in ascending id and reads
+  their permissions with a locking read too. `List(offset, limit, sortBy, sortOrder)` returns a page (each role with its permissions) and the total from the
   same predicate, ordered by `utils.AllowedSortColumns["roles"]` (`id`, `name`, `created_at`,
   `updated_at`) and then `roles.id` in the same direction (`orderPage`), or by id ascending; another
   column is an error before any query. `Delete(id)` locks the role, deletes its permissions and then
@@ -643,6 +645,9 @@ service or answer change: nothing calls the new repository methods yet.
   and returns the locked rows that still match, in id order: no locking statement filters on role,
   so no lock is taken through `idx_users_role`. `ClearRoleIDOfErased(roleID)` sets `role_id` NULL on
   the soft-deleted users of that role and returns the count, after which the role can be deleted.
+  #348 adds `LockLiveByIDs` (the actor and the target, by primary key in id order),
+  `LockLiveRoleHolders` (the live users of a role, a locking read by `role_id`) and
+  `CountLiveRoleHolders` (the `user_count` of the role API).
 - **Migration.** `20261119120000_add_roles_and_permissions` (#259 planned `20261101120000`, which
   `add_task_deal_link` already holds). Its down half sets `role = 'support'` and `is_active = 0` on
   every live custom-role user before it drops anything (owner decision 8): irreversible for those
@@ -652,14 +657,15 @@ service or answer change: nothing calls the new repository methods yet.
   match no role guard of that binary and get 403 on every guarded route.
 - **Erasure.** `roles`, `role_permissions` and `role_audit_log` are not touched by the erasure:
   role names carry no personal text by rule, and audit rows hold ids, role names, permission keys
-  and scopes only (an obligation on the S3 writer). An erased user keeps its `role_id`, which keeps
-  the role in use until `ClearRoleIDOfErased` runs.
+  and scopes only: the writers of #348 store a role's name, description and permissions, or a
+  user's `role` and `role_id`, and nothing else. An erased user keeps its `role_id`, which keeps
+  the foreign key in place until the role delete runs `ClearRoleIDOfErased`.
 - **Collation.** On MySQL/MariaDB `roles.name_key` keeps `utf8mb4_unicode_ci`, so names differing
   only by accents or trailing spaces also collide there; SQLite compares binary. No collation guard
   is added (pending the owner's answer).
 
 Regression roots: `TestRoleSchemaSQLite`, `TestRoleSQLiteUpgradeFromV120`, `TestUserRoleIDJSON`,
-`TestRoleNameKey`, `TestRoleFieldsKeepAPIReferenceUnchanged` (`internal/models`);
+`TestRoleNameKey`, `TestRoleFieldsAreInTheAPIReference` (`internal/models`);
 `TestRoleRepository{SQLite,MySQL}`, `TestForeignKeyRefusalClassifier`,
 `TestSystemRoleSeed{SQLite,MySQL}` (statements captured by GORM callbacks; the MySQL root also
 starts two pools at once), `TestUserRepositoryRoleColumns{SQLite,MySQL}` (`internal/repository`);
@@ -670,6 +676,54 @@ SQLite roots use the production connector over a file under `t.TempDir()`; the M
 disposable `TEST_MYSQL_DSN` schema, skipped without the variable (the acceptance run sets it and
 fails on a skip). Operator follow-up (owner decision 9): register the migration and seed roots in
 `.github/workflows/migrations.yml` and the repository roots in `scripts/ci/check-go.py`.
+
+**Role API and governed user writes (#259 S4, #348)** — `internal/service/role_service.go` serves
+`GET /permissions/catalogue`, `/roles` (list, create, get, update, delete), `POST /roles/{id}/clone`
+and `GET /roles/audit`; `internal/service/user_governed_writes.go` holds the actor-taking user
+writes (`CreateAs`, `UpdateAs`, `SetActiveAs`, `DeleteAs`) that `POST /users`, `PUT /users/{id}`,
+activate, deactivate and `DELETE /users/{id}` call. What both share is in
+`internal/service/role_governance.go`.
+
+- **One transaction per write.** Each write is a `WithTransactionAndRetry` root through the `WithTx`
+  repositories that locks the active admin set (user writes only), the actor and the target in
+  ascending id, then the custom roles in ascending id, reads all of them again under the locks and
+  only then decides; the audit row is inserted in the same transaction. Lock order and retry are in
+  [CONCURRENCY.md](CONCURRENCY.md) (flow "RBAC user-role and role writes").
+- **The escalation rule** is one function, `checkEscalation`: a permission set exceeds the actor's
+  when one of its grants is not covered (`own` is below `all`, a missing key below `own`); a system
+  admin is exempt. A role write checks the requested set (create, update, clone) and, on update and
+  delete, the role's stored set, so a manager can neither grant above its own permissions nor edit
+  or delete a role that is above them. A user write checks the target as it is now and the role it
+  is to receive, on the caller's own account too. The `customer` system role stands for the empty
+  set there (`escalationSet`): it holds the one system-only key, which no custom role can hold, so
+  it never counts as above a manager. A custom role holding `users.create` alone can create a
+  customer login, and one holding `users.update`, `users.activate` or `users.delete` can manage one.
+- **Order of the refusals.** User writes: `NOT_FOUND`, `ROLE_NOT_FOUND`, `FORBIDDEN` (the actor lost
+  the route's key while the request waited), `ROLE_ESCALATION`, `CUSTOMER_LOGIN_ROLE`, `LAST_ADMIN`.
+  `PUT` and `DELETE /roles/{id}`: `ROLE_NOT_FOUND`, `FORBIDDEN`, `SYSTEM_ROLE_IMMUTABLE`,
+  `ROLE_ESCALATION` for the stored set, then on `PUT` `INVALID_PERMISSION` and `ROLE_ESCALATION` for
+  the requested set, on `DELETE` `ROLE_IN_USE` (after the escalation check, so a manager below the
+  role does not learn its `user_count`). A refusal writes nothing.
+- **Which user writes are governed.** Every `PUT /users/{id}` on another account (profile fields
+  included: changing a superior's email would redirect its password reset) and every one that
+  writes `role`, `role_id` or `is_active`, the caller's own account included. A profile-only update
+  of the caller's own account and `PUT /users/me` stay the plain `UserService.Update`. `Register`,
+  `Update` and `Delete` keep their behaviour for the non-HTTP writers (`cmd/create-admin`, public
+  registration); a user service built without `service.WithUserRoleGovernance` runs the actor-taking
+  methods as those plain writes, which is what the older suites rely on.
+- **Audit.** `role_audit_log` gets one row per role create, clone (`role_created`), update and
+  delete, and per change of a user's `role` or `role_id` (`user_role_changed`, also for the role a
+  new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value
+  (`bearer` or `api_key`). The log lines of these paths carry ids and action names only.
+
+Regression roots (`internal/integration`, on the real Auth, routes, handlers and repositories):
+`TestRoleAPI{SQLite,MySQL}`, `TestRoleAPIRejectsInvalidPermissionsSQLite`,
+`TestRoleAPIDeleteAssignedRoleSQLite`, `TestLastAdminInvariant{SQLite,MySQL}`,
+`TestLastAdminConcurrent{SQLite,MySQL}`, `TestLastAdminAPISQLite`, `TestRoleEscalationRefused`,
+`TestRoleEscalationConcurrent{SQLite,MySQL}`, `TestCustomerLoginCannotReceiveCustomRole`,
+`TestRoleAuditAtomic{SQLite,MySQL}`, `TestRoleChangeLogsOmitPersonalData`, `TestRoleAuditAPISQLite`,
+`TestUserRoleAssignmentAPISQLite`; and `TestUserWritesAreRoleGovernedOnTheRealRouter` (`cmd`), which
+shows that `setupRouter` wires the governance option.
 
 **Account security** — account lockout after 5 failed login attempts (15 min) and password
 complexity validation (min 10 chars, upper + lower + digit + special).
@@ -1589,18 +1643,27 @@ covering MySQL and MariaDB behaviour of the handlers.
   harness failure, never a recorded value. Nothing leaves the process (no SMTP host, no reCAPTCHA
   keys, no AEO provider keys or egress origins, inactive webhook endpoints).
 
-A pull request that adds or changes a protected route declares the request in `matrixRequests`
-(fixture kind, valid body, note) and regenerates the golden in the same pull request:
+The golden is frozen (see the last paragraph of this section), so a pull request that adds a
+protected route no longer regenerates it. It lists the route on `routeMatrixAfterFreeze` (the full
+`METHOD /api/v1/...` key), declares the request in `matrixRequests` (fixture kind, valid body,
+note) and adds the route's key to `permissions.RouteKeys`. The replay and the recorded-versus-served
+comparison leave such a route out; `TestRouteMatrixCoversEveryProtectedRoute` checks that every
+listed route is served, is absent from the golden and has a `RouteKeys` entry, and the route is
+covered by `TestZeroPermissionRoleIsDeniedEverywhere` and `TestEveryRouteRequiresItsOwnKey`
+instead. The eight routes of the role API (#348) are the first entries; their fixture is a pair of
+unassigned custom roles without permissions, restored with every other table after a cell that
+wrote. A pull request that changes what an existing route answers to a system role changes a
+recorded cell and fails the replay: that is the regression the golden exists to catch.
+
+The generator stays in the tree for its guard test:
 
 ```bash
 go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix
 ```
 
-Two generations in a row are byte-identical, with and without `-race`. `base_commit` is `main` at
-the point the branch started (`git merge-base origin/main HEAD`); after a rebase, regenerate and
-re-stamp `routeMatrixBaseCommit` in the test together with the file. Review the diff of the golden
-as carefully as the route change: a status that looks wrong is recorded as observed and reported,
-never adjusted by hand.
+It refuses to write (see below). `base_commit` is `main` at the point the golden was generated
+from; a status that looks wrong in the golden was recorded as observed and reported, never
+adjusted by hand.
 
 The fixture anchors (`TestRouteMatrixFixtureAnchors`) do not read the golden, because the golden
 is written by the harness that replays it. They assert from the database that each `own`,
@@ -1864,7 +1927,7 @@ What the erasure touches, and what it keeps on purpose:
 | `quote_lines` of those quotes | `description` → the name of the line's product (soft-deleted products included) | product, quantity, prices, discount, total, position |
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `companies` (`notes`), staff-written ticket comments, deals and quotes reached only through `owner_id` | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*). A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
-| `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys and scopes only, by contract (an obligation on the S3 writer). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
+| `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys and scopes only, by contract (the #348 writers store role names, descriptions, permissions, `role` and `role_id` only). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |

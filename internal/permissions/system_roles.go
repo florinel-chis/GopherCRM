@@ -136,7 +136,7 @@ func ForUser(user *models.User) Set {
 	if set, ok := systemRoles[user.Role]; ok {
 		return set
 	}
-	if string(user.Role) != models.RoleCustom || user.CustomRole == nil {
+	if user.Role != models.RoleCustom || user.CustomRole == nil {
 		return Set{}
 	}
 	return ForCustomRole(user.CustomRole.Permissions)

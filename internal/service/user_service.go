@@ -18,10 +18,20 @@ func isNotFound(err error) bool {
 
 type userService struct {
 	userRepo repository.UserRepository
+	// governance is set by WithUserRoleGovernance; nil leaves the actor-taking
+	// writes as plain as Register, Update and Delete.
+	governance *roleGovernance
 }
 
-func NewUserService(userRepo repository.UserRepository) UserService {
-	return &userService{userRepo: userRepo}
+// UserServiceOption configures NewUserService beyond the user repository.
+type UserServiceOption func(*userService)
+
+func NewUserService(userRepo repository.UserRepository, opts ...UserServiceOption) UserService {
+	s := &userService{userRepo: userRepo}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *userService) Register(user *models.User, password string) error {

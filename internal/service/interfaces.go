@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
 
@@ -54,6 +55,44 @@ type UserService interface {
 	List(offset, limit int) ([]models.User, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
+
+	// The actor-taking writes of the user routes (#259 S4, #348). On a
+	// service built with WithUserRoleGovernance each is one transaction that
+	// locks the active admin set, the actor and the target (ascending id) and
+	// their custom roles (ascending id), re-reads the actor's permissions and
+	// then refuses, in this order: an actor that lost the route's key
+	// (ErrForbidden), ErrRoleEscalation, ErrCustomerLoginRole, ErrLastAdmin.
+	// A changed role or role_id commits with its user_role_changed audit row.
+	// Without the option they behave as Register, Update and Delete do.
+
+	// CreateAs is Register by an actor. user.Role custom needs user.RoleID,
+	// any other role forbids it (ErrInvalidRoleAssignment); an unknown
+	// RoleID is ErrRoleNotFound.
+	CreateAs(ctx context.Context, actor Actor, user *models.User, password string) error
+	// UpdateAs is Update by an actor. Besides the keys of Update the map may
+	// carry "role_id" (*uint) next to "role".
+	UpdateAs(ctx context.Context, actor Actor, id uint, updates map[string]interface{}) (*models.User, error)
+	// SetActiveAs activates or deactivates an account.
+	SetActiveAs(ctx context.Context, actor Actor, id uint, active bool) (*models.User, error)
+	// DeleteAs is Delete (the irreversible erasure) by an actor.
+	DeleteAs(ctx context.Context, actor Actor, id uint) error
+}
+
+// RoleService is the role API of #259 (S4, #348): the permission catalogue,
+// custom roles and the audit listing. Every write takes the actor and runs
+// as one transaction with its audit row; see role_service.go for the locks
+// and the order of the refusals.
+type RoleService interface {
+	// Catalogue is the permission tree in display order.
+	Catalogue() []permissions.Node
+	List(offset, limit int, sortBy, sortOrder string) ([]RoleDetail, int64, error)
+	// Get answers ErrRoleNotFound for an id no role has.
+	Get(id uint) (*RoleDetail, error)
+	Create(ctx context.Context, actor Actor, input RoleCreateInput) (*RoleDetail, error)
+	Update(ctx context.Context, actor Actor, id uint, input RoleUpdateInput) (*RoleDetail, error)
+	Delete(ctx context.Context, actor Actor, id uint) error
+	Clone(ctx context.Context, actor Actor, sourceID uint, name, description string) (*RoleDetail, error)
+	ListAudit(filter repository.RoleAuditFilter, offset, limit int, sortBy, sortOrder string) ([]models.RoleAuditEntry, int64, error)
 }
 
 type LeadService interface {

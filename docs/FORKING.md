@@ -343,7 +343,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:318`), refresh and password-reset tokens (`cmd/main.go:300`), form confirmation
+>   (`cmd/main.go:346`), refresh and password-reset tokens (`cmd/main.go:300`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
 >   encryption of sensitive settings (`cmd/main.go:303`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and

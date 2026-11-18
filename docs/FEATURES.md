@@ -635,7 +635,7 @@ test --list` reports 100.
 | `cmd/migrate/products_quotes_migration_test.go` | 1 (MySQL/MariaDB, + subtests) | Products and quotes migration |
 | `cmd/migrate/automation_migration_test.go` | 2 (one MySQL/MariaDB, + subtests) | Follow-up automation migration |
 | `cmd/automation_runtime_test.go` | 1 (+ subtests) | Automation worker through the real wiring (boot stale sweep, start, drain) |
-| `cmd/system_role_route_matrix_test.go` | 5 (+ subtests) | System-role route matrix through `setupRouter` (#322): replay of `cmd/testdata/system_role_route_matrix.json` (157 protected routes, four roles), route coverage, fixture anchors, golden provenance and generator guard, cell comparison |
+| `cmd/system_role_route_matrix_test.go` | 5 (+ subtests) | System-role route matrix through `setupRouter` (#322): replay of `cmd/testdata/system_role_route_matrix.json` (the 157 protected routes recorded before the freeze, four roles; the 8 role API routes added after it by #348 are on `routeMatrixAfterFreeze`), route coverage, fixture anchors, golden provenance and generator guard, cell comparison |
 | `tests/automation_api_test.go` | 2 (+ subtests) | Automation rules, runs and dry run over HTTP |
 | `tests/notification_api_test.go` | 1 (+ subtests) | Notifications over HTTP |
 | `internal/repository/automation_repository_test.go` | 3 (SQLite + MySQL) | Run list scope, conditional updates |

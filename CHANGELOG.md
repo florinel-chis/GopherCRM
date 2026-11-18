@@ -9,6 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Role API, last-admin invariant, escalation rule and audit trail (#348, slice S4 of #259).**
+  Eight new routes: `GET /permissions/catalogue`, `GET` and `POST /roles`, `GET`, `PUT` and
+  `DELETE /roles/{id}`, `POST /roles/{id}/clone` and `GET /roles/audit`. Reading the catalogue and
+  the roles needs `roles.view` or `users.assign_role`, every role write `roles.manage`, the audit
+  listing `roles.audit_view`; the admin system role holds all four. The four system roles can be
+  cloned but neither edited nor deleted (409 `SYSTEM_ROLE_IMMUTABLE`). `role` gains the value
+  `custom`: `POST /users` and `PUT /users/{id}` accept it together with `role_id`, and
+  `models.User` returns `role_id` for an account on a custom role.
+  - **New error codes.** 409 `LAST_ADMIN`, 403 `ROLE_ESCALATION`, 409 `CUSTOMER_LOGIN_ROLE`, 400
+    `INVALID_ROLE_ASSIGNMENT` (role `custom` without `role_id`, or `role_id` with any other role),
+    400 `INVALID_PERMISSION` (an unknown key, a key only a system role holds, a key named twice or
+    a scope the key does not allow; `details.keys`), 409 `SYSTEM_ROLE_IMMUTABLE`, 409 `ROLE_IN_USE`
+    (a live user, deactivated included, still holds the role; `details.user_count`), 409
+    `ROLE_NAME_TAKEN` and 404 `ROLE_NOT_FOUND`.
+  - **Last admin.** No role change, deactivation or erasure can leave zero active admins: a
+    change that would is refused with 409 `LAST_ADMIN`, also when the last admin demotes or
+    deactivates itself through `PUT /users/{id}`, which that route accepted before. Only active,
+    non-erased users on the admin system role count.
+  - **Escalation rule.** A caller that is not on the admin system role can neither grant
+    permissions above its own (create, update or clone a role, assign a role, create a user with a
+    role) nor edit or delete a role whose permissions are above its own, nor edit, activate,
+    deactivate or erase a user whose permissions are above its own. `own` is below `all`, a
+    missing key below `own`. Behaviour change: `PUT /users/{id}` on another account is now refused
+    with 403 `ROLE_ESCALATION` for a manager below the target, profile fields included (changing a
+    superior's email would redirect its password reset). The rule applies to the caller's own
+    account too: it cannot give itself a role above its own.
+  - **A customer login is the floor of the rule.** The `customer` system role never counts as
+    above a manager, as a target and as a requested role: its matrix holds
+    `tickets.view_own_customer`, the one key no custom role can hold. So a custom role holding
+    `users.create` alone can create a customer login (any other role needs `users.assign_role`,
+    403 `FORBIDDEN` otherwise), and one holding `users.update`, `users.activate` or `users.delete`
+    can edit, deactivate, activate and erase a customer login. A customer login cannot receive a
+    custom role (409 `CUSTOMER_LOGIN_ROLE`).
+  - **Audit trail.** Every role create, clone, update and delete and every change of a user's
+    `role` or `role_id` (the role a new account is created with included) commits one
+    `role_audit_log` row in the same transaction (`role_created`, `role_updated`, `role_deleted`,
+    `user_role_changed`), with the acting user, how the request authenticated (`bearer` or
+    `api_key`) and the state before and after. A failed audit insert rolls the change back. Rows
+    hold ids, role names, permission keys and scopes only. `GET /roles/audit` lists them, newest
+    first, filterable by `role_id` and `target_user_id`.
+  - **Lock order.** Every governed user write is one transaction that locks the active admins,
+    then the caller and the target in ascending id, then their custom roles in ascending id; a
+    role write locks the caller, then the roles. The caller's permissions are read again under
+    the locks and every rule is decided there, so a request that waited behind a promotion, a
+    widened role or the caller's own demotion is refused. See
+    [docs/CONCURRENCY.md](docs/CONCURRENCY.md), flow "RBAC user-role and role writes".
+  - **Answer order.** `PUT` and `DELETE /roles/{id}` answer `ROLE_NOT_FOUND`, `FORBIDDEN`,
+    `SYSTEM_ROLE_IMMUTABLE`, `ROLE_ESCALATION` and only then `INVALID_PERMISSION` or `ROLE_IN_USE`,
+    so a manager below a role does not learn how many users hold it.
+  - **Tests.** The system-role route matrix of #322 is frozen and stays byte-identical; the eight
+    new routes are listed in `routeMatrixAfterFreeze` and covered by the deny-by-default test (165
+    protected routes) and the own-key test (`permissions.RouteKeys` has 155 entries), which accepts
+    403 `ROLE_ESCALATION` as past the permission check on the five user-write routes only.
+    No SPA change: the Settings screens are #260.
 - **Permission catalogue and deny-by-default enforcement (#347, slice S3 of #259).** The new
   `internal/permissions` package holds the permission tree (`entity.action` leaves, each with an
   `all` or `own` scope where the leaf allows it), the matrices of the four system roles (pinned by
@@ -27,8 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eligibility checks follow keys too: ticket assignee `assignment.ticket_assignee`, customer
   assignee `assignment.customer_assignee`, form default owner and lead owner
   `assignment.form_owner`. What the four system roles are answered is unchanged: the route matrix
-  of #322 replays byte-identical. There is no role API yet (custom roles exist only as rows), and
-  the API-docs gate does not yet require a 403 on a permission-guarded route.
+  of #322 replays byte-identical. Custom roles are created and assigned through the role API of
+  #348 (next entry). The API-docs gate does not yet require a 403 on a permission-guarded route.
 - **System-role route matrix (#322, part of #259), tests only.**
   `cmd/testdata/system_role_route_matrix.json` records what the router built by `setupRouter`
   answers (HTTP status and `error.code`) to each of the four system roles on all 157 protected routes, for

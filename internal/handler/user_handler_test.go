@@ -65,7 +65,7 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 		Role:      models.RoleCustomer,
 	}
 
-	suite.mockService.On("Register", mock.MatchedBy(func(u *models.User) bool {
+	suite.mockService.On("CreateAs", mock.Anything, mock.Anything, mock.MatchedBy(func(u *models.User) bool {
 		return u.Email == payload.Email &&
 			u.FirstName == payload.FirstName &&
 			u.LastName == payload.LastName &&
@@ -73,7 +73,7 @@ func (suite *UserHandlerTestSuite) TestCreate_Success() {
 			u.IsActive == true
 	}), payload.Password).Return(nil).Run(func(args mock.Arguments) {
 		// Simulate the service setting the ID
-		user := args.Get(0).(*models.User)
+		user := args.Get(2).(*models.User)
 		user.ID = 1
 	})
 
@@ -104,7 +104,7 @@ func (suite *UserHandlerTestSuite) TestCreate_EmailConflict() {
 		Role:      models.RoleCustomer,
 	}
 
-	suite.mockService.On("Register", mock.Anything, payload.Password).
+	suite.mockService.On("CreateAs", mock.Anything, mock.Anything, mock.Anything, payload.Password).
 		Return(fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail))
 
 	body, _ := json.Marshal(payload)
@@ -238,7 +238,7 @@ func (suite *UserHandlerTestSuite) TestUpdate_NotFound() {
 
 	payload := UpdateUserRequest{FirstName: "Updated"}
 
-	suite.mockService.On("Update", uint(999), mock.Anything).
+	suite.mockService.On("UpdateAs", mock.Anything, mock.Anything, uint(999), mock.Anything).
 		Return(nil, fmt.Errorf("user %d not found: %w", 999, apperrors.ErrNotFound))
 
 	body, _ := json.Marshal(payload)
@@ -267,7 +267,7 @@ func (suite *UserHandlerTestSuite) TestUpdate_GenuineFailureIsInternalError() {
 	payload := UpdateUserRequest{FirstName: "Updated"}
 
 	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
-	suite.mockService.On("Update", uint(2), mock.Anything).Return(nil, dbErr)
+	suite.mockService.On("UpdateAs", mock.Anything, mock.Anything, uint(2), mock.Anything).Return(nil, dbErr)
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/users/2", bytes.NewBuffer(body))
@@ -296,7 +296,7 @@ func (suite *UserHandlerTestSuite) TestUpdate_EmailConflict() {
 
 	payload := UpdateUserRequest{Email: "taken@example.com"}
 
-	suite.mockService.On("Update", uint(2), mock.Anything).
+	suite.mockService.On("UpdateAs", mock.Anything, mock.Anything, uint(2), mock.Anything).
 		Return(nil, fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail))
 
 	body, _ := json.Marshal(payload)
@@ -318,7 +318,7 @@ func (suite *UserHandlerTestSuite) TestUpdate_EmailConflict() {
 func (suite *UserHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/users/:id", suite.handler.Delete)
 
-	suite.mockService.On("Delete", uint(2)).Return(nil)
+	suite.mockService.On("DeleteAs", mock.Anything, mock.Anything, uint(2)).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
 	rec := httptest.NewRecorder()
@@ -331,7 +331,7 @@ func (suite *UserHandlerTestSuite) TestDelete_Success() {
 func (suite *UserHandlerTestSuite) TestDelete_NotFound() {
 	suite.router.DELETE("/users/:id", suite.handler.Delete)
 
-	suite.mockService.On("Delete", uint(2)).
+	suite.mockService.On("DeleteAs", mock.Anything, mock.Anything, uint(2)).
 		Return(fmt.Errorf("user %d not found: %w", 2, apperrors.ErrNotFound))
 
 	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
@@ -356,7 +356,7 @@ func (suite *UserHandlerTestSuite) TestDelete_GenuineFailureIsInternalError() {
 	// A driver-level failure part-way through an erasure must not be reported
 	// as "there was nobody to erase".
 	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
-	suite.mockService.On("Delete", uint(2)).Return(dbErr)
+	suite.mockService.On("DeleteAs", mock.Anything, mock.Anything, uint(2)).Return(dbErr)
 
 	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil)
 	rec := httptest.NewRecorder()
@@ -573,7 +573,7 @@ func (suite *UserHandlerTestSuite) TestActivate_Success() {
 		IsActive:  true,
 	}
 
-	suite.mockService.On("Update", targetID, map[string]interface{}{"is_active": true}).
+	suite.mockService.On("SetActiveAs", mock.Anything, mock.Anything, targetID, true).
 		Return(activatedUser, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/users/2/activate", nil)
@@ -589,7 +589,7 @@ func (suite *UserHandlerTestSuite) TestActivate_Success() {
 func (suite *UserHandlerTestSuite) TestActivate_NotFound() {
 	suite.router.POST("/users/:id/activate", suite.handler.Activate)
 
-	suite.mockService.On("Update", uint(99), map[string]interface{}{"is_active": true}).
+	suite.mockService.On("SetActiveAs", mock.Anything, mock.Anything, uint(99), true).
 		Return(nil, apperrors.ErrNotFound)
 
 	req := httptest.NewRequest(http.MethodPost, "/users/99/activate", nil)
@@ -609,7 +609,7 @@ func (suite *UserHandlerTestSuite) TestDeactivate_Success() {
 		IsActive:  false,
 	}
 
-	suite.mockService.On("Update", targetID, map[string]interface{}{"is_active": false}).
+	suite.mockService.On("SetActiveAs", mock.Anything, mock.Anything, targetID, false).
 		Return(deactivatedUser, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/users/2/deactivate", nil)

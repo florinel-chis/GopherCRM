@@ -313,3 +313,26 @@ func SetupWebhookRoutes(router *gin.RouterGroup, handler *WebhookHandler) {
 		webhooks.GET("/deliveries", middleware.RequirePermission(permissions.WebhooksManage), handler.ListDeliveries)
 	}
 }
+
+// SetupRoleRoutes mounts the role API (#259 S4, #348): the permission
+// catalogue, the roles and the role audit log. Reading the catalogue and the
+// roles is open to a role manager's reader (roles.view) and to whoever assigns
+// roles to users (users.assign_role); every write needs roles.manage and the
+// audit log roles.audit_view. The static /roles/audit is registered before
+// /roles/:id. The escalation rule, the system-role rule and the in-use rule
+// are the role service's, inside its transaction.
+func SetupRoleRoutes(router *gin.RouterGroup, handler *RoleHandler) {
+	readers := middleware.RequireAnyPermission(permissions.RolesView, permissions.UsersAssignRole)
+	router.GET("/permissions/catalogue", readers, handler.Catalogue)
+
+	roles := router.Group("/roles")
+	{
+		roles.GET("", readers, handler.List)
+		roles.POST("", middleware.RequirePermission(permissions.RolesManage), handler.Create)
+		roles.GET("/audit", middleware.RequirePermission(permissions.RolesAuditView), handler.ListAudit)
+		roles.GET("/:id", readers, handler.Get)
+		roles.PUT("/:id", middleware.RequirePermission(permissions.RolesManage), handler.Update)
+		roles.DELETE("/:id", middleware.RequirePermission(permissions.RolesManage), handler.Delete)
+		roles.POST("/:id/clone", middleware.RequirePermission(permissions.RolesManage), handler.Clone)
+	}
+}

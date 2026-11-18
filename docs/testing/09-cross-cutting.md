@@ -77,7 +77,7 @@ the in-handler role checks (API gate). It is the specification the cases in this
 | `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
 | `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:235`); `/configurations` is admin except `/configurations/ui` |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:299`); `/configurations` is admin except `/configurations/ui` |
 | `/settings/profile`, `/settings/api-keys` | authenticated only | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
 
@@ -615,7 +615,7 @@ into a sign-out test.
   `lead_handler.go:202`) and the query falls back to the repository default ordering — there is no
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
-  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:168` and
+  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:233` and
   `customer_handler.go:274`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -768,7 +768,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:374`) — not a 403.
+  account" (`user_handler.go:466`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4

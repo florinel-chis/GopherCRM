@@ -101,11 +101,11 @@ func assertGuard(t *testing.T, guard gin.HandlerFunc, cases []guardCase) {
 func TestRequirePermission(t *testing.T) {
 	assertGuard(t, RequirePermission(permissions.LeadsView), []guardCase{
 		{name: "admitted by the published set at scope all",
-			published: setOf(grantAll(permissions.LeadsView)), role: models.RoleCustom, wantStatus: http.StatusNoContent},
+			published: setOf(grantAll(permissions.LeadsView)), role: string(models.RoleCustom), wantStatus: http.StatusNoContent},
 		{name: "admitted by the published set at scope own: the guard checks the key, the handler narrows",
-			published: setOf(grantOwn(permissions.LeadsView)), role: models.RoleCustom, wantStatus: http.StatusNoContent},
+			published: setOf(grantOwn(permissions.LeadsView)), role: string(models.RoleCustom), wantStatus: http.StatusNoContent},
 		{name: "refused when the published set holds another key",
-			published: setOf(grantAll(permissions.DealsView)), role: models.RoleCustom,
+			published: setOf(grantAll(permissions.DealsView)), role: string(models.RoleCustom),
 			wantStatus: http.StatusForbidden, wantMessage: "Insufficient permissions"},
 		{name: "a published set wins over the role: a custom set admits whatever user_role says",
 			published: setOf(grantAll(permissions.LeadsView)), role: "customer", wantStatus: http.StatusNoContent},
@@ -120,7 +120,7 @@ func TestRequirePermission(t *testing.T) {
 		{name: "no published set, user_role=support: the system matrix refuses",
 			role: "support", wantStatus: http.StatusForbidden, wantMessage: "Insufficient permissions"},
 		{name: "no published set, user_role=custom: no matrix, refused",
-			role: models.RoleCustom, wantStatus: http.StatusForbidden, wantMessage: "Insufficient permissions"},
+			role: string(models.RoleCustom), wantStatus: http.StatusForbidden, wantMessage: "Insufficient permissions"},
 		{name: "no published set, an unknown role: refused",
 			role: "manager", wantStatus: http.StatusForbidden, wantMessage: "Insufficient permissions"},
 		{name: "neither a set nor a role: Access denied",
@@ -233,8 +233,8 @@ func TestAuthPublishesPermissions(t *testing.T) {
 		leadsOnly int
 	}{
 		{"a system role gets its matrix", sales, "sales", permissions.ForSystemRole("sales").List(), http.StatusNoContent},
-		{"a custom role gets its stored permissions, filtered by the catalogue", custom, models.RoleCustom, customSet, http.StatusNoContent},
-		{"a custom role without permissions gets an empty set", empty, models.RoleCustom, []permissions.Grant{}, http.StatusForbidden},
+		{"a custom role gets its stored permissions, filtered by the catalogue", custom, string(models.RoleCustom), customSet, http.StatusNoContent},
+		{"a custom role without permissions gets an empty set", empty, string(models.RoleCustom), []permissions.Grant{}, http.StatusForbidden},
 	} {
 		for method, authorization := range credentials(c.user) {
 			t.Run(c.name+" ("+method+")", func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -29,8 +30,9 @@ import (
 // user with a Bearer token or an API key: nothing stands in for Auth, so the
 // permission set every request carries is the one Auth resolved.
 //
-// There is no role API yet (S4): custom roles are written through
-// repository.RoleRepository and users.role = 'custom' with role_id.
+// The S3 suites seed custom roles through repository.RoleRepository and
+// users.role = 'custom' with role_id; the role API suites (#348) create them
+// through the routes. The user service is the governed one production builds.
 
 const permissionTestSecret = "permission-integration-secret-0123456789"
 
@@ -59,6 +61,35 @@ type permissionEnv struct {
 
 	tokens map[uint]string
 	seq    int
+
+	hooks *permissionHooks
+}
+
+// permissionHooks lets a suite stop a request between its admission (Auth has
+// resolved the caller's permissions) and its handler, which is where a
+// concurrent change has to land to show that a decision is taken inside the
+// transaction and not from the permissions the request was admitted with.
+type permissionHooks struct {
+	mu       sync.Mutex
+	admitted func(c *gin.Context)
+}
+
+func (h *permissionHooks) middleware(c *gin.Context) {
+	h.mu.Lock()
+	admitted := h.admitted
+	h.mu.Unlock()
+	if admitted != nil {
+		admitted(c)
+	}
+	c.Next()
+}
+
+// onAdmitted installs fn to run for every request right after Auth; nil
+// removes it.
+func (e *permissionEnv) onAdmitted(fn func(c *gin.Context)) {
+	e.hooks.mu.Lock()
+	e.hooks.admitted = fn
+	e.hooks.mu.Unlock()
 }
 
 // permissionResponse is one answer of the router.
@@ -72,6 +103,16 @@ type permissionResponse struct {
 }
 
 func newPermissionEnv(t *testing.T, useMySQL bool) *permissionEnv {
+	t.Helper()
+	return newPermissionEnvWith(t, useMySQL, nil)
+}
+
+// roleRepositoryWrap lets a suite put a decorator around the role and audit
+// repositories the governed services are built on, to inject a failure the
+// real ones cannot be made to produce.
+type roleRepositoryWrap func(repository.RoleRepository, repository.RoleAuditRepository) (repository.RoleRepository, repository.RoleAuditRepository)
+
+func newPermissionEnvWith(t *testing.T, useMySQL bool, wrap roleRepositoryWrap) *permissionEnv {
 	t.Helper()
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
 	gin.SetMode(gin.TestMode)
@@ -123,7 +164,16 @@ func newPermissionEnv(t *testing.T, useMySQL bool) *permissionEnv {
 	router.Use(middleware.ErrorHandler())
 	api := router.Group("")
 	api.Use(middleware.Auth(auth))
-	handler.SetupUserRoutes(api, handler.NewUserHandler(service.NewUserService(userRepo)))
+	hooks := &permissionHooks{}
+	api.Use(hooks.middleware)
+	roleRepo := repository.NewRoleRepository(db)
+	auditRepo := repository.NewRoleAuditRepository(db)
+	if wrap != nil {
+		roleRepo, auditRepo = wrap(roleRepo, auditRepo)
+	}
+	handler.SetupUserRoutes(api, handler.NewUserHandler(service.NewUserService(userRepo,
+		service.WithUserRoleGovernance(roleRepo, auditRepo, txManager))))
+	handler.SetupRoleRoutes(api, handler.NewRoleHandler(service.NewRoleService(roleRepo, auditRepo, userRepo, txManager)))
 	handler.SetupLeadRoutes(api, handler.NewLeadHandler(leadService))
 	handler.SetupCustomerRoutes(api, handler.NewCustomerHandler(customerService))
 	handler.SetupCompanyRoutes(api, handler.NewCompanyHandler(companyService))
@@ -145,6 +195,7 @@ func newPermissionEnv(t *testing.T, useMySQL bool) *permissionEnv {
 		leadService: leadService, customerService: customerService, ticketService: ticketService, taskService: taskService,
 		dealService: dealService, formService: formService, automationService: automationService, automationEngine: automationEngine,
 		tokens: map[uint]string{},
+		hooks:  hooks,
 	}
 }
 
@@ -232,7 +283,13 @@ func (e *permissionEnv) send(authorization, method, path string, body interface{
 		require.NoError(e.t, err)
 		reader = bytes.NewBuffer(encoded)
 	}
-	request := httptest.NewRequest(method, path, reader)
+	return e.serve(authorization, method, path, reader.Bytes())
+}
+
+// serve sends one request with an encoded body. It does not touch the
+// testing.T, so a goroutine other than the test's may call it.
+func (e *permissionEnv) serve(authorization, method, path string, encoded []byte) permissionResponse {
+	request := httptest.NewRequest(method, path, bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", "application/json")
 	if authorization != "" {
 		request.Header.Set("Authorization", authorization)
