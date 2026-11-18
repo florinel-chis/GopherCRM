@@ -26,7 +26,7 @@ import {
   ConfirmationNumber as TicketIcon,
 } from '@mui/icons-material';
 import { dashboardApi } from '@/api/endpoints';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { PipelineChart } from '@/components/dashboard/PipelineChart';
 import { WonThisMonthTile } from '@/components/dashboard/WonThisMonthTile';
 import { useDefaultDealCurrency } from '@/pages/deals/useDefaultDealCurrency';
@@ -91,13 +91,12 @@ const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, trend })
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { can } = usePermissions();
 
   // GET /dashboard/stats is restricted to admin, sales and support on the
   // backend; customer-role users would only receive a 403, so skip the
   // request and the stats section entirely for them.
-  const canViewStats =
-    user?.role === 'admin' || user?.role === 'sales' || user?.role === 'support';
+  const canViewStats = can('dashboard.view');
 
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['dashboard', 'stats'],
@@ -128,9 +127,12 @@ export const Dashboard: React.FC = () => {
   // Deals are admin and sales only (GET /dashboard/pipeline answers 403 to
   // support and customer), so the other roles get neither the widgets nor the
   // request. The API scopes sales to its own deals.
-  const canViewDeals = user?.role === 'admin' || user?.role === 'sales';
+  const canViewDeals = can('deals.view');
   // Ticket creation is admin and support on the API and the /tickets/new route.
-  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
+  const canCreateTicket = can('tickets.create');
+  // The /customers route needs the read key; without it the button would
+  // only lead to /unauthorized.
+  const canViewCustomers = can('customers.view');
 
   const {
     data: pipeline,
@@ -277,13 +279,15 @@ export const Dashboard: React.FC = () => {
           >
             New Task
           </Button>
-          <Button
-            variant="outlined"
-            startIcon={<Business />}
-            onClick={() => navigate('/customers')}
-          >
-            View Customers
-          </Button>
+          {canViewCustomers && (
+            <Button
+              variant="outlined"
+              startIcon={<Business />}
+              onClick={() => navigate('/customers')}
+            >
+              View Customers
+            </Button>
+          )}
         </Box>
       </Paper>
 

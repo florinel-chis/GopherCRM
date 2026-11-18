@@ -12,6 +12,7 @@ import { configurationsApi, type Configuration } from '@/api/endpoints/configura
 import { authApi } from '@/api/endpoints';
 import { createMockUser } from '@/test/factories';
 import { APP_QUERY_DEFAULTS } from '@/api/queryDefaults';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/api/endpoints/configurations', async () => {
   const actual = await vi.importActual<typeof import('@/api/endpoints/configurations')>(
@@ -106,6 +107,7 @@ const Probe: React.FC = () => {
 
 const authValue = (user: AuthContextType['user'], isLoading = false): AuthContextType => ({
   user,
+  permissions: permissionsOf(user),
   isLoading,
   isAuthenticated: !!user,
   login: vi.fn(),
@@ -337,6 +339,13 @@ describe('ConfigurationProvider under AuthProvider', () => {
     vi.clearAllMocks();
     session.generation = 0;
     session.token = null;
+    // A sign-in asks /users/me for the user and its permissions; the answer
+    // is the account the stored session belongs to.
+    vi.mocked(authApi.getCurrentUser).mockImplementation(async () =>
+      session.token === 'access-2'
+        ? createMockUser({ id: 2, email: 'user2@example.com' })
+        : createMockUser({ id: 1, email: 'user1@example.com' }),
+    );
   });
 
   const Controls: React.FC = () => {

@@ -7,6 +7,7 @@ import { labelsApi, tasksApi, usersApi } from '@/api/endpoints';
 import { createMockLabel, createMockTask, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 import { AxiosError, AxiosHeaders } from 'axios';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -45,6 +46,7 @@ vi.mock('@/api/endpoints', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

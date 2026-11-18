@@ -64,26 +64,30 @@ coverage matrix.
 ## Route and role matrix (FEATURES 11.1)
 
 The matrix below is derived from `gocrm-ui/src/routes/index.tsx` (SPA gate),
-`gocrm-ui/src/layouts/MainLayout.tsx` (`navItems[].roles`) and `internal/handler/routes.go` +
+`gocrm-ui/src/layouts/MainLayout.tsx` (`navItems[].permission`) and `internal/handler/routes.go` +
 the in-handler role checks (API gate). It is the specification the cases in this section assert.
+Since #380 the SPA gate is a permission key from `GET /users/me` (`requiredPermission`); the
+system roles holding the key are named in brackets.
 
 | SPA route | SPA gate | Nav item shown to | API guard for the data the page loads |
 |---|---|---|---|
 | `/login`, `/register`, `/unauthorized` | none (public) | — | — |
 | `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`routes.go:105`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
-| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `requiredRole=['admin','sales']` (pathless layout, #120) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
-| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:249`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
-| `/customers/new` | `requiredRole=['admin','sales']` (shares the lead guard, #120) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
-| `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
-| `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
-| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:299`); `/configurations` is admin except `/configurations/ui` |
-| `/settings/profile`, `/settings/api-keys` | authenticated only | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
+| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `leads.view` (list, detail), `leads.create` (new), `leads.update` (edit) [admin, sales] (pathless layouts, #120, #380) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
+| `/customers`, `/customers/:id`, `/customers/:id/edit` | `customers.view` (list, detail) [admin, sales, support]; `customers.update` (edit) [admin, sales] (#380) | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:249`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/customers/new` | `customers.create` [admin, sales] (#120, #380) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
+| `/tickets`, `/tickets/:id` | any of `tickets.view`, `tickets.view_own_customer` [all four] (#380) | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
+| `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`routes/index.tsx:396,413`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
+| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:299`); `/configurations` is admin except `/configurations/ui` |
+| `/settings/profile`, `/settings/api-keys` | authenticated only (no key) | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
 
-The important asymmetry: apart from ticket writes, users and configuration, the SPA has **no**
-route-level role gate. Leads, customers, tickets (read) and tasks are reachable by deep link for
-every authenticated role; the refusal happens at the API and is not surfaced.
+Since #380 every route except `/`, `/settings/profile` and `/settings/api-keys` carries a
+permission key, so a deep link without the key lands on `/unauthorized` instead of a page of
+refused requests. Tickets (read), tasks and labels stay reachable for every system role because
+each of them holds the read key; the customer role is redirected from the customer pages, and
+support and customer from the customer edit form.
 
 ### TC-XCUT-001 — Redirect an unauthenticated visitor from a protected route to /login
 - **Priority:** P0
@@ -119,7 +123,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Steps:** Navigate to `/no-such-page`.
 - **Expected:** The URL stays `/no-such-page` and the 404 page renders (`404`, "Page Not Found",
   "Go to Dashboard"). The catch-all `*` route is declared **outside** the `ProtectedRoute` branch
-  (`routes/index.tsx:156`), so an unknown path is never authentication-gated.
+  (`routes/index.tsx:590`), so an unknown path is never authentication-gated.
 - **Known issue:** The 404 page leaks the existence of the SPA shell to anonymous visitors and its
   "Go to Dashboard" button navigates to `/`, which then bounces to `/login`. Harmless, but the
   two-hop journey is easy to mistake for a bug.
@@ -174,8 +178,8 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Type:** rbac
 - **Preconditions:** Logged in as a `sales` user; a ticket id created earlier by the admin.
 - **Steps:** Navigate to `/tickets/new`, then to `/tickets/<id>/edit`.
-- **Expected:** Both land on `/unauthorized` — the pathless layout route at `routes/index.tsx:80-95`
-  wraps both children in `requiredRole={['admin','support']}`. A direct
+- **Expected:** Both land on `/unauthorized` — the pathless layout routes at `routes/index.tsx:393-424`
+  ask for `tickets.create` and `tickets.update`, which sales does not hold. A direct
   `PUT /api/v1/tickets/<id>` with the sales token returns **403** (`ticket_handler.go:415`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
@@ -216,9 +220,10 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Preconditions:** Register a `customer` through `/register` with `generateTestUser()`; stay logged
   in as that account.
 - **Steps:** Inspect the permanent drawer.
-- **Expected:** Exactly **Dashboard**, **Tasks** and **Settings** (expanding to Profile and API Keys)
-  are present. Leads, Customers, Tickets, Users and Settings → Configuration are absent, because
-  `canViewNavItem` filters on `navItems[].roles` and the `customer` role appears in none of them.
+- **Expected:** Exactly **Dashboard**, **Tasks**, **Labels** and **Settings** (expanding to Profile
+  and API Keys) are present. Leads, Customers, Tickets, Users and Settings → Configuration are
+  absent, because `canViewNavItem` asks `usePermissions().can` for each entry's `permission` key
+  and the `customer` role holds only `tasks.view` and `labels.view` among them.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-011 — Customer deep-links into /customers and /tickets and sees empty pages
@@ -286,7 +291,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   and the row is still listed after a reload.
 - **Known issue:** Frontend gating and backend guard disagree here in the dangerous direction — the
   UI offers an irreversible action that the caller is not allowed to perform. Not listed in
-  FEATURES; the equivalent gating exists on `UserList.tsx:314`.
+  FEATURES; the equivalent gating exists on `UserList.tsx:319`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ---
@@ -787,7 +792,7 @@ into a sign-out test.
   value-typed `Customer` field (`internal/models/ticket.go:25`) serialises as a zero object
   (`"customer":{"id":0,"first_name":"","email":"",...}`). The anonymised `.invalid` placeholder
   address never reaches the client.
-- **Known issue:** `TicketList.tsx:142` and `TicketDetail.tsx:183` read `customer.company_name`,
+- **Known issue:** `TicketList.tsx:144` and `TicketDetail.tsx:182` read `customer.company_name`,
   but the API field is `company` (`internal/models/customer.go:9`), so the Customer column shows
   `N/A` for **live** customers too — an erased and a healthy customer are indistinguishable here.
 - **Automation:** planned — `gocrm-ui/e2e/tests/erasure-ui.spec.ts` (new)

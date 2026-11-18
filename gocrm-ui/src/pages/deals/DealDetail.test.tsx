@@ -17,6 +17,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type { User } from '@/types';
 import { formatDealAmount } from './dealFormat';
 import { DASHBOARD_PIPELINE_KEY, clientWithDashboardPipeline, isInvalidated, withClient } from '@/test/dealQueryCache';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -62,6 +63,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),
@@ -341,7 +343,9 @@ describe('DealDetail', () => {
   });
 
   it('gives sales the stage selector and edit but no delete', async () => {
-    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 2, role: 'sales' })));
+    // Sales holds deals.update at scope own, and the API returns it only its
+    // own deals: the caller is the owner of the deal on screen.
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'sales' })));
     render(<DealDetail />);
     await screen.findByRole('heading', { name: 'Website redesign' });
 

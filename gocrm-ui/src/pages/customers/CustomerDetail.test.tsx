@@ -5,6 +5,7 @@ import { customersApi, dealsApi, ticketsApi } from '@/api/endpoints';
 import { createMockCustomer, createMockCompany, createMockDeal, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 import { useNavigate, useParams } from 'react-router-dom';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -35,6 +36,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),
@@ -192,5 +194,43 @@ describe('CustomerDetail ticket creation', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Tickets' }));
     expect(await screen.findByText('Support Tickets')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New Ticket' })).not.toBeInTheDocument();
+  });
+});
+
+// The /customers/:id/edit route needs customers.update; the button must not
+// lead a read-only caller to /unauthorized.
+describe('CustomerDetail edit button', () => {
+  const mockNavigate = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useNavigate).mockReturnValue(mockNavigate);
+    vi.mocked(useParams).mockReturnValue({ id: '5' });
+    vi.mocked(ticketsApi.getTickets).mockResolvedValue({ data: [], total: 0, page: 1, limit: 10, total_pages: 0 });
+    vi.mocked(dealsApi.getCustomerDeals).mockResolvedValue({ deals: [], total: 0 });
+    vi.mocked(customersApi.getCustomer).mockResolvedValue(
+      createMockCustomer({ id: 5, company_name: 'Bolt Robotics' }),
+    );
+  });
+
+  it('shows Edit only with customers.update', async () => {
+    for (const role of ['admin', 'sales'] as const) {
+      mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role })));
+      const view = render(<CustomerDetail />);
+      await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+      expect(mockNavigate).toHaveBeenCalledWith('/customers/5/edit');
+      expect(screen.getByTestId('DeleteIcon')).toBeInTheDocument();
+      view.unmount();
+    }
+
+    mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'support' })));
+    render(<CustomerDetail />);
+    await screen.findByRole('heading', { level: 4, name: 'Bolt Robotics' });
+
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    // Delete is not gated here: the API refuses it, as before.
+    expect(screen.getByTestId('DeleteIcon')).toBeInTheDocument();
   });
 });

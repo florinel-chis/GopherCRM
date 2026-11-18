@@ -28,7 +28,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ConvertLeadDialog, type ConvertLeadData } from '@/components/ConvertLeadDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { leadsApi, type LeadFilters } from '@/api/endpoints';
 import { leadConversionRefusal } from '@/api/endpoints/configurations';
@@ -93,16 +93,17 @@ export const Component: React.FC = () => {
   const { getLeadConversion, refreshConfigurations } = useConfiguration();
   const conversion = getLeadConversion();
   const conversionSettings = conversion.status === 'ready' ? conversion.settings : null;
-  const { user } = useAuth();
+  const { scopeOf } = usePermissions();
 
-  // GET /leads/export answers admin (every live lead) and sales (own leads)
-  // and ignores the list's filters, so the label says what is downloaded and
-  // no filter state is shown beside it. Other roles never see the button (the
-  // /leads route guard already keeps them off this page; the API answers 403).
+  // GET /leads/export answers leads.export at scope all with every live lead
+  // and at scope own with the caller's leads, and ignores the list's filters,
+  // so the label says what is downloaded and no filter state is shown beside
+  // it. A caller without the key never sees the button (the API answers 403).
+  const exportScope = scopeOf('leads.export');
   const exportLabel =
-    user?.role === 'admin'
+    exportScope === 'all'
       ? 'Export all leads (CSV)'
-      : user?.role === 'sales'
+      : exportScope === 'own'
         ? 'Export my leads (CSV)'
         : null;
   const [exporting, setExporting] = useState(false);

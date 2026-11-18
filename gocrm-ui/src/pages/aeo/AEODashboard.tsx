@@ -40,7 +40,7 @@ import type {
   AEOExportDays,
   AEOExportFormat,
 } from '@/api/endpoints/aeo';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   aeoExportErrorMessage,
@@ -134,9 +134,9 @@ const buildRows = (
 export const Component: React.FC = () => {
   const [days, setDays] = useState<AEOExportDays>(30);
   const [exporting, setExporting] = useState(false);
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showError } = useSnackbar();
-  const canExport = canExportAEO(user?.role);
+  const canExport = canExportAEO(can);
 
   // Exports the answers and citations of the window the dashboard shows.
   const handleExport = async (format: AEOExportFormat) => {

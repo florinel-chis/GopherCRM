@@ -4,6 +4,7 @@ import { render, screen, waitFor } from '@/test/test-utils';
 import { Component as Profile } from './Profile';
 import { authApi } from '@/api/endpoints';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const showSuccess = vi.fn();
 const showError = vi.fn();
@@ -30,6 +31,7 @@ vi.mock('@/hooks/useSnackbar', () => ({
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: adminUser,
+    permissions: permissionsOf(adminUser),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

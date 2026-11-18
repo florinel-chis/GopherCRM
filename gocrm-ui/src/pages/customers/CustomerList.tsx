@@ -16,7 +16,7 @@ import {
 } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { RowActionsMenu } from '@/components/RowActionsMenu';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
@@ -28,12 +28,15 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { user } = useAuth();
+  const { can } = usePermissions();
 
   // POST /customers is admin and sales only; POST /tickets admin and support
   // only. The routes refuse the forms to everyone else, so do not offer them.
-  const canCreateCustomer = user?.role === 'admin' || user?.role === 'sales';
-  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
+  const canCreateCustomer = can('customers.create');
+  // The edit route needs customers.update; without it the row offers no
+  // edit action.
+  const canUpdateCustomer = can('customers.update');
+  const canCreateTicket = can('tickets.create');
   
   const [filters, setFilters] = useState<CustomerFilters>({
     page: 1,
@@ -196,7 +199,9 @@ export const Component: React.FC = () => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(customer) => navigate(`/customers/${customer.id}`)}
-        onEdit={(customer) => navigate(`/customers/${customer.id}/edit`)}
+        onEdit={
+          canUpdateCustomer ? (customer) => navigate(`/customers/${customer.id}/edit`) : undefined
+        }
         onDelete={(customer) => setDeleteDialog({ open: true, customer })}
         rowActions={renderRowActions}
       />

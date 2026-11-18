@@ -15,6 +15,7 @@ import NotificationsIcon from '@mui/icons-material/Notifications';
 import { notificationsApi } from '@/api/endpoints';
 import type { Notification } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { afterNotificationsRead, notificationKeys } from '@/pages/automation/automationQueries';
 import { notificationTarget } from '@/pages/notifications/notificationTarget';
@@ -29,9 +30,9 @@ export const BELL_MENU_LIMIT = 10;
 // queries override those defaults: the count polls every minute and on focus,
 // and every opening of the menu fetches the latest ten.
 export const NotificationBell = () => {
-  const { user, isAuthenticated } = useAuth();
-  const isStaff = isAuthenticated && !!user && user.role !== 'customer';
-  const role = user?.role;
+  const { isAuthenticated } = useAuth();
+  const { can } = usePermissions();
+  const isStaff = isAuthenticated && can('notifications.use');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
@@ -101,7 +102,7 @@ export const NotificationBell = () => {
       markReadMutation.mutate(n.id);
     }
     handleClose();
-    const target = notificationTarget(n, role);
+    const target = notificationTarget(n, can);
     if (target) {
       navigate(target);
     }

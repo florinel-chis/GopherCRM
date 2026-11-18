@@ -24,8 +24,9 @@ regression anchors, not endorsements.
 **Constraints**
 
 - `SetupTaskRoutes` (`internal/handler/routes.go:64`) installs **no** `RequireRole` guard on the
-  `/tasks` group, and the `Tasks` sidebar entry (`MainLayout.tsx:77`) carries no `roles` array. Every
-  authenticated role, customer included, can open `/tasks`. Role differences on that group are
+  `/tasks` group, and the `Tasks` sidebar entry (`MainLayout.tsx:150`) and the `tasks/*` routes ask for
+  `tasks.view`, which all four system roles hold. Every authenticated system role, customer
+  included, can open `/tasks`; a custom role without the key is redirected to `/unauthorized`. Role differences on that group are
   enforced inside the handlers only. The one guarded route it registers is the deal sub-list
   `GET /deals/:id/tasks`, limited to admin and sales.
 - The non-admin cases need sales, support and customer accounts. They must be created through the
@@ -104,7 +105,7 @@ regression anchors, not endorsements.
   1. Log in as the customer.
   2. Observe the sidebar.
   3. Click "Tasks".
-- **Expected:** "Tasks" is present in the sidebar (`MainLayout.tsx:77` declares no `roles`), `/tasks` renders, and `GET /api/v1/tasks` returns 200 with an empty task array for a customer who has never been assigned one. The "Create Task" button is visible even though `POST /tasks` will refuse the role (see TC-TASK-015).
+- **Expected:** "Tasks" is present in the sidebar (`MainLayout.tsx:150` asks for `tasks.view`, which the customer role holds), `/tasks` renders, and `GET /api/v1/tasks` returns 200 with an empty task array for a customer who has never been assigned one. The "Create Task" button is visible even though `POST /tasks` will refuse the role (see TC-TASK-015).
 - **Known issue:** Contrast with Tickets, whose sidebar entry and routes are role-gated. Tasks are visible to a role that cannot meaningfully use them.
 - **Automation:** blocked — needs a customer-role login helper
 
@@ -135,7 +136,7 @@ regression anchors, not endorsements.
   2. Fill Title, Description and Due Date; leave "Assign To (Optional)" untouched.
   3. Click "Create Task".
 - **Expected:** `assigned_to_id` is omitted from the request body, `POST /api/v1/tasks` returns **400**, the error snackbar reads "Failed to create task" and the browser stays on `/tasks/new`. No task is created.
-- **Known issue:** `CreateTaskRequest.AssignedToID` is `binding:"required"` (`internal/handler/task_handler.go:30`) while the field is labelled "Assign To (Optional)" (`TaskForm.tsx:216`) and typed `assigned_to?: number` (`api/endpoints/tasks.ts:19`). `e2e/screenshots/06-tasks.spec.ts` documents the same contradiction in a code comment. Consequently `admin-tasks.spec.ts` "admin can create a new task successfully" and "admin can create task with minimal required data" assert `201` while never selecting an assignee — those two tests cannot pass against the current backend.
+- **Known issue:** `CreateTaskRequest.AssignedToID` is `binding:"required"` (`internal/handler/task_handler.go:30`) while the field is labelled "Assign To (Optional)" (`TaskForm.tsx:215`) and typed `assigned_to?: number` (`api/endpoints/tasks.ts:19`). `e2e/screenshots/06-tasks.spec.ts` documents the same contradiction in a code comment. Consequently `admin-tasks.spec.ts` "admin can create a new task successfully" and "admin can create task with minimal required data" assert `201` while never selecting an assignee — those two tests cannot pass against the current backend.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; the two existing create tests need the assignee step added, and this case pins the 400)
 
 ### TC-TASK-009 — Title is required
@@ -167,7 +168,7 @@ regression anchors, not endorsements.
   2. Fill the form and set Status to "In Progress".
   3. Save, then open the new task's detail page.
 - **Expected:** `POST /api/v1/tasks` returns 201 and the created task's status is **`pending`**, not `in_progress`. The detail page shows a "Pending" chip and a "Start Task" button.
-- **Known issue:** `TaskHandler.Create` hard-codes `Status: models.TaskStatusPending` (`task_handler.go:101`) and ignores the request field, but the create form offers all four statuses (`TaskForm.tsx:186-190`) and `generateTaskData()` even randomises one. The field is decorative on create.
+- **Known issue:** `TaskHandler.Create` hard-codes `Status: models.TaskStatusPending` (`task_handler.go:101`) and ignores the request field, but the create form offers all four statuses (`TaskForm.tsx:185-189`) and `generateTaskData()` even randomises one. The field is decorative on create.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-012 — A due date in the past is accepted
@@ -178,7 +179,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks/new`.
   2. Fill Title and an assignee; set Due Date to yesterday.
   3. Save and open the task detail page.
-- **Expected:** No client-side rejection — `FormDatePicker` only emits a `min` attribute when a `minDate` prop is supplied and `TaskForm` supplies none (`TaskForm.tsx:200-204`, `FormDatePicker.tsx:47-50`) — and the backend performs no due-date validation. `POST /tasks` returns 201. The detail page shows a red "Overdue" chip and renders the due date in the error colour (`TaskDetail.tsx:122`, `138-144`).
+- **Expected:** No client-side rejection — `FormDatePicker` only emits a `min` attribute when a `minDate` prop is supplied and `TaskForm` supplies none (`TaskForm.tsx:199-203`, `FormDatePicker.tsx:47-50`) — and the backend performs no due-date validation. `POST /tasks` returns 201. The detail page shows a red "Overdue" chip and renders the due date in the error colour (`TaskDetail.tsx:122`, `138-144`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-013 — Clearing the due date blocks submission
@@ -213,7 +214,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks` and click "Create Task" (the button is rendered for every role).
   2. Fill Title and Due Date and submit.
 - **Expected:** `POST /api/v1/tasks` returns **403** with the message "Only admin, support, and sales users can create tasks" (`task_handler.go:75`). The UI shows the generic "Failed to create task" snackbar — the server's message is not surfaced — and stays on `/tasks/new`.
-- **Known issue:** The route is reachable and the button visible for a role the handler always refuses; the frontend applies no `requiredRole` to the `tasks/*` routes (`routes/index.tsx:97-111`).
+- **Known issue:** The route is reachable and the button visible for a role the handler always refuses; the frontend guards the `tasks/*` routes with `tasks.view` only (`routes/index.tsx:428-449`), which the customer role holds.
 - **Automation:** blocked — needs a customer-role login helper
 
 ### TC-TASK-016 — Lead and customer links are not reachable from the UI
@@ -286,7 +287,7 @@ regression anchors, not endorsements.
   2. Open "Assign To (Optional)" and select the second user.
   3. Click "Update Task".
 - **Expected:** `PUT /api/v1/tasks/{id}` returns 200 and the stored `assigned_to_id` is the second user's id. The list still shows "Unassigned" in the Assigned To column (TC-TASK-002), so the change must be asserted on the response body, not on the table.
-- **Known issue:** The edit form does not pre-select the current assignee, because `TaskForm.tsx:119-121` reads `task.assignee`, a key the transform never populates. The autocomplete is blank when editing an assigned task, and leaving it blank sends no `assigned_to_id`, which the handler treats as "no reassignment" (`task_handler.go:535`) — so the assignee survives, by luck rather than design.
+- **Known issue:** The edit form does not pre-select the current assignee, because `TaskForm.tsx:118-120` reads `task.assignee`, a key the transform never populates. The autocomplete is blank when editing an assigned task, and leaving it blank sends no `assigned_to_id`, which the handler treats as "no reassignment" (`task_handler.go:535`) — so the assignee survives, by luck rather than design.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-022 — A completed task cannot be moved to another status
@@ -484,7 +485,7 @@ regression anchors, not endorsements.
   2. Read the "Due Date" cell on `/tasks`.
   3. Open `/tasks/{id}`.
   4. Open `/tasks/{id}/edit`.
-- **Expected:** The form posts `due_date` as a full ISO-8601 timestamp (`TaskForm.tsx:128`, midnight local time). The list renders `MMM dd, yyyy`; the detail page renders `MMM dd, yyyy (in N months)`; the edit form's date input is repopulated as `yyyy-MM-dd` with the same calendar day.
+- **Expected:** The form posts `due_date` as a full ISO-8601 timestamp (`TaskForm.tsx:127`, midnight local time). The list renders `MMM dd, yyyy`; the detail page renders `MMM dd, yyyy (in N months)`; the edit form's date input is repopulated as `yyyy-MM-dd` with the same calendar day.
 - **Known issue:** FEATURES.md row 6.8 notes there is no dedicated E2E due-date test; the previously claimed "manage due dates" / "date validation" spec titles do not exist.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
@@ -543,7 +544,7 @@ regression anchors, not endorsements.
   1. Navigate to `/users/{id}` for one of them.
   2. Open the tasks tab.
 - **Expected:** `GET /api/v1/tasks?assigned_to={id}` returns 200 with **every** task in the system, because `assigned_to` is not a parameter the handler reads. The tab therefore lists other users' tasks as if they belonged to this user.
-- **Known issue:** `UserDetail.tsx:94-97` sends a filter the API ignores; same root cause as TC-TASK-029. Not recorded in FEATURES.md.
+- **Known issue:** `UserDetail.tsx:96-99` sends a filter the API ignores; same root cause as TC-TASK-029. Not recorded in FEATURES.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---

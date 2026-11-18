@@ -5,6 +5,8 @@ import { Component as LeadDetail } from './LeadDetail';
 import { Component as LeadList } from './LeadList';
 import { configurationsApi, leadsApi, type Configuration } from '@/api/endpoints';
 import { createMockLead, createMockUser } from '@/test/factories';
+import { permissionsOf } from '@/test/permissions';
+import type { User } from '@/types';
 
 // The lead pages under the real configuration provider, for a signed-in
 // admin: what they offer while the conversion rules load, after the load
@@ -26,10 +28,11 @@ vi.mock('@/api/endpoints', async () => {
   };
 });
 
-const signedIn = vi.hoisted(() => ({ user: null as unknown }));
+const signedIn = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: signedIn.user,
+    permissions: permissionsOf(signedIn.user),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

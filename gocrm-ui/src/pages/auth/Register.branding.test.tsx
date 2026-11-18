@@ -5,10 +5,12 @@ import { MemoryRouter } from 'react-router-dom';
 import { Register } from './Register';
 import { ConfigurationProvider } from '@/contexts/ConfigurationContext';
 import { authApi, configurationsApi } from '@/api/endpoints';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: null,
+    permissions: permissionsOf(null),
     isLoading: false,
     isAuthenticated: false,
     login: vi.fn(),

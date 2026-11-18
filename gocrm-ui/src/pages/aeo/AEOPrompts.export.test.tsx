@@ -4,6 +4,7 @@ import { Component as AEOPrompts } from './AEOPrompts';
 import { aeoApi, type AEOAnswer, type AEOPrompt, type AEORun } from '@/api/endpoints/aeo';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 const showError = vi.fn();
@@ -77,6 +78,7 @@ const runs: AEORun[] = [
 const signIn = (role: User['role']) => {
   mockUseAuth.mockReturnValue({
     user: createMockUser({ role }),
+    permissions: permissionsOf(createMockUser({ role })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

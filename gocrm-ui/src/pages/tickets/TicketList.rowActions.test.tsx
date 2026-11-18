@@ -5,6 +5,7 @@ import { Component as TicketList } from './TicketList';
 import { ticketsApi, type TicketFilters } from '@/api/endpoints';
 import { createMockTicket, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -26,6 +27,7 @@ vi.mock('@/hooks/useAuth', () => ({
 const signedInAs = (role: User['role']) =>
   mockUseAuth.mockReturnValue({
     user: createMockUser({ id: 1, role }),
+    permissions: permissionsOf(createMockUser({ id: 1, role })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

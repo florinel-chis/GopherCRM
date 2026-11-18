@@ -4,6 +4,7 @@ import { Component as FormList } from './FormList';
 import { formsApi, type Form } from '@/api/endpoints/forms';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 const mockNavigate = vi.fn();
@@ -32,6 +33,7 @@ vi.mock('@/api/endpoints/forms', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

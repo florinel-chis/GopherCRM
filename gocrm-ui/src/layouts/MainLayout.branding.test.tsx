@@ -8,6 +8,7 @@ import {
 } from '@/contexts/configuration-context';
 import type { Configuration } from '@/api/endpoints/configurations';
 import { createMockUser } from '@/test/factories';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/components/layout/NotificationBell', () => ({
   NotificationBell: () => <div data-testid="notification-bell" />,
@@ -16,6 +17,7 @@ vi.mock('@/components/layout/NotificationBell', () => ({
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: createMockUser({ role: 'admin' }),
+    permissions: permissionsOf(createMockUser({ role: 'admin' })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

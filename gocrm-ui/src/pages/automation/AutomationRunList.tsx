@@ -16,7 +16,7 @@ import {
 } from '@mui/material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { automationApi, type AutomationRunFilters, type AutomationRunSortColumn } from '@/api/endpoints';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   AUTOMATION_ENTITY_TYPES,
   AUTOMATION_RUN_STATUSES,
@@ -96,8 +96,8 @@ const idText = (value: number | undefined): string => (value === undefined ? '' 
 
 export const Component: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const isAdmin = user?.role === 'admin';
+  const { can } = usePermissions();
+  const canManageRules = can('automation.rules_manage');
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Admin and sales only (route guard); the API narrows sales to the leads and
@@ -324,7 +324,7 @@ export const Component: React.FC = () => {
             </Select>
           </FormControl>
 
-          {isAdmin && (
+          {canManageRules && (
             <RuleFilterAutocomplete
               value={urlFilters.rule_id}
               onChange={(ruleId) => {

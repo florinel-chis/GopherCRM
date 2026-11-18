@@ -36,6 +36,7 @@ import {
 import { FormSelect, FormSwitch, FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi } from '@/api/endpoints/users';
 import {
@@ -615,11 +616,15 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   const isEditMode = Boolean(id);
-  // Support reads forms but never writes them; the API enforces the same.
-  const canManage = user?.role === 'admin' || user?.role === 'sales';
+  // A caller without forms.manage reads forms but never writes them; the API
+  // enforces the same.
+  const canManage = can('forms.manage');
+  // The default-owner picker lists the users through GET /users.
+  const canListUsers = can('users.view');
   const readOnly = !canManage;
 
   const [typeMenuAnchor, setTypeMenuAnchor] = useState<null | HTMLElement>(null);
@@ -640,11 +645,12 @@ export const Component: React.FC = () => {
     enabled: isEditMode,
   });
 
-  // Only admins may list users; a sales user owns what they create.
+  // Without users.view the list is not asked for; such a caller owns what it
+  // creates.
   const { data: userPage } = useQuery({
     queryKey: ['users', { limit: 100 }],
     queryFn: () => usersApi.getUsers({ limit: 100 }),
-    enabled: user?.role === 'admin',
+    enabled: canListUsers,
   });
 
   useEffect(() => {
@@ -654,13 +660,13 @@ export const Component: React.FC = () => {
     }
   }, [form, reset]);
 
-  // A sales user cannot pick from the user list, so their own account is the
+  // A caller that cannot pick from the user list gets its own account as the
   // only sensible default for a brand-new form.
   useEffect(() => {
-    if (!isEditMode && user && user.role !== 'admin') {
+    if (!isEditMode && user && !canListUsers) {
       setValue('default_owner_id', user.id);
     }
-  }, [isEditMode, user, setValue]);
+  }, [isEditMode, user, canListUsers, setValue]);
 
   const createMutation = useMutation({
     mutationFn: (data: CreateFormData) => formsApi.create(data),

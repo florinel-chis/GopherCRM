@@ -19,7 +19,7 @@ import { Add as AddIcon, Search as SearchIcon } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, type DealFilters, type DealSortColumn } from '@/api/endpoints';
 import { DEAL_STAGES, DEAL_STAGE_VALUES, isClosedDealStage, type Deal, type DealStage } from '@/types';
@@ -59,7 +59,7 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
   const hasQuery = searchParams.toString() !== '';
 
@@ -71,10 +71,10 @@ export const Component: React.FC = () => {
     }
   }, [hasQuery, navigate]);
 
-  // Deals are admin and sales only on the API; the route guard keeps the
-  // other roles out, and only admin deletes.
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
+  // The route guard asks for deals.view; the writes carry their own keys.
+  const canCreate = can('deals.create');
+  const canUpdate = can('deals.update');
+  const canDelete = can('deals.delete');
 
   const [state, setState] = useState<ListState>(() => ({
     page: 1,
@@ -212,7 +212,7 @@ export const Component: React.FC = () => {
         <Typography variant="h4">Deals</Typography>
         <Box display="flex" gap={2} alignItems="center">
           <DealViewToggle value="list" />
-          {canWrite && (
+          {canCreate && (
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/deals/new')}>
               New Deal
             </Button>
@@ -286,7 +286,7 @@ export const Component: React.FC = () => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(deal) => navigate(`/deals/${deal.id}`)}
-        onEdit={canWrite ? (deal) => navigate(`/deals/${deal.id}/edit`) : undefined}
+        onEdit={canUpdate ? (deal) => navigate(`/deals/${deal.id}/edit`) : undefined}
         onDelete={canDelete ? (deal) => setDeleteDialog({ open: true, deal }) : undefined}
       />
 

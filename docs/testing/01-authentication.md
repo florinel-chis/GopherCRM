@@ -901,8 +901,8 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** Seeded admin exists.
 - **Steps:** Log in as the admin, then navigate to `/users`.
 - **Expected:** The user list renders and the URL does not contain `/login` or `/unauthorized`.
-  `/users` sits under the pathless `ProtectedRoute requiredRole="admin"` layout route in
-  `routes/index.tsx`, and `GET /api/v1/users` passes its `RequireRole(admin)` guard
+  `/users` sits under the pathless `ProtectedRoute requiredPermission="users.view"` layout route in
+  `routes/index.tsx` (the key comes from `GET /users/me`), and `GET /api/v1/users` passes its `RequireRole(admin)` guard
   (`internal/handler/routes.go:13`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "logged in user can access protected routes"
 

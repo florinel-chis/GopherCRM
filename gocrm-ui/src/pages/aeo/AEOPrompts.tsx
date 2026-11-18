@@ -53,7 +53,7 @@ import { AxiosError } from 'axios';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   aeoApi,
@@ -121,15 +121,15 @@ type EditPromptFormData = z.infer<typeof editPromptSchema>;
 
 export const Component: React.FC = () => {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   // Matches the API: admin and sales may add, edit and toggle prompts; only an
   // admin may delete. Support is read-only, customers never reach the route.
-  const canManage = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
+  const canManage = can('aeo.manage');
+  const canDelete = can('aeo.delete_prompts');
   // Exporting is a read: support may export although it cannot manage prompts.
-  const canExport = canExportAEO(user?.role);
+  const canExport = canExportAEO(can);
 
   const [days, setDays] = useState<number>(30);
   const [selected, setSelected] = useState<AEOPrompt | null>(null);

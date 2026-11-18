@@ -5,6 +5,7 @@ import { Component as LabelList } from './LabelList';
 import { labelsApi } from '@/api/endpoints';
 import { createMockLabel, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 
@@ -23,6 +24,7 @@ vi.mock('@/api/endpoints', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

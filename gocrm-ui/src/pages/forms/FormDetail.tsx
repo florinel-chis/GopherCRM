@@ -38,7 +38,7 @@ import {
 import { formatDate } from '@/utils/date';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   formsApi,
@@ -80,11 +80,11 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
-  const canManage = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
+  const canManage = can('forms.manage');
+  const canDelete = can('forms.delete');
 
   const [status, setStatus] = useState('');
   const [page, setPage] = useState(0);

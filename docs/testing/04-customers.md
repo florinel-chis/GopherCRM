@@ -82,7 +82,7 @@ depend on that are flagged.
 - **Steps:**
   1. Click "Customers" in the sidebar.
   2. Wait for `GET /api/v1/customers`.
-- **Expected:** The nav item is present (`MainLayout.tsx` lists `roles: ['admin','sales','support']`),
+- **Expected:** The nav item is present (`MainLayout.tsx` shows it with `permission: 'customers.view'`, which sales holds),
   the request returns 200 and the same unfiltered set an admin sees — `CustomerHandler.List` applies
   no ownership filter for sales.
 - **Automation:** blocked — needs a role-login helper; only `AdminAuthHelper` exists
@@ -98,7 +98,7 @@ depend on that are flagged.
   3. Click the Edit (pencil) icon, change the Company Name, click "Update Customer".
   4. Return to `/customers`, click the Delete (bin) icon on the same row and confirm.
 - **Expected:** Step 1–2: 200, and the view / edit / delete icon buttons all render — `DataTable`
-  renders them whenever `onEdit`/`onDelete` are supplied and `CustomerList.tsx:201-202` supplies them
+  renders them whenever `onEdit`/`onDelete` are supplied and `CustomerList.tsx:206-207` supplies them
   unconditionally, with no role check. Step 3: `PUT /api/v1/customers/{id}` returns 403 with
   `error.message` "Insufficient permissions to update customers"; the page stays on the edit form and
   an error snackbar reads "Failed to update customer". Step 4: `DELETE /api/v1/customers/{id}` returns
@@ -109,7 +109,7 @@ depend on that are flagged.
   not mention permissions.
 - **Automation:** blocked — needs a role-login helper
 
-### TC-CUST-005 — Customer-role user reaches /customers by deep link and sees an empty table
+### TC-CUST-005 — Customer-role user is redirected from /customers
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** A customer-role account registered through `/register` (the public endpoint
@@ -118,18 +118,23 @@ depend on that are flagged.
   1. Confirm the sidebar has no "Customers" item.
   2. Navigate directly to `/customers`.
   3. Observe the `GET /api/v1/customers` response and the rendered page.
-- **Expected:** The nav item is hidden. The deep link still renders the page — `src/routes/index.tsx`
-  wraps `customers*` in the bare `ProtectedRoute` with **no** `requiredRole`, so there is no redirect
-  to `/unauthorized`. `GET /api/v1/customers` returns **403** with "Insufficient permissions to list
-  customers". The page shows the "Customers" heading (no "Add Customer" button, which is admin and
-  sales only since #120) and a table with zero rows; no error message is displayed, because `CustomerList` never reads the query's `error` state
-  and the axios interceptor only acts on 401.
-- **Known issue:** A forbidden page renders as an empty-but-normal page. Compare `/users` and the
-  ticket forms (`/tickets/new`, `/tickets/:id/edit`), which are role-gated in the router, as are
-  `/leads/*` and `/customers/new` since #120 (see TC-LEAD-004 and TC-CUST-013). The customer list,
-  detail and edit routes stay open on purpose: the API scopes them itself.
+- **Expected:** The nav item is hidden. Since #380 the deep link lands on `/unauthorized` ("Access
+  Denied"): `src/routes/index.tsx` puts `customers` and `customers/:id` under
+  `ProtectedRoute requiredPermission="customers.view"` and `customers/:id/edit` under
+  `requiredPermission="customers.update"`, and the customer role holds neither key. No
+  `GET /api/v1/customers` request is made and no empty table is shown; a direct request with the
+  customer's token still returns **403** with "Insufficient permissions to list customers". The
+  dashboard no longer offers the customer role "View Customers" (TC-DASH-016).
+- **Support:** support holds `customers.view` but not `customers.update`: the list and the detail
+  page render without the row edit action and without the "Edit" button, and a deep link to
+  `/customers/:id/edit` lands on `/unauthorized`. The Delete controls on both pages are still
+  shown to support and the API refuses the request (not gated, as before #380).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new, or a dedicated
-  `customer-role-access.spec.ts`)
+  `customer-role-access.spec.ts`). Covered in Vitest by `src/routes/index.test.tsx` "keep the
+  customer list reachable for support, redirect customer users, and redirect support from the
+  customer edit form", `src/routes/index.permissions.test.tsx`,
+  `CustomerList.rowActions.test.tsx` "shows the edit action only with customers.update" and
+  `CustomerDetail.test.tsx` "shows Edit only with customers.update".
 
 ---
 
@@ -271,7 +276,8 @@ depend on that are flagged.
   3. With the support user's token, `POST /api/v1/customers` with valid `generateCustomerData()`
      values.
 - **Expected:** Step 1: no "Add Customer" button. Step 2: redirect to `/unauthorized` ("Access
-  Denied") — since #120 the route sits under an admin+sales `ProtectedRoute`. Step 3: the
+  Denied") — since #120 the route sits under a `ProtectedRoute` (since #380
+  `requiredPermission="customers.create"`, held by admin and sales). Step 3: the
   route-level `middleware.RequireRole(admin, sales)` answers **403**.
 - **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
   routes" and `CustomerList.rowActions.test.tsx` "shows Add Customer to …"; the browser case is
@@ -429,7 +435,7 @@ depend on that are flagged.
   2. Observe the entries and check the network tab.
 - **Expected:** Exactly two list items: "Customer account created — System — {created_at}" and
   "Customer information updated — Unknown — {updated_at}". No activity request is issued.
-- **Known issue:** The list is a hardcoded literal in `CustomerDetail.tsx:101-116`; there is no
+- **Known issue:** The list is a hardcoded literal in `CustomerDetail.tsx:104-119`; there is no
   activity store. The second entry always attributes to "Unknown" because it reads
   `customer.owner?.email` and `models.Customer` has no `owner` field.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
@@ -564,7 +570,7 @@ depend on that are flagged.
   2. Type a 6-character term into the search box at normal speed.
 - **Expected:** Six `GET /api/v1/customers` requests, one per character — `handleSearch` sets state
   directly with no debounce and the search value is part of the TanStack Query key
-  (`CustomerList.tsx:48-51, 142-144`).
+  (`CustomerList.tsx:51-54, 142-144`).
 - **Known issue:** Undebounced search against a route covered by `RateLimitModerate` (120/min,
   burst 30); a fast typist on a long term can approach the limit. Compare the roadmap note on rate
   limiting having no integration coverage (FEATURES.md 11.2 / G22).
@@ -793,7 +799,7 @@ depend on that are flagged.
   parameter is silently discarded and the full ticket list comes back with 200.
 - **Known issue:** A customer-scoped panel headed "Support Tickets" shows other customers' ticket
   subjects. The correctly scoped route exists and is ownership-checked
-  (`TicketHandler.ListByCustomer`), but `CustomerDetail.tsx:79-83` calls
+  (`TicketHandler.ListByCustomer`), but `CustomerDetail.tsx:82-86` calls
   `ticketsApi.getTickets({ customer_id })` instead. Related to the G27 IDOR that was fixed on the
   other route; FEATURES.md 5.9 records "still no E2E test" but not this frontend mismatch.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)

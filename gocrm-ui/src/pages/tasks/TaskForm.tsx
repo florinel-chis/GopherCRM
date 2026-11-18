@@ -26,7 +26,7 @@ import { LabelChip } from '@/components/LabelChip';
 import { nextPaletteColor } from '@/components/labelColors';
 import { Loading } from '@/components/Loading';
 import { DealAutocomplete } from '@/components/DealAutocomplete';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   labelsApi,
@@ -84,19 +84,18 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
   const isEditMode = !!id;
 
-  // POST /labels is limited to admin, sales and support, exactly as on the
-  // label management page. Offering the inline "Add ..." option to a customer
-  // would only ever produce a 403, so it is not offered at all.
-  const canCreateLabels =
-    user?.role === 'admin' || user?.role === 'sales' || user?.role === 'support';
+  // POST /labels needs labels.create, exactly as on the label management
+  // page. Offering the inline "Add ..." option without it would only ever
+  // produce a 403, so it is not offered at all.
+  const canCreateLabels = can('labels.create');
 
-  // Only admin and sales may list deals (GET /deals), so only they get the
-  // picker; support and customer never send deal_id and leave the link alone.
-  const canLinkDeal = user?.role === 'admin' || user?.role === 'sales';
+  // The picker lists deals through GET /deals (deals.view); a caller without
+  // the key never sends deal_id and leaves the link alone.
+  const canLinkDeal = can('deals.view');
 
   const [selectedAssignee, setSelectedAssignee] = useState<User | null>(null);
   const [selectedLabels, setSelectedLabels] = useState<Label[]>([]);

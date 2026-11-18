@@ -15,7 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import { tasksApi } from '@/api/endpoints';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import type { Deal, Task } from '@/types';
 import { formatDate } from '@/utils/date';
 
@@ -45,10 +45,11 @@ export interface DealTasksSectionProps {
  * stale.
  */
 export const DealTasksSection: React.FC<DealTasksSectionProps> = ({ deal }) => {
-  const { user } = useAuth();
-  // The API gives sales users only the tasks assigned to them (and counts only
-  // those in the total); say so, so a short list is not read as complete.
-  const assignedOnly = user?.role === 'sales';
+  const { scopeOf } = usePermissions();
+  // The API gives a caller holding tasks.view at scope own only the tasks
+  // assigned to it (and counts only those in the total); say so, so a short
+  // list is not read as complete.
+  const assignedOnly = scopeOf('tasks.view') === 'own';
   const [paging, setPaging] = useState({ page: 0, limit: 5 });
 
   const { data, isError } = useQuery({

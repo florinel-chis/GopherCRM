@@ -5,6 +5,7 @@ import { formsApi, type Form } from '@/api/endpoints/forms';
 import { usersApi } from '@/api/endpoints/users';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 // The submission action of the builder (#335): one choice between a lead, a
 // support ticket (#213) and nothing, holding the server's rules — a ticket form
@@ -53,6 +54,7 @@ const TICKET_HELPER = /A confirmed submission opens a ticket for the live custom
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Permission-driven routes, navigation and buttons in the SPA (#380, first part of S6 of
+  #259).** The SPA no longer decides by role name. `AuthProvider` publishes the effective
+  permissions of `GET /users/me` on session restore, after a login, after a registration and
+  again whenever the window regains focus; the new `usePermissions` hook exposes `can(key)` and
+  `scopeOf(key)`; `ProtectedRoute` takes `requiredPermission` (one key or an any-of list) in place
+  of `requiredRole`; and the route table, the sidebar and every page control that read the
+  signed-in user's role now ask for the permission key of the API call behind them. A user on a
+  custom role therefore sees what its role grants. A missing or empty permission list grants
+  nothing, whatever the role is called. `/tickets` and `/tickets/:id` (any of `tickets.view`,
+  `tickets.view_own_customer`), the task pages (`tasks.view`) and `/labels` (`labels.view`) gain
+  a guard that excludes no system role. A refused focus refetch (401 or 403) signs the tab out;
+  any other failure keeps the session. Frontend only: no route, schema or API change.
+  - **Changed for the system roles.** The `customer` role is redirected to `/unauthorized` from
+    `/customers` and `/customers/:id` (both now need `customers.view`; before, the pages rendered
+    empty behind a 403) and no longer sees the dashboard "View Customers" button. `support` and
+    `customer` are redirected from `/customers/:id/edit` (now `customers.update`), and `support`
+    no longer sees the customer Edit controls on the customer list and detail pages. Everything
+    else is unchanged for admin, sales, support and customer; the customer Delete controls stay
+    as they were (shown, and refused by the API for support).
+  - **Not in this change.** The role screens in Settings, the role picker of the user form and
+    the browser spec for custom roles belong to the second part of #260; until then a custom
+    role is created and assigned through the API and its user's role label shows the raw value.
+  - **Tests.** `usePermissions.test.tsx`, `ProtectedRoute.permissions.test.tsx`,
+    `MainLayout.permissions.test.tsx`, `AuthContext.permissions.test.tsx`,
+    `routes/index.permissions.test.tsx`, `TicketDetail.permissions.test.tsx`,
+    `permissions/noRoleGating.test.ts` (fails on any role-name gate in the source) and
+    `permissions/systemRoleFixture.test.ts` (the UI test fixture equals
+    `internal/permissions/testdata/system_roles.golden.json`).
 - **Least-privilege integration user, documented and tested (#211).** `docs/AUTHORIZATION.md`
   has a new section "Least-privilege integration user": a custom role holding only the keys the
   integration needs, a dedicated user on it and an API key issued to that user, with the keys for

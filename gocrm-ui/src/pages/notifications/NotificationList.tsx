@@ -24,7 +24,7 @@ import {
 import { DoneAll as DoneAllIcon, MarkEmailRead as MarkReadIcon } from '@mui/icons-material';
 import { notificationsApi, type NotificationFilters } from '@/api/endpoints';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { afterNotificationsRead, notificationKeys } from '@/pages/automation/automationQueries';
 import { AUTOMATION_DATETIME } from '@/pages/automation/automationFormat';
@@ -42,7 +42,7 @@ type ReadFilter = 'all' | 'unread';
  * every notification query, so the app bar's bell follows.
  */
 export const Component: React.FC = () => {
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
   const [paging, setPaging] = useState({ page: 0, limit: 10 });
@@ -159,7 +159,7 @@ export const Component: React.FC = () => {
                   </TableRow>
                 ) : (
                   notifications.map((n) => {
-                    const target = notificationTarget(n, user?.role);
+                    const target = notificationTarget(n, can);
                     return (
                       <TableRow key={n.id} hover data-testid="notification-row" data-read={String(!!n.read_at)}>
                         <TableCell>

@@ -33,7 +33,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { customersApi, dealsApi, ticketsApi } from '@/api/endpoints';
 import { DealsSection } from '@/pages/deals/DealsSection';
@@ -66,12 +66,15 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   // Deals are admin and sales only on the API; support sees the customer
   // without the section.
-  const canSeeDeals = user?.role === 'admin' || user?.role === 'sales';
+  const canSeeDeals = can('deals.view');
+  const canCreateDeal = can('deals.create');
+  // The edit route needs customers.update.
+  const canUpdateCustomer = can('customers.update');
   // Ticket creation is admin and support on the API and the /tickets/new route.
-  const canCreateTicket = user?.role === 'admin' || user?.role === 'support';
+  const canCreateTicket = can('tickets.create');
 
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -137,13 +140,15 @@ export const Component: React.FC = () => {
               Create Ticket
             </Button>
           )}
-          <Button
-            variant="outlined"
-            startIcon={<EditIcon />}
-            onClick={() => navigate(`/customers/${id}/edit`)}
-          >
-            Edit
-          </Button>
+          {canUpdateCustomer && (
+            <Button
+              variant="outlined"
+              startIcon={<EditIcon />}
+              onClick={() => navigate(`/customers/${id}/edit`)}
+            >
+              Edit
+            </Button>
+          )}
           <IconButton
             color="error"
             onClick={() => setDeleteDialog(true)}
@@ -373,7 +378,7 @@ export const Component: React.FC = () => {
             queryKey={['customer', id, 'deals']}
             fetchDeals={(params) => dealsApi.getCustomerDeals(Number(id), params)}
             newDealPath={`/deals/new?customer_id=${customer.id}`}
-            canWrite
+            canWrite={canCreateDeal}
             headingId="customer-deals-heading"
             emptyText="No deals for this customer"
           />

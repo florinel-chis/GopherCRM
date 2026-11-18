@@ -18,7 +18,7 @@ import { Add as AddIcon, Search as SearchIcon } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { productsApi, type ProductFilters, type ProductSortColumn } from '@/api/endpoints';
 import type { Product } from '@/types';
@@ -42,12 +42,13 @@ interface ListState {
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
-  // Admin and sales read the catalogue (the route guard keeps the other roles
-  // out); only admin writes it.
-  const isAdmin = user?.role === 'admin';
+  // The route guard asks for products.view; each write has its own key.
+  const canCreate = can('products.create');
+  const canUpdate = can('products.update');
+  const canDelete = can('products.delete');
 
   const [state, setState] = useState<ListState>({ page: 1, limit: 10, search: '', active: '' });
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; product?: Product }>({ open: false });
@@ -140,7 +141,7 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Products</Typography>
-        {isAdmin && (
+        {canCreate && (
           <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/products/new')}>
             New Product
           </Button>
@@ -199,8 +200,8 @@ export const Component: React.FC = () => {
         sortOrder={state.sort_order ?? 'asc'}
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
-        onEdit={isAdmin ? (product) => navigate(`/products/${product.id}/edit`) : undefined}
-        onDelete={isAdmin ? (product) => setDeleteDialog({ open: true, product }) : undefined}
+        onEdit={canUpdate ? (product) => navigate(`/products/${product.id}/edit`) : undefined}
+        onDelete={canDelete ? (product) => setDeleteDialog({ open: true, product }) : undefined}
       />
 
       <ConfirmDialog

@@ -23,7 +23,7 @@ import {
   MoreVert as MoreVertIcon,
 } from '@mui/icons-material';
 import { AxiosError } from 'axios';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, type ChangeDealStageData, type DealFilters } from '@/api/endpoints';
 import {
@@ -301,9 +301,9 @@ const BoardColumn: React.FC<BoardColumnProps> = ({
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
+  const canCreate = can('deals.create');
 
   // Won and lost start collapsed: their headers still show count and totals.
   const [expandedClosed, setExpandedClosed] = useState<Record<'won' | 'lost', boolean>>({
@@ -356,7 +356,7 @@ export const Component: React.FC = () => {
         <Typography variant="h4">Deal pipeline</Typography>
         <Box display="flex" gap={2} alignItems="center">
           <DealViewToggle value="board" />
-          {canWrite && (
+          {canCreate && (
             <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/deals/new')}>
               New Deal
             </Button>

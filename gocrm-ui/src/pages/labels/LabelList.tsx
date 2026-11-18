@@ -38,7 +38,7 @@ import {
 } from '@/components/labelColors';
 import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { labelsApi, type CreateLabelData } from '@/api/endpoints';
 import type { Label } from '@/types';
@@ -54,13 +54,14 @@ type LabelFormData = z.infer<typeof labelSchema>;
 
 export const Component: React.FC = () => {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
-  // Mirrors the API policy: admin, sales and support may create and edit
-  // labels; only an admin may delete one. Customers are read-only.
-  const canManage = user?.role === 'admin' || user?.role === 'sales' || user?.role === 'support';
-  const canDelete = user?.role === 'admin';
+  // Mirrors the API: labels.create, labels.update and labels.delete each
+  // open their own control; a caller with labels.view alone is read-only.
+  const canCreate = can('labels.create');
+  const canUpdate = can('labels.update');
+  const canDelete = can('labels.delete');
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Label | null>(null);
@@ -167,7 +168,7 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Labels</Typography>
-        {canManage && (
+        {canCreate && (
           <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
             Create Label
           </Button>
@@ -219,7 +220,7 @@ export const Component: React.FC = () => {
                     <TableCell align="right">{label.task_count ?? 0}</TableCell>
                     <TableCell align="right">
                       <Box display="flex" gap={1} justifyContent="flex-end">
-                        {canManage && (
+                        {canUpdate && (
                           <Tooltip title="Edit label">
                             <IconButton size="small" onClick={() => openEdit(label)}>
                               <EditIcon fontSize="small" />

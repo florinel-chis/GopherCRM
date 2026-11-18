@@ -27,7 +27,7 @@ import {
 import { AxiosError } from 'axios';
 import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { aeoApi, type AEOProfile, type SaveAEOProfileData } from '@/api/endpoints/aeo';
 import { configurationsApi } from '@/api/endpoints/configurations';
@@ -364,14 +364,14 @@ const ProviderKeysCard: React.FC = () => {
 
 export const Component: React.FC = () => {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   // The API allows admin and sales to write the profile and to start a run;
   // support is read-only here, and customers never reach the route at all.
-  const canManage = user?.role === 'admin' || user?.role === 'sales';
+  const canManage = can('aeo.manage');
   // Only admins may read or write configurations, so only they get the key card.
-  const isAdmin = user?.role === 'admin';
+  const canEditSettings = can('settings.update');
 
   const {
     data: profile,
@@ -532,8 +532,8 @@ export const Component: React.FC = () => {
         )}
       </Paper>
 
-      {isAdmin && <ProviderKeysCard />}
-      {isAdmin && <AEOProviderConnections providers={providerList} />}
+      {canEditSettings && <ProviderKeysCard />}
+      {canEditSettings && <AEOProviderConnections providers={providerList} />}
 
       {!profile && (
         <Alert severity="info" sx={{ mb: 3 }}>

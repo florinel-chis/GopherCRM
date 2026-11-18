@@ -28,11 +28,13 @@ where the behaviour is surprising a **Known issue** line names it.
   name. A case that creates a label must therefore use a run-scoped name (`labels.spec.ts` derives
   one from `Date.now()` plus a random suffix) and delete it again, or the shared database — and the
   screenshot captures taken from it — fills up with run debris.
-- **`/labels` has no route guard.** `SetupLabelRoutes` (`internal/handler/routes.go:81`) leaves
+- **`/labels` is open to every system role.** `SetupLabelRoutes` (`internal/handler/routes.go:81`) leaves
   `GET /labels` open to every authenticated role, and the SPA route
-  (`gocrm-ui/src/routes/index.tsx`) and the sidebar entry (`MainLayout.tsx`) carry no `roles` array.
+  (`gocrm-ui/src/routes/index.tsx`) and the sidebar entry (`MainLayout.tsx`) ask for `labels.view`,
+  which all four system roles hold (a custom role without it is redirected to `/unauthorized`).
   Write access is enforced per verb: create and update need admin, sales or support; delete needs
-  admin. The page hides the buttons to match (`LabelList.tsx:62-63`).
+  admin. The page hides the buttons to match (`labels.create`, `labels.update`, `labels.delete`;
+  `LabelList.tsx:62-64`).
 - **Only the admin account is available to e2e.** Sales and support accounts require an
   admin-authenticated `POST /users` plus a role-login helper that does not exist yet; a *customer*
   is obtainable through public registration, which `registration.spec.ts` already does. Cases that
@@ -84,7 +86,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Read the Color cell of that row.
-- **Expected:** A coloured square (`data-testid="label-swatch-{id}"`) followed by `#D62728`. The value is uppercased for display only (`LabelList.tsx:210`); the stored value keeps the case it was sent with.
+- **Expected:** A coloured square (`data-testid="label-swatch-{id}"`) followed by `#D62728`. The value is uppercased for display only (`LabelList.tsx:211`); the stored value keeps the case it was sent with.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "admin can create a label from the labels management page"
 
 ### TC-LABEL-005 — Empty state when no labels exist
@@ -136,7 +138,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open the create dialog and enter `"  Renewal  "`.
   2. Submit.
-- **Expected:** The request body carries `Renewal` (the page trims at `LabelList.tsx:149`), and the service trims again in `normalizeLabel`. The stored name has no padding, so a later `Renewal` is a duplicate.
+- **Expected:** The request body carries `Renewal` (the page trims at `LabelList.tsx:150`), and the service trims again in `normalizeLabel`. The stored name has no padding, so a later `Renewal` is a duplicate.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-010 — A blank name is rejected before any request
@@ -239,7 +241,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels` and click the delete icon on the first label.
   2. Read the dialog, cancel, and repeat on the second label.
-- **Expected:** The dialog is titled "Delete Label" and reads `Delete the label "<name>"? It will be removed from 1 task. This action cannot be undone.` — singular for one task, `0 tasks` / `2 tasks` otherwise (`LabelList.tsx:325`). The count comes from the list payload, so it is as fresh as the last `GET /labels`.
+- **Expected:** The dialog is titled "Delete Label" and reads `Delete the label "<name>"? It will be removed from 1 task. This action cannot be undone.` — singular for one task, `0 tasks` / `2 tasks` otherwise (`LabelList.tsx:326`). The count comes from the list payload, so it is as fresh as the last `GET /labels`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "deleting a label detaches it from the tasks that carry it" (the "1 task" wording) and "a label no task carries can be deleted" (the "0 tasks" wording)
 
 ### TC-LABEL-020 — Deleting a label detaches it from every task
@@ -288,7 +290,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Preconditions:** A customer account, obtained through public registration (`/register`), logged in.
 - **Steps:**
   1. Navigate to `/labels`.
-- **Expected:** `GET /api/v1/labels` returns 200 and the table renders. `SetupLabelRoutes` installs no `RequireRole` on the GET, and neither the SPA route nor the sidebar entry carries a `roles` array, so the page is reachable by every role.
+- **Expected:** `GET /api/v1/labels` returns 200 and the table renders. `SetupLabelRoutes` installs no `RequireRole` on the GET, and the SPA route and the sidebar entry ask for `labels.view`, which all four system roles hold, so the page is reachable by every system role.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended). Feasible without new infrastructure: unlike sales and support, a customer can be created through public registration.
 
 ### TC-LABEL-025 — A customer sees no create, edit or delete affordance
@@ -298,7 +300,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Look for the "Create Label" button and the row action icons.
-- **Expected:** None of them are rendered (`canManage`/`canDelete`, `LabelList.tsx:62-63`). The API backs this up: `POST` and `PUT` require admin, sales or support and answer 403 for a customer.
+- **Expected:** None of them are rendered (`canCreate`/`canUpdate`/`canDelete`, `LabelList.tsx:62-64`). The API backs this up: `POST` and `PUT` require admin, sales or support and answer 403 for a customer.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-026 — Sales and support may create and edit but not delete
@@ -494,7 +496,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Read the sidebar.
   2. Click "Labels".
-- **Expected:** A "Labels" entry with a tag icon sits between "Tasks" and "Users" and navigates to `/labels`. It carries no `roles` array, so it is shown to every authenticated role, including customers — for whom the destination page is read-only rather than hidden.
+- **Expected:** A "Labels" entry with a tag icon sits between "Tasks" and "Users" and navigates to `/labels`. It asks for `labels.view`, which every system role holds, so it is shown to every system role, including customers — for whom the destination page is read-only rather than hidden.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ## 10.10 Payload limits and task-form gating

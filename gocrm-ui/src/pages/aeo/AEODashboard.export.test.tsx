@@ -5,6 +5,7 @@ import { Component as AEODashboard } from './AEODashboard';
 import { aeoApi, type AEODashboard as AEODashboardData } from '@/api/endpoints/aeo';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 // recharts' ResponsiveContainer needs ResizeObserver, which jsdom lacks.
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -50,6 +51,7 @@ const dashboard: AEODashboardData = {
 const signIn = (role: User['role']) => {
   mockUseAuth.mockReturnValue({
     user: createMockUser({ role }),
+    permissions: permissionsOf(createMockUser({ role })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

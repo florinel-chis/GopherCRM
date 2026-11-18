@@ -3,7 +3,8 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ProtectedRoute } from './ProtectedRoute';
 import { createMockUser } from '@/test/factories';
-import type { User } from '@/types';
+import type { Permission, User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 
@@ -13,10 +14,12 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (overrides?: {
   user?: User | null;
+  permissions?: Permission[];
   isLoading?: boolean;
   isAuthenticated?: boolean;
 }) => ({
   user: null,
+  permissions: permissionsOf(null),
   isLoading: false,
   isAuthenticated: false,
   login: vi.fn(),
@@ -26,7 +29,7 @@ const authState = (overrides?: {
   ...overrides,
 });
 
-const renderProtected = (requiredRole?: string | string[]) =>
+const renderProtected = (requiredPermission?: string | string[]) =>
   render(
     <MemoryRouter initialEntries={['/secret']}>
       <Routes>
@@ -35,7 +38,7 @@ const renderProtected = (requiredRole?: string | string[]) =>
         <Route
           path="/secret"
           element={
-            <ProtectedRoute requiredRole={requiredRole}>
+            <ProtectedRoute requiredPermission={requiredPermission}>
               <div>Protected Content</div>
             </ProtectedRoute>
           }
@@ -69,10 +72,11 @@ describe('ProtectedRoute', () => {
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
   });
 
-  it('renders children for an authenticated user when no role is required', () => {
+  it('renders children for an authenticated user when no permission is required', () => {
     mockUseAuth.mockReturnValue(
       authState({
         user: createMockUser({ role: 'customer' }),
+        permissions: permissionsOf(createMockUser({ role: 'customer' })),
         isAuthenticated: true,
       })
     );
@@ -84,55 +88,59 @@ describe('ProtectedRoute', () => {
     expect(screen.queryByText('Unauthorized Page')).not.toBeInTheDocument();
   });
 
-  it('renders children when the user has the required role', () => {
+  it('renders children when the user holds the required permission', () => {
     mockUseAuth.mockReturnValue(
       authState({
         user: createMockUser({ role: 'admin' }),
+        permissions: permissionsOf(createMockUser({ role: 'admin' })),
         isAuthenticated: true,
       })
     );
 
-    renderProtected('admin');
+    renderProtected('users.view');
 
     expect(screen.getByText('Protected Content')).toBeInTheDocument();
   });
 
-  it('redirects authenticated users without the required role to /unauthorized', () => {
+  it('redirects authenticated users without the required permission to /unauthorized', () => {
     mockUseAuth.mockReturnValue(
       authState({
         user: createMockUser({ role: 'sales' }),
+        permissions: permissionsOf(createMockUser({ role: 'sales' })),
         isAuthenticated: true,
       })
     );
 
-    renderProtected('admin');
+    renderProtected('users.view');
 
     expect(screen.getByText('Unauthorized Page')).toBeInTheDocument();
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
   });
 
-  it('accepts an array of roles and renders children when the user matches one of them', () => {
+  it('accepts a list of permissions and renders children when the user holds one of them', () => {
     mockUseAuth.mockReturnValue(
       authState({
         user: createMockUser({ role: 'sales' }),
+        permissions: permissionsOf(createMockUser({ role: 'sales' })),
         isAuthenticated: true,
       })
     );
 
-    renderProtected(['admin', 'sales']);
+    renderProtected(['users.view', 'leads.view']);
 
     expect(screen.getByText('Protected Content')).toBeInTheDocument();
   });
 
-  it('redirects to /unauthorized when the user role is not in the required role array', () => {
+  it('redirects to /unauthorized when the user holds none of the listed permissions', () => {
     mockUseAuth.mockReturnValue(
       authState({
         user: createMockUser({ role: 'customer' }),
+        permissions: permissionsOf(createMockUser({ role: 'customer' })),
         isAuthenticated: true,
       })
     );
 
-    renderProtected(['admin', 'sales']);
+    renderProtected(['users.view', 'leads.view']);
 
     expect(screen.getByText('Unauthorized Page')).toBeInTheDocument();
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();

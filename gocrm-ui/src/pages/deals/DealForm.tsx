@@ -27,7 +27,7 @@ import { CustomerAutocomplete } from '@/components/CustomerAutocomplete';
 import { LeadAutocomplete } from '@/components/LeadAutocomplete';
 import { Loading } from '@/components/Loading';
 import { useUIConfigurationsQuery } from '@/hooks/useUIConfigurations';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, usersApi, type CreateDealData } from '@/api/endpoints';
 import {
@@ -158,10 +158,12 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
   const isEditMode = !!id;
-  const isAdmin = user?.role === 'admin';
+  // The owner picker hands the deal to another user (deals.assign_owner) and
+  // lists the users to pick from (GET /users, users.view).
+  const canAssignOwner = can('deals.assign_owner') && can('users.view');
 
   // "New Deal" on a company or customer page arrives with the id in the query.
   const prefilledCompanyId = positiveId(searchParams.get('company_id'));
@@ -179,8 +181,8 @@ export const Component: React.FC = () => {
   const [lead, setLead] = useState<Lead | null>(null);
   const [originalLeadId, setOriginalLeadId] = useState<number | null>(null);
 
-  // Only an admin may hand a deal to another user; sales never sends
-  // owner_id and the API assigns the caller. An untouched picker is not sent,
+  // Only a caller with deals.assign_owner may hand a deal to another user;
+  // anyone else never sends owner_id and the API assigns the caller. An untouched picker is not sent,
   // so create defaults to the caller and update keeps the current owner.
   const [owner, setOwner] = useState<User | null>(null);
   const [ownerTouched, setOwnerTouched] = useState(false);
@@ -208,7 +210,7 @@ export const Component: React.FC = () => {
   const { data: usersData } = useQuery({
     queryKey: ['users', { is_active: true }],
     queryFn: () => usersApi.getUsers({ is_active: true }),
-    enabled: isAdmin,
+    enabled: canAssignOwner,
   });
 
   // `deals.default_currency` is read from the UI-safe configuration list the
@@ -323,7 +325,7 @@ export const Component: React.FC = () => {
     });
 
   const ownerPatch = (): Pick<CreateDealData, 'owner_id'> =>
-    isAdmin && ownerTouched && owner ? { owner_id: owner.id } : {};
+    canAssignOwner && ownerTouched && owner ? { owner_id: owner.id } : {};
 
   // The picker's helper line: a server rejection first, then the note about
   // an erased record while nothing has been picked in its place.
@@ -508,7 +510,7 @@ export const Component: React.FC = () => {
                 />
               </Box>
 
-              {isAdmin && (
+              {canAssignOwner && (
                 <Autocomplete
                   value={owner}
                   disableClearable={owner !== null}

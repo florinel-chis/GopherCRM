@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MainLayout } from './MainLayout';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 vi.mock('@/components/layout/NotificationBell', () => ({
@@ -16,6 +17,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),
