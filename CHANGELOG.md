@@ -543,6 +543,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`POST /leads/{id}/assign` asks a custom role for `leads.assign_owner` when it names another
+  user (#377).** A custom role calling `POST /api/v1/leads/{id}/assign` needs `leads.update`, and
+  `leads.assign_owner` as well when `user_id` is not the caller, the key an owner change through
+  `PUT /api/v1/leads/{id}` asks for; without it the answer is 403 `FORBIDDEN` "You can only assign
+  leads to yourself" and nothing is written. Assigning a lead to oneself needs `leads.update` alone.
+  The four system roles are answered as before (a sales user still hands over its own lead): the
+  system-role route matrix is byte-identical. The route-key table declares the further key, and
+  `TestLeadAssignRequiresAssignOwnerKey` in `cmd` covers a custom role with and without it. API
+  docs regenerated; no schema or SPA change.
 - **CI runs the MySQL 8 migration check on pull requests that change migration code (#376, CI).**
   A pull request whose diff adds, changes or deletes a path under `migrations/` or `cmd/migrate/`,
   or changes the migrations workflow or its coverage gate (`scripts/release/check-sql-tests.py`

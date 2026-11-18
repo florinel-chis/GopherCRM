@@ -57,7 +57,8 @@ var RouteKeys = map[string]RouteKey{
 	"PUT /leads/:id":          key(LeadsUpdate),
 	"DELETE /leads/:id":       key(LeadsDelete),
 	"POST /leads/:id/convert": key(LeadsConvert),
-	"POST /leads/:id/assign":  key(LeadsUpdate),
+	// The request names another user as owner, which only leads.assign_owner allows.
+	"POST /leads/:id/assign":  key(LeadsUpdate).needs(LeadsAssignOwner),
 	"POST /leads/bulk/status": key(LeadsUpdate),
 
 	// customers

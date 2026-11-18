@@ -119,6 +119,19 @@ func aggregateScope(c *gin.Context, key string) models.PermissionScope {
 	return permissionScope(c, key)
 }
 
+// mayAssignLeadTo reports whether the caller may make userID the owner of a
+// lead through POST /leads/{id}/assign. Naming another user asks a custom role
+// for leads.assign_owner, the key an owner change through PUT /leads/{id} asks
+// for; assigning to itself asks for nothing beyond the route's leads.update.
+// The four system roles are answered as they always were on this route: a
+// sales user hands its own lead to a colleague without holding the key.
+func mayAssignLeadTo(c *gin.Context, userID uint) bool {
+	if permissions.IsSystemRole(c.GetString("user_role")) {
+		return true
+	}
+	return userID == c.GetUint("user_id") || hasPermission(c, permissions.LeadsAssignOwner)
+}
+
 // runViewer is the caller of the automation run history. Its key is
 // automation.runs_view, never leads.view, so the lead scope cannot widen the
 // runs a caller sees.

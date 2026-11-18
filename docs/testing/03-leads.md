@@ -1161,11 +1161,18 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   (status and `customer_id` stay). No credential is 401; support and customer callers are 403; a
   sales user on another owner's lead is 403 whatever `user_id` it sends; a missing or erased lead is
   404; a non-numeric id or a missing or malformed body is 400.
+  A custom role needs `leads.update`, and `leads.assign_owner` unless `user_id` is the caller's own
+  id (#377): with `leads.update` alone, naming another user is **403** "You can only assign leads to
+  yourself" and the owner is unchanged, at scope all and at scope own on the caller's own lead
+  alike; with `leads.assign_owner` added the same request is **200**; naming itself is **200**
+  without the key when the caller may own leads (`assignment.form_owner`). That 403 is answered
+  before the lead is read, so this caller gets it for a missing lead id too; the 400s come first.
 - **Known issue:** No screen calls `leadsApi.assignLead` yet; the route is reachable through the API
   only.
 - **Automation:** automated — `test/integration/lead_owner_validation_test.go`:
   `TestLeadAssignPermissionsSQLite`, `TestLeadAssignSalesHandOffSQLite`,
-  `TestLeadAssignConvertedLeadSQLite`
+  `TestLeadAssignConvertedLeadSQLite`; `cmd/lead_assign_permission_test.go`:
+  `TestLeadAssignRequiresAssignOwnerKey` (custom roles)
 
 ### TC-LEAD-068 — A lead owner must be an active admin or sales user
 - **Priority:** P0
