@@ -598,6 +598,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **AEO: concurrent run claims no longer surface a deadlock on MySQL/MariaDB (#371).** Several
+  replicas claiming the same daily slot, or starting manual or single-prompt runs at the same
+  moment, could make the server answer the claim INSERT with error 1213 (deadlock) instead of a
+  duplicate key, and that raw driver error reached the caller: a 500 for a manual start, an error
+  log for the scheduler. Reproduced on MariaDB 10.11 for both claim kinds. `ClaimRun` now treats
+  error 1213 and error 1205 (lock wait timeout) on the claim as contention: a scheduled claim
+  looks the slot up first and answers "slot already started" when a row holds it; otherwise the
+  INSERT is replayed, at most 3 attempts in total per claim, each going through the usual
+  duplicate-key classification. A deadlock on every attempt answers "run in progress" (409, or a
+  scheduled skip), never the driver error. A lock wait timeout is replayed once; a second one on
+  the same claim is still returned as the driver error, so a claim waits for at most two lock
+  waits. No sleep or backoff, no schema change and no API change. Regression roots:
+  `TestAEORunClaimContention{SQLite,MySQL}` (`internal/repository`), with the existing
+  eight-claimant `TestAEORunClaimMySQL` as the concurrency proof.
 - **Automation: a duplicate run dedupe key is no longer reported as a started run on MariaDB
   10.5+ (#367).** On MariaDB the driver appended `RETURNING` to the dedupe insert
   (`ON DUPLICATE KEY UPDATE id=id`), so a duplicate `dedupe_key` came back with the existing row

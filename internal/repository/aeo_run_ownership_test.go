@@ -160,6 +160,14 @@ func TestAEORunAbandonedSweepMySQL(t *testing.T) {
 	runAEORunAbandonedSweep(t, openAEORunOwnershipDB(t, true), true)
 }
 
+func TestAEORunClaimContentionSQLite(t *testing.T) {
+	runAEORunClaimContention(t, openAEORunOwnershipDB(t, false))
+}
+
+func TestAEORunClaimContentionMySQL(t *testing.T) {
+	runAEORunClaimContention(t, openAEORunOwnershipDB(t, true))
+}
+
 // AC-3: the claim inserts a running row with its owner, heartbeat_at =
 // started_at and running_lock = 1, refuses while the lock is held, and refuses
 // a taken slot; concurrent claims commit exactly one row.
@@ -549,3 +557,219 @@ func runAEORunAbandonedSweep(t *testing.T, db *gorm.DB, concurrent bool) {
 }
 
 func timePointer(at time.Time) *time.Time { return &at }
+
+// aeoClaimFault counts the INSERT attempts on aeo_runs and fails the first
+// failFirst of them with a MySQL driver error before any statement is sent.
+type aeoClaimFault struct {
+	number    uint16
+	failFirst int
+	attempts  int
+}
+
+var aeoClaimFaultSeq int
+
+// injectAEOClaimFault registers the fault as a callback before gorm:create on
+// the test handle and removes it when the test ends. GORM's create callback
+// returns as soon as the statement carries an error, so a failed attempt
+// sends no INSERT. Register it after the seed rows exist: seeding goes
+// through the same callback chain.
+func injectAEOClaimFault(t *testing.T, db *gorm.DB, number uint16, failFirst int) *aeoClaimFault {
+	t.Helper()
+	fault := &aeoClaimFault{number: number, failFirst: failFirst}
+	aeoClaimFaultSeq++
+	name := fmt.Sprintf("test:aeo_claim_fault_%d", aeoClaimFaultSeq)
+	require.NoError(t, db.Callback().Create().Before("gorm:create").Register(name, func(tx *gorm.DB) {
+		if tx.Statement.Table != "aeo_runs" {
+			return
+		}
+		fault.attempts++
+		if fault.attempts <= fault.failFirst {
+			_ = tx.AddError(&mysqldriver.MySQLError{Number: fault.number, Message: "injected claim contention"})
+		}
+	}))
+	t.Cleanup(func() { _ = db.Callback().Create().Remove(name) })
+	return fault
+}
+
+// resetAEORuns empties aeo_runs, soft-deleted rows included.
+func resetAEORuns(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&models.AEORun{}).Error)
+	require.Zero(t, countAEORuns(t, db))
+}
+
+func countAEOSlotRows(t *testing.T, db *gorm.DB, slot string) int64 {
+	t.Helper()
+	var count int64
+	require.NoError(t, db.Model(&models.AEORun{}).Unscoped().Where("schedule_slot = ?", slot).Count(&count).Error)
+	return count
+}
+
+// #371: lock contention on the claim INSERT (MySQL/MariaDB 1213 and 1205) is
+// classified instead of returned. The driver error is injected, so both
+// databases run the same rule; every row assertion is a COUNT on the table.
+func runAEORunClaimContention(t *testing.T, db *gorm.DB) {
+	repo := NewAEORepository(db)
+	now := ownershipNow()
+	const slot = "2026-11-16T06:00Z"
+	const every = 1 << 20
+
+	contention := []struct {
+		name   string
+		number uint16
+	}{
+		{"deadlock 1213", 1213},
+		{"lock wait timeout 1205", 1205},
+	}
+	claimKinds := []struct {
+		name string
+		slot string
+	}{
+		{"slot", slot},
+		{"slot-less", ""},
+	}
+	// assertOneRunning checks the table holds exactly the claimant's running row.
+	assertOneRunning := func(t *testing.T, run *models.AEORun, owner string) models.AEORun {
+		t.Helper()
+		require.EqualValues(t, 1, countAEORuns(t, db))
+		var stored models.AEORun
+		require.NoError(t, db.First(&stored).Error)
+		assert.Equal(t, models.AEORunStatusRunning, stored.Status)
+		require.NotNil(t, stored.OwnerInstance)
+		assert.Equal(t, owner, *stored.OwnerInstance)
+		require.NotNil(t, stored.RunningLock)
+		assert.Equal(t, stored.ID, run.ID)
+		return stored
+	}
+
+	t.Run("held slot answers slot taken", func(t *testing.T) {
+		for _, tc := range contention {
+			t.Run(tc.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				holder := ownedRun("owner-holder", now.Add(-time.Hour), slot)
+				holder.Status = models.AEORunStatusCompleted
+				holder.CompletedAt = timePointer(now.Add(-30 * time.Minute))
+				require.NoError(t, db.Create(holder).Error)
+				fault := injectAEOClaimFault(t, db, tc.number, 1)
+
+				run := ownedRun("owner-a", now, slot)
+				assert.ErrorIs(t, repo.ClaimRun(run), apperrors.ErrAEOScheduleSlotTaken)
+				assert.Equal(t, 1, fault.attempts)
+				assert.Zero(t, run.ID)
+				assert.EqualValues(t, 1, countAEORuns(t, db))
+				assert.EqualValues(t, 1, countAEOSlotRows(t, db, slot))
+			})
+		}
+	})
+
+	t.Run("free slot is claimed on retry", func(t *testing.T) {
+		for _, tc := range contention {
+			t.Run(tc.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				fault := injectAEOClaimFault(t, db, tc.number, 1)
+
+				run := ownedRun("owner-a", now, slot)
+				require.NoError(t, repo.ClaimRun(run))
+				assert.Equal(t, 2, fault.attempts)
+				stored := assertOneRunning(t, run, "owner-a")
+				require.NotNil(t, stored.ScheduleSlot)
+				assert.Equal(t, slot, *stored.ScheduleSlot)
+				assert.EqualValues(t, 1, countAEOSlotRows(t, db, slot))
+			})
+		}
+	})
+
+	t.Run("slot claim behind a running lock answers run in progress", func(t *testing.T) {
+		resetAEORuns(t, db)
+		insertAEORunRow(t, db, models.AEORunStatusRunning, "owner-manual", now, &now, true)
+		fault := injectAEOClaimFault(t, db, 1213, 1)
+
+		run := ownedRun("owner-a", now, slot)
+		err := repo.ClaimRun(run)
+		assert.ErrorIs(t, err, apperrors.ErrRunInProgress)
+		assert.False(t, errors.Is(err, apperrors.ErrAEOScheduleSlotTaken))
+		assert.Equal(t, 2, fault.attempts)
+		assert.Zero(t, run.ID)
+		assert.EqualValues(t, 1, countAEORuns(t, db))
+		assert.Zero(t, countAEOSlotRows(t, db, slot))
+	})
+
+	t.Run("slot-less free claim is claimed on retry", func(t *testing.T) {
+		for _, tc := range contention {
+			t.Run(tc.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				fault := injectAEOClaimFault(t, db, tc.number, 1)
+
+				run := ownedRun("owner-a", now, "")
+				require.NoError(t, repo.ClaimRun(run))
+				assert.Equal(t, 2, fault.attempts)
+				stored := assertOneRunning(t, run, "owner-a")
+				assert.Nil(t, stored.ScheduleSlot)
+			})
+		}
+	})
+
+	t.Run("slot-less claim behind a running lock answers run in progress", func(t *testing.T) {
+		resetAEORuns(t, db)
+		insertAEORunRow(t, db, models.AEORunStatusRunning, "owner-manual", now, &now, true)
+		fault := injectAEOClaimFault(t, db, 1213, 1)
+
+		run := ownedRun("owner-a", now, "")
+		assert.ErrorIs(t, repo.ClaimRun(run), apperrors.ErrRunInProgress)
+		assert.Equal(t, 2, fault.attempts)
+		assert.Zero(t, run.ID)
+		assert.EqualValues(t, 1, countAEORuns(t, db))
+	})
+
+	t.Run("deadlock on every attempt answers run in progress", func(t *testing.T) {
+		for _, kind := range claimKinds {
+			t.Run(kind.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				fault := injectAEOClaimFault(t, db, 1213, every)
+
+				run := ownedRun("owner-a", now, kind.slot)
+				err := repo.ClaimRun(run)
+				assert.ErrorIs(t, err, apperrors.ErrRunInProgress)
+				var driverErr *mysqldriver.MySQLError
+				assert.False(t, errors.As(err, &driverErr), "the raw deadlock is never returned")
+				assert.Equal(t, 3, fault.attempts)
+				assert.Zero(t, countAEORuns(t, db))
+				assert.Zero(t, run.ID)
+				assert.Nil(t, run.HeartbeatAt)
+				assert.Nil(t, run.RunningLock)
+			})
+		}
+	})
+
+	t.Run("lock wait timeout is retried once", func(t *testing.T) {
+		for _, kind := range claimKinds {
+			t.Run(kind.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				fault := injectAEOClaimFault(t, db, 1205, every)
+
+				run := ownedRun("owner-a", now, kind.slot)
+				err := repo.ClaimRun(run)
+				var driverErr *mysqldriver.MySQLError
+				require.True(t, errors.As(err, &driverErr), "got %v", err)
+				assert.EqualValues(t, 1205, driverErr.Number)
+				assert.Equal(t, 2, fault.attempts)
+				assert.Zero(t, countAEORuns(t, db))
+				assert.Zero(t, run.ID)
+			})
+		}
+	})
+
+	t.Run("other driver errors are not retried", func(t *testing.T) {
+		resetAEORuns(t, db)
+		fault := injectAEOClaimFault(t, db, 1040, 1)
+
+		run := ownedRun("owner-a", now, "")
+		err := repo.ClaimRun(run)
+		var driverErr *mysqldriver.MySQLError
+		require.True(t, errors.As(err, &driverErr), "got %v", err)
+		assert.EqualValues(t, 1040, driverErr.Number)
+		assert.Equal(t, 1, fault.attempts)
+		assert.Zero(t, countAEORuns(t, db))
+		assert.Zero(t, run.ID)
+	})
+}

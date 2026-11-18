@@ -823,6 +823,17 @@ type AEORepository interface {
 	// running_lock it inserts nothing and returns apperrors.ErrRunInProgress;
 	// when run.ScheduleSlot is set and a row with that slot exists it inserts
 	// nothing and returns apperrors.ErrAEOScheduleSlotTaken.
+	//
+	// MySQL/MariaDB lock contention on the INSERT (#371) follows the same
+	// answers for scheduled and slot-less claims: on error 1213 (deadlock) or
+	// 1205 (lock wait timeout) a slot claim whose slot is held returns
+	// apperrors.ErrAEOScheduleSlotTaken; otherwise the INSERT is replayed, at
+	// most 3 attempts in total, each classified as above. A deadlock on the
+	// last attempt returns apperrors.ErrRunInProgress, never the raw 1213. A
+	// lock wait timeout is replayed once and a second one is returned
+	// unchanged, so the worst case is two lock waits (2 x
+	// innodb_lock_wait_timeout). A failed attempt was rolled back whole, and
+	// ClaimRun is never called on a transaction handle.
 	ClaimRun(run *models.AEORun) error
 	// FinishRun writes status, completed_at, total_queries, failed_queries,
 	// updated_at and running_lock = NULL WHERE id = ? AND status = 'running'
