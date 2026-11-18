@@ -4,9 +4,10 @@
 Outside a release, CI runs this instead of the whole suite: the packages that
 own the changed files, every package that imports them (transitively, test
 imports included) and the few packages whose tests read the changed files from
-disk. A documentation-only change runs no Go test. The race detector, the
-migrations matrix and the no-skip checkers belong to a full run
-(`make verify-backend`, check-go.py, check-auth.py).
+disk. A documentation-only change runs no Go test. The race detector and the
+no-skip checkers belong to a full run (`make verify-backend`, check-go.py,
+check-auth.py). The migrations matrix is a separate job: a pull request that
+changes migration code runs its MySQL 8 leg, a full run both engines.
 
     python3 scripts/ci/check-changed-go.py --base origin/main          # local
     python3 scripts/ci/check-changed-go.py --base origin/main --list   # selection only

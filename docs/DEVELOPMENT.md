@@ -1485,9 +1485,13 @@ push to `main`, CI runs hygiene, backend, frontend and the database gates job:
   packages run there. Nothing rejects a skip in this job.
 - A documentation-only change (`*.md`, anything under `docs/`, `LICENSE`) runs no Go test at all.
 - The race detector (`make verify-backend`), `make verify-api-docs`, the no-skip checkers
-  (`check-go.py transaction`, `check-auth.py --persistence`), MySQL 8, the Database migrations
-  matrix and the browser matrix run only when CI is called with `full: true`: the release workflow,
-  or a manual dispatch of CI with the `full` input (which runs everything but the browsers).
+  (`check-go.py transaction`, `check-auth.py --persistence`), the MySQL 8 service of the Backend
+  job, the browser matrix and the two-engine run of the Database migrations workflow happen only
+  when CI is called with `full: true`: the release workflow, or a manual dispatch of CI with the `full` input
+  (which runs everything but the browsers).
+- A pull request that changes migration code (a path under `migrations/` or `cmd/migrate/`, the
+  migrations workflow or its coverage gate) also runs the `Migrations (MySQL 8)` leg of the
+  Database migrations workflow; see below.
 - A manual dispatch has no base to compare with, so with `full: false` it tests every package
   without `-race`.
 
@@ -1551,12 +1555,21 @@ for selection, full-suite overrides, version preparation, rehearsals and publica
 Production deployment follows a published full-validation release, rather than every main push.
 
 The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs focused
-fresh/upgrade/rollback checks on disposable MySQL 8 and MariaDB 10.11 services. CI calls it only
-on a `full` run (a release, or a manual dispatch with `full: true`); it is skipped for a pull request,
-a merge-queue group and a push to `main`, and it can be dispatched by itself for diagnosis. Both jobs
-retain the existing SQLite upgrade fixtures and reject missing or skipped required coverage. Their
+fresh/upgrade/rollback checks on disposable MySQL 8 and MariaDB 10.11 services. CI calls it in two
+cases. On a `full` run (a release, or a manual dispatch with `full: true`) both engines run. On a
+pull request whose diff changes migration code only `Migrations (MySQL 8)` runs, with the same
+steps: the `plan` job's `migrations` output (`scripts/ci/plan-validation.py`) is `true` when a
+changed, added or deleted path is under `migrations/` or `cmd/migrate/` or is in the selector's
+`MIGRATION_WORKFLOW_FILES` (the migrations workflow, `scripts/release/check-sql-tests.py` and its
+tests), and also when the change set or that set cannot be read. Any other pull request, a
+merge-queue group and a push to `main` do not call it, and a direct dispatch of the workflow for
+diagnosis runs both engines. Every leg
+retains the existing SQLite upgrade fixtures and rejects missing or skipped required coverage. The
 artifacts include the tested revision and Go JSON results, and on a full run the required Backend
-check fails unless both jobs succeeded. On a pull request a change under `migrations/` runs the
+check fails unless both jobs succeeded. On a pull request `Migrations (MySQL 8)` is not a required
+check and the Backend check does not depend on its result, so branch protection does not wait for
+it; the remediation runner waits for every check on the pull request and treats any failed one as
+failed, so a red leg still stops its merge. On a pull request a change under `migrations/` also runs the
 `cmd/migrate`, `internal/service` and `internal/config` tests through the selection above (on
 MariaDB in the database gates job); see [migration CI](VALIDATION_RELEASE.md#migration-ci) for the exact coverage.
 

@@ -24,7 +24,7 @@ boundary and caller tests with health smoke. Production deploys move to validate
 | Browser coverage | Health smoke plus affected feature specs, or full fallback | Every enabled spec |
 | CI database engines | SQLite (backend job) and MariaDB 10.11 (database gates job: the selected packages, `-count=1`, no `-race`, skips not rejected) | MySQL 8, MariaDB 10.11, SQLite |
 | Local runner database engines | SQLite; also MySQL for persistence/full fallback | CI owns the release matrix |
-| Migration coverage | CI: no migrations matrix; a change under `migrations/` or `cmd/migrate` runs the `cmd/migrate` tests on MariaDB through the selection. Runner: local persistence/full fallback also requires migration checks; skips rejected | Dedicated MySQL/MariaDB migration and SQLite upgrade CI: fresh, upgrade, rollback; skips rejected |
+| Migration coverage | CI: a pull request that changes migration code runs `Migrations (MySQL 8)` (not a required check), and a change under `migrations/` or `cmd/migrate` runs the `cmd/migrate` tests on MariaDB through the selection. Runner: local persistence/full fallback also requires migration checks; skips rejected | Dedicated MySQL/MariaDB migration and SQLite upgrade CI: fresh, upgrade, rollback; skips rejected |
 | Runner tests | Required when the workflow changes | Always |
 | Independent review and exact-head merge checks | Required | Release uses the already-reviewed main commit |
 
@@ -39,7 +39,8 @@ branch CI takes. For the Go side, CI has two modes only:
   `-race` on the packages the change touches, their transitive importers and the packages whose
   tests read the changed files. The Database gates job runs the same selection with `--tests-only`
   against MariaDB 10.11 (`TEST_MYSQL_DSN` set, skips not rejected). A documentation-only change runs
-  no Go test. The migrations matrix and the browser matrix are skipped. The selection rules and the
+  no Go test. The browser matrix is skipped, and so is the migrations matrix unless a pull request
+  changes migration code: then its MySQL 8 leg runs (see [Migration CI](#migration-ci)). The selection rules and the
   external-readers table are in [DEVELOPMENT.md](DEVELOPMENT.md#testing).
 - **`full`** (the release workflow, or a manual dispatch of CI with the `full` input): the two-engine
   migrations matrix, `make verify-api-docs`, `make verify-backend` (`-race`), then
@@ -166,8 +167,9 @@ fix, not this policy prerequisite. The checker also rejects missing or skipped r
 defense in depth; they do not silently reduce coverage. The source boundary has
 no persistence change, so local browsers need only SQLite health smoke. SMTP behavior is
 covered by protocol fixtures, and no login/form browser pretends to test a real SMTP relay.
-CI keeps the frontend build and the targeted backend and database gates; the MySQL/MariaDB
-migration gates and browser specs run in CI only for a release (11 November 2026). Every frozen named acceptance
+CI keeps the frontend build and the targeted backend and database gates; the two-engine
+migration gates and browser specs run in CI for a release (11 November 2026), and the MySQL 8 migration
+leg for a pull request that changes migration code. Every frozen named acceptance
 command still runs; explicit full/release coverage remains unchanged.
 
 The bounded `aeo` profile covers AEO engine/provider files, its service, credentials,
@@ -311,12 +313,27 @@ the lead suites, not the full browser matrix. Any other path under `api/` select
 
 ## Migration CI
 
-[Database migrations](../.github/workflows/migrations.yml) is called by CI only on a `full` run
-(a release, or a manual dispatch of CI with `full: true`) and supports a manual trigger for
-diagnosis; it is skipped for a pull request, a merge group and a main push (#365). On a full run the
+[Database migrations](../.github/workflows/migrations.yml) is called by CI on a `full` run
+(a release, or a manual dispatch of CI with `full: true`), where both engines run, and on a pull
+request that changes migration code, where only `Migrations (MySQL 8)` runs (#376). It supports a
+manual trigger for diagnosis, which runs both engines. A pull request without migration code, a
+merge group and a main push do not call it (#365).
+
+The `plan` job decides: `scripts/ci/plan-validation.py` writes `migrations=true` when a changed,
+added or deleted path is under `migrations/` or `cmd/migrate/`, or is in `MIGRATION_WORKFLOW_FILES`
+of the trusted selector (the migrations workflow, `scripts/release/check-sql-tests.py` and its two
+test files). It also writes `true` when it has no change set or the trusted selector has no such
+set, so the check runs when the question cannot be answered. CI passes `mysql8_only` to the
+workflow, which picks its matrix from one of two fixed engine lists; the steps are the same for
+every leg, including the no-skip check. `internal/models/**` and the Go test files of the migration
+roots do not select the leg.
+
+On a full run the
 required Backend job fails unless both database jobs succeeded, so migration failures block that check
-without requiring new branch-protection names. Outside a full run a change under `migrations/` or
-`cmd/migrate` runs the `cmd/migrate` tests through `scripts/ci/check-changed-go.py`, on MariaDB
+without requiring new branch-protection names. On a pull request the MySQL 8 leg is not a required
+check and Backend does not read its result: branch protection does not wait for it, while the
+remediation runner treats any failed check on the pull request as failed and does not merge. Outside a full run a change under `migrations/` or
+`cmd/migrate` also runs the `cmd/migrate` tests through `scripts/ci/check-changed-go.py`, on MariaDB
 10.11 in the database gates job, where a skip is not rejected. The reusable call checks out the same revision
 as the rest of CI, including releases. Its two jobs use disposable MySQL 8
 and MariaDB 10.11 services. They run only the migration, SQLite upgrade and repository SQL regressions:
@@ -344,7 +361,7 @@ Changes confined to this workflow and the SQL evidence checker/tests select the 
 `python3 scripts/ci/check-go.py migration` against disposable MySQL plus SQLite upgrade fixtures,
 all frozen acceptance checks and SQLite health smoke. Accompanying runner changes also run
 runner checks. CI runs the module build and vet, the targeted Go tests and frontend build health;
-the two-engine migration gate runs in CI only on `full`. Schema, migration SQL, application code and unrelated release
+in CI the MySQL 8 migration leg runs for a pull request that changes migration code and both engines on `full`. Schema, migration SQL, application code and unrelated release
 machinery remain outside this profile and retain their full fallback. Explicit full/release
 validation remains complete. This is shared profile data and checker code, not a per-ticket helper.
 

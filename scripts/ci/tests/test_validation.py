@@ -506,6 +506,142 @@ class ValidationSelectionTests(unittest.TestCase):
             selected = json.loads((root / 'validation-plan.json').read_text())
             self.assertEqual((selected['profile'], selected['specs']), ('full', []))
 
+    MIGRATIONS_IF = ("    if: ${{ inputs.full == true || (github.event_name == 'pull_request'"
+                     " && needs.plan.outputs.migrations == 'true') }}\n")
+
+    def migration_selection(self, root, change, *, selector=None):
+        """Plan a pull request whose whole diff is `change`; (result, output text, plan)."""
+        def git(*args):
+            return subprocess.check_output(['git', *args], cwd=root, text=True,
+                                           stderr=subprocess.DEVNULL).strip()
+        self.shared_change(root)
+        for name in ('migrations/20261101120000_old.up.sql', 'cmd/migrate/main.go',
+                     '.github/workflows/migrations.yml', 'scripts/release/check-sql-tests.py',
+                     'docs/GUIDE.md'):
+            target = root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('-- base\n')
+        if selector is not None:
+            (root / 'automation/langflow/gophercrm_runner/validation.py').write_text(selector)
+        git('add', '.')
+        git('commit', '-m', 'base with migration code')
+        base = git('rev-parse', 'HEAD')
+        change(root)
+        git('add', '-A')
+        git('commit', '-m', 'candidate')
+        result = self.plan_in(root, {'pull_request': {'base': {'sha': base}}}, 'pull_request')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result, (root / 'output').read_text(), json.loads((root / 'validation-plan.json').read_text())
+
+    @staticmethod
+    def edit(name, text='-- changed\n'):
+        def change(root):
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / name).write_text(text)
+        return change
+
+    def test_migration_check_selected_for_migration_code(self):
+        cases = {
+            'added migration': self.edit('migrations/20261201120000_x.up.sql'),
+            # The selector lists a rename as a delete plus an add, so this covers renames.
+            'deleted migration': lambda root: (root / 'migrations/20261101120000_old.up.sql').unlink(),
+            'migration runner': self.edit('cmd/migrate/main.go', 'package main\n'),
+            # Alone, this gets the migration profile, which never reaches bounded().
+            'migrations workflow': self.edit('.github/workflows/migrations.yml'),
+            # In the selector's set and nowhere in the planner: the set is read, not copied.
+            'sql coverage gate': self.edit('scripts/release/check-sql-tests.py'),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as folder:
+                _, output, selected = self.migration_selection(Path(folder), change)
+                self.assertRegex(output, r'\Aprofile=[a-z-]+\nspecs=[^\n]*\nmigrations=true\n\Z')
+                self.assertIs(selected['migrations'], True)
+
+    def test_migration_check_not_selected_without_migration_code(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            base = self.shared_change(root)
+            self.assertEqual(self.plan_in(root, {'pull_request': {'base': {'sha': base}}},
+                                          'pull_request').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertEqual(selected['changed_paths'], ['internal/models/lead.go'])
+            self.assertIn('\nmigrations=false\n', (root / 'output').read_text())
+            self.assertIs(selected['migrations'], False)
+        with tempfile.TemporaryDirectory() as folder:
+            _, output, selected = self.migration_selection(Path(folder), self.edit('docs/GUIDE.md'))
+            self.assertEqual(selected['changed_paths'], ['docs/GUIDE.md'])
+            self.assertIn('\nmigrations=false\n', output)
+            self.assertIs(selected['migrations'], False)
+
+    def test_migration_check_selected_when_change_set_unknown(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.shared_change(root)
+            self.assertEqual(self.plan_in(root, {'before': '0' * 40}, 'push').returncode, 0)
+            selected = json.loads((root / 'validation-plan.json').read_text())
+            self.assertNotIn('changed_paths', selected)
+            self.assertIn('\nmigrations=true\n', (root / 'output').read_text())
+            self.assertIs(selected['migrations'], True)
+
+    def test_migration_check_selected_when_trusted_selector_lacks_the_migration_set(self):
+        # An older policy ref: the real selector with the set under another name.
+        source = (ROOT / 'automation/langflow/gophercrm_runner/validation.py').read_text()
+        self.assertIn('MIGRATION_WORKFLOW_FILES', source)
+        older = source.replace('MIGRATION_WORKFLOW_FILES', 'MIGRATION_GATE_FILES')
+        with tempfile.TemporaryDirectory() as folder:
+            result, output, selected = self.migration_selection(
+                Path(folder), self.edit('internal/models/lead.go', 'package models\n\ntype Lead struct{ ID uint }\n'),
+                selector=older)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(selected['changed_paths'], ['internal/models/lead.go'])
+            self.assertIn('\nmigrations=true\n', output)
+            self.assertIs(selected['migrations'], True)
+
+    def test_migration_check_workflow_runs_mysql8_on_pull_requests_and_both_engines_on_full(self):
+        ci, blocks = self.ci_jobs()
+        self.assertIn('      migrations: ${{ steps.plan.outputs.migrations }}\n',
+                      blocks['plan'].split('\n    steps:\n', 1)[0] + '\n')
+        self.assertIn(self.MIGRATIONS_IF, blocks['migrations'])
+        self.assertIn('      mysql8_only: ${{ inputs.full != true }}\n', blocks['migrations'])
+        self.assertEqual(blocks['migrations'].count('mysql8_only'), 1)
+        self.assertEqual(blocks['migrations'].count('    if: '), 1)
+        workflow = (ROOT / '.github/workflows/migrations.yml').read_text()
+        lines = workflow.splitlines()
+        self.assertIn('      mysql8_only:\n        type: boolean\n        default: false\n', workflow)
+        matrix = [line for line in lines if re.match(r'\s*db: ', line)]
+        self.assertEqual(len(matrix), 1, matrix)
+        found = re.fullmatch(r"        db: \$\{\{ fromJSON\(inputs\.mysql8_only && '([^']*)' \|\| '([^']*)'\) \}\}",
+                             matrix[0])
+        self.assertIsNotNone(found, matrix[0])
+        self.assertEqual(lines[lines.index(matrix[0]) - 1], '      matrix:')
+        # An unquoted YAML value cannot hold a colon followed by a space: the JSON is compact.
+        self.assertNotIn(': ', matrix[0].split('db: ', 1)[1])
+        mysql = {'name': 'MySQL 8', 'id': 'mysql8', 'image': 'mysql:8.0',
+                 'health': 'mysqladmin ping -h 127.0.0.1 -pmigration-test-password'}
+        mariadb = {'name': 'MariaDB 10.11', 'id': 'mariadb1011', 'image': 'mariadb:10.11',
+                   'health': 'healthcheck.sh --connect --innodb_initialized'}
+        # Whole lists: a swap, a missing engine or a changed value fails.
+        self.assertEqual(json.loads(found.group(1)), [mysql])
+        self.assertEqual(json.loads(found.group(2)), [mysql, mariadb])
+        # One mechanism only. An include row can add a leg, and a condition on the matrix
+        # lets an engine report success without running its steps.
+        self.assertEqual(workflow.count('fromJSON'), 1)
+        self.assertEqual(workflow.count('matrix:'), 1)
+        self.assertNotRegex(workflow, r'(?m)^\s*(include|exclude):')
+        conditions = [line.strip() for line in lines if 'if:' in line]
+        self.assertFalse([line for line in conditions if 'matrix.' in line])
+        self.assertEqual(conditions, ['if: ${{ !cancelled() }}', 'if: always()'])
+        self.assertIn('    name: Migrations (${{ matrix.db.name }})\n', workflow)
+        self.assertNotRegex(ci + workflow, r'(?m)^\s+paths(-ignore)?:|paths-filter')
+        # The pull-request leg is not folded into a required check.
+        self.assertIn('    needs: [plan, migrations]\n    if: ${{ !cancelled() }}\n', blocks['backend'])
+        coverage = [condition for condition, step in self.steps(blocks['backend']) if 'MIGRATION_RESULT' in step]
+        self.assertEqual(coverage, ["needs.plan.outputs.profile == 'full'"])
+        config = (ROOT / 'automation/langflow/gophercrm_runner/config.py').read_text()
+        required = re.findall(r"'([^']+)'", config.split('REQUIRED_CHECKS = (', 1)[1].split('\n)\n', 1)[0])
+        self.assertEqual(len(required), 4)
+        self.assertFalse([name for name in required if name.startswith('Migrations (')])
+
     @staticmethod
     def ci_jobs():
         """The workflow text and each job's body, keyed by job id."""
@@ -535,7 +671,7 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertNotIn('default: true', ci)
         dispatch = ci.split('workflow_dispatch:')[1].split('pull_request:')[0]
         self.assertRegex(dispatch, r'inputs:\n      full:\n        type: boolean\n        default: false\n')
-        self.assertIn('    if: ${{ inputs.full == true }}\n', blocks['migrations'])
+        self.assertIn(self.MIGRATIONS_IF, blocks['migrations'])
         self.assertIn('uses: ./.github/workflows/migrations.yml', blocks['migrations'])
         # The race-detector suite, the make targets and the no-skip checkers are full-only.
         full_only = re.compile(r'verify-backend|verify-api-docs|check-go\.py|check-auth\.py|\bgo test\b')
