@@ -2,8 +2,10 @@ package main
 
 // Issue #337: the lead erasure hooks (repository.LeadErasureHooks, set through
 // the repository.WithLeadErasureHooks option of NewLeadRepository) are test
-// seams. No production file may reference them; only their own definition file
-// names them.
+// seams. Issue #385 added the hooks of the erasure protocol
+// (repository.ErasureHooks, set through WithUserErasureHooks,
+// WithCustomerErasureHooks and WithLeadErasureLockHooks). No production file
+// may reference any of them; only their own definition files name them.
 
 import (
 	"go/ast"
@@ -21,11 +23,17 @@ import (
 func TestLeadErasureHooksNotWiredInProduction(t *testing.T) {
 	root, err := filepath.Abs("..")
 	require.NoError(t, err)
-	const definition = "internal/repository/lead_erasure_hooks.go"
-	forbidden := map[string]bool{"WithLeadErasureHooks": true, "LeadErasureHooks": true}
+	definitions := map[string]bool{
+		"internal/repository/lead_erasure_hooks.go": false,
+		"internal/repository/erasure_hooks.go":      false,
+	}
+	forbidden := map[string]bool{
+		"WithLeadErasureHooks": true, "LeadErasureHooks": true,
+		"ErasureHooks": true, "WithUserErasureHooks": true, "WithCustomerErasureHooks": true, "WithLeadErasureLockHooks": true,
+	}
 
 	parsed := 0
-	sawMain, sawDefinition := false, false
+	sawMain := false
 	for _, dir := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -50,11 +58,8 @@ func TestLeadErasureHooksNotWiredInProduction(t *testing.T) {
 				return err
 			}
 			parsed++
-			switch rel {
-			case "cmd/main.go":
+			if rel == "cmd/main.go" {
 				sawMain = true
-			case definition:
-				sawDefinition = true
 			}
 
 			var refs []string
@@ -64,16 +69,19 @@ func TestLeadErasureHooksNotWiredInProduction(t *testing.T) {
 				}
 				return true
 			})
-			if rel == definition {
+			if _, isDefinition := definitions[rel]; isDefinition {
+				definitions[rel] = true
 				assert.NotEmpty(t, refs, "%s defines the hooks", rel)
 				return nil
 			}
-			assert.Empty(t, refs, "%s references the test-only lead erasure hooks", rel)
+			assert.Empty(t, refs, "%s references the test-only erasure hooks", rel)
 			return nil
 		})
 		require.NoError(t, err)
 	}
 	assert.True(t, sawMain, "cmd/main.go was parsed")
-	assert.True(t, sawDefinition, "%s was parsed", definition)
+	for definition, saw := range definitions {
+		assert.True(t, saw, "%s was parsed", definition)
+	}
 	assert.Greater(t, parsed, 50, "the production sources were walked")
 }

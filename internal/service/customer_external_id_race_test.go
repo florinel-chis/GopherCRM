@@ -44,7 +44,9 @@ const externalIDRaceTimeout = 20 * time.Second
 // The statements the MySQL orderings wait on. MariaDB can keep `?` in INFO, so
 // no pattern depends on a parameter's value.
 var (
-	externalIDErasureScrub = regexp.MustCompile("^UPDATE `customers` SET ")
+	// The erasure's first lock on the customer row: since #385 its locking
+	// read by primary key, which precedes the scrub UPDATE.
+	externalIDErasureScrub = regexp.MustCompile("(?s)^(UPDATE `customers` SET |SELECT `id`,`user_id` FROM `customers` WHERE .*FOR UPDATE$)")
 	externalIDCustomerLock = regexp.MustCompile("^SELECT `id` FROM `customers` .*FOR UPDATE$")
 )
 
@@ -283,7 +285,7 @@ func TestCustomerExternalIDCreateRacesErasureMySQL(t *testing.T) {
 
 		eraseDone := make(chan error, 1)
 		go func() { eraseDone <- eraser.Delete(customer.ID) }()
-		// The erasure's scrub of the customer row waits for that lock.
+		// The erasure's lock of the customer row waits for that lock.
 		awaitExternalIDLockWait(t, probeDB, externalIDErasureScrub)
 		close(gate.release)
 

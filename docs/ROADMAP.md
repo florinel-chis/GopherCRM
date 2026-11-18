@@ -154,9 +154,22 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   (#108) is one transaction. Lead-rooted erasure against a conversion of the same lead is closed by
   #337: the erasure cancels the lead's automation runs, then locks the lead row and decides on it,
   so a conversion either commits first (an admin erasure erases its customer too, a non-admin one
-  is refused) or waits and answers 404. Customer- and user-rooted erasure still share no lock
-  protocol with customer/login linking, opposite entry points can deadlock (an error, never a
-  partial commit), and no erasure is under the #183 retry rule yet. Login (#336), refresh
+  is refused) or waits and answers 404. Since #385 every erasure, whichever row it starts from,
+  discovers the person's rows, locks them in one order (automation runs, leads, customers, users,
+  then the credential tables, ids ascending), re-checks the graph under the locks and is under the
+  retry rule: opposite entry points queue instead of deadlocking, a lost deadlock or lock wait is
+  replayed, and a graph that moved restarts the erasure, both within a bound. Still open: the
+  governed user write (`DELETE /users/{id}`) holds the target's `users` row before its nested
+  erasure locks leads and customers, so it can deadlock with a customer- or lead-rooted erasure
+  of the same person (either side is replayed; a governed delete replayed after the other
+  erasure committed answers 404, the account being erased already); the password-reset confirm
+  takes its token before the `users` row and is not retried, so against an erasure it may fail
+  with error 1213 and nothing written (on MariaDB 10.11 also when the erasure already holds the
+  token row, because the confirm's claim locks through `idx_password_reset_tokens_deleted_at`
+  first); inside a caller's transaction the erasure's re-check of the reverse links
+  answers from the caller's snapshot; and nothing locks the `users` row when `customers.user_id`
+  is set (no shipped code path sets it; it comes from a seed, an import or SQL), so a customer
+  linked to the login after the erasure's re-check and before its commit is not erased. Login (#336), refresh
   rotation, the password-reset request and API-key creation (#342) lock the owner's `users` row
   before they issue anything, so against a user- or customer-rooted erasure they either commit
   first (and the erasure purges what they issued) or wait and are refused. The reset request and

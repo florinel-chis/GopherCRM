@@ -50,12 +50,12 @@ var concurrencyDocFlowsInOrder = []string{
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
 
 // concurrencyDocExpectedStatus is the status of every flow at a415cf1, with
-// Login implemented by #336 (C2) and the password-reset request and API-key
-// create by #342 (C3).
+// Login implemented by #336 (C2), the password-reset request and API-key
+// create by #342 (C3) and the three erasures by #385 (C4).
 var concurrencyDocExpectedStatus = map[string]string{
-	"User-rooted erasure":            "partial",
-	"Customer-rooted erasure":        "partial",
-	"Lead-rooted erasure":            "partial",
+	"User-rooted erasure":            "implemented",
+	"Customer-rooted erasure":        "implemented",
+	"Lead-rooted erasure":            "implemented",
 	"Lead conversion":                "implemented",
 	"Lead update":                    "implemented",
 	"Company delete":                 "implemented",
@@ -69,21 +69,33 @@ var concurrencyDocExpectedStatus = map[string]string{
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
-// WithTransactionAndRetry, with the retry bound constant each cites and the
-// file that defines it.
-var concurrencyDocRetryFlows = map[string]struct{ constant, file string }{
-	"Lead conversion":        {"", ""},
-	"Login":                  {"loginMaxRetries", "internal/service/auth_service.go"},
-	"Password-reset request": {"resetRequestMaxRetries", "internal/service/auth_service.go"},
-	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go"},
+// WithTransactionAndRetry, with the retry bound constant each cites, the file
+// that defines it and, when the constant is not a `const name = 3` line of its
+// own, the declaration as the file writes it.
+var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration string }{
+	"Lead conversion":        {"", "", ""},
+	"Login":                  {"loginMaxRetries", "internal/service/auth_service.go", ""},
+	"Password-reset request": {"resetRequestMaxRetries", "internal/service/auth_service.go", ""},
+	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go", ""},
 	// #348: every governed user write and role write is one replayed root.
-	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go"},
+	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #385: every erasure root is one replayed transaction (a const block).
+	"User-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
+	"Customer-rooted erasure": {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
+	"Lead-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
 }
 
+const (
+	concurrencyDocErasureFile      = "internal/repository/erasure.go"
+	concurrencyDocErasureRetryDecl = "\terasureMaxRetries       = 3\n"
+	// concurrencyDocErasureOrder is the one lock order of every erasure (#385).
+	concurrencyDocErasureOrder = "automation runs → leads → customers → users → refresh_tokens → password_reset_tokens → api_keys"
+)
+
 var concurrencyDocExpectedTicket = map[string]string{
-	"User-rooted erasure":            "C4",
-	"Customer-rooted erasure":        "C4",
-	"Lead-rooted erasure":            "C4",
+	"User-rooted erasure":            "#385",
+	"Customer-rooted erasure":        "#385",
+	"Lead-rooted erasure":            "#385",
 	"Lead conversion":                "#182",
 	"Lead update":                    "#182",
 	"Company delete":                 "#182",
@@ -487,10 +499,27 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.NotContains(t, rbac, "has no caller")
 	assert.NotContains(t, rbac, "Target")
 
-	// The root: WithTransactionAndRetry with the bound the Retry line cites.
-	run := concurrencyDocFuncBody(t, "internal/service/role_governance.go", "func (g *roleGovernance) run(")
-	assert.Contains(t, run, "g.txManager.WithTransactionAndRetry(")
-	assert.Contains(t, run, "roleWriteMaxRetries")
+	// The root: WithTransactionAndRetry with the bound the Retry line cites,
+	// inside the restart loop of a nested erasure whose graph changed (#385).
+	const governance = "internal/service/role_governance.go"
+	runOnce := concurrencyDocFuncBody(t, governance, "func (g *roleGovernance) runOnce(")
+	assert.Contains(t, runOnce, "g.txManager.WithTransactionAndRetry(")
+	assert.Contains(t, runOnce, "roleWriteMaxRetries")
+	run := concurrencyDocFuncBody(t, governance, "func (g *roleGovernance) run(")
+	assert.Contains(t, run, "g.runOnce(ctx, fn)")
+	assert.Contains(t, run, "shouldRestartGovernedWrite(ctx, err)")
+	assert.Contains(t, run, "restarts >= roleWriteGraphMaxRestarts")
+	assert.NotContains(t, run, "WithTransactionAndRetry(", "the deadlock replay stays WithTransactionAndRetry's own, in runOnce")
+	restartGoverned := concurrencyDocFuncBody(t, governance, "func shouldRestartGovernedWrite(")
+	for _, want := range []string{"repository.ErrErasureGraphChanged", "utils.ErrRollbackFailed", "utils.ErrTransactionPoisoned",
+		"utils.ErrCommitFailed", "utils.ErrBeginFailed", "ctx.Err() == nil"} {
+		assert.Contains(t, restartGoverned, want, "shouldRestartGovernedWrite")
+	}
+	assert.Contains(t, readRepositoryFile(t, governance), "const roleWriteGraphMaxRestarts = 3")
+	for _, want := range []string{"`ErrErasureGraphChanged`", "`roleWriteGraphMaxRestarts`", "`shouldRestartGovernedWrite`",
+		"the one inversion of the erasure order (#385)", "`governedWrite` is not reordered"} {
+		assert.Contains(t, rbac, want, "RBAC flow")
+	}
 
 	// The governed user writes: admin set, then users, then roles, inside it.
 	inOrder := func(body string, statements ...string) {
@@ -590,21 +619,35 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 	assert.NotContains(t, rbac, "target")
 	assert.NotContains(t, rbac, "not implemented")
 
-	cross := concurrencyDocNormalize(concurrencyDocParagraph(t, section, "**Cross-chain order (undecided).**", concurrencyDocFile))
+	// #385: the cross-chain order is decided for the erasures and stated once.
+	assert.NotContains(t, section, "(undecided)")
+	assert.NotContains(t, section, "This document pins no combined sequence across the chains")
+	erasureParagraph := concurrencyDocParagraph(t, section, "**Erasure order (#385).**", concurrencyDocFile)
+	cross := concurrencyDocNormalize(erasureParagraph)
 	for _, want := range []string{
-		"No source specifies the order for flows spanning several chains",
-		"`C4` (#183) owns that decision",
-		"the current erasure order depends on the root",
-		"the user-rooted erasure locks the user before its customers and leads",
+		"One order spans the chains for every erasure, whichever row it starts from",
+		"`" + concurrencyDocErasureOrder + "`",
+		"ids ascending inside each table",
+		"a locking read by primary key only",
+		"`lockGraph`", "`lockCredentials`",
+		"Two flows still lock against this order",
+		"The governed user write of `DELETE /users/{id}` (#348) holds the target's `users` row",
+		"whichever side is the victim is replayed",
+		"The password-reset confirm claims its `password_reset_tokens` row before the owner's `users` row and is not retried",
 	} {
-		assert.Contains(t, cross, want, "Cross-chain paragraph")
+		assert.Contains(t, cross, want, "Erasure order paragraph")
+	}
+	erasureLines := map[string]bool{}
+	for _, line := range strings.Split(erasureParagraph, "\n") {
+		erasureLines[line] = true
 	}
 
-	// No arrow in the section joins tables of different chains: the section
-	// states no combined cross-chain sequence.
+	// Outside the erasure order paragraph no arrow in the section joins tables
+	// of different chains; inside it the only cross-chain step is customers →
+	// users, the step of the erasure order.
 	parenthetical := regexp.MustCompile(`\([^)]*\)`)
 	word := regexp.MustCompile(`[A-Za-z_]+`)
-	pairs := 0
+	pairs, crossPairs := 0, 0
 	for _, line := range lines {
 		clean := strings.NewReplacer("`", "", "*", "").Replace(line)
 		parts := strings.Split(clean, "→")
@@ -622,10 +665,16 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 			}
 			pairs++
 			sameChain := (aLead && bLead) || (aSession && bSession) || (aRBAC && bRBAC)
+			if erasureLines[line] && !sameChain {
+				crossPairs++
+				assert.Equal(t, "customers → users", a+" → "+b, "the erasure order crosses the chains at customers → users only: %q", line)
+				continue
+			}
 			assert.True(t, sameChain, "Global lock order joins %s → %s across chains: %q", a, b, line)
 		}
 	}
 	assert.GreaterOrEqual(t, pairs, 6, "the chains themselves were not recognised")
+	assert.Equal(t, 1, crossPairs, "the erasure order states leads → customers → users once")
 }
 
 func TestConcurrencyDocRetryRule(t *testing.T) {
@@ -656,6 +705,24 @@ func TestConcurrencyDocRetryRule(t *testing.T) {
 	}
 	assert.True(t, issuance, "the same sentence names the password-reset request and API-key create (#342)")
 	assert.True(t, target, "a sentence says the rule is the #183 target")
+	// #385: the erasures are under the rule; the target sentence names the
+	// four flows that are not, and no erasure.
+	var erasures, remaining bool
+	for _, s := range concurrencyDocSentences(section) {
+		if strings.Contains(s, "current") && strings.Contains(s, "the three erasures") && strings.Contains(s, "`runErasureUnit`") {
+			erasures = true
+		}
+		if strings.Contains(s, "target") && strings.Contains(s, "#183") {
+			for _, flow := range []string{"company delete", "bulk status", "refresh rotation", "the password-reset confirm"} {
+				assert.Contains(t, s, flow, "the #183 target sentence")
+			}
+			assert.NotContains(t, s, "erasure", "the #183 target sentence")
+			remaining = true
+		}
+	}
+	assert.True(t, erasures, "the sentence on current behaviour names the three erasures and runErasureUnit")
+	assert.True(t, remaining)
+	assert.Contains(t, norm, "the erasures restart theirs on `ErrErasureGraphChanged`")
 
 	// The rule as the code implements it.
 	tx := readRepositoryFile(t, "internal/utils/transaction.go")
@@ -675,11 +742,15 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 			assert.Contains(t, retry, "WithTransactionAndRetry", name)
 			if bound.constant != "" {
 				assert.Contains(t, retry, bound.constant, "%s Retry", name)
-				assert.Contains(t, readRepositoryFile(t, bound.file), "const "+bound.constant+" = 3")
+				declaration := bound.declaration
+				if declaration == "" {
+					declaration = "const " + bound.constant + " = 3"
+				}
+				assert.Contains(t, readRepositoryFile(t, bound.file), declaration)
 			}
 		} else {
 			assert.NotContains(t, retry, "WithTransactionAndRetry",
-				"only the Lead conversion, Login, Password-reset request, API-key create and RBAC Retry lines name it; %s does", name)
+				"only the erasure, Lead conversion, Login, Password-reset request, API-key create and RBAC Retry lines name it; %s does", name)
 		}
 	}
 	for _, name := range []string{"Lead conversion", "Lead update"} {
@@ -689,12 +760,20 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 		}
 	}
 	assert.Contains(t, fields["Lead update"]["Retry"], "no deadlock retry")
-	for _, name := range []string{
-		"User-rooted erasure", "Customer-rooted erasure", "Lead-rooted erasure",
-		"Company delete", "Bulk status", "Refresh rotation", "Password-reset confirm",
-	} {
+	for _, name := range []string{"Company delete", "Bulk status", "Refresh rotation", "Password-reset confirm"} {
 		assert.Contains(t, fields[name]["Retry"], "none today", "%s Retry", name)
 	}
+	// #385: the erasures are retried and restarted, and carry no target.
+	for _, name := range []string{"User-rooted erasure", "Customer-rooted erasure", "Lead-rooted erasure"} {
+		retry := fields[name]["Retry"]
+		for _, want := range []string{"`ErrErasureGraphChanged`", "`erasureGraphMaxRestarts`"} {
+			assert.Contains(t, retry, want, "%s Retry", name)
+		}
+		for _, gone := range []string{"none today", "Target"} {
+			assert.NotContains(t, retry, gone, "%s Retry", name)
+		}
+	}
+	assert.Contains(t, readRepositoryFile(t, concurrencyDocErasureFile), "\terasureGraphMaxRestarts = 3\n")
 
 	// The code behind the lead Retry lines.
 	update := concurrencyDocFuncBody(t, "internal/service/lead_service.go", "func (s *leadService) Update(")
@@ -801,7 +880,9 @@ func TestConcurrencyDocTicketMap(t *testing.T) {
 	assert.Len(t, seen, len(concurrencyDocFlowsInOrder), "one row per flow")
 
 	after := concurrencyDocNormalize(strings.Join(lines[end:], "\n"))
-	assert.Contains(t, after, "C2–C4 are Paperclip ids with no GitHub issue yet")
+	assert.Contains(t, after, "C2 and C3 are Paperclip ids with no GitHub issue yet")
+	assert.NotContains(t, after, "C2–C4 are Paperclip ids")
+	assert.Contains(t, after, "C4 is implemented by #385")
 	assert.Contains(t, after, "The RBAC lock order of #259 is implemented by #348")
 	assert.NotContains(t, concurrencyDocText(t), "R6")
 	assert.NotContains(t, concurrencyDocText(t), "R7")
@@ -890,11 +971,10 @@ func TestConcurrencyDocCrossLinks(t *testing.T) {
 	}
 }
 
-// TestConcurrencyDocLeadErasureVsConversion pins the #337 order of the
-// lead-rooted erasure — automation runs, then a locking read of the lead by
-// id, then the customer by id, with a plain converted-lead pluck — to the
-// document and to the code, and the inherited per-lead order of the customer-
-// and user-rooted erasures.
+// TestConcurrencyDocLeadErasureVsConversion pins the order of the lead-rooted
+// erasure (#337, #385) — automation runs, then a locking read of the lead by
+// id, then the customer and the login by id, with a plain converted-lead
+// pluck — to the document and to the code.
 func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 	const cascade = "internal/repository/erasure_cascade.go"
 	bodies := concurrencyDocFlowBodies(t)
@@ -903,9 +983,11 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 	order := fields["Lead-rooted erasure"]["Order"]
 
 	for _, want := range []string{
-		"automation runs (`cancelLeadAutomation`) → leads (locking read by id",
+		"automation runs (`cancelAutomationInTables`) → leads (locking read by id",
 		"→ customers (locking read by id",
-		"→ users → deals and quotes text",
+		"→ users (locking read by id",
+		"→ the credential rows → deals and quotes text",
+		"`DeleteUnconverted` discovers and locks the root lead only and never reads or locks a customer or a user",
 		"The converted-lead pluck (`WHERE customer_id = ?`",
 		"stays a plain read",
 		"a conversion always inserts a new customer",
@@ -917,53 +999,179 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 	}
 	assert.Contains(t, lead, "`ErrConvertedLeadNeedsAdmin`")
 	assert.Contains(t, lead, "Neither ordering ends in error 1213")
+	assert.Contains(t, lead, "rolls back with `ErrErasureGraphChanged`, discovers again and erases the new customer too")
 
-	// The lead lock the Order line cites is the locking read in eraseLead.
-	cite := regexp.MustCompile("`" + regexp.QuoteMeta(cascade) + `:([0-9]+)` + "`")
-	leadAt := strings.Index(order, "leads (locking read by id")
-	require.GreaterOrEqual(t, leadAt, 0)
-	m := cite.FindStringSubmatch(order[leadAt:])
-	require.NotNil(t, m, "the lead lock is cited with file:line")
-	n, err := strconv.Atoi(m[1])
-	require.NoError(t, err)
+	// The locks the Order line cites are the locking reads of lockGraph.
 	lines := strings.Split(readRepositoryFile(t, cascade), "\n")
-	require.LessOrEqual(t, n, len(lines))
-	assert.Contains(t, lines[n-1], `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`,
-		"%s:%d is the locking read of the lead", cascade, n)
-
-	// Customer- and user-rooted erasures inherit the per-lead order.
-	for _, flow := range []string{"Customer-rooted erasure", "User-rooted erasure"} {
-		assert.Contains(t, concurrencyDocNormalize(bodies[flow]), "customers → automation runs → leads", flow)
-		assert.Contains(t, concurrencyDocNormalize(bodies[flow]), "`readErasedEmail`", flow)
+	cited := func(after, statement string) {
+		t.Helper()
+		at := strings.Index(order, after)
+		require.GreaterOrEqual(t, at, 0, after)
+		m := regexp.MustCompile("`(?:" + regexp.QuoteMeta(cascade) + ")?:([0-9]+)`").FindStringSubmatch(order[at:])
+		require.NotNil(t, m, "%q is cited with a line", after)
+		n, err := strconv.Atoi(m[1])
+		require.NoError(t, err)
+		require.LessOrEqual(t, n, len(lines))
+		assert.Contains(t, lines[n-1], statement, "%s:%d", cascade, n)
 	}
+	cited("leads (locking read by id", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`)
+	cited("customers (locking read by id", `lockingRead(tx).Unscoped().Select("id", "user_id")`)
+	cited("users (locking read by id", `lockingRead(tx).Unscoped().Select("id", "role")`)
 
 	// Lead conversion queued behind an erasure: not found, 404.
 	conversion := concurrencyDocNormalize(bodies["Lead conversion"])
 	assert.Contains(t, conversion, "A conversion queued behind a lead erasure finds the lead gone")
 	assert.Contains(t, conversion, "404")
 
-	// The "no shared order with lead conversion" statement is narrowed.
+	// The erasures share the direction of lead conversion (#385).
 	flowsSection := concurrencyDocNormalize(concurrencyDocSectionBody(t, "Flows"))
 	assert.NotContains(t, flowsSection, "All three erasures are one transaction each, but they share no order with lead conversion")
-	assert.Contains(t, flowsSection, "Customer- and user-rooted erasures still share no order with lead conversion")
+	assert.NotContains(t, flowsSection, "Customer- and user-rooted erasures still share no order with lead conversion")
+	assert.Contains(t, flowsSection, "All three erasures take the lead before the customer, the direction lead conversion takes")
 
-	// The code behind it.
-	eraseLead := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) eraseLead(")
-	cancelAt := strings.Index(eraseLead, "plan.BeforeScrub(tx, id)")
-	lockAt := strings.Index(eraseLead, `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`)
-	refuseAt := strings.Index(eraseLead, "return ErrConvertedLeadNeedsAdmin")
-	scrubAt := strings.Index(eraseLead, "eraseRecord(tx, id, plan)")
-	assert.True(t, cancelAt >= 0 && lockAt > cancelAt && refuseAt > lockAt && scrubAt > refuseAt,
-		"eraseLead cancels the runs, locks the lead, decides, then scrubs")
-	assert.Equal(t, 1, strings.Count(eraseLead, "First(&"), "eraseLead reads the lead once, under the lock")
+	// The code behind it: the plan still names the cancel, and the address
+	// read and the plain reverse reads are what the document says they are.
 	assert.Contains(t, leadErasurePlanBody(t, cascade), "BeforeScrub: cancelLeadAutomation")
-
-	eraseCustomer := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) eraseCustomer(")
-	assert.Contains(t, eraseCustomer, `lockingRead(tx).Unscoped().Select("id", "user_id")`)
-	assert.Contains(t, eraseCustomer, "tx.Unscoped().Model(&models.Lead{}).\n\t\tWhere(\"customer_id = ?\", id)",
-		"the converted-lead pluck is a plain read")
-	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/erasure.go", "func readErasedEmail("),
+	assert.Contains(t, concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func readErasedEmail("),
 		"lockingRead(tx).Unscoped()")
+	pluck := concurrencyDocFuncBody(t, cascade, "func convertedLeadsOf(")
+	assert.Contains(t, pluck, "db.Unscoped().Model(&models.Lead{}).\n\t\tWhere(\"customer_id = ?\", customerID)",
+		"the converted-lead pluck is a plain read")
+	assert.NotContains(t, pluck, "lockingRead")
+	assert.NotContains(t, concurrencyDocFuncBody(t, cascade, "func customersOfLogin("), "lockingRead")
+}
+
+// TestConcurrencyDocErasureOrder pins the one erasure protocol of #385 to the
+// three erasure flows and to the code: the order, the snapshot rule, the
+// re-check, the retry and the restart, and what stays open.
+func TestConcurrencyDocErasureOrder(t *testing.T) {
+	const cascade = "internal/repository/erasure_cascade.go"
+	bodies := concurrencyDocFlowBodies(t)
+	fields := concurrencyDocFlowFields(t)
+	erasures := []string{"User-rooted erasure", "Customer-rooted erasure", "Lead-rooted erasure"}
+
+	for _, name := range erasures {
+		body := concurrencyDocNormalize(bodies[name])
+		order := fields[name]["Order"]
+		assert.Contains(t, order, concurrencyDocErasureOrder, "%s Order", name)
+		assert.Contains(t, order, "ids ascending inside each table", "%s Order", name)
+		assert.Contains(t, strings.ToLower(order), "snapshot rule", "%s Order", name)
+		assert.Contains(t, body, "`readErasedEmail`", name)
+		for _, gone := range []string{"Target (C4)", "(undecided)", "customers → automation runs → leads", "db.Transaction"} {
+			assert.NotContains(t, body, gone, name)
+		}
+		assert.Contains(t, fields[name]["Transaction"], "`eraseGraph`", "%s Transaction", name)
+		assert.Contains(t, fields[name]["Transaction"], "`runErasureUnit`", "%s Transaction", name)
+	}
+
+	// The rule is stated in full once, in the user-rooted flow.
+	user := concurrencyDocNormalize(bodies["User-rooted erasure"])
+	for _, want := range []string{
+		"`discoverErasureGraph`",
+		"No locking read filters on `leads.customer_id`, `customers.user_id`, `deleted_at` or a credential table's `user_id`",
+		"`ErrErasureGraphChanged`",
+		"the first plain read of a transaction fixes its snapshot",
+		"run on the root handle before the transaction begins",
+		"no plain read of any kind runs on the transaction before the `users` lock, the last graph lock",
+		"on MySQL 8 a select on `information_schema` fixes the snapshot (on MariaDB 10.11 it does not)",
+		"`probeAutomationTables`",
+		"`purgeCredentials`",
+		"`shouldRestartErasure`",
+		"Two inversions remain",
+		"The governed user write holds the target's `users` row before its nested erasure locks leads and customers",
+		"The password-reset confirm takes `password_reset_tokens` before `users` and is not retried",
+		"Inside a caller's transaction the reverse re-read answers from the caller's snapshot",
+		"No shipped code path writes `customers.user_id`",
+		"such a write takes no lock on the `users` row",
+		"`scrubUnlinkedSubmissions`",
+	} {
+		assert.Contains(t, user, want, "User-rooted erasure")
+	}
+
+	// The code: discovery before the unit, one attempt per discovery, the
+	// restart on the sentinel only.
+	graph := concurrencyDocFuncBody(t, cascade, "func eraseGraph(")
+	inOrder := func(body string, statements ...string) {
+		t.Helper()
+		last := -1
+		for _, statement := range statements {
+			at := strings.Index(body, statement)
+			if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+				assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+				last = at
+			}
+		}
+	}
+	inOrder(graph, "discoverErasureGraph(db, root, allowCustomers)", "seams.runAfterDiscovery()", "runErasureUnit(db,",
+		"cascade.erase(tx, root, discovery)", "if inTransaction(db) {", "shouldRestartErasure(err)", "restarts >= erasureGraphMaxRestarts")
+	restart := concurrencyDocFuncBody(t, cascade, "func shouldRestartErasure(")
+	for _, want := range []string{"ErrErasureGraphChanged", "utils.ErrRollbackFailed", "utils.ErrTransactionPoisoned",
+		"utils.ErrCommitFailed", "utils.ErrBeginFailed"} {
+		assert.Contains(t, restart, want, "shouldRestartErasure")
+	}
+	assert.Contains(t, readRepositoryFile(t, cascade), "var ErrErasureGraphChanged = errors.New(")
+
+	// The discovery reads plainly and resolves the schema probes itself.
+	discover := concurrencyDocFuncBody(t, cascade, "func discoverErasureGraph(")
+	assert.NotContains(t, discover, "lockingRead")
+	assert.Contains(t, discover, "probeAutomationTables(db)")
+
+	// One attempt: cancel (writes only), lock, re-read, credential locks, scrub.
+	erase := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) erase(")
+	inOrder(erase, "cancelAutomationInTables(tx, models.AutomationEntityLead, leadID, discovery.tables)",
+		"c.lockGraph(tx, graph)", "walkErasureGraph(root, c.allowCustomers, locked.links(tx, graph))",
+		"return ErrErasureGraphChanged", "c.lockCredentials(tx, graph.users)",
+		"eraseRecord(tx, leadID, plan)", "eraseRecord(tx, customerID, customerErasurePlan())",
+		"eraseRecord(tx, userID, userErasurePlan())", "c.scrubBusinessText(tx)")
+	assert.NotContains(t, erase, "HasTable", "no schema probe on the transaction before the locks")
+	assert.NotContains(t, concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func cancelAutomationInTables("), "HasTable",
+		"the cancel of an erasure issues writes only")
+	assert.Contains(t, concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func probeAutomationTables("), "db.Migrator().HasTable(")
+
+	// The graph locks: leads, customers, users, by primary key, the refusal
+	// decided on the locked lead.
+	lock := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockGraph(")
+	inOrder(lock, "c.lockStage(erasureStageLeads,", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id").First(&lead, id)`,
+		"return ErrConvertedLeadNeedsAdmin", "c.lockStage(erasureStageCustomers,",
+		`lockingRead(tx).Unscoped().Select("id", "user_id").First(&customer, id)`, "c.lockStage(erasureStageUsers,",
+		`lockingRead(tx).Unscoped().Select("id", "role").First(&user, id)`)
+	assert.Equal(t, 3, strings.Count(lock, "First(&"), "each graph row is read once, under its lock")
+	for _, filter := range []string{`"customer_id = ?"`, `"user_id = ?"`, "deleted_at"} {
+		assert.NotContains(t, lock, filter, "lockGraph filters on the primary key only")
+	}
+
+	// The credential locks: refresh_tokens, password_reset_tokens, api_keys,
+	// ids by a plain read, locks by primary key.
+	credentials := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockCredentials(")
+	inOrder(credentials, "erasureStageRefreshTokens", "erasureStagePasswordResets", "erasureStageAPIKeys",
+		`Where("user_id IN ?", userIDs).Order("id").Pluck("id", &ids)`, "lockingRead(tx).Unscoped().Model(stage.model())",
+		`Where("id IN ?", chunk).Order("id")`)
+	assert.Equal(t, 1, strings.Count(credentials, "lockingRead("), "only the read by primary key locks")
+	stages := readRepositoryFile(t, cascade)
+	for _, stage := range []string{
+		`erasureStageLeads          = "leads"`, `erasureStageCustomers      = "customers"`, `erasureStageUsers          = "users"`,
+		`erasureStageRefreshTokens  = "refresh_tokens"`, `erasureStagePasswordResets = "password_reset_tokens"`,
+		`erasureStageAPIKeys        = "api_keys"`,
+	} {
+		assert.Contains(t, stages, stage)
+	}
+
+	// The unit: WithTransactionAndRetry on the database, a savepoint in a
+	// caller's transaction, and no db.Transaction any more.
+	unit := concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func runErasureUnit(")
+	assert.Contains(t, unit, "utils.NewTransactionManager(db).WithTransactionAndRetry(context.Background(),")
+	assert.Contains(t, unit, "}, erasureMaxRetries)")
+	assert.Contains(t, unit, `"SAVEPOINT "+name`)
+	assert.NotContains(t, unit, "db.Transaction(")
+
+	// Every root enters through eraseGraph.
+	for file, calls := range map[string]int{
+		"internal/repository/user_repository.go":     1,
+		"internal/repository/customer_repository.go": 1,
+		"internal/repository/lead_repository.go":     2,
+	} {
+		assert.Equal(t, calls, strings.Count(readRepositoryFile(t, file), "return eraseGraph(r.db, "), file)
+	}
 }
 
 func leadErasurePlanBody(t *testing.T, rel string) string {
@@ -994,4 +1202,13 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 		}
 	}
 	assert.True(t, entry, "an [Unreleased] entry names docs/CONCURRENCY.md and #323")
+	// #385: the erasure lock order has its own entry.
+	var erasure bool
+	for _, b := range concurrencyDocBullets(unreleased) {
+		if strings.Contains(b, "#385") && strings.Contains(b, "docs/CONCURRENCY.md") &&
+			strings.Contains(b, "ErrErasureGraphChanged") && strings.Contains(b, "check-go.py transaction") {
+			erasure = true
+		}
+	}
+	assert.True(t, erasure, "an [Unreleased] entry names #385, docs/CONCURRENCY.md, the sentinel and the transaction gate")
 }

@@ -40,7 +40,7 @@ These caveats apply to every recipe that takes in leads through forms.
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
   were (`applySubmissionLead`, `internal/service/form_service.go:1170-1240`). Matching is
   installation-wide, not per form (`GetLatestByEmail`,
-  `internal/repository/lead_repository.go:300`). A rule that routes on `source` sees the form that
+  `internal/repository/lead_repository.go:298`). A rule that routes on `source` sees the form that
   created the lead, not the form just submitted. To act on every enquiry, trigger on
   `lead_form_submitted`: it follows the `lead_created` or `lead_updated` of each finalised
   submission, carries the form and submission ids, can be narrowed with `trigger.form_id`, and lets
@@ -167,7 +167,7 @@ containers (backend and UI) with a fixed project name, port and subnet
 values. One shared installation does not work for several clients, for two reasons:
 
 - lead email matching is installation-wide, so enquiries from different clients' sites merge into
-  one lead (`internal/repository/lead_repository.go:300`);
+  one lead (`internal/repository/lead_repository.go:298`);
 - AEO tracks exactly one brand per installation (`AEOProfile`, `internal/models/aeo.go:28-31`).
 
 ### Gaps

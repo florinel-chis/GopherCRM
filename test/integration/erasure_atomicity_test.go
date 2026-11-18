@@ -782,9 +782,12 @@ func runCustomerWriteAfterErasure(t *testing.T, useMySQL bool) {
 
 // --- AC-4: writes and erasures running at the same time ------------------------
 
-// awaitBlockedCustomerUpdate returns once an UPDATE of the customers table is
-// seen executing on another connection on two consecutive polls of
-// information_schema.PROCESSLIST, which means it is waiting for the row lock.
+// awaitBlockedCustomerUpdate returns once a statement that takes the row lock
+// of a customers row is seen executing on another connection on two
+// consecutive polls of information_schema.PROCESSLIST, which means it is
+// waiting for that lock: an UPDATE of the customers table (a customer write),
+// or the erasure's locking read of the customer by primary key, which since
+// #385 precedes its first write to the row.
 func awaitBlockedCustomerUpdate(t *testing.T, db *gorm.DB, done <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(customerWriteWait)
@@ -793,14 +796,14 @@ func awaitBlockedCustomerUpdate(t *testing.T, db *gorm.DB, done <-chan error) {
 		require.NoError(t, db.Raw(`SELECT COUNT(*)
 			FROM information_schema.PROCESSLIST
 			WHERE DB = DATABASE() AND ID <> CONNECTION_ID() AND COMMAND IN ('Query', 'Execute')
-			AND INFO LIKE 'UPDATE%customers%'`).Scan(&waiting).Error)
+			AND (INFO LIKE 'UPDATE%customers%' OR INFO LIKE 'SELECT%FROM%customers%FOR UPDATE')`).Scan(&waiting).Error)
 		if waiting > 0 {
 			seen++
 		} else {
 			seen = 0
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("no UPDATE of customers was seen waiting for the row lock within %s", customerWriteWait)
+			t.Fatalf("no statement on customers was seen waiting for the row lock within %s", customerWriteWait)
 		}
 		select {
 		case err := <-done:

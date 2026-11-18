@@ -1,9 +1,11 @@
 package repository
 
 // Repository roots of #337: the statement order of a lead-rooted erasure
-// (automation cancel first, then a locking read of the lead by primary key that
-// decides the refusal and the graph, then the customer by primary key, with a
-// plain converted-lead pluck), the locking clauses on MySQL, the survival of
+// (a plain discovery of the graph, then the automation cancel ahead of every
+// locking read and every write of leads, then a locking read of the lead by
+// primary key that decides the refusal and the graph, then the customer by
+// primary key, with a plain converted-lead pluck; the discovery and the
+// one-order locks are #385), the locking clauses on MySQL, the survival of
 // the erasure against an automation step that holds the lead row, and the
 // instance-local erasure hooks. Statements are captured through GORM
 // callbacks registered only for the duration of the repository call. The MySQL
@@ -94,9 +96,20 @@ var (
 	erasureCustomersUpd  = regexp.MustCompile("^UPDATE `customers` SET ")
 	erasureUsersUpdate   = regexp.MustCompile("^UPDATE `users` SET ")
 	erasureConvertedPick = regexp.MustCompile("^SELECT `id` FROM `leads` WHERE customer_id = \\?")
+	erasureLeadsDelete   = regexp.MustCompile("^DELETE FROM `leads`")
 	erasureLeadEmailRead = regexp.MustCompile("^SELECT `email` FROM `leads` WHERE id = \\?")
 	erasureCustEmailRead = regexp.MustCompile("^SELECT `email` FROM `customers` WHERE id = \\?")
 )
+
+// lastMatch is the index of the last statement re matches, or -1.
+func lastMatch(statements []string, re *regexp.Regexp) int {
+	for i := len(statements) - 1; i >= 0; i-- {
+		if re.MatchString(statements[i]) {
+			return i
+		}
+	}
+	return -1
+}
 
 func firstMatch(statements []string, re *regexp.Regexp) int {
 	for i, s := range statements {
@@ -139,13 +152,25 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 	owner := seedAutomationUser(t, db, "lock-order-owner", models.RoleSales)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 
+	// The discovery (#385) reads the graph with plain reads before the cancel;
+	// what stays ahead of every lock and every write of leads is the cancel
+	// (#337). SQLite drops FOR UPDATE, so the locking read is recognised by its
+	// shape; nothing but a SELECT precedes the cancel at all.
 	assertCancelFirst := func(t *testing.T, statements []string) {
 		t.Helper()
 		require.NotEmpty(t, statements)
-		assert.Regexp(t, erasureRunCancel, statements[0], "the automation_runs cancel is the first data statement")
 		cancelAt := firstMatch(statements, erasureRunCancel)
-		leadsAt := firstMatch(statements, erasureLeadsSelect)
-		assert.True(t, leadsAt < 0 || leadsAt > cancelAt, "no SELECT of leads precedes the cancel: %q", statements)
+		require.GreaterOrEqual(t, cancelAt, 0, "the automation_runs cancel: %q", statements)
+		for _, s := range statements[:cancelAt] {
+			assert.True(t, strings.HasPrefix(s, "SELECT "), "only discovery reads precede the cancel: %q", s)
+			assert.NotContains(t, s, "FOR UPDATE", "no locking read precedes the cancel: %q", s)
+			assert.NotRegexp(t, erasureLeadLockRead, s, "no locking read of leads precedes the cancel")
+		}
+		for _, re := range []*regexp.Regexp{erasureLeadLockRead, erasureLeadsUpdate, erasureLeadsDelete} {
+			at := firstMatch(statements, re)
+			assert.True(t, at < 0 || at > cancelAt, "no locking read and no write of leads precedes the cancel: %q", statements)
+		}
+		assert.GreaterOrEqual(t, firstMatch(statements[:cancelAt], erasureLeadsSelect), 0, "the discovery read the lead before the cancel: %q", statements)
 	}
 
 	t.Run("admin erasure of a converted lead", func(t *testing.T) {
@@ -157,14 +182,15 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 		leadRead := firstMatch(statements, erasureLeadLockRead)
 		leadScrub := firstMatch(statements, erasureLeadsUpdate)
 		customerRead := firstMatch(statements, erasureCustomerRead)
-		pluck := firstMatch(statements, erasureConvertedPick)
+		pluck := lastMatch(statements, erasureConvertedPick)
 		require.GreaterOrEqual(t, leadRead, 0, "the lead read: %q", statements)
 		require.GreaterOrEqual(t, leadScrub, 0, "the leads scrub: %q", statements)
 		require.GreaterOrEqual(t, customerRead, 0, "the customer read: %q", statements)
 		require.GreaterOrEqual(t, pluck, 0, "the converted-lead pluck: %q", statements)
 		assert.Less(t, leadRead, leadScrub, "the lead read precedes the leads scrub UPDATE")
 		assert.Less(t, leadRead, customerRead, "the customer read follows the lead read")
-		assert.Less(t, leadRead, pluck, "the converted-lead pluck follows the lead read")
+		assert.Less(t, leadRead, pluck, "the re-check's converted-lead pluck follows the lead read")
+		assert.Less(t, customerRead, leadScrub, "every graph lock precedes the first scrub")
 		assert.Equal(t, 1, countMatches(statements, erasureLeadLockRead), "the lead is read once")
 		assertWritesByPrimaryKeyOnly(t, statements)
 
@@ -276,21 +302,27 @@ func TestLeadErasureDiscoveryReadsLockMySQL(t *testing.T) {
 	lockedByID(erasureLeadEmailRead, "readErasedEmail of the lead")
 	lockedByID(erasureCustEmailRead, "readErasedEmail of the customer")
 
-	pluck := firstMatch(statements, erasureConvertedPick)
-	require.GreaterOrEqual(t, pluck, 0, "the converted-lead pluck: %q", statements)
-	assert.NotContains(t, statements[pluck], "FOR UPDATE", "the converted-lead pluck is a plain read")
+	require.Equal(t, 2, countMatches(statements, erasureConvertedPick), "the converted-lead pluck of the discovery and of the re-check: %q", statements)
+	for _, s := range statements {
+		if erasureConvertedPick.MatchString(s) {
+			assert.NotContains(t, s, "FOR UPDATE", "the converted-lead pluck is a plain read")
+		}
+	}
 
+	// The discovery reads leads plainly before the cancel (#385); the first
+	// statement that locks or writes leads comes after it.
 	cancelAt := firstMatch(statements, erasureRunCancel)
 	firstLeads := -1
 	for i, s := range statements {
-		if strings.Contains(s, "`leads`") {
+		if strings.Contains(s, "`leads`") && (!strings.HasPrefix(s, "SELECT ") || strings.Contains(s, "FOR UPDATE")) {
 			firstLeads = i
 			break
 		}
 	}
 	require.GreaterOrEqual(t, cancelAt, 0)
 	require.GreaterOrEqual(t, firstLeads, 0)
-	assert.Less(t, cancelAt, firstLeads, "the automation_runs cancel precedes the first leads statement")
+	assert.Less(t, cancelAt, firstLeads, "the automation_runs cancel precedes the first lock and the first write of leads")
+	assert.Regexp(t, erasureLeadLockRead, statements[firstLeads], "and that statement is the locking read of the lead")
 }
 
 // isDeadlockError reports MySQL/MariaDB error 1213.
