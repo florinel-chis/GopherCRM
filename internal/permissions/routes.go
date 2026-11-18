@@ -29,13 +29,24 @@ func (r RouteKey) needs(keys ...string) RouteKey {
 // handlers pass the same constants this table names.
 var RouteKeys = map[string]RouteKey{
 	// users
-	"POST /users":                key(UsersCreate),
+	// The request names role sales, which only users.assign_role allows: without it a new account can only be a customer.
+	"POST /users":                key(UsersCreate).needs(UsersAssignRole),
 	"GET /users":                 key(UsersView),
 	"GET /users/:id":             key(UsersView),
 	"PUT /users/:id":             key(UsersUpdate),
 	"DELETE /users/:id":          key(UsersDelete),
 	"POST /users/:id/activate":   key(UsersActivate),
 	"POST /users/:id/deactivate": key(UsersActivate),
+
+	// roles
+	"GET /permissions/catalogue": key(RolesView, UsersAssignRole),
+	"GET /roles":                 key(RolesView, UsersAssignRole),
+	"POST /roles":                key(RolesManage),
+	"GET /roles/audit":           key(RolesAuditView),
+	"GET /roles/:id":             key(RolesView, UsersAssignRole),
+	"PUT /roles/:id":             key(RolesManage),
+	"DELETE /roles/:id":          key(RolesManage),
+	"POST /roles/:id/clone":      key(RolesManage),
 
 	// leads
 	// The request names another user as owner, which only leads.assign_owner allows.

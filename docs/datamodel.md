@@ -36,9 +36,9 @@ Represents system users with different roles and permissions.
 - `sales` - Access to leads and customers
 - `support` - Access to tickets and customer support
 - `customer` - Limited access to own data
-- `custom` - Reserved for the role API of #259 (`models.RoleCustom`, an untyped constant): the
-  account's permissions come from `role_id`. Nothing assigns it yet and no handler accepts it; the
-  API reference and the request bindings still list the four values above.
+- `custom` - An account on a custom role (`models.RoleCustom`, a typed `UserRole` constant): the
+  account's permissions come from the role `role_id` names. `POST /users` and `PUT /users/{id}`
+  assign it together with `role_id` (#348); a customer login cannot receive it.
 
 ### Relationships
 - Has many Leads (as owner)
@@ -49,7 +49,9 @@ Represents system users with different roles and permissions.
 ## Role Model
 
 RBAC persistence of #259 slice S2 (#344): three tables, the `users.role_id` link and four seeded
-system rows. No route, service or check reads them yet; every API answer is unchanged.
+system rows. The permission checks read them since #347; the role API and the user routes write
+them since #348 (`/roles`, `POST /users`, `PUT /users/{id}`), each change with its
+`role_audit_log` row in the same transaction.
 
 ```mermaid
 erDiagram
@@ -109,7 +111,7 @@ The four system rows (`models.SystemRoleSeeds`, the same literal values as the S
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | role_id | bigint unsigned | No | - | Primary key part 1; `fk_roles_permissions` → `roles.id` (no ON DELETE clause) |
-| permission_key | varchar(100) | No | - | Primary key part 2; the catalogue arrives in a later slice |
+| permission_key | varchar(100) | No | - | Primary key part 2; a leaf key of the permission catalogue (`internal/permissions`), validated on write |
 | scope | varchar(10) | No | 'all' | `all` or `own` |
 
 ### role_audit_log
@@ -127,7 +129,7 @@ blocks a role or user delete.
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
 | target_user_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_target_user_id` |
-| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data (an obligation on the S3 writer). That is why the erasure does not touch the table |
+| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data: the writers store a role's name, description and permissions, or a user's `role` and `role_id`. That is why the erasure does not touch the table |
 
 ### Schema sources
 

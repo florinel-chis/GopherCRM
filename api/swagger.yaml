@@ -3766,6 +3766,18 @@ definitions:
         description: Status after the change.
         example: sent
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.RoleAuditAction:
+    enum:
+    - role_created
+    - role_updated
+    - role_deleted
+    - user_role_changed
+    type: string
+    x-enum-varnames:
+    - RoleAuditRoleCreated
+    - RoleAuditRoleUpdated
+    - RoleAuditRoleDeleted
+    - RoleAuditUserRoleChanged
   github_com_florinel-chis_gophercrm_internal_models.Task:
     description: A to-do item assigned to one user, optionally linked to a lead or
       a customer (never both) and to a deal, and carrying labels.
@@ -4231,7 +4243,7 @@ definitions:
       is_active:
         description: |-
           False for a deactivated account: it cannot log in, and its bearer tokens and
-          API keys are rejected. Changed only by an admin.
+          API keys are rejected. Changed by a caller holding users.activate.
         example: true
         type: boolean
       last_login_at:
@@ -4257,9 +4269,17 @@ definitions:
       role:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
-        description: Role of the account; only an admin can change it (PUT /users/{id},
-          POST /users).
+        description: |-
+          Role of the account: a system role, or custom for an account on a custom
+          role (see role_id). Changed through PUT /users/{id} and set by POST /users,
+          by a caller holding users.assign_role.
         example: sales
+      role_id:
+        description: |-
+          Id of the account's custom role. Present exactly when role is custom;
+          omitted for an account on a system role.
+        example: 7
+        type: integer
       updated_at:
         description: When the record was last written (RFC 3339 date-time), set by
           the server on every update. Read-only.
@@ -4268,20 +4288,23 @@ definitions:
         type: string
     type: object
   github_com_florinel-chis_gophercrm_internal_models.UserRole:
-    description: Role of an account. It decides which operations and records the account
-      may reach; every operation lists the roles it admits. Public registration always
-      creates customer accounts.
+    description: 'Role of an account: one of the four system roles (admin, sales,
+      support, customer), whose permissions are fixed, or custom for an account whose
+      permissions come from the custom role its role_id names. Public registration
+      always creates customer accounts.'
     enum:
     - admin
     - sales
     - support
     - customer
+    - custom
     type: string
     x-enum-varnames:
     - RoleAdmin
     - RoleSales
     - RoleSupport
     - RoleCustomer
+    - RoleCustom
   github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery:
     description: One outbound webhook delivery (one event for one endpoint) and its
       outcome. Holds ids, the event type, the status, counters and timestamps; never
@@ -5219,6 +5242,25 @@ definitions:
         example: Leads
         type: string
     type: object
+  internal_handler.CloneRoleRequest:
+    description: Body of POST /roles/{id}/clone.
+    properties:
+      description:
+        description: Free text, up to 500 characters; the source's description is
+          not copied.
+        example: Cloned from Sales
+        maxLength: 500
+        type: string
+      name:
+        description: |-
+          Display name of the new role, 1 to 100 characters after trimming, unique
+          among all roles whatever the letter case.
+        example: Sales (copy)
+        maxLength: 100
+        type: string
+    required:
+    - name
+    type: object
   internal_handler.CompanyRequest:
     properties:
       address:
@@ -5891,6 +5933,30 @@ definitions:
     - external_id
     - source
     type: object
+  internal_handler.CreateRoleRequest:
+    description: Body of POST /roles.
+    properties:
+      description:
+        description: Free text, up to 500 characters.
+        example: Sales with the whole pipeline
+        maxLength: 500
+        type: string
+      name:
+        description: |-
+          Display name, 1 to 100 characters after trimming, unique among all roles
+          whatever the letter case. It must not carry personal text.
+        example: Sales lead
+        maxLength: 100
+        type: string
+      permissions:
+        description: The permissions of the role; omitted or empty creates a role
+          without any.
+        items:
+          $ref: '#/definitions/internal_handler.RolePermissionRequest'
+        type: array
+    required:
+    - name
+    type: object
   internal_handler.CreateTaskRequest:
     description: Body of POST /tasks.
     properties:
@@ -6036,8 +6102,8 @@ definitions:
     - title
     type: object
   internal_handler.CreateUserRequest:
-    description: Body of POST /users (admin). Unlike public registration, the requested
-      role is honoured.
+    description: Body of POST /users. Unlike public registration, the requested role
+      is honoured.
     properties:
       email:
         description: Login email address; must be valid and not used by any account
@@ -6064,14 +6130,22 @@ definitions:
       role:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
-        description: Role of the new account; required, one of admin, sales, support,
-          customer.
+        description: |-
+          Role of the new account; required, one of admin, sales, support,
+          customer, custom. Any role other than customer needs users.assign_role.
         enum:
         - admin
         - sales
         - support
         - customer
+        - custom
         example: sales
+      role_id:
+        description: |-
+          Id of the custom role; required with role custom and refused with any
+          other role (400 INVALID_ROLE_ASSIGNMENT).
+        example: 7
+        type: integer
     required:
     - email
     - first_name
@@ -6600,7 +6674,7 @@ definitions:
       is_active:
         description: |-
           False for a deactivated account: it cannot log in, and its bearer tokens and
-          API keys are rejected. Changed only by an admin.
+          API keys are rejected. Changed by a caller holding users.activate.
         example: true
         type: boolean
       last_login_at:
@@ -6633,9 +6707,17 @@ definitions:
       role:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
-        description: Role of the account; only an admin can change it (PUT /users/{id},
-          POST /users).
+        description: |-
+          Role of the account: a system role, or custom for an account on a custom
+          role (see role_id). Changed through PUT /users/{id} and set by POST /users,
+          by a caller holding users.assign_role.
         example: sales
+      role_id:
+        description: |-
+          Id of the account's custom role. Present exactly when role is custom;
+          omitted for an account on a system role.
+        example: 7
+        type: integer
       role_name:
         description: |-
           Name of the account's role: admin, sales, support or customer for a
@@ -6690,6 +6772,41 @@ definitions:
         type: string
     required:
     - email
+    type: object
+  internal_handler.PermissionCatalogueNode:
+    description: 'One node of the permission catalogue: a group with children, or
+      a permission a role can hold.'
+    properties:
+      children:
+        description: The permissions of a group, in display order; empty for a permission.
+        items:
+          $ref: '#/definitions/internal_handler.PermissionCatalogueNode'
+        type: array
+      key:
+        description: Group key (leads) or permission key (leads.view).
+        example: leads.view
+        type: string
+      scopes:
+        description: |-
+          Scopes a role may hold the permission at: all and own for a permission
+          that can be limited to own records, empty for a permission that is
+          always all and for a group.
+        example:
+        - all
+        - own
+        items:
+          type: string
+        type: array
+      selectable:
+        description: |-
+          True for a permission a custom role can hold; false for a group and for
+          a permission only a system role holds.
+        example: true
+        type: boolean
+      title:
+        description: Display title.
+        example: View leads
+        type: string
     type: object
   internal_handler.ProductRequest:
     properties:
@@ -7045,6 +7162,145 @@ definitions:
           setting is off or could not be read.
         example: false
         type: boolean
+    type: object
+  internal_handler.RoleAuditEntryResponse:
+    description: One row of the role audit log. It holds ids, role names, permission
+      keys and scopes only.
+    properties:
+      action:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.RoleAuditAction'
+        description: Kind of change.
+        enum:
+        - role_created
+        - role_updated
+        - role_deleted
+        - user_role_changed
+        example: role_updated
+      actor_user_id:
+        description: Id of the acting user.
+        example: 1
+        type: integer
+      after_state:
+        description: State after the change, in the same shape. null on a role delete.
+      auth_method:
+        description: 'How the acting request authenticated: bearer or api_key.'
+        enum:
+        - bearer
+        - api_key
+        example: bearer
+        type: string
+      before_state:
+        description: |-
+          State before the change: name, description and permissions of a role,
+          or role and role_id of a user. null on a create.
+      created_at:
+        description: UTC time of the change (RFC 3339).
+        example: "2026-11-18T09:00:00Z"
+        type: string
+      id:
+        description: Row id.
+        example: 42
+        type: integer
+      role_id:
+        description: |-
+          The affected role, or the custom role a user received; null when a user
+          received a system role.
+        example: 7
+        type: integer
+      role_name:
+        description: |-
+          Name of that role at the time of the change; the system role's key when
+          a user received a system role.
+        example: Sales lead
+        type: string
+      target_user_id:
+        description: The user whose role changed; null on a role change.
+        example: 12
+        type: integer
+    type: object
+  internal_handler.RolePermissionEntry:
+    description: 'One permission of a role: a catalogue key and the scope it is held
+      at.'
+    properties:
+      key:
+        description: Permission key, group.action, for example leads.view.
+        example: leads.view
+        type: string
+      scope:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.PermissionScope'
+        description: |-
+          Which records the permission reaches: all of them, or own, the records
+          the account owns or is assigned.
+        enum:
+        - all
+        - own
+        example: all
+    type: object
+  internal_handler.RolePermissionRequest:
+    description: One requested permission of a role.
+    properties:
+      key:
+        description: Permission key from GET /permissions/catalogue; only selectable
+          keys are accepted.
+        example: leads.view
+        type: string
+      scope:
+        description: |-
+          all or own; omitted or empty means all. own is accepted only on a key
+          whose catalogue node lists it under scopes.
+        enum:
+        - all
+        - own
+        example: own
+        type: string
+    type: object
+  internal_handler.RoleResponse:
+    description: 'A role: one of the four system roles or a custom role, with its
+      permissions and the number of users on it.'
+    properties:
+      created_at:
+        description: Creation time (RFC 3339).
+        example: "2026-11-18T09:00:00Z"
+        type: string
+      description:
+        description: Free text.
+        example: Sales with the whole pipeline
+        type: string
+      id:
+        description: Role id.
+        example: 7
+        type: integer
+      is_system:
+        description: True for the four system roles, which cannot be edited or deleted,
+          only cloned.
+        example: false
+        type: boolean
+      name:
+        description: Display name.
+        example: Sales lead
+        type: string
+      permissions:
+        description: |-
+          The role's permissions, sorted by key. A system role's come from its
+          fixed matrix.
+        items:
+          $ref: '#/definitions/internal_handler.RolePermissionEntry'
+        type: array
+      system_key:
+        description: admin, sales, support or customer on a system role; null on a
+          custom role.
+        example: sales
+        type: string
+      updated_at:
+        description: Time of the last change (RFC 3339).
+        example: "2026-11-18T09:00:00Z"
+        type: string
+      user_count:
+        description: Number of live users on the role, deactivated ones included.
+        example: 3
+        type: integer
     type: object
   internal_handler.SaveAEOProfileRequest:
     properties:
@@ -7553,6 +7809,32 @@ definitions:
           Refused: this key, with any value (null included) and in any letter case, is
           answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
     type: object
+  internal_handler.UpdateRoleRequest:
+    description: Body of PUT /roles/{id}. name is always written; an omitted description
+      or permissions field keeps the stored value.
+    properties:
+      description:
+        description: Free text, up to 500 characters; omitted keeps the stored description.
+        example: Sales with the whole pipeline
+        maxLength: 500
+        type: string
+      name:
+        description: |-
+          Display name, 1 to 100 characters after trimming, unique among all roles
+          whatever the letter case.
+        example: Sales lead
+        maxLength: 100
+        type: string
+      permissions:
+        description: |-
+          When present, the array replaces the role's permissions; an empty array
+          leaves the role without any. Omitted keeps the stored permissions.
+        items:
+          $ref: '#/definitions/internal_handler.RolePermissionRequest'
+        type: array
+    required:
+    - name
+    type: object
   internal_handler.UpdateTaskRequest:
     description: Body of PUT /tasks/{id}. Every field is optional; absent or empty
       fields are left unchanged.
@@ -7703,10 +7985,10 @@ definitions:
         type: string
       is_active:
         description: |-
-          New active flag. Applied only when the caller is an admin and silently
-          ignored otherwise. false deactivates the account (its tokens and API keys
-          stop working); unlike POST /users/{id}/deactivate this path does not stop
-          an admin from deactivating itself.
+          New active flag. Applied only when the caller holds users.activate and
+          silently ignored otherwise. false deactivates the account (its tokens and
+          API keys stop working); deactivating the last active admin is refused
+          with 409 LAST_ADMIN.
         example: true
         type: boolean
       last_name:
@@ -7717,15 +7999,23 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
         description: |-
-          New role. Applied only when the caller is an admin and silently ignored
-          otherwise; a value outside admin, sales, support, customer is a 400 for
-          every caller.
+          New role. Applied only when the caller holds users.assign_role and
+          silently ignored otherwise; a value outside admin, sales, support,
+          customer, custom is a 400 for every caller.
         enum:
         - admin
         - sales
         - support
         - customer
+        - custom
         example: support
+      role_id:
+        description: |-
+          Id of the custom role; required with role custom and refused with any
+          other role or without role (400 INVALID_ROLE_ASSIGNMENT). Ignored, like
+          role, for a caller without users.assign_role.
+        example: 7
+        type: integer
     type: object
   internal_handler.WebhookEndpointCreateRequest:
     properties:
@@ -18739,6 +19029,66 @@ paths:
       summary: Count my unread notifications
       tags:
       - notifications
+  /permissions/catalogue:
+    get:
+      description: 'The tree of permissions a role can hold, in display order: groups,
+        each with its permissions. A permission lists the scopes it can be held at
+        (all and own, or none when it is always all) and whether a custom role can
+        hold it (selectable is false for a group and for a permission only a system
+        role holds). The catalogue is fixed in code. Needs roles.view or users.assign_role
+        (the admin system role holds both).'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The catalogue groups
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.PermissionCatalogueNode'
+                  type: array
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller holds neither roles.view nor users.assign_role
+            (Insufficient permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get the permission catalogue
+      tags:
+      - users
   /products:
     get:
       description: |-
@@ -20723,6 +21073,734 @@ paths:
       summary: Move a quote to another status
       tags:
       - quotes
+  /roles:
+    get:
+      description: |-
+        A page of roles, system and custom, as a bare array in data with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Each role carries its permissions (a system role's come from its fixed matrix) and user_count, the number of live users on it. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. Needs roles.view or users.assign_role.
+        Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0). An unknown sort_by is ignored rather than rejected.
+      parameters:
+      - default: 0
+        description: Number of rows to skip
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size; capped at 100, non-positive or invalid values give
+          20
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column; any other value is ignored (ascending id order)
+        enum:
+        - id
+        - name
+        - created_at
+        - updated_at
+        in: query
+        name: sort_by
+        type: string
+      - default: asc
+        description: Sort direction; any other value falls back to asc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: A page of roles; pagination in meta
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.RoleResponse'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller holds neither roles.view nor users.assign_role
+            (Insufficient permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the roles could not be read'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List roles
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: 'Creates a custom role with the given permissions. Needs roles.manage.
+        One transaction: the caller''s account is locked and its permissions are read
+        again, the permission list is validated, the escalation rule is applied, and
+        the role is written together with its role_created audit row. The escalation
+        rule: a caller that is not on the admin system role cannot grant a permission
+        it does not hold itself, or hold only at scope own while granting all. The
+        name is trimmed and must be unique among all roles, system roles included,
+        whatever the letter case.'
+      parameters:
+      - description: The role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CreateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The created role; user_count is 0
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.RoleResponse'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: name is missing, blank after trimming or
+            over 100 characters, or description is over 500 (details maps the Go field
+            name to a message). BAD_REQUEST: malformed JSON (Invalid request format).
+            INVALID_PERMISSION: the list holds a key outside the catalogue, a key
+            only a system role holds, a key twice, a scope other than all or own,
+            or own on a key that does not allow it; details.keys lists the offending
+            keys and nothing is written'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold roles.manage (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the list grants a permission above the caller''s own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'ROLE_NAME_TAKEN: another role already has this name'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the role could not be written; nothing was
+            stored'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a custom role
+      tags:
+      - users
+  /roles/{id}:
+    delete:
+      description: 'Deletes a custom role that no live user holds; there is no automatic
+        reassignment. Needs roles.manage. One transaction: the caller''s account,
+        the users holding the role and the role itself are locked, the holders are
+        read again, erased accounts that still referenced the role are detached, the
+        role and its permissions are deleted and the role_deleted audit row is written.
+        The checks answer in this order: ROLE_NOT_FOUND, FORBIDDEN, SYSTEM_ROLE_IMMUTABLE,
+        ROLE_ESCALATION, ROLE_IN_USE. A caller that is not on the admin system role
+        cannot delete a role whose permissions are above its own, and is told so before
+        the holders are counted. A deactivated holder blocks the delete like an active
+        one; an erased one does not. A refusal writes nothing.'
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted; no body
+        "400":
+          description: 'BAD_REQUEST: Invalid role ID'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold roles.manage (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the role''s permissions are above the caller''s own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'ROLE_NOT_FOUND: no role with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'SYSTEM_ROLE_IMMUTABLE: the role is one of the four system
+            roles. ROLE_IN_USE: a live user still holds the role, also when the assignment
+            committed while the delete ran; details.user_count is the number of holders'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the role could not be deleted; nothing was
+            changed'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Delete a custom role
+      tags:
+      - users
+    get:
+      description: One role, system or custom, with its permissions and user_count.
+        Needs roles.view or users.assign_role.
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The role
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.RoleResponse'
+              type: object
+        "400":
+          description: 'BAD_REQUEST: Invalid role ID (not an unsigned 32-bit integer)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller holds neither roles.view nor users.assign_role
+            (Insufficient permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'ROLE_NOT_FOUND: no role with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the role could not be read'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Get a role
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: 'Renames a custom role and, when the body carries permissions,
+        replaces its permission set; the holders are affected from their next request.
+        Needs roles.manage. One transaction: the caller''s account, then the caller''s
+        role and this role (ascending id) are locked, the caller''s permissions are
+        read again, and the role is written together with its role_updated audit row
+        holding the state before and after. The checks answer in this order: ROLE_NOT_FOUND,
+        FORBIDDEN, SYSTEM_ROLE_IMMUTABLE, ROLE_ESCALATION for the role''s current
+        permissions, INVALID_PERMISSION, ROLE_ESCALATION for the requested permissions,
+        then the name rules. The escalation rule covers both directions: a caller
+        that is not on the admin system role can neither grant a permission above
+        its own nor edit a role whose current permissions are above its own. A refusal
+        writes nothing.'
+      parameters:
+      - description: Role ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: The new name and, optionally, description and permissions
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.UpdateRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The updated role
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.RoleResponse'
+              type: object
+        "400":
+          description: 'BAD_REQUEST: Invalid role ID, or malformed JSON (Invalid request
+            format). VALIDATION_ERROR: name is missing, blank after trimming or over
+            100 characters, or description is over 500 (details maps the Go field
+            name to a message). INVALID_PERMISSION: the list holds a key outside the
+            catalogue, a key only a system role holds, a key twice, a scope other
+            than all or own, or own on a key that does not allow it; details.keys
+            lists the offending keys'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold roles.manage (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the role''s current permissions, or the requested ones,
+            are above the caller''s own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'ROLE_NOT_FOUND: no role with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'SYSTEM_ROLE_IMMUTABLE: the role is one of the four system
+            roles. ROLE_NAME_TAKEN: another role already has this name'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the role could not be written; nothing was
+            changed'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Update a custom role
+      tags:
+      - users
+  /roles/{id}/clone:
+    post:
+      consumes:
+      - application/json
+      description: 'Creates a custom role holding the permissions of the source: the
+        stored set of a custom role, or the fixed matrix of a system role, in both
+        cases without the permissions only a system role can hold. This is how a system
+        role is adapted, since it cannot be edited. Needs roles.manage. The escalation
+        check runs inside the transaction after the caller''s account and the source
+        role are locked: a caller that is not on the admin system role cannot clone
+        a role whose permissions are above its own. Audited as role_created.'
+      parameters:
+      - description: ID of the role to copy
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Name and description of the new role
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.CloneRoleRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The new custom role; user_count is 0
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.RoleResponse'
+              type: object
+        "400":
+          description: 'BAD_REQUEST: Invalid role ID, or malformed JSON (Invalid request
+            format). VALIDATION_ERROR: name is missing, blank after trimming or over
+            100 characters, or description is over 500 (details maps the Go field
+            name to a message)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold roles.manage (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the source''s permissions are above the caller''s own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'ROLE_NOT_FOUND: no role with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'ROLE_NAME_TAKEN: another role already has this name'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the role could not be written; nothing was
+            stored'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Clone a role
+      tags:
+      - users
+  /roles/audit:
+    get:
+      description: |-
+        A page of the append-only role audit log as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). A row is written, in the transaction of the change it records, for every role create, clone (role_created), update and delete, and for every change of a user's role or role_id (user_role_changed, also for the role a new user is created with). Rows hold ids, role names, permission keys and scopes only. Without sort_by the newest row comes first (created_at descending, then id descending); with an allowed sort_by the rows are ordered by that column, then by id, in the requested direction. Needs roles.audit_view.
+        Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0). An unknown sort_by is ignored rather than rejected. A role_id or target_user_id that is not an unsigned integer is ignored too.
+      parameters:
+      - default: 0
+        description: Number of rows to skip
+        in: query
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size; capped at 100, non-positive or invalid values give
+          20
+        in: query
+        name: limit
+        type: integer
+      - description: Sort column; any other value is ignored (newest first)
+        enum:
+        - id
+        - created_at
+        - action
+        in: query
+        name: sort_by
+        type: string
+      - default: desc
+        description: Sort direction; any other value falls back to desc
+        enum:
+        - asc
+        - desc
+        in: query
+        name: sort_order
+        type: string
+      - description: Only the rows of this role
+        in: query
+        name: role_id
+        type: integer
+      - description: Only the role changes of this user
+        in: query
+        name: target_user_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: A page of audit rows; pagination in meta
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.RoleAuditEntryResponse'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold roles.audit_view (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the audit log could not be read'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the role audit log
+      tags:
+      - users
   /tasks:
     get:
       description: 'One page of tasks. Roles: every authenticated role. Admins see
@@ -22552,11 +23630,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 'Admin only (route guard). Creates an active account with the requested
-        role, unlike the public POST /auth/register, which always creates a customer.
-        Password policy: at least 10 characters with an uppercase letter, a lowercase
-        letter, a digit and a special character. No mail is sent; the new user signs
-        in with the password the admin chose.'
+      description: |-
+        Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the caller chose.
+        The account is written in one transaction that locks the caller's account and the custom role, reads the caller's permissions again and applies the escalation rule: a caller that is not on the admin system role cannot give a role whose permissions are above its own (a missing permission, or all where it holds own). The customer role never counts as above the caller. The role the account is created with is recorded in the role audit log (user_role_changed) in the same transaction.
       parameters:
       - description: New account
         in: body
@@ -22579,10 +23655,12 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: a required field is missing, email is invalid,
             password is shorter than 10 characters or role is not one of admin, sales,
-            support, customer (details maps the Go field name to a message). BAD_REQUEST:
-            malformed JSON (Invalid request format), the password fails the complexity
-            policy, or the user could not be stored (the underlying message is returned,
-            e.g. a password over 72 bytes)'
+            support, customer, custom (details maps the Go field name to a message).
+            BAD_REQUEST: malformed JSON (Invalid request format), the password fails
+            the complexity policy, or the user could not be stored (the underlying
+            message is returned, e.g. a password over 72 bytes). INVALID_ROLE_ASSIGNMENT:
+            role custom without role_id, role_id with any other role, or a role_id
+            that names a system role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22602,7 +23680,20 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: the caller is not an admin (Insufficient permissions)'
+          description: 'FORBIDDEN: the caller does not hold users.create, or asks
+            for a role other than customer without users.assign_role (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the requested role''s permissions are above the caller''s
+            own'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'ROLE_NOT_FOUND: role_id names no role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22633,13 +23724,13 @@ paths:
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
-      summary: Create a user (admin)
+      summary: Create a user
       tags:
       - users
   /users/{id}:
     delete:
       description: |-
-        Admin only (route guard, repeated in the handler); an admin cannot erase its own account. This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
+        Needs users.delete (route guard, repeated in the handler; the admin system role holds it); a caller cannot erase its own account. The erasure runs in one transaction that first locks the active admins, the caller and the target (ascending id) and their custom roles, reads them again and answers in this order: FORBIDDEN (the caller lost the permission), ROLE_ESCALATION (a caller that is not on the admin system role cannot erase an account whose permissions are above its own; a customer login never is), LAST_ADMIN (the last active admin cannot be erased). This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
         Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. To suspend an account reversibly use POST /users/{id}/deactivate instead.
         When a customer-role user is erased, the deals and quotes of the customers and leads it reaches keep their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: deal title [redacted] with empty notes and lost_reason, quote title [redacted] with empty notes, each quote line's description set to its product's name; notifications about those deals are deleted. Deals and quotes owned by an erased staff user are not touched (owner_id is never followed).
       parameters:
@@ -22675,7 +23766,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: the caller is not an admin'
+          description: 'FORBIDDEN: the caller does not hold users.delete, also when
+            it lost the permission while the request waited. ROLE_ESCALATION: the
+            target''s permissions are above the caller''s own'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22686,6 +23779,15 @@ paths:
         "404":
           description: 'NOT_FOUND: no live user with this id (an already erased account
             included)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'LAST_ADMIN: the target is the last active admin'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22805,15 +23907,9 @@ paths:
     put:
       consumes:
       - application/json
-      description: Any authenticated role may update its own account; updating another
-        account requires the admin role (checked before the body is read). Only non-empty
-        fields are written. role and is_active are applied only for an admin caller
-        and silently ignored for everyone else; unlike POST /users/{id}/deactivate,
-        nothing here stops an admin from changing its own role or deactivating itself.
-        A body with nothing to apply returns the account unchanged. A password key
-        in the body is ignored; passwords are changed through POST /auth/change-password,
-        not here. Changing role or is_active takes effect on the account's next request
-        (tokens are re-checked against the stored account); no session is revoked.
+      description: |-
+        Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+        Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lost the permission), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
       parameters:
       - description: User ID
         in: path
@@ -22841,8 +23937,10 @@ paths:
         "400":
           description: 'BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request
             format). VALIDATION_ERROR: email is not an email address or role is not
-            one of admin, sales, support, customer (details maps the Go field name
-            to a message)'
+            one of admin, sales, support, customer, custom (details maps the Go field
+            name to a message). INVALID_ROLE_ASSIGNMENT (only for a caller holding
+            users.assign_role): role custom without role_id, role_id with any other
+            role or without role, or a role_id that names a system role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22862,8 +23960,11 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: a non-admin tried to update another account (You
-            can only update your own profile)'
+          description: 'FORBIDDEN: a caller without users.update tried to update another
+            account (You can only update your own profile), or the caller lost a permission
+            the request needs while it waited (Insufficient permissions). ROLE_ESCALATION:
+            the target''s permissions, or those of the requested role, are above the
+            caller''s own'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22872,7 +23973,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "404":
-          description: 'NOT_FOUND: no live user with this id'
+          description: 'NOT_FOUND: no live user with this id. ROLE_NOT_FOUND: role_id
+            names no role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22881,7 +23983,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "409":
-          description: 'CONFLICT: another account already uses this email'
+          description: 'CONFLICT: another account already uses this email. LAST_ADMIN:
+            the change would demote or deactivate the last active admin. CUSTOMER_LOGIN_ROLE:
+            a customer login cannot receive a custom role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22917,9 +24021,13 @@ paths:
       - users
   /users/{id}/activate:
     post:
-      description: 'Admin only (route guard). Sets is_active to true, so the account
-        can log in again and its unexpired access tokens and active API keys work
-        again. Idempotent: an already active account is returned unchanged.'
+      description: 'Needs users.activate (route guard; the admin system role holds
+        it). Sets is_active to true, so the account can log in again and its unexpired
+        access tokens and active API keys work again. Idempotent: an already active
+        account is returned unchanged. One transaction with the locks of PUT /users/{id};
+        the escalation rule applies: a caller that is not on the admin system role
+        cannot activate an account whose permissions are above its own (a customer
+        login never is).'
       parameters:
       - description: User ID
         in: path
@@ -22959,7 +24067,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: the caller is not an admin (Insufficient permissions)'
+          description: 'FORBIDDEN: the caller does not hold users.activate (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the target''s permissions are above the caller''s own'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22999,17 +24109,22 @@ paths:
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
-      summary: Activate a user (admin)
+      summary: Activate a user
       tags:
       - users
   /users/{id}/deactivate:
     post:
-      description: 'Admin only (route guard); an admin cannot deactivate its own account
-        here. Sets is_active to false, the reversible alternative to erasure: from
-        the next request on the account cannot log in, its bearer tokens and API keys
-        are rejected, and a refresh of its tokens fails. No data is changed and this
-        call deletes no refresh token, but a refresh attempted while the account is
-        deactivated revokes the token it presented. Idempotent.'
+      description: 'Needs users.activate (route guard; the admin system role holds
+        it); a caller cannot deactivate its own account here. One transaction with
+        the locks and the order of checks of PUT /users/{id}: FORBIDDEN (the caller
+        lost the permission), ROLE_ESCALATION (a caller that is not on the admin system
+        role cannot deactivate an account whose permissions are above its own; a customer
+        login never is), LAST_ADMIN (the last active admin cannot be deactivated).
+        Sets is_active to false, the reversible alternative to erasure: from the next
+        request on the account cannot log in, its bearer tokens and API keys are rejected,
+        and a refresh of its tokens fails. No data is changed and this call deletes
+        no refresh token, but a refresh attempted while the account is deactivated
+        revokes the token it presented. Idempotent.'
       parameters:
       - description: User ID
         in: path
@@ -23050,7 +24165,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: the caller is not an admin (Insufficient permissions)'
+          description: 'FORBIDDEN: the caller does not hold users.activate (Insufficient
+            permissions), also when it lost the permission while the request waited.
+            ROLE_ESCALATION: the target''s permissions are above the caller''s own'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -23060,6 +24177,15 @@ paths:
               type: object
         "404":
           description: 'NOT_FOUND: no live user with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'LAST_ADMIN: the target is the last active admin'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -23090,7 +24216,7 @@ paths:
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
-      summary: Deactivate a user (admin)
+      summary: Deactivate a user
       tags:
       - users
   /users/me:
@@ -23835,7 +24961,8 @@ swagger: "2.0"
 tags:
 - description: Login, registration, token refresh, logout, password change and reset.
   name: auth
-- description: Staff and customer accounts, the caller's own profile, activation (admin).
+- description: 'Staff and customer accounts, the caller''s own profile, activation,
+    and what governs them: roles, the permission catalogue and the role audit log.'
   name: users
 - description: 'Personal API keys for the Authorization: ApiKey <key> scheme.'
   name: api-keys

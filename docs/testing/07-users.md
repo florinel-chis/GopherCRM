@@ -470,8 +470,10 @@ Expected field still describes it and a **Known issue** line records the defect.
   database on every request. After a reload, `GET /users/me` returns `role: "customer"`, the drawer
   loses its Users entry and `/users` redirects to `/unauthorized`. The account cannot restore itself
   — only another admin or the `create-admin` CLI can.
-- **Known issue:** Self-demotion is unguarded and can lock the last admin out of user management. Not
-  currently recorded in FEATURES.md or ROADMAP.md.
+- **Known issue:** An admin can still demote itself here while another active admin remains (the
+  case's precondition); `POST /users/{id}/deactivate` refuses the caller's own account, this route
+  does not (ROADMAP.md). The last active admin is protected since #348: the same request answers
+  409 `LAST_ADMIN` and writes nothing.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended; needs the login
   helper for arbitrary credentials)
 

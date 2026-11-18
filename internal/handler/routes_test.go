@@ -38,6 +38,8 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	SetupNotificationRoutes(group, &NotificationHandler{})
 	// Registered right after SetupCustomerRoutes in cmd/main.go (#212).
 	SetupCustomerExternalIDRoutes(group, &CustomerHandler{})
+	// The role API (#348) puts the static /roles/audit next to /roles/:id.
+	SetupRoleRoutes(group, &RoleHandler{})
 	// The forms module registers two groups on the same mount point from two
 	// different files: the CRM routes above and the unauthenticated ones here.
 	// Between them they put a static segment (/forms/public), a parameter
@@ -83,6 +85,11 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/labels"},
+		// Roles: the static /roles/audit sits next to /roles/:id on the same verb.
+		{http.MethodGet, "/api/v1/roles/audit"},
+		{http.MethodGet, "/api/v1/roles/1"},
+		{http.MethodPost, "/api/v1/roles/1/clone"},
+		{http.MethodGet, "/api/v1/permissions/catalogue"},
 		{http.MethodPut, "/api/v1/labels/1"},
 		{http.MethodDelete, "/api/v1/labels/1"},
 		// The AEO group does the same thing one level deeper: /prompts/generate

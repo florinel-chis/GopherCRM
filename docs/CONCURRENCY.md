@@ -4,7 +4,7 @@ One place for the row-lock order and the retry rule of every write that locks ro
 one table: the erasures, lead conversion and update, company delete, bulk status, the session and
 credential flows, and RBAC writes. It records what the code does at `a415cf1` (with Login updated
 for #336, the password-reset request and API-key create for #342, and the lead-rooted erasure
-against lead conversion for #337) and, separately, the target that #183 (and #259 for RBAC) asks for. A flow whose order is only a target is marked
+against lead conversion for #337, and the RBAC writes for #348) and, separately, the target that #183 asks for. A flow whose order is only a target is marked
 `not implemented` or `partial`; nothing here describes a target as current behaviour.
 
 Each flow lists five fields:
@@ -37,9 +37,9 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   and API-key create `users → api_keys` (#342). The password-reset confirm is the exception: it
   claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
   inversion of the reset request's order (see both flows).
-- `admin set → users (id ascending) → roles (id ascending)` is the #259 target for RBAC writes (R6, R7), not implemented.
-  The #344 persistence has no caller yet; its locking methods follow this chain, with a role's
-  `role_permissions` rows after its `roles` row (see the RBAC flow below).
+- `admin set → users (id ascending) → roles (id ascending)` (#259, implemented by #348) for every governed user write and, without the admin set, every role write.
+  The admin set is the `users` rows of the active admins, locked by primary key in id order; a
+  role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
 **Outbound webhooks (#345), a self-contained order.** The endpoint delete
 (`internal/repository/webhook_repository.go`, `DeleteEndpoint`) takes `webhook_endpoints →
@@ -79,8 +79,9 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
 
 The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1064`),
 login (`internal/service/auth_service.go:283`), the password-reset request
-(`internal/service/auth_service.go:1220`) and API-key create
-(`internal/service/apikey_service.go:86`).
+(`internal/service/auth_service.go:1220`), API-key create
+(`internal/service/apikey_service.go:86`) and the RBAC user-role and role writes
+(`internal/service/role_governance.go:116`).
 For every other flow below it is the #183 target, a bounded whole-root retry, not today's
 behaviour. The lead writes also restart the whole root on `errLeadCompanyMoved`, a separate bounded
 loop (`runLeadCompanyAttempts`) described in their entries.
@@ -103,11 +104,14 @@ loop (`runLeadCompanyAttempts`) described in their entries.
   cancelled, then the lead is read with a locking read by id (#337). A staff login stops after its
   credentials.
 - **Transaction:** `userRepository.Delete` → `eraseGraph`
-  (`internal/repository/user_repository.go:164`) → `runErasureUnit`
+  (`internal/repository/user_repository.go:180`) → `runErasureUnit`
   (`internal/repository/erasure.go:407`): a `db.Transaction`, or a checked SAVEPOINT inside the
-  caller's transaction.
-- **Retry:** none today; a deadlock or lock wait timeout reaches the caller. Target (C4): the
-  #183 retry rule on the whole erasure root.
+  caller's transaction. On `DELETE /users/{id}` the caller is the governed user write of #348
+  (see the RBAC flow), which holds the admin set, the actor and the target before the erasure
+  starts.
+- **Retry:** none today for the erasure itself; a deadlock or lock wait timeout reaches the
+  caller, which on `DELETE /users/{id}` is the governed user write and replays its whole root
+  (see the RBAC flow). Target (C4): the #183 retry rule on every erasure root.
 - **Status:** partial
 
 The user is locked before its customers and leads, the opposite of the `companies → leads →
@@ -382,26 +386,42 @@ follow-up.
 
 ### RBAC user-role and role writes
 
-- **Rows locked:** none by a locking read on the routed path. `UserService.Update`
-  (`internal/service/user_service.go:55`) reads the user plainly and writes the role with one
-  conditional `UpdateFields` (`internal/service/user_service.go:107`); it reads and writes no
-  `roles` table row: the routed role is still the string column `role` of `users` (the `Role`
-  field, `internal/models/user.go:38`), typed by the `UserRole` string type
-  (`internal/models/user.go:14`). The #344 persistence (`roles`, `role_permissions`,
-  `users.role_id`) has no caller yet. Its locking methods: `LockActiveAdmins`
-  (`internal/repository/user_repository.go`, optional interface `UserRoleMaintenance`) discovers
-  the admin ids with a plain read and then locks those `users` rows by primary key in id order,
-  never through `idx_users_role`; `RoleRepository.ReplacePermissions` and `Delete`
-  (`internal/repository/role_repository.go`) lock the `roles` row by primary key, then delete its
-  `role_permissions` rows (and, for `Delete`, the role).
-- **Order:** users only, one statement, on the routed path. The #344 methods are written for the
-  #259 target admin set → users (id ascending) → roles (id ascending), with a role's
-  `role_permissions` rows after its `roles` row; a caller (S3) must take the users rows before any
-  roles row.
-- **Transaction:** no transaction today on the routed path. `ReplacePermissions` and `Delete` each
-  run one transaction (a savepoint under `WithTx`).
-- **Retry:** none. Target (R6, R7): one root transaction under the #183 retry rule.
-- **Status:** not implemented
+- **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
+  account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:221`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:91`) locks the `users` rows of the active
+  admins (`LockActiveAdmins`, `internal/repository/user_repository.go:284`: a plain read discovers
+  the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
+  `users` rows of the actor and the target (`LockLiveByIDs`,
+  `internal/repository/user_repository.go:322`, one locking read by primary key in id order) and
+  the `roles` rows of the actor's, the target's and the requested custom role with their
+  `role_permissions` rows (`RoleRepository.LockByIDs`,
+  `internal/repository/role_repository.go:227`: the roles by primary key in id order, then their
+  permissions, both locking reads, so a transaction that waited reads the committed rows and not
+  its snapshot). A role write (`internal/service/role_service.go:232`, `:274`, `:352` and `:418`
+  in the same file: create, update, delete, clone) locks the actor's `users` row and then the
+  `roles` rows of the actor's role and the role it touches; `ReplacePermissions` and `Delete`
+  (`internal/repository/role_repository.go:140`, `:178` in the same file) lock the `roles` row
+  again by primary key before they delete its `role_permissions` rows. The role delete also takes
+  a locking read of the live users holding the role, by `role_id`
+  (`LockLiveRoleHolders`, `internal/repository/user_repository.go:343`), before the roles and
+  again after them (`internal/service/role_service.go:358`, `:382` in the same file).
+- **Order:** admin set → users (id ascending) → roles (id ascending), with a role's
+  `role_permissions` rows after its `roles` row. A role write starts at the actor's `users` row:
+  users before roles. The actor is read again under its lock and every refusal (the lost
+  permission, the escalation rule, the customer-login rule, the last-admin invariant) is decided
+  after the locks, from the locked rows. The role delete is the one place where `users` rows are
+  not taken in ascending id: its holder reads lock by `role_id`, after the actor's row and, the
+  second time, after the roles; a deadlock that this causes is replayed.
+- **Transaction:** one root transaction per write (`roleGovernance.run`,
+  `internal/service/role_governance.go:116`) through the `WithTx` repositories; the audit row
+  (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
+  `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
+  (`internal/service/user_governed_writes.go:289`).
+- **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
+  (`internal/service/role_governance.go:28`) replays the whole root on a deadlock, lock wait
+  timeout or SQLite busy/locked.
+- **Status:** implemented
 
 ## How the #175 failure modes are avoided
 
@@ -449,8 +469,8 @@ same on MySQL 8 and MariaDB 10.11.
 | Password-reset request | C3 | implemented |
 | Password-reset confirm | C3 | implemented |
 | API-key create | C3 | implemented |
-| RBAC user-role and role writes | R6, R7 | not implemented |
+| RBAC user-role and role writes | #348 | implemented |
 
-C2–C4 and R6–R7 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
+C2–C4 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
 #183 comment of 14 Nov 2026 (C2 session credentials, C3 reset and API-key issuance, C4 erasure
-graph discovery), and R6–R7 are the #259 RBAC lock tickets.
+graph discovery). The RBAC lock order of #259 is implemented by #348.

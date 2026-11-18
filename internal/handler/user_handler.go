@@ -22,7 +22,7 @@ func NewUserHandler(userService service.UserService) *UserHandler {
 	return &UserHandler{userService: userService}
 }
 
-// @Description Body of POST /users (admin). Unlike public registration, the requested role is honoured.
+// @Description Body of POST /users. Unlike public registration, the requested role is honoured.
 type CreateUserRequest struct {
 	// Login email address; must be valid and not used by any account (409).
 	Email string `json:"email" binding:"required,email" format:"email" example:"sam.sales@example.com"`
@@ -34,8 +34,12 @@ type CreateUserRequest struct {
 	FirstName string `json:"first_name" binding:"required" example:"Sam"`
 	// Family name; required, non-empty.
 	LastName string `json:"last_name" binding:"required" example:"Seller"`
-	// Role of the new account; required, one of admin, sales, support, customer.
-	Role models.UserRole `json:"role" binding:"required,oneof=admin sales support customer" example:"sales"`
+	// Role of the new account; required, one of admin, sales, support,
+	// customer, custom. Any role other than customer needs users.assign_role.
+	Role models.UserRole `json:"role" binding:"required,oneof=admin sales support customer custom" example:"sales"`
+	// Id of the custom role; required with role custom and refused with any
+	// other role (400 INVALID_ROLE_ASSIGNMENT).
+	RoleID *uint `json:"role_id,omitempty" example:"7"`
 }
 
 // @Description Body of PUT /users/{id}. Every field is optional; an omitted or empty field leaves the stored value unchanged (names and email cannot be cleared).
@@ -46,14 +50,18 @@ type UpdateUserRequest struct {
 	FirstName string `json:"first_name,omitempty" example:"Sam"`
 	// New family name; empty leaves it unchanged.
 	LastName string `json:"last_name,omitempty" example:"Seller"`
-	// New role. Applied only when the caller is an admin and silently ignored
-	// otherwise; a value outside admin, sales, support, customer is a 400 for
-	// every caller.
-	Role models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer" example:"support"`
-	// New active flag. Applied only when the caller is an admin and silently
-	// ignored otherwise. false deactivates the account (its tokens and API keys
-	// stop working); unlike POST /users/{id}/deactivate this path does not stop
-	// an admin from deactivating itself.
+	// New role. Applied only when the caller holds users.assign_role and
+	// silently ignored otherwise; a value outside admin, sales, support,
+	// customer, custom is a 400 for every caller.
+	Role models.UserRole `json:"role,omitempty" binding:"omitempty,oneof=admin sales support customer custom" example:"support"`
+	// Id of the custom role; required with role custom and refused with any
+	// other role or without role (400 INVALID_ROLE_ASSIGNMENT). Ignored, like
+	// role, for a caller without users.assign_role.
+	RoleID *uint `json:"role_id,omitempty" example:"7"`
+	// New active flag. Applied only when the caller holds users.activate and
+	// silently ignored otherwise. false deactivates the account (its tokens and
+	// API keys stop working); deactivating the last active admin is refused
+	// with 409 LAST_ADMIN.
 	IsActive *bool `json:"is_active,omitempty" example:"true"`
 }
 
@@ -111,8 +119,9 @@ type UpdateMeRequest struct {
 }
 
 // Create godoc
-// @Summary Create a user (admin)
-// @Description Admin only (route guard). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the admin chose.
+// @Summary Create a user
+// @Description Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the caller chose.
+// @Description The account is written in one transaction that locks the caller's account and the custom role, reads the caller's permissions again and applies the escalation rule: a caller that is not on the admin system role cannot give a role whose permissions are above its own (a missing permission, or all where it holds own). The customer role never counts as above the caller. The role the account is created with is recorded in the role audit log (user_role_changed) in the same transaction.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -120,9 +129,10 @@ type UpdateMeRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateUserRequest true "New account"
 // @Success 201 {object} utils.APIResponse{data=models.User} "User created"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password fails the complexity policy, or the user could not be stored (the underlying message is returned, e.g. a password over 72 bytes)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password fails the complexity policy, or the user could not be stored (the underlying message is returned, e.g. a password over 72 bytes). INVALID_ROLE_ASSIGNMENT: role custom without role_id, role_id with any other role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.create, or asks for a role other than customer without users.assign_role (Insufficient permissions), also when it lost the permission while the request waited. ROLE_ESCALATION: the requested role's permissions are above the caller's own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "ROLE_NOT_FOUND: role_id names no role"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: an account already uses this email"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Router /users [post]
@@ -140,19 +150,32 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// Only a customer can be created without users.assign_role. The refusal
+	// comes before role_id is looked at, so such a caller learns nothing
+	// about the roles.
+	if service.RoleNeedsAssignPermission(req.Role) && !hasPermission(c, permissions.UsersAssignRole) {
+		utils.RespondForbidden(c, "Insufficient permissions")
+		return
+	}
+	if err := service.CheckRoleAssignment(req.Role, req.RoleID); err != nil {
+		respondRoleGovernanceError(c, err)
+		return
+	}
+
 	user := &models.User{
 		Email:     req.Email,
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
 		Role:      req.Role,
+		RoleID:    req.RoleID,
 		IsActive:  true,
 	}
 
-	if err := h.userService.Register(user, req.Password); err != nil {
+	if err := h.userService.CreateAs(c.Request.Context(), requestActor(c), user, req.Password); err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Failed to create user")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
 			utils.RespondConflict(c, "user with this email already exists")
-		} else {
+		} else if !respondRoleGovernanceError(c, err) {
 			utils.RespondBadRequest(c, err.Error())
 		}
 		return
@@ -291,7 +314,8 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Any authenticated role may update its own account; updating another account requires the admin role (checked before the body is read). Only non-empty fields are written. role and is_active are applied only for an admin caller and silently ignored for everyone else; unlike POST /users/{id}/deactivate, nothing here stops an admin from changing its own role or deactivating itself. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+// @Description Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+// @Description Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lost the permission), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -300,11 +324,11 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param request body UpdateUserRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.User} "The updated user"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer (details maps the Go field name to a message)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role): role custom without role_id, role_id with any other role or without role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a non-admin tried to update another account (You can only update your own profile)"
-// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
-// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a caller without users.update tried to update another account (You can only update your own profile), or the caller lost a permission the request needs while it waited (Insufficient permissions). ROLE_ESCALATION: the target's permissions, or those of the requested role, are above the caller's own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id. ROLE_NOT_FOUND: role_id names no role"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email. LAST_ADMIN: the change would demote or deactivate the last active admin. CUSTOMER_LOGIN_ROLE: a customer login cannot receive a custom role"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
 // @Router /users/{id} [put]
@@ -317,7 +341,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Check permissions - users can only update themselves unless admin
+	// Check permissions - users can only update themselves without users.update
 	currentUserID := c.GetUint("user_id")
 
 	if uint(id) != currentUserID && !hasPermission(c, permissions.UsersUpdate) {
@@ -344,23 +368,46 @@ func (h *UserHandler) Update(c *gin.Context) {
 	}
 
 	// Role and active status each need their own permission (admins hold
-	// both); without it the field is silently ignored, as it always was.
-	if hasPermission(c, permissions.UsersAssignRole) {
-		if req.Role != "" {
-			updates["role"] = req.Role
+	// both); without it the field is silently ignored, as it always was, and
+	// so is an inconsistent role and role_id pair.
+	governed := uint(id) != currentUserID
+	if hasPermission(c, permissions.UsersAssignRole) && (req.Role != "" || req.RoleID != nil) {
+		if req.Role == "" {
+			respondRoleGovernanceError(c, apperrors.ErrInvalidRoleAssignment)
+			return
 		}
+		if err := service.CheckRoleAssignment(req.Role, req.RoleID); err != nil {
+			respondRoleGovernanceError(c, err)
+			return
+		}
+		updates["role"] = req.Role
+		updates["role_id"] = req.RoleID
+		governed = true
 	}
 	if hasPermission(c, permissions.UsersActivate) {
 		if req.IsActive != nil {
 			updates["is_active"] = *req.IsActive
+			governed = true
 		}
 	}
 
-	user, err := h.userService.Update(uint(id), updates)
+	// Another account, and any write of role, role_id or is_active, goes
+	// through the governed transaction; a profile-only update of the caller's
+	// own account stays the plain update it was.
+	var user *models.User
+	if governed {
+		user, err = h.userService.UpdateAs(c.Request.Context(), requestActor(c), uint(id), updates)
+	} else {
+		user, err = h.userService.Update(uint(id), updates)
+	}
 	if err != nil {
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
 			logger.WithError(utils.LogError(err)).Warn("Failed to update user")
 			utils.RespondConflict(c, "user with this email already exists")
+			return
+		}
+		if respondRoleGovernanceError(c, err) {
+			logger.WithError(utils.LogError(err)).Warn("User update refused")
 			return
 		}
 		// An update that matched nobody is a client error, not a server fault:
@@ -381,7 +428,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Erase a user (irreversible)
-// @Description Admin only (route guard, repeated in the handler); an admin cannot erase its own account. This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
+// @Description Needs users.delete (route guard, repeated in the handler; the admin system role holds it); a caller cannot erase its own account. The erasure runs in one transaction that first locks the active admins, the caller and the target (ascending id) and their custom roles, reads them again and answers in this order: FORBIDDEN (the caller lost the permission), ROLE_ESCALATION (a caller that is not on the admin system role cannot erase an account whose permissions are above its own; a customer login never is), LAST_ADMIN (the last active admin cannot be erased). This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
 // @Description Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. To suspend an account reversibly use POST /users/{id}/deactivate instead.
 // @Description When a customer-role user is erased, the deals and quotes of the customers and leads it reaches keep their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: deal title [redacted] with empty notes and lost_reason, quote title [redacted] with empty notes, each quote line's description set to its product's name; notifications about those deals are deleted. Deals and quotes owned by an erased staff user are not touched (owner_id is never followed).
 // @Tags users
@@ -392,8 +439,9 @@ func (h *UserHandler) Update(c *gin.Context) {
 // @Success 204 "Erased; no body"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or You cannot delete your own account"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.delete, also when it lost the permission while the request waited. ROLE_ESCALATION: the target's permissions are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id (an already erased account included)"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "LAST_ADMIN: the target is the last active admin"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the erasure failed; before the commit it was rolled back and nothing was erased, while a failed COMMIT is ambiguous (the erasure may have been applied)"
 // @Router /users/{id} [delete]
@@ -406,7 +454,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Only admins can delete users
+	// Deleting users needs users.delete
 	if !hasPermission(c, permissions.UsersDelete) {
 		utils.RespondForbidden(c, "Only administrators can delete users")
 		return
@@ -419,7 +467,11 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.userService.Delete(uint(id)); err != nil {
+	if err := h.userService.DeleteAs(c.Request.Context(), requestActor(c), uint(id)); err != nil {
+		if respondRoleGovernanceError(c, err) {
+			logger.WithError(utils.LogError(err)).Warn("User erasure refused")
+			return
+		}
 		// An erasure that matched nobody and an erasure that failed must not
 		// look the same to the operator: only the not-found sentinel is a 404,
 		// everything else is a genuine failure and stays a 500.
@@ -539,8 +591,8 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 }
 
 // Activate godoc
-// @Summary Activate a user (admin)
-// @Description Admin only (route guard). Sets is_active to true, so the account can log in again and its unexpired access tokens and active API keys work again. Idempotent: an already active account is returned unchanged.
+// @Summary Activate a user
+// @Description Needs users.activate (route guard; the admin system role holds it). Sets is_active to true, so the account can log in again and its unexpired access tokens and active API keys work again. Idempotent: an already active account is returned unchanged. One transaction with the locks of PUT /users/{id}; the escalation rule applies: a caller that is not on the admin system role cannot activate an account whose permissions are above its own (a customer login never is).
 // @Tags users
 // @Produce json
 // @Security BearerAuth
@@ -549,7 +601,7 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.User} "The activated user"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.activate (Insufficient permissions), also when it lost the permission while the request waited. ROLE_ESCALATION: the target's permissions are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
@@ -563,8 +615,12 @@ func (h *UserHandler) Activate(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.Update(uint(id), map[string]interface{}{"is_active": true})
+	user, err := h.userService.SetActiveAs(c.Request.Context(), requestActor(c), uint(id), true)
 	if err != nil {
+		if respondRoleGovernanceError(c, err) {
+			logger.WithError(utils.LogError(err)).Warn("User activation refused")
+			return
+		}
 		if errors.Is(err, apperrors.ErrNotFound) {
 			logger.WithError(utils.LogError(err)).Warn("User not found")
 			utils.RespondNotFound(c, "User not found")
@@ -580,8 +636,8 @@ func (h *UserHandler) Activate(c *gin.Context) {
 }
 
 // Deactivate godoc
-// @Summary Deactivate a user (admin)
-// @Description Admin only (route guard); an admin cannot deactivate its own account here. Sets is_active to false, the reversible alternative to erasure: from the next request on the account cannot log in, its bearer tokens and API keys are rejected, and a refresh of its tokens fails. No data is changed and this call deletes no refresh token, but a refresh attempted while the account is deactivated revokes the token it presented. Idempotent.
+// @Summary Deactivate a user
+// @Description Needs users.activate (route guard; the admin system role holds it); a caller cannot deactivate its own account here. One transaction with the locks and the order of checks of PUT /users/{id}: FORBIDDEN (the caller lost the permission), ROLE_ESCALATION (a caller that is not on the admin system role cannot deactivate an account whose permissions are above its own; a customer login never is), LAST_ADMIN (the last active admin cannot be deactivated). Sets is_active to false, the reversible alternative to erasure: from the next request on the account cannot log in, its bearer tokens and API keys are rejected, and a refresh of its tokens fails. No data is changed and this call deletes no refresh token, but a refresh attempted while the account is deactivated revokes the token it presented. Idempotent.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
@@ -590,8 +646,9 @@ func (h *UserHandler) Activate(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.User} "The deactivated user"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or You cannot deactivate your own account"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.activate (Insufficient permissions), also when it lost the permission while the request waited. ROLE_ESCALATION: the target's permissions are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "LAST_ADMIN: the target is the last active admin"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be updated"
 // @Router /users/{id}/deactivate [post]
@@ -611,8 +668,12 @@ func (h *UserHandler) Deactivate(c *gin.Context) {
 		return
 	}
 
-	user, err := h.userService.Update(uint(id), map[string]interface{}{"is_active": false})
+	user, err := h.userService.SetActiveAs(c.Request.Context(), requestActor(c), uint(id), false)
 	if err != nil {
+		if respondRoleGovernanceError(c, err) {
+			logger.WithError(utils.LogError(err)).Warn("User deactivation refused")
+			return
+		}
 		if errors.Is(err, apperrors.ErrNotFound) {
 			logger.WithError(utils.LogError(err)).Warn("User not found")
 			utils.RespondNotFound(c, "User not found")

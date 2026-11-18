@@ -180,17 +180,17 @@ func TestRoleForCall(t *testing.T) {
 		{LeadsExport, models.RoleAdmin, models.RoleSales, ""},
 		{AutomationRunsView, models.RoleAdmin, models.RoleSales, ""},
 	} {
-		role, err := RoleForCall(row.key, allOf(row.key), models.RoleCustom)
+		role, err := RoleForCall(row.key, allOf(row.key), string(models.RoleCustom))
 		require.NoError(t, err, row.key)
 		assert.Equal(t, row.all, role, "%s at all", row.key)
 
 		if row.own != "" {
-			role, err = RoleForCall(row.key, ownOf(row.key), models.RoleCustom)
+			role, err = RoleForCall(row.key, ownOf(row.key), string(models.RoleCustom))
 			require.NoError(t, err, row.key)
 			assert.Equal(t, row.own, role, "%s at own", row.key)
 		}
 
-		role, err = RoleForCall(row.key, Set{}, models.RoleCustom)
+		role, err = RoleForCall(row.key, Set{}, string(models.RoleCustom))
 		if row.absent == "" {
 			assert.ErrorIs(t, err, ErrNotHeld, "%s absent", row.key)
 			assert.Empty(t, role)
@@ -210,7 +210,7 @@ func TestRoleForCall(t *testing.T) {
 
 	// A key outside the table is an error, never a default.
 	for _, outside := range []string{QuotesCreate, TicketsView, UsersView, "nosuch.key", ""} {
-		for _, system := range []string{"admin", "sales", models.RoleCustom, ""} {
+		for _, system := range []string{"admin", "sales", string(models.RoleCustom), ""} {
 			role, err := RoleForCall(outside, ForSystemRole("admin"), system)
 			assert.True(t, errors.Is(err, ErrNoCallRole), "%q as %q", outside, system)
 			assert.Empty(t, role)

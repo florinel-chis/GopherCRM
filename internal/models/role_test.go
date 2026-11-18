@@ -90,11 +90,12 @@ func swaggerDefinition(t *testing.T, definitions map[string]json.RawMessage, sho
 	return nil
 }
 
-// #344 adds User.RoleID and the users.role value custom without changing the
-// checked-in API reference: RoleID is swaggerignore'd and RoleCustom is an
-// untyped constant, so neither swag nor scripts/ci/check-api-docs.py's
-// closed-set collector picks it up.
-func TestRoleFieldsKeepAPIReferenceUnchanged(t *testing.T) {
+// The role API (#348) documents the custom role: role_id is a documented
+// property of a user and custom is the fifth value of the role enum, because
+// RoleCustom is a typed UserRole constant that both swag and
+// scripts/ci/check-api-docs.py's closed-set collector pick up by type. The
+// loaded role itself (custom_role) is never serialised.
+func TestRoleFieldsAreInTheAPIReference(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "api", "swagger.json"))
 	require.NoError(t, err)
 	var spec struct {
@@ -103,35 +104,36 @@ func TestRoleFieldsKeepAPIReferenceUnchanged(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &spec))
 
 	var user struct {
-		Properties map[string]json.RawMessage `json:"properties"`
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
 	}
 	require.NoError(t, json.Unmarshal(swaggerDefinition(t, spec.Definitions, "models.User"), &user))
 	require.NotEmpty(t, user.Properties)
 	assert.Contains(t, user.Properties, "role")
-	assert.NotContains(t, user.Properties, "role_id")
+	require.Contains(t, user.Properties, "role_id")
+	assert.NotEmpty(t, user.Properties["role_id"].Description, "role_id is documented")
 	assert.NotContains(t, user.Properties, "custom_role")
 
 	var role struct {
 		Enum []string `json:"enum"`
 	}
 	require.NoError(t, json.Unmarshal(swaggerDefinition(t, spec.Definitions, "models.UserRole"), &role))
-	assert.Equal(t, []string{"admin", "sales", "support", "customer"}, role.Enum)
+	assert.Equal(t, []string{"admin", "sales", "support", "customer", "custom"}, role.Enum)
 
-	// The struct tags that keep it so.
+	// The struct tags that make it so.
 	assert.Equal(t, "role_id,omitempty", fieldTag(t, User{}, "RoleID", "json"))
-	assert.Equal(t, "true", fieldTag(t, User{}, "RoleID", "swaggerignore"))
+	assert.Empty(t, fieldTag(t, User{}, "RoleID", "swaggerignore"))
 	assert.Equal(t, "-", fieldTag(t, User{}, "CustomRole", "json"))
 
-	// RoleCustom is untyped: it converts to UserRole (and to string) only
-	// because it has no type of its own.
+	// RoleCustom is a UserRole.
 	var asRole UserRole = RoleCustom
-	var asString string = RoleCustom
 	assert.Equal(t, UserRole("custom"), asRole)
-	assert.Equal(t, "custom", asString)
+	assert.Equal(t, "custom", string(RoleCustom))
 
 	// check-api-docs.py's CONST_PATTERN, verbatim: group 2 is the declared
-	// type. The declaration of RoleCustom must carry none, and the UserRole
-	// set it collects (by type) must stay the four system roles.
+	// type. The declaration of RoleCustom carries UserRole, so the set the
+	// gate collects (by type) is the four system roles and custom.
 	constPattern := regexp.MustCompile(`(?m)^\s*([A-Z]\w*)\s+(?:([A-Z]\w*)\s+)?=\s*"((?:[^"\\]|\\.)*)"`)
 	var typedUserRoles []string
 	foundCustom := false
@@ -146,7 +148,7 @@ func TestRoleFieldsKeepAPIReferenceUnchanged(t *testing.T) {
 		for _, match := range constPattern.FindAllStringSubmatch(string(source), -1) {
 			if match[1] == "RoleCustom" {
 				foundCustom = true
-				assert.Empty(t, match[2], "RoleCustom must be declared without a type (%s)", path)
+				assert.Equal(t, "UserRole", match[2], "RoleCustom must be declared as a UserRole (%s)", path)
 			}
 			if match[2] == "UserRole" {
 				typedUserRoles = append(typedUserRoles, match[3])
@@ -154,7 +156,7 @@ func TestRoleFieldsKeepAPIReferenceUnchanged(t *testing.T) {
 		}
 	}
 	assert.True(t, foundCustom, "the collector sees the RoleCustom declaration")
-	assert.Equal(t, []string{"admin", "sales", "support", "customer"}, typedUserRoles)
+	assert.Equal(t, []string{"admin", "sales", "support", "customer", "custom"}, typedUserRoles)
 }
 
 func fieldTag(t *testing.T, value interface{}, field, key string) string {

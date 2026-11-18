@@ -56,6 +56,11 @@ var AllowedSortColumns = map[string]map[string]bool{
 	"roles": {
 		"id": true, "name": true, "created_at": true, "updated_at": true,
 	},
+	// The role audit log (#348): RoleAuditRepository.List orders by one of
+	// these and then by role_audit_log.id in the same direction.
+	"role_audit_log": {
+		"id": true, "created_at": true, "action": true,
+	},
 	// Outbound webhook endpoints (#345): WebhookRepository.ListEndpoints
 	// orders by one of these and then by webhook_endpoints.id.
 	"webhook_endpoints": {

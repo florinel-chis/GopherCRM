@@ -37,11 +37,11 @@ type UserRepository interface {
 	WithTx(tx *gorm.DB) UserRepository
 }
 
-// UserRoleMaintenance is the role half of the user repository (#259 S2,
-// #344). The production userRepository implements it; it is kept apart from
+// UserRoleMaintenance is the role half of the user repository (#259, #344,
+// #348). The production userRepository implements it; it is kept apart from
 // UserRepository (the TicketLockingReader pattern) so the hand-written mocks
-// need no change. Nothing calls it yet; the role service (S3) will, inside its
-// transaction through WithTx.
+// need no change. The governed user writes and the role service call it inside
+// their transaction, through WithTx.
 type UserRoleMaintenance interface {
 	// LockActiveAdmins discovers the live, active admin ids with a plain,
 	// non-locking SELECT, then locks those rows by primary key in id order
@@ -53,12 +53,23 @@ type UserRoleMaintenance interface {
 	// reference roleID and returns how many rows it changed. Live users are
 	// never touched.
 	ClearRoleIDOfErased(roleID uint) (int64, error)
+	// LockLiveByIDs locks the users rows with these ids by primary key, in
+	// ascending id order, and returns the live ones in that order as the
+	// locking read saw them. CustomRole is not loaded: role rows are locked
+	// after users rows, by the caller.
+	LockLiveByIDs(ids []uint) ([]models.User, error)
+	// LockLiveRoleHolders is a locking read of the live users whose role_id
+	// is roleID, deactivated ones included; it returns their ids in id order.
+	LockLiveRoleHolders(roleID uint) ([]uint, error)
+	// CountLiveRoleHolders counts the live users per system role (by
+	// users.role) and per custom role (by users.role_id).
+	CountLiveRoleHolders() (bySystemRole map[string]int64, byRoleID map[uint]int64, err error)
 }
 
-// RoleRepository is the persistence of RBAC roles (#259 S2, #344). Nothing
-// calls it yet. Role names are unique regardless of letter case and
-// surrounding whitespace (ErrRoleNameTaken); a role still referenced by a
-// user cannot be deleted (ErrRoleInUse).
+// RoleRepository is the persistence of RBAC roles (#259, #344); the role
+// service (#348) is its caller. Role names are unique regardless of letter
+// case and surrounding whitespace (ErrRoleNameTaken); a role still referenced
+// by a user cannot be deleted (ErrRoleInUse).
 type RoleRepository interface {
 	// Create inserts a custom role (SystemKey must be nil) without its
 	// permissions.
@@ -69,11 +80,37 @@ type RoleRepository interface {
 	Update(role *models.Role) error
 	// Delete removes the role and its permissions in one transaction.
 	Delete(id uint) error
-	// List returns a page in a total order and the total count.
+	// List returns a page in a total order, each role with its permissions
+	// ordered by permission_key, and the total count.
 	List(offset, limit int, sortBy, sortOrder string) ([]models.Role, int64, error)
 	// ReplacePermissions replaces the role's permissions atomically.
 	ReplacePermissions(roleID uint, permissions []models.RolePermission) error
+	// LockByIDs locks the role rows with these ids in ascending id order and
+	// returns the ones that exist, in that order, each with its permissions
+	// as a locking read saw them (so a transaction that waited for the lock
+	// reads the committed set, not its snapshot). FOR UPDATE on
+	// MySQL/MariaDB, plain reads on SQLite.
+	LockByIDs(ids []uint) ([]models.Role, error)
 	WithTx(tx *gorm.DB) RoleRepository
+}
+
+// RoleAuditFilter narrows a role audit listing; a nil field does not filter.
+type RoleAuditFilter struct {
+	RoleID       *uint
+	TargetUserID *uint
+}
+
+// RoleAuditRepository is the persistence of role_audit_log (#348). The table
+// is append-only: there is no update and no delete.
+type RoleAuditRepository interface {
+	// Create appends one row. CreatedAt is set to the current UTC time.
+	Create(entry *models.RoleAuditEntry) error
+	// List returns one page and the total under the same filter. Rows are
+	// ordered by the validated column (utils.AllowedSortColumns
+	// ["role_audit_log"]) and then by id in the same direction; without a
+	// sort column the newest row comes first.
+	List(filter RoleAuditFilter, offset, limit int, sortBy, sortOrder string) ([]models.RoleAuditEntry, int64, error)
+	WithTx(tx *gorm.DB) RoleAuditRepository
 }
 
 type LeadRepository interface {

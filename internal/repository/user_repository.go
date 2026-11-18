@@ -314,3 +314,67 @@ func (r *userRepository) ClearRoleIDOfErased(roleID uint) (int64, error) {
 	}
 	return result.RowsAffected, nil
 }
+
+// LockLiveByIDs implements UserRoleMaintenance: one locking read by primary
+// key in id order, Unscoped so the statement carries no other predicate, with
+// erased rows dropped afterwards. The rows are what the locking read saw, so
+// on MySQL/MariaDB they are the committed state even after a lock wait.
+func (r *userRepository) LockLiveByIDs(ids []uint) ([]models.User, error) {
+	live := []models.User{}
+	if len(ids) == 0 {
+		return live, nil
+	}
+	var locked []models.User
+	if err := r.db.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id").Find(&locked).Error; err != nil {
+		return nil, fmt.Errorf("lock users: %w", err)
+	}
+	for _, user := range locked {
+		if !user.DeletedAt.Valid {
+			live = append(live, user)
+		}
+	}
+	return live, nil
+}
+
+// LockLiveRoleHolders implements UserRoleMaintenance: a locking read of the
+// live users referencing roleID (FOR UPDATE on MySQL/MariaDB, where it also
+// reads the committed rows rather than the snapshot; a plain read on SQLite).
+func (r *userRepository) LockLiveRoleHolders(roleID uint) ([]uint, error) {
+	ids := []uint{}
+	if err := r.db.Model(&models.User{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("role_id = ?", roleID).Order("id").Pluck("id", &ids).Error; err != nil {
+		return nil, fmt.Errorf("lock role holders: %w", err)
+	}
+	return ids, nil
+}
+
+// CountLiveRoleHolders implements UserRoleMaintenance with two grouped
+// counts over the live users.
+func (r *userRepository) CountLiveRoleHolders() (map[string]int64, map[uint]int64, error) {
+	var byRole []struct {
+		Role  string
+		Total int64
+	}
+	if err := r.db.Model(&models.User{}).Select("role, COUNT(*) AS total").
+		Where("role_id IS NULL").Group("role").Scan(&byRole).Error; err != nil {
+		return nil, nil, fmt.Errorf("count users per system role: %w", err)
+	}
+	var byID []struct {
+		RoleID uint
+		Total  int64
+	}
+	if err := r.db.Model(&models.User{}).Select("role_id, COUNT(*) AS total").
+		Where("role_id IS NOT NULL").Group("role_id").Scan(&byID).Error; err != nil {
+		return nil, nil, fmt.Errorf("count users per custom role: %w", err)
+	}
+	bySystemRole := make(map[string]int64, len(byRole))
+	for _, row := range byRole {
+		bySystemRole[row.Role] = row.Total
+	}
+	byRoleID := make(map[uint]int64, len(byID))
+	for _, row := range byID {
+		byRoleID[row.RoleID] = row.Total
+	}
+	return bySystemRole, byRoleID, nil
+}

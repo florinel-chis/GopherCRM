@@ -177,6 +177,35 @@ var (
 	// references through users.role_id (fk_users_custom_role, ON DELETE
 	// RESTRICT). The role and its permissions are kept.
 	ErrRoleInUse = errors.New("the role is still assigned to a user")
+
+	// Role API and governed user writes (#259 S4, #348). Each is answered with
+	// the code in its name; no message carries an email, a person's name or a
+	// role name.
+	//
+	// ErrLastAdmin refuses a role change, deactivation or erasure that would
+	// leave no active, non-erased user on the system admin role (409
+	// LAST_ADMIN).
+	ErrLastAdmin = errors.New("the last active administrator cannot be demoted, deactivated or erased")
+	// ErrRoleEscalation refuses a role or user write that grants, or manages,
+	// permissions above the actor's own (403 ROLE_ESCALATION).
+	ErrRoleEscalation = errors.New("the change reaches permissions above the caller's own")
+	// ErrCustomerLoginRole refuses a custom role on a customer login (409
+	// CUSTOMER_LOGIN_ROLE).
+	ErrCustomerLoginRole = errors.New("a customer login cannot receive a custom role")
+	// ErrInvalidRoleAssignment refuses role custom without role_id, role_id
+	// with any other role, and a role_id naming a system role (400
+	// INVALID_ROLE_ASSIGNMENT).
+	ErrInvalidRoleAssignment = errors.New("role and role_id do not go together")
+	// ErrInvalidPermission refuses a permission list holding an unknown key, a
+	// system-only key, a repeated key or a scope the key does not allow (400
+	// INVALID_PERMISSION). InvalidPermissionError carries the keys.
+	ErrInvalidPermission = errors.New("the permission list is not valid")
+	// ErrSystemRoleImmutable refuses an edit or delete of one of the four
+	// system roles (409 SYSTEM_ROLE_IMMUTABLE).
+	ErrSystemRoleImmutable = errors.New("a system role cannot be edited or deleted")
+	// ErrRoleNotFound is a role id no row has: 404 ROLE_NOT_FOUND, at the
+	// requested path and in a request body alike.
+	ErrRoleNotFound = errors.New("role not found")
 )
 
 // Error codes
@@ -290,4 +319,32 @@ func (e *LeadAlreadyConvertedError) Is(target error) bool {
 // not text, so message equality alone would never match.
 func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound) || errors.Is(err, ErrRecordNotFound) || errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+// InvalidPermissionError is ErrInvalidPermission with the offending
+// permission keys, sorted, for the details of the 400 answer.
+type InvalidPermissionError struct {
+	Keys []string
+}
+
+func (e *InvalidPermissionError) Error() string {
+	return ErrInvalidPermission.Error()
+}
+
+func (e *InvalidPermissionError) Is(target error) bool {
+	return target == ErrInvalidPermission
+}
+
+// RoleInUseError is ErrRoleInUse with the number of live users that hold the
+// role, for the details of the 409 answer.
+type RoleInUseError struct {
+	UserCount int64
+}
+
+func (e *RoleInUseError) Error() string {
+	return ErrRoleInUse.Error()
+}
+
+func (e *RoleInUseError) Is(target error) bool {
+	return target == ErrRoleInUse
 }

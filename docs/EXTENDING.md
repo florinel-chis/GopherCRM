@@ -277,11 +277,11 @@ schema). A root that skipped proves nothing.
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
   Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:279`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 755). A new or changed protected route also goes
-  into the system-role route matrix: add or adjust its `matrixRequests` entry and regenerate
-  `cmd/testdata/system_role_route_matrix.json` with
-  `go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix`, then review the diff of
-  the golden (section 3.7).
+  per-item authorization (DEVELOPMENT.md line 755). A new protected route also goes into the
+  route tests of `cmd`: the system-role golden is frozen and is not regenerated, so list the route
+  on `routeMatrixAfterFreeze`, give it a `matrixRequests` entry and add its key to
+  `permissions.RouteKeys` (DEVELOPMENT.md, "System-role route matrix"). A change to what an
+  existing route answers to a system role fails the replay of the golden.
 - **Screen.** Endpoint function, page, lazy route, nav entry, Vitest, and an e2e spec for a
   user-visible flow (`REVIEW.md`). Frontend endpoint functions that call routes the backend lacks
   are a to-do list, not dead code: implement the route instead of deleting the function, as
@@ -444,7 +444,8 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 This recipe has the highest blast radius in this guide: a missed check either leaks data or locks
 users out.
 
-Roles are a string type with four values (`internal/models/user.go:9-16`), and they are checked in
+Roles are a string type with five values (`internal/models/user.go:15-26`): the four system
+roles and `custom`, the role of an account on a custom role (`role_id`). They are checked in
 several layers at once:
 
 - group and route guards: `middleware.RequirePermission` and `RequireAnyPermission` in
@@ -456,8 +457,8 @@ several layers at once:
   `internal/permissions/system_roles.go`;
 - service policies (`CanViewLead` and the redaction helpers, ticket and dashboard scoping, staff
   checks for automation assignees in `automation_validation.go`, `staffUserProblem`);
-- user management: the `oneof=admin sales support customer` binding in
-  `internal/handler/user_handler.go:29,35`; registration always creates `customer`;
+- user management: the `oneof=admin sales support customer custom` binding in
+  `internal/handler/user_handler.go:39,56`; registration always creates `customer`;
 - the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,499` and
   `src/api/endpoints/users.ts:18,25`, `ProtectedRoute` guards in `src/routes/index.tsx`, and `roles`
   on nav entries in `MainLayout.tsx`.
@@ -517,7 +518,7 @@ it is the cleanest removal.
 | Module | Prefer | Coupling to watch |
 |---|---|---|
 | Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:350`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:272-273,314-315,378-379,487-488`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:273-274,355-357,429-430,546-547`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
 | Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:237-238`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of

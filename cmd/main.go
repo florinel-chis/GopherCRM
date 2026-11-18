@@ -74,7 +74,7 @@ import (
 // @tag.name auth
 // @tag.description Login, registration, token refresh, logout, password change and reset.
 // @tag.name users
-// @tag.description Staff and customer accounts, the caller's own profile, activation (admin).
+// @tag.description Staff and customer accounts, the caller's own profile, activation, and what governs them: roles, the permission catalogue and the role audit log.
 // @tag.name api-keys
 // @tag.description Personal API keys for the Authorization: ApiKey <key> scheme.
 // @tag.name configurations
@@ -305,7 +305,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret,
 		service.WithAuthProductName(configService))
-	userService := service.NewUserService(userRepo)
+	// Every role, role_id, activation and erasure write of the user routes is
+	// one transaction with the role repositories (#348): the last-admin
+	// invariant, the escalation rule and the audit row are decided under its
+	// locks. The role service shares the repositories.
+	roleRepo := repository.NewRoleRepository(models.DB)
+	roleAuditRepo := repository.NewRoleAuditRepository(models.DB)
+	userService := service.NewUserService(userRepo,
+		service.WithUserRoleGovernance(roleRepo, roleAuditRepo, txManager))
+	roleService := service.NewRoleService(roleRepo, roleAuditRepo, userRepo, txManager)
 	// Every lead and deal write path records its automation events in the
 	// transaction that commits the write (issue #164): the lead service, the
 	// deal service, the form submission path and the bulk status path all take the
@@ -410,6 +418,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 
 	authHandler := handler.NewAuthHandler(authService, userService)
 	userHandler := handler.NewUserHandler(userService)
+	roleHandler := handler.NewRoleHandler(roleService)
 	leadHandler := handler.NewLeadHandler(leadService)
 	customerHandler := handler.NewCustomerHandler(customerService).WithExternalIDs(service.NewCustomerExternalIDService(repository.NewCustomerExternalIDRepository(models.DB), txManager))
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
@@ -528,6 +537,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	protected.Use(middleware.RateLimitModerate()) // 120 req/min, burst 30, for authenticated users
 	{
 		handler.SetupUserRoutes(protected, userHandler)
+		handler.SetupRoleRoutes(protected, roleHandler)
 		handler.SetupLeadRoutes(protected, leadHandler)
 		handler.SetupCustomerRoutes(protected, customerHandler)
 		handler.SetupCustomerExternalIDRoutes(protected, customerHandler)

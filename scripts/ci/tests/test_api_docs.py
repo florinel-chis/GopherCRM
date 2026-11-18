@@ -448,7 +448,7 @@ class ConstantTests(unittest.TestCase):
         sets = gate.closed_sets(gate.go_constants(ROOT))
         for name, values in sets.items():
             self.assertTrue(values, name)
-        self.assertEqual(sorted(sets['UserRole']), ['admin', 'customer', 'sales', 'support'])
+        self.assertEqual(sorted(sets['UserRole']), ['admin', 'custom', 'customer', 'sales', 'support'])
 
 
 class ArtifactTests(unittest.TestCase):

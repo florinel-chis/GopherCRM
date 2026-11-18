@@ -9,18 +9,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// RBAC persistence (#259 S2, #344). Nothing reads these tables yet: the role
-// API, the permission catalogue, enforcement and the audit writer arrive in
-// later slices. Every current answer is unchanged.
-
-// RoleCustom is the users.role value of an account whose permissions come from
-// a custom role (users.role_id). It is deliberately an untyped constant: a
-// typed UserRole constant would enter the swag enum and the closed set that
-// scripts/ci/check-api-docs.py checks, both of which stay admin, sales,
-// support, customer until the role API slice. No handler accepts it yet.
-const (
-	RoleCustom = "custom"
-)
+// RBAC persistence (#259 S2, #344). The permission catalogue and its
+// enforcement read these tables since #347; the role API, the governed user
+// writes and the audit writer since #348 (internal/service/role_service.go).
 
 // RoleNameMaxRunes is the length limit of roles.name, counted in runes.
 const RoleNameMaxRunes = 100
@@ -70,20 +61,21 @@ type Role struct {
 	Permissions []RolePermission `gorm:"foreignKey:RoleID" json:"permissions,omitempty"`
 }
 
-// RolePermission grants one permission key to a role with a scope. The
-// catalogue of keys comes in a later slice.
+// RolePermission grants one permission key to a role with a scope. The keys
+// are the leaves of the catalogue in internal/permissions.
 type RolePermission struct {
 	RoleID        uint            `gorm:"primaryKey;autoIncrement:false" json:"-"`
 	PermissionKey string          `gorm:"primaryKey;type:varchar(100)" json:"permission_key"`
 	Scope         PermissionScope `gorm:"type:varchar(10);not null;default:'all'" json:"scope"`
 }
 
-// RoleAuditEntry is one append-only row of role_audit_log. Nothing writes it
-// in this slice. By contract a row holds ids, role names, permission keys and
-// scopes only, never personal data: the writer (S3) must keep names, emails
-// and other personal text out of BeforeState and AfterState, which is why the
-// erasure does not touch the table. No column carries a foreign key, so an
-// audit row never blocks a role or user delete.
+// RoleAuditEntry is one append-only row of role_audit_log, written by the
+// role service and the governed user writes in the transaction of the change
+// it records. By contract a row holds ids, role names, permission keys and
+// scopes only, never personal data: the writers keep names, emails and other
+// personal text out of BeforeState and AfterState, which is why the erasure
+// does not touch the table. No column carries a foreign key, so an audit row
+// never blocks a role or user delete.
 type RoleAuditEntry struct {
 	ID           uint            `gorm:"primaryKey"`
 	CreatedAt    time.Time       `gorm:"not null;index:idx_role_audit_log_created_at"`
