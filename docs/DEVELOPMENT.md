@@ -930,6 +930,29 @@ error text.
   "Invalid or expired quote link"; the response is `models.QuotePublicView` (number, status,
   currency, `valid_until`, lines, five totals; no id, title, notes, owner, customer, deal or
   product reference).
+- **Page (#383).** The link opens the SPA route `/quote-response`, declared at the top level of
+  `gocrm-ui/src/routes/index.tsx`, outside `ProtectedRoute` and `MainLayout`
+  (`gocrm-ui/src/pages/quotes/QuoteResponse.tsx`). It issues one `GET` per mount (no retry, no
+  refetch: the strict bucket is shared with the `POST`), asks for a confirmation before the one
+  `POST`, and treats a 400 on the `GET`, or a 400 `BAD_REQUEST` on the `POST`, as a dead link.
+  The token is read from the query string and never rendered or logged.
+- **Public client.** The page's endpoint module (`gocrm-ui/src/api/endpoints/quoteResponse.ts`)
+  calls through `publicApi`, which is `apiClient.getPublicClient()`: a second axios instance
+  with the base URL, timeout, transport and envelope unwrapping of `api` and no request
+  interceptor. It never attaches the stored session's `Authorization` header and a 401 is neither
+  refreshed nor replayed. Use it for any endpoint that is answered without a session and must
+  not carry one; touch it only inside function bodies, as many tests mock `../client` with a
+  factory that defines `api` alone.
+- **Browser-test link.** The mail body is the only place the plain token exists, and the
+  log-only mailer never writes it. `go run ./scripts/e2e/quote-response-link -quote-id N` loads
+  the configuration like the server, wires the quote service as `cmd/main.go` does with a mailer
+  that keeps the message in memory, calls `Email(N)` and prints the link line, and nothing else,
+  on stdout (the loggers are pointed at stderr). It exits non-zero without output when the quote
+  is not emailed with a link (a draft, an accepted quote, a sent quote past `valid_until`), when
+  `E2E_UI_PORT` is not set (only `scripts/e2e/run.sh` exports it) and, before any connection,
+  when `DB_DRIVER` is mysql and `DB_NAME` does not end in `_e2e`. Like a staff email it
+  invalidates the previous link of the quote and stamps `last_emailed_at`, which is why it must
+  never run against a real database. It is not part of the server binary and adds no route.
 
 Roots: `TestQuoteEmailResponseLink` (`internal/service/quote_email_test.go`);
 `TestQuoteResponse{View,Decision,RollbackKeepsLink,DeadLinks}`
@@ -939,7 +962,11 @@ like the application, skips without `TEST_MYSQL_DSN` and is not part of a CI gat
 quote concurrency roots); `TestQuoteResponseTokenRepository` (`internal/repository`);
 `TestQuotePublic{View,Respond}`, `TestQuotePublicRoutesWinOverTheIDParameter` (`internal/handler`);
 `TestQuoteResponseTokensMigrationFiles` (it holds the newest-migration assertion) and
-`TestQuoteResponseTokensMigration` (`cmd/migrate`).
+`TestQuoteResponseTokensMigration` (`cmd/migrate`). Page and client: `QuoteResponse.test.tsx`,
+`client.public.test.ts`, `quoteResponse.test.ts`, the "quote response route" block of
+`routes/index.test.tsx`, `gocrm-ui/e2e/tests/quote-response.spec.ts`, and
+`TestQuoteResponseLink{PrintsUsableLink,RefusesDraftQuote,RefusesNonE2EDatabase}`
+(`scripts/e2e/quote-response-link`).
 
 **The SMTP transport refuses CR/LF in headers** — `SMTPMailer.Send` and `SendPasswordReset` return
 an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipient or subject that

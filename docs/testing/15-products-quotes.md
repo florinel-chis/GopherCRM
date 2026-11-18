@@ -9,7 +9,8 @@ its cases are section 15.8. Product external-id mappings (2026-11, issue #239) a
 The per-line tax rate and the tax and gross totals (2026-11, issue #324) are section 15.10; their
 web UI (issue #325) is TC-PQ-037 in that section. The web UI for fractional line quantities
 (issue #346, over the API of #343) is TC-PQ-038 in section 15.11. The client response link of the
-quote email and its two public routes (issue #382, backend only) are section 15.12.
+quote email and its two public routes (issue #382) are section 15.12; the public page of the web
+application that answers the link (issue #383) is section 15.13.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -18,7 +19,7 @@ single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin 
 to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
 asserts the core outcome, the rest is pinned in Vitest).
 
-46 cases: 46 automated (39 Go, 7 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 27 P0, 17 P1, 2 P2.
+51 cases: 51 automated (39 Go, 12 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 31 P0, 18 P1, 2 P2.
 
 **Sources**
 
@@ -847,7 +848,7 @@ quote totals are always the server's; the browser computes none of them.
   `admin-quotes.spec.ts` and `admin-quotes-tax.spec.ts`, which fill whole quantities, run
   unchanged.
 
-## 15.12 Client response link (#382, backend)
+## 15.12 Client response link (#382, API and service)
 
 Since #382 the email of a sent quote ends with a single-use link,
 `APP_BASE_URL/quote-response?token=<token>`. Only the HMAC-SHA256 hash of the token is stored
@@ -855,7 +856,8 @@ Since #382 the email of a sent quote ends with a single-use link,
 `GET /quotes/public/response?token=` shows the quote and never writes; `POST
 /quotes/public/response` `{token, decision}` claims the token and moves the quote `sent → accepted
 | rejected` in one transaction. Every refusal is the same 400 `BAD_REQUEST` "Invalid or expired
-quote link". There is no page behind the link yet, so these cases are API and service level.
+quote link". These cases are API and service level; the page that answers the link is section
+15.13.
 
 Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/service/quote_response.go`,
 `internal/repository/quote_response_token_repository.go`, `internal/handler/quote_public_handler.go`,
@@ -1000,3 +1002,125 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
   `TestQuotePublicRoutesWinOverTheIDParameter`, `TestAllRouteSetupsCoexist`;
   `cmd/migrate/quote_response_tokens_migration_test.go` `TestQuoteResponseTokensMigrationFiles`,
   `TestQuoteResponseTokensMigration`.
+
+---
+
+## 15.13 Client response page (#383)
+
+Since #383 the link of the quote email opens `/quote-response?token=<token>`, a page of the web
+application that needs no account. It is a top-level route outside `ProtectedRoute` and
+`MainLayout`, reads the link once per mount, and calls `GET` and `POST /quotes/public/response`
+through `publicApi`, an axios instance without a request interceptor, so no bearer token is sent
+even when a staff session is stored in the browser. The token is never rendered or logged.
+
+Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
+`gocrm-ui/src/api/endpoints/quoteResponse.ts`, `gocrm-ui/src/api/client.ts` (`getPublicClient`,
+`publicApi`), `gocrm-ui/src/routes/index.tsx` (`/quote-response`),
+`scripts/e2e/quote-response-link/main.go`.
+
+### TC-PQ-047 — The page shows the quote and accepts it after one confirmation
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** `/quote-response?token=t`; the read returns a sent quote in USD with one line, a `valid_until` and distinct net, tax and gross totals.
+- **Steps:**
+  1. Open the page.
+  2. Click **Accept**.
+  3. Click **Cancel**, then **Accept** and **Confirm**.
+  4. With the answer still in flight, click **Confirm** again.
+- **Expected:** Step 1: one read with the token; the heading `Quote <number>`, `Valid until` as
+  `MMM dd, yyyy` through `formatDate` (the row is absent when the quote has no date), the line
+  (description, quantity without trailing zeros, unit price, discount, tax rate, net line total)
+  and the Subtotal, Discount, Net, Tax and Gross totals in the quote's currency; the buttons
+  Accept and Decline; no link into the application; the token is nowhere in the page. Step 2: a
+  dialog `Accept quote <number>?` opens and nothing is sent. Step 3: Cancel closes the dialog
+  without a request; Confirm calls `respond('t', 'accept')` once and the page then shows only
+  `You have accepted quote <number>.`, with no Accept or Decline button and no totals. Step 4:
+  Confirm, Cancel, Accept and Decline are disabled while the answer is in flight and one request
+  is sent, so a used-link refusal of a second request cannot hide the recorded answer.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteResponse.test.tsx` "QuoteResponse
+  page shows the quote number, the validity date, the line and the totals with the currency",
+  "… omits the validity row when the quote has no validity date", "… sends nothing when Accept
+  is clicked without Confirm, and Cancel closes the dialog", "… accepts after Confirm and then
+  shows only the confirmation", "… sends one decision when Confirm is clicked twice while the
+  first is in flight".
+
+### TC-PQ-048 — The client declines after one confirmation
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** As TC-PQ-047.
+- **Steps:**
+  1. Click **Decline**, then **Confirm** in the dialog `Decline quote <number>?`.
+- **Expected:** `respond('t', 'decline')` is called once and the page shows only
+  `You have declined quote <number>.`, with no Accept or Decline button.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteResponse.test.tsx` "QuoteResponse
+  page declines after Confirm and then shows only the confirmation".
+
+### TC-PQ-049 — A dead link shows no quote; other failures are told apart
+- **Priority:** P0
+- **Type:** negative, security
+- **Preconditions:** None.
+- **Steps:**
+  1. Open `/quote-response` and `/quote-response?token=`.
+  2. Open a link whose read is answered 400.
+  3. Open a usable link, then answer; the answer is refused with 400 `BAD_REQUEST`.
+  4. Open a link whose read fails with 500, with 429, and with a network error.
+  5. Open a usable link, then answer; the answer fails with 400 `VALIDATION_ERROR`, 500 or 429; answer again.
+- **Expected:** Steps 1 to 3 show only `This link is no longer valid. It may already have been
+  used or it has expired.`: no quote number, no line, no totals, no Accept or Decline button; in
+  step 1 no request is made, and in step 3 the quote that was on screen is removed. Step 4 shows
+  only `The quote could not be loaded. Please try again later.`, with no quote data and no
+  buttons, after exactly one read per visit (no retry). Step 5 shows the alert `Your answer could
+  not be recorded. Please try again.`, keeps the quote and both buttons enabled, and the second
+  answer goes through.
+- **Automation:** automated — `gocrm-ui/src/pages/quotes/QuoteResponse.test.tsx` "QuoteResponse
+  page shows only the invalid-link message when the read is rejected with 400", "… shows the
+  invalid-link message without a request when the token is missing or empty", "… switches to the
+  invalid-link message when the decision is rejected with 400 BAD_REQUEST", "… shows only the
+  load-failure message when the read fails otherwise", "… keeps the quote and both buttons for a
+  retry when the decision fails otherwise".
+
+### TC-PQ-050 — The route is public and its calls carry no bearer token
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** For the client half, a session stored in the browser storages.
+- **Steps:**
+  1. Signed out, open `/quote-response?token=t` in the application router.
+  2. With a stored session, send one request through `getPublicClient()` and one through `getClient()`.
+  3. Through `getPublicClient()`, receive a success envelope, a 400 error envelope and a 401.
+  4. Call `quoteResponseApi.getQuoteResponse('t')` and `quoteResponseApi.respond('t', 'accept')`.
+- **Expected:** Step 1: the page renders (heading and Accept button) and the location stays
+  `/quote-response?token=t`; no redirect to `/login`. Step 2: the public request has no
+  `Authorization` header; the session client's request carries `Bearer <token>`. Step 3: the
+  payload is unwrapped with its `meta`; the error is unwrapped flat (`response.data.code`,
+  `.message`); the 401 causes no refresh and no replay and leaves the stored session unchanged.
+  Step 4: `GET /quotes/public/response` with params `{token: 't'}` and `POST
+  /quotes/public/response` with body `{token: 't', decision: 'accept'}`, both on `publicApi`,
+  none on `api`; an omitted `valid_until` becomes `null` and missing `lines` an empty array.
+- **Automation:** automated — `gocrm-ui/src/routes/index.test.tsx` "quote response route renders
+  the page for a signed-out visitor and stays on /quote-response";
+  `gocrm-ui/src/api/client.public.test.ts` (5 tests, "ApiClient.getPublicClient sends no
+  Authorization header while a session is stored; getClient() sends the bearer token" among
+  them); `gocrm-ui/src/api/endpoints/quoteResponse.test.ts` (4 tests).
+
+### TC-PQ-051 — Browser flow: the client accepts through the emailed link, once
+- **Priority:** P1
+- **Type:** end-to-end
+- **Preconditions:** `make e2e` (the link command needs the runner's environment); an admin session.
+- **Steps:**
+  1. Through the API as admin: a customer with an email address, a product, a quote with one line (2 × 12.50, 19 % tax), status sent.
+  2. `go run ./scripts/e2e/quote-response-link -quote-id <id>`; open the path and query of the printed link in a new browser context with no session.
+  3. Click **Accept**, then **Confirm**.
+  4. As admin open `/quotes/<id>`.
+  5. Reopen the link in the signed-out context.
+- **Expected:** Step 2: the command prints one line, `<APP_BASE_URL>/quote-response?token=<token>`;
+  the page shows `Quote <number>`, net €25.00, tax €4.75 and gross €29.75, and the browser
+  storages stay empty. Step 3: the `POST` answers 200 and carried no `Authorization` header; the
+  page shows `You have accepted quote <number>.` with no Accept or Decline button. Step 4: the
+  status chip reads Accepted. Step 5: the invalid-link message, no quote number, no buttons. The
+  command itself prints a link the quote service answers once, prints nothing and exits non-zero
+  for a draft quote, and refuses before connecting without `E2E_UI_PORT` or on a MySQL database
+  whose name does not end in `_e2e`.
+- **Automation:** automated — `gocrm-ui/e2e/tests/quote-response.spec.ts` "Quote response link a
+  client accepts a sent quote through the emailed link, once, without signing in";
+  `scripts/e2e/quote-response-link/main_test.go` `TestQuoteResponseLinkPrintsUsableLink`,
+  `TestQuoteResponseLinkRefusesDraftQuote`, `TestQuoteResponseLinkRefusesNonE2EDatabase`.

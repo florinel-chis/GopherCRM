@@ -208,11 +208,9 @@ included. Found by reading the code path unless noted.
   recorded on the `quote_response_tokens` row (`used_at`, `decision`), which no endpoint exposes.
   `GET /quotes/{id}/history` therefore shows a client acceptance as the owner's. The follow-up
   ticket decides how the history labels it (a nullable actor column or a join on the token row).
-- **The client response link has no page yet (#382).** The quote email links to
-  `APP_BASE_URL/quote-response?token=...`, and the two `/quotes/public/response` routes answer
-  it, but the SPA has no such route until the follow-up ships; a client who opens the link today
-  lands on the application without the quote. Erasing the customer of a sent quote leaves a
-  mailed link usable until the quote leaves sent (the public view holds no personal data).
+- **A mailed client response link outlives the erasure of its customer (#382).** Erasing the
+  customer of a sent quote leaves a mailed link usable until the quote leaves sent (the public
+  view and the `/quote-response` page hold no personal data).
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

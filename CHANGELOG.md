@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Public accept/decline page for the quote link (#383).** The link of a quote email (#382)
+  now opens a page of the web application, `/quote-response?token=...`, that needs no account:
+  it shows the quote number, the validity date, the lines and the subtotal, discount, net, tax
+  and gross totals in the quote's currency, with the buttons Accept and Decline. Each opens one
+  confirmation dialog naming the quote; only Confirm sends the answer, once, and the page then
+  shows "You have accepted quote Q-…" or "You have declined quote Q-…". A link that is unknown,
+  used, expired or invalidated shows "This link is no longer valid. It may already have been
+  used or it has expired." with no quote data and no buttons; any other failure to read the
+  quote shows "The quote could not be loaded. Please try again later."; a failed answer that is
+  not a dead link keeps the quote and the buttons for another try. The page reads the link once
+  per visit (no retry, no refetch on focus), renders outside the application shell with no
+  navigation and no sign-in link, and never shows or logs the token.
+  - **No bearer token on public calls.** `ApiClient.getPublicClient()` (exported as `publicApi`)
+    is a second axios instance with the same base URL, timeout and envelope handling as `api`
+    but no request interceptor: it never sends the stored session's `Authorization` header and
+    never refreshes or replays on a 401. The new endpoint module
+    `src/api/endpoints/quoteResponse.ts` uses it for `GET` and `POST /quotes/public/response`.
+  - **Browser-test link command.** `go run ./scripts/e2e/quote-response-link -quote-id N`
+    emails a sent quote through the real quote service with an in-memory mailer and prints the
+    link, because the log-only mailer writes no mail body and no route returns the token. It is
+    not part of the server binary, adds no route, runs only under `make e2e` (it requires
+    `E2E_UI_PORT`) and refuses a MySQL database whose name does not end in `_e2e`.
+  - No API, schema or configuration change.
+
 - **Client accept/decline link in the quote email, backend (#382).** The email of a *sent* quote
   (`POST /quotes/{id}/email`) now ends with a single-use response link,
   `APP_BASE_URL/quote-response?token=...`. Only the HMAC-SHA256 hash of the token is stored, in
@@ -33,10 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **History attribution.** `quote_status_changes.changed_by_id` must be a user, so the history
     row of a client answer names the quote owner; the token row (`used_at`, `decision`) is the
     record that the client answered. No existing table is altered.
-  - **Not included.** The public page behind `/quote-response` and a "client" label in the staff
-    history are the follow-up; until the page ships the link opens the SPA without a matching
-    route. The public view holds no personal data, and erasing the customer of a sent quote
-    leaves a mailed link usable until the quote leaves sent.
+  - **Not included.** A "client" label in the staff history is the follow-up (the page that
+    answers the link is #383). The public view holds no personal data, and erasing the customer
+    of a sent quote leaves a mailed link usable until the quote leaves sent.
   - **Schema:** migration `20261121120000_add_quote_response_tokens` on MySQL/MariaDB (one
     `CREATE TABLE IF NOT EXISTS`, no foreign key), `MigrateDatabase` on SQLite; rollback drops
     the table.

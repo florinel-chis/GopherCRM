@@ -7,6 +7,7 @@ export * from './companies';
 export * from './deals';
 export * from './products';
 export * from './quotes';
+export * from './quoteResponse';
 export * from './tickets';
 export * from './tasks';
 export * from './labels';

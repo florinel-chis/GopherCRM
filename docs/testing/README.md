@@ -34,9 +34,9 @@ blocked.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
-| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, and the client response link | 46 | 27 | 17 | 2 | 46 | 0 | 0 |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page | 51 | 31 | 18 | 2 | 51 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **698** | **244** | **305** | **149** | **300** | **315** | **83** |
+| **Total** | | **703** | **248** | **306** | **149** | **305** | **315** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -97,6 +97,11 @@ The row was recounted on 2026-11-18 (#382) from the file's `### TC-PQ-` headings
 the 22 cases of 2026-10-28 while sections 15.9 to 15.11 (#239, #324, #325, #346) added sixteen.
 Section 15.12 (#382) adds eight cases for the client response link of the quote email, all
 automated at the Go level (service, repository, handler, route and migration roots).
+Section 15.13 (2026-11-18, #383) adds five cases for the public page that answers the link
+(TC-PQ-047 to 051: four P0, one P1), automated in Vitest (`QuoteResponse.test.tsx`,
+`client.public.test.ts`, `quoteResponse.test.ts`, the "quote response route" block of
+`routes/index.test.tsx`) and by the single test of `gocrm-ui/e2e/tests/quote-response.spec.ts`;
+the row and the total were recounted with them (51 and 703).
 
 [16-follow-up-automation.md](16-follow-up-automation.md) was added 2026-10-28 with the follow-up
 automation and notifications API (issue #164). Twenty-seven cases are automated at the Go level

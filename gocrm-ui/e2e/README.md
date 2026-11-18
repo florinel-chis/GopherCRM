@@ -190,6 +190,16 @@ an admin through the app.
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
 | `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
+| `quote-response.spec.ts` | 1 | Quote response link — an admin-created sent quote (API), its emailed link opened in a signed-out browser context, Accept and Confirm, the staff page showing the quote accepted, and the reopened link showing the invalid-link message without buttons |
+
+`quote-response.spec.ts` needs the link of the quote email, which exists only in the mail body
+(the e2e backend's log-only mailer writes none). It shells out to
+`go run ./scripts/e2e/quote-response-link -quote-id <id>` from the repo root, which emails the
+quote through the real quote service with an in-memory mailer and prints the link. The command
+inherits `DB_DRIVER`, `DB_NAME` or `DB_PATH`, the secrets and `APP_BASE_URL` from `make e2e`, and
+refuses to run without `E2E_UI_PORT` or against a MySQL database whose name does not end in
+`_e2e`, so this spec runs only under `make e2e`, not by hand against a dev backend. The spec opens
+only the path and query of the printed link, and never logs it: the link is a live credential.
 
 Counts are per `test(...)` block and will drift; `npx playwright test --list` is authoritative.
 
