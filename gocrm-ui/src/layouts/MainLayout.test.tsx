@@ -43,7 +43,7 @@ describe('MainLayout', () => {
       const view = render(<MainLayout />);
 
       await userEvent.click(navigation().getByText('Automation'));
-      expect(navigation().getByText('Runs')).toBeInTheDocument();
+      expect(await navigation().findByText('Runs', {}, { timeout: 15000 })).toBeInTheDocument();
       // Rules are admin-only on the API.
       if (role === 'admin') {
         expect(navigation().getByText('Rules')).toBeInTheDocument();
@@ -60,14 +60,14 @@ describe('MainLayout', () => {
       expect(navigation().queryByText('Automation')).not.toBeInTheDocument();
       view.unmount();
     }
-  });
+  }, 30000);
 
   it('renders the notification bell slot in the app bar', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
     render(<MainLayout />);
 
     expect(screen.getByTestId('notification-bell')).toBeInTheDocument();
-  });
+  }, 30000);
 
   it('shows the Products and Quotes navigation entries for admin and sales and hides them for support and customer', () => {
     for (const role of ['admin', 'sales'] as const) {
@@ -92,7 +92,7 @@ describe('MainLayout', () => {
       expect(navigation().getByText('Tasks')).toBeInTheDocument();
       view.unmount();
     }
-  });
+  }, 30000);
 
   it('shows Tickets to admin, sales and support and hides it from customer', () => {
     for (const role of ['admin', 'sales', 'support'] as const) {
@@ -106,7 +106,7 @@ describe('MainLayout', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'customer' })));
     render(<MainLayout />);
     expect(navigation().queryByText('Tickets')).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it('keeps the existing role-gated entries as they were', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'support' })));
@@ -116,5 +116,5 @@ describe('MainLayout', () => {
     expect(navigation().getByText('Tickets')).toBeInTheDocument();
     expect(navigation().getByText('Companies')).toBeInTheDocument();
     expect(navigation().queryByText('Users')).not.toBeInTheDocument();
-  });
+  }, 30000);
 });

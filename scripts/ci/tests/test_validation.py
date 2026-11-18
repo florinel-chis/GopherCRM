@@ -737,6 +737,14 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertIn('verify-api-docs:\n\tgo test ./scripts/ci/apiroutes\n\tpython3 scripts/ci/check-api-docs.py\n',
                       makefile)
 
+    def test_make_verify_runs_the_frontend_gate_first_with_capped_vitest_workers(self):
+        # The frontend unit tests run before the race-enabled Go tests and on three workers, so they
+        # do not compete with the Go tests for the processor (#403).
+        makefile = (ROOT / 'Makefile').read_text()
+        self.assertIn('\nverify: verify-hygiene verify-frontend verify-backend verify-api-docs\n', makefile)
+        self.assertIn('verify-frontend:\n\tcd gocrm-ui && npm ci && npm run build && npm run lint && '
+                      'npm test -- --run --maxWorkers=3\n', makefile)
+
     def test_browser_jobs_never_run_in_pull_request_ci_and_the_required_names_agree(self):
         # 11 November 2026: end-to-end tests run for releases only, never in pull-request CI.
         ci, blocks = self.ci_jobs()

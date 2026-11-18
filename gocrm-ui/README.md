@@ -65,8 +65,11 @@ npm run preview
 ### Testing
 
 ```bash
-# Run tests
+# Run tests (watch mode)
 npm run test
+
+# Run tests once, on three workers (what make verify-frontend runs)
+npm test -- --run --maxWorkers=3
 
 # Run tests in watch mode
 npm run test:watch

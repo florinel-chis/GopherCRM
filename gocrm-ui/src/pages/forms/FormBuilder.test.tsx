@@ -92,7 +92,7 @@ describe('FormBuilder', () => {
     expect(screen.getByRole('heading', { name: 'Create Form' })).toBeInTheDocument();
     expect(screen.getByTestId('field-editor-0')).toBeInTheDocument();
     expect(screen.getByLabelText(/^Field 1 name/)).toHaveValue('email');
-  });
+  }, 30000);
 
   it('renders the editors for a newly added field', () => {
     render(<FormBuilder />);
@@ -104,7 +104,7 @@ describe('FormBuilder', () => {
     expect(within(editor).getByLabelText(/^Field 2 name/)).toBeInTheDocument();
     expect(within(editor).getByLabelText(/^Field 2 options/)).toBeInTheDocument();
     expect(within(editor).getByLabelText(/^Field 2 placeholder/)).toBeInTheDocument();
-  });
+  }, 30000);
 
   it('suggests the machine name from the label', () => {
     render(<FormBuilder />);
@@ -115,7 +115,7 @@ describe('FormBuilder', () => {
     });
 
     expect(screen.getByLabelText(/^Field 2 name/)).toHaveValue('your_message');
-  });
+  }, 30000);
 
   it('swaps two fields with the reorder buttons', () => {
     render(<FormBuilder />);
@@ -128,7 +128,7 @@ describe('FormBuilder', () => {
 
     expect(screen.getByLabelText(/^Field 1 name/)).toHaveValue('message');
     expect(screen.getByLabelText(/^Field 2 name/)).toHaveValue('email');
-  });
+  }, 30000);
 
   it('refuses to save a definition without an email field', async () => {
     render(<FormBuilder />);
@@ -139,9 +139,9 @@ describe('FormBuilder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove field 1' }));
     fireEvent.click(screen.getByRole('button', { name: /create form/i }));
 
-    expect(await screen.findByText(/Add exactly one email field/)).toBeInTheDocument();
+    expect(await screen.findByText(/Add exactly one email field/, {}, { timeout: 15000 })).toBeInTheDocument();
     expect(formsApi.create).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('refuses to save a redirect without a URL', async () => {
     render(<FormBuilder />);
@@ -150,9 +150,9 @@ describe('FormBuilder', () => {
     fireEvent.click(screen.getByLabelText('Redirect to a URL'));
     fireEvent.click(screen.getByRole('button', { name: /create form/i }));
 
-    expect(await screen.findByText('A redirect needs an http(s) URL')).toBeInTheDocument();
+    expect(await screen.findByText('A redirect needs an http(s) URL', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(formsApi.create).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('refuses a notification address that is not an email', async () => {
     render(<FormBuilder />);
@@ -165,10 +165,12 @@ describe('FormBuilder', () => {
     fireEvent.click(screen.getByRole('button', { name: /create form/i }));
 
     expect(
-      await screen.findByText('"not-an-address" is not a valid email address')
+      await screen.findByText('"not-an-address" is not a valid email address', {}, {
+        timeout: 15000,
+      })
     ).toBeInTheDocument();
     expect(formsApi.create).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('sends a snake_case payload with the field definitions', async () => {
     vi.mocked(formsApi.create).mockImplementation(async (data) => ({
@@ -228,12 +230,12 @@ describe('FormBuilder', () => {
         default_owner_id: 7,
         allowed_domains: [],
       });
-    });
+    }, { timeout: 15000 });
 
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/forms/42');
-    });
-  });
+    }, { timeout: 15000 });
+  }, 30000);
 
   it('keeps the dropdown options and drops them from the other fields', async () => {
     vi.mocked(formsApi.create).mockImplementation(async (data) => ({
@@ -267,8 +269,8 @@ describe('FormBuilder', () => {
           ],
         })
       );
-    });
-  });
+    }, { timeout: 15000 });
+  }, 30000);
 
   it('refuses a dropdown without options', async () => {
     render(<FormBuilder />);
@@ -279,9 +281,9 @@ describe('FormBuilder', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /create form/i }));
 
-    expect(await screen.findByText('A dropdown needs at least one option')).toBeInTheDocument();
+    expect(await screen.findByText('A dropdown needs at least one option', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(formsApi.create).not.toHaveBeenCalled();
-  });
+  }, 30000);
 
   it('lets an admin pick the lead owner from the user list', async () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 1, role: 'admin' })));
@@ -290,13 +292,13 @@ describe('FormBuilder', () => {
 
     await waitFor(() => {
       expect(usersApi.getUsers).toHaveBeenCalledWith({ limit: 100 });
-    });
+    }, { timeout: 15000 });
 
     fireEvent.mouseDown(screen.getByLabelText(/^Lead owner/));
 
-    expect(await screen.findByText(/admin@example.com/)).toBeInTheDocument();
+    expect(await screen.findByText(/admin@example.com/, {}, { timeout: 15000 })).toBeInTheDocument();
     expect(screen.getByRole('listbox')).toBeInTheDocument();
-  });
+  }, 30000);
 
   it('renders read-only for the support role', () => {
     mockUseAuth.mockReturnValue(authState(createMockUser({ id: 3, role: 'support' })));
@@ -308,5 +310,5 @@ describe('FormBuilder', () => {
     expect(screen.queryByRole('button', { name: /add field/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Remove field 1' })).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^Name/)).toBeDisabled();
-  });
+  }, 30000);
 });

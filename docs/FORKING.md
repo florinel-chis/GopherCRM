@@ -201,7 +201,7 @@ key for an integration belongs to a dedicated user on a custom role:
 ### 2.5 Is my clone healthy?
 
 ```bash
-make verify            # hygiene + Go build/vet/test -race + frontend build/lint/unit tests
+make verify            # hygiene, frontend build/lint/unit tests, then gofmt + Go build/vet/test -race, API docs
 ```
 
 This is what a release runs for the backend and frontend, and the check to run before pushing

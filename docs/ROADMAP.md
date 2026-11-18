@@ -20,17 +20,38 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   rather than the record the test created, plus a one-shot `isVisible()` guard that falls through
   to a positional `button` fallback when the icon has not painted yet. Green today, latently flaky —
   port the customers approach across.
-- **Vitest cases that time out on a loaded machine**
+- **Vitest cases that time out on a loaded machine** — reduced in #403, not closed for the whole suite.
   - **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
     running; load average up to 71):**
     - `src/routes/index.test.tsx` › "blocks non-admin users from /users via the pathless
       ProtectedRoute layout": the page rendered empty and `findByText` gave up after 1 s.
     - `src/pages/forms/FormBuilder.test.tsx` › "refuses a dropdown without options" and "lets an
       admin pick the lead owner from the user list" hit Vitest's 5 s test timeout.
-  - **Not regressions:** each passes 5 of 5 alone, and `make verify-frontend` on a quiet machine
-    passes 38 of 38 files.
-  - **Fix options:** longer timeouts for these interaction-heavy tests, fewer Vitest workers in
-    `make verify`, or run the frontend gate before the race-enabled Go tests.
+    - Later runs under contention added `src/layouts/MainLayout.test.tsx` › "shows the Automation
+      group for admin and sales and hides it for support and customer" and synchronous
+      `FormBuilder.test.tsx` cases to the list.
+  - **Not regressions:** each file passes alone.
+  - **What was done (#403):**
+    - `make verify-frontend` and the documented one-shot command run Vitest with `--maxWorkers=3`
+      (`npm test -- --run --maxWorkers=3`).
+    - `make verify` runs the frontend gate before the race-enabled Go tests, so the two no longer
+      compete for the processor.
+    - Every test in `src/routes/index.test.tsx`, `src/pages/forms/FormBuilder.test.tsx` and
+      `src/layouts/MainLayout.test.tsx` carries an explicit test timeout (30 s or more) and every
+      `findBy*`/`waitFor` call in them an explicit 15 s timeout, and the `MainLayout` test waits
+      for the opened Automation group instead of reading it straight after the click. These three
+      files no longer depend on the runner's 5 s test default or the 1 s query default: with the
+      runner default forced to 1 ms (`--testTimeout=1`) all 63 of their tests pass, where 36 failed
+      before.
+  - **The check that was run:** ten consecutive runs of the three files next to one CPU-bound busy
+    process per core (10 on a 10-core machine), started and stopped by the test command itself:
+    63 of 63 passed in all ten runs. That load is the bound set for the check; it is not claimed
+    to reproduce the original timeouts.
+  - **What remains:** the sibling files (`MainLayout.branding.test.tsx`,
+    `MainLayout.permissions.test.tsx`, `routes/index.permissions.test.tsx`,
+    `FormBuilder.ticket.test.tsx`) and the rest of the suite keep the default timeouts and rely on
+    the worker cap. A machine loaded well beyond one busy process per core can still time them
+    out; give a file that does so the same explicit timeouts.
 - **Sortable columns the backend has no mapping for** — the tickets **Customer** /
   **Assigned To** and the tasks **Assigned To** header are deliberately non-sortable in the list
   pages: tickets/tasks allow only the `customer_id` / `assigned_to_id` foreign keys, which order

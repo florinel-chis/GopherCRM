@@ -358,11 +358,11 @@ describe('admin routes', () => {
 
     renderAt('/users');
 
-    expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: 'Users' })
     ).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it('no route in the config defines BOTH a static element and lazy (the invariant behind the bug)', () => {
     const offenders: string[] = [];
@@ -385,7 +385,7 @@ describe('admin routes', () => {
     walk(router.routes as unknown as RouteObject[], '');
 
     expect(offenders).toEqual([]);
-  });
+  }, 30000);
 });
 
 // Ticket writes are support/admin only on the API. The forms therefore sit under
@@ -402,11 +402,12 @@ describe('ticket routes', () => {
 
       renderAt(path);
 
-      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+      expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
       expect(
         screen.queryByRole('heading', { name: /ticket/i })
       ).not.toBeInTheDocument();
-    }
+    },
+    30000
   );
 
   it.each(['admin', 'support'] as const)(
@@ -470,8 +471,9 @@ describe('company routes', () => {
 
       renderAt(path);
 
-      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
-    }
+      expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+    },
+    30000
   );
 
   it.each(['/companies/new', '/companies/1/edit'])(
@@ -481,11 +483,12 @@ describe('company routes', () => {
 
       renderAt(path);
 
-      expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+      expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
       expect(
         screen.queryByRole('heading', { name: /company/i })
       ).not.toBeInTheDocument();
-    }
+    },
+    30000
   );
 
   it('lets a sales user reach the company create form', async () => {
@@ -561,18 +564,18 @@ describe('deal routes', () => {
 
     renderAt(path);
 
-    expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /deal/i })).not.toBeInTheDocument();
-  });
+  }, 30000);
 
   it.each(dealPaths)('blocks a customer user from %s', async (path) => {
     authUser = createMockUser({ role: 'customer' });
 
     renderAt(path);
 
-    expect(await screen.findByText('Access Denied')).toBeInTheDocument();
+    expect(await screen.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /deal/i })).not.toBeInTheDocument();
-  });
+  }, 30000);
 });
 
 // Products and quotes share the deal guard: admin and sales only. The product
