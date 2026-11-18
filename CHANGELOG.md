@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **System-role route matrix (#322, part of #259), tests only.**
-  `cmd/testdata/system_role_route_matrix.json` records what the router production builds answers
-  (HTTP status and `error.code`) to each of the four system roles on all 157 protected routes, for
+  `cmd/testdata/system_role_route_matrix.json` records what the router built by `setupRouter`
+  answers (HTTP status and `error.code`) to each of the four system roles on all 157 protected routes, for
   an own record, a foreign record, a missing id, a malformed id and, where the handler binds a
   body, a malformed body. Five tests in `cmd/system_role_route_matrix_test.go` keep it honest: the
   replay against the live router, route coverage (every route is recorded or on the explicit
