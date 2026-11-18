@@ -410,14 +410,16 @@ follow-up.
   `role_permissions` rows after its `roles` row. A role write starts at the actor's `users` row:
   users before roles. The actor is read again under its lock and every refusal (the lost
   permission, the escalation rule, the customer-login rule, the last-admin invariant) is decided
-  after the locks, from the locked rows. The role delete is the one place where `users` rows are
+  after the locks, from the locked rows. Whether a customer login has a linked customer record
+  (`HasLinkedCustomerRecord`, a plain read of `customers` by `user_id` after the locks) takes no
+  lock, so the lock order is unchanged. The role delete is the one place where `users` rows are
   not taken in ascending id: its holder reads lock by `role_id`, after the actor's row and, the
   second time, after the roles; a deadlock that this causes is replayed.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
   `internal/service/role_governance.go:116`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:289`).
+  (`internal/service/user_governed_writes.go:293`).
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
   (`internal/service/role_governance.go:28`) replays the whole root on a deadlock, lock wait
   timeout or SQLite busy/locked.

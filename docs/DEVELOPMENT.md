@@ -698,8 +698,13 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
   set there (`escalationSet`): it holds the one system-only key, which no custom role can hold, so
   it never counts as above a manager. A custom role holding `users.create` alone can create a
   customer login, and one holding `users.update`, `users.activate` or `users.delete` can manage one.
+  A customer login with a linked customer record (a `customers` row naming it in `user_id`, erased
+  rows included) asks for one key more (#378): erasing it needs `customers.delete`, changing its
+  email needs `customers.update`. `governedTx.keysFor` adds the key from the stored role and email,
+  after a plain read of `customers` inside the transaction.
 - **Order of the refusals.** User writes: `NOT_FOUND`, `ROLE_NOT_FOUND`, `FORBIDDEN` (the actor lost
-  the route's key while the request waited), `ROLE_ESCALATION`, `CUSTOMER_LOGIN_ROLE`, `LAST_ADMIN`.
+  the route's key while the request waited, or lacks the customer key a write to a customer login
+  with a linked customer record needs), `ROLE_ESCALATION`, `CUSTOMER_LOGIN_ROLE`, `LAST_ADMIN`.
   `PUT` and `DELETE /roles/{id}`: `ROLE_NOT_FOUND`, `FORBIDDEN`, `SYSTEM_ROLE_IMMUTABLE`,
   `ROLE_ESCALATION` for the stored set, then on `PUT` `INVALID_PERMISSION` and `ROLE_ESCALATION` for
   the requested set, on `DELETE` `ROLE_IN_USE` (after the escalation check, so a manager below the
@@ -722,8 +727,10 @@ Regression roots (`internal/integration`, on the real Auth, routes, handlers and
 `TestLastAdminConcurrent{SQLite,MySQL}`, `TestLastAdminAPISQLite`, `TestRoleEscalationRefused`,
 `TestRoleEscalationConcurrent{SQLite,MySQL}`, `TestCustomerLoginCannotReceiveCustomRole`,
 `TestRoleAuditAtomic{SQLite,MySQL}`, `TestRoleChangeLogsOmitPersonalData`, `TestRoleAuditAPISQLite`,
-`TestUserRoleAssignmentAPISQLite`; and `TestUserWritesAreRoleGovernedOnTheRealRouter` (`cmd`), which
-shows that `setupRouter` wires the governance option.
+`TestUserRoleAssignmentAPISQLite`, `TestLinkedCustomerLoginWrites{SQLite,MySQL}`;
+`TestGovernedWritesToLinkedCustomerLogin` (`internal/service`); and
+`TestUserWritesAreRoleGovernedOnTheRealRouter` (`cmd`), which shows that `setupRouter` wires the
+governance option.
 
 **Account security** — account lockout after 5 failed login attempts (15 min) and password
 complexity validation (min 10 chars, upper + lower + digit + special).

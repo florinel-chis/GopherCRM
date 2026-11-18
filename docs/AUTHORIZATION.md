@@ -283,6 +283,15 @@ permissions are above its own. `own` is below `all`, and a missing key is below 
 refusal is 403 `ROLE_ESCALATION`, and the rule applies to the caller's own account too. The
 customer system role counts as the empty set here, so a customer login is never above a manager.
 
+A customer login with a linked customer record (a `customers` row whose `user_id` is that login,
+erased rows included) asks for the customer key next to the user key: erasing it
+(`DELETE /users/{id}`) needs `customers.delete` as well as `users.delete`, because the customer
+record is erased with it, and changing its email (`PUT /users/{id}`) needs `customers.update` as
+well as `users.update`. Without the customer key the answer is 403 `FORBIDDEN` and nothing is
+written. Its other fields, a customer login without a linked customer record and the four system
+roles are answered as before. Covered by `TestLinkedCustomerLoginWrites{SQLite,MySQL}`
+(`internal/integration`) and `TestGovernedWritesToLinkedCustomerLogin` (`internal/service`).
+
 ## Audit trail
 
 Every role create, clone, update and delete, and every change of a user's `role` or `role_id`,

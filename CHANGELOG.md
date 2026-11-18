@@ -58,8 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `tickets.view_own_customer`, the one key no custom role can hold. So a custom role holding
     `users.create` alone can create a customer login (any other role needs `users.assign_role`,
     403 `FORBIDDEN` otherwise), and one holding `users.update`, `users.activate` or `users.delete`
-    can edit, deactivate, activate and erase a customer login. A customer login cannot receive a
-    custom role (409 `CUSTOMER_LOGIN_ROLE`).
+    can edit, deactivate, activate and erase a customer login (one with a linked customer record
+    also asks for a customer key on erasure and on an email change, see #378 under Changed). A
+    customer login cannot receive a custom role (409 `CUSTOMER_LOGIN_ROLE`).
   - **Audit trail.** Every role create, clone, update and delete and every change of a user's
     `role` or `role_id` (the role a new account is created with included) commits one
     `role_audit_log` row in the same transaction (`role_created`, `role_updated`, `role_deleted`,
@@ -543,6 +544,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Writes to a customer login with a linked customer record follow the customer permissions
+  (#378).** Erasing a customer login that has a linked customer record (`DELETE /api/v1/users/{id}`)
+  now needs `customers.delete` next to `users.delete`, and changing its email
+  (`PUT /api/v1/users/{id}`) needs `customers.update` next to `users.update`. A custom role without
+  the customer key is answered 403 `FORBIDDEN` and nothing is written. The four system roles are
+  answered as before, and a customer login without a linked customer record is managed with the
+  user keys alone, as before.
 - **`POST /leads/{id}/assign` asks a custom role for `leads.assign_owner` when it names another
   user (#377).** A custom role calling `POST /api/v1/leads/{id}/assign` needs `leads.update`, and
   `leads.assign_owner` as well when `user_id` is not the caller, the key an owner change through

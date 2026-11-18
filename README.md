@@ -675,8 +675,8 @@ authentication and live on the moderate tier:
 - `GET /api/v1/users/me` - Get current user profile
 - `PUT /api/v1/users/me` - Update current user profile
 - `GET /api/v1/users/:id` - Get specific user *(self or admin)*
-- `PUT /api/v1/users/:id` - Update user *(self or admin; only admins may change `role` or `is_active`)*
-- `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself; a customer-role user takes its customer records along)*
+- `PUT /api/v1/users/:id` - Update user *(self or admin; only admins may change `role` or `is_active`; for a custom role, changing the email of a customer login with a linked customer record also needs `customers.update`)*
+- `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself; a customer-role user takes its customer records along; for a custom role, erasing a customer login with a linked customer record also needs `customers.delete`)*
 
 ### Leads *(entire group requires admin or sales)*
 - `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`;

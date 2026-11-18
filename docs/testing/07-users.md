@@ -646,11 +646,18 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** Step 1 → 204. Step 2 finds nothing: the user's customer records and the lead they
   were converted from are erased in the same transaction (#108). Deleting a staff user (admin,
   sales, support) erases that user only — customers, leads, deals and tickets it owns, manages or
-  is assigned to keep their links and data.
+  is assigned to keep their links and data. A custom role (#378): deleting such a linked customer
+  login with `users.delete` alone → 403 `FORBIDDEN` and nothing is erased; with `users.delete` and
+  `customers.delete` → 204. Likewise `PUT /users/{id}` changing the email of a linked customer
+  login needs `customers.update` next to `users.update` (403 `FORBIDDEN` without it, the email
+  unchanged), while its other fields and a customer login without a linked customer record need
+  the user key alone.
 - **Automation:** planned — needs a fixture that links a login to a customer. Go coverage:
   `internal/repository/identity_erasure_test.go` (`user_root_erases_the_whole_graph`,
   `staff_login_link_is_never_followed`); `erasure_pii_sweep_test.go`
-  `TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable`.
+  `TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable`; the custom-role expectations in
+  `internal/integration` `TestLinkedCustomerLoginWrites{SQLite,MySQL}` and `internal/service`
+  `TestGovernedWritesToLinkedCustomerLogin`.
 
 ### TC-USER-036 — Attempt to delete your own account from the row action
 - **Priority:** P0
