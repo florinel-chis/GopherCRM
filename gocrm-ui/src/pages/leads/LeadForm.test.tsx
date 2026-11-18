@@ -321,6 +321,24 @@ describe('LeadForm', () => {
       });
     });
 
+    // #398: the API clears phone and notes only when the key is sent as an
+    // empty string, so an emptied field must not be dropped from the payload.
+    it('sends an emptied phone and notes as empty strings', async () => {
+      vi.mocked(leadsApi.updateLead).mockResolvedValue({ ...mockLead, phone: '', notes: '' });
+
+      render(<LeadForm />);
+      await waitFor(() => expect(screen.getByDisplayValue('Existing Company')).toBeInTheDocument());
+
+      fireEvent.change(screen.getByDisplayValue('+0987654321'), { target: { value: '' } });
+      fireEvent.change(screen.getByDisplayValue('Important lead'), { target: { value: '' } });
+      fireEvent.click(screen.getByText('Update Lead'));
+
+      await waitFor(() => expect(leadsApi.updateLead).toHaveBeenCalledTimes(1));
+      const [leadId, payload] = vi.mocked(leadsApi.updateLead).mock.calls[0];
+      expect(leadId).toBe(1);
+      expect(payload).toMatchObject({ phone: '', notes: '', email: 'jane@existing.com' });
+    });
+
     it('omits company_id when the lead had no link and none is chosen', async () => {
       vi.mocked(leadsApi.updateLead).mockResolvedValue(mockLead);
 

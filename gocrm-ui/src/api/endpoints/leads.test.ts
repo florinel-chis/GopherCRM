@@ -65,3 +65,19 @@ describe('updateLead owner_id', () => {
     expect('owner_id' in payload).toBe(false);
   });
 });
+
+// #398: PUT /leads/{id} clears phone, company and notes when the key is sent
+// as an empty string and keeps the stored value when the key is absent, so the
+// client must forward '' and must not drop it as if it were undefined.
+describe('updateLead empty text fields', () => {
+  it('updateLead sends empty phone, company and notes as empty strings', async () => {
+    vi.mocked(api.put).mockResolvedValue({
+      data: { id: 5, first_name: 'Ada', last_name: 'Lovelace', company: '', owner_id: 9 },
+    });
+
+    await leadsApi.updateLead(5, { phone: '', company_name: '', notes: '' });
+
+    expect(api.put).toHaveBeenCalledTimes(1);
+    expect(api.put).toHaveBeenCalledWith('/leads/5', { phone: '', company: '', notes: '' });
+  });
+});

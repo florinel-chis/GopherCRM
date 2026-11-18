@@ -103,14 +103,16 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   a fresh file of the previous release, so the chain keeps being exercised.
   Backing up before upgrading (see
   [DOCKER.md](DOCKER.md#upgrading-the-sqlite-database)) stays the rule.
-- **Lead update cannot clear optional text fields (defect)** — the customer half was fixed in
-  #270: `PUT /customers/{id}` now stores a sent `""` for `phone`, `company`, `position`,
-  `address`, `city`, `state`, `country`, `postal_code` and `notes`, while an omitted key or a
-  JSON `null` keeps the stored value (`first_name`, `last_name` and `email` still ignore an empty
-  value by design). The lead handler has the same defect and was left out of that change: its
-  optional text fields still apply only when non-empty. A JSON `null` meaning "clear" (a
-  three-state wrapper) or a field mask is not offered on either entity. A browser test that
-  clears a customer field and reloads (TC-CUST-018, browser half) is still planned.
+- **Clearing text fields on customer and lead updates: what stays open** — `PUT /customers/{id}`
+  (#270) and `PUT /leads/{id}` (#398) store a sent `""` for their optional text fields, while an
+  omitted key or a JSON `null` keeps the stored value (`first_name`, `last_name` and `email`
+  still ignore an empty value by design). Not offered on either entity: a JSON `null` meaning
+  "clear" (a three-state wrapper) or a field mask. The lead form requires "Company (as entered)"
+  and "Lead Source" and has no position or external-id field, so a lead's `company`, `position`,
+  `source` and `external_id` are cleared through the API only. The lead update does not re-check
+  the email-or-phone rule of create, so the API accepts clearing the phone of a lead that has no
+  email and leaves a lead with neither contact (pinned as observed behaviour by
+  `TestLeadUpdateClearsOptionalTextFields` in `tests/lead_clear_fields_integration_test.go`).
 - **Retire the unused bulk-operation schema** — since the generic bulk subsystem was removed
   (#112), nothing writes `bulk_operation_items` or the `success_count`/`failure_count` columns
   of `bulk_operations`; the status endpoints write only the parent row's type, resource, totals

@@ -7824,8 +7824,9 @@ definitions:
         - hot_lead
         example: hot_lead
       company:
-        description: New free-text company name; empty or absent keeps the stored
-          one.
+        description: |-
+          New free-text company name; omitted or null leaves it unchanged,
+          "" clears it. Independent of company_id.
         example: Analytical Engines Ltd
         type: string
       company_id:
@@ -7842,7 +7843,8 @@ definitions:
         format: email
         type: string
       external_id:
-        description: New external id; empty or absent keeps the stored one.
+        description: New external id; omitted or null leaves it unchanged, "" clears
+          it.
         example: crm-legacy-1042
         type: string
       first_name:
@@ -7856,7 +7858,8 @@ definitions:
       notes:
         description: |-
           New notes, replacing the stored text; at most 65535 bytes (400
-          BAD_REQUEST above). Empty or absent keeps the stored notes.
+          BAD_REQUEST above). Omitted or null leaves them unchanged, "" clears
+          them, form-submission blocks included.
         example: Demo booked for Tuesday.
         type: string
       owner_id:
@@ -7868,15 +7871,19 @@ definitions:
         example: 9
         type: integer
       phone:
-        description: New phone number; empty or absent keeps the stored one.
+        description: |-
+          New phone number; omitted or null leaves it unchanged, "" clears it.
+          The email-or-phone rule of create is not re-checked, so the phone of
+          a lead without an email can be cleared.
         example: +44 20 7946 0001
         type: string
       position:
-        description: New job title; empty or absent keeps the stored one.
+        description: New job title; omitted or null leaves it unchanged, "" clears
+          it.
         example: CEO
         type: string
       source:
-        description: New source; empty or absent keeps the stored one.
+        description: New source; omitted or null leaves it unchanged, "" clears it.
         example: referral
         type: string
       status:
@@ -18279,7 +18286,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
+        Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional. first_name, last_name, email, status and classification apply only when non-empty: omitted or empty leaves them unchanged. phone, company, position, source, external_id and notes: omitted or null keeps the stored value, an empty string clears it, any other value is stored as sent. The email-or-phone rule of create is not re-checked, so clearing the phone of a lead without an email is accepted. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
         Side effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.
         The response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
       parameters:
@@ -18288,7 +18295,8 @@ paths:
         name: id
         required: true
         type: integer
-      - description: Fields to change; empty strings and absent fields are left unchanged
+      - description: Fields to change; an absent field is left unchanged, and an empty
+          string clears phone, company, position, source, external_id and notes
         in: body
         name: request
         required: true

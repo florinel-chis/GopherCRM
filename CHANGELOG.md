@@ -797,6 +797,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`PUT /leads/{id}` can clear the optional text fields (#398).** `phone`, `company`,
+  `position`, `source`, `external_id` and `notes` used to apply only when non-empty, so a lead
+  form saved with an emptied Phone or Notes answered 200 and the old text came back on reload.
+  A sent `""` is now stored; an omitted key or a JSON `null` still keeps the stored value, and
+  `first_name`, `last_name`, `email`, `status` and `classification` still ignore an empty value.
+  **Compatibility:** an API client that sent `""` for one of the six fields used to have it
+  ignored and now clears the field; send `null` or leave the key out to keep the value. The
+  email-or-phone rule of create is still not re-checked on update, so the phone of a lead
+  without an email can be cleared through the API. Emptying Notes removes the whole stored text,
+  the form-submission blocks in it included. The lead form still requires "Company (as entered)"
+  and "Lead Source" and has no position or external-id field, so in the web application only
+  Phone and Notes can be emptied; the other four are cleared through the API. Customer updates
+  (#270) are unchanged.
 - **Users: a database failure on a user lookup answers 500, not 404 (#399).** `GET /users/{id}`,
   `GET /users/me` and the user lookup of `POST /customers/{id}/assign` answered 404
   `User not found` for every lookup error. Only a missing user is a 404 now; a read that fails
@@ -999,7 +1012,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when non-empty, so the customer form's cleared fields answered 200 and came back on reload. A
   sent `""` is now stored; an omitted key or a JSON `null` still keeps the stored value.
   `first_name`, `last_name` and `email` still ignore an empty value, and `website` and `company_id`
-  keep their own rules. The lead update still has the same limitation.
+  keep their own rules. The lead update had the same limitation until #398.
 - **`PUT /tickets/{id}` stores a new assignee (#269).** On a ticket that already had an assignee the
   request validated the new user, answered 200 and kept the old one, because GORM wrote the
   preloaded `AssignedTo` id back over the foreign key. The service now detaches a preloaded user

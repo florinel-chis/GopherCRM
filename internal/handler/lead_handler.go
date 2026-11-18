@@ -80,9 +80,12 @@ type CreateLeadRequest struct {
 	CreatedAt *string `json:"created_at,omitempty" example:"2025-03-14T09:26:53Z"` // ISO8601 timestamp for import
 }
 
-// UpdateLeadRequest is the body of PUT /leads/:id. Every field is optional,
-// and an empty string is the same as an absent field: a text field cannot be
-// cleared through this endpoint.
+// UpdateLeadRequest is the body of PUT /leads/:id. Every field is optional.
+// first_name, last_name, email, status and classification apply only when
+// non-empty: omitted or empty leaves them unchanged. The other text fields
+// (phone, company, position, source, external_id, notes): omitted or null
+// leaves the stored value unchanged, an empty string clears it, any other
+// value is stored as sent.
 type UpdateLeadRequest struct {
 	// New given name; empty or absent keeps the stored one.
 	FirstName string `json:"first_name,omitempty" example:"Ada"`
@@ -91,24 +94,28 @@ type UpdateLeadRequest struct {
 	// New email address, validated when present; empty or absent keeps the
 	// stored one. The email-or-phone rule of create is not re-checked.
 	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"ada.king@example.com"`
-	// New phone number; empty or absent keeps the stored one.
-	Phone string `json:"phone,omitempty" example:"+44 20 7946 0001"`
-	// New free-text company name; empty or absent keeps the stored one.
-	Company string `json:"company,omitempty" example:"Analytical Engines Ltd"`
-	// New job title; empty or absent keeps the stored one.
-	Position string `json:"position,omitempty" example:"CEO"`
-	// New source; empty or absent keeps the stored one.
-	Source string `json:"source,omitempty" example:"referral"`
+	// New phone number; omitted or null leaves it unchanged, "" clears it.
+	// The email-or-phone rule of create is not re-checked, so the phone of
+	// a lead without an email can be cleared.
+	Phone *string `json:"phone,omitempty" example:"+44 20 7946 0001"`
+	// New free-text company name; omitted or null leaves it unchanged,
+	// "" clears it. Independent of company_id.
+	Company *string `json:"company,omitempty" example:"Analytical Engines Ltd"`
+	// New job title; omitted or null leaves it unchanged, "" clears it.
+	Position *string `json:"position,omitempty" example:"CEO"`
+	// New source; omitted or null leaves it unchanged, "" clears it.
+	Source *string `json:"source,omitempty" example:"referral"`
 	// New status; empty or absent keeps the stored one. converted is refused
 	// with 400 VALIDATION_ERROR unless the lead is already converted.
 	Status models.LeadStatus `json:"status,omitempty" binding:"omitempty,oneof=new contacted qualified unqualified converted" example:"qualified"`
 	// New classification; empty or absent keeps the stored one.
 	Classification models.LeadClassification `json:"classification,omitempty" binding:"omitempty,oneof=unclassified test spam lead hot_lead" example:"hot_lead"`
-	// New external id; empty or absent keeps the stored one.
-	ExternalID string `json:"external_id,omitempty" example:"crm-legacy-1042"`
+	// New external id; omitted or null leaves it unchanged, "" clears it.
+	ExternalID *string `json:"external_id,omitempty" example:"crm-legacy-1042"`
 	// New notes, replacing the stored text; at most 65535 bytes (400
-	// BAD_REQUEST above). Empty or absent keeps the stored notes.
-	Notes string `json:"notes,omitempty" example:"Demo booked for Tuesday."`
+	// BAD_REQUEST above). Omitted or null leaves them unchanged, "" clears
+	// them, form-submission blocks included.
+	Notes *string `json:"notes,omitempty" example:"Demo booked for Tuesday."`
 	// New owner. Admin only: any owner_id from another role, even the
 	// caller's own id, is 403. A changed owner must name an active admin or
 	// sales user (400 INVALID_REFERENCE otherwise); the current owner_id is
@@ -502,9 +509,17 @@ func (h *LeadHandler) Get(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, lead)
 }
 
+// setOptionalLeadText adds a sent text value to the update map under key. A
+// nil pointer (key omitted or JSON null) adds nothing.
+func setOptionalLeadText(updates map[string]interface{}, key string, sent *string) {
+	if sent != nil {
+		updates[key] = *sent
+	}
+}
+
 // Update godoc
 // @Summary Update a lead
-// @Description Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional and an empty string counts as absent, so a text field cannot be cleared here; the email-or-phone rule of create is not re-checked. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
+// @Description Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional. first_name, last_name, email, status and classification apply only when non-empty: omitted or empty leaves them unchanged. phone, company, position, source, external_id and notes: omitted or null keeps the stored value, an empty string clears it, any other value is stored as sent. The email-or-phone rule of create is not re-checked, so clearing the phone of a lead without an email is accepted. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.
 // @Description Side effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.
 // @Description The response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
 // @Tags leads
@@ -513,7 +528,7 @@ func (h *LeadHandler) Get(c *gin.Context) {
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Param id path int true "Lead ID"
-// @Param request body UpdateLeadRequest true "Fields to change; empty strings and absent fields are left unchanged"
+// @Param request body UpdateLeadRequest true "Fields to change; an absent field is left unchanged, and an empty string clears phone, company, position, source, external_id and notes"
 // @Success 200 {object} utils.APIResponse{data=models.Lead} "The updated lead"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID') or notes over 65535 bytes. VALIDATION_ERROR (message 'Validation failed'): a binding rule failed; error.details maps the Go field name (for example FirstName) to a message. BAD_REQUEST: the body is not valid JSON for the schema ('Invalid request format'). VALIDATION_ERROR: status converted for a lead that is not converted, with error.details {'field': 'status'}. INVALID_REFERENCE: company_id names no live company, or a changed owner_id names no active admin or sales user ('owner_id must name an active admin or sales user', error.details {'field': 'owner_id'})"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
@@ -537,7 +552,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 		c.Error(err).SetType(gin.ErrorTypeBind)
 		return
 	}
-	if len(req.Notes) > models.LeadNotesMaxBytes {
+	if req.Notes != nil && len(*req.Notes) > models.LeadNotesMaxBytes {
 		utils.RespondBadRequest(c, leadNotesTooLongMessage)
 		return
 	}
@@ -569,30 +584,21 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	if req.Email != "" {
 		updates["email"] = req.Email
 	}
-	if req.Phone != "" {
-		updates["phone"] = req.Phone
-	}
-	if req.Company != "" {
-		updates["company"] = req.Company
-	}
-	if req.Position != "" {
-		updates["position"] = req.Position
-	}
-	if req.Source != "" {
-		updates["source"] = req.Source
-	}
 	if req.Status != "" {
 		updates["status"] = req.Status
 	}
 	if req.Classification != "" {
 		updates["classification"] = req.Classification
 	}
-	if req.ExternalID != "" {
-		updates["external_id"] = req.ExternalID
-	}
-	if req.Notes != "" {
-		updates["notes"] = req.Notes
-	}
+	// Optional text fields: an omitted key or a JSON null adds no key and so
+	// keeps the stored value, any sent string (the empty one included)
+	// replaces it.
+	setOptionalLeadText(updates, "phone", req.Phone)
+	setOptionalLeadText(updates, "company", req.Company)
+	setOptionalLeadText(updates, "position", req.Position)
+	setOptionalLeadText(updates, "source", req.Source)
+	setOptionalLeadText(updates, "external_id", req.ExternalID)
+	setOptionalLeadText(updates, "notes", req.Notes)
 
 	// Only admins can reassign leads
 	if req.OwnerID != nil {

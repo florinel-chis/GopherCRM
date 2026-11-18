@@ -170,6 +170,61 @@ test.describe('Admin - Leads Management', () => {
     await expect(page.getByText(completeLeadData.companyName).first()).toBeVisible();
   });
 
+  // #398: an emptied optional text field is sent as "" and the API stores it.
+  test('admin clears the phone and notes of a lead and they stay empty after a reload', async ({ page }) => {
+    // The 30 s waits after each navigation need more than the default test timeout.
+    test.setTimeout(120000);
+    const company = `E2E Clear ${Date.now()}`;
+    const leadData = {
+      ...generateLeadData(),
+      companyName: company,
+      phone: '+44 20 7946 0001',
+      notes: 'Clear me: demo booked for Tuesday.',
+    };
+
+    await leadsPage.goto();
+    await leadsPage.clickNewLead();
+    await leadsPage.fillLeadForm(leadData);
+    const created = await leadsPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
+    const leadId = (await created.json())?.data?.id;
+    expect(leadId).toBeTruthy();
+
+    // The edit form is filled by a reset once the lead query resolves, so
+    // wait for the stored values before touching the fields.
+    await page.goto(`/leads/${leadId}/edit`);
+    await expect(leadsPage.companyNameInput).toHaveValue(company, { timeout: 30000 });
+    await expect(leadsPage.phoneInput).toHaveValue(leadData.phone);
+    await expect(leadsPage.notesTextarea).toHaveValue(leadData.notes);
+
+    await leadsPage.phoneInput.clear();
+    await leadsPage.notesTextarea.clear();
+
+    const updatePromise = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith(`/leads/${leadId}`) &&
+        response.request().method() === 'PUT'
+    );
+    await leadsPage.saveButton.click();
+    const updated = await updatePromise;
+    expect(updated.status()).toBe(200);
+    const sent = updated.request().postDataJSON();
+    expect(sent.phone).toBe('');
+    expect(sent.notes).toBe('');
+    await page.waitForURL(/\/leads(?!.*edit)/, { timeout: 30000 });
+
+    // Open the edit form again and reload it, so the values come from the
+    // server and not from a cached query. The inputs are briefly empty
+    // before the reset: the unique company proves the stored lead is on
+    // screen before the two cleared fields are judged.
+    await page.goto(`/leads/${leadId}/edit`);
+    await page.reload();
+    await expect(leadsPage.companyNameInput).toHaveValue(company, { timeout: 30000 });
+    await expect(leadsPage.emailInput).toHaveValue(leadData.email);
+    await expect(leadsPage.phoneInput).toHaveValue('');
+    await expect(leadsPage.notesTextarea).toHaveValue('');
+  });
+
   test('admin can navigate between leads efficiently', async ({ page }) => {
     // Create multiple leads
     for (let i = 0; i < 2; i++) {

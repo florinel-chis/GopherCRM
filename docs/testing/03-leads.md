@@ -304,22 +304,38 @@ the frontend gating.
   lead"; lock order in Go: `TestLeadCompanyLockOrderOutcomesSQLite`,
   `TestLeadUpdateVsCompanyDeleteMySQL`, `TestLeadCompanyContendedHandlerMapping`
 
-### TC-LEAD-017 — Clearing the Notes field does not clear it
+### TC-LEAD-017 — Clearing Phone and Notes on edit clears them server-side
 - **Priority:** P1
-- **Type:** negative
-- **Preconditions:** Admin logged in; a lead created with non-empty notes.
+- **Type:** regression
+- **Preconditions:** Admin logged in; a lead created by the test with an email, a phone and
+  non-empty notes.
 - **Steps:**
   1. Open `/leads/{id}/edit`.
-  2. Select all text in the Notes textarea and delete it.
-  3. Submit, then reopen the lead's detail page.
-- **Expected:** `PUT /leads/{id}` returns **200** and the success snackbar appears, but the Notes
-  block on the detail page still shows the original text. The update handler builds its updates map
-  only from non-empty strings (`if req.Notes != ""`, `lead_handler.go:386`), so an emptied optional
-  field is dropped rather than written.
-- **Known issue:** No text field on a lead can be blanked through the UI; the same
-  `!= ""` pattern applies to phone, company, position, source and external_id
-  (`lead_handler.go:358-386`).
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
+  2. Clear the "Phone" field and the "Notes" textarea entirely.
+  3. Click "Update Lead", then open the edit form again and reload the page.
+- **Expected:** The form sends `phone: ""` and `notes: ""`, `PUT /leads/{id}` answers **200**, and
+  both fields are still empty after the reload. In `PUT /leads/{id}` the optional text fields
+  `phone`, `company`, `position`, `source`, `external_id` and `notes` are pointers: an omitted key
+  or a JSON `null` keeps the stored value, a sent `""` is stored. `first_name`, `last_name`,
+  `email`, `status` and `classification` still ignore an empty value (the stored value stays).
+  Emptying Notes removes the whole stored text, the form-submission blocks in it included. The
+  form requires "Company (as entered)" and "Lead Source" and has no position or external-id
+  field, so `company`, `position`, `source` and `external_id` are cleared through the API only.
+  The email-or-phone rule of create is not re-checked: the API accepts `{"phone":""}` for a lead
+  without an email (the form does not, it requires one of the two).
+- **Known issue (fixed, #398):** The handler applied each text field only `if req.X != ""`, so an
+  emptied field answered 200 with the success snackbar and came back on reload. Still open: no
+  re-check of the email-or-phone rule on update (`docs/ROADMAP.md`).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin clears the phone and notes of a lead and they stay empty after a reload".
+  API: `tests/lead_clear_fields_integration_test.go` (`TestLeadUpdateClearsOptionalTextFields`,
+  `TestLeadUpdateOmittedOrNullFieldsUnchanged`, `TestLeadUpdateEmptyRequiredFieldsUnchanged`:
+  SQLite, the routes of `SetupLeadRoutes` behind the real JWT middleware, every value read back
+  from the database), the handler unit roots `TestLeadHandlerUpdateClearsOptionalFields`,
+  `TestLeadHandlerUpdateKeepsOmittedOrNull` and `TestLeadHandlerUpdateIgnoresEmptyRequiredFields`
+  (`internal/handler/lead_clear_fields_test.go`) and the service root
+  `TestLeadServiceUpdateStoresSentEmptyText` (`internal/service/lead_clear_fields_test.go`).
+  Payload (Vitest): `LeadForm.test.tsx` "sends an emptied phone and notes as empty strings" and
+  `leads.test.ts` "updateLead sends empty phone, company and notes as empty strings"
 
 ### TC-LEAD-018 — A sales user cannot edit a lead owned by someone else
 - **Priority:** P0
