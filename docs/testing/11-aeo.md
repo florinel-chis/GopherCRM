@@ -579,8 +579,8 @@ two connection pools on one SQLite file to prove the outcomes in sequence.
   2. While it runs, `POST /aeo/runs` and `POST /aeo/prompts/{id}/run` on B.
   3. Let A's run finish, then `POST /aeo/runs` on B.
   4. Fire starts on both replicas at once.
-- **Expected:** Step 2: 409 `CONFLICT` "an AEO run is already in progress", no row inserted, no provider call from B. Step 3: 202. Step 4: exactly one run is admitted (MySQL), every other start is 409.
-- **Automation:** automated (backend) — `tests/aeo_replica_test.go` "TestAEOReplicaAPISQLite", `internal/service/aeo_replica_test.go` "TestAEOReplicaAdmissionSQLite" / "…MySQL", `internal/repository/aeo_run_ownership_test.go` "TestAEORunClaimSQLite" / "…MySQL".
+- **Expected:** Step 2: 409 `CONFLICT` "an AEO run is already in progress", no row inserted, no provider call from B. Step 3: 202. Step 4: exactly one run is admitted (MySQL), every other start is 409. A claim the database answers with a deadlock (error 1213) or a lock wait timeout (error 1205) is replayed, at most 3 INSERT attempts in total: a deadlock on every attempt is the same 409, never a driver error; a lock wait timeout is replayed once and a second one is returned as the driver error (#371).
+- **Automation:** automated (backend) — `tests/aeo_replica_test.go` "TestAEOReplicaAPISQLite", `internal/service/aeo_replica_test.go` "TestAEOReplicaAdmissionSQLite" / "…MySQL", `internal/repository/aeo_run_ownership_test.go` "TestAEORunClaimSQLite" / "…MySQL" and "TestAEORunClaimContentionSQLite" / "…MySQL" (injected deadlock and lock wait timeout).
 
 ### TC-AEO-052 — One scheduled run per daily slot
 - **Priority:** P1
@@ -589,8 +589,8 @@ two connection pools on one SQLite file to prove the outcomes in sequence.
 - **Steps:**
   1. Let the scheduled hour pass with every replica running.
   2. Read the run list and the schedulers' logs.
-- **Expected:** One `scheduled` run for the slot; the other replicas log one info line "AEO scheduled run skipped: this slot was already started" (no slot value in the log) and re-arm for the next day, also when the first run has already finished. A replica whose timer fires late names the same slot (the `NextRunAt` instant, not the wake-up time). A slot refused because a manual run held the lock is not retried.
-- **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaScheduleSlotSQLite" / "…MySQL", `internal/aeo/scheduler_slot_test.go` (`TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`).
+- **Expected:** One `scheduled` run for the slot; the other replicas log one info line "AEO scheduled run skipped: this slot was already started" (no slot value in the log) and re-arm for the next day, also when the first run has already finished. A replica whose timer fires late names the same slot (the `NextRunAt` instant, not the wake-up time). A slot refused because a manual run held the lock is not retried. A slot claim the database answers with a deadlock (error 1213) or a lock wait timeout (error 1205) is "slot already started" when a row holds the slot; otherwise it is replayed like any other claim (TC-AEO-051), and a deadlock on every attempt is the "a run is already in progress" skip (#371).
+- **Automation:** automated (backend) — `internal/service/aeo_replica_test.go` "TestAEOReplicaScheduleSlotSQLite" / "…MySQL", `internal/repository/aeo_run_ownership_test.go` "TestAEORunClaimContentionSQLite" / "…MySQL", `internal/aeo/scheduler_slot_test.go` (`TestSchedulerPassesSlot`, `TestSchedulerSlotTakenSkip`).
 
 ### TC-AEO-053 — A crashed replica's run is recovered after the heartbeat horizon
 - **Priority:** P0

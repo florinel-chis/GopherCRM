@@ -1017,7 +1017,11 @@ run JSON is unchanged.
 
 Lifecycle: `ClaimRun` inserts the row `running` with its owner, `heartbeat_at = started_at` and
 `running_lock = 1`; a duplicate on `running_lock` is a run in progress (409, or a scheduled skip),
-a duplicate slot is a taken slot. The owner renews `heartbeat_at` and finishes the row with one
+a duplicate slot is a taken slot. A deadlock (error 1213) or a lock wait timeout (error 1205) on
+the claim INSERT is contention, for slot and slot-less claims alike (#371): a slot claim whose
+slot a row already holds is a taken slot; otherwise the INSERT is replayed, at most 3 attempts in
+total. A deadlock on every attempt is a run in progress; a lock wait timeout is replayed once and
+a second one is returned as the driver error. The owner renews `heartbeat_at` and finishes the row with one
 `UPDATE … WHERE id = ? AND status = 'running' AND owner_instance = ?` that writes the terminal
 status, the counters, `completed_at` and `running_lock = NULL`; there is no full-struct write of
 the table. At boot and before every start, any replica fails, in one conditional `UPDATE`, the

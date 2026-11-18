@@ -2299,7 +2299,22 @@ one MySQL/MariaDB database.
   one running row across every process, so there is no count-then-insert any more and
   `startMu` only serialises this process's own sweep and claim. A duplicate key is
   `apperrors.ErrRunInProgress` (409, or a scheduled skip), or `apperrors.ErrAEOScheduleSlotTaken`
-  when the claim names a slot that a row already holds.
+  when the claim names a slot that a row already holds. Lock contention on the claim (#371) gets
+  the same answers, for scheduled and slot-less (manual, single-prompt) claims alike: concurrent
+  claimants of the same unique keys can make MySQL/MariaDB answer error 1213 (deadlock) or 1205
+  (lock wait timeout) instead of a duplicate key. A slot claim then looks the slot up first and
+  answers `ErrAEOScheduleSlotTaken` when a row holds it; otherwise the INSERT is replayed, at
+  most 3 attempts in total per claim, without sleep or backoff, and every attempt goes through
+  the duplicate-key classification (after a deadlock the winner may not have committed yet, so
+  the replay waits for it and ends as a duplicate key). A deadlock on all three attempts is
+  `ErrRunInProgress`, never the raw driver error; for a scheduled claim that is the scheduler's
+  "a run is already in progress" skip, so the slot is not retried. A lock wait timeout is
+  replayed once and a second one on the same claim is returned unchanged as the driver error:
+  each arrives only after `innodb_lock_wait_timeout` (50 s by default) and `startMu` is held
+  across the claim, so the worst case is two lock waits during which this process starts no other
+  run. The replay is safe because a failed attempt left nothing behind: GORM runs the INSERT in
+  its own short transaction, which the server rolls back on a deadlock and GORM rolls back after
+  a lock wait timeout, and `ClaimRun` is never called on a transaction handle.
 - **The daily slot.** The scheduler calls `StartScheduledRun(ctx, slot)` with the instant it
   computed with `aeo.NextRunAt`, never the wake-up time; the slot is stored as
   `slot.UTC().Format("2006-01-02T15:04Z")` under the unique `idx_aeo_runs_schedule_slot`, so one
@@ -2335,6 +2350,7 @@ MySQL/MariaDB; see [datamodel.md](datamodel.md#aeo-run-ownership). Regression ro
 `TestAEORunOwnershipMigrationFiles` (the newest-migration assertion has since moved to
 `TestAutomationRunLeaseMigrationFiles`, #237) and
 `TestAEORunOwnershipMigration` (`cmd/migrate`); `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`
+and `TestAEORunClaimContention{SQLite,MySQL}` (#371, injected deadlock and lock wait timeout)
 (`internal/repository`); `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`,
 `TestAEORunHeartbeatLifecycle` and `TestAEOReplicaLogsOmitPersonalData` (`internal/service`,
 two service instances with separate pools on one SQLite file or one disposable `TEST_MYSQL_DSN`

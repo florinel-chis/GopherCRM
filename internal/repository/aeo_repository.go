@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/go-sql-driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -296,6 +297,32 @@ func (r *aeoRepository) CountRunsByStatus(status string) (int64, error) {
 // terminal row) never collides.
 const aeoRunningLock uint8 = 1
 
+// aeoClaimMaxAttempts bounds the INSERT attempts of one ClaimRun call: the
+// first attempt plus the replays after lock contention.
+const aeoClaimMaxAttempts = 3
+
+// MySQL/MariaDB error numbers ClaimRun treats as contention on the claim.
+const (
+	mysqlErrLockWaitTimeout uint16 = 1205 // ER_LOCK_WAIT_TIMEOUT
+	mysqlErrLockDeadlock    uint16 = 1213 // ER_LOCK_DEADLOCK
+)
+
+// aeoClaimContention returns the MySQL/MariaDB error number when err is lock
+// contention on the claim INSERT (1213 deadlock, 1205 lock wait timeout) and 0
+// otherwise. It reads the typed driver error only; SQLite busy/locked errors
+// are not contention here.
+func aeoClaimContention(err error) uint16 {
+	var mysqlErr *mysql.MySQLError
+	if !errors.As(err, &mysqlErr) {
+		return 0
+	}
+	switch mysqlErr.Number {
+	case mysqlErrLockDeadlock, mysqlErrLockWaitTimeout:
+		return mysqlErr.Number
+	}
+	return 0
+}
+
 // ClaimRun admits a run across every process sharing the database (#229). It
 // inserts the row as running, owned by run.OwnerInstance, with heartbeat_at =
 // started_at and running_lock = 1, in one INSERT: the unique running_lock
@@ -304,7 +331,30 @@ const aeoRunningLock uint8 = 1
 // A duplicate key inserts nothing and is classified: when run.ScheduleSlot is
 // set and a row with that slot exists (soft-deleted rows included, since they
 // still hold the index) it is apperrors.ErrAEOScheduleSlotTaken, otherwise
-// apperrors.ErrRunInProgress. Any other failure is returned as is.
+// apperrors.ErrRunInProgress.
+//
+// Lock contention on the INSERT (#371) is classified too, for scheduled and
+// slot-less claims alike. Concurrent claimants of the same unique keys can
+// make MySQL/MariaDB answer error 1213 (deadlock) or 1205 (lock wait timeout)
+// instead of a duplicate key. A slot claim first looks the slot up and
+// answers apperrors.ErrAEOScheduleSlotTaken when a row holds it; a failed
+// lookup is returned as is. Otherwise the INSERT is replayed, at most
+// aeoClaimMaxAttempts attempts in total, and every attempt goes through the
+// duplicate-key classification above: after a deadlock the winner may not
+// have committed yet, so the replay waits for it and ends as a duplicate key.
+// A deadlock on the last allowed attempt is apperrors.ErrRunInProgress; the
+// raw 1213 is never returned. A lock wait timeout is replayed once per claim
+// and a second one is returned unchanged: each arrives only after
+// innodb_lock_wait_timeout (50 s by default), so the worst case is two lock
+// waits. There is no sleep and no backoff, and the statements stay on the
+// repository handle, so its context still cuts them short.
+//
+// The replay is safe because a failed attempt left nothing behind: GORM runs
+// the INSERT in its own short transaction (BEGIN, INSERT, COMMIT), the server
+// rolls that transaction back on a deadlock and GORM rolls it back after a
+// lock wait timeout. ClaimRun is never called on a transaction handle, so no
+// enclosing transaction is lost with it. Any other failure is returned as is
+// after the attempt that raised it.
 func (r *aeoRepository) ClaimRun(run *models.AEORun) error {
 	if run == nil || run.OwnerInstance == nil || strings.TrimSpace(*run.OwnerInstance) == "" {
 		return errors.New("aeo: a run claim needs an owner instance")
@@ -316,31 +366,72 @@ func (r *aeoRepository) ClaimRun(run *models.AEORun) error {
 	run.StartedAt = startedAt
 	run.Status = models.AEORunStatusRunning
 	run.CompletedAt = nil
-	run.HeartbeatAt = &heartbeatAt
-	run.RunningLock = &lock
 
-	err := r.db.Create(run).Error
-	if err == nil {
-		return nil
-	}
-	run.ID = 0
-	run.HeartbeatAt = nil
-	run.RunningLock = nil
-	if !isDuplicateKeyError(err) {
-		return err
-	}
-	if run.ScheduleSlot != nil {
-		var taken int64
-		if countErr := r.db.Model(&models.AEORun{}).Unscoped().
-			Where("schedule_slot = ?", *run.ScheduleSlot).
-			Count(&taken).Error; countErr != nil {
-			return countErr
+	lockWaitReplayed := false
+	for attempt := 1; ; attempt++ {
+		run.ID = 0
+		run.HeartbeatAt = &heartbeatAt
+		run.RunningLock = &lock
+
+		err := r.db.Create(run).Error
+		if err == nil {
+			return nil
 		}
-		if taken > 0 {
-			return apperrors.ErrAEOScheduleSlotTaken
+		run.ID = 0
+		run.HeartbeatAt = nil
+		run.RunningLock = nil
+
+		if isDuplicateKeyError(err) {
+			if run.ScheduleSlot != nil {
+				taken, slotErr := r.scheduleSlotHeld(*run.ScheduleSlot)
+				if slotErr != nil {
+					return slotErr
+				}
+				if taken {
+					return apperrors.ErrAEOScheduleSlotTaken
+				}
+			}
+			return apperrors.ErrRunInProgress
+		}
+
+		contention := aeoClaimContention(err)
+		if contention == 0 {
+			return err
+		}
+		if run.ScheduleSlot != nil {
+			taken, slotErr := r.scheduleSlotHeld(*run.ScheduleSlot)
+			if slotErr != nil {
+				return slotErr
+			}
+			if taken {
+				return apperrors.ErrAEOScheduleSlotTaken
+			}
+		}
+		if contention == mysqlErrLockWaitTimeout {
+			if lockWaitReplayed {
+				return err
+			}
+			lockWaitReplayed = true
+		}
+		if attempt >= aeoClaimMaxAttempts {
+			if contention == mysqlErrLockDeadlock {
+				return apperrors.ErrRunInProgress
+			}
+			return err
 		}
 	}
-	return apperrors.ErrRunInProgress
+}
+
+// scheduleSlotHeld reports whether any run row carries the slot. Soft-deleted
+// rows count: they still hold the unique index.
+func (r *aeoRepository) scheduleSlotHeld(slot string) (bool, error) {
+	var taken int64
+	if err := r.db.Model(&models.AEORun{}).Unscoped().
+		Where("schedule_slot = ?", slot).
+		Count(&taken).Error; err != nil {
+		return false, err
+	}
+	return taken > 0, nil
 }
 
 // FinishRun writes the terminal state of a run its owner finalizes: status,
