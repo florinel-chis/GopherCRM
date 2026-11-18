@@ -34,3 +34,16 @@ func (m *LogMailer) Send(to, subject, _ string) error {
 		Info("SMTP not configured; email logged instead of sent")
 	return nil
 }
+
+// SendWithAttachment records the delivery of a message with one attachment.
+// The recipient, the subject and the attachment's filename and size are
+// logged; the body and the file's content are not.
+func (m *LogMailer) SendWithAttachment(to, subject, _ string, a Attachment) error {
+	log().
+		WithField("to", to).
+		WithField("subject", subject).
+		WithField("attachment", a.Filename).
+		WithField("attachment_bytes", len(a.Data)).
+		Info("SMTP not configured; email with attachment logged instead of sent")
+	return nil
+}

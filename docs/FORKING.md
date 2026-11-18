@@ -61,11 +61,14 @@ Checked by searching the tracked tree on `4dfe404`:
   `ticket_mail_deliveries` (backend only; no retry). A ticket channel field and inbound mail remain
   later work.
 - No internationalisation framework in `gocrm-ui/package.json`.
-- No quote PDF, and tax is one rate per quote line only: no tax categories, reverse charge or
+- Quote PDF output needs a Chrome or Chromium binary on the server (`QUOTE_PDF_CHROME_PATH`,
+  off by default outside the Docker image; `docs/FEATURES.md` row 4d.14, #384), and tax is one
+  rate per quote line only: no tax categories, reverse charge or
   per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
   #324, #233).
 - CSV export covers customers and leads only (`internal/handler/customer_handler.go:569`,
-  `lead_handler.go:935`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
+  `lead_handler.go:935`, #234); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
+  single quote is delivered, #384).
 - Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
   not apply and the server ships no CSRF protection (README "Known Limitations"). A cookie session
   added in a fork must ship with session-bound CSRF protection (#261).
@@ -96,7 +99,7 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:1648`). Everything under `[Unreleased]`
+The latest release is 1.2.0 (`CHANGELOG.md:1696`). Everything under `[Unreleased]`
 (`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
@@ -117,7 +120,7 @@ go run ./cmd                     # or: make run
 ```
 
 The backend listens on `http://localhost:8080` and creates `gophercrm.db` in the working
-directory (`DB_PATH`, `internal/config/config.go:275`). The schema is created by auto-migration at
+directory (`DB_PATH`, `internal/config/config.go:282`). The schema is created by auto-migration at
 startup. `cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
 
 In a second terminal, create the first admin. Self-service registration only ever creates
@@ -156,7 +159,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret stops the app.** `internal/config/config.go:260-270` rejects an empty
+1. **The example JWT secret stops the app.** `internal/config/config.go:267-277` rejects an empty
    value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
    placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
    `.env.example` does not start. Replace the secret with the output of
@@ -234,7 +237,7 @@ conflict on each upstream sync.
 | What | Where |
 |---|---|
 | Browser title and meta description | `gocrm-ui/index.html:7-8` |
-| App name in the UI | one hook, `useProductName` (`gocrm-ui/src/hooks/useProductName.ts`), used by the layout, the printable quote and the sign-in and registration pages. Order: the stored `general.company_name` when a signed-in user's configuration holds a non-blank value, else `VITE_APP_NAME` (`gocrm-ui/.env.example:6`), else `GoCRM` (`FALLBACK_PRODUCT_NAME`). The sign-in and registration pages render before sign-in and always show the build-time name |
+| App name in the UI | one hook, `useProductName` (`gocrm-ui/src/hooks/useProductName.ts`), used by the layout, the printable quote and the sign-in and registration pages. The PDF render page (`/quote-render`, #384) has no session and does not use the hook: it takes the stored name from `POST /quotes/public/render` (`product_name`) and falls back to the build-time name (`buildTimeProductName`). Order: the stored `general.company_name` when a signed-in user's configuration holds a non-blank value, else `VITE_APP_NAME` (`gocrm-ui/.env.example:6`), else `GoCRM` (`FALLBACK_PRODUCT_NAME`). The sign-in and registration pages render before sign-in and always show the build-time name |
 | Settings fallback name | `DEFAULT_COMPANY_NAME` in `gocrm-ui/src/contexts/ConfigurationContext.tsx:26` |
 | Favicon (the only logo asset) | `gocrm-ui/public/favicon.svg` |
 | Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` (`createAppTheme`); the light theme's primary colour follows the `ui.theme.primary_color` setting for signed-in users |
@@ -320,24 +323,25 @@ Configuration comes from three places:
 
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | none (required) | `config.go:261` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:305`, `internal/service/form_service.go:347` | see the rotation callout below |
-| `DB_DRIVER` | `mysql` | `config.go:274` | `mysql` or `sqlite`; anything else stops startup |
-| `DB_PATH` | `gophercrm.db` | `config.go:275` | SQLite only; no `?`; local filesystem (WAL) |
-| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:276-280` | MySQL only |
-| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:284-285` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:286` | `production` switches Gin to release mode (`cmd/main.go:221-223`) |
-| `TRUSTED_PROXIES` | trust none | `config.go:287` | see below |
-| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:288` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `config.go:315` | the UI origin; password-reset links and the client response link of a quote email (`/quote-response?token=`) |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:343` | this backend's public origin; form confirmation links |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:308-312` | empty host means log-only mail |
-| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:344-345` | both or the layer is skipped |
-| `FORM_RETENTION_DAYS` | off | `config.go:347` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
-| `AUTOMATION_ENABLED` | `true` | `config.go:350` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
-| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:337-338` | daily AEO run |
-| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:340` | environment only; see `docs/AEO_SECURITY.md` |
-| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:300-301` | SQL statements only at debug/trace |
+| `JWT_SECRET` | none (required) | `config.go:268` | at least 32 characters; replace the example (section 2.3) |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:312`, `internal/service/form_service.go:347` | see the rotation callout below |
+| `DB_DRIVER` | `mysql` | `config.go:281` | `mysql` or `sqlite`; anything else stops startup |
+| `DB_PATH` | `gophercrm.db` | `config.go:282` | SQLite only; no `?`; local filesystem (WAL) |
+| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:283-287` | MySQL only |
+| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:291-292` | `127.0.0.1` behind a proxy on the same host |
+| `SERVER_MODE` | `development` | `config.go:293` | `production` switches Gin to release mode (`cmd/main.go:221-223`) |
+| `TRUSTED_PROXIES` | trust none | `config.go:294` | see below |
+| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:295` | every browser origin of your UI |
+| `APP_BASE_URL` | `http://localhost:5173` | `config.go:322` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
+| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/bin/chromium-browser` in the Docker image, empty again in the two development Compose files | `config.go:323` | the Chrome or Chromium binary that prints quotes to PDF; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:351` | this backend's public origin; form confirmation links |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:315-319` | empty host means log-only mail |
+| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:352-353` | both or the layer is skipped |
+| `FORM_RETENTION_DAYS` | off | `config.go:355` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
+| `AUTOMATION_ENABLED` | `true` | `config.go:358` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
+| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:345-346` | daily AEO run |
+| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:348` | environment only; see `docs/AEO_SECURITY.md` |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:307-308` | SQL statements only at debug/trace |
 
 The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
 environment. `docs/AEO_SECURITY.md` explains why.
@@ -385,20 +389,20 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:108-111`).
-- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:292`, used at
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:299`, used at
   `internal/service/auth_service.go:573`) and the refresh-token lifetime from
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:297`). `JWT_ACCESS_TOKEN_MINUTES` is read
-  (`config.go:293`) but used by nothing.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:304`). `JWT_ACCESS_TOKEN_MINUTES` is read
+  (`config.go:300`) but used by nothing.
 
 The company name and colour settings are covered in
 section 3.1.
 
 ### 4.4 Module switches
 
-Only two exist: `AUTOMATION_ENABLED` (`config.go:350`) turns the automation worker off on an
-instance, and `AEO_SCHEDULE_ENABLED` (`config.go:337`) turns off the daily AEO run. Forms and AEO
+Only two exist: `AUTOMATION_ENABLED` (`config.go:358`) turns the automation worker off on an
+instance, and `AEO_SCHEDULE_ENABLED` (`config.go:345`) turns off the daily AEO run. Forms and AEO
 as a whole have no switch; removing a module is described in [EXTENDING.md](EXTENDING.md).
-`FORM_RETENTION_DAYS` (`config.go:347`) is the opposite kind of setting: the form retention purge
+`FORM_RETENTION_DAYS` (`config.go:355`) is the opposite kind of setting: the form retention purge
 stays off until you set it.
 
 ## 5. Deployment shapes
@@ -410,23 +414,27 @@ local machine. Before you put either on the internet:
 
 - They do not forward SMTP, `PUBLIC_BASE_URL`, reCAPTCHA, `AUTOMATION_*` or `AEO_SCHEDULE_*`
   variables to the backend, and they set `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS` to
-  `localhost:${UI_PORT}` (`docker-compose.yml:41-60`, `docker-compose.sqlite.yml:25-43`). Apply
+  `localhost:${UI_PORT}` (`docker-compose.yml:41-65`, `docker-compose.sqlite.yml:25-48`). Apply
   the committed `docker-compose.production.example.yml` with a second `-f` and supply your real
   values from the shell or the repo-root `.env`; [DOCKER.md](DOCKER.md) ("Production override
   example") lists what it forwards and the values it requires.
+- Both files switch quote PDF output off (`QUOTE_PDF_CHROME_PATH: ""`), because their
+  `APP_BASE_URL` is not reachable from the backend container. The production example does not
+  forward the variable, so PDF output stays off under it too; switch it on in your own override
+  ([DOCKER.md](DOCKER.md), "Quote PDF output").
 - The UI image bakes `VITE_API_BASE_URL=/api/v1` and `VITE_APP_NAME`, empty by default, which
   shows `GoCRM` before sign-in (`gocrm-ui/Dockerfile:19-22`). Set the name with
   `--build-arg VITE_APP_NAME=...` (see [DOCKER.md](DOCKER.md)); the shipped Compose files forward
   `VITE_APP_NAME` from the shell or the repo-root `.env` through `build.args` (#308).
 - Put TLS in front, and close the plain-HTTP ports behind it. Passwords and bearer tokens cross
   plain HTTP in clear text, and both files publish the backend's `8080` and the UI's `UI_PORT` on
-  every host interface (`docker-compose.yml:61-62,78-79`, `docker-compose.sqlite.yml:46-47,63-64`),
+  every host interface (`docker-compose.yml:66-67,83-84`, `docker-compose.sqlite.yml:51-52,68-69`),
   so a proxy alone leaves both reachable without TLS. `docker-compose.production.example.yml`
   drops the backend publication and binds the UI to `127.0.0.1` (Compose 2.24.4 or later; an
   older Compose accepts the file but keeps the all-interfaces UI publication);
   [DOCKER.md](DOCKER.md) ("Several installations on one host") explains the syntax.
 - The SQLite stack is two containers with a fixed project name (`gophercrm-sqlite`), fixed host
-  port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,46-47,69-76`). Several installs on
+  port 8080 and a fixed subnet (`docker-compose.sqlite.yml:20,51-52,74-81`). Several installs on
   one host need separate project names, ports, subnets, volumes and secrets.
 - Back up SQLite by stopping the backend and copying the file with its `-wal` and `-shm`
   siblings (restore all three together), or with `VACUUM INTO` (see [DOCKER.md](DOCKER.md)).
@@ -579,7 +587,7 @@ does not have to match your repository, and it appears in 323 tracked files, thi
 `f5ec601`). A rename touches every one of them on every sync.
 
 If you rename anyway, do it in one mechanical commit and redo it after each merge. Besides the Go
-imports, the path is hard-coded in `scripts/ci/check-go.py:60`, `scripts/release/check-sql-tests.py:11-32`,
+imports, the path is hard-coded in `scripts/ci/check-go.py:61`, `scripts/release/check-sql-tests.py:11-32`,
 `scripts/release/tests/test_release.py` and `scripts/release/tests/test_sql_coverage.py`. Deriving
 it from `go.mod` instead is #223.
 

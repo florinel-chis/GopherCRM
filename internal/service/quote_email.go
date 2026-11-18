@@ -7,9 +7,11 @@ import (
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
 )
 
 // QuoteEmailSubject is the subject of a quote email: the quote number and the
@@ -33,6 +35,15 @@ func QuoteEmailSubject(quoteID uint, productName string) string {
 // A sent quote also gets a client response link (#382), minted in one short
 // transaction after the recipient checks and before the send; see
 // mintResponseLink. An accepted quote is emailed without one.
+//
+// The quote's PDF is attached (#384) when PDF output is on and the mailer can
+// carry an attachment. It is rendered after the recipient checks and before
+// the response link is minted, with no transaction held, in at most
+// QuotePDFRenderTimeout. When PDF output is off, the mailer has no attachment
+// support, or the render fails or runs out of time, the mail goes out through
+// Send exactly as before and one warn line says why, with the quote id and
+// the customer id only. So the call takes at most QuotePDFRenderTimeout plus
+// the mailer's send timeout.
 func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("quote_id", id), "QuoteService", "Email")
 
@@ -91,6 +102,7 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	// falls back to "GopherCRM" and never blocks the send (#292).
 	productName := ResolveMailProductName(s.currency)
 	body := RenderQuoteEmail(quote)
+	attachments, pdf := s.quoteEmailPDF(id, logger)
 	if s.mintsResponseLink(quote) {
 		link, err := s.mintResponseLink(id, latestHistoryID)
 		if err != nil {
@@ -99,7 +111,17 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 		}
 		body += renderQuoteResponseLink(link)
 	}
-	if err := s.mailer.Send(to, QuoteEmailSubject(quote.ID, productName), body); err != nil {
+	subject := QuoteEmailSubject(quote.ID, productName)
+	if pdf != nil {
+		err = attachments.SendWithAttachment(to, subject, body, mailer.Attachment{
+			Filename:    quotePDFFilename(quote.ID),
+			ContentType: "application/pdf",
+			Data:        pdf,
+		})
+	} else {
+		err = s.mailer.Send(to, subject, body)
+	}
+	if err != nil {
 		// The mailer's own error is kept for errors.Is but not logged here:
 		// a transport error may quote the address. A response token minted
 		// above stays stored: its plain value was never delivered.
@@ -120,6 +142,34 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 
 	logger.Info("Quote emailed")
 	return s.GetByID(id)
+}
+
+// quoteEmailPDF renders the PDF the email attaches. It returns the mailer's
+// attachment side and the file, or nil bytes when the mail is to go out
+// text-only: PDF output is off, the mailer cannot attach, or the render failed
+// or timed out. Each of those is one warn line with a reason and the ids the
+// logger already carries; the render's own failure is not an error of the
+// email.
+func (s *quoteService) quoteEmailPDF(id uint, logger *logrus.Entry) (mailer.AttachmentSender, []byte) {
+	const message = "Quote emailed without a PDF attachment"
+	if !s.PDFAvailable() {
+		logger.WithField("reason", "pdf_off").Warn(message)
+		return nil, nil
+	}
+	attachments, ok := s.mailer.(mailer.AttachmentSender)
+	if !ok {
+		logger.WithField("reason", "mailer_without_attachments").Warn(message)
+		return nil, nil
+	}
+	pdf, reason, err := s.renderQuotePDF(id)
+	if err != nil || len(pdf) == 0 {
+		if reason == "" {
+			reason = quotePDFReasonRenderer
+		}
+		logger.WithField("reason", reason).Warn(message)
+		return nil, nil
+	}
+	return attachments, pdf
 }
 
 // mintsResponseLink reports whether the email of this quote carries a client

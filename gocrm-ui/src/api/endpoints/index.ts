@@ -8,6 +8,7 @@ export * from './deals';
 export * from './products';
 export * from './quotes';
 export * from './quoteResponse';
+export * from './quoteRender';
 export * from './tickets';
 export * from './tasks';
 export * from './labels';

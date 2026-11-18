@@ -85,8 +85,8 @@ Notes on the wiring:
   the network in clear text. The stack as shipped is for `localhost`; put a
   TLS-terminating reverse proxy in front of the UI port before anyone reaches
   it over a network. Both files publish the backend's `8080` and the UI port on
-  every host interface (`docker-compose.yml:61-62,78-79`,
-  `docker-compose.sqlite.yml:46-47,63-64`), so the proxy alone leaves both
+  every host interface (`docker-compose.yml:66-67,83-84`,
+  `docker-compose.sqlite.yml:51-52,68-69`), so the proxy alone leaves both
   reachable over plain HTTP: remove the backend publication and bind the UI to
   loopback (or a private network) in an override, as shown under
   [Several installations on one host](#several-installations-on-one-host).
@@ -170,11 +170,64 @@ Notes on the wiring:
   (`FORM_RETENTION_DAYS`) is not part of the worker limit either: it is safe on
   every replica, because extra sweeps only compete for the same rows.
 
+### Quote PDF output
+
+The backend image ships what quote PDF output needs: the Alpine `chromium` package, the
+`font-liberation` font (without a font the PDF is a valid file with no readable text) and
+`QUOTE_PDF_CHROME_PATH=/usr/bin/chromium-browser`. The server prints a quote by running that
+browser headless on `APP_BASE_URL/quote-render`, a public page of the web application that
+loads the quote from the API with a short-lived, single-quote, read-only credential.
+
+- **Image size.** Chromium is most of the image now: the backend image built from this
+  Dockerfile measures 686,689,600 bytes (about 655 MiB) against 55,708,069 bytes (about 53 MiB)
+  before (`docker image inspect --format '{{.Size}}'`, linux/arm64, alpine 3.20, Chromium 131).
+- **Flags and init, in the image only.** The Alpine launcher reads
+  `/etc/chromium/chromium.conf`, where the image sets `--no-sandbox` (as uid 10001 in a
+  container Chromium cannot set up its own sandbox; the container is the boundary) and
+  `--disable-dev-shm-usage` (a container's `/dev/shm` is 64 MB; shared memory goes to `/tmp`).
+  The server itself never passes either flag. The image starts the server under `tini`
+  (`ENTRYPOINT ["/sbin/tini", "--", "gophercrm"]`): a render kills the browser's whole process
+  group, the helpers orphaned that way are handed to PID 1, and an init reaps them where the
+  server would leave zombies. If you replace the entrypoint, keep an init (`docker run --init`,
+  `init: true` in Compose).
+- **What the browser may write.** Only one temporary directory per render, under `/tmp`,
+  removed afterwards. The image was verified as uid 10001 with a read-only root file system and
+  only `/tmp` (tmpfs) and `/data` writable.
+- **Off in both development stacks.** `docker-compose.yml` and `docker-compose.sqlite.yml` set
+  `QUOTE_PDF_CHROME_PATH: ""`. Their `APP_BASE_URL` is `http://localhost:${UI_PORT}`, and inside
+  the backend container `localhost` is that container, not the UI: every render would fail. With
+  the variable empty (or naming a file that is not executable) PDF output is switched off: the
+  server starts as usual, quote emails go out as text only, `GET /api/v1/quotes/:id/pdf` answers
+  503 `PDF_UNAVAILABLE`, `GET /api/v1/configurations/ui` reports `quotes.pdf_available` `false`
+  and the quote page shows no Download PDF button.
+- **Switching it on.** The production override example does not forward the variable, so the
+  stack it is applied to keeps PDF output off. Add `QUOTE_PDF_CHROME_PATH: /usr/bin/chromium-browser`
+  to the backend `environment` in your own override, together with an `APP_BASE_URL` that meets
+  both conditions:
+  - it is **reachable from inside the backend container**. A public origin works when the
+    container can resolve and reach it (through your TLS proxy); `http://ui`, the UI service on
+    the Compose network, works without leaving the host;
+  - its origin is **allowed by `CORS_ALLOWED_ORIGINS`** when the API is on another origin than
+    `APP_BASE_URL`. The render page calls `POST /api/v1/quotes/public/render` from the browser
+    with an `Origin` header; an origin that is not listed gets a bare 403 that the backend does
+    not log, the credential is never redeemed, and every render fails: the download answers 503
+    `PDF_RENDER_FAILED` and the quote email falls back to text. With the UI nginx proxying
+    `/api/v1/` the call is same-origin, but the browser still sends `Origin`, so list the
+    `APP_BASE_URL` origin either way.
+- **Time budget.** One render runs at a time per backend process and is bounded at 15 s, the
+  wait for its turn included. `POST /api/v1/quotes/:id/email` takes at most 15 s for the render
+  plus 30 s for the SMTP delivery, 45 s; the web application waits 55 s for that call and for
+  the PDF download. A reverse proxy in front must keep a read timeout of 60 s or more
+  (`proxy_read_timeout`, 60 s by default in nginx; the UI image's nginx does not lower it), or
+  it answers 504 for a mail the backend still delivers.
+- Known limits (credentials per backend process, the render URL in the container's process list
+  for the life of a render, dates in the container's time zone, UTC) are in `docs/ROADMAP.md`.
+
 ## Running Compose beyond localhost
 
 Both Compose files are built for one developer machine. They set a fixed list
-of backend variables (`docker-compose.yml:41-60`,
-`docker-compose.sqlite.yml:25-43`) and pass nothing else from the host or the
+of backend variables (`docker-compose.yml:41-65`,
+`docker-compose.sqlite.yml:25-48`) and pass nothing else from the host or the
 repo-root `.env`: Compose uses that file only to fill the `${...}`
 placeholders in the YAML. Before exposing a stack, know what it does and does
 not set.
@@ -194,6 +247,8 @@ Set by the Compose files:
   origin either way.
 - `SERVER_MODE=production`, `TRUSTED_PROXIES` for the fixed subnet,
   `API_PREFIX`, `LOG_FORMAT=json` and the database settings.
+- `QUOTE_PDF_CHROME_PATH`, **empty**: quote PDF output is off in both stacks
+  (see [Quote PDF output](#quote-pdf-output)).
 
 Not set, so the backend falls back to its defaults (`internal/config/config.go`):
 
@@ -211,7 +266,7 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
 - `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:292-297`.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:299-304`.
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 
@@ -220,7 +275,7 @@ file rather than editing the shipped files. The committed
 `docker-compose.production.example.yml` covers the common production set; see
 [Production override example](#production-override-example) below. In the
 SQLite stack the backend also loads `/data/.env` from its volume
-(`Dockerfile:36-38`); variables set in `environment` take precedence over it.
+(`Dockerfile:52-54`); variables set in `environment` take precedence over it.
 
 ### Production override example
 
@@ -244,7 +299,8 @@ every 30 seconds, the AEO run at hour 6).
 What the values mean here:
 
 - `APP_BASE_URL` is the browser origin of the UI, for example
-  `https://crm.example.com`, used in password-reset links.
+  `https://crm.example.com`, used in password-reset links and, when quote PDF
+  output is switched on, opened by the backend's own browser.
 - `PUBLIC_BASE_URL` is the public origin of the UI proxy, normally the same
   value as `APP_BASE_URL`. The example removes the backend's host port, so
   form confirmation links, the hosted form page and the embed snippet reach
@@ -310,7 +366,7 @@ ports (`8080` for the backend, `UI_PORT` for the UI), the project name
 (`gophercrm-sqlite` in the SQLite file, the directory name for the MySQL
 file) and the subnet (`172.28.0.0/16` or `172.29.0.0/16`, which
 `TRUSTED_PROXIES` must match) are fixed in the files
-(`docker-compose.sqlite.yml:20,47,76`, `docker-compose.yml:62,88`). A second
+(`docker-compose.sqlite.yml:20,52,81`, `docker-compose.yml:67,93`). A second
 installation from the same file needs, in its override:
 
 - its own project name (`docker compose -p client-b ...`), which also gives it

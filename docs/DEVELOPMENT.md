@@ -887,6 +887,121 @@ the recipient is never copied onto the quote, the body (`RenderQuoteEmail`) ends
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
 and `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
 
+**Quote PDF: a headless browser prints the SPA's render page (#384)** — `service.WithQuotePDF(svc,
+renderer)` switches PDF output on for a quote service (`cmd/main.go` does it when
+`NewChromeQuotePDFRenderer(QUOTE_PDF_CHROME_PATH)` returns a renderer; an empty path is off, a
+path that is not an executable file is off with one warn line; an empty `APP_BASE_URL` is off
+too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.go`:
+
+- **Render step.** `RenderPDF(id)` (behind `GET /quotes/:id/pdf`) and `Email` call
+  `renderQuotePDF`: take the single render slot, mint a credential, call
+  `QuotePDFRenderer.Render(ctx, APP_BASE_URL + "/quote-render#" + token)`, and require that the
+  page redeemed the credential before the bytes count. Every failure is
+  `apperrors.ErrQuotePDFRenderFailed` (503 `PDF_RENDER_FAILED`) with a reason in the log
+  (`no_turn_within_bound`, `timeout`, `renderer_error`, `page_never_loaded_the_quote`); the
+  renderer's own error is dropped, because nothing guarantees it is free of the URL. PDF off is
+  `apperrors.ErrQuotePDFUnavailable` (503 `PDF_UNAVAILABLE`).
+- **Render credential.** 32 random bytes (`generateOpaqueToken`), stored only as a hash in an
+  in-memory map of the service with the quote id and an expiry equal to the bound, deleted when
+  the render returns. It travels in the URL **fragment**, so the server that serves the page
+  never receives it, and then in the body of `POST /quotes/public/render`
+  (`QuoteService.GetRenderView`), which returns `models.QuoteRenderView` (the quote as
+  `GET /quotes/:id` serialises it, and the trimmed `general.company_name`) for the credential's
+  own quote and nothing the caller names. Every refusal is `apperrors.ErrQuoteRenderRejected`,
+  one generic 400. It is not a session: the Auth middleware does not know it. A browser that
+  exits cleanly without the credential having been redeemed printed something else (an error
+  page: `APP_BASE_URL` unreachable, CORS refusing the call), so that render fails.
+- **Fallback in the email.** `Email` renders after the recipient checks and before
+  `mintResponseLink`, with no transaction held. With PDF off, a mailer that does not implement
+  `mailer.AttachmentSender`, or a failed or late render, the mail goes out through `Mailer.Send`
+  exactly as before and one warn line carries the quote id, the customer id and the reason. The
+  render's failure is never an error of the email. Otherwise the mail goes out through
+  `SendWithAttachment` with `Quote-<number>.pdf` (`application/pdf`): `multipart/mixed`, the text
+  part as `Send` composes it, the file base64 in 76-column lines; a filename with CR, LF, a quote
+  or a backslash is refused before the relay is contacted.
+- **Built child environment.** `ChromeQuotePDFRenderer` starts one browser per render with a
+  fresh temp dir as `--user-data-dir`, `HOME`, `TMPDIR`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME`,
+  and an environment that is built, not inherited: `PATH`, `LANG`, `LC_ALL` and `TZ` when set,
+  plus those directories. `JWT_SECRET`, `API_KEY_SECRET`, `DB_PASSWORD` and `SMTP_PASSWORD`
+  never reach a browser process, and a hardened unit (`ProtectHome`, `ProtectSystem=strict`,
+  `PrivateTmp`) or a read-only root file system leaves it everything it needs. The browser is the
+  leader of its own process group and the whole group is killed at the bound and after every
+  render, so no helper survives. Flags: `--headless`, `--print-to-pdf`, `--no-pdf-header-footer`,
+  `--virtual-time-budget` (so the page's fetch finishes and is painted), `--use-mock-keychain`
+  and `--password-store=basic` (with `HOME` in a temp dir a macOS Chrome otherwise waits for a
+  login keychain it cannot find). `--no-sandbox` is never passed from Go: an image that needs it
+  sets it in its launcher (the Dockerfile writes `/etc/chromium/chromium.conf`). Neither the URL,
+  its fragment nor the browser's stdout or stderr is logged or wrapped into an error.
+- **Time budget (a contract, tested).** `QuotePDFRenderTimeout` = 15 s is the only definition of
+  the bound and covers the wait for the slot: one render at a time per process, and a render
+  queued behind another fails within the same 15 s. `POST /quotes/:id/email` therefore takes at
+  most 15 s + `mailer.DefaultSendTimeout` (30 s) = 45 s and `GET /quotes/:id/pdf` at most 15 s.
+  The SPA passes `QUOTE_PDF_REQUEST_TIMEOUT_MS` = 55 000 to `emailQuote` and `downloadQuotePdf`
+  (the default `API_TIMEOUT` of 30 s would abort a call the server still completes, and the user
+  would send the quote twice); a reverse proxy needs a read timeout of 60 s or more.
+  `TestQuotePDFTimeoutBudget` and `quotes.test.ts` pin the numbers; change them together.
+- **UI.** `GET /configurations/ui` appends the synthetic read-only `quotes.pdf_available`
+  (`ConfigurationHandler.WithQuotePDFAvailable`); `isQuotePdfAvailable` in
+  `configuration-context.ts` reads it and QuoteDetail shows **Download PDF** only when it is
+  `true`. `QuoteDocument.tsx` is the document shared by `QuotePrint` (toolbar, inside the shell)
+  and `QuoteRender` (public route `/quote-render`, no toolbar, no shell). `downloadQuotePdf`
+  asks for a blob; an error body is then a Blob as well, which the client's envelope unwrapping
+  does not see, so the function reads it and rethrows the error with the flat `{code, message}`
+  body every other call has.
+
+Roots: `TestQuotePDF{Off,Render,TimeoutBudget}`, `TestQuoteRenderCredential`
+(`internal/service/quote_pdf_test.go`); `TestChromeQuotePDFRenderer{MissingBinary,Timeout,Environment,RealBinary}`
+(`quote_pdf_chrome_test.go`; `RealBinary` drives the binary named by `QUOTE_PDF_CHROME_PATH` and
+skips without it, and none of the four is in a no-skip gate: CI has no browser);
+`TestQuoteEmailPDFAttachment` (`quote_email_test.go`, in `MAILER_CALLER_ROOTS`);
+`TestQuotePDFHandler`, `TestQuotePublicRender`, `TestUIConfigurationsQuotePDFAvailable`
+(`internal/handler`); `TestSMTPAttachment`, `TestLogMailerAttachment` (`internal/mailer`);
+`TestDockerfileShipsChromium`, `TestLoad_QuotePDFChromePath` (`internal/config`).
+
+*The real chain is checked by hand, and belongs to the release checks.* The e2e backend runs
+with `QUOTE_PDF_CHROME_PATH` pinned empty (`scripts/e2e/run.sh`), and the tests above use fake
+renderers, so nothing automatic notices a change to `QuoteDocument`, the render route or the
+browser flags that makes the PDF show the loading state or an empty page: "the credential was
+redeemed" proves the page's request arrived, not that the answer was painted.
+`scripts/e2e/quote-pdf-smoke.sh` checks exactly that chain (Chrome, the SPA's `/quote-render`,
+`POST /quotes/public/render`, the text of the printed file) against a backend on `localhost`. It
+logs in, creates a customer, a product and a quote with one line `PDF smoke line <hex>`,
+downloads `GET /quotes/<id>/pdf`, fails unless the answer is 200 `application/pdf` starting with
+`%PDF`, writes the file and prints `number=` and `line=` (with `SMOKE_EMAIL=1` it also sends and
+emails the quote and prints `emailed=yes`). Run it before a release, locally and against the
+built image:
+
+```bash
+S=$(mktemp -d)                                   # outside the repository
+go build -o "$S/gophercrm" ./cmd && go build -o "$S/create-admin" ./cmd/create-admin
+(cd gocrm-ui && VITE_API_BASE_URL=http://localhost:18095/api/v1 npx vite build --outDir "$S/dist")
+
+# the same environment for the server and for create-admin
+export DB_DRIVER=sqlite DB_PATH="$S/pdf.db" SERVER_HOST=127.0.0.1 SERVER_PORT=18095 \
+  SERVER_MODE=development API_PREFIX=/api/v1 JWT_SECRET="$(openssl rand -base64 32)" SMTP_HOST= \
+  APP_BASE_URL=http://localhost:15195 CORS_ALLOWED_ORIGINS=http://localhost:15195 \
+  QUOTE_PDF_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+"$S/gophercrm" &                                 # terminal 1
+"$S/create-admin" -non-interactive -email admin@example.com -name Admin -password '<throwaway>'
+(cd gocrm-ui && npx vite preview --outDir "$S/dist" --port 15195 --strictPort) &   # terminal 2
+
+BASE_URL=http://localhost:18095/api/v1 ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD='<throwaway>' \
+  bash scripts/e2e/quote-pdf-smoke.sh "$S/local.pdf"
+# the text of the file must hold both printed values (poppler-utils; from a container if not installed)
+docker run --rm -v "$S":/w alpine:3.20 sh -c 'apk add -q poppler-utils && pdftotext /w/local.pdf /w/local.txt'
+command grep -cF '<number>' "$S/local.txt"; command grep -cF '<line>' "$S/local.txt"   # each 1 or more
+```
+
+Negative control: stop `vite preview` and run the script again; it must exit non-zero with 503
+`PDF_RENDER_FAILED`. For the image, start the SQLite Compose stack with an override that sets
+`read_only: true`, `tmpfs: [/tmp]`, `APP_BASE_URL: http://ui`,
+`CORS_ALLOWED_ORIGINS: http://ui,http://localhost:<UI_PORT>` and
+`QUOTE_PDF_CHROME_PATH: /usr/bin/chromium-browser` on the backend, run the script with
+`BASE_URL=http://localhost:<UI_PORT>/api/v1`, and check the text the same way plus `pdffonts`
+(at least one embedded font). The script starts nothing, prints no token and no password, refuses
+a `BASE_URL` whose host is not `localhost` or `127.0.0.1` (it creates data), and is referenced by
+no workflow, Makefile target or gate.
+
 **Quote response link: a single-use token claimed with the transition (#382)** — a quote service
 built with `NewQuoteServiceWithResponseLinks(..., tokenRepo, appBaseURL, tokenSecret)` (what
 `cmd/main.go` wires, with `APP_BASE_URL` and `API_KEY_SECRET`, else `JWT_SECRET`) appends
@@ -1741,7 +1856,7 @@ covering MySQL and MariaDB behaviour of the handlers.
   route's `note` says why; generation fails on a non-2xx admin `own` without a note.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
   `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes, the
-  six `/forms/public` routes and the two `/quotes/public/response` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
+  six `/forms/public` routes and the two `/quotes/public/response` routes and `POST /quotes/public/render`. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its
   own, because the authenticated rate tier is live in a normal build; a 401 or 429 in a cell is a

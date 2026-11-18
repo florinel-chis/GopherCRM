@@ -32,6 +32,11 @@ type quoteService struct {
 	tokenRepo   repository.QuoteResponseTokenRepository
 	appBaseURL  string
 	tokenSecret string
+
+	// PDF output (#384), set by WithQuotePDF. nil is off: the email goes out
+	// text-only, RenderPDF answers apperrors.ErrQuotePDFUnavailable and
+	// GetRenderView refuses every credential.
+	pdf *quotePDF
 }
 
 // NewQuoteService wires the quotes module. currency is the configuration read
@@ -785,6 +790,7 @@ var quoteRefusals = []error{
 	apperrors.ErrQuoteLocked, apperrors.ErrQuoteCurrencyLocked, apperrors.ErrQuoteCurrencyMismatch,
 	apperrors.ErrInvalidQuoteTransition, apperrors.ErrQuoteHasNoLines, apperrors.ErrQuoteExpired,
 	apperrors.ErrQuoteNotSent, apperrors.ErrQuoteChangedDuringSend, apperrors.ErrQuoteResponseRejected,
+	apperrors.ErrQuoteRenderRejected,
 }
 
 // logServiceOutcome logs a refused write at warn level when it is a domain

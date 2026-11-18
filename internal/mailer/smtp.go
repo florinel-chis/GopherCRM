@@ -2,7 +2,10 @@ package mailer
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"mime"
@@ -165,16 +168,23 @@ func (m *SMTPMailer) send(to, subject, body string) error {
 	if err != nil {
 		return err
 	}
-	msg := strings.Join([]string{
-		"From: " + sender.String(),
-		"To: " + recipient.String(),
-		"Subject: " + encodeSubject(subject),
-		"MIME-Version: 1.0",
+	return m.submit(sender, recipient, subject, []string{
 		"Content-Type: text/plain; charset=UTF-8",
 		"Content-Transfer-Encoding: quoted-printable",
 		"",
 		encodedBody,
-	}, "\r\n")
+	})
+}
+
+// submit puts the envelope headers in front of content (the entity headers,
+// an empty line and the encoded payload) and hands the message to the relay.
+func (m *SMTPMailer) submit(sender, recipient *mail.Address, subject string, content []string) error {
+	msg := strings.Join(append([]string{
+		"From: " + sender.String(),
+		"To: " + recipient.String(),
+		"Subject: " + encodeSubject(subject),
+		"MIME-Version: 1.0",
+	}, content...), "\r\n")
 
 	envelopeFrom, err := envelopeAddress("sender", sender.Address)
 	if err != nil {
@@ -185,6 +195,137 @@ func (m *SMTPMailer) send(to, subject, body string) error {
 		return err
 	}
 	return m.deliver(envelopeFrom, envelopeTo, []byte(msg))
+}
+
+// SendWithAttachment delivers a plaintext message with one attachment as
+// multipart/mixed. The text part is what Send produces (UTF-8,
+// quoted-printable); the attachment is base64 in 76-column lines. The
+// recipient and the subject are checked as in Send, and an attachment whose
+// filename or content type holds CR, LF, another control character, a double
+// quote or a backslash is refused with ErrInvalidHeader before any relay is
+// contacted. The delivery is the same bounded exchange (DefaultSendTimeout),
+// and the log rules are those of Send: the transport error only, never the
+// recipient, the subject, the body or the file.
+func (m *SMTPMailer) SendWithAttachment(to, subject, body string, a Attachment) error {
+	if err := validateHeaders(to, subject); err != nil {
+		// The offending value is not logged: it is the injection attempt.
+		log().WithError(err).Warn("Refused to send email with an invalid header or address")
+		return fmt.Errorf("send mail: %w", err)
+	}
+	if err := m.sendWithAttachment(to, subject, body, a); err != nil {
+		if errors.Is(err, ErrInvalidHeader) {
+			log().WithError(err).Warn("Refused to send email with an invalid header or address")
+		} else {
+			log().WithError(utils.LogError(err)).Error("Failed to send email")
+		}
+		return fmt.Errorf("send mail: %w", err)
+	}
+	return nil
+}
+
+// sendWithAttachment composes the multipart/mixed message. Like send it
+// repeats the header checks and does not log.
+func (m *SMTPMailer) sendWithAttachment(to, subject, body string, a Attachment) error {
+	if err := validateHeaders(to, subject); err != nil {
+		return err
+	}
+	if strings.ContainsAny(m.from, "\r\n") {
+		return fmt.Errorf("sender: %w", ErrInvalidHeader)
+	}
+	sender, err := parseAddress("sender", m.from)
+	if err != nil {
+		return err
+	}
+	recipient, err := parseAddress("recipient", to)
+	if err != nil {
+		return err
+	}
+	contentType, disposition, err := attachmentHeaders(a)
+	if err != nil {
+		return err
+	}
+	encodedBody, err := encodeBody(body)
+	if err != nil {
+		return err
+	}
+	boundary, err := newBoundary()
+	if err != nil {
+		return err
+	}
+	return m.submit(sender, recipient, subject, []string{
+		`Content-Type: multipart/mixed; boundary="` + boundary + `"`,
+		"",
+		"--" + boundary,
+		"Content-Type: text/plain; charset=UTF-8",
+		"Content-Transfer-Encoding: quoted-printable",
+		"",
+		encodedBody,
+		"--" + boundary,
+		"Content-Type: " + contentType,
+		"Content-Transfer-Encoding: base64",
+		"Content-Disposition: " + disposition,
+		"",
+		encodeBase64Lines(a.Data),
+		"--" + boundary + "--",
+		"",
+	})
+}
+
+// attachmentHeaders returns the Content-Type and Content-Disposition values
+// of an attachment, or ErrInvalidHeader when the filename or the content type
+// could break out of its header.
+func attachmentHeaders(a Attachment) (contentType, disposition string, err error) {
+	refused := func(value string) bool {
+		for _, r := range value {
+			if r == '"' || r == '\\' || unicode.IsControl(r) || r == utf8.RuneError {
+				return true
+			}
+		}
+		return false
+	}
+	if a.Filename == "" || refused(a.Filename) {
+		return "", "", fmt.Errorf("attachment filename: %w", ErrInvalidHeader)
+	}
+	mediaType := a.ContentType
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	if refused(mediaType) {
+		return "", "", fmt.Errorf("attachment content type: %w", ErrInvalidHeader)
+	}
+	params := map[string]string{"filename": a.Filename}
+	disposition = mime.FormatMediaType("attachment", params)
+	contentType = mime.FormatMediaType(mediaType, map[string]string{"name": a.Filename})
+	if disposition == "" || contentType == "" {
+		return "", "", fmt.Errorf("attachment: %w", ErrInvalidHeader)
+	}
+	return contentType, disposition, nil
+}
+
+// newBoundary returns a multipart boundary no base64 or quoted-printable line
+// can contain by accident: 24 random bytes in hex behind a fixed prefix.
+func newBoundary() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("mail boundary: %w", err)
+	}
+	return "=_gophercrm_" + hex.EncodeToString(buf), nil
+}
+
+// encodeBase64Lines encodes data as base64 in lines of 76 characters joined
+// by CRLF (RFC 2045), without a trailing line break.
+func encodeBase64Lines(data []byte) string {
+	const width = 76
+	encoded := base64.StdEncoding.EncodeToString(data)
+	var b strings.Builder
+	b.Grow(len(encoded) + 2*(len(encoded)/width+1))
+	for len(encoded) > width {
+		b.WriteString(encoded[:width])
+		b.WriteString("\r\n")
+		encoded = encoded[width:]
+	}
+	b.WriteString(encoded)
+	return b.String()
 }
 
 // deliver runs one bounded SMTP exchange. The connection carries a single

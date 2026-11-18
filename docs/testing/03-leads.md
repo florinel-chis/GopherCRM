@@ -1086,7 +1086,7 @@ every refusal or failure before the file starts is the JSON envelope.
 
 ## Section 10 — Bulk lead status endpoint
 
-`POST /leads/bulk/status` is routed by `SetupBulkStatusRoutes` (`routes.go:279`) with its own
+`POST /leads/bulk/status` is routed by `SetupBulkStatusRoutes` (`routes.go:280`) with its own
 `RequireRole(admin, sales)` guard. **The UI exposes no bulk selection for leads**: `LeadList.tsx`
 does not pass `selectable` to `DataTable`, so no checkboxes render, and `DataTable`'s bulk-delete
 handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in

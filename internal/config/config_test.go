@@ -40,6 +40,8 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"DB_HOST", "DB_PORT", "DB_NAME", "SERVER_PORT", "API_PREFIX", "JWT_EXPIRY_HOURS",
 		// Automation worker settings, for the same reason as the AEO ones.
 		"AUTOMATION_ENABLED", "AUTOMATION_POLL_INTERVAL_SECONDS",
+		// Quote PDF output: a developer shell may point at a local browser.
+		"QUOTE_PDF_CHROME_PATH",
 	}
 
 	// Save originals.
@@ -154,6 +156,53 @@ func TestLoadFormRetentionDays(t *testing.T) {
 				assert.Equalf(t, tc.want, cfg.Forms.RetentionDays, "FORM_RETENTION_DAYS=%q", tc.raw)
 			})
 		})
+	}
+}
+
+// QUOTE_PDF_CHROME_PATH (#384) is read trimmed and defaults to empty, which
+// is PDF output off. Load never fails on it: whether the path is an
+// executable file is the renderer's question, and a miss only switches PDF
+// output off.
+func TestLoad_QuotePDFChromePath(t *testing.T) {
+	withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
+		cfg, err := Load()
+		assert.NoError(t, err)
+		assert.Empty(t, cfg.App.QuotePDFChromePath, "PDF output is off by default")
+	})
+
+	for raw, want := range map[string]string{
+		"":                                    "",
+		"   ":                                 "",
+		"/usr/bin/chromium-browser":           "/usr/bin/chromium-browser",
+		"  /usr/bin/chromium  ":               "/usr/bin/chromium",
+		"/no/such/directory/chrome":           "/no/such/directory/chrome",
+		"/Applications/Google Chrome.app/x y": "/Applications/Google Chrome.app/x y",
+	} {
+		withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret(), "QUOTE_PDF_CHROME_PATH": raw}, func() {
+			cfg, err := Load()
+			assert.NoError(t, err, "a path that does not exist does not stop the boot: %q", raw)
+			if cfg != nil {
+				assert.Equal(t, want, cfg.App.QuotePDFChromePath, "%q", raw)
+			}
+		})
+	}
+}
+
+// The commented QUOTE_PDF_CHROME_PATH entry of .env.example says what a
+// deployment has to know before switching PDF output on.
+func TestEnvExample_QuotePDFChromePathDocumented(t *testing.T) {
+	text := readRepositoryFile(t, ".env.example")
+	entry := "\n# QUOTE_PDF_CHROME_PATH=\n"
+	assert.Equal(t, 1, strings.Count(text, entry), "one commented entry")
+	assert.NotContains(t, text, "\nQUOTE_PDF_CHROME_PATH=", "the entry stays commented")
+	end := strings.Index(text, entry)
+	start := strings.LastIndex(text[:end], "\n\n")
+	if start < 0 || end < 0 {
+		t.Fatal("the entry has no comment block")
+	}
+	block := text[start:end]
+	for _, needle := range []string{"APP_BASE_URL", "CORS_ALLOWED_ORIGINS", "quote-render", "font", "15 seconds", "PDF_UNAVAILABLE", "text only"} {
+		assert.Contains(t, block, needle, "the comment block mentions %s", needle)
 	}
 }
 

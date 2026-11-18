@@ -123,7 +123,7 @@ support and customer from the customer edit form.
 - **Steps:** Navigate to `/no-such-page`.
 - **Expected:** The URL stays `/no-such-page` and the 404 page renders (`404`, "Page Not Found",
   "Go to Dashboard"). The catch-all `*` route is declared **outside** the `ProtectedRoute` branch
-  (`routes/index.tsx:629`), so an unknown path is never authentication-gated.
+  (`routes/index.tsx:637`), so an unknown path is never authentication-gated.
 - **Known issue:** The 404 page leaks the existence of the SPA shell to anonymous visitors and its
   "Go to Dashboard" button navigates to `/`, which then bounces to `/login`. Harmless, but the
   two-hop journey is easy to mistake for a bug.
@@ -592,7 +592,7 @@ into a sign-out test.
 - **Steps:** `GET /api/v1/customers?limit=500`.
 - **Expected:** **200**, at most 100 rows, and `meta` reads
   `{"page":1,"per_page":100,"total":N,"total_pages":ceil(N/100)}` — `utils.ParseOffsetLimit`
-  clamps at 100 (`internal/utils/response.go:158`). Verified live against the running backend.
+  clamps at 100 (`internal/utils/response.go:164`). Verified live against the running backend.
 - **Known issue:** The cap is unreachable from the UI: the largest rows-per-page option is 50, so
   this can only be asserted through the API context.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)

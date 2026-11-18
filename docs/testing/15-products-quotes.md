@@ -51,9 +51,12 @@ asserts the core outcome, the rest is pinned in Vitest).
   (`FOR UPDATE` on MySQL) and answers **409** `CONFLICT` outside draft. A transition is a
   conditional claim (`WHERE id = ? AND status = <from>`) plus one history row in one transaction;
   `draft → sent` counts the lines after the claim and rolls back on zero.
-- **The email is a plaintext rendering, not the printable document.** It goes to the linked
+- **The email body is a plaintext rendering, not the printable document.** It goes to the linked
   customer's current address with the subject `Quote Q-… from <general.company_name>`, or
   `GopherCRM` when that setting is blank (#292); nothing personal is copied onto the quote.
+  Since #384 the printable document is attached as `Quote-<number>.pdf` when PDF output is on
+  (`QUOTE_PDF_CHROME_PATH`); with PDF output off, or a failed render, the mail is text only as
+  before (section 15.14).
 - **Deals are not touched by quotes.** Accepting a quote changes neither the deal's stage nor its
   amount; expiry is manual (acceptance is refused after `valid_until`).
 - **Run the MySQL roots with `TEST_MYSQL_DSN`.** `TestQuoteStatusConcurrentMySQL` and
@@ -1124,3 +1127,164 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
   client accepts a sent quote through the emailed link, once, without signing in";
   `scripts/e2e/quote-response-link/main_test.go` `TestQuoteResponseLinkPrintsUsableLink`,
   `TestQuoteResponseLinkRefusesDraftQuote`, `TestQuoteResponseLinkRefusesNonE2EDatabase`.
+
+---
+
+## 15.14 Quote PDF output (#384)
+
+Since #384 the server prints the quote document to PDF with a headless Chrome or Chromium named
+by `QUOTE_PDF_CHROME_PATH` (empty, or not an executable file: PDF output off). The browser opens
+the public page `/quote-render#<credential>` of the web application, which loads the quote
+through `POST /quotes/public/render` with a credential minted for that one render. The PDF is
+served by `GET /quotes/{id}/pdf`, attached to the quote email, announced as `quotes.pdf_available`
+on `GET /configurations/ui` and offered as **Download PDF** on the quote page. One render at a
+time, bounded at 15 s. The e2e backend runs with PDF output off, so the browser suite does not
+cover it.
+
+Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go`,
+`internal/handler/quote_handler.go` (`PDF`), `quote_public_handler.go` (`Render`),
+`configuration_handler.go`, `internal/mailer/smtp.go` (`SendWithAttachment`),
+`gocrm-ui/src/pages/quotes/QuoteDocument.tsx`, `QuoteRender.tsx`, `QuoteDetail.tsx`,
+`gocrm-ui/src/api/endpoints/quotes.ts`, `quoteRender.ts`, `scripts/e2e/quote-pdf-smoke.sh`.
+
+### TC-PQ-052 — Download: the PDF route answers the file, with the refusals of the quote read
+- **Priority:** P0
+- **Type:** functional, security
+- **Preconditions:** PDF output on (a renderer that returns known bytes); quote A owned by sales user S1; sales user S2; an admin.
+- **Steps:**
+  1. As admin `GET /quotes/{A}/pdf`.
+  2. As S2 `GET /quotes/{A}/pdf` and `GET /quotes/{A}`.
+  3. As admin `GET /quotes/999999/pdf` and `GET /quotes/abc/pdf`.
+  4. Make the renderer fail, then `GET /quotes/{A}/pdf` as admin.
+- **Expected:** Step 1: 200, the renderer's bytes unchanged, `Content-Type: application/pdf`,
+  `Content-Disposition: attachment; filename="Quote-Q-<6 digits>.pdf"`, no JSON envelope. Step 2:
+  both answers are the same 403 `FORBIDDEN` "You can only view your own quotes", byte for byte,
+  and the renderer is not called. Step 3: 404 `NOT_FOUND` "Quote not found" and 400 "Invalid quote
+  ID", the renderer not called. Step 4: 503 `PDF_RENDER_FAILED` "The PDF could not be produced".
+  `GET /configurations/ui` reports `quotes.pdf_available` `true`.
+- **Automation:** automated — `internal/handler/quote_pdf_handler_test.go` `TestQuotePDFHandler`;
+  `internal/service/quote_pdf_test.go` `TestQuotePDFRender`;
+  `internal/handler/configuration_handler_test.go` `TestUIConfigurationsQuotePDFAvailable`.
+
+### TC-PQ-053 — PDF output off: the server boots, the route answers 503, the email is text only
+- **Priority:** P1
+- **Type:** functional, configuration
+- **Preconditions:** `QUOTE_PDF_CHROME_PATH` empty, or naming a file that does not exist or is not executable.
+- **Steps:**
+  1. Load the configuration and build the renderer and the quote service.
+  2. As admin `GET /quotes/{id}/pdf` on an existing quote.
+  3. `POST /quotes/{id}/email` on a sent quote.
+  4. `GET /configurations/ui`.
+- **Expected:** Step 1: no error; the renderer is nil and `PDFAvailable()` is false (a path that
+  does not resolve is reported once, as a warning). Step 2: 503 `PDF_UNAVAILABLE` "PDF output is
+  switched off". Step 3: exactly one mail through `Mailer.Send`, no attachment call,
+  `last_emailed_at` stamped. Step 4: the entry `quotes.pdf_available` is present with value
+  `false`.
+- **Automation:** automated — `internal/service/quote_pdf_test.go` `TestQuotePDFOff`;
+  `internal/service/quote_pdf_chrome_test.go` `TestChromeQuotePDFRendererMissingBinary`;
+  `internal/handler/quote_pdf_handler_test.go` `TestQuotePDFHandler`;
+  `internal/handler/configuration_handler_test.go` `TestUIConfigurationsQuotePDFAvailable`;
+  `internal/config/config_test.go` `TestLoad_QuotePDFChromePath`.
+
+### TC-PQ-054 — Email: the PDF is attached, and a failed or late render falls back to text
+- **Priority:** P0
+- **Type:** functional, privacy
+- **Preconditions:** PDF output on; a mailer that implements `mailer.AttachmentSender`; a sent quote whose customer has an address.
+- **Steps:**
+  1. `POST /quotes/{id}/email` with a renderer that returns bytes.
+  2. The same with a renderer that returns an error.
+  3. The same with a renderer that blocks past the render bound.
+  4. Send a message with one attachment through `SMTPMailer.SendWithAttachment` to a relay and read what arrived; try a filename holding CR, LF or a double quote.
+- **Expected:** Step 1: one mail with exactly one attachment, `Quote-<number>.pdf`,
+  `application/pdf`, the renderer's bytes, and the unchanged text body. Steps 2 and 3: the mail is
+  still sent once, without an attachment, `last_emailed_at` is stamped and the call returns no
+  error; the log holds one warning with the quote id, the customer id and a reason, and neither
+  the render URL, the credential, the customer's address nor the customer's name. Step 4: a
+  `multipart/mixed` message whose quoted-printable text part decodes to the body and whose base64
+  part (76-column lines) decodes to the file; the unsafe filename is refused with
+  `ErrInvalidHeader` before the relay is contacted. The log-only mailer logs recipient, subject,
+  filename and size, never the body or the file.
+- **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailPDFAttachment`;
+  `internal/mailer/smtp_attachment_test.go` `TestSMTPAttachment`, `TestLogMailerAttachment`.
+
+### TC-PQ-055 — Render credential: one quote, read-only, only while its render runs
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** PDF output on; quotes A and B; a render of A in progress with credential `c`.
+- **Steps:**
+  1. `POST /quotes/public/render` `{token: c}` during the render.
+  2. The same with `id` and `quote_id` of quote B added to the body.
+  3. The same after the render returned; after the lifetime passed (injected clock); with an unknown token; with an empty token and with a malformed body.
+  4. Send `Authorization: Bearer c` to `GET /quotes/{B}` and to `PUT /quotes/{A}`.
+  5. Request any other path or verb under `/quotes/public`.
+- **Expected:** Step 1: 200 with quote A (number, lines) exactly as `GET /quotes/{A}` returns it,
+  and `product_name`. Step 2: still quote A. Step 3: 400 `BAD_REQUEST` "Invalid or expired render
+  link" for every dead or unknown credential; 400 `VALIDATION_ERROR` for the empty token and the
+  malformed body. Step 4: 401 on both. Step 5: no route (response on `GET`/`POST` and render on
+  `POST` are the only three). A render whose page never redeemed the credential fails with
+  `ErrQuotePDFRenderFailed`. The route is public in the route matrix and has its own generous
+  rate-limit bucket.
+- **Automation:** automated — `internal/service/quote_pdf_test.go` `TestQuoteRenderCredential`,
+  `TestQuotePDFRender`; `internal/handler/quote_public_handler_test.go` `TestQuotePublicRender`;
+  `internal/handler/routes_test.go` `TestQuotePublicRoutesWinOverTheIDParameter`,
+  `TestAllRouteSetupsCoexist`; `cmd/system_role_route_matrix_test.go`
+  `TestRouteMatrixCoversEveryProtectedRoute`.
+
+### TC-PQ-056 — Quote page: Download PDF appears on the server's word and reports failures
+- **Priority:** P1
+- **Type:** UI
+- **Preconditions:** `/quotes/{id}` as admin; the UI configuration with `quotes.pdf_available` `true`, `false`, or without the entry.
+- **Steps:**
+  1. Open the page in each of the three configurations.
+  2. With the entry `true`, click **Download PDF**.
+  3. Make the download fail with 503 `PDF_RENDER_FAILED` whose body is a Blob holding the JSON envelope; then with an error that carries no message.
+  4. Signed out, open `/quote-render#<credential>` and `/quote-render`.
+- **Expected:** Step 1: the button is rendered only when the entry is `true`. Step 2: one
+  `GET /quotes/{id}/pdf` requested as a blob; the file is saved as `Quote-<number>.pdf`. Step 3:
+  `downloadQuotePdf` rethrows the error with `response.data` in the flat `{code, message}` shape
+  and the page shows "The PDF could not be produced"; without a message it shows "Failed to
+  download the PDF". Step 4: the page stays on `/quote-render` without a redirect to `/login`,
+  loads the quote through `publicApi` (no `Authorization` header) and shows the quote document
+  (the `quote-print-*` test ids) with no toolbar and no application chrome; without a credential,
+  or when the read fails, it shows "Quote not available". The print page is unchanged.
+- **Automation:** automated — `QuoteDetail.test.tsx`, `quotes.test.ts`, `QuoteRender.test.tsx`,
+  `quoteRender.test.ts`, `ConfigurationContext.test.tsx`, `routes/index.test.tsx`; the unmodified
+  `QuotePrint.test.tsx`, `QuotePrint.tax.test.tsx` and `QuotePrint.branding.test.tsx`.
+
+### TC-PQ-057 — Time budget: 15 s per render, 45 s for the email, 55 s in the web application
+- **Priority:** P1
+- **Type:** reliability
+- **Preconditions:** PDF output on with an injected render bound; a browser stand-in that starts a child process and outlives the bound.
+- **Steps:**
+  1. Start a second render while the first one blocks.
+  2. Render with the stand-in that outlives the bound.
+  3. Read `QuotePDFRenderTimeout` and `mailer.DefaultSendTimeout`.
+  4. Read the request options of `emailQuote` and `downloadQuotePdf`.
+- **Expected:** Step 1: the queued render fails with `ErrQuotePDFRenderFailed` within the bound
+  and its renderer is never called. Step 2: `Render` returns an error at the bound, and the
+  stand-in and its child process are both gone; the browser process received none of
+  `JWT_SECRET`, `DB_PASSWORD`, `SMTP_PASSWORD`, and its `HOME` lies inside the render's temporary
+  directory. Step 3: 15 s, and 15 s + 30 s is at most 45 s. Step 4: both calls pass
+  `timeout: 55000`, above 45 s and below 60 s.
+- **Automation:** automated — `internal/service/quote_pdf_test.go` `TestQuotePDFRender`,
+  `TestQuotePDFTimeoutBudget`; `internal/service/quote_pdf_chrome_test.go`
+  `TestChromeQuotePDFRendererTimeout`, `TestChromeQuotePDFRendererEnvironment`; `quotes.test.ts`.
+
+### TC-PQ-058 — Real chain: Chrome prints the web application's render page
+- **Priority:** P1
+- **Type:** end-to-end, manual
+- **Preconditions:** A backend of the build under test on `localhost` with `QUOTE_PDF_CHROME_PATH` set to a real Chrome or Chromium and an `APP_BASE_URL` that serves the web application of the same build; an admin; `pdftotext` and `pdffonts` (poppler-utils). Recipe in `docs/DEVELOPMENT.md`.
+- **Steps:**
+  1. `BASE_URL=... ADMIN_EMAIL=... ADMIN_PASSWORD=... bash scripts/e2e/quote-pdf-smoke.sh out.pdf`.
+  2. `pdftotext out.pdf out.txt`; look for the printed `number=` and `line=` values in `out.txt`; `pdffonts out.pdf`.
+  3. Stop the web application and run the script again.
+  4. Repeat steps 1 and 2 against the Docker image running as uid 10001 with a read-only root file system and only `/tmp` and `/data` writable.
+- **Expected:** Step 1: exit 0 and exactly two lines, `number=<quote number>` and
+  `line=PDF smoke line <hex>`; the file starts with `%PDF`. Step 2: both values are in the text
+  and at least one font is embedded. Step 3: a non-zero exit naming 503 `PDF_RENDER_FAILED`.
+  Step 4: as steps 1 and 2; no browser process and no temporary directory is left in the
+  container.
+- **Automation:** planned — manual release check (`scripts/e2e/quote-pdf-smoke.sh`); the e2e
+  backend runs with `QUOTE_PDF_CHROME_PATH` pinned empty. `TestChromeQuotePDFRendererRealBinary`
+  (`internal/service/quote_pdf_chrome_test.go`) drives a real binary against a static page when
+  `QUOTE_PDF_CHROME_PATH` is set and skips otherwise.

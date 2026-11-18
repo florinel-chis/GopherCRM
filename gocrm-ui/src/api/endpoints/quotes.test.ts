@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { quotesApi } from './quotes';
+import { quotesApi, QUOTE_PDF_REQUEST_TIMEOUT_MS } from './quotes';
 import { api } from '../client';
 
 vi.mock('../client', () => ({
@@ -229,7 +229,7 @@ describe('quotesApi', () => {
 
     const quote = await quotesApi.emailQuote(42);
 
-    expect(api.post).toHaveBeenCalledWith('/quotes/42/email');
+    expect(api.post).toHaveBeenCalledWith('/quotes/42/email', undefined, { timeout: 55000 });
     expect(quote.last_emailed_at).toBe('2026-10-27T12:00:00Z');
   });
 
@@ -243,5 +243,99 @@ describe('quotesApi', () => {
     expect(api.get).toHaveBeenCalledWith('/customers/3/quotes', { params: { offset: 5, limit: 5 } });
     expect(byDeal.total).toBe(4);
     expect(byCustomer.quotes[0].id).toBe(42);
+  });
+
+  // The two calls that can wait for a PDF render get a longer timeout: the
+  // server takes up to 15 s for the render plus 30 s for the SMTP delivery.
+  describe('PDF request timeout', () => {
+    it('is above the 45 s worst case of the server and below a 60 s proxy timeout', () => {
+      expect(QUOTE_PDF_REQUEST_TIMEOUT_MS).toBe(55000);
+      expect(QUOTE_PDF_REQUEST_TIMEOUT_MS).toBeGreaterThan(45000);
+      expect(QUOTE_PDF_REQUEST_TIMEOUT_MS).toBeLessThan(60000);
+    });
+
+    it('emailQuote passes timeout: 55000', async () => {
+      vi.mocked(api.post).mockResolvedValue({ data: { ...backendQuote, status: 'sent' } });
+
+      await quotesApi.emailQuote(42);
+
+      expect(api.post).toHaveBeenCalledTimes(1);
+      const [url, body, config] = vi.mocked(api.post).mock.calls[0];
+      expect(url).toBe('/quotes/42/email');
+      expect(body).toBeUndefined();
+      expect(config).toEqual({ timeout: 55000 });
+    });
+
+    it('downloadQuotePdf requests a blob and passes timeout: 55000', async () => {
+      const blob = new Blob(['%PDF-1.7 test'], { type: 'application/pdf' });
+      vi.mocked(api.get).mockResolvedValue({ data: blob });
+
+      const result = await quotesApi.downloadQuotePdf(42);
+
+      expect(api.get).toHaveBeenCalledTimes(1);
+      expect(api.get).toHaveBeenCalledWith('/quotes/42/pdf', { responseType: 'blob', timeout: 55000 });
+      // The blob comes back as it is: nothing unwraps or transforms it.
+      expect(result).toBe(blob);
+    });
+  });
+
+  describe('downloadQuotePdf errors', () => {
+    const envelope = (code: string, message: string) =>
+      JSON.stringify({ success: false, error: { code, message }, meta: { request_id: 'r-1' } });
+    const rejection = (status: number, data: unknown) => ({
+      isAxiosError: true,
+      message: `Request failed with status code ${status}`,
+      response: { status, data },
+    });
+
+    it('rethrows a 503 whose body is a Blob with the flat code and message', async () => {
+      const body = new Blob([envelope('PDF_RENDER_FAILED', 'The PDF could not be produced')], { type: 'application/json' });
+      const original = rejection(503, body);
+      vi.mocked(api.get).mockRejectedValue(original);
+
+      const caught = await quotesApi.downloadQuotePdf(42).catch((error: unknown) => error);
+
+      expect(caught).toBe(original);
+      const response = (caught as typeof original).response;
+      expect(response.status).toBe(503);
+      expect(response.data).toEqual({ code: 'PDF_RENDER_FAILED', message: 'The PDF could not be produced' });
+      expect((response.data as { code: string }).code).toBe('PDF_RENDER_FAILED');
+      expect((response.data as { message: string }).message).toBe('The PDF could not be produced');
+    });
+
+    it('does the same for PDF_UNAVAILABLE and for the 403 of another owner', async () => {
+      vi.mocked(api.get).mockRejectedValueOnce(
+        rejection(503, new Blob([envelope('PDF_UNAVAILABLE', 'PDF output is switched off')]))
+      );
+      const off = (await quotesApi.downloadQuotePdf(42).catch((error: unknown) => error)) as ReturnType<typeof rejection>;
+      expect(off.response.data).toEqual({ code: 'PDF_UNAVAILABLE', message: 'PDF output is switched off' });
+
+      vi.mocked(api.get).mockRejectedValueOnce(
+        rejection(403, new Blob([envelope('FORBIDDEN', 'You can only view your own quotes')]))
+      );
+      const forbidden = (await quotesApi.downloadQuotePdf(42).catch((error: unknown) => error)) as ReturnType<typeof rejection>;
+      expect(forbidden.response.data).toEqual({ code: 'FORBIDDEN', message: 'You can only view your own quotes' });
+    });
+
+    it('leaves the error without a message when the Blob is not the envelope', async () => {
+      for (const text of ['<html>502 Bad Gateway</html>', '', '{"unexpected":true}', '[1,2]']) {
+        vi.mocked(api.get).mockRejectedValueOnce(rejection(502, new Blob([text], { type: 'text/html' })));
+        const caught = (await quotesApi.downloadQuotePdf(42).catch((error: unknown) => error)) as ReturnType<typeof rejection>;
+        expect(caught.response.status).toBe(502);
+        expect(caught.response.data).toEqual({});
+        expect((caught.response.data as { message?: string }).message).toBeUndefined();
+      }
+    });
+
+    it('passes an error without a Blob body on untouched', async () => {
+      const flat = rejection(401, { code: 'UNAUTHORIZED', message: 'Invalid credentials' });
+      vi.mocked(api.get).mockRejectedValueOnce(flat);
+      await expect(quotesApi.downloadQuotePdf(42)).rejects.toBe(flat);
+      expect(flat.response.data).toEqual({ code: 'UNAUTHORIZED', message: 'Invalid credentials' });
+
+      const network = new Error('timeout of 55000ms exceeded');
+      vi.mocked(api.get).mockRejectedValueOnce(network);
+      await expect(quotesApi.downloadQuotePdf(42)).rejects.toBe(network);
+    });
   });
 });

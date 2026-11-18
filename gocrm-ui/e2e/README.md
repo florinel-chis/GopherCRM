@@ -41,7 +41,10 @@ published; that local scope is separate from CI.
 
 The run pins the backend's environment: the chosen driver, the default API prefix, no SMTP (the
 log-only mailer), no reCAPTCHA, no answer-engine keys, provider model/endpoint overrides or AEO
-schedule, whatever the root `.env` says. On macOS it keeps the machine awake (`caffeinate -i`),
+schedule, and quote PDF output off (`QUOTE_PDF_CHROME_PATH` empty, so the quote page shows no
+Download PDF button and quote emails are text only), whatever the root `.env` says. The real PDF
+chain (Chrome, the `/quote-render` page, the API, the printed text) is checked by hand with
+`scripts/e2e/quote-pdf-smoke.sh` from the repo root; the recipe is in `docs/DEVELOPMENT.md`. On macOS it keeps the machine awake (`caffeinate -i`),
 since an idle sleep mid-run shows up as a cascade of page-load timeouts.
 
 Database credentials come from the environment, falling back to `DB_*` in the root `.env`. The

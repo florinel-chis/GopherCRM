@@ -34,9 +34,9 @@ blocked.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
-| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page | 51 | 31 | 18 | 2 | 51 | 0 | 0 |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output | 58 | 34 | 22 | 2 | 57 | 1 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **703** | **248** | **306** | **149** | **305** | **315** | **83** |
+| **Total** | | **710** | **251** | **310** | **149** | **311** | **316** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -102,6 +102,11 @@ Section 15.13 (2026-11-18, #383) adds five cases for the public page that answer
 `client.public.test.ts`, `quoteResponse.test.ts`, the "quote response route" block of
 `routes/index.test.tsx`) and by the single test of `gocrm-ui/e2e/tests/quote-response.spec.ts`;
 the row and the total were recounted with them (51 and 703).
+Section 15.14 (2026-11-18, #384) adds seven cases for quote PDF output (TC-PQ-052 to 058: three
+P0, four P1). Six are automated in Go and Vitest with fake renderers and a browser stand-in;
+TC-PQ-058, the real chain through Chrome and the web application, is a manual release check
+(`scripts/e2e/quote-pdf-smoke.sh`) and counts as planned. The row and the total were recounted
+with them (58 and 710).
 
 [16-follow-up-automation.md](16-follow-up-automation.md) was added 2026-10-28 with the follow-up
 automation and notifications API (issue #164). Twenty-seven cases are automated at the Go level

@@ -120,6 +120,7 @@ var RouteKeys = map[string]RouteKey{
 	"DELETE /quotes/:id/lines/:lineId": key(QuotesUpdate),
 	"POST /quotes/:id/status":          key(QuotesUpdate),
 	"GET /quotes/:id/history":          key(QuotesView),
+	"GET /quotes/:id/pdf":              key(QuotesView),
 	"POST /quotes/:id/email":           key(QuotesUpdate),
 
 	// tickets

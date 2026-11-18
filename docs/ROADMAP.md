@@ -211,6 +211,31 @@ included. Found by reading the code path unless noted.
 - **A mailed client response link outlives the erasure of its customer (#382).** Erasing the
   customer of a sent quote leaves a mailed link usable until the quote leaves sent (the public
   view and the `/quote-response` page hold no personal data).
+- **Quote PDF: the render credential store is per process (#384).** A render credential lives
+  in the memory of the backend process that minted it. With several backend instances behind one
+  origin, a render succeeds only when the render page's `POST /quotes/public/render` reaches the
+  instance that started it; otherwise the credential is unknown there, the render fails, the
+  download answers 503 `PDF_RENDER_FAILED` and the email falls back to text. A shared store (or
+  a signed, self-describing credential) would lift this.
+- **Quote PDF: the render URL is visible in the host's process list during a render (#384).**
+  The URL with the credential in its fragment is on the browser's command line for the life of
+  the render (at most 15 s). The credential opens one quote, read-only, and dies with the
+  render; driving the browser over its DevTools pipe instead of the command line would remove
+  the exposure.
+- **Quote PDF: the date is formatted in the server's time zone (#384).** The document formats
+  its date in the browser's zone. The headless browser runs in the server's zone (UTC in the
+  Docker image), so near midnight the PDF can show another issue date than the print page of the
+  staff member's own browser.
+- **Quote PDF output is off in the two development Compose files (#384).** Their `APP_BASE_URL`
+  (`http://localhost:<UI_PORT>`) is not reachable from the backend container, so
+  `docker-compose.yml` and `docker-compose.sqlite.yml` set `QUOTE_PDF_CHROME_PATH` empty, and
+  `docker-compose.production.example.yml` does not forward it; an operator switches it on in an
+  override (`docs/DOCKER.md`).
+- **Quote PDF: the systemd deployment was not run on a real host (#384).** The renderer is built
+  to need only a writable temporary directory, which the unit of `docs/SERVER_PROVISIONING.md`
+  provides (`PrivateTmp=yes`); the nearest proof is the Docker image running as an unprivileged
+  user with a read-only root file system. No automatic test drives a real browser through the
+  web application either: `scripts/e2e/quote-pdf-smoke.sh` is a manual release check.
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

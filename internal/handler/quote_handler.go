@@ -736,9 +736,10 @@ func (h *QuoteHandler) History(c *gin.Context) {
 
 // Email godoc
 // @Summary Email a quote to its customer
-// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
+// @Description Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address, with the quote's PDF attached when PDF output is on. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
 // @Description Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
 // @Description The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each email of a sent quote invalidates the link of the previous one, and any status change away from sent invalidates the current one. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent.
+// @Description The attachment is one file, Quote-Q-000042.pdf (application/pdf) for quote 42: the document GET /quotes/{id}/pdf returns, rendered before the response link is stored, with no transaction held, in at most 15 seconds. When PDF output is off (GET /configurations/ui reports quotes.pdf_available false), or the render fails or runs out of time, the mail goes out as plain text only, exactly as without PDF output, and the request still succeeds; the fallback is logged, not reported. The response does not say whether a PDF was attached. Worst-case duration: 15 seconds for the render plus 30 seconds for the SMTP delivery, 45 seconds; a client should allow more than that (the web app allows 55) and a reverse proxy in front at least 60.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -770,6 +771,56 @@ func (h *QuoteHandler) Email(c *gin.Context) {
 	utils.LogHandlerResponse(logger, http.StatusOK, emailed)
 	utils.RespondSuccess(c, http.StatusOK, emailed)
 }
+
+// PDF godoc
+// @Summary Download a quote as PDF
+// @Description The quote as a PDF file: the same document as the print page of the web app, printed by a headless Chrome or Chromium on the server. Roles: admin (any quote) and sales (only the quotes it owns; another owner's quote is 403, not 404). The id, the caller's permission and the quote are checked first, with the answers of GET /quotes/{id}; nothing is rendered for a refused request. Any status can be downloaded.
+// @Description PDF output is on when the server has a browser binary (QUOTE_PDF_CHROME_PATH) and an APP_BASE_URL; GET /configurations/ui reports it as quotes.pdf_available. Off is 503 PDF_UNAVAILABLE. One render runs at a time per server process and a render, its wait for a turn included, is bounded at 15 seconds: a render that fails, runs out of time, does not get its turn, or whose page never loaded the quote is 503 PDF_RENDER_FAILED and can be retried. The success answer is the raw file, not the JSON envelope; errors are the JSON envelope. The request writes nothing.
+// @Tags quotes
+// @Produce application/pdf
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Quote ID"
+// @Success 200 {file} file "The PDF, with Content-Type application/pdf and Content-Disposition attachment; filename='Quote-Q-000042.pdf' (double quotes on the wire) for quote 42"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live quote has this id ('Quote not found')"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
+// @Failure 503 {object} utils.APIResponse{error=utils.APIError} "PDF_UNAVAILABLE 'PDF output is switched off': the server has no browser binary or no APP_BASE_URL. PDF_RENDER_FAILED 'The PDF could not be produced': the render failed or did not finish within 15 seconds"
+// @Router /quotes/{id}/pdf [get]
+func (h *QuoteHandler) PDF(c *gin.Context) {
+	logger := utils.LogHandlerStart(c, "QuoteHandler.PDF")
+
+	// The same refusals as GET /quotes/:id, before anything else is looked at.
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesView)
+	if !ok {
+		return
+	}
+	if !h.quoteService.PDFAvailable() {
+		logger.Warn("Quote PDF refused: PDF output is off")
+		utils.RespondError(c, http.StatusServiceUnavailable, utils.ErrCodePDFUnavailable, quotePDFUnavailableMessage, nil)
+		return
+	}
+	pdf, err := h.quoteService.RenderPDF(quote.ID)
+	if err != nil {
+		h.respondError(c, logger, err)
+		return
+	}
+
+	utils.LogHandlerResponse(logger, http.StatusOK, nil)
+	c.Header("Content-Disposition", `attachment; filename="Quote-`+quote.Number()+`.pdf"`)
+	c.Data(http.StatusOK, "application/pdf", pdf)
+}
+
+// The messages of the two PDF refusals. 503, not 502: a proxy in front may
+// replace the body of a 502 with its own page.
+const (
+	quotePDFUnavailableMessage  = "PDF output is switched off"
+	quotePDFRenderFailedMessage = "The PDF could not be produced"
+)
 
 // ListByDeal godoc
 // @Summary List a deal's quotes
@@ -962,6 +1013,12 @@ func (h *QuoteHandler) respondError(c *gin.Context, logger *logrus.Entry, err er
 		// The transport's own message is not echoed: it may quote the address.
 		logger.WithError(utils.LogError(err)).Error("Quote email delivery failed")
 		utils.RespondError(c, http.StatusBadGateway, utils.ErrCodeMailDeliveryFailed, "The quote email could not be delivered", nil)
+	case errors.Is(err, apperrors.ErrQuotePDFUnavailable):
+		logger.WithError(utils.LogError(err)).Warn("Quote PDF output is off")
+		utils.RespondError(c, http.StatusServiceUnavailable, utils.ErrCodePDFUnavailable, quotePDFUnavailableMessage, nil)
+	case errors.Is(err, apperrors.ErrQuotePDFRenderFailed):
+		logger.WithError(utils.LogError(err)).Error("Quote PDF render failed")
+		utils.RespondError(c, http.StatusServiceUnavailable, utils.ErrCodePDFRenderFailed, quotePDFRenderFailedMessage, nil)
 	case errors.Is(err, apperrors.ErrQuoteLineNotFound):
 		logger.WithError(utils.LogError(err)).Warn("Quote line not found")
 		utils.RespondNotFound(c, "Quote line not found")

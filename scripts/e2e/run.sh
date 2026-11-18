@@ -145,6 +145,7 @@ export API_PREFIX=/api/v1 SERVER_MODE=development \
   AEO_ANTHROPIC_MODEL= AEO_OPENAI_MODEL= AEO_GEMINI_MODEL= AEO_KIMI_MODEL= AEO_PERPLEXITY_MODEL= \
   AEO_ANTHROPIC_BASE_URL= AEO_OPENAI_BASE_URL= AEO_GEMINI_BASE_URL= AEO_KIMI_BASE_URL= AEO_PERPLEXITY_BASE_URL= \
   AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
+  QUOTE_PDF_CHROME_PATH= \
   APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
 # The same fixed fixture port is reused by sequential tests. Replace inherited

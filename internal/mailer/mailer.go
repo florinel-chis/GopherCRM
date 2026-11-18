@@ -68,6 +68,25 @@ type LogOnlyReporter interface {
 	LogsOnly() bool
 }
 
+// Attachment is one file sent along with a plaintext message.
+type Attachment struct {
+	// Filename is the name the recipient's mail client shows. It must not
+	// hold CR, LF or a double quote.
+	Filename string
+	// ContentType is the media type of Data, for example application/pdf.
+	ContentType string
+	// Data is the file's bytes.
+	Data []byte
+}
+
+// AttachmentSender is an optional interface a Mailer implements when it can
+// deliver a plaintext message with one attachment. The same rules as Send
+// apply: the body is never logged. SMTPMailer and LogMailer implement it; a
+// caller that finds its mailer does not falls back to Send.
+type AttachmentSender interface {
+	SendWithAttachment(to, subject, body string, a Attachment) error
+}
+
 // NewFromConfig picks the implementation from configuration: SMTP when
 // SMTP_HOST is set, otherwise the logging fallback.
 func NewFromConfig(cfg config.SMTPConfig) Mailer {

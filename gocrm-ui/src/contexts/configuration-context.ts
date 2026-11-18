@@ -37,3 +37,18 @@ export interface ConfigurationContextType {
 export const UI_CONFIGURATIONS_KEY = ['configurations', 'ui'] as const;
 
 export const ConfigurationContext = createContext<ConfigurationContextType | undefined>(undefined);
+
+/** The read-only entry of GET /configurations/ui that reports quote PDF output. */
+export const QUOTE_PDF_AVAILABLE_KEY = 'quotes.pdf_available';
+
+/**
+ * Whether the server can produce quote PDFs: the configuration the context
+ * serves holds the boolean entry `quotes.pdf_available` with the value true.
+ * False outside a provider, while nothing is loaded, without a session, and
+ * when the entry is absent, false or malformed: the download is offered only
+ * on the server's word.
+ */
+export const isQuotePdfAvailable = (context: ConfigurationContextType | undefined): boolean => {
+  const entry = context?.configurations.find((config) => config.key === QUOTE_PDF_AVAILABLE_KEY);
+  return entry !== undefined && entry.type === 'boolean' && entry.value === 'true';
+};

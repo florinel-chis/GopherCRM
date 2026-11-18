@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,6 +74,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		"/api/v1/forms/public/confirm",
 		"/api/v1/forms/public/abc/submissions",
 		"/api/v1/quotes/public/response",
+		"/api/v1/quotes/public/render",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		w := httptest.NewRecorder()
@@ -170,9 +172,11 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodPost, "/api/v1/quotes/1/status"},
 		{http.MethodGet, "/api/v1/quotes/1/history"},
 		{http.MethodPost, "/api/v1/quotes/1/email"},
-		// The public response link next to /quotes/:id.
+		{http.MethodGet, "/api/v1/quotes/1/pdf"},
+		// The public response link and the PDF render read next to /quotes/:id.
 		{http.MethodGet, "/api/v1/quotes/public/response"},
 		{http.MethodPost, "/api/v1/quotes/public/response"},
+		{http.MethodPost, "/api/v1/quotes/public/render"},
 		{http.MethodGet, "/api/v1/deals/1/quotes"},
 		{http.MethodGet, "/api/v1/deals/1/tasks"},
 		{http.MethodGet, "/api/v1/customers/1/quotes"},
@@ -277,11 +281,14 @@ func TestAutomationDraftDryRunRouteIsStatic(t *testing.T) {
 	}
 }
 
-// The client response link (#382) is mounted on the public group while
-// /quotes/:id sits on the protected one. The static /quotes/public/response
-// must reach the public handler on both verbs without a credential, the
-// guarded routes must stay guarded, and nothing else under /quotes/public may
-// become reachable: /quotes/public is still the :id route behind the guard.
+// The client response link (#382) and the PDF render read (#384) are mounted
+// on the public group while /quotes/:id sits on the protected one. The static
+// /quotes/public/response must reach the public handler on both verbs, and
+// /quotes/public/render on POST, without a credential; the guarded routes
+// must stay guarded, and nothing else under /quotes/public may become
+// reachable: /quotes/public is still the :id route behind the guard. A render
+// credential is not a session: as a Bearer token it is refused by the real
+// Auth middleware on every guarded quote route.
 func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 	ensureHandlerTestLogger(t)
 	gin.SetMode(gin.TestMode)
@@ -300,6 +307,7 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 	view := &models.QuotePublicView{Number: "Q-000001", Status: models.QuoteStatusSent, Currency: "EUR", Lines: []models.QuotePublicLine{}}
 	quotes.On("GetPublicResponse", "tok").Return(view, nil).Once()
 	quotes.On("RespondPublic", "tok", "accept").Return(view, nil).Once()
+	quotes.On("GetRenderView", "tok").Return(&models.QuoteRenderView{Quote: &models.Quote{BaseModel: models.BaseModel{ID: 1}}}, nil).Once()
 	SetupQuotePublicRoutes(public, NewQuotePublicHandler(quotes))
 	SetupQuoteRoutes(protected, &QuoteHandler{})
 
@@ -309,9 +317,12 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/v1/quotes/public/response?token=tok", "", "/api/v1/quotes/public/response", http.StatusOK},
 		{http.MethodPost, "/api/v1/quotes/public/response", `{"token":"tok","decision":"accept"}`, "/api/v1/quotes/public/response", http.StatusOK},
+		{http.MethodPost, "/api/v1/quotes/public/render", `{"token":"tok"}`, "/api/v1/quotes/public/render", http.StatusOK},
 		{http.MethodGet, "/api/v1/quotes/1", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/quotes/1/pdf", "", "/api/v1/quotes/:id/pdf", http.StatusUnauthorized},
 		{http.MethodGet, "/api/v1/quotes/public", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
 		{http.MethodPut, "/api/v1/quotes/public", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/quotes/public/pdf", "", "/api/v1/quotes/:id/pdf", http.StatusUnauthorized},
 		{http.MethodGet, "/api/v1/quotes/1/history", "", "/api/v1/quotes/:id/history", http.StatusUnauthorized},
 		{http.MethodPost, "/api/v1/quotes/1/email", "", "/api/v1/quotes/:id/email", http.StatusUnauthorized},
 		{http.MethodGet, "/api/v1/quotes", "", "/api/v1/quotes", http.StatusUnauthorized},
@@ -325,10 +336,15 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 			t.Errorf("%s %s matched %q with %d, want %q with %d", route.method, route.path, matched, w.Code, route.want, route.status)
 		}
 	}
-	// No route exists under /quotes/public but the two.
+	// No route exists under /quotes/public but the three: response on GET
+	// and POST, render on POST.
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/quotes/public/other"},
+		{http.MethodPost, "/api/v1/quotes/public/other"},
 		{http.MethodDelete, "/api/v1/quotes/public/response"},
+		{http.MethodGet, "/api/v1/quotes/public/render"},
+		{http.MethodPut, "/api/v1/quotes/public/render"},
+		{http.MethodDelete, "/api/v1/quotes/public/render"},
 	} {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
@@ -337,4 +353,48 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 		}
 	}
 	quotes.AssertExpectations(t)
+	public3 := 0
+	for _, info := range router.Routes() {
+		if strings.HasPrefix(info.Path, "/api/v1/quotes/public") {
+			public3++
+		}
+	}
+	if public3 != 3 {
+		t.Errorf("%d routes are registered under /quotes/public, want 3", public3)
+	}
+
+	// The render credential presented as a session: with the real service,
+	// the real routes and the real Auth middleware, the credential of a
+	// running render is 401 on another quote's read and on a write, while the
+	// public route accepts it at that very moment.
+	chain := newQuotePDFChain(t)
+	var asRead, asWrite, asOwnRead, asPDF, asRender *httptest.ResponseRecorder
+	chain.renderer.during = func(token string) {
+		asRead = chain.bearer(http.MethodGet, fmt.Sprintf("/api/v1/quotes/%d", chain.quoteB.ID), token, "")
+		asWrite = chain.bearer(http.MethodPut, fmt.Sprintf("/api/v1/quotes/%d", chain.quoteA.ID), token, `{"title":"Taken over"}`)
+		asOwnRead = chain.bearer(http.MethodGet, fmt.Sprintf("/api/v1/quotes/%d", chain.quoteA.ID), token, "")
+		asPDF = chain.bearer(http.MethodGet, fmt.Sprintf("/api/v1/quotes/%d/pdf", chain.quoteA.ID), token, "")
+		asRender = chain.post(fmt.Sprintf(`{"token":%q}`, token))
+	}
+	if _, err := chain.svc.RenderPDF(chain.quoteA.ID); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if chain.quoteA.ID != 1 || chain.quoteB.ID != 2 {
+		t.Fatalf("the chain's quotes are %d and %d, want 1 and 2", chain.quoteA.ID, chain.quoteB.ID)
+	}
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"GET /api/v1/quotes/2": asRead, "PUT /api/v1/quotes/1": asWrite,
+		"GET /api/v1/quotes/1": asOwnRead, "GET /api/v1/quotes/1/pdf": asPDF,
+	} {
+		if w == nil || w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), `"code":"UNAUTHORIZED"`) {
+			t.Errorf("%s with the render credential as Bearer: %v, want 401 UNAUTHORIZED", name, w)
+		}
+	}
+	if asRender == nil || asRender.Code != http.StatusOK {
+		t.Errorf("POST /quotes/public/render with the same credential: %v, want 200", asRender)
+	}
+	var title string
+	if err := chain.db.Model(&models.Quote{}).Where("id = ?", chain.quoteA.ID).Pluck("title", &title).Error; err != nil || title != "Quote A" {
+		t.Errorf("quote A's title is %q (%v), want it untouched", title, err)
+	}
 }

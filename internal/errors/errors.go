@@ -107,6 +107,19 @@ var (
 	// is no longer sent or no longer exists. One sentinel on purpose, so the
 	// public routes cannot tell the cases apart (400).
 	ErrQuoteResponseRejected = errors.New("invalid or expired quote link")
+	// ErrQuotePDFUnavailable says PDF output is switched off: no Chrome binary
+	// is configured (QUOTE_PDF_CHROME_PATH), it does not exist, or there is no
+	// APP_BASE_URL to open (503 PDF_UNAVAILABLE).
+	ErrQuotePDFUnavailable = errors.New("quote PDF output is switched off")
+	// ErrQuotePDFRenderFailed is every failed render of a quote PDF: the
+	// browser failed, ran past the render bound, did not get its turn within
+	// it, or printed a page that never loaded the quote (503
+	// PDF_RENDER_FAILED).
+	ErrQuotePDFRenderFailed = errors.New("quote PDF could not be produced")
+	// ErrQuoteRenderRejected is every refusal of a render credential: unknown,
+	// expired, or of a render that has finished. One sentinel on purpose, so
+	// the public route cannot tell the cases apart (400).
+	ErrQuoteRenderRejected = errors.New("invalid or expired render link")
 	// ErrMailDelivery wraps a mailer failure (502 MAIL_DELIVERY_FAILED).
 	ErrMailDelivery = errors.New("mail delivery failed")
 	// ErrFormDeliveryNotRetryable refuses a retry of a form mail delivery

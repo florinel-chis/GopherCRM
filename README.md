@@ -69,7 +69,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 `make run`):
 
 - **Replace the example `JWT_SECRET`.** The placeholder is refused at startup, so a copied
-  `.env.example` does not start until the secret is replaced (`internal/config/config.go:260-270`).
+  `.env.example` does not start until the secret is replaced (`internal/config/config.go:267-277`).
 - **Set `CORS_ALLOWED_ORIGINS`** for any cross-origin UI other than localhost on 5173, 3000 or 8080
   (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
 - **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
@@ -815,8 +815,17 @@ authentication and live on the moderate tier:
   `INVALID_STATUS_TRANSITION`; sending without lines or accepting after `valid_until` is 409; one
   history row per move; accepting does not change the deal)*
 - `GET /api/v1/quotes/:id/history` - The status changes, oldest first, with the acting user
+- `GET /api/v1/quotes/:id/pdf` - Download the quote as a PDF file *(admin and sales, the same
+  refusals as `GET /quotes/:id`; the raw file with `Content-Type: application/pdf` and
+  `Content-Disposition: attachment; filename="Quote-Q-000042.pdf"`, printed by a headless
+  Chrome or Chromium on the server in at most 15 seconds; 503 `PDF_UNAVAILABLE` when PDF output
+  is off (`QUOTE_PDF_CHROME_PATH` empty or not an executable file), 503 `PDF_RENDER_FAILED`
+  when the render fails or runs out of time; `GET /configurations/ui` reports
+  `quotes.pdf_available`)*
 - `POST /api/v1/quotes/:id/email` - Email a sent or accepted quote as plaintext to the linked
-  customer's current address *(subject `Quote Q-000042 from <name>`, the configured
+  customer's current address, with the quote's PDF attached (`Quote-Q-000042.pdf`) when PDF
+  output is on; when it is off or the render fails the mail goes out as text only and the call
+  still succeeds; worst case 45 seconds *(subject `Quote Q-000042 from <name>`, the configured
   `general.company_name` or `GopherCRM` when it is blank; 409 without a live
   customer or when the quote was revised during the send; 502 `MAIL_DELIVERY_FAILED` when the mailer
   fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
@@ -837,6 +846,11 @@ authentication and live on the moderate tier:
   names the quote owner; the deal is not changed; an invalid body is 400 `VALIDATION_ERROR`, any
   unusable token the same generic 400; strict rate tier. The web application's `/quote-response`
   page calls both routes without a bearer token)*
+- `POST /api/v1/quotes/public/render` - **No authentication.** The read the PDF render page
+  (`APP_BASE_URL/quote-render`) makes while the server prints a quote `{token}` *(the token is
+  the credential of one running render: it returns that one quote as `GET /quotes/:id` does,
+  plus `product_name`, writes nothing, and is refused with the generic 400 "Invalid or expired
+  render link" once the render is over; generous rate tier)*
 - `GET /api/v1/deals/:id/quotes` - The deal's quotes, paginated *(sales: its own deals and its own quotes only)*
 - `GET /api/v1/customers/:id/quotes` - The customer's quotes, paginated *(sales sees only its own)*
 
@@ -1116,6 +1130,11 @@ gophercrm/
   automation email step is logged as `succeeded`, although nothing was delivered. Form mail and
   ticket comment mail (`email_customer`) are the exception: each delivery is recorded `log_only`,
   not `sent`. Fine for development, useless in production.
+- **Quote PDF output needs a browser on the server.** The PDF of a quote (download and email
+  attachment) is printed by a headless Chrome or Chromium named by `QUOTE_PDF_CHROME_PATH`.
+  Without it, and in the two development Compose stacks, PDF output is off: the quote email is
+  text only and the download answers 503 `PDF_UNAVAILABLE`. The Docker image ships Chromium and
+  a font; the limits of the renderer are listed in `docs/ROADMAP.md`.
 - **Form mail is retried by hand only.** Every form mail (confirmation, follow-up, one notification
   per address) is recorded and shown on the submission and in `GET /api/v1/forms/deliveries`;
   admin and sales retry a failed, log-only or stuck one with

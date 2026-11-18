@@ -502,6 +502,19 @@ type QuoteService interface {
 	// A decision outside the two is apperrors.ErrValidation; every other
 	// refusal is apperrors.ErrQuoteResponseRejected.
 	RespondPublic(token, decision string) (*models.QuotePublicView, error)
+	// PDFAvailable reports whether this service can produce a quote PDF: it
+	// was given a renderer (WithQuotePDF) and has an APP_BASE_URL to open.
+	PDFAvailable() bool
+	// RenderPDF prints the quote's render page to PDF. It is
+	// apperrors.ErrQuotePDFUnavailable when PDF output is off,
+	// apperrors.ErrQuoteNotFound for an unknown quote, and
+	// apperrors.ErrQuotePDFRenderFailed for every failed, late or queued-out
+	// render (bound: QuotePDFRenderTimeout).
+	RenderPDF(id uint) ([]byte, error)
+	// GetRenderView answers the render page: the quote behind a render
+	// credential, readable only while its render runs. Every refusal is
+	// apperrors.ErrQuoteRenderRejected. It never writes.
+	GetRenderView(token string) (*models.QuoteRenderView, error)
 }
 
 type APIKeyService interface {

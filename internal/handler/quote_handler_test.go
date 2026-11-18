@@ -280,6 +280,7 @@ func TestQuoteHandler_SalesIsScopedToItsOwnQuotes(t *testing.T) {
 		{http.MethodDelete, "/quotes/1/lines/3", nil},
 		{http.MethodPost, "/quotes/1/status", gin.H{"status": "accepted"}},
 		{http.MethodGet, "/quotes/1/history", nil},
+		{http.MethodGet, "/quotes/1/pdf", nil},
 		{http.MethodPost, "/quotes/1/email", nil},
 	} {
 		status, envelope := doJSON(t, router, route.method, route.path, route.body)
@@ -288,7 +289,7 @@ func TestQuoteHandler_SalesIsScopedToItsOwnQuotes(t *testing.T) {
 			assert.Equal(t, utils.ErrCodeForbidden, envelope.Error.Code)
 		}
 	}
-	assertNoCalls(t, &svc.Mock, "Update", "Delete", "AddLine", "UpdateLine", "DeleteLine", "ChangeStatus", "History", "Email")
+	assertNoCalls(t, &svc.Mock, "Update", "Delete", "AddLine", "UpdateLine", "DeleteLine", "ChangeStatus", "History", "Email", "RenderPDF", "PDFAvailable")
 
 	// Lists: the owner filter is the caller, before the service is reached.
 	one := uint(1)

@@ -625,6 +625,14 @@ export const router = createBrowserRouter([
     lazy: () => import('@/pages/quotes/QuoteResponse'),
     errorElement: <RouteErrorBoundary />,
   },
+  // The page the server's headless browser prints to PDF (#384): public for
+  // the same reason, and readable only with the credential of a running
+  // render in the URL fragment.
+  {
+    path: '/quote-render',
+    lazy: () => import('@/pages/quotes/QuoteRender'),
+    errorElement: <RouteErrorBoundary />,
+  },
   {
     path: '*',
     element: <NotFound />,
