@@ -359,14 +359,13 @@ history. This is a staff-maintained register, not a shared helpdesk.
   support users; the `tickets.auto_assign_support` setting that suggested otherwise was retired
   in #224.
 - Train staff on the difference between internal notes and public comments.
-- An integration that creates both customers and tickets **with one identity** must use an admin
-  API key: customer create is admin and sales (`internal/handler/routes.go:42`), ticket create is
-  support and admin (`internal/handler/ticket_handler.go:88`), and API keys carry their owner's
-  full role with no scopes (`APIKey`, `internal/models/apikey.go:5`). Two identities also work: a
-  sales key creates the customer and a support key creates the ticket. The support key can then
-  read only tickets assigned to its own user (`ticket_handler.go:195`), which is the default when
-  it omits `assigned_to_id`; a ticket it assigns to a technician drops out of its reads. A
-  least-privilege credential is tracked in #211.
+- An integration that creates both customers and tickets **with one identity** uses the key of
+  a dedicated user on a custom role holding `customers.create` and `tickets.create`
+  (`internal/handler/routes.go:42`, `internal/handler/ticket_handler.go:167`): no system role
+  other than admin holds both, and an API key has no scopes of its own, it acts with its owner's
+  permissions (`APIKey`, `internal/models/apikey.go:9`). Such a key can read nothing and must
+  name `assigned_to_id` on every ticket it creates. Setup, rotation and revocation:
+  [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 
 ### Gaps before a shared desk
 
@@ -473,7 +472,7 @@ planning around an issue number.
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
 | Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-60`; `docker-compose.sqlite.yml:25-43`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
-| Least-privilege credential for integrations (API keys carry the owner's full role) | 3, 4 | `internal/models/apikey.go:5` | #211 |
+| Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `internal/models/apikey.go:9` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
 | Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:230` | #215 |

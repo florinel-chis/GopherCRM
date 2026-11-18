@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Least-privilege integration user, documented and tested (#211).** `docs/AUTHORIZATION.md`
+  has a new section "Least-privilege integration user": a custom role holding only the keys the
+  integration needs, a dedicated user on it and an API key issued to that user, with the keys for
+  ticket and lead intake, key rotation and revocation. `TestLeastPrivilegeIntegrationUserSQLite`
+  and `TestLeastPrivilegeIntegrationUserMySQL` in `internal/integration` build that setup through
+  `POST /roles`, `POST /users` and `POST /api-keys` and show a key whose role holds
+  `customers.create` and `tickets.create` creating a customer and a ticket and answered 403
+  `FORBIDDEN` on every other route tried, the user, role and export routes among them.
+  `docs/EXTENDING.md`, `docs/FORKING.md` and `docs/USE_CASES.md` no longer say that a key carries
+  its owner's full role. No route, schema or SPA change.
 - **Authorization guide `docs/AUTHORIZATION.md` (#349, slice S5 of #259), with a test.** The
   guide holds the phased plan of #259, the permission catalogue, the matrix of the four system
   roles, custom roles and scopes, the self-service routes, the service-boundary

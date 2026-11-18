@@ -289,6 +289,95 @@ user-role and role writes"; the order of the refusals, the error codes and the p
 are in [DEVELOPMENT.md](DEVELOPMENT.md), "RBAC persistence" and "Role API and governed user
 writes".
 
+## Least-privilege integration user
+
+An API key has no scopes of its own. It acts with the permissions its owner holds at the moment
+of each request (see [Custom roles and scopes](#custom-roles-and-scopes)), so a least-privilege
+credential is a dedicated user on a custom role that holds only the keys the integration needs.
+Use one user per integration: the role is then the complete list of what that integration can do,
+and one integration can be stopped without touching another.
+
+**Setup.** Three calls:
+
+1. `POST /roles` with the name and the permission keys creates the custom role. The caller needs
+   `roles.manage`.
+2. `POST /users` with `role: custom` and the `role_id` of that role creates the integration user.
+   The caller needs `users.create` and `users.assign_role`; a caller that is not on the admin
+   system role is also bound by the [escalation rule](#escalation-rule). The password sent here
+   is the integration user's login: keep it in the secret store.
+3. `POST /api-keys` always creates a key for the caller, so it is sent signed in as the
+   integration user. The plaintext key is in the answer's `key` field, once.
+
+```bash
+curl -s -X POST "$CRM/api/v1/roles" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Ticket intake","permissions":[{"key":"customers.create"},{"key":"tickets.create"}]}'
+curl -s -X POST "$CRM/api/v1/users" -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"intake@example.com","password":"<from the secret store>","first_name":"Ticket","last_name":"Intake","role":"custom","role_id":<id of the role>}'
+curl -s -X POST "$CRM/api/v1/api-keys" -H "Authorization: Bearer $INTEGRATION_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"name":"intake"}'
+```
+
+**Which keys.**
+
+| Integration | Keys on the role | The request must |
+|---|---|---|
+| Ticket intake that creates customers and tickets | `customers.create`, `tickets.create` | Name `assigned_to_id` in `POST /tickets` |
+| The same, looking a customer up before creating it | Add `customers.view` | (as above) |
+| Form handler writing leads that the integration user owns | `leads.create`, `assignment.form_owner` | Send no `owner_id` in `POST /leads` |
+| Form handler writing leads for a named owner | `leads.create`, `leads.assign_owner` | Name `owner_id` in `POST /leads` |
+
+- *Tickets.* `POST /tickets` without `assigned_to_id` assigns the ticket to the caller, and an
+  assignee must hold `assignment.ticket_assignee`. The integration user does not, so the request
+  is answered 400 `BAD_REQUEST` and no ticket is written. Name the `assigned_to_id` of a user
+  that holds `assignment.ticket_assignee` (the support and admin system roles do). The
+  alternative is to grant the integration role `assignment.ticket_assignee`, which also makes the
+  integration user a valid assignee for everyone else.
+- *Reading.* With `customers.create` and `tickets.create` alone the integration cannot read
+  anything, the records it created included. A second `POST /customers` with an email that
+  exists is 409 `CONFLICT` and the answer does not carry the existing customer's id, so an
+  integration that has to find the customer first also needs `customers.view`, which exists at
+  scope `all` only.
+- *Leads.* The CRM's own embedded forms post to the public `/forms/public` routes and need no
+  key at all. An external form handler that writes through `POST /leads` needs `leads.create`
+  and an eligible owner. With `leads.create` alone the lead would be owned by the caller, who
+  cannot own leads: 400 `INVALID_REFERENCE`. Either grant `assignment.form_owner`, and the
+  integration user owns the leads it creates when the body has no `owner_id`; or grant
+  `leads.assign_owner`, and the body must name the `owner_id` of a user that holds
+  `assignment.form_owner` (without `owner_id` the answer is 400 `BAD_REQUEST`).
+
+Every other protected route answers such a key 403 `FORBIDDEN`: the user and role routes, the
+exports and the listings among them. A key granted to the role later applies from the key's next
+request, and so does a key taken away.
+
+**What stays open.** The ten self-service routes of [Deny by default](#deny-by-default) need
+authentication only, so the integration user can read and edit its own profile and create, list,
+update and revoke its own API keys. It cannot change its own role that way: `PUT /users/me` has
+no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and `is_active`
+from a caller without `users.assign_role` and `users.activate`. It can create further keys,
+though, and those never expire unless `expires_at` is sent: whoever holds a leaked key can mint
+more keys for the same user.
+
+**Rotate.** Create the successor with `POST /api-keys`, authenticated with the current key or
+signed in as the integration user; deploy it; then revoke the old key with
+`DELETE /api-keys/{id}` (or `PUT /api-keys/{id}` with `is_active: false`). Both keys work until
+the old one is revoked. `expires_at` at creation forces a rotation date; it cannot be changed
+afterwards.
+
+**Revoke.** `DELETE /api-keys/{id}` by the owner answers 200 and the key's next request is 401
+`UNAUTHORIZED`. Revocation is a flag, not a deletion: the owner, or any other key of the same
+user, can set the key active again with `PUT /api-keys/{id}`. An administrator cannot list, read
+or revoke another user's keys (403 `FORBIDDEN`); the administrator's switch is
+`POST /users/{id}/deactivate`, which stops every key of that user at its next request (401).
+After a suspected leak, deactivate the user, or revoke every key of the user and not only the
+leaked one, then issue a new key.
+
+`TestLeastPrivilegeIntegrationUserSQLite` and `TestLeastPrivilegeIntegrationUserMySQL` in
+`internal/integration` build this setup through the three routes and prove each statement of
+this section with the key: the two creates, 403 on the other routes, the lead and assignee
+rules, rotation, revocation and deactivation.
+
 ## Phase 2 design note
 
 This section is a design note for #261 and is not implemented: there is no `user_identities`

@@ -275,3 +275,53 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		}
 	}
 }
+
+// The integration-user section (#211) names the setup calls, the keys of the
+// two intake cases, rotation, revocation and the suite that proves it. Every
+// permission key it names in backticks must be a leaf of the catalogue.
+func TestAuthorizationGuideCoversIntegrationUser(t *testing.T) {
+	doc := readGuideFile(t, guidePath)
+	section := strings.Join(mustGuideSection(t, doc, "## Least-privilege integration user"), "\n")
+
+	for _, token := range []string{
+		"customers.create",
+		"tickets.create",
+		"customers.view",
+		"assigned_to_id",
+		"assignment.ticket_assignee",
+		"leads.create",
+		"assignment.form_owner",
+		"leads.assign_owner",
+		"POST /roles",
+		"POST /users",
+		"POST /api-keys",
+		"DELETE /api-keys/{id}",
+		"/deactivate",
+		"expires_at",
+		"TestLeastPrivilegeIntegrationUser",
+	} {
+		t.Run(token, func(t *testing.T) {
+			if !strings.Contains(section, token) {
+				t.Errorf("the Least-privilege integration user section must contain %q", token)
+			}
+		})
+	}
+
+	keys := regexp.MustCompile("`([a-z_]+\\.[a-z_]+)`").FindAllStringSubmatch(section, -1)
+	if len(keys) == 0 {
+		t.Error("the Least-privilege integration user section names no permission key in backticks")
+	}
+	for _, key := range keys {
+		if _, known := Leaf(key[1]); !known {
+			t.Errorf("the Least-privilege integration user section names %s, which is not in the catalogue", key[1])
+		}
+	}
+
+	// The section sits directly before the design note.
+	order := regexp.MustCompile(`(?m)^## .*$`).FindAllString(doc, -1)
+	for i, heading := range order {
+		if heading == "## Phase 2 design note" && (i == 0 || order[i-1] != "## Least-privilege integration user") {
+			t.Error("the Least-privilege integration user section must come directly before the Phase 2 design note")
+		}
+	}
+}
