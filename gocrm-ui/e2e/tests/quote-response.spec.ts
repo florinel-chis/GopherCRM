@@ -22,6 +22,10 @@ import { expectedAmountText } from '../pages/deals.page';
 const repoRoot = path.resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
 const LINK_MARKER = '/quote-response?token=';
 const INVALID_LINK = 'This link is no longer valid. It may already have been used or it has expired.';
+// The first assertion after a navigation or a request waits for the page to
+// load its data. On a loaded machine that takes longer than the default five
+// seconds of an assertion, so those assertions get the navigation budget.
+const PAGE_LOAD = { timeout: 30000 };
 
 // The path and query of the link, to open on the UI under test.
 const responseLinkPath = (quoteId: number): string => {
@@ -102,7 +106,7 @@ test.describe('Quote response link', () => {
     try {
       const client = await clientContext.newPage();
       await client.goto(`${UI_BASE_URL}${linkPath}`);
-      await expect(client.getByRole('heading', { name: `Quote ${quoteNumber}` })).toBeVisible();
+      await expect(client.getByRole('heading', { name: `Quote ${quoteNumber}` })).toBeVisible(PAGE_LOAD);
       await expect(client).toHaveURL(/\/quote-response\?token=/);
       await expect(client.getByTestId('quote-response-line')).toHaveCount(1);
       await expect(client.getByTestId('quote-response-net')).toHaveText(expectedAmountText('25.00', 'EUR'));
@@ -124,18 +128,24 @@ test.describe('Quote response link', () => {
       const response = await responded;
       expect(response.status()).toBe(200);
       expect(response.request().headers()['authorization']).toBeUndefined();
-      await expect(client.getByText(`You have accepted quote ${quoteNumber}.`)).toBeVisible();
+      await expect(client.getByText(`You have accepted quote ${quoteNumber}.`)).toBeVisible(PAGE_LOAD);
       await expect(client.getByRole('button', { name: /accept|decline/i })).toHaveCount(0);
 
       // 4. Staff see the quote accepted.
       await new AdminAuthHelper(page).ensureAdminLoggedIn();
+      const quoteLoaded = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname.endsWith(`/quotes/${quoteId}`) && response.request().method() === 'GET',
+        PAGE_LOAD
+      );
       await page.goto(`/quotes/${quoteId}`);
-      await expect(page.getByTestId('quote-number')).toHaveText(quoteNumber);
+      expect((await quoteLoaded).status()).toBe(200);
+      await expect(page.getByTestId('quote-number')).toHaveText(quoteNumber, PAGE_LOAD);
       await expect(page.getByTestId('quote-status-chip')).toHaveText('Accepted');
 
       // 5. The link worked once: reopened, it shows no quote and no buttons.
       await client.goto(`${UI_BASE_URL}${linkPath}`);
-      await expect(client.getByText(INVALID_LINK)).toBeVisible();
+      await expect(client.getByText(INVALID_LINK)).toBeVisible(PAGE_LOAD);
       await expect(client.getByText(quoteNumber)).toHaveCount(0);
       await expect(client.getByRole('button', { name: /accept|decline/i })).toHaveCount(0);
     } finally {
