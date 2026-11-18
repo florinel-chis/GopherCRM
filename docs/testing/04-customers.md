@@ -253,8 +253,10 @@ depend on that are flagged.
   retained fields" asserts the create and update payloads and the edit-form reload from a stored
   record, with a mocked API. Persistence of a cleared field is asserted at the API level by
   `tests/customer_clear_fields_integration_test.go` (`TestCustomerUpdateClearsOptionalTextFields`)
-  and, for Website, by `tests/customer_website_integration_test.go`. The browser half (including
-  the persistence check after a reload) is planned in `gocrm-ui/e2e/tests/admin-customers.spec.ts`
+  and, for Website, by `tests/customer_website_integration_test.go`. In the browser, the reload
+  check for Notes and City is `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin clears the
+  notes and city of a customer and they stay empty after a reload" (TC-CUST-018); the rest of
+  the browser half (the absent controls, the other cleared fields) is planned in the same spec
 
 ### TC-CUST-012a — Website persists through both creation paths and can be cleared
 - **Priority:** P1
@@ -351,14 +353,14 @@ depend on that are flagged.
   sales user may clear a field; a support user's `PUT` answers 403 and changes nothing.
 - **Known issue (fixed, #270):** The handler applied each text field only `if req.X != ""`, so a
   cleared field came back on reload with no indication that the clearing was ignored. The lead
-  update has the same defect and is still open (`docs/ROADMAP.md`).
-- **Automation:** API half automated — `tests/customer_clear_fields_integration_test.go`
+  update had the same defect, fixed in #398 (TC-LEAD-017 in 03-leads.md).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin clears the notes and city of a customer and they stay empty after a reload".
+  API: `tests/customer_clear_fields_integration_test.go`
   (`TestCustomerUpdateClearsOptionalTextFields`, `TestCustomerUpdateOmittedOrNullFieldsUnchanged`,
   `TestCustomerUpdateEmptyRequiredFieldsUnchanged`, `TestCustomerUpdateClearRoles`: SQLite, the
   routes of `SetupCustomerRoutes` behind the real JWT middleware, every value read back from the
   database), with the handler unit roots `TestCustomerHandlerUpdateClearsOptionalFields` and
-  `TestCustomerHandlerUpdateKeepsOmittedOrNull` (`internal/handler/customer_clear_fields_test.go`).
-  Browser half planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
+  `TestCustomerHandlerUpdateKeepsOmittedOrNull` (`internal/handler/customer_clear_fields_test.go`)
 
 ### TC-CUST-019 — Support user cannot update a customer
 - **Priority:** P0

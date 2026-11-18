@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -23,7 +23,7 @@ blocked.
 |---|---|---|---|---|---|---|---|---|
 | [01-authentication.md](01-authentication.md) | Login, registration, sessions, lockout, password reset, registration switch | 53 | 17 | 21 | 15 | 32 | 19 | 2 |
 | [02-dashboard.md](02-dashboard.md) | Stats, quick actions, charts, activity widgets, deal widgets | 43 | 12 | 18 | 13 | 3 | 31 | 9 |
-| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, CSV export, conversion, bulk status, owner validation and assignment | 73 | 18 | 40 | 15 | 38 | 27 | 8 |
+| [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, CSV export, conversion, bulk status, owner validation and assignment | 77 | 18 | 43 | 16 | 43 | 26 | 8 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer, external identity mappings | 53 | 20 | 20 | 13 | 26 | 18 | 9 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets, SLA fields, server-side status/priority filters | 64 | 29 | 25 | 10 | 21 | 40 | 3 |
 | [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 11 | 28 | 10 |
@@ -36,7 +36,7 @@ blocked.
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output | 58 | 34 | 22 | 2 | 57 | 1 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **710** | **251** | **310** | **149** | **311** | **316** | **83** |
+| **Total** | | **714** | **251** | **313** | **150** | **316** | **315** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

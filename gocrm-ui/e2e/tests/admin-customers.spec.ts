@@ -139,6 +139,64 @@ test.describe('Admin - Customers Management', () => {
     expect(response.status()).toBe(201);
   });
 
+  // TC-CUST-018, browser half (#270, #398): an emptied optional text field is
+  // sent as "" and the API stores it. Phone is required by the form, so the
+  // test clears Notes and City.
+  test('admin clears the notes and city of a customer and they stay empty after a reload', async ({ page }) => {
+    // The 30 s waits after each navigation need more than the default test timeout.
+    test.setTimeout(120000);
+    const company = `E2E Clear ${Date.now()}`;
+    const data = {
+      ...generateCustomerData(),
+      companyName: company,
+      phone: '555-0100',
+      city: 'Cluj-Napoca',
+      notes: 'Clear me: met at the fair.',
+    };
+
+    await customersPage.goto();
+    await customersPage.clickNewCustomer();
+    await customersPage.fillCustomerForm(data);
+    const created = await customersPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
+    const customerId = (await created.json())?.data?.id;
+    expect(customerId).toBeTruthy();
+
+    // The edit form is filled by a reset once the customer query resolves,
+    // so wait for the stored values before touching the fields.
+    await page.goto(`/customers/${customerId}/edit`);
+    await expect(customersPage.companyNameInput).toHaveValue(company, { timeout: 30000 });
+    await expect(customersPage.cityInput).toHaveValue(data.city);
+    await expect(customersPage.notesTextarea).toHaveValue(data.notes);
+
+    await customersPage.cityInput.clear();
+    await customersPage.notesTextarea.clear();
+
+    const updatePromise = page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith(`/customers/${customerId}`) &&
+        response.request().method() === 'PUT'
+    );
+    await customersPage.saveButton.click();
+    const updated = await updatePromise;
+    expect(updated.status()).toBe(200);
+    const sent = updated.request().postDataJSON();
+    expect(sent.city).toBe('');
+    expect(sent.notes).toBe('');
+    await page.waitForURL(/\/customers(?!.*edit)/, { timeout: 30000 });
+
+    // Open the edit form again and reload it, so the values come from the
+    // server. The inputs are briefly empty before the reset: the unique
+    // company and the email prove the stored customer is on screen before
+    // the two cleared fields are judged.
+    await page.goto(`/customers/${customerId}/edit`);
+    await page.reload();
+    await expect(customersPage.companyNameInput).toHaveValue(company, { timeout: 30000 });
+    await expect(customersPage.emailInput).toHaveValue(data.email);
+    await expect(customersPage.cityInput).toHaveValue('');
+    await expect(customersPage.notesTextarea).toHaveValue('');
+  });
+
   test('admin can handle duplicate customer email validation', async ({ page }) => {
     const data = generateCustomerData();
 
