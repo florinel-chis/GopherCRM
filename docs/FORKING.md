@@ -51,9 +51,10 @@ Checked by searching the tracked tree on `4dfe404`:
 - Outbound webhooks cover only `lead.created`, `customer.created` and `ticket.created` (#345, the
   first cut of #232): no update, delete or other events, and no web UI for the registry yet.
 - No MCP server.
-- API keys have no scopes: a key acts with its owner's full role (`internal/models/apikey.go`
-  holds only name, hash, prefix, owner, expiry and an active flag). Least-privilege credentials
-  are #211.
+- API keys have no scopes of their own (`internal/models/apikey.go` holds only name, hash,
+  prefix, owner, expiry and an active flag): a key acts with its owner's current permissions. A
+  least-privilege credential is a dedicated user on a custom role, see
+  [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 - No ticket channel and no inbound mail (`internal/models/ticket.go`). Every ticket is created
   through the API or the UI. Outbound ticket replies by email shipped in #219: a staff comment sent
   with `email_customer: true` is mailed once to the ticket's customer and its outcome recorded in
@@ -95,7 +96,7 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:1638`). Everything under `[Unreleased]`
+The latest release is 1.2.0 (`CHANGELOG.md:1648`). Everything under `[Unreleased]`
 (`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
@@ -190,8 +191,9 @@ KEY=$(curl -s -X POST http://localhost:8080/api/v1/api-keys \
 curl -s http://localhost:8080/api/v1/leads -H "Authorization: ApiKey $KEY"
 ```
 
-The plaintext key (prefix `gcrm_`) is returned once. Remember that it carries its owner's full
-role (#211).
+The plaintext key (prefix `gcrm_`) is returned once. It acts with its owner's permissions, so a
+key for an integration belongs to a dedicated user on a custom role:
+[Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 
 ### 2.5 Is my clone healthy?
 

@@ -432,10 +432,14 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
     "https://crm.example.com/api/v1/leads?offset=0&limit=20"
   ```
 
-  A key acts with its user's full role; keys have no scopes (`internal/models/apikey.go`, #211).
-  A support identity sees only tickets assigned to it, and a sales identity gets 403 on ticket
-  create (`internal/handler/ticket_handler.go:88,195`), so one identity that does both must be an
-  admin. The lead external-id lookup is not routed (#215).
+  A key has no scopes of its own (`internal/models/apikey.go`): it acts with the permissions its
+  user holds at each request. Put the integration's user on a custom role that holds only the
+  keys it needs, for example `customers.create` and `tickets.create` for an intake that creates
+  both; the setup, the keys per case, rotation and revocation are in
+  [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user). A key of a
+  system-role user is bound by that role: a support identity sees only tickets assigned to it,
+  and a sales identity gets 403 on ticket create (`internal/handler/ticket_handler.go:167`). The
+  lead external-id lookup is not routed (#215).
 - **Export.** Copy `ListAllForExport`: one ordered statement with a total order, filtered and
   sorted through the allowlist; never `FindInBatches` with a non-id order.
 
@@ -484,7 +488,8 @@ Recipe:
 **A permission** (one more route for an existing role) is the same recipe in small: change the
 guard, add the denied-role and allowed-role tests, and change the matching frontend guard. There is
 no permission matrix as data; a fork that needs several new roles should consider building one.
-A least-privilege integration role is tracked in #211.
+A role for an integration needs no code: it is a custom role created through `POST /roles`, see
+[Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 
 ## 11. Removing a module safely
 
