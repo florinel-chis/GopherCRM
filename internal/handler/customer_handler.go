@@ -9,6 +9,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -164,10 +165,8 @@ var customerExportColumns = []string{
 func (h *CustomerHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Create")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin and sales users can create customers
-	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
+	if !hasPermission(c, permissions.CustomersCreate) {
 		utils.RespondForbidden(c, "Insufficient permissions to create customers")
 		return
 	}
@@ -246,12 +245,8 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 func (h *CustomerHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.List")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin, sales, and support users can list customers
-	if currentUserRole != string(models.RoleAdmin) &&
-		currentUserRole != string(models.RoleSales) &&
-		currentUserRole != string(models.RoleSupport) {
+	if !hasPermission(c, permissions.CustomersView) {
 		utils.RespondForbidden(c, "Insufficient permissions to list customers")
 		return
 	}
@@ -335,12 +330,8 @@ func (h *CustomerHandler) List(c *gin.Context) {
 func (h *CustomerHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Get")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin, sales, and support users can get customers
-	if currentUserRole != string(models.RoleAdmin) &&
-		currentUserRole != string(models.RoleSales) &&
-		currentUserRole != string(models.RoleSupport) {
+	if !hasPermission(c, permissions.CustomersView) {
 		utils.RespondForbidden(c, "Insufficient permissions to view customers")
 		return
 	}
@@ -392,10 +383,8 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 func (h *CustomerHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Update")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin and sales users can update customers
-	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
+	if !hasPermission(c, permissions.CustomersUpdate) {
 		utils.RespondForbidden(c, "Insufficient permissions to update customers")
 		return
 	}
@@ -515,10 +504,8 @@ func applyOptionalText(stored *string, sent *string) {
 func (h *CustomerHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Delete")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can delete customers
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.CustomersDelete) {
 		utils.RespondForbidden(c, "Only administrators can delete customers")
 		return
 	}
@@ -582,9 +569,9 @@ var customerSortColumns = map[string]bool{
 func (h *CustomerHandler) Export(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Export")
 
-	// Belt and braces with the route-level RequireRole(admin) guard. A bulk PII
-	// download is the last endpoint that should depend on a single check.
-	if c.GetString("user_role") != string(models.RoleAdmin) {
+	// Belt and braces with the route-level customers.export permission guard.
+	// A bulk PII download is the last endpoint that should depend on a single check.
+	if !hasPermission(c, permissions.CustomersExport) {
 		utils.RespondForbidden(c, "Only administrators can export customers")
 		return
 	}
@@ -728,10 +715,8 @@ func isNumericLike(value string) bool {
 func (h *CustomerHandler) Assign(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "CustomerHandler.Assign")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin and sales users can assign customers
-	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSales) {
+	if !hasPermission(c, permissions.CustomersAssign) {
 		utils.RespondForbidden(c, "Insufficient permissions to assign customers")
 		return
 	}

@@ -235,7 +235,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Set Status to "Resolved".
   3. Submit and open the new ticket's detail page.
 - **Expected:** The request body does contain `"status":"resolved"`, but the created ticket comes
-  back and renders as **Open**. `CreateTicketRequest` (`ticket_handler.go:28`) has no `Status`
+  back and renders as **Open**. `CreateTicketRequest` (`ticket_handler.go:29`) has no `Status`
   field, and the handler hard-codes `Status: models.TicketStatusOpen`.
 - **Known issue:** The form offers a control that cannot take effect; the only way to reach a
   non-open status is a follow-up edit. Not recorded in FEATURES.md row 5.2.
@@ -952,7 +952,7 @@ therefore API-level, driven from a Playwright `request` context with a UI verifi
 - **Expected:** **403** in all four calls — "Sales users cannot update tickets" and "Customers
   cannot update tickets" respectively. The malformed body still yields 403, not 400: the handler
   checks the role before `ShouldBindJSON` so an unauthorized caller learns nothing about payload
-  shape (`bulk_handler.go:447-457`). No ticket changes status.
+  shape (`bulk_handler.go:None-None`). No ticket changes status.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-bulk-status.spec.ts` (new)
 
 ### TC-TICK-046 — Support bulk update names the tickets it may not touch

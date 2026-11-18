@@ -1491,28 +1491,26 @@ func TestRouteMatrixGoldenProvenance(t *testing.T) {
 	assert.Equal(t, routeMatrixBaseCommit, loadRouteMatrixGolden(t).BaseCommit, "base_commit is the constant the generator stamps")
 	assert.Equal(t, routeMatrixGenerator, loadRouteMatrixGolden(t).Generator)
 
-	// tree lays out a copy of the real route files under a temp directory,
-	// with one extra line appended to routes.go.
+	// tree lays out guard-free stand-ins for the route files under a temp
+	// directory, with one extra line appended to routes.go. The real files
+	// carry permission guards since #347, so a copy of them could no longer
+	// show the guard-free case.
 	tree := func(t *testing.T, extra string) string {
 		t.Helper()
 		root := t.TempDir()
-		real, err := routeMatrixGuardFiles("..")
-		require.NoError(t, err)
-		for _, file := range real {
-			rel, err := filepath.Rel("..", file)
-			require.NoError(t, err)
-			raw, err := os.ReadFile(file)
-			require.NoError(t, err)
-			if filepath.Base(file) == "routes.go" {
-				raw = append(raw, []byte(extra)...)
-			}
-			target := filepath.Join(root, rel)
+		write := func(rel, content string) {
+			t.Helper()
+			target := filepath.Join(root, filepath.FromSlash(rel))
 			require.NoError(t, os.MkdirAll(filepath.Dir(target), 0o755))
-			require.NoError(t, os.WriteFile(target, raw, 0o644))
+			require.NoError(t, os.WriteFile(target, []byte(content), 0o644))
 		}
+		write("cmd/main.go", "package main\n\nfunc main() {}\n")
+		for _, name := range []string{"aeo_routes.go", "form_public_routes.go", "form_routes.go"} {
+			write("internal/handler/"+name, "package handler\n")
+		}
+		write("internal/handler/routes.go", "package handler\n"+extra)
 		// A test file the glob matches: a guard named there must not count.
-		require.NoError(t, os.WriteFile(filepath.Join(root, "internal", "handler", "routes_test.go"),
-			[]byte("package handler\n\n// middleware.RequirePermission(\"leads.view\")\n"), 0o644))
+		write("internal/handler/routes_test.go", "package handler\n\n// middleware.RequirePermission(\"leads.view\")\n")
 		return root
 	}
 	file := matrixFile{BaseCommit: routeMatrixBaseCommit, Generator: routeMatrixGenerator}

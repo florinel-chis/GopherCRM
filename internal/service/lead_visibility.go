@@ -5,6 +5,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
 
@@ -12,6 +13,11 @@ import (
 type LeadViewer struct {
 	UserID uint
 	Role   models.UserRole
+	// TaskScope, when set, is the scope the caller holds tasks.view at. Only
+	// TaskService.ListByDeal reads it, and only for a custom-role caller,
+	// whose deal visibility (Role) and task visibility are separate
+	// permissions; empty means "as Role says", which is every system role.
+	TaskScope models.PermissionScope
 }
 
 // CanViewLead is the one lead-visibility policy. It decides every association
@@ -108,9 +114,18 @@ func checkLeadLink(leadRepo repository.LeadRepository, userRepo repository.UserR
 	return lead, nil
 }
 
-// leadViewerOf loads the acting user. No actor (id 0) and an unknown one are
-// a viewer without a role, which sees no lead.
+// leadViewerOf loads the acting user as the lead-visibility policy sees it.
+// No actor (id 0) and an unknown one are a viewer without a role, which sees
+// no lead.
 func leadViewerOf(userRepo repository.UserRepository, actorID uint) (LeadViewer, error) {
+	return viewerOf(userRepo, actorID, permissions.LeadsView)
+}
+
+// viewerOf loads the acting user and answers with the viewer one permission
+// key gives it: a system role as it is, a custom role by the scope its stored
+// permissions hold the key at (permissions.RoleForCall). An actor that does
+// not hold the key is a viewer without a role, which sees nothing.
+func viewerOf(userRepo repository.UserRepository, actorID uint, key string) (LeadViewer, error) {
 	if actorID == 0 {
 		return LeadViewer{}, nil
 	}
@@ -121,5 +136,9 @@ func leadViewerOf(userRepo repository.UserRepository, actorID uint) (LeadViewer,
 		}
 		return LeadViewer{}, err
 	}
-	return LeadViewer{UserID: actor.ID, Role: actor.Role}, nil
+	role, err := permissions.RoleForCall(key, permissions.ForUser(actor), string(actor.Role))
+	if err != nil {
+		return LeadViewer{UserID: actor.ID}, nil
+	}
+	return LeadViewer{UserID: actor.ID, Role: role}, nil
 }

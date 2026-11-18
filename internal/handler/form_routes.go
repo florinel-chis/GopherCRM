@@ -2,7 +2,7 @@ package handler
 
 import (
 	"github.com/florinel-chis/gophercrm/internal/middleware"
-	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,17 +20,17 @@ import (
 // reason; support may read the attention list, retrying is admin and sales.
 func SetupFormRoutes(router *gin.RouterGroup, h *FormHandler) {
 	group := router.Group("/forms")
-	group.Use(middleware.RequireRole(models.RoleAdmin, models.RoleSales, models.RoleSupport))
-	write := middleware.RequireRole(models.RoleAdmin, models.RoleSales)
+	group.Use(middleware.RequireAnyPermission(permissions.GroupKeys("forms")...))
+	write := middleware.RequirePermission(permissions.FormsManage)
 	{
-		group.GET("", h.List)
+		group.GET("", middleware.RequirePermission(permissions.FormsView), h.List)
 		group.POST("", write, h.Create)
 		group.GET("/deliveries", h.ListDeliveries)
 		group.POST("/deliveries/:id/retry", write, h.RetryDelivery)
-		group.GET("/submissions/:id", h.GetSubmission)
+		group.GET("/submissions/:id", middleware.RequirePermission(permissions.FormsView), h.GetSubmission)
 		group.GET("/:id", h.Get)
 		group.PUT("/:id", write, h.Update)
-		group.DELETE("/:id", middleware.RequireRole(models.RoleAdmin), h.Delete)
-		group.GET("/:id/submissions", h.ListSubmissions)
+		group.DELETE("/:id", middleware.RequirePermission(permissions.FormsDelete), h.Delete)
+		group.GET("/:id/submissions", middleware.RequirePermission(permissions.FormsView), h.ListSubmissions)
 	}
 }

@@ -421,7 +421,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	quoteHandler := handler.NewQuoteHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
-	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService)
+	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
+		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(models.DB)))
 	bulkHandler := handler.NewBulkHandler(bulkService)
 	aeoHandler := handler.NewAEOHandler(aeoService)
 	formHandler := handler.NewFormHandler(formService)

@@ -32,6 +32,24 @@ func (_m *QuoteService) Create(quote *models.Quote, actorID uint, role models.Us
 	return r0
 }
 
+// CreateWithPolicy provides a mock function with given fields: quote, actorID, policy
+func (_m *QuoteService) CreateWithPolicy(quote *models.Quote, actorID uint, policy models.QuoteCreatePolicy) error {
+	ret := _m.Called(quote, actorID, policy)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateWithPolicy")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(*models.Quote, uint, models.QuoteCreatePolicy) error); ok {
+		r0 = rf(quote, actorID, policy)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // GetByID provides a mock function with given fields: id
 func (_m *QuoteService) GetByID(id uint) (*models.Quote, error) {
 	ret := _m.Called(id)

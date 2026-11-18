@@ -6,6 +6,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -349,7 +350,7 @@ func (s *customerService) Assign(customerID, userID uint) (*models.Customer, err
 		return nil, fmt.Errorf("cannot assign customer to inactive user: %w", apperrors.ErrInactiveUser)
 	}
 
-	if assignee.Role != models.RoleSales && assignee.Role != models.RoleAdmin {
+	if !permissions.ForUser(assignee).Has(permissions.AssignmentCustomerAssignee) {
 		logger.WithField("assignee_role", assignee.Role).Warn("Invalid assignee role")
 		return nil, fmt.Errorf("customers can only be assigned to sales or admin users: %w", apperrors.ErrInvalidCustomerAssignee)
 	}

@@ -72,12 +72,12 @@ the in-handler role checks (API gate). It is the specification the cases in this
 | `/login`, `/register`, `/unauthorized` | none (public) | — | — |
 | `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`routes.go:105`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
 | `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `requiredRole=['admin','sales']` (pathless layout, #120) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
-| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:252`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/customers`, `/customers/:id`, `/customers/:id/edit` | authenticated only | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:249`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
 | `/customers/new` | `requiredRole=['admin','sales']` (shares the lead guard, #120) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
-| `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:135`, `:354`) — sales reads, read-only |
-| `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:69`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
-| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:236`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:209`); `/configurations` is admin except `/configurations/ui` |
+| `/tickets`, `/tickets/:id` | authenticated only | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
+| `/tickets/new`, `/tickets/:id/edit` | `requiredRole=['admin','support']` (`routes/index.tsx:81`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
+| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | authenticated only | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `requiredRole='admin'` (`routes/index.tsx:118`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:235`); `/configurations` is admin except `/configurations/ui` |
 | `/settings/profile`, `/settings/api-keys` | authenticated only | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
 
@@ -150,7 +150,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   loaded and no `GET /api/v1/users` request is issued. Issuing that request directly from an
   `APIRequestContext` with the sales token returns **403** with
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
-  (`internal/middleware/auth.go:64`).
+  (`internal/middleware/auth.go:68`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
 
 ### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
@@ -163,7 +163,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   2. Click it.
   3. Open the first ticket.
 - **Expected:** Both pages render and `GET /api/v1/tickets` and `GET /api/v1/tickets/:id` return
-  **200** — the ticket handler rejects only the `customer` role (`ticket_handler.go:135`, `:354`).
+  **200** — the ticket handler rejects only the `customer` role (`ticket_handler.go:136`, `:354`).
   The **Create Ticket** button is absent and the row Edit/Delete icons are absent (`TicketList`
   `canCreate`/`canEdit`/`canDelete`). Nav gating and API gating agree since #241: `MainLayout`
   lists the Tickets entry for `['admin','sales','support']`.
@@ -176,7 +176,7 @@ every authenticated role; the refusal happens at the API and is not surfaced.
 - **Steps:** Navigate to `/tickets/new`, then to `/tickets/<id>/edit`.
 - **Expected:** Both land on `/unauthorized` — the pathless layout route at `routes/index.tsx:80-95`
   wraps both children in `requiredRole={['admin','support']}`. A direct
-  `PUT /api/v1/tickets/<id>` with the sales token returns **403** (`ticket_handler.go:416`).
+  `PUT /api/v1/tickets/<id>` with the sales token returns **403** (`ticket_handler.go:415`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-008 — Support opens /leads and gets an empty table instead of a refusal
@@ -205,9 +205,9 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   2. Fill the form from `generateTicketData()` and save.
   3. Return to `/tickets` and inspect the row actions for the new ticket.
 - **Expected:** `/tickets/new` renders (support is in the SPA guard list) and
-  `POST /api/v1/tickets` returns **201** (`ticket_handler.go:69`). Back on the list, the Delete icon
+  `POST /api/v1/tickets` returns **201** (`ticket_handler.go:70`). Back on the list, the Delete icon
   is not rendered for support (`TicketList` `canDelete` is admin-only) and a direct
-  `DELETE /api/v1/tickets/:id` with the support token returns **403** (`ticket_handler.go:511`).
+  `DELETE /api/v1/tickets/:id` with the support token returns **403** (`ticket_handler.go:508`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-010 — Customer sees a three-item sidebar
@@ -228,8 +228,8 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   exist.
 - **Steps:** Navigate to `/customers`, then `/tickets`, then `/tickets/new`.
 - **Expected:** `/customers` and `/tickets` both render their page shells with an empty table;
-  `GET /api/v1/customers` returns **403** (`customer_handler.go:252`) and `GET /api/v1/tickets`
-  returns **403** (`ticket_handler.go:135`). `/tickets/new` is the only one that is properly
+  `GET /api/v1/customers` returns **403** (`customer_handler.go:249`) and `GET /api/v1/tickets`
+  returns **403** (`ticket_handler.go:136`). `/tickets/new` is the only one that is properly
   refused: it redirects to `/unauthorized`.
 - **Known issue:** Read routes for other people's business data are gated only by the API; the SPA
   shows a page that looks like an empty account rather than a refusal. Same root cause as
@@ -245,9 +245,9 @@ every authenticated role; the refusal happens at the API and is not surfaced.
   1. Open **Tasks** from the sidebar.
   2. Click **New Task** (or navigate to `/tasks/new`), fill the form and save.
 - **Expected:** `GET /api/v1/tasks` returns **200** but only with tasks assigned to this user —
-  `task_handler.go:236` gives the full list to admins and the caller's own tasks to everyone else.
+  `task_handler.go:241` gives the full list to admins and the caller's own tasks to everyone else.
   The `/tasks/new` route renders (no SPA gate), but `POST /api/v1/tasks` returns **403**
-  (`task_handler.go:73`, which admits only admin, support and sales) and the form surfaces the
+  (`task_handler.go:74`, which admits only admin, support and sales) and the form surfaces the
   failure without navigating away.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
@@ -575,7 +575,7 @@ into a sign-out test.
   3. Change **Rows per page** to 25.
 - **Expected:** The default is 10 rows (`LeadList` `filters.limit = 10`) and the select offers
   exactly 5, 10, 25, 50 (`DataTable` `rowsPerPageOptions`). Page 2 issues `?page=2&limit=10`; the
-  handler converts it with `offset = (page-1) * limit` (`lead_handler.go:181`). Changing the page
+  handler converts it with `offset = (page-1) * limit` (`lead_handler.go:182`). Changing the page
   size issues `?page=1&limit=25` — the page index is explicitly reset — and the footer reads
   `1-25 of N`. The same behaviour holds on `/customers`, `/tickets`, `/tasks` and `/users`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -612,11 +612,11 @@ into a sign-out test.
   2. `GET /api/v1/leads?sort_by=password;DROP TABLE leads&sort_order=desc`.
   3. `GET /api/v1/leads?sort_by=created_at&sort_order=sideways`.
 - **Expected:** All three return **200**. The unknown column is blanked (`sortBy = ""` at
-  `lead_handler.go:201`) and the query falls back to the repository default ordering — there is no
+  `lead_handler.go:202`) and the query falls back to the repository default ordering — there is no
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
-  is in `ticket_handler.go:161`, `task_handler.go:222`, `user_handler.go:142` and
-  `customer_handler.go:279`; the deeper `utils.ValidateSort` allowlist
+  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:168` and
+  `customer_handler.go:274`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
 
@@ -650,7 +650,7 @@ into a sign-out test.
   in the pagination footer are **unchanged**. Verified live: `GET /leads?limit=5&status=new` returns
   the same `total=71` and the same first row (status `contacted`) as the unfiltered call, and
   `GET /users?limit=5&role=admin` returns non-admin users. The one dropdown that does work is the
-  lead **Classification** filter, which `lead_handler.go:178` reads — and only when `search` is empty
+  lead **Classification** filter, which `lead_handler.go:179` reads — and only when `search` is empty
   and the caller is an admin, because the search branch is evaluated first and sales users are routed
   to `GetByOwner` before either is considered.
 - **Known issue:** FEATURES 3.8, 6.5 and 7.8 and gap G34 describe these as *client-side filters
@@ -768,7 +768,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:347`) — not a 403.
+  account" (`user_handler.go:374`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4

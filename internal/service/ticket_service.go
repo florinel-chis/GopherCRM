@@ -8,6 +8,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -143,7 +144,7 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 			return fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
 		// Only support and admin users can be assigned tickets
-		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
+		if !permissions.ForUser(assignee).Has(permissions.AssignmentTicketAssignee) {
 			logger.Warn("Invalid assignee role")
 			return fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}
@@ -345,7 +346,7 @@ func checkTicketUpdate(logger *logrus.Entry, existing, ticket *models.Ticket, us
 			logger.WithError(utils.LogError(err)).Warn("Assignee not found")
 			return nil, fmt.Errorf("assignee not found: %w", apperrors.ErrAssigneeNotFound)
 		}
-		if assignee.Role != models.RoleSupport && assignee.Role != models.RoleAdmin {
+		if !permissions.ForUser(assignee).Has(permissions.AssignmentTicketAssignee) {
 			logger.Warn("Invalid assignee role")
 			return nil, fmt.Errorf("tickets can only be assigned to support or admin users: %w", apperrors.ErrInvalidAssigneeRole)
 		}

@@ -9,6 +9,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -202,10 +203,9 @@ func (h *DealHandler) Create(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 	if req.OwnerID != nil {
 		// Only admins hand a deal to somebody else; the owner rule of leads.
-		if currentUserRole != string(models.RoleAdmin) && *req.OwnerID != currentUserID {
+		if !hasPermission(c, permissions.DealsAssignOwner) && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign deals to yourself")
 			return
 		}
@@ -301,7 +301,7 @@ func (h *DealHandler) List(c *gin.Context) {
 		return
 	}
 	// Sales users only ever see their own deals, as on GET /leads.
-	if c.GetString("user_role") != string(models.RoleAdmin) {
+	if !hasPermissionOnAll(c, permissions.DealsView) {
 		userID := c.GetUint("user_id")
 		filter.OwnerID = &userID
 	}
@@ -347,7 +347,12 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 	}
 
 	// The service narrows a sales caller to itself, as the list does.
-	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), models.UserRole(c.GetString("user_role")))
+	role, ok := callRole(c, permissions.DealsView)
+	if !ok {
+		utils.RespondForbidden(c, "Insufficient permissions")
+		return
+	}
+	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), role)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return
@@ -376,7 +381,7 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 func (h *DealHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.Get")
 
-	deal, ok := h.loadVisible(c, logger)
+	deal, ok := h.loadVisible(c, logger, permissions.DealsView)
 	if !ok {
 		return
 	}
@@ -421,15 +426,14 @@ func (h *DealHandler) Update(c *gin.Context) {
 		return
 	}
 
-	deal, ok := h.loadVisible(c, logger)
+	deal, ok := h.loadVisible(c, logger, permissions.DealsUpdate)
 	if !ok {
 		return
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 	if req.OwnerID != nil {
-		if currentUserRole != string(models.RoleAdmin) && *req.OwnerID != currentUserID {
+		if !hasPermission(c, permissions.DealsAssignOwner) && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign deals to yourself")
 			return
 		}
@@ -491,7 +495,7 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 		return
 	}
 
-	deal, ok := h.loadVisible(c, logger)
+	deal, ok := h.loadVisible(c, logger, permissions.DealsUpdate)
 	if !ok {
 		return
 	}
@@ -526,7 +530,7 @@ func (h *DealHandler) ChangeStage(c *gin.Context) {
 func (h *DealHandler) History(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DealHandler.History")
 
-	deal, ok := h.loadVisible(c, logger)
+	deal, ok := h.loadVisible(c, logger, permissions.DealsView)
 	if !ok {
 		return
 	}
@@ -670,10 +674,10 @@ func (h *DealHandler) ListByCustomer(c *gin.Context) {
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deals, pageMeta(c, offset, limit, total))
 }
 
-// ownerScope is the owner filter a list gets from the caller's role: none for
-// an admin, the caller itself for everybody else.
+// ownerScope is the owner filter a list gets from the caller's deals.view
+// scope: none at scope all (an admin), the caller itself for everybody else.
 func (h *DealHandler) ownerScope(c *gin.Context) *uint {
-	if c.GetString("user_role") == string(models.RoleAdmin) {
+	if hasPermissionOnAll(c, permissions.DealsView) {
 		return nil
 	}
 	userID := c.GetUint("user_id")
@@ -682,9 +686,11 @@ func (h *DealHandler) ownerScope(c *gin.Context) *uint {
 
 // loadVisible parses :id, loads the deal and applies the visibility rule of
 // leads: a sales user may only see its own deals, and somebody else's is a
-// 403, not a 404 — the same answer GET /leads/:id gives. It has responded
+// 403, not a 404 — the same answer GET /leads/:id gives. key is the
+// permission the route acts under (deals.view or deals.update): only a caller
+// holding it at scope all reaches a deal it does not own. It has responded
 // when ok is false.
-func (h *DealHandler) loadVisible(c *gin.Context, logger *logrus.Entry) (*models.Deal, bool) {
+func (h *DealHandler) loadVisible(c *gin.Context, logger *logrus.Entry, key string) (*models.Deal, bool) {
 	id, ok := pathID(c, "Invalid deal ID")
 	if !ok {
 		return nil, false
@@ -696,7 +702,7 @@ func (h *DealHandler) loadVisible(c *gin.Context, logger *logrus.Entry) (*models
 		return nil, false
 	}
 
-	if c.GetString("user_role") != string(models.RoleAdmin) && deal.OwnerID != c.GetUint("user_id") {
+	if !hasPermissionOnAll(c, key) && deal.OwnerID != c.GetUint("user_id") {
 		utils.RespondForbidden(c, "You can only view your own deals")
 		return nil, false
 	}

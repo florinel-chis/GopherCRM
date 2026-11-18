@@ -18,7 +18,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 
 | Rule | Where it lives | Long form |
 |---|---|---|
-| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:582,617`), the lead CSV export (`lead_handler.go:915,968`), and deletes that answer an empty 204 (`customer_handler.go:547`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
+| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:569,617`), the lead CSV export (`lead_handler.go:914,968`), and deletes that answer an empty 204 (`customer_handler.go:534`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 459) |
 | Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:146`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
@@ -166,8 +166,8 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 ### 3.7 Routes and wiring
 
-- Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Put the role guard on the group with
-  `middleware.RequireRole(...)` and narrow individual routes where needed
+- Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Guard the group with
+  `middleware.RequirePermission(...)` and narrow individual routes where needed
   (`SetupProductRoutes`, `routes.go:99-107`: group admin+sales, writes admin).
 - In `cmd/main.go`, `setupDependencies` (line 257): construct the repository with `models.DB`
   (line 270), the service (line 314), the handler (line 378), and register the routes in the
@@ -298,7 +298,7 @@ schema). A root that skipped proves nothing.
   `internal/utils/secretbox.go`, blanked in responses, read only through `GetSecret`. The key derives
   from `API_KEY_SECRET` (falling back to `JWT_SECRET`); rotating it orphans stored secrets.
 - Everything in category `ui` reaches every authenticated user through `GET /configurations/ui`
-  (`GetUIConfigurations`, `internal/handler/configuration_handler.go:403`). Never put a sensitive
+  (`GetUIConfigurations`, `internal/handler/configuration_handler.go:394`). Never put a sensitive
   key there.
 - Ship the consumer and its test in the same change. A seeded setting nobody reads is a defect.
   To retire one, remove it from `DefaultConfigurations`, add its key to
@@ -317,7 +317,7 @@ origins (lines 49-55) and six step types (lines 58-65).
 
 1. Constant in `internal/models/automation.go`. `step_type` is `varchar(20)` (line 274), so keep the
    name short.
-2. Validation in `validateStep` (`internal/service/automation_validation.go:287`).
+2. Validation in `validateStep` (`internal/service/automation_validation.go:288`).
 3. Dry run in `AutomationEngine.DryRun` (`internal/service/automation_dry_run.go:17`).
 4. Execution in `planStep` (`internal/service/automation_engine.go:695`): build a `stepPlan` whose
    `effect` writes through the transaction-bound repositories, so it commits or rolls back with the
@@ -340,14 +340,14 @@ origins (lines 49-55) and six step types (lines 58-65).
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
    and `origin` are `varchar(20)` (lines 214-216, 310-315).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:70`;
+   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:71`;
    helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
    (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
    never turns into a run. That is the loop guard; keep it.
 4. Allow the trigger for its entity in `automationTriggerTypes`
-   (`internal/service/automation_validation.go:108`). `validateRule` refuses any trigger missing
-   from that map before `validateTrigger` runs (`automation_validation.go:143-152`), so without
+   (`internal/service/automation_validation.go:109`). `validateRule` refuses any trigger missing
+   from that map before `validateTrigger` runs (`automation_validation.go:144-153`), so without
    this step a rule on the new event cannot be saved.
 5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
    (`automation_engine.go`), the erasure cancel for that entity, and validation of values in
@@ -384,7 +384,7 @@ missing (see the roadmap).
 ## 7. Add a form field type
 
 Constant and `validateFieldType` in `internal/models/form.go:54-62,365`; submitted-value validation
-in `validateValues` (`internal/service/form_service.go:780`, called from `SubmitPublic` at line
+in `validateValues` (`internal/service/form_service.go:781`, called from `SubmitPublic` at line
 713); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
@@ -425,7 +425,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 
 - **Integration.** Create a dedicated user for each integration, issue an API key for it
   (`POST /api/v1/api-keys`) and send it as `Authorization: ApiKey <key>`
-  (`internal/middleware/auth.go:24-27`):
+  (`internal/middleware/auth.go:25-28`):
 
   ```bash
   curl -s -H "Authorization: ApiKey $GOPHERCRM_KEY" \
@@ -434,7 +434,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 
   A key acts with its user's full role; keys have no scopes (`internal/models/apikey.go`, #211).
   A support identity sees only tickets assigned to it, and a sales identity gets 403 on ticket
-  create (`internal/handler/ticket_handler.go:87,195`), so one identity that does both must be an
+  create (`internal/handler/ticket_handler.go:88,195`), so one identity that does both must be an
   admin. The lead external-id lookup is not routed (#215).
 - **Export.** Copy `ListAllForExport`: one ordered statement with a total order, filtered and
   sorted through the allowlist; never `FindInBatches` with a non-id order.
@@ -447,13 +447,17 @@ users out.
 Roles are a string type with four values (`internal/models/user.go:9-16`), and they are checked in
 several layers at once:
 
-- group and route guards: `middleware.RequireRole` in `internal/handler/routes.go`,
-  `aeo_routes.go`, `form_routes.go`;
-- checks inside handlers that compare the role string (tickets: `ticket_handler.go:87-416`);
+- group and route guards: `middleware.RequirePermission` and `RequireAnyPermission` in
+  `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go`; every protected route also needs
+  its entry in `permissions.RouteKeys` (`internal/permissions/routes.go`), or
+  `TestEveryRouteRequiresItsOwnKey` fails;
+- permission and scope checks inside handlers, all through `internal/handler/permission_context.go`
+  (tickets: `ticket_handler.go:88-415`); a system role is its matrix in
+  `internal/permissions/system_roles.go`;
 - service policies (`CanViewLead` and the redaction helpers, ticket and dashboard scoping, staff
   checks for automation assignees in `automation_validation.go`, `staffUserProblem`);
 - user management: the `oneof=admin sales support customer` binding in
-  `internal/handler/user_handler.go:28,35`; registration always creates `customer`;
+  `internal/handler/user_handler.go:29,35`; registration always creates `customer`;
 - the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,499` and
   `src/api/endpoints/users.ts:18,25`, `ProtectedRoute` guards in `src/routes/index.tsx`, and `roles`
   on nav entries in `MainLayout.tsx`.
@@ -468,8 +472,9 @@ Recipe:
 1. Write the access matrix first: every route and every visible record, for the new role.
 2. Write the visibility tests before the change, copying `internal/integration/`
    (`ticket_visibility_integration_test.go`, `lead_visibility_integration_test.go`). They must fail.
-3. Add the constant, then walk every hit of both greps above, plus raw `c.GetString("user_role")`
-   comparisons, and decide each one explicitly.
+3. Add the constant, then walk every hit of both greps above, plus the role's matrix in
+   `internal/permissions/system_roles.go` and the helpers of `permission_context.go` (handlers no
+   longer read `user_role` themselves), and decide each one explicitly.
 4. Extend the handler role tests and the frontend `ProtectedRoute` and nav tests
    (`src/routes/index.test.tsx`).
 5. Keep public registration creating `customer` only, and keep elevated roles coming only from

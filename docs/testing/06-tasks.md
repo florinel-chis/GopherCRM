@@ -71,7 +71,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Click the next-page arrow.
   3. Set "Rows per page" to 25.
-- **Expected:** Step 2 issues `GET /api/v1/tasks?page=2&limit=10`; step 3 issues `page=1&limit=25` (the handler converts `page` to an offset at `task_handler.go:205-207`). The footer count updates and no request is sent with `limit=0`.
+- **Expected:** Step 2 issues `GET /api/v1/tasks?page=2&limit=10`; step 3 issues `page=1&limit=25` (the handler converts `page` to an offset at `task_handler.go:211-213`). The footer count updates and no request is sent with `limit=0`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-004 — Switch to the calendar view
@@ -93,7 +93,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Log in as the support user.
   2. Navigate to `/tasks`.
-- **Expected:** `GET /api/v1/tasks` returns 200 but is narrowed to `GetByAssignee(currentUserID, …)` (`task_handler.go:236-237`). Only the support user's own task is listed; `total` counts only their tasks. The "Create Task" button and the per-row edit and delete icons are still rendered — the frontend applies no role gating on this page.
+- **Expected:** `GET /api/v1/tasks` returns 200 but is narrowed to `GetByAssignee(currentUserID, …)` (`task_handler.go:241-242`). Only the support user's own task is listed; `total` counts only their tasks. The "Create Task" button and the per-row edit and delete icons are still rendered — the frontend applies no role gating on this page.
 - **Automation:** blocked — needs a non-admin role-login helper; `e2e/helpers/admin-auth.ts` only handles the seeded admin
 
 ### TC-TASK-006 — Customer role can open the Tasks page
@@ -135,7 +135,7 @@ regression anchors, not endorsements.
   2. Fill Title, Description and Due Date; leave "Assign To (Optional)" untouched.
   3. Click "Create Task".
 - **Expected:** `assigned_to_id` is omitted from the request body, `POST /api/v1/tasks` returns **400**, the error snackbar reads "Failed to create task" and the browser stays on `/tasks/new`. No task is created.
-- **Known issue:** `CreateTaskRequest.AssignedToID` is `binding:"required"` (`internal/handler/task_handler.go:29`) while the field is labelled "Assign To (Optional)" (`TaskForm.tsx:216`) and typed `assigned_to?: number` (`api/endpoints/tasks.ts:19`). `e2e/screenshots/06-tasks.spec.ts` documents the same contradiction in a code comment. Consequently `admin-tasks.spec.ts` "admin can create a new task successfully" and "admin can create task with minimal required data" assert `201` while never selecting an assignee — those two tests cannot pass against the current backend.
+- **Known issue:** `CreateTaskRequest.AssignedToID` is `binding:"required"` (`internal/handler/task_handler.go:30`) while the field is labelled "Assign To (Optional)" (`TaskForm.tsx:216`) and typed `assigned_to?: number` (`api/endpoints/tasks.ts:19`). `e2e/screenshots/06-tasks.spec.ts` documents the same contradiction in a code comment. Consequently `admin-tasks.spec.ts` "admin can create a new task successfully" and "admin can create task with minimal required data" assert `201` while never selecting an assignee — those two tests cannot pass against the current backend.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; the two existing create tests need the assignee step added, and this case pins the 400)
 
 ### TC-TASK-009 — Title is required
@@ -167,7 +167,7 @@ regression anchors, not endorsements.
   2. Fill the form and set Status to "In Progress".
   3. Save, then open the new task's detail page.
 - **Expected:** `POST /api/v1/tasks` returns 201 and the created task's status is **`pending`**, not `in_progress`. The detail page shows a "Pending" chip and a "Start Task" button.
-- **Known issue:** `TaskHandler.Create` hard-codes `Status: models.TaskStatusPending` (`task_handler.go:100`) and ignores the request field, but the create form offers all four statuses (`TaskForm.tsx:186-190`) and `generateTaskData()` even randomises one. The field is decorative on create.
+- **Known issue:** `TaskHandler.Create` hard-codes `Status: models.TaskStatusPending` (`task_handler.go:101`) and ignores the request field, but the create form offers all four statuses (`TaskForm.tsx:186-190`) and `generateTaskData()` even randomises one. The field is decorative on create.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-012 — A due date in the past is accepted
@@ -201,7 +201,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks/new`.
   2. Open the "Assign To (Optional)" autocomplete.
   3. Fill Title and Due Date and click "Create Task".
-- **Expected:** `TaskForm` unconditionally issues `GET /api/v1/users?is_active=true` (`TaskForm.tsx:76-79`), which is admin-only (`routes.go:13`), so the request returns **403** and the autocomplete shows "No options". The submitted body has no `assigned_to_id`, so `POST /tasks` returns **400** with "Failed to create task". A sales or support user therefore cannot create a task through the UI at all, even though `TaskHandler.Create` explicitly permits both roles (`task_handler.go:73-76`).
+- **Expected:** `TaskForm` unconditionally issues `GET /api/v1/users?is_active=true` (`TaskForm.tsx:76-79`), which is admin-only (`routes.go:13`), so the request returns **403** and the autocomplete shows "No options". The submitted body has no `assigned_to_id`, so `POST /tasks` returns **400** with "Failed to create task". A sales or support user therefore cannot create a task through the UI at all, even though `TaskHandler.Create` explicitly permits both roles (`task_handler.go:74-77`).
 - **Known issue:** Not recorded in FEATURES.md row 6.2. The backend intends non-admins to self-assign; the form has no "assign to me" affordance.
 - **Automation:** blocked — needs a non-admin role-login helper
 
@@ -212,7 +212,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks` and click "Create Task" (the button is rendered for every role).
   2. Fill Title and Due Date and submit.
-- **Expected:** `POST /api/v1/tasks` returns **403** with the message "Only admin, support, and sales users can create tasks" (`task_handler.go:74`). The UI shows the generic "Failed to create task" snackbar — the server's message is not surfaced — and stays on `/tasks/new`.
+- **Expected:** `POST /api/v1/tasks` returns **403** with the message "Only admin, support, and sales users can create tasks" (`task_handler.go:75`). The UI shows the generic "Failed to create task" snackbar — the server's message is not surfaced — and stays on `/tasks/new`.
 - **Known issue:** The route is reachable and the button visible for a role the handler always refuses; the frontend applies no `requiredRole` to the `tasks/*` routes (`routes/index.tsx:97-111`).
 - **Automation:** blocked — needs a customer-role login helper
 
@@ -263,7 +263,7 @@ regression anchors, not endorsements.
   1. Open `/tasks/{id}/edit` for the task assigned to the support user.
   2. Change the Description only.
   3. Click "Update Task".
-- **Expected:** `PUT /api/v1/tasks/{id}` returns **200**, not 403, even when the body repeats the current `assigned_to_id`. `TaskHandler.Update` only treats an assignee change as a reassignment (`task_handler.go:523`).
+- **Expected:** `PUT /api/v1/tasks/{id}` returns **200**, not 403, even when the body repeats the current `assigned_to_id`. `TaskHandler.Update` only treats an assignee change as a reassignment (`task_handler.go:535`).
 - **Known issue:** This was G30 in the FEATURES.md Gap Summary — non-admins used to be 403'd for editing their own task. The Go regression test is `TestUpdateTask_NonAdminSameAssignee_Success`; there is no E2E equivalent.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; needs a non-admin role-login helper)
 
@@ -273,7 +273,7 @@ regression anchors, not endorsements.
 - **Preconditions:** Admin creates a support user plus a second user, and a task assigned to the support user; support user logged in.
 - **Steps:**
   1. Issue `PUT /api/v1/tasks/{id}` with `{"assigned_to_id": <other user id>}` using the authenticated request context.
-- **Expected:** **403** with "Only admins can reassign tasks" (`task_handler.go:525`). The stored assignee is unchanged.
+- **Expected:** **403** with "Only admins can reassign tasks" (`task_handler.go:537`). The stored assignee is unchanged.
 - **Known issue:** Not reproducible through the UI: the edit form's assignee autocomplete is empty for non-admins (TC-TASK-014), so this must be driven at the API level.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended, API-level via `request` fixture)
 
@@ -286,7 +286,7 @@ regression anchors, not endorsements.
   2. Open "Assign To (Optional)" and select the second user.
   3. Click "Update Task".
 - **Expected:** `PUT /api/v1/tasks/{id}` returns 200 and the stored `assigned_to_id` is the second user's id. The list still shows "Unassigned" in the Assigned To column (TC-TASK-002), so the change must be asserted on the response body, not on the table.
-- **Known issue:** The edit form does not pre-select the current assignee, because `TaskForm.tsx:119-121` reads `task.assignee`, a key the transform never populates. The autocomplete is blank when editing an assigned task, and leaving it blank sends no `assigned_to_id`, which the handler treats as "no reassignment" (`task_handler.go:523`) — so the assignee survives, by luck rather than design.
+- **Known issue:** The edit form does not pre-select the current assignee, because `TaskForm.tsx:119-121` reads `task.assignee`, a key the transform never populates. The autocomplete is blank when editing an assigned task, and leaving it blank sends no `assigned_to_id`, which the handler treats as "no reassignment" (`task_handler.go:535`) — so the assignee survives, by luck rather than design.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-022 — A completed task cannot be moved to another status
@@ -309,7 +309,7 @@ regression anchors, not endorsements.
   2. Clear the Description textarea.
   3. Click "Update Task", then open `/tasks/{id}`.
 - **Expected:** `PUT /api/v1/tasks/{id}` returns **200** with the success snackbar, but the description is unchanged — the detail page still shows the original text.
-- **Known issue:** `TaskHandler.Update` applies a field only when it is non-empty (`if req.Description != ""`, `task_handler.go:435-437`); the same applies to Title. There is no way to blank either field through the API. The UI reports success regardless.
+- **Known issue:** `TaskHandler.Update` applies a field only when it is non-empty (`if req.Description != ""`, `task_handler.go:443-445`); the same applies to Title. There is no way to blank either field through the API. The UI reports success regardless.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ### TC-TASK-024 — Mark a task complete from the list row menu
@@ -357,7 +357,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Click the delete icon on their own task and confirm.
-- **Expected:** The delete icon is rendered (the list passes `onDelete` unconditionally, `TaskList.tsx:414`). `DELETE /api/v1/tasks/{id}` returns **403** with "Only administrators can delete tasks" (`task_handler.go:580`) — the role check runs before the id is even parsed. The snackbar reads "Failed to delete task", the dialog stays open and the task survives.
+- **Expected:** The delete icon is rendered (the list passes `onDelete` unconditionally, `TaskList.tsx:414`). `DELETE /api/v1/tasks/{id}` returns **403** with "Only administrators can delete tasks" (`task_handler.go:591`) — the role check runs before the id is even parsed. The snackbar reads "Failed to delete task", the dialog stays open and the task survives.
 - **Known issue:** Frontend and backend disagree: the backend is admin-only, the UI offers the control to every role.
 - **Automation:** blocked — needs a non-admin role-login helper
 
@@ -384,7 +384,7 @@ regression anchors, not endorsements.
   2. Select Status = "Completed".
   3. Wait for the refetch and re-read the table.
 - **Expected:** A request goes out as `GET /api/v1/tasks?page=1&limit=10&status=completed`, returns 200, and the result set is **identical** to the unfiltered one: the same total and the same mix of Pending and Completed rows. The dropdown shows "Completed" but the table is unchanged.
-- **Known issue:** `TaskHandler.List` reads only `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search` (`task_handler.go:200-229`) — `status` is ignored server-side. Unlike the ticket list, `TaskList` also performs **no** client-side narrowing: it renders `data?.data` straight into `DataTable`, which does not filter (`TaskList.tsx:404`, `components/DataTable.tsx`). Confirmed live: `GET /tasks` and `GET /tasks?status=completed&priority=high` both return `total: 39` with mixed statuses. FEATURES.md row 6.5 and gap **G34** call this "client-side" filtering; that is inaccurate for tasks — no filtering happens anywhere. The spec "admin can filter tasks by status" asserted only `count >= 0`, which passes without checking that anything was filtered; since 2026-09-23 it is `test.fixme` until the filter works.
+- **Known issue:** `TaskHandler.List` reads only `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search` (`task_handler.go:206-234`) — `status` is ignored server-side. Unlike the ticket list, `TaskList` also performs **no** client-side narrowing: it renders `data?.data` straight into `DataTable`, which does not filter (`TaskList.tsx:404`, `components/DataTable.tsx`). Confirmed live: `GET /tasks` and `GET /tasks?status=completed&priority=high` both return `total: 39` with mixed statuses. FEATURES.md row 6.5 and gap **G34** call this "client-side" filtering; that is inaccurate for tasks — no filtering happens anywhere. The spec "admin can filter tasks by status" asserted only `count >= 0`, which passes without checking that anything was filtered; since 2026-09-23 it is `test.fixme` until the filter works.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended; the existing test must be strengthened to assert the no-op rather than a tautology)
 
 ### TC-TASK-030 — The Priority dropdown does not filter anything
@@ -420,7 +420,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Type the unique fragment into the "Search tasks..." field.
-- **Expected:** Each keystroke resets `page` to 1 and issues `GET /api/v1/tasks?…&search=<fragment>` (there is no debounce). The response contains the matching task and the table narrows to it. Search takes precedence over `sort_by` (`task_handler.go:238-242`).
+- **Expected:** Each keystroke resets `page` to 1 and issues `GET /api/v1/tasks?…&search=<fragment>` (there is no debounce). The response contains the matching task and the table narrows to it. Search takes precedence over `sort_by` (`task_handler.go:244-248`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can search tasks" (since 2026-09-23 it asserts that the search returns exactly the task it created)
 
 ### TC-TASK-033 — Search with no matches empties the table
@@ -440,7 +440,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Search for a fragment matching exactly one of the two tasks.
-- **Expected:** The request carries `search`, returns 200, but **both** tasks remain listed: the non-admin branch calls `GetByAssignee` before the search branch is ever reached (`task_handler.go:236-237`), so `search`, `sort_by` and `sort_order` are all discarded for non-admins. The search box gives no indication that it did nothing.
+- **Expected:** The request carries `search`, returns 200, but **both** tasks remain listed: the non-admin branch calls `GetByAssignee` before the search branch is ever reached (`task_handler.go:241-242`), so `search`, `sort_by` and `sort_order` are all discarded for non-admins. The search box gives no indication that it did nothing.
 - **Known issue:** Documented in the swagger description for `GET /tasks` but not in FEATURES.md row 6.6.
 - **Automation:** blocked — needs a non-admin role-login helper
 
@@ -456,7 +456,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Click the "Title" column header, then click it again.
   3. Click the "Due Date" header.
-- **Expected:** Each click issues `GET /api/v1/tasks?…&sort_by=title&sort_order=asc|desc` (then `sort_by=due_date`) and resets `page` to 1. The rows reorder accordingly. Allowed columns are `created_at`, `updated_at`, `title`, `status`, `priority`, `due_date` (`task_handler.go:213-220`).
+- **Expected:** Each click issues `GET /api/v1/tasks?…&sort_by=title&sort_order=asc|desc` (then `sort_by=due_date`) and resets `page` to 1. The rows reorder accordingly. Allowed columns are `created_at`, `updated_at`, `title`, `status`, `priority`, `due_date` (`task_handler.go:218-225`).
 - **Known issue:** FEATURES.md row 6.7 is *partial* — there is no E2E sort coverage for tasks (compare gap **G21** for leads).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
@@ -467,7 +467,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Click the "Assigned To" column header.
-- **Expected:** `DataTable` marks the column sorted and issues `sort_by=assignee`. `assignee` is not in the allowlist, so the handler blanks `sortBy` (`task_handler.go:222-224`) and falls back to the unsorted `List`. The header shows a sort arrow while the row order is unchanged. No 400 is returned.
+- **Expected:** `DataTable` marks the column sorted and issues `sort_by=assignee`. `assignee` is not in the allowlist, so the handler blanks `sortBy` (`task_handler.go:227-229`) and falls back to the unsorted `List`. The header shows a sort arrow while the row order is unchanged. No 400 is returned.
 - **Known issue:** Every column is sortable by default in `DataTable` (`sortable !== false`), including ones the API cannot sort on.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
@@ -520,7 +520,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Issue `GET /api/v1/tasks/my` with the admin's bearer token via the `request` fixture.
   2. Issue `GET /api/v1/tasks` with the same token.
-- **Expected:** Step 1 returns 200 with only the admin's own tasks — `ListMyTasks` calls `GetByAssignee` unconditionally and does not special-case admins (`task_handler.go:294`). Step 2 returns every task. The two totals differ. This closes **G18** at the API level.
+- **Expected:** Step 1 returns 200 with only the admin's own tasks — `ListMyTasks` calls `GetByAssignee` unconditionally and does not special-case admins (`task_handler.go:300`). Step 2 returns every task. The two totals differ. This closes **G18** at the API level.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended, API-level via `request` fixture)
 
 ### TC-TASK-041 — GET /tasks/upcoming excludes overdue and completed tasks and clamps the window
@@ -531,7 +531,7 @@ regression anchors, not endorsements.
   1. `GET /api/v1/tasks/upcoming` (no parameters).
   2. `GET /api/v1/tasks/upcoming?days=500`.
   3. `GET /api/v1/tasks/upcoming?days=abc`.
-- **Expected:** A bare array in `data`, ordered by due date ascending. Step 1 uses a 7-day window from *now*, so it contains the first task and excludes both the overdue one and the completed one (`task_handler.go:327-360`). Step 2 clamps to 90 days rather than returning 400; step 3 falls back to 7. At most 100 tasks are returned.
+- **Expected:** A bare array in `data`, ordered by due date ascending. Step 1 uses a 7-day window from *now*, so it contains the first task and excludes both the overdue one and the completed one (`task_handler.go:333-367`). Step 2 clamps to 90 days rather than returning 400; step 3 falls back to 7. At most 100 tasks are returned.
 - **Known issue:** `tasksApi.getUpcomingTasks` exists in `gocrm-ui/src/api/endpoints/tasks.ts:104` but has no caller — the dashboard's "Upcoming Tasks" panel uses `GET /dashboard/upcoming-tasks` instead (`gocrm-ui/src/api/endpoints/dashboard.ts:61`). The two endpoints are unrelated code paths.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended, API-level via `request` fixture)
 
@@ -569,7 +569,7 @@ regression anchors, not endorsements.
   1. POST with `{"task_ids":[],"status":"pending"}`.
   2. POST with 101 ids.
   3. POST with `{"task_ids":[<valid id>],"status":"archived"}`.
-- **Expected:** All three return **400** from the binding tags `required,min=1,max=100,dive,gt=0` and `oneof=pending in_progress completed cancelled` (`bulk_handler.go:382-385`). Nothing is written.
+- **Expected:** All three return **400** from the binding tags `required,min=1,max=100,dive,gt=0` and `oneof=pending in_progress completed cancelled` (`bulk_handler.go:None-None`). Nothing is written.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended, API-level via `request` fixture)
 
 ### TC-TASK-045 — A batch naming a missing or already-completed task fails whole and names the ids
@@ -580,7 +580,7 @@ regression anchors, not endorsements.
   1. POST `{"task_ids":[<pending id>, 999999999],"status":"in_progress"}`.
   2. POST `{"task_ids":[<pending id>, <completed id>],"status":"pending"}`.
   3. Re-read the pending task.
-- **Expected:** Step 1 returns **404** and step 2 returns **400**; in both cases `error.details` names the offending ids (`respondBulkStatusError`, `bulk_handler.go:520-543`). Step 3 shows the pending task still `pending` — the transaction rolled back, so a partially valid batch writes nothing.
+- **Expected:** Step 1 returns **404** and step 2 returns **400**; in both cases `error.details` names the offending ids (`respondBulkStatusError`, `bulk_handler.go:None-None`). Step 3 shows the pending task still `pending` — the transaction rolled back, so a partially valid batch writes nothing.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended, API-level via `request` fixture)
 
 ### TC-TASK-046 — Bulk status is not role-gated at the route, only per item
@@ -590,7 +590,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. POST `{"task_ids":[<own task id>],"status":"in_progress"}` as the support user.
   2. POST `{"task_ids":[<own task id>, <other user's task id>],"status":"in_progress"}` as the support user.
-- **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:494-500`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
+- **Expected:** Step 1 returns **200** — unlike the ticket variant, `BulkUpdateTaskStatus` performs no role pre-check and binds the body first (`bulk_handler.go:None-None`), so every authenticated role including `customer` reaches the service. Step 2 returns **403** with the other user's task id listed in `error.details`, and the caller's own task is left untouched.
 - **Known issue:** The asymmetry with `BulkUpdateTicketStatus`, which rejects `customer` and `sales` before reading the body, is deliberate but undocumented in FEATURES.md.
 - **Automation:** blocked — needs a non-admin role-login helper to obtain a support token
 

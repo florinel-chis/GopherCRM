@@ -490,7 +490,7 @@ func (h *AutomationHandler) ListRuns(c *gin.Context) {
 		return
 	}
 
-	runs, total, err := h.automationService.ListRuns(leadViewer(c), offset, limit, filter)
+	runs, total, err := h.automationService.ListRuns(runViewer(c), offset, limit, filter)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return
@@ -521,7 +521,7 @@ func (h *AutomationHandler) GetRun(c *gin.Context) {
 	if !ok {
 		return
 	}
-	run, err := h.automationService.GetRun(leadViewer(c), id)
+	run, err := h.automationService.GetRun(runViewer(c), id)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -40,6 +41,12 @@ const formDeliveryNotRetryableCode = "FORM_DELIVERY_NOT_RETRYABLE"
 // @Router /forms/deliveries [get]
 func (h *FormHandler) ListDeliveries(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "FormHandler.ListDeliveries")
+
+	// The route line carries no guard of its own (its text is pinned by the
+	// route-order test): forms.view is decided here, first.
+	if denyWithoutPermission(c, permissions.FormsView) {
+		return
+	}
 
 	offset, limit := utils.ParseOffsetLimit(c)
 	filter := service.FormMailDeliveryFilter{

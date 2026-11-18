@@ -10512,7 +10512,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live leads across statuses as chart data with one dataset labelled Leads. Every status is always present, in the order new, contacted, qualified, unqualified, converted, with 0 when no lead holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order rather than dropped. System-wide: not narrowed to the caller's own leads (support, which cannot read leads elsewhere, sees these counts too).",
+                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live leads across statuses as chart data with one dataset labelled Leads. Every status is always present, in the order new, contacted, qualified, unqualified, converted, with 0 when no lead holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order rather than dropped. System-wide: not narrowed to the caller's own leads (support, which cannot read leads elsewhere, sees these counts too). For a custom role the counts follow leads.view: every lead at scope all, the leads it owns at scope own, and all zero without it.",
                 "produces": [
                     "application/json"
                 ],
@@ -10984,7 +10984,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin, sales and support (route guard; customer gets 403). Lead conversions over time as chart data with one dataset labelled Conversions: the number of leads in the converted status whose updated_at falls in each bucket. It counts conversions, not revenue. A lead has no converted_at column, so updated_at stands in for the conversion time and a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned in the server's time zone and end with the one containing now: week gives the last 12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the last 5 years (2026). Any other period falls back to month. System-wide: not narrowed to the caller's leads.",
+                "description": "Admin, sales and support (route guard; customer gets 403). Lead conversions over time as chart data with one dataset labelled Conversions: the number of leads in the converted status whose updated_at falls in each bucket. It counts conversions, not revenue. A lead has no converted_at column, so updated_at stands in for the conversion time and a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned in the server's time zone and end with the one containing now: week gives the last 12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the last 5 years (2026). Any other period falls back to month. System-wide: not narrowed to the caller's leads. For a custom role the conversions follow leads.view: every lead at scope all, the leads it owns at scope own, and none without it.",
                 "produces": [
                     "application/json"
                 ],
@@ -11111,7 +11111,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin, sales and support (route guard; customer gets 403). Returns system-wide counts: live leads, live customers, tickets in open or in_progress, tasks in pending or in_progress, and conversion_rate = customers / leads * 100 (0 without leads). Deliberately not narrowed to the caller: a sales or support user sees the same totals as an admin.",
+                "description": "Admin, sales and support (route guard; customer gets 403). Returns system-wide counts: live leads, live customers, tickets in open or in_progress, tasks in pending or in_progress, and conversion_rate = customers / leads * 100 (0 without leads). Deliberately not narrowed to the caller: a sales or support user sees the same totals as an admin. The four system roles get these system-wide totals; a custom role is counted by its own permissions instead: leads by leads.view, customers by customers.view, tickets by tickets.view and tasks by tasks.view, each at the scope it holds (own counts only the leads it owns and the tickets and tasks assigned to it), and a kind whose permission it lacks counts as 0.",
                 "produces": [
                     "application/json"
                 ],
@@ -11223,7 +11223,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live tasks across statuses as chart data with one dataset labelled Tasks. Every status is always present, in the order pending, in_progress, completed, cancelled, with 0 when no task holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.",
+                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live tasks across statuses as chart data with one dataset labelled Tasks. Every status is always present, in the order pending, in_progress, completed, cancelled, with 0 when no task holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments. For a custom role the counts follow tasks.view: every task at scope all, the tasks assigned to it at scope own, and all zero without it.",
                 "produces": [
                     "application/json"
                 ],
@@ -11335,7 +11335,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live tickets across priorities as chart data with one dataset labelled Tickets. Every priority is always present, in the order low, medium, high, urgent, with 0 when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.",
+                "description": "Admin, sales and support (route guard; customer gets 403). Distribution of live tickets across priorities as chart data with one dataset labelled Tickets. Every priority is always present, in the order low, medium, high, urgent, with 0 when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments. For a custom role the counts follow tickets.view: every ticket at scope all, the tickets assigned to it at scope own, and all zero without it.",
                 "produces": [
                     "application/json"
                 ],
@@ -15262,7 +15262,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Every label, ordered by name ascending, as a bare array (no pagination). Roles: every authenticated role. Each label carries task_count, the number of live (not soft-deleted) tasks using it, counted across all assignees whatever the caller's role.",
+                "description": "Every label, ordered by name ascending, as a bare array (no pagination). Roles: every system role, and a custom role holding labels.view. Each label carries task_count, the number of live (not soft-deleted) tasks using it, counted across all assignees whatever the caller's role.",
                 "produces": [
                     "application/json"
                 ],
@@ -15294,6 +15294,24 @@
                     },
                     "401": {
                         "description": "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - the caller does not hold labels.view (every system role does; a custom role needs it)",
                         "schema": {
                             "allOf": [
                                 {
@@ -21127,6 +21145,24 @@
                             ]
                         }
                     },
+                    "403": {
+                        "description": "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
                     "429": {
                         "description": "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s",
                         "schema": {
@@ -21498,7 +21534,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of the tasks assigned to the caller, in ascending id order. Roles: every authenticated role; admins also see only their own tasks here. No sorting, search or label filter. Pagination as on GET /tasks (page overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued object on this endpoint (the assignee is not loaded). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
+                "description": "One page of the tasks assigned to the caller, in ascending id order. Roles: every system role, and a custom role holding tasks.view; admins also see only their own tasks here. No sorting, search or label filter. Pagination as on GET /tasks (page overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued object on this endpoint (the assignee is not loaded). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
                 "produces": [
                     "application/json"
                 ],
@@ -21568,6 +21604,24 @@
                             ]
                         }
                     },
+                    "403": {
+                        "description": "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
                     "429": {
                         "description": "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s",
                         "schema": {
@@ -21617,7 +21671,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending (then id). Roles: every authenticated role; admins see every assignee's tasks, every other role only the tasks assigned to them. Completed and cancelled tasks and tasks without a due date are excluded; the window starts at the current instant, so overdue tasks are NOT included. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned and there is no pagination. Labels are not loaded here (labels is omitted). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
+                "description": "The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending (then id). Roles: every system role, and a custom role holding tasks.view; admins see every assignee's tasks, every other role only the tasks assigned to them. Completed and cancelled tasks and tasks without a due date are excluded; the window starts at the current instant, so overdue tasks are NOT included. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned and there is no pagination. Labels are not loaded here (labels is omitted). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
                 "produces": [
                     "application/json"
                 ],
@@ -21660,6 +21714,24 @@
                     },
                     "401": {
                         "description": "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)",
                         "schema": {
                             "allOf": [
                                 {
@@ -23955,7 +24027,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Any authenticated role. Returns the account the credential belongs to.",
+                "description": "Any authenticated account; no permission is needed. Returns the account the credential belongs to, the name of its role (role_name: admin, sales, support or customer for a system role, the role's own name for a custom role) and its effective permissions (permissions: key and scope, sorted by key). The permissions are resolved on every request from the account's current role, for a Bearer token and an API key alike, so a role change shows on the next call. Every user field keeps its name and value.",
                 "produces": [
                     "application/json"
                 ],
@@ -23965,7 +24037,7 @@
                 "summary": "Get the caller's account",
                 "responses": {
                     "200": {
-                        "description": "The caller's account",
+                        "description": "The caller's account with role_name and permissions",
                         "schema": {
                             "allOf": [
                                 {
@@ -23975,7 +24047,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.User"
+                                            "$ref": "#/definitions/internal_handler.MeResponse"
                                         }
                                     }
                                 }
@@ -29283,6 +29355,17 @@
                 }
             }
         },
+        "github_com_florinel-chis_gophercrm_internal_models.PermissionScope": {
+            "type": "string",
+            "enum": [
+                "all",
+                "own"
+            ],
+            "x-enum-varnames": [
+                "PermissionScopeAll",
+                "PermissionScopeOwn"
+            ]
+        },
         "github_com_florinel-chis_gophercrm_internal_models.Product": {
             "type": "object",
             "properties": {
@@ -32256,7 +32339,7 @@
             }
         },
         "internal_handler.DashboardStats": {
-            "description": "System-wide counters of the dashboard; never narrowed to the caller.",
+            "description": "Counters of the dashboard: system-wide for the four system roles, narrowed by its own permissions for a custom role.",
             "type": "object",
             "properties": {
                 "conversion_rate": {
@@ -32679,6 +32762,115 @@
                     "description": "Number of notifications this call marked read (0 when none were unread).",
                     "type": "integer",
                     "example": 3
+                }
+            }
+        },
+        "internal_handler.MePermission": {
+            "description": "One effective permission of the calling account.",
+            "type": "object",
+            "properties": {
+                "key": {
+                    "description": "Permission key, group.action, for example leads.view.",
+                    "type": "string",
+                    "example": "leads.view"
+                },
+                "scope": {
+                    "description": "Which records the permission reaches: all of them, or own, the records\nthe account owns or is assigned.",
+                    "enum": [
+                        "all",
+                        "own"
+                    ],
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.PermissionScope"
+                        }
+                    ],
+                    "example": "own"
+                }
+            }
+        },
+        "internal_handler.MeResponse": {
+            "description": "The calling account (the fields of a user) plus the name of its role and its effective permissions.",
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "description": "When the record was created (RFC 3339 date-time), set by the server. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-10-01T09:30:00Z"
+                },
+                "deleted_at": {
+                    "description": "Soft-deletion time (RFC 3339 date-time) or null. Always present in the JSON. Reads exclude soft-deleted rows, so records returned by the API carry null here. Read-only.",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true,
+                    "readOnly": true
+                },
+                "email": {
+                    "description": "Login email address, unique among all accounts, including erased ones\n(erasure replaces the address, which frees it for reuse).",
+                    "type": "string",
+                    "format": "email",
+                    "example": "jane.doe@example.com"
+                },
+                "first_name": {
+                    "description": "Given name.",
+                    "type": "string",
+                    "example": "Jane"
+                },
+                "id": {
+                    "description": "Unique identifier, assigned by the server on creation. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 42
+                },
+                "is_active": {
+                    "description": "False for a deactivated account: it cannot log in, and its bearer tokens and\nAPI keys are rejected. Changed only by an admin.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "last_login_at": {
+                    "description": "Time of the last successful password login (RFC 3339). Absent when the\naccount has never logged in. Server-maintained, read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-10-30T08:15:00Z"
+                },
+                "last_name": {
+                    "description": "Family name.",
+                    "type": "string",
+                    "example": "Doe"
+                },
+                "locked_until": {
+                    "description": "End of the login lockout set after 5 consecutive failed logins (15 minutes,\nRFC 3339). Absent when no lock is recorded; it may lie in the past, since a\nlapsed lock is cleared only by the next login attempt. Server-maintained,\nread-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-10-30T08:30:00Z"
+                },
+                "permissions": {
+                    "description": "Effective permissions of the account, sorted by key. Resolved on every\nrequest, so a role change shows on the next call.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.MePermission"
+                    }
+                },
+                "role": {
+                    "description": "Role of the account; only an admin can change it (PUT /users/{id}, POST /users).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole"
+                        }
+                    ],
+                    "example": "sales"
+                },
+                "role_name": {
+                    "description": "Name of the account's role: admin, sales, support or customer for a\nsystem role, the role's own name for a custom role.",
+                    "type": "string",
+                    "example": "sales"
+                },
+                "updated_at": {
+                    "description": "When the record was last written (RFC 3339 date-time), set by the server on every update. Read-only.",
+                    "type": "string",
+                    "readOnly": true,
+                    "example": "2026-10-02T14:05:00Z"
                 }
             }
         },

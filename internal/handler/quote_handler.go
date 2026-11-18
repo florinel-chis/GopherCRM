@@ -11,6 +11,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -247,9 +248,8 @@ func (h *QuoteHandler) Create(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := models.UserRole(c.GetString("user_role"))
 	if req.OwnerID != nil {
-		if currentUserRole != models.RoleAdmin && *req.OwnerID != currentUserID {
+		if !hasPermission(c, permissions.QuotesAssignOwner) && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign quotes to yourself")
 			return
 		}
@@ -258,7 +258,16 @@ func (h *QuoteHandler) Create(c *gin.Context) {
 		quote.OwnerID = currentUserID
 	}
 
-	if err := h.quoteService.Create(quote, currentUserID, currentUserRole); err != nil {
+	// A system-role caller goes through Create with its role, as before; a
+	// custom role has no role to hand over, so its two decisions (another
+	// owner, another owner's deal) are named one by one.
+	var err error
+	if role, isSystemRole := quoteCreateRole(c); isSystemRole {
+		err = h.quoteService.Create(quote, currentUserID, role)
+	} else {
+		err = h.quoteService.CreateWithPolicy(quote, currentUserID, quoteCreatePolicy(c))
+	}
+	if err != nil {
 		h.respondError(c, logger, err)
 		return
 	}
@@ -363,7 +372,7 @@ func (h *QuoteHandler) List(c *gin.Context) {
 func (h *QuoteHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "QuoteHandler.Get")
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesView)
 	if !ok {
 		return
 	}
@@ -405,14 +414,14 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 		return
 	}
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
 
 	currentUserID := c.GetUint("user_id")
 	if req.OwnerID != nil {
-		if c.GetString("user_role") != string(models.RoleAdmin) && *req.OwnerID != currentUserID {
+		if !hasPermission(c, permissions.QuotesAssignOwner) && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign quotes to yourself")
 			return
 		}
@@ -477,11 +486,11 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 func (h *QuoteHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "QuoteHandler.Delete")
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesDelete)
 	if !ok {
 		return
 	}
-	draftOnly := c.GetString("user_role") != string(models.RoleAdmin)
+	draftOnly := !hasPermissionOnAll(c, permissions.QuotesDelete)
 	if err := h.quoteService.Delete(quote.ID, draftOnly); err != nil {
 		h.respondError(c, logger, err)
 		return
@@ -525,7 +534,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 		return
 	}
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
@@ -584,7 +593,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 	if !ok {
 		return
 	}
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
@@ -632,7 +641,7 @@ func (h *QuoteHandler) DeleteLine(c *gin.Context) {
 	if !ok {
 		return
 	}
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
@@ -677,7 +686,7 @@ func (h *QuoteHandler) ChangeStatus(c *gin.Context) {
 		return
 	}
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
@@ -711,7 +720,7 @@ func (h *QuoteHandler) ChangeStatus(c *gin.Context) {
 func (h *QuoteHandler) History(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "QuoteHandler.History")
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesView)
 	if !ok {
 		return
 	}
@@ -747,7 +756,7 @@ func (h *QuoteHandler) History(c *gin.Context) {
 func (h *QuoteHandler) Email(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "QuoteHandler.Email")
 
-	quote, ok := h.loadVisible(c, logger)
+	quote, ok := h.loadVisible(c, logger, permissions.QuotesUpdate)
 	if !ok {
 		return
 	}
@@ -884,10 +893,10 @@ func lineIDParam(c *gin.Context) (uint, bool) {
 	return uint(id), true
 }
 
-// ownerScope is the owner filter a list gets from the caller's role: none for
-// an admin, the caller itself for everybody else.
+// ownerScope is the owner filter a list gets from the caller's quotes.view
+// scope: none at scope all (an admin), the caller itself for everybody else.
 func (h *QuoteHandler) ownerScope(c *gin.Context) *uint {
-	if c.GetString("user_role") == string(models.RoleAdmin) {
+	if hasPermissionOnAll(c, permissions.QuotesView) {
 		return nil
 	}
 	userID := c.GetUint("user_id")
@@ -896,8 +905,10 @@ func (h *QuoteHandler) ownerScope(c *gin.Context) *uint {
 
 // loadVisible parses :id, loads the quote and applies the visibility rule of
 // deals: a sales user may only see its own quotes, and somebody else's is a
-// 403, not a 404. It has responded when ok is false.
-func (h *QuoteHandler) loadVisible(c *gin.Context, logger *logrus.Entry) (*models.Quote, bool) {
+// 403, not a 404. key is the permission the route acts under (quotes.view,
+// quotes.update or quotes.delete): only a caller holding it at scope all
+// reaches a quote it does not own. It has responded when ok is false.
+func (h *QuoteHandler) loadVisible(c *gin.Context, logger *logrus.Entry, key string) (*models.Quote, bool) {
 	id, ok := pathID(c, "Invalid quote ID")
 	if !ok {
 		return nil, false
@@ -907,7 +918,7 @@ func (h *QuoteHandler) loadVisible(c *gin.Context, logger *logrus.Entry) (*model
 		h.respondError(c, logger, err)
 		return nil, false
 	}
-	if c.GetString("user_role") != string(models.RoleAdmin) && quote.OwnerID != c.GetUint("user_id") {
+	if !hasPermissionOnAll(c, key) && quote.OwnerID != c.GetUint("user_id") {
 		utils.RespondForbidden(c, "You can only view your own quotes")
 		return nil, false
 	}

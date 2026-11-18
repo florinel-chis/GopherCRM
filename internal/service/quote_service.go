@@ -79,6 +79,11 @@ func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, pr
 }
 
 func (s *quoteService) Create(quote *models.Quote, actorID uint, role models.UserRole) error {
+	isAdmin := role == models.RoleAdmin
+	return s.CreateWithPolicy(quote, actorID, QuoteCreatePolicy{AnyOwner: isAdmin, AnyDeal: isAdmin})
+}
+
+func (s *quoteService) CreateWithPolicy(quote *models.Quote, actorID uint, policy QuoteCreatePolicy) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "quote"), "QuoteService", "Create")
 
 	if quote.Currency == "" {
@@ -93,7 +98,7 @@ func (s *quoteService) Create(quote *models.Quote, actorID uint, role models.Use
 		logger.WithError(utils.LogError(err)).Warn("Quote rejected")
 		return err
 	}
-	if role != models.RoleAdmin && quote.OwnerID != actorID {
+	if !policy.AnyOwner && quote.OwnerID != actorID {
 		err := fmt.Errorf("sales users may only own their own quotes: %w", apperrors.ErrForbidden)
 		logger.WithError(utils.LogError(err)).Warn("Quote rejected")
 		return err
@@ -110,7 +115,7 @@ func (s *quoteService) Create(quote *models.Quote, actorID uint, role models.Use
 		}
 		// A sales user may only quote the deals it owns; the answer is the
 		// one GET /deals/:id gives, a 403 rather than a 404.
-		if role != models.RoleAdmin && deal.OwnerID != actorID {
+		if !policy.AnyDeal && deal.OwnerID != actorID {
 			return fmt.Errorf("deal %d belongs to another owner: %w", deal.ID, apperrors.ErrForbidden)
 		}
 		if deal.Stage.IsClosed() {

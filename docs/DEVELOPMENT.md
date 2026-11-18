@@ -209,7 +209,7 @@ handler package, `TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits`.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
 hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use
-`middleware.RequireRole()` for RBAC on routes. An API key whose owner has been erased or deactivated
+`middleware.RequirePermission()` for RBAC on routes. An API key whose owner has been erased or deactivated
 is rejected at authentication time, and none is issued to such an owner (#342, see *Credential
 issuance under the owner lock*).
 
@@ -602,8 +602,8 @@ service or answer change: nothing calls the new repository methods yet.
   NULL value adds no key and the checked-in API reference stays byte-identical; `CustomRole` is
   `json:"-"`. `models.RoleCustom` (`"custom"`) is an untyped constant on purpose: a typed `UserRole`
   constant would enter the swag enum and the closed set of `scripts/ci/check-api-docs.py`, both of
-  which stay admin, sales, support, customer until the role API slice. A `custom` user would match
-  no `RequireRole` today, but nothing can create one.
+  which stay admin, sales, support, customer until the role API slice. A `custom` user holds only
+  the permissions of its role row (#347); no API creates one yet.
 - **The seed.** `seedSystemRoles` runs in `MigrateDatabase` after `normalizeCompanyDomains` on every
   start and driver. It reads `SELECT system_key FROM roles WHERE system_key IS NOT NULL` (plain,
   non-locking) and inserts only the missing rows of `models.SystemRoleSeeds` (#259's names and
@@ -649,7 +649,7 @@ service or answer change: nothing calls the new repository methods yet.
   users, so take a backup before rolling back on MySQL/MariaDB. SQLite has no down path: roll back by
   restoring the pre-upgrade backup. An older binary started on the upgraded file would keep the role
   tables and `fk_users_custom_role` (its AutoMigrate drops nothing), and every `custom` user would
-  match no `RequireRole` and get 403 on every guarded route.
+  match no role guard of that binary and get 403 on every guarded route.
 - **Erasure.** `roles`, `role_permissions` and `role_audit_log` are not touched by the erasure:
   role names carry no personal text by rule, and audit rows hold ids, role names, permission keys
   and scopes only (an obligation on the S3 writer). An erased user keeps its `role_id`, which keeps
@@ -2279,7 +2279,7 @@ the Database migrations workflow is an operator follow-up.
 
 **AEO export (#244).** `GET /aeo/export` (`AEOHandler.Export`, `internal/handler/aeo_export.go`)
 sits in the `/aeo` read group, so admin, sales and support reach it and the customer role gets 403
-from `RequireRole` before the handler runs.
+from `RequirePermission(aeo.view)` before the handler runs.
 
 - **Parameters.** `format` is `csv` (default) or `json`; `run_id` is a positive integer; `days` is
   checked against `aeoAllowedRangeDays` (7, 30, 90) and, unlike the dashboard's
@@ -2683,7 +2683,7 @@ the creating transaction commits. Code: `internal/models/webhook.go`,
 `internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
 
 - **Registry.** `/webhooks/endpoints` (list, create, read, update, delete) and
-  `/webhooks/deliveries` sit behind `RequireRole(admin)`. The handler validates every input before
+  `/webhooks/deliveries` sit behind `RequirePermission(webhooks.manage)` (admin). The handler validates every input before
   calling `WebhookService` (400 `VALIDATION_ERROR`, `error.details` keyed by `url`, `event_types`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
