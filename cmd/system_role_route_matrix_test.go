@@ -93,6 +93,8 @@ var routeMatrixPublic = map[string]bool{
 	"GET /api/v1/forms/public/:key":              true,
 	"GET /api/v1/forms/public/:key/view":         true,
 	"POST /api/v1/forms/public/:key/submissions": true,
+	"GET /api/v1/quotes/public/response":         true,
+	"POST /api/v1/quotes/public/response":        true,
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was

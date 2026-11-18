@@ -1713,8 +1713,8 @@ covering MySQL and MariaDB behaviour of the handlers.
   administrator deactivating or deleting itself, an AEO call with no provider configured) the
   route's `note` says why; generation fails on a non-2xx admin `own` without a note.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
-  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes and the
-  six `/forms/public` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
+  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes, the
+  six `/forms/public` routes and the two `/quotes/public/response` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its
   own, because the authenticated rate tier is live in a normal build; a 401 or 429 in a cell is a
