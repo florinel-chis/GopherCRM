@@ -689,7 +689,7 @@ authentication and live on the moderate tier:
 - `PUT /api/v1/leads/:id` - Update lead (a changed owner must be an active admin or sales user; admin only)
 - `DELETE /api/v1/leads/:id` - **Erase** lead (cascades to the customer it was converted into and its login; converted leads admin-only)
 - `POST /api/v1/leads/:id/convert` - Convert lead to customer
-- `POST /api/v1/leads/:id/assign` - Assign lead to an active admin or sales user *(sales may only hand over leads they own)*
+- `POST /api/v1/leads/:id/assign` - Assign lead to an active admin or sales user *(sales may only hand over leads they own; a custom role needs `leads.update`, and `leads.assign_owner` unless it assigns the lead to itself)*
 - `POST /api/v1/leads/bulk/status` - Set the status of up to 100 leads at once, all-or-nothing
   *(sales may only touch leads they own)*
 

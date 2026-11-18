@@ -16991,7 +16991,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Make user_id the lead's owner. Roles: admin (any lead) and sales (only the leads it owns, so a sales user can hand its own lead to a colleague and loses access to it at once). Visibility is decided on the row locked by the writing transaction.\nThe new owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. Unlike PUT /leads/{id} this holds for the current owner too: naming a current owner who has been deactivated is refused. A converted lead can be assigned; its status and customer_id stay as they are.\nSide effect: lead_updated is recorded in the same transaction; assigning the current owner again records it too.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
+                "description": "Make user_id the lead's owner. Roles: admin (any lead) and sales (only the leads it owns, so a sales user can hand its own lead to a colleague and loses access to it at once). Visibility is decided on the row locked by the writing transaction.\nA custom role needs leads.update, which decides the leads it may assign by its scope, and leads.assign_owner as well unless user_id is the caller's own id. That rule is checked before the lead is read. The four system roles are answered as described above.\nThe new owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. Unlike PUT /leads/{id} this holds for the current owner too: naming a current owner who has been deactivated is refused. A converted lead can be assigned; its status and customer_id stay as they are.\nSide effect: lead_updated is recorded in the same transaction; assigning the current owner again records it too.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -17076,7 +17076,7 @@
                         }
                     },
                     "403": {
-                        "description": "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads')",
+                        "description": "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads'); and FORBIDDEN 'You can only assign leads to yourself': a custom role without leads.assign_owner named a user other than itself, which is answered before the lead is read, so for a lead id that does not exist too",
                         "schema": {
                             "allOf": [
                                 {

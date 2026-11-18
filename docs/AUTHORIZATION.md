@@ -217,6 +217,15 @@ cannot receive a custom role (409 `CUSTOMER_LOGIN_ROLE`). The permission set is 
 a changed role applies from the caller's next request. `GET /users/me` returns `role_name` and
 `permissions`.
 
+`POST /leads/{id}/assign` asks a custom role for `leads.update`, whose scope decides the leads it
+may assign, and for `leads.assign_owner` when `user_id` is not the caller: without that key the
+answer is 403 "You can only assign leads to yourself", and assigning a lead to oneself needs
+`leads.update` alone. The four system roles are answered on this route as before permissions
+existed: a sales user hands its own lead to a colleague although the sales role does not hold
+`leads.assign_owner`. A clone of the sales role is a custom role, so it hands a lead to a colleague
+through this route only once `leads.assign_owner` is ticked on it
+(`cmd/lead_assign_permission_test.go`, `TestLeadAssignRequiresAssignOwnerKey`).
+
 ## Deny by default
 
 Every protected route is either in `permissions.RouteKeys` (`internal/permissions/routes.go`),

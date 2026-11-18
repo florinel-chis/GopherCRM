@@ -646,6 +646,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 // Assign godoc
 // @Summary Assign a lead to an owner
 // @Description Make user_id the lead's owner. Roles: admin (any lead) and sales (only the leads it owns, so a sales user can hand its own lead to a colleague and loses access to it at once). Visibility is decided on the row locked by the writing transaction.
+// @Description A custom role needs leads.update, which decides the leads it may assign by its scope, and leads.assign_owner as well unless user_id is the caller's own id. That rule is checked before the lead is read. The four system roles are answered as described above.
 // @Description The new owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them. Unlike PUT /leads/{id} this holds for the current owner too: naming a current owner who has been deactivated is refused. A converted lead can be assigned; its status and customer_id stay as they are.
 // @Description Side effect: lead_updated is recorded in the same transaction; assigning the current owner again records it too.
 // @Description The response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.
@@ -659,7 +660,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.Lead} "The updated lead"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid lead ID'), or the body is not valid JSON for the schema ('Invalid request format', an empty body included). VALIDATION_ERROR (message 'Validation failed'): user_id is missing or 0; error.details maps the Go field name (UserID) to a message. INVALID_REFERENCE: user_id names no active admin or sales user ('user_id must name an active admin or sales user', error.details {'field': 'user_id'})"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads')"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales, or a sales user asked for another owner's lead, whatever user_id it named ('You can only assign your own leads'); and FORBIDDEN 'You can only assign leads to yourself': a custom role without leads.assign_owner named a user other than itself, which is answered before the lead is read, so for a lead id that does not exist too"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live lead has this id ('Lead not found')"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure, including a failed owner lookup; nothing is written unless the COMMIT itself failed, which is ambiguous"
@@ -676,6 +677,12 @@ func (h *LeadHandler) Assign(c *gin.Context) {
 	var req AssignLeadRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	if !mayAssignLeadTo(c, req.UserID) {
+		logger.WithField("lead_id", uint(id)).Warn("Lead assignment refused: the caller may assign leads only to itself")
+		utils.RespondForbidden(c, "You can only assign leads to yourself")
 		return
 	}
 

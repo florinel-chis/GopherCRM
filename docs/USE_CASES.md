@@ -82,7 +82,7 @@ These caveats apply to every recipe that takes in leads through forms.
   and `leads.conversion.auto_assign_owner` (on by default) makes the lead's owner the customer's
   account manager (`ConvertToCustomer`, `internal/service/lead_service.go:755`). The UI offers
   Convert only on the allowed statuses (#192). A lead without an email cannot be converted (400),
-  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:850-852`).
+  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:867-869`).
 
 ## 1. Small agency: website forms to leads
 
