@@ -514,13 +514,13 @@ start attempt. Requirements:
 ## 6. CI on a fork
 
 - **No secrets are needed for CI.** The workflows start throwaway databases in service containers
-  and generate `JWT_SECRET` at runtime (`.github/workflows/ci.yml:334`). Deploy secrets are needed
+  and generate `JWT_SECRET` at runtime (`.github/workflows/ci.yml:339`). Deploy secrets are needed
   only for section 5.2.
 - **Keep the `gophercrm_runner` Python package.** Ordinary CI imports it:
   `scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13` (used by `check-go.py`),
   `scripts/ci/check-go.py:7`, `scripts/ci/check-changed-go.py:23` (through `go_checks.py`),
   `scripts/ci/plan-documentation.py:10`, and
-  `scripts/ci/plan-validation.py:77`, which reads `validation.py` from the base commit. You may
+  `scripts/ci/plan-validation.py:96`, which reads `validation.py` from the base commit. You may
   drop the Langflow graphs (`automation/langflow/flows/`) and the runner runtime, but not
   `automation/langflow/gophercrm_runner/`. `.github/workflows/remediation-runner.yml` is also a
   reusable workflow that Release calls as its `runner-validation` job
@@ -538,11 +538,12 @@ start attempt. Requirements:
 
   For the runner's local validation, shared code, schema, dependency and API-contract changes fall
   back to `full` (`make verify` plus the whole browser matrix). CI does not: outside a release every
-  profile runs the targeted Go tests (`scripts/ci/check-changed-go.py`), and the race detector, the
-  migrations matrix and the browser matrix run only when CI is called with `full: true`.
+  profile runs the targeted Go tests (`scripts/ci/check-changed-go.py`), and the race detector, both
+  engines of the migrations workflow and the browser matrix run only when CI is called with
+  `full: true`. A pull request that changes migration code runs the MySQL 8 migration leg alone.
   `docs/VALIDATION_RELEASE.md` has the profile table.
 - **Simplifying.** If you do not want contextual selection, make the `plan` job always emit
-  `profile=full`, which is what `scripts/ci/plan-validation.py:79-84` writes for a release when it
+  `profile=full`, which is what `scripts/ci/plan-validation.py:98-103` writes for a release when it
   has no trusted selector. Do not delete the planner import chain without replacing it.
 - **The hygiene hook.** It runs only after `git config core.hooksPath scripts/git-hooks`
   (`scripts/git-hooks/pre-commit:15`). It refuses new folders under `docs/` other than `img`,

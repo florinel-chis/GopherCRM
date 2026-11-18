@@ -42,6 +42,7 @@ jobs:
     outputs:
       specs: ${{ steps.plan.outputs.specs }}
       profile: ${{ steps.plan.outputs.profile }}
+      migrations: ${{ steps.plan.outputs.migrations }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -85,14 +86,17 @@ jobs:
       - name: Size guard and e2e runner self-test
         run: make verify-hygiene
 
-  # The two-engine migration matrix is release-grade: it runs for a release
-  # and for a manual run that asks for full: true.
+  # A pull request that changes migration code (migrations/, cmd/migrate/ or
+  # the selection's own migration set) runs the MySQL 8 leg. A release and a
+  # manual run that asks for full: true run both engines. Merge-queue groups
+  # and pushes to main skip the job.
   migrations:
     needs: plan
-    if: ${{ inputs.full == true }}
+    if: ${{ inputs.full == true || (github.event_name == 'pull_request' && needs.plan.outputs.migrations == 'true') }}
     uses: ./.github/workflows/migrations.yml
     with:
       revision: ${{ inputs.revision || github.sha }}
+      mysql8_only: ${{ inputs.full != true }}
 
   backend:
     name: Backend (build, vet, test)
@@ -117,7 +121,8 @@ jobs:
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
         run: test "$PLAN_RESULT" = success
-      # The migrations job is skipped outside a full run.
+      # Only a full run requires the migrations job: on a pull request its
+      # MySQL 8 leg reports on its own and is not folded into this check.
       - name: Require SQL migration and SQLite upgrade coverage
         if: needs.plan.outputs.profile == 'full'
         env:

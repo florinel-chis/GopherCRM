@@ -6,6 +6,11 @@ on:
       revision:
         type: string
         required: true
+      # CI passes true for a pull request that changes migration code. A full
+      # run passes false and a direct dispatch has no inputs: both engines.
+      mysql8_only:
+        type: boolean
+        default: false
   workflow_dispatch:
 
 permissions:
@@ -23,15 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        db:
-          - name: MySQL 8
-            id: mysql8
-            image: mysql:8.0
-            health: mysqladmin ping -h 127.0.0.1 -pmigration-test-password
-          - name: MariaDB 10.11
-            id: mariadb1011
-            image: mariadb:10.11
-            health: healthcheck.sh --connect --innodb_initialized
+        db: ${{ fromJSON(inputs.mysql8_only && '[{"name":"MySQL 8","id":"mysql8","image":"mysql:8.0","health":"mysqladmin ping -h 127.0.0.1 -pmigration-test-password"}]' || '[{"name":"MySQL 8","id":"mysql8","image":"mysql:8.0","health":"mysqladmin ping -h 127.0.0.1 -pmigration-test-password"},{"name":"MariaDB 10.11","id":"mariadb1011","image":"mariadb:10.11","health":"healthcheck.sh --connect --innodb_initialized"}]') }}
     services:
       db:
         image: ${{ matrix.db.image }}

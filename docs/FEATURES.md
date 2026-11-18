@@ -31,7 +31,8 @@ Outside a release they run repository hygiene; a Go build and vet of the module,
 check and `go test -count=1` (no race detector) on the changed packages, their importers and the
 packages that read the changed files (`scripts/ci/check-changed-go.py`), repeated against MariaDB
 10.11 in the database gates job; and the frontend build, lint and unit tests. A documentation-only
-change runs no Go test. The race suite, the migrations matrix and Playwright on MySQL 8, MariaDB 10.11
+change runs no Go test. A pull request that changes migration code also runs `Migrations (MySQL 8)`.
+The race suite, the two-engine migrations matrix and Playwright on MySQL 8, MariaDB 10.11
 and SQLite run only for a release (a manual CI run with `full: true` runs all but the browsers).
 The profiles below are what the remediation runner validates locally before a pull request. Runner-only changes use hygiene, runner/probe tests, API/frontend build
 health checks and browser health smoke. The bounded auth profile uses auth/session race tests,
@@ -54,7 +55,9 @@ The bounded migration-workflow profile runs SQL/SQLite migration checks and heal
 two database migration CI jobs feed the required Backend check on a full run. See the [validation and release runbook](VALIDATION_RELEASE.md).
 The separate [Database migrations workflow](../.github/workflows/migrations.yml) runs fresh,
 populated-upgrade and rollback/reapply SQL regressions on MySQL 8 and MariaDB 10.11, alongside
-the SQLite upgrade fixtures, on every full CI run (a release, or a manual run with `full: true`). Required roots and their
+the SQLite upgrade fixtures, on every full CI run (a release, or a manual run with `full: true`). A pull
+request that changes migration code (`migrations/`, `cmd/migrate/`, the workflow or its coverage gate)
+runs the MySQL 8 leg alone; it is not a required check. Required roots and their
 descendants cannot be skipped; revision-bound JSON artifacts retain the results.
 CI also checks the API reference on every change: `scripts/ci/check-api-docs.py` (a Backend-job
 step; `make verify-api-docs`, part of `make verify` and of a full CI run, adds the route extractor's

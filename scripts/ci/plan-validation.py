@@ -25,11 +25,30 @@ def present(specs):
     return kept
 
 
-def bounded(selected, selector):
-    """Replace a full selection, keeping its reasons so the narrower run is visible."""
+def load(selector):
+    """Import the trusted selector, so its own sets are read rather than copied here."""
     spec = importlib.util.spec_from_file_location('trusted_validation', selector)
     policy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(policy)
+    return policy
+
+
+def migration_code(paths, policy):
+    """Whether the change touches migration code, so the MySQL 8 migration check runs.
+
+    Deleted paths count: the selector lists both sides of a rename. An unknown change
+    set, or a policy without its migration set, answers yes: the check runs when the
+    question cannot be answered.
+    """
+    workflow = getattr(policy, 'MIGRATION_WORKFLOW_FILES', None)
+    if not paths or workflow is None:
+        return True
+    return any(path.startswith(('migrations/', 'cmd/migrate/')) or path in workflow
+               for path in paths)
+
+
+def bounded(selected, policy):
+    """Replace a full selection, keeping its reasons so the narrower run is visible."""
     wanted = set(selected.get('affected_specs') or
                  (f'e2e/tests/{name}.spec.ts' for feature in selected.get('features', [])
                   for name in policy.FEATURES[feature]))
@@ -82,6 +101,7 @@ def main():
             "specs": [] if full else present({SMOKE}),
             "reasons": ["no trusted selector/change base" + ("" if full else "; smoke only")],
         }
+        migrations = True
     else:
         with tempfile.TemporaryDirectory() as folder:
             trusted = Path(folder) / "validation.py"
@@ -92,12 +112,15 @@ def main():
                 args.append("--full")
             subprocess.run(args, check=True)
             selected = json.loads(plan_file.read_text())
+            policy = load(trusted)
+            migrations = migration_code(selected.get('changed_paths'), policy)
             if selected['profile'] == 'full' and not full:
-                selected = bounded(selected, trusted)
-    selected.update(policy_commit=policy_ref, policy_origin=policy_origin)
+                selected = bounded(selected, policy)
+    selected.update(policy_commit=policy_ref, policy_origin=policy_origin, migrations=migrations)
     plan_file.write_text(json.dumps(selected, indent=2) + '\n')
     with output.open('a') as stream:
         stream.write(f"profile={selected['profile']}\nspecs={' '.join(selected['specs'])}\n")
+        stream.write(f"migrations={'true' if migrations else 'false'}\n")
     print(json.dumps(selected, indent=2))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

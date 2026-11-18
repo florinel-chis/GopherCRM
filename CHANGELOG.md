@@ -543,6 +543,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CI runs the MySQL 8 migration check on pull requests that change migration code (#376, CI).**
+  A pull request whose diff adds, changes or deletes a path under `migrations/` or `cmd/migrate/`,
+  or changes the migrations workflow or its coverage gate (`scripts/release/check-sql-tests.py`
+  and its tests), now runs `Migrations (MySQL 8)` from the Database migrations workflow, with the
+  same steps as a release, the no-skip check included. Other pull requests, merge-queue groups
+  and pushes to `main` still skip it, and a `full` run (a release, or a manual run with
+  `full: true`) is unchanged: MySQL 8 and MariaDB 10.11. The decision is the new `migrations`
+  output of `scripts/ci/plan-validation.py`, read from the trusted selector's own migration set;
+  it answers `true` when the change set cannot be read. The leg is not a required check and the
+  Backend job does not depend on its result outside `full`; the four required checks are the same.
 - **CI runs targeted backend tests outside a release (#365, CI).** For a pull request, a merge-queue
   group and a push to `main`, the Backend job builds and vets the module, runs the API reference
   check (`scripts/ci/check-api-docs.py`) and runs `go test -count=1` without `-race` only on the Go

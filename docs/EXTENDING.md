@@ -533,13 +533,13 @@ leads, customers and deals), configuration, and erasure. Every other module depe
 
 | Gate | What it checks | Where |
 |---|---|---|
-| `plan` job | Picks one profile from the diff and records the documentation impact | `.github/workflows/ci.yml:39`; `scripts/ci/plan-validation.py` reads `validation.py` from the **base** ref (the base at lines 48-52, the read at line 77), so a change cannot weaken its own gate |
-| `hygiene` | File-size guard, e2e runner self-test, deploy-script test, Python tests for `scripts/ci` and `scripts/release` | `ci.yml:71`, `make verify-hygiene` |
-| `migrations` | Fresh install, populated upgrade, rollback and reapply on MySQL 8 and MariaDB 10.11, plus the SQLite upgrade fixtures; rejects skips. Runs only on a `full` run (a release, or a manual dispatch with `full: true`); skipped for a pull request | `.github/workflows/migrations.yml`, called from `ci.yml:93`; on `full`, `backend` requires its success |
-| `backend` | Outside `full`: module build and vet, `python3 scripts/ci/check-api-docs.py`, and `go test -count=1` (no `-race`) on the changed packages, their importers and the packages that read the changed files; no Go test for a documentation-only change. On `full`: `make verify-api-docs`, `make verify-backend` (build, vet, `go test -race`), `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8 | `ci.yml:97`, `scripts/ci/check-changed-go.py` |
-| `db-gates` | Outside `full`: the same selected packages against MariaDB 10.11 (`TEST_MYSQL_DSN` set, no `-race`, skips not rejected). On `full`: `check-go.py transaction` on MariaDB | `ci.yml:195` |
-| `frontend` | `npm ci`, build, lint with zero warnings, Vitest | `ci.yml:167`, `make verify-frontend` |
-| `e2e` | Playwright on MySQL 8, MariaDB 10.11 and SQLite through `scripts/e2e/run.sh`; only when the release workflow calls CI | `ci.yml:252` |
+| `plan` job | Picks one profile from the diff and records the documentation impact | `.github/workflows/ci.yml:39`; `scripts/ci/plan-validation.py` reads `validation.py` from the **base** ref (the base at lines 67-71, the read at line 96), so a change cannot weaken its own gate |
+| `hygiene` | File-size guard, e2e runner self-test, deploy-script test, Python tests for `scripts/ci` and `scripts/release` | `ci.yml:72`, `make verify-hygiene` |
+| `migrations` | Fresh install, populated upgrade, rollback and reapply on MySQL 8 and MariaDB 10.11, plus the SQLite upgrade fixtures; rejects skips. Both engines run on a `full` run (a release, or a manual dispatch with `full: true`); a pull request that changes migration code (`migrations/`, `cmd/migrate/`, the workflow or its coverage gate) runs the MySQL 8 leg alone, which is not a required check; any other pull request does not run it | `.github/workflows/migrations.yml`, called from `ci.yml:96`; on `full`, `backend` requires its success |
+| `backend` | Outside `full`: module build and vet, `python3 scripts/ci/check-api-docs.py`, and `go test -count=1` (no `-race`) on the changed packages, their importers and the packages that read the changed files; no Go test for a documentation-only change. On `full`: `make verify-api-docs`, `make verify-backend` (build, vet, `go test -race`), `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8 | `ci.yml:101`, `scripts/ci/check-changed-go.py` |
+| `db-gates` | Outside `full`: the same selected packages against MariaDB 10.11 (`TEST_MYSQL_DSN` set, no `-race`, skips not rejected). On `full`: `check-go.py transaction` on MariaDB | `ci.yml:200` |
+| `frontend` | `npm ci`, build, lint with zero warnings, Vitest | `ci.yml:172`, `make verify-frontend` |
+| `e2e` | Playwright on MySQL 8, MariaDB 10.11 and SQLite through `scripts/e2e/run.sh`; only when the release workflow calls CI | `ci.yml:257` |
 | No-skip SQL gate | Required SQL roots must pass; any skip or fail is an error | `scripts/release/check-sql-tests.py` |
 | Release | Full matrix; every `cmd/migrate` and `internal/integration` root against MySQL with no skips | `.github/workflows/release.yml:94-98` |
 
@@ -558,9 +558,9 @@ Points that catch people out:
   package needs a row in that script's `EXTERNAL_READERS` table. On a `full` run the `make
   verify-backend` step sets no `TEST_MYSQL_DSN` either, so MySQL roots skip there too, and the
   migrations workflow runs a fixed list of roots (`migrations.yml`, the `-run` expression at lines
-  64-65). Add a new migration root to that list, to the `--migrations-only` set in `check-sql-tests.py` and to
+  61-62). Add a new migration root to that list, to the `--migrations-only` set in `check-sql-tests.py` and to
   `MIGRATION_SOURCES` (and the required set) in `scripts/ci/check-go.py`, or it first runs against
-  MySQL at release time. A new auth MySQL root in a file `check-auth.py` already selects runs on
+  MySQL at release time. A pull request that changes migration code runs that list on MySQL 8 only. A new auth MySQL root in a file `check-auth.py` already selects runs on
   `full` through `check-auth.py --persistence` (#230); a MySQL root anywhere else needs a checker
   that selects it.
 - **Run browsers the way CI does.** `make e2e` builds a disposable backend with the `gophercrm_e2e`
@@ -582,7 +582,7 @@ Points that catch people out:
 On a fork, keep the `gophercrm_runner` Python package even if you never use the remediation runner:
 ordinary CI imports it (`scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13`,
 `scripts/ci/plan-documentation.py:10-12`, `scripts/ci/check-go.py:7`, and
-`scripts/ci/plan-validation.py:77` reads `validation.py`; `scripts/ci/check-changed-go.py:23` goes through `go_checks.py`). The Langflow graphs, the runner runtime
+`scripts/ci/plan-validation.py:96` reads `validation.py`; `scripts/ci/check-changed-go.py:24` goes through `go_checks.py`). The Langflow graphs, the runner runtime
 and `remediation-runner.yml` can go. [FORKING.md](FORKING.md) has the full keep/drop list.
 
 ## 13. Working with coding agents
