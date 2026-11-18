@@ -1670,7 +1670,7 @@ go test -run TestFunctionName ./internal/service/
 ```
 
 Use current command output for test counts and coverage; historical counts are not release gates.
-`make verify` runs hygiene checks, Go build/vet/race tests, and frontend build/lint/unit tests.
+`make verify` runs hygiene checks, the Go formatting check, Go build/vet/race tests, and frontend build/lint/unit tests.
 The runner's local validation picks a profile from the changed paths; its bounded profiles
 (`auth`, `auth-persistence`, `transaction`, `migration`, `aeo`, `mailer`) replace `make verify` with
 their `scripts/ci/check-auth.py` / `scripts/ci/check-go.py` race roots on SQLite and MySQL, named
@@ -1679,15 +1679,25 @@ acceptance checks and health smoke; see [validation and releases](VALIDATION_REL
 **CI outside a release runs targeted Go tests (#365).** For a pull request, a merge-queue group and a
 push to `main`, CI runs hygiene, backend, frontend and the database gates job:
 
-- **Backend** builds and vets the whole module, runs `python3 scripts/ci/check-api-docs.py`, and
-  runs `python3 scripts/ci/check-changed-go.py` on the plan job's changed paths: one
-  `go test -count=1 -timeout 10m` over the selected packages, without `-race` and without a
-  database server (MySQL-backed tests skip there).
+- **Backend** checks the Go formatting, builds and vets the whole module, runs
+  `python3 scripts/ci/check-api-docs.py`, and runs `python3 scripts/ci/check-changed-go.py` on the
+  plan job's changed paths: one `go test -count=1 -timeout 10m` over the selected packages, without
+  `-race` and without a database server (MySQL-backed tests skip there).
+- **Go formatting (#405).** `python3 scripts/ci/check-go-format.py` runs `gofmt -l` on every Go
+  file git tracks (untracked sources are never read) and fails with the list of files gofmt would
+  rewrite, or with gofmt's report when a file does not parse. Both paths of the Backend job start
+  it before `go build`: `check-changed-go.py` on every run that builds and vets, a
+  documentation-only change included (not with `--tests-only`, so not in the Database gates job),
+  and `make verify-backend` as its first step on a full run. To fix a failure, run `gofmt -w` on
+  the listed files and commit the result. The check uses the `gofmt` on `PATH` (the one next to
+  `go` when there is none): in the Backend job that is the Go version of `go.mod`, locally your
+  own. A Go upgrade that changes gofmt's output fails the check on every pull request until the
+  tree is reformatted, so reformat in the pull request that raises the version.
 - **Database gates (MariaDB 10.11)** runs the same selection with `--tests-only` and
   `TEST_MYSQL_DSN` pointing at a MariaDB 10.11 service, so the MySQL-backed tests of the selected
   packages run there. Nothing rejects a skip in this job.
 - A documentation-only change (`*.md`, anything under `docs/`, `LICENSE`) runs no Go test at all.
-- The race detector (`make verify-backend`), `make verify-api-docs`, the no-skip checkers
+- The race detector (`make verify-backend`, which starts with the formatting check), `make verify-api-docs`, the no-skip checkers
   (`check-go.py transaction`, `check-auth.py --persistence`), the MySQL 8 service of the Backend
   job, the browser matrix and the two-engine run of the Database migrations workflow happen only
   when CI is called with `full: true`: the release workflow, or a manual dispatch of CI with the `full` input
@@ -1726,10 +1736,12 @@ What `check-changed-go.py` selects, from a universe of every package outside `go
 When `internal/middleware` or `internal/aeo` is selected, a second run adds `-tags=gophercrm_e2e`
 for those two. The log starts with `Go tests: <n> of <total> packages selected` and the package
 directories, `Go tests: none selected (documentation-only change)` or
-`Go tests: every package (<reason>)`, and prints each command before running it.
+`Go tests: every package (<reason>)`, and prints each command before running it, the formatting
+check first.
 
 ```bash
-python3 scripts/ci/check-changed-go.py --base origin/main          # what CI will build, vet and test
+python3 scripts/ci/check-go-format.py                              # gofmt over the tracked Go files
+python3 scripts/ci/check-changed-go.py --base origin/main          # what CI will format-check, build, vet and test
 python3 scripts/ci/check-changed-go.py --base origin/main --list   # the selection only
 ```
 

@@ -253,7 +253,6 @@ func TestRespondSuccessWithMeta_NilMeta(t *testing.T) {
 	assert.Equal(t, "test-req-id-123", resp.Meta.RequestID)
 }
 
-
 func TestParseOffsetLimit_Defaults(t *testing.T) {
 	c, _ := createTestContext()
 	c.Request, _ = http.NewRequest("GET", "/test", nil)

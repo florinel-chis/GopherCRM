@@ -17,7 +17,7 @@ func Recovery() gin.HandlerFunc {
 				buf := make([]byte, 1024)
 				n := runtime.Stack(buf, false)
 				stackTrace := string(buf[:n])
-				
+
 				// Log the panic
 				logger := utils.GetLogger(c).WithFields(map[string]interface{}{
 					"panic":       fmt.Sprintf("%v", err),
@@ -26,15 +26,15 @@ func Recovery() gin.HandlerFunc {
 					"method":      c.Request.Method,
 				})
 				logger.Error("Panic recovered")
-				
+
 				// Abort the request
 				c.AbortWithStatus(500)
-				
+
 				// Return JSON error response
 				utils.RespondInternalError(c)
 			}
 		}()
-		
+
 		c.Next()
 	}
 }

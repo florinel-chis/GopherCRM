@@ -12,7 +12,7 @@ help:
 	@echo "  make run          - Run the application"
 	@echo "  make build        - Build the application"
 	@echo "  make test         - Run Go tests"
-	@echo "  make verify       - Core CI checks: hygiene, Go build/vet/test -race, frontend build/lint/test, API docs"
+	@echo "  make verify       - Core CI checks: hygiene, gofmt, Go build/vet/test -race, frontend build/lint/test, API docs"
 	@echo "  make verify-runner - Runner tests, workflow export parity, and database probe tests"
 	@echo "  make e2e          - Playwright e2e against a real backend and a freshly reset gocrm_e2e database"
 	@echo "                      (make e2e SPECS=\"e2e/tests/admin-leads.spec.ts\" for selected specs)"
@@ -52,6 +52,7 @@ verify-hygiene:
 	python3 -m unittest discover -s scripts/release/tests -v
 
 verify-backend:
+	python3 scripts/ci/check-go-format.py
 	go build $(GO_BUILD_PKGS)
 	go vet $(GO_PKGS)
 	go test -race $(GO_PKGS)

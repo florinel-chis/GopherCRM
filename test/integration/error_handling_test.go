@@ -15,9 +15,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -61,7 +61,7 @@ func (suite *ErrorHandlingTestSuite) SetupSuite() {
 func (suite *ErrorHandlingTestSuite) setupRouter() {
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
-	
+
 	// Add middleware
 	suite.router.Use(middleware.RequestID())
 	suite.router.Use(middleware.Logger())
@@ -91,7 +91,7 @@ func (suite *ErrorHandlingTestSuite) setupRouter() {
 			protected.GET("/panic", func(c *gin.Context) {
 				panic("test panic")
 			})
-			
+
 			// Add a test endpoint that returns 404
 			protected.GET("/users/:id", func(c *gin.Context) {
 				utils.RespondNotFound(c, "User not found")
@@ -155,7 +155,7 @@ func (suite *ErrorHandlingTestSuite) TestValidationError_400() {
 			assert.NotNil(suite.T(), response.Error)
 			assert.Equal(suite.T(), "VALIDATION_ERROR", response.Error.Code)
 			assert.NotNil(suite.T(), response.Error.Details)
-			
+
 			// Check that expected validation errors are present
 			details, ok := response.Error.Details.(map[string]interface{})
 			assert.True(suite.T(), ok)

@@ -35,7 +35,9 @@ branch CI takes. For the Go side, CI has two modes only:
 
 - **Not `full`** (every pull request, merge-queue group and push to `main`, whatever the profile):
   the Backend job builds and vets the module, runs `python3 scripts/ci/check-api-docs.py`, and runs
-  `python3 scripts/ci/check-changed-go.py --plan <validation-plan.json>`: `go test -count=1` without
+  `python3 scripts/ci/check-changed-go.py --plan <validation-plan.json>`: first
+  `python3 scripts/ci/check-go-format.py` (`gofmt -l` on every tracked Go file; an unformatted file
+  fails the job before the build), then `go test -count=1` without
   `-race` on the packages the change touches, their transitive importers and the packages whose
   tests read the changed files. The Database gates job runs the same selection with `--tests-only`
   against MariaDB 10.11 (`TEST_MYSQL_DSN` set, skips not rejected). A documentation-only change runs
@@ -43,7 +45,8 @@ branch CI takes. For the Go side, CI has two modes only:
   changes migration code: then its MySQL 8 leg runs (see [Migration CI](#migration-ci)). The selection rules and the
   external-readers table are in [DEVELOPMENT.md](DEVELOPMENT.md#testing).
 - **`full`** (the release workflow, or a manual dispatch of CI with the `full` input): the two-engine
-  migrations matrix, `make verify-api-docs`, `make verify-backend` (`-race`), then
+  migrations matrix, `make verify-api-docs`, `make verify-backend` (the formatting check
+  `scripts/ci/check-go-format.py`, then build, vet and `-race` tests), then
   `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8, and
   `check-go.py transaction` on MariaDB 10.11. The browser matrix additionally needs a calling
   workflow, so only a release runs it.

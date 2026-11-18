@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Build and vet the module, then test only the Go packages a change touches.
+"""Check formatting, build and vet the module, then test the Go packages a change touches.
 
-Outside a release, CI runs this instead of the whole suite: the packages that
-own the changed files, every package that imports them (transitively, test
-imports included) and the few packages whose tests read the changed files from
-disk. A documentation-only change runs no Go test. The race detector and the
-no-skip checkers belong to a full run (`make verify-backend`, check-go.py,
-check-auth.py). The migrations matrix is a separate job: a pull request that
-changes migration code runs its MySQL 8 leg, a full run both engines.
+Outside a release, CI runs this instead of the whole suite: gofmt on every tracked
+Go file (check-go-format.py, not with --tests-only), then the packages that own the
+changed files, every package that imports them (transitively, test imports included)
+and the few packages whose tests read the changed files from disk. A documentation-only
+change runs no Go test. The race detector and the no-skip checkers belong to a full run
+(`make verify-backend`, check-go.py, check-auth.py). The migrations matrix is a separate
+job: a pull request that changes migration code runs its MySQL 8 leg, a full run both engines.
 
     python3 scripts/ci/check-changed-go.py --base origin/main          # local
     python3 scripts/ci/check-changed-go.py --base origin/main --list   # selection only
@@ -25,6 +25,8 @@ from go_checks import ROOT, verification_environment
 
 EVERY = object()
 E2E_TAG = 'gophercrm_e2e'
+# The gofmt check over every tracked Go file, started from the repository root.
+FORMAT_CHECK = ['python3', 'scripts/ci/check-go-format.py']
 # Packages with files behind the e2e build tag; a second run compiles them in.
 E2E_TAGGED = ('internal/aeo', 'internal/middleware')
 # What a non-documentation change outside every package still has to prove:
@@ -127,11 +129,12 @@ def report(selected, reason, total):
 
 
 def commands(selected, universe, buildable, *, tests_only=False):
-    """Every Go command of the run, in order. Nothing selected starts no test."""
+    """Every command of the run, in order. Nothing selected starts no test."""
     def targets(folders):
         return ['./' + folder for folder in folders]
     planned = []
     if not tests_only:
+        planned.append(list(FORMAT_CHECK))
         planned.append(['go', 'build', *targets(buildable)])
         planned.append(['go', 'vet', *targets(universe)])
     if selected:
@@ -197,7 +200,7 @@ def main():
     source.add_argument('--plan', help="the plan job's validation-plan.json (reads changed_paths)")
     source.add_argument('--base', help='compare this revision with HEAD (committed changes only)')
     parser.add_argument('--list', action='store_true', help='print the selection and run nothing')
-    parser.add_argument('--tests-only', action='store_true', help='skip the build and vet')
+    parser.add_argument('--tests-only', action='store_true', help='skip the formatting check, the build and vet')
     args = parser.parse_args()
     if args.plan:
         with open(args.plan) as stream:
