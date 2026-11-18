@@ -12,10 +12,22 @@ import (
 
 type userRepository struct {
 	db *gorm.DB
+	// lockSeams are the test seams of the erasure protocol (#385), set only by
+	// the test option in erasure_hooks.go and copied by WithTx; nil in
+	// production.
+	lockSeams *erasureSeams
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
-	return &userRepository{db: db}
+// UserRepositoryOption configures NewUserRepository beyond its handle.
+// Production wiring passes none.
+type UserRepositoryOption func(*userRepository)
+
+func NewUserRepository(db *gorm.DB, opts ...UserRepositoryOption) UserRepository {
+	r := &userRepository{db: db}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *userRepository) Create(user *models.User) error {
@@ -177,9 +189,7 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 //
 // See erasure.go for the shared machinery and the full GDPR rationale.
 func (r *userRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
-		return c.eraseUser(tx, id, false)
-	})
+	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootUser, id: id}, r.lockSeams, nil)
 }
 
 // userErasurePlan lists what counts as personal data on a user, and what goes
@@ -269,7 +279,7 @@ func (r *userRepository) CountSearch(query string) (int64, error) {
 }
 
 func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
-	return &userRepository{db: tx}
+	return &userRepository{db: tx, lockSeams: r.lockSeams}
 }
 
 var _ UserRoleMaintenance = (*userRepository)(nil)

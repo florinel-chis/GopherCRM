@@ -751,7 +751,9 @@ func TestFormTicketIntakeVsCustomerErasureMySQL(t *testing.T) {
 
 		eraseDone := make(chan error, 1)
 		go func() { eraseDone <- customers.Delete(customer.ID) }()
-		waitForStatement(t, db, "UPDATE `customers`")
+		// The erasure's first lock on the customer row is its locking read by
+		// primary key (#385), ahead of the scrub UPDATE.
+		waitForStatement(t, db, "SELECT `id`,`user_id` FROM `customers`")
 
 		releaseOnce.Do(func() { close(release) })
 		confirmErr := <-confirmDone

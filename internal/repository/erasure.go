@@ -108,15 +108,16 @@ type erasurePlan struct {
 	AfterScrub func(tx *gorm.DB, id uint) error
 
 	// BeforeScrub runs inside the SAME transaction before the row is read or
-	// touched. The lead plan's automation cancel lives here, and eraseLead runs
-	// it itself, before its locking read of the lead (#337): an automation step
-	// holds the lead row FOR UPDATE while it runs, so an erasure that waited on
-	// the lead before cancelling would let the step commit its task. Having
-	// modified the run rows by the time it waits on the lead is what makes the
-	// erasure the survivor of the resulting MySQL deadlock: the step (no rows
-	// modified yet) is rolled back, retried, and then finds the run cancelled
-	// and the lead gone. eraseRecord still runs a plan's BeforeScrub when the
-	// caller has not cleared it.
+	// touched. The lead plan's automation cancel lives here, and the erasure
+	// unit runs that cancel itself for every lead of the graph, before its
+	// first locking read of a lead (#337, #385): an automation step holds the
+	// lead row FOR UPDATE while it runs, so an erasure that waited on the lead
+	// before cancelling would let the step commit its task. Having modified
+	// the run rows by the time it waits on the lead is what makes the erasure
+	// the survivor of the resulting MySQL deadlock: the step (no rows modified
+	// yet) is rolled back, retried, and then finds the run cancelled and the
+	// lead gone. eraseRecord still runs a plan's BeforeScrub when the caller
+	// has not cleared it.
 	BeforeScrub func(tx *gorm.DB, id uint) error
 }
 
@@ -140,6 +141,8 @@ var erasureScrubObserver atomic.Pointer[func(table string, id uint)]
 // tx must already be the transactional handle of the erasure unit (see
 // runErasureUnit): a person is erased as a whole graph of rows, and the unit
 // that makes the graph atomic belongs to the cascade, never to a single row.
+// The row is already locked by then: the unit locks the whole graph before
+// its first scrub (erasure_cascade.go).
 func eraseRecord(tx *gorm.DB, id uint, plan erasurePlan) error {
 	if plan.BeforeScrub != nil {
 		if err := plan.BeforeScrub(tx, id); err != nil {
@@ -375,6 +378,18 @@ func scrubUnlinkedSubmissions(tx *gorm.DB, table string, id uint, original, plac
 	return nil
 }
 
+// erasureMaxRetries bounds the replays of one erasure transaction that lost a
+// deadlock or a lock wait (or met a busy SQLite file) and rolled back cleanly.
+// erasureGraphMaxRestarts bounds the whole-root restarts of an erasure whose
+// graph moved between its discovery and its locks (ErrErasureGraphChanged):
+// each restart discovers the graph again. The worst case of one erasure is
+// (erasureGraphMaxRestarts+1) discoveries of (erasureMaxRetries+1)
+// transactions each.
+const (
+	erasureMaxRetries       = 3
+	erasureGraphMaxRestarts = 3
+)
+
 // erasureSavepointSeq numbers the savepoints of erasure units so that two
 // erasures joined to the same caller transaction never reuse a name.
 var erasureSavepointSeq atomic.Uint64
@@ -402,11 +417,24 @@ var erasureSavepointSeq atomic.Uint64
 //
 // The control statements are sent to the underlying transaction, bypassing
 // GORM's prepared-statement wrapper: MySQL cannot prepare SAVEPOINT, RELEASE or
-// ROLLBACK TO. Nothing is retried here; a deadlock or lock timeout reaches the
-// caller, whose whole transaction is the only safe unit to replay.
+// ROLLBACK TO.
+//
+// Retry (#385). On the database the transaction runs under
+// utils.TransactionManager.WithTransactionAndRetry: an attempt that lost a
+// deadlock (1213) or a lock wait (1205), or met a busy SQLite file, and rolled
+// back cleanly is replayed, at most erasureMaxRetries times. On a caller's
+// transaction nothing is retried here: the unit runs once, and a deadlock, a
+// lock timeout or ErrErasureGraphChanged reaches the caller, whose whole
+// transaction is the only safe unit to replay.
 func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
 	if !inTransaction(db) {
-		return db.Transaction(fn)
+		return utils.NewTransactionManager(db).WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+			tx, ok := utils.GetTxFromContext(ctx)
+			if !ok {
+				return utils.ErrNoTransaction
+			}
+			return fn(tx)
+		}, erasureMaxRetries)
 	}
 
 	name := fmt.Sprintf("gocrm_erasure_%d", erasureSavepointSeq.Add(1))
@@ -537,6 +565,26 @@ func purgeUserNotifications(tx *gorm.DB, userID uint) error {
 	return nil
 }
 
+// automationTables records which of the two automation tables the schema has.
+// A number of fixtures migrate only the tables they exercise, so the cancel
+// skips a table that is not there (see purgeUserNotifications).
+type automationTables struct {
+	runs          bool
+	notifications bool
+}
+
+// probeAutomationTables asks the migrator for both tables. On MySQL the probe
+// is a plain SELECT on information_schema, and on MySQL 8 that select fixes
+// the REPEATABLE READ snapshot of the transaction it runs on. An erasure
+// therefore resolves it on the root handle, together with its discovery, and
+// never on its transaction before the last graph lock (#385).
+func probeAutomationTables(db *gorm.DB) automationTables {
+	return automationTables{
+		runs:          db.Migrator().HasTable(&models.AutomationRun{}),
+		notifications: db.Migrator().HasTable(&models.Notification{}),
+	}
+}
+
 // cancelAutomationForEntity ends the automation state that refers to a
 // record about to be erased: every pending, waiting or running run of the
 // record is cancelled with record_deleted, so no further step runs against
@@ -548,9 +596,18 @@ func purgeUserNotifications(tx *gorm.DB, userID uint) error {
 // because its rendered title or body may name the person. A failure of
 // either statement rolls the erasure back; a table absent from the schema
 // (see purgeUserNotifications) is skipped.
+//
+// This form probes the schema on the handle it is given. The erasure of a
+// person uses cancelAutomationInTables with the answers of its discovery.
 func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) error {
+	return cancelAutomationInTables(tx, entityType, entityID, probeAutomationTables(tx))
+}
+
+// cancelAutomationInTables is cancelAutomationForEntity with the schema
+// answers supplied by the caller: it issues writes only, no read of any kind.
+func cancelAutomationInTables(tx *gorm.DB, entityType string, entityID uint, tables automationTables) error {
 	now := time.Now().UTC()
-	if tx.Migrator().HasTable(&models.AutomationRun{}) {
+	if tables.runs {
 		err := tx.Model(&models.AutomationRun{}).
 			Where("entity_type = ? AND entity_id = ?", entityType, entityID).
 			Where("status IN ?", []string{models.AutomationRunPending, models.AutomationRunWaiting, models.AutomationRunRunning}).
@@ -566,7 +623,7 @@ func cancelAutomationForEntity(tx *gorm.DB, entityType string, entityID uint) er
 			return fmt.Errorf("cancelling automation runs of %s %d: %w", entityType, entityID, err)
 		}
 	}
-	if tx.Migrator().HasTable(&models.Notification{}) {
+	if tables.notifications {
 		if err := tx.Unscoped().Where("entity_type = ? AND entity_id = ?", entityType, entityID).
 			Delete(&models.Notification{}).Error; err != nil {
 			return fmt.Errorf("purging notifications of %s %d: %w", entityType, entityID, err)

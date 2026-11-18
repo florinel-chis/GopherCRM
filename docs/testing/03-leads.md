@@ -427,7 +427,7 @@ the frontend gating.
   4. Create a **new** lead reusing the exact same email address.
 - **Expected:** Step 3 returns no rows — the search runs `LIKE` over
   `first_name, last_name, email, company, phone, notes`
-  (`lead_repository.go:206`) and the erasure has overwritten all of them with a random
+  (`lead_repository.go:204`) and the erasure has overwritten all of them with a random
   `.invalid` address and placeholder names before soft-deleting the row
   (`erasure_cascade.go`, `erasure.go`). Step 4 returns **201**: the address is reusable because it
   no longer exists anywhere in the table.
@@ -444,7 +444,7 @@ the frontend gating.
   3. Navigate to `/customers` and search for the original email address.
 - **Expected:** 204 on the delete. The customer row no longer appears in the customer list and the
   original email is not found there either — `leadRepository.Delete` runs the identity cascade
-  (`erasure_cascade.go`, `eraseLead`), which follows `leads.customer_id` and erases both halves in
+  (`erasure_cascade.go`, `eraseGraph`), which follows `leads.customer_id` and erases both halves in
   one transaction, together with the customer's customer-role login if it has one (#108). Only an
   admin may do this: see TC-LEAD-065 for the owning sales user.
 - **Concurrency (#337):** the erasure cancels the lead's automation runs, then locks the lead row
@@ -507,7 +507,7 @@ the frontend gating.
 - **Expected:** `GET /api/v1/leads?...&search=<email>` returns 200 and the table shows the matching
   lead. The search is a case-insensitive `LIKE` across first_name, last_name, email, company, phone
   and notes; `total` in the response reflects the filtered count (`CountSearch`,
-  `lead_repository.go:222`).
+  `lead_repository.go:220`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search for a
   lead by email"
 
@@ -554,7 +554,7 @@ the frontend gating.
   1. Search for a distinctive word from the lead's notes.
   2. Search for a fragment of the lead's phone number.
 - **Expected:** Both searches return the lead — `notes` and `phone` are in the `LIKE` clause
-  (`lead_repository.go:206`), even though neither is presented as a searchable column in the UI.
+  (`lead_repository.go:204`), even though neither is presented as a searchable column in the UI.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended)
 
 ### TC-LEAD-032 — Search and sort combine
@@ -566,7 +566,7 @@ the frontend gating.
   2. Click the "Created" column header.
 - **Expected:** The request carries both `search` and `sort_by=created_at`; 200. The search branch
   (`lead_handler.go:228`) forwards `sortBy`/`sortOrder` to `leadService.Search`, which builds the
-  ORDER BY through `utils.SafeOrderClause` (`lead_repository.go:210`).
+  ORDER BY through `utils.SafeOrderClause` (`lead_repository.go:208`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search and
   sort together"
 
@@ -699,7 +699,7 @@ the frontend gating.
   2. Set the Classification dropdown to "Spam".
 - **Expected:** `GET /api/v1/leads?...&classification=spam` returns 200; only leads with that
   classification are listed and `total` is the per-classification count
-  (`GetByClassification` + `CountByClassification`, `lead_repository.go:122`/`:238`). With no spam
+  (`GetByClassification` + `CountByClassification`, `lead_repository.go:126`/`:236`). With no spam
   leads present the table is empty and the total is 0 — verified live.
 - **Known issue:** Gap **G17** in `docs/FEATURES.md` — this dropdown has no E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; closes G17)

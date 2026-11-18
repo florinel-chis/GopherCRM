@@ -27,6 +27,11 @@ import (
 // lost a deadlock or a lock wait.
 const roleWriteMaxRetries = 3
 
+// roleWriteGraphMaxRestarts bounds the whole-root restarts of a governed user
+// delete whose nested erasure found the graph of the person changed under its
+// locks (repository.ErrErasureGraphChanged).
+const roleWriteGraphMaxRestarts = 3
+
 // Actor is who performs a governed write and how its request authenticated.
 // AuthMethod is the request's AuthMethodContextKey value (AuthMethodBearer or
 // AuthMethodAPIKey) and is stored on the audit row as it is.
@@ -113,7 +118,46 @@ type roleGovernance struct {
 
 // run executes fn as one root transaction, replayed on a deadlock or a lock
 // wait, with the repositories bound to it.
+//
+// A governed user delete nests the erasure of the target (#385). Joined to
+// this transaction the erasure runs once, and when the graph of the person
+// moved under its locks it returns repository.ErrErasureGraphChanged: the
+// whole root is then started again, at most roleWriteGraphMaxRestarts times
+// (shouldRestartGovernedWrite). The deadlock replay is WithTransactionAndRetry's
+// own decision and is not touched here.
 func (g *roleGovernance) run(ctx context.Context, fn func(tx *governedTx) error) error {
+	for restarts := 0; ; restarts++ {
+		err := g.runOnce(ctx, fn)
+		if !shouldRestartGovernedWrite(ctx, err) {
+			return err
+		}
+		if restarts >= roleWriteGraphMaxRestarts {
+			return fmt.Errorf("governed write abandoned after %d attempts: %w", restarts+1, err)
+		}
+	}
+}
+
+// shouldRestartGovernedWrite reports whether a failed governed write may be
+// started again from its first statement: only an error that carries
+// repository.ErrErasureGraphChanged, whose transaction rolled back cleanly (no
+// ErrRollbackFailed, ErrTransactionPoisoned, ErrCommitFailed or ErrBeginFailed,
+// which leave the outcome unknown), on a context that is not done. The bound
+// is the caller's.
+func shouldRestartGovernedWrite(ctx context.Context, err error) bool {
+	if err == nil || !errors.Is(err, repository.ErrErasureGraphChanged) {
+		return false
+	}
+	for _, unclean := range []error{utils.ErrRollbackFailed, utils.ErrTransactionPoisoned, utils.ErrCommitFailed, utils.ErrBeginFailed} {
+		if errors.Is(err, unclean) {
+			return false
+		}
+	}
+	return ctx.Err() == nil
+}
+
+// runOnce is one root transaction of run, with its deadlock and lock-wait
+// replays.
+func (g *roleGovernance) runOnce(ctx context.Context, fn func(tx *governedTx) error) error {
 	return g.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 		handle, ok := utils.GetTxFromContext(ctx)
 		if !ok {

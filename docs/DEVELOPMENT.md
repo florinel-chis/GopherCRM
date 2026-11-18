@@ -2046,7 +2046,7 @@ What happens on `DELETE`:
   traversal remembers every row it has visited, checked before any read, so each row is scrubbed
   once and the cycle user → customer → lead → customer → user terminates.
 - The lead's automation state ends in the same transaction, *before* the lead is even read
-  (`erasurePlan.BeforeScrub`, run by `eraseLead` ahead of its locking read of the lead): every pending, waiting or running run on the lead is cancelled with
+  (`erasurePlan.BeforeScrub`, run by the erasure unit for every lead of the graph, ahead of its first locking read of a lead): every pending, waiting or running run on the lead is cancelled with
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification
   whose entity is the lead is hard-deleted, because a rendered title or body may name the person.
   Run logs hold ids only and stay. The tasks a `create_task` step created stay too, as every task
@@ -2065,13 +2065,43 @@ What happens on `DELETE`:
   lock and let the step commit its task; cancelling the runs first means the erasure has modified
   rows by the time it waits, which makes it the survivor of the resulting deadlock — the step
   (nothing modified yet) is rolled back, retried, and finds the run cancelled and the lead gone.
-- **Lead erasure against lead conversion (#337).** After the cancel, `eraseLead` reads the lead
-  with a locking read by primary key (`FOR UPDATE` on MySQL/MariaDB), the first read of the leads
-  row in the unit, and takes the non-admin refusal and the decision to follow `customer_id` on that
-  locked row only. Every erased row (lead, customer, user) is scrubbed first, by primary key, which
-  takes its row lock; its original address is then read by `readErasedEmail`, a locking read by
-  primary key, and only then replaced by the placeholder. `eraseCustomer` reads `id` and `user_id`
-  with a locking read by primary key after its scrub. None of them answers from a REPEATABLE READ
+- **One lock order for every erasure (#385).** `eraseGraph` (`internal/repository/erasure_cascade.go`)
+  is the entry point of the user, customer and lead erasures and runs one protocol: (1) discover
+  the graph from the root with plain reads; (2) cancel the automation runs of every discovered
+  lead, ids ascending; (3) lock with locking reads by primary key only, ids ascending inside each
+  table, leads → customers → users → refresh_tokens → password_reset_tokens → api_keys; (4) read
+  the graph again, forward links from the locked rows and reverse links by plain reads issued
+  after the users lock, and roll back with `ErrErasureGraphChanged` when it differs from the
+  discovery; (5) decide the non-admin refusal on the locked lead, then scrub, purge and
+  soft-delete as before. When the repository is not bound to a transaction, the discovery and the
+  schema probes of the cancel (`probeAutomationTables`) run on the root handle before the
+  transaction begins, and the transaction issues no plain read before the users lock, so the
+  re-check of step 4 sees everything that committed before the locks were granted: under
+  REPEATABLE READ the first plain read fixes the snapshot, and on MySQL 8 a migrator probe (a
+  select on `information_schema`) counts as one (on MariaDB 10.11 it does not). The transaction
+  runs under `WithTransactionAndRetry` (`erasureMaxRetries` replays of a deadlock, a lock wait or
+  a busy SQLite file, on the same discovery); a changed graph starts over from a new discovery,
+  at most `erasureGraphMaxRestarts` times. Through `WithTx` the erasure is one checked SAVEPOINT
+  of the caller's transaction, runs once and hands both kinds of error to the caller; the governed
+  user write (`roleGovernance.run`) restarts its root on `ErrErasureGraphChanged`, at most
+  `roleWriteGraphMaxRestarts` times. Regression roots: `internal/repository/erasure_lock_order_test.go`
+  (`TestErasureCrossRootMySQL`, `TestErasureLockOrder{SQLite,MySQL}`,
+  `TestErasureGraphChanged{SQLite,MySQL}`, `TestErasureRetryBoundSQLite`) and
+  `internal/service/erasure_credential_order_test.go` (`TestErasureVsCredentialFlows{SQLite,MySQL}`,
+  `TestGovernedUserErasureVsCustomerErasureMySQL`, `TestGovernedWriteReplaysErasureGraphChange`),
+  through the test-only `repository.ErasureHooks`. CI limit: `erasure_lock_order_test.go` and
+  `erasure_credential_order_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI
+  runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on
+  MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs them on MariaDB 10.11
+  only, without `-race` and without rejecting a skip.
+- **Lead erasure against lead conversion (#337).** After the cancel, the erasure reads the lead
+  with a locking read by primary key (`FOR UPDATE` on MySQL/MariaDB), the first lock it takes on
+  the leads row, and takes the non-admin refusal and the decision to follow `customer_id` on that
+  locked row only (since #385 a `customer_id` that differs from the discovery restarts the
+  erasure). The customer and the login are locked by primary key next. Every erased row (lead,
+  customer, user) is then scrubbed by primary key; its original address is read by
+  `readErasedEmail`, a locking read by primary key, and only then replaced by the placeholder.
+  None of them answers from a REPEATABLE READ
   snapshot older than a conversion that committed meanwhile. The converted-lead pluck
   (`WHERE customer_id = ?`) stays a plain read, so no lock is taken through the
   `leads.customer_id` index: a conversion always inserts a new customer, so no lead can be
@@ -2353,10 +2383,23 @@ Known limits of the erasure, in one place:
 - **Concurrency.** The erasure is one transaction. A lead-rooted erasure locks the lead after
   cancelling its automation runs and decides on the locked row, so a conversion of that lead either
   commits first (the erasure erases its customer, or refuses a non-admin caller) or waits and
-  answers 404 (#337, see *Lead erasure against lead conversion*). Customer- and user-rooted
-  erasures still share no lock protocol with customer/login linking: a link committed while such an
-  erasure is in flight can escape the cascade, and opposite entry points can deadlock (an error,
-  never a partial commit). No erasure is retried yet. Login (#336), refresh rotation, the
+  answers 404 (#337, see *Lead erasure against lead conversion*). Since #385 every erasure
+  discovers the person's rows first, cancels the automation runs of the leads, locks leads,
+  customers, users and the credential rows in that order by primary key, re-checks the graph under
+  the locks and only then scrubs (see *One lock order for every erasure*): two erasures of one
+  person started from different rows queue instead of deadlocking, a lost deadlock or lock wait is
+  replayed (`erasureMaxRetries`), and a graph that moved between the discovery and the locks
+  restarts the erasure (`ErrErasureGraphChanged`, `erasureGraphMaxRestarts`); when a bound is
+  exhausted the caller gets the generic 500. What stays open: the governed user write of
+  `DELETE /users/{id}` holds the target's user row before its nested erasure locks leads and
+  customers (a deadlock with an erasure of the same person from another row is replayed by either
+  side, and a governed delete replayed after the other erasure committed answers 404); the
+  password-reset confirm takes its token before the user row and is not retried, so it may fail
+  with error 1213 against an erasure (on MariaDB 10.11 also against one that already holds the
+  token row: the confirm's claim locks the `deleted_at` index entry first, tracked in #407); inside a caller's transaction the re-check of the
+  reverse links answers from the caller's snapshot; and a write of `customers.user_id` takes no
+  lock on the user row (no shipped code path writes it), so a customer linked to the login after
+  the erasure's re-check and before its commit escapes the cascade. Login (#336), refresh rotation, the
   password-reset request and API-key creation (#342) lock the user row before they issue anything,
   so against a user- or customer-rooted erasure they either commit first (and the erasure purges
   what they issued) or wait and are refused. The original address is read with a locking read of
@@ -3352,7 +3395,8 @@ logic lives in `internal/service/form_ticket_intake.go` and
   form mail rows) rolls the whole confirmation back, token claim included, so the link works again.
 - **Erasure race (#183).** The confirmation locks token then customer; a customer erasure locks the
   customer then the address's tokens (`scrubUnlinkedSubmissions`). On MySQL one of the two may
-  therefore end in error 1213 and roll back whole; it is not retried. Confirmation first: both
+  therefore end in error 1213 and roll back whole; the erasure is replayed when it is the victim
+  (#385), the confirmation is not retried. Confirmation first: both
   commit and the erasure purges the key row. Erasure first: the confirmation finds no live
   customer (`no_customer`) or an invalid link. No committed state keeps a key row of an erased
   customer.

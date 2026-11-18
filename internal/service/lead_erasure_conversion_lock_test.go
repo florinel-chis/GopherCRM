@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ import (
 )
 
 var (
-	// erasureLeadLock is the erasure's locking read of the lead (eraseLead).
+	// erasureLeadLock is the erasure's locking read of the lead (lockGraph).
 	erasureLeadLock = regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id` FROM `leads` WHERE .*FOR UPDATE$")
 	// conversionLeadLock is the conversion's lockedLeadRead.
 	conversionLeadLock = regexp.MustCompile("(?s)^SELECT \\* FROM `leads` WHERE .*FOR UPDATE$")
@@ -282,8 +283,14 @@ func TestLeadErasureConversionCommittedAfterCancelMySQL(t *testing.T) {
 				staleCustomerErr error
 			)
 			gate := newParkGate()
+			var firstCancel atomic.Bool
+			firstCancel.Store(true)
 			withLeadErasureHooks(f, repository.LeadErasureHooks{AfterAutomationCancel: func(tx *gorm.DB, id uint) {
-				if id != lead.ID {
+				// Only the first transaction of the erasure is observed: the
+				// admin erasure finds the graph changed under its lead lock and
+				// starts over from a new discovery (#385), which runs this hook
+				// again on a transaction that began after the conversion.
+				if id != lead.ID || !firstCancel.CompareAndSwap(true, false) {
 					return
 				}
 				// The pre-#337 discovery read: plain, so it opens the snapshot.

@@ -22,7 +22,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
 | Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 459) |
 | Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:152`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
-| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:261`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
+| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:273`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
 | Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
 | Transactions that lock rows of more than one table lock them in the one documented order and retry only the whole root | `internal/utils/transaction.go`, `internal/service/lead_service.go` | [CONCURRENCY.md](CONCURRENCY.md) |
 | A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
@@ -238,9 +238,10 @@ Decide first whether the new table stores personal data or only refers to people
 - Update the matrix in [DEVELOPMENT.md](DEVELOPMENT.md#deleting-personal-data). Known gaps you
   inherit: ticket free text, which the erasure keeps and an operator redacts first through the
   documented procedure (#214), tasks rendered from `{{deal.title}}` before an erasure (they keep
-  the text; deal and quote text itself is scrubbed since #245), and the missing lock protocol between
-  erasure and conversion or authentication (#183; current orders in
-  [CONCURRENCY.md](CONCURRENCY.md)). A new table that copies a person's email without a link to
+  the text; deal and quote text itself is scrubbed since #245), and what the erasure lock order of
+  #385 leaves open under #183 (the governed user write and the password-reset confirm still lock
+  against it in the opposite order; see [CONCURRENCY.md](CONCURRENCY.md)). A new table that an
+  erasure must lock goes into that order, after the tables it depends on, by primary key only. A new table that copies a person's email without a link to
   the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
 
 ### 3.11 Tests at every layer
@@ -331,7 +332,7 @@ origins (lines 49-55) and six step types (lines 58-65).
    owner checks as the email step: the locking check of the run row in its first transaction and
    the plain read just before the call.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
-   (`internal/repository/erasure.go:551`) must reach it.
+   (`internal/repository/erasure.go:602`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,
    `automationFormat.ts`, and the types in `gocrm-ui/src/types/automation.ts`.
 7. Tests: execution and dry run (`automation_step_execution_test.go`,
@@ -529,9 +530,9 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:358`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:530-534`). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:358`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:558-562`, and `probeAutomationTables`, `erasure.go:581`, for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
 | Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:275-276,355-357,441-442,558-559`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:239-240`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,105`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:196`) |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:239-240`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,107`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:199`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.

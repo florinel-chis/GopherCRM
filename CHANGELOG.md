@@ -783,6 +783,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Privacy: two erasures of one person no longer end in a deadlock error (#385).** An erasure
+  started from a user, from a customer and from a lead locked the same rows in different orders
+  and was never retried: on MySQL 8 and MariaDB 10.11 a user-rooted erasure against a
+  customer-rooted one, and a lead-rooted against a customer-rooted one, ended with error 1213 for
+  one caller (a 500; nothing was half-erased). Every erasure (`userRepository.Delete`,
+  `customerRepository.Delete`, `leadRepository.Delete` and `DeleteUnconverted`) now discovers the
+  person's rows with plain reads, cancels the automation runs of the leads, locks by primary key
+  in one order (leads, customers, users, `refresh_tokens`, `password_reset_tokens`, `api_keys`,
+  ids ascending), reads the graph again under the locks and only then scrubs. A graph that moved
+  between the discovery and the locks rolls back with `repository.ErrErasureGraphChanged` and the
+  erasure starts over, at most `erasureGraphMaxRestarts` (3) times; a lost deadlock or lock wait
+  is replayed by `WithTransactionAndRetry`, at most `erasureMaxRetries` (3) times. The discovery
+  and the schema probes of the cancel run before the transaction, which issues no plain read
+  before its last graph lock: on MySQL 8 a select on `information_schema` fixes the REPEATABLE
+  READ snapshot, and the re-check would otherwise miss a customer linked meanwhile. Inside a
+  caller's transaction (`WithTx`) the erasure runs once; the governed user write behind
+  `DELETE /users/{id}` restarts its root on a changed graph. What is erased, the public errors
+  and the status codes are unchanged; an exhausted bound is the generic 500 a deadlock was. Two
+  opposite orders remain and are documented in [docs/CONCURRENCY.md](docs/CONCURRENCY.md): the
+  governed user write holds the target's `users` row before the nested erasure locks leads and
+  customers (replayed by either side; a governed delete replayed after the other erasure
+  committed answers 404, the account being erased already), and the password-reset confirm takes
+  its token before the `users` row and is not retried (it may fail with error 1213 against an
+  erasure; on MariaDB 10.11 also against one that already holds the token row, tracked in #407).
+  The new seams (`repository.ErasureHooks`) are test-only, and
+  the regression roots (`internal/repository/erasure_lock_order_test.go`,
+  `internal/service/erasure_credential_order_test.go`) are registered in the
+  `scripts/ci/check-go.py transaction` gate.
 - **AEO: concurrent run claims no longer surface a deadlock on MySQL/MariaDB (#371).** Several
   replicas claiming the same daily slot, or starting manual or single-prompt runs at the same
   moment, could make the server answer the claim INSERT with error 1213 (deadlock) instead of a

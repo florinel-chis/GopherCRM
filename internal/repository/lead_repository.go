@@ -39,6 +39,10 @@ type leadRepository struct {
 	// the test option in lead_erasure_hooks.go and copied by WithTx; nil in
 	// production.
 	erasureSeams *leadErasureSeams
+	// lockSeams are the test seams of the erasure protocol (#385), set only by
+	// the test option in erasure_hooks.go and copied by WithTx; nil in
+	// production.
+	lockSeams *erasureSeams
 }
 
 // LeadRepositoryOption configures NewLeadRepository beyond its handle.
@@ -157,10 +161,7 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 // has its new customer erased too, and one that comes later waits for the unit
 // and then finds the lead gone (not found).
 func (r *leadRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, func(c *erasureCascade, tx *gorm.DB) error {
-		c.hooks = r.erasureSeams
-		return c.eraseLead(tx, id)
-	})
+	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams)
 }
 
 // DeleteUnconverted erases a lead that was never converted. A converted lead
@@ -170,10 +171,7 @@ func (r *leadRepository) Delete(id uint) error {
 // changes nothing. It is the erasure a non-admin caller gets: erasing a
 // converted lead erases a customer, which only an admin may do.
 func (r *leadRepository) DeleteUnconverted(id uint) error {
-	return eraseGraph(r.db, false, func(c *erasureCascade, tx *gorm.DB) error {
-		c.hooks = r.erasureSeams
-		return c.eraseLead(tx, id)
-	})
+	return eraseGraph(r.db, false, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams)
 }
 
 func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error) {
@@ -340,7 +338,7 @@ func (r *leadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
 }
 
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
-	return &leadRepository{db: tx, erasureSeams: r.erasureSeams}
+	return &leadRepository{db: tx, erasureSeams: r.erasureSeams, lockSeams: r.lockSeams}
 }
 
 // LeadExportFilter narrows the leads ListAllForExport reads. Every field is
