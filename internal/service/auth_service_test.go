@@ -9,12 +9,12 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"gorm.io/gorm"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // Mock repositories
@@ -153,11 +153,11 @@ func TestAuthService_Login(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		password := "password123"
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-		
+
 		user := &models.User{
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
@@ -170,7 +170,7 @@ func TestAuthService_Login(t *testing.T) {
 		mockUserRepo.On("UpdateLastLogin", uint(1)).Return(nil)
 
 		token, err := authService.Login("test@example.com", password)
-		
+
 		assert.NoError(t, err)
 		assert.NotEmpty(t, token)
 		mockUserRepo.AssertExpectations(t)
@@ -183,12 +183,12 @@ func TestAuthService_Login(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		mockUserRepo.On("GetByEmail", "invalid@example.com").Return(nil, errors.New("user not found"))
 
 		token, err := authService.Login("invalid@example.com", "password")
-		
+
 		assert.Error(t, err)
 		assert.Equal(t, "invalid credentials", err.Error())
 		assert.Empty(t, token)
@@ -394,7 +394,7 @@ func TestAuthService_GenerateJWT(t *testing.T) {
 		Secret:      "test-secret",
 		ExpiryHours: 24,
 	}
-	
+
 	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
 	user := &models.User{
@@ -404,7 +404,7 @@ func TestAuthService_GenerateJWT(t *testing.T) {
 	}
 
 	token, err := authService.GenerateJWT(user)
-	
+
 	assert.NoError(t, err)
 	assert.NotEmpty(t, token)
 
@@ -412,10 +412,10 @@ func TestAuthService_GenerateJWT(t *testing.T) {
 	parsedToken, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		return []byte(jwtConfig.Secret), nil
 	})
-	
+
 	assert.NoError(t, err)
 	assert.True(t, parsedToken.Valid)
-	
+
 	claims, ok := parsedToken.Claims.(jwt.MapClaims)
 	assert.True(t, ok)
 	assert.Equal(t, float64(1), claims["user_id"])
@@ -430,7 +430,7 @@ func TestAuthService_ValidateToken(t *testing.T) {
 		Secret:      "test-secret",
 		ExpiryHours: 24,
 	}
-	
+
 	authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 
 	t.Run("valid token", func(t *testing.T) {
@@ -445,7 +445,7 @@ func TestAuthService_ValidateToken(t *testing.T) {
 		mockUserRepo.On("GetByID", uint(1)).Return(user, nil)
 
 		validatedUser, err := authService.ValidateToken(token)
-		
+
 		assert.NoError(t, err)
 		assert.NotNil(t, validatedUser)
 		assert.Equal(t, user.ID, validatedUser.ID)
@@ -473,7 +473,7 @@ func TestAuthService_ValidateToken(t *testing.T) {
 
 	t.Run("invalid token", func(t *testing.T) {
 		validatedUser, err := authService.ValidateToken("invalid-token")
-		
+
 		assert.Error(t, err)
 		assert.Nil(t, validatedUser)
 	})
@@ -486,12 +486,12 @@ func TestAuthService_ValidateToken(t *testing.T) {
 			"role":    "customer",
 			"exp":     time.Now().Add(-time.Hour).Unix(),
 		}
-		
+
 		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		tokenString, _ := token.SignedString([]byte(jwtConfig.Secret))
 
 		validatedUser, err := authService.ValidateToken(tokenString)
-		
+
 		assert.Error(t, err)
 		assert.Nil(t, validatedUser)
 	})
@@ -505,7 +505,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		user := &models.User{
 			BaseModel: models.BaseModel{ID: 1},
@@ -602,12 +602,12 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		mockAPIKeyRepo.On("GetByKeyHash", mock.Anything).Return(nil, errors.New("not found"))
 
 		validatedUser, err := authService.ValidateAPIKey("invalid-key")
-		
+
 		assert.Error(t, err)
 		assert.Equal(t, "invalid API key", err.Error())
 		assert.Nil(t, validatedUser)
@@ -621,7 +621,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 			Secret:      "test-secret",
 			ExpiryHours: 24,
 		}
-		
+
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		expiredTime := time.Now().Add(-time.Hour)
 		apiKey := &models.APIKey{
@@ -634,7 +634,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 		mockAPIKeyRepo.On("GetByKeyHash", mock.Anything).Return(apiKey, nil)
 
 		validatedUser, err := authService.ValidateAPIKey("expired-key")
-		
+
 		assert.Error(t, err)
 		assert.Equal(t, "API key expired", err.Error())
 		assert.Nil(t, validatedUser)

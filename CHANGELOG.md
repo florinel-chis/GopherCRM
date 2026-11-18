@@ -702,6 +702,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Go sources are gofmt-formatted and the Backend check keeps them so (#405).** Twelve Go files
+  that `gofmt -l` reported were reformatted (whitespace only, no behaviour change). The new
+  `python3 scripts/ci/check-go-format.py` runs `gofmt -l` on every tracked Go file and fails with
+  the list of unformatted files; the Backend check starts it before `go build` on both of its
+  paths, `scripts/ci/check-changed-go.py` for pull requests and `make verify-backend` for full
+  runs. Fix a failure with `gofmt -w` on the listed files.
 - **Writes to a customer login with a linked customer record follow the customer permissions
   (#378).** Erasing a customer login that has a linked customer record (`DELETE /api/v1/users/{id}`)
   now needs `customers.delete` next to `users.delete`, and changing its email

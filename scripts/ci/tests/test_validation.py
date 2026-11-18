@@ -731,7 +731,8 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertIn('full: true', (ROOT / '.github/workflows/release.yml').read_text())
         self.assertIn('-race', (ROOT / '.github/workflows/migrations.yml').read_text())
         makefile = (ROOT / 'Makefile').read_text()
-        self.assertIn('verify-backend:\n\tgo build $(GO_BUILD_PKGS)\n\tgo vet $(GO_PKGS)\n\tgo test -race $(GO_PKGS)\n'
+        self.assertIn('verify-backend:\n\tpython3 scripts/ci/check-go-format.py\n\tgo build $(GO_BUILD_PKGS)\n'
+                      '\tgo vet $(GO_PKGS)\n\tgo test -race $(GO_PKGS)\n'
                       '\tgo test -race -tags=gophercrm_e2e ./internal/middleware ./internal/aeo\n', makefile)
         self.assertIn('verify-api-docs:\n\tgo test ./scripts/ci/apiroutes\n\tpython3 scripts/ci/check-api-docs.py\n',
                       makefile)

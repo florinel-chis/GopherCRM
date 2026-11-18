@@ -15,9 +15,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -37,21 +37,21 @@ func (suite *AuthIntegrationTestSuite) SetupSuite() {
 	}
 	err := utils.InitLogger(logConfig)
 	suite.NoError(err)
-	
+
 	// Setup test database
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	suite.NoError(err)
-	
+
 	// Migrate the schema
 	err = db.AutoMigrate(&models.User{}, &models.APIKey{})
 	suite.NoError(err)
-	
+
 	suite.db = db
-	
+
 	// Setup repositories
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
-	
+
 	// Setup services
 	jwtConfig := config.JWTConfig{
 		Secret:      "test-secret",
@@ -59,21 +59,21 @@ func (suite *AuthIntegrationTestSuite) SetupSuite() {
 	}
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
-	
+
 	// Setup router
 	gin.SetMode(gin.TestMode)
 	suite.router = gin.New()
 	suite.router.Use(middleware.ErrorHandler())
-	
+
 	// Setup handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)
-	
+
 	// Setup routes
 	api := suite.router.Group("/api/v1")
 	{
 		api.POST("/auth/register", authHandler.Register)
 		api.POST("/auth/login", authHandler.Login)
-		
+
 		// Protected route for testing
 		protected := api.Group("")
 		protected.Use(middleware.Auth(suite.authService))
@@ -167,12 +167,12 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 			body, _ := json.Marshal(tt.payload)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBuffer(body))
 			req.Header.Set("Content-Type", "application/json")
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
-			
+
 			if tt.expectedError != "" {
 				var response utils.APIResponse
 				err := json.Unmarshal(w.Body.Bytes(), &response)
@@ -180,13 +180,13 @@ func (suite *AuthIntegrationTestSuite) TestRegisterEndpoint() {
 				assert.False(suite.T(), response.Success)
 				assert.Contains(suite.T(), response.Error.Message, tt.expectedError)
 			}
-			
+
 			if tt.expectedStatus == http.StatusCreated {
 				var response utils.APIResponse
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(suite.T(), err)
 				assert.True(suite.T(), response.Success)
-				
+
 				authData := response.Data.(map[string]interface{})
 				assert.NotEmpty(suite.T(), authData["token"])
 				assert.NotNil(suite.T(), authData["user"])
@@ -259,12 +259,12 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 			body, _ := json.Marshal(tt.payload)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBuffer(body))
 			req.Header.Set("Content-Type", "application/json")
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
-			
+
 			if tt.expectedError != "" {
 				var response utils.APIResponse
 				err := json.Unmarshal(w.Body.Bytes(), &response)
@@ -272,13 +272,13 @@ func (suite *AuthIntegrationTestSuite) TestLoginEndpoint() {
 				assert.False(suite.T(), response.Success)
 				assert.Contains(suite.T(), response.Error.Message, tt.expectedError)
 			}
-			
+
 			if tt.expectedStatus == http.StatusOK {
 				var response utils.APIResponse
 				err := json.Unmarshal(w.Body.Bytes(), &response)
 				assert.NoError(suite.T(), err)
 				assert.True(suite.T(), response.Success)
-				
+
 				authData := response.Data.(map[string]interface{})
 				assert.NotEmpty(suite.T(), authData["token"])
 				assert.NotNil(suite.T(), authData["user"])
@@ -297,7 +297,7 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 	}
 	err := suite.userService.Register(user, "Password123!")
 	suite.NoError(err)
-	
+
 	token, err := suite.authService.Login("protected@example.com", "Password123!")
 	suite.NoError(err)
 
@@ -338,12 +338,12 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
 			}
-			
+
 			w := httptest.NewRecorder()
 			suite.router.ServeHTTP(w, req)
-			
+
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
-			
+
 			if tt.expectedError != "" {
 				var response utils.APIResponse
 				err := json.Unmarshal(w.Body.Bytes(), &response)
@@ -351,7 +351,7 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 				assert.False(suite.T(), response.Success)
 				assert.Contains(suite.T(), response.Error.Message, tt.expectedError)
 			}
-			
+
 			if tt.expectedStatus == http.StatusOK {
 				var response map[string]interface{}
 				err := json.Unmarshal(w.Body.Bytes(), &response)
@@ -365,6 +365,7 @@ func (suite *AuthIntegrationTestSuite) TestProtectedRoute() {
 func TestAuthIntegrationTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthIntegrationTestSuite))
 }
+
 // cmd/main.go mounts POST /auth/register behind
 // middleware.RequireRegistrationEnabled. The suite's shared router mounts the
 // bare handler, so this test builds the gated route the way main.go does,

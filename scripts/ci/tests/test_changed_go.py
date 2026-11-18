@@ -40,6 +40,7 @@ IMPORTS = {
     'tests': {'internal/handler'},
 }
 PACKAGES = set(IMPORTS)
+FORMAT = ['python3', 'scripts/ci/check-go-format.py']
 MAILER = ['cmd', 'internal/handler', 'internal/integration', 'internal/mailer', 'internal/middleware',
           'internal/service', 'tests']
 
@@ -154,12 +155,17 @@ class CommandTests(unittest.TestCase):
 
     def test_tests_are_uncached_bounded_and_never_use_the_race_detector(self):
         planned = self.planned(MAILER)
-        self.assertEqual(planned[0], ['go', 'build', *('./' + name for name in self.BUILDABLE)])
-        self.assertEqual(planned[1], ['go', 'vet', *('./' + name for name in self.UNIVERSE)])
-        self.assertEqual(planned[2], ['go', 'test', '-count=1', '-timeout', '10m', *('./' + name for name in MAILER)])
-        self.assertEqual(planned[3], ['go', 'test', '-count=1', '-timeout', '10m', '-tags=gophercrm_e2e',
+        # The formatting check comes first, before anything is built.
+        self.assertEqual(planned[0], FORMAT)
+        self.assertEqual(planned[1], ['go', 'build', *('./' + name for name in self.BUILDABLE)])
+        self.assertEqual(planned[2], ['go', 'vet', *('./' + name for name in self.UNIVERSE)])
+        self.assertEqual(planned[3], ['go', 'test', '-count=1', '-timeout', '10m', *('./' + name for name in MAILER)])
+        self.assertEqual(planned[4], ['go', 'test', '-count=1', '-timeout', '10m', '-tags=gophercrm_e2e',
                                       './internal/middleware'])
-        self.assertEqual(len(planned), 4)
+        self.assertEqual(len(planned), 5)
+        # The Database gates job (--tests-only) starts tests and nothing else.
+        self.assertNotIn(FORMAT, self.planned(MAILER, tests_only=True))
+        self.assertEqual({command[1] for command in self.planned(MAILER, tests_only=True)}, {'test'})
         for selected in (MAILER, self.UNIVERSE, ['internal/config'], []):
             for tests_only in (False, True):
                 for command in self.planned(selected, tests_only=tests_only):
@@ -168,7 +174,8 @@ class CommandTests(unittest.TestCase):
                         self.assertEqual(command[2:5], ['-count=1', '-timeout', '10m'])
 
     def test_nothing_selected_starts_no_go_test(self):
-        self.assertEqual([command[1] for command in self.planned([])], ['build', 'vet'])
+        self.assertEqual(self.planned([])[0], FORMAT)
+        self.assertEqual([command[1] for command in self.planned([])[1:]], ['build', 'vet'])
         self.assertEqual(self.planned([], tests_only=True), [])
         self.assertEqual(self.planned(['internal/config'], tests_only=True),
                          [['go', 'test', '-count=1', '-timeout', '10m', './internal/config']])
@@ -220,9 +227,15 @@ class RunTests(unittest.TestCase):
         self.assertEqual(lines, ['Go tests: 1 of 16 packages selected', 'internal/config',
                                  '+ go test -count=1 -timeout 10m ./internal/config'])
         started, lines = self.run_with(['internal/aeo/provider.go'])
-        self.assertEqual([command[1] for command, _ in started], ['build', 'vet', 'test', 'test'])
+        self.assertEqual(started[0][0], FORMAT)
+        self.assertEqual([command[1] for command, _ in started[1:]], ['build', 'vet', 'test', 'test'])
         self.assertEqual([line.split()[:3] for line in lines if line.startswith('+ ')],
-                         [['+', 'go', 'build'], ['+', 'go', 'vet'], ['+', 'go', 'test'], ['+', 'go', 'test']])
+                         [['+', 'python3', 'scripts/ci/check-go-format.py'], ['+', 'go', 'build'], ['+', 'go', 'vet'],
+                          ['+', 'go', 'test'], ['+', 'go', 'test']])
+        # The check is started from the repository root, where its relative path resolves.
+        self.assertEqual(started[0][1]['cwd'], ROOT)
+        self.assertTrue((ROOT / FORMAT[1]).is_file())
+        self.assertTrue(started[0][1]['check'])
         self.assertIn('-tags=gophercrm_e2e', lines[-1])
 
     def test_a_documentation_only_change_starts_no_go_test(self):
@@ -230,7 +243,24 @@ class RunTests(unittest.TestCase):
         self.assertEqual(started, [])
         self.assertEqual(lines, ['Go tests: none selected (documentation-only change)'])
         started, lines = self.run_with(['docs/DEVELOPMENT.md', 'CHANGELOG.md'])
-        self.assertEqual([command[1] for command, _ in started], ['build', 'vet'])
+        # Formatting is checked on every run that builds, a documentation-only one included.
+        self.assertEqual([command for command, _ in started][0], FORMAT)
+        self.assertEqual([command[1] for command, _ in started[1:]], ['build', 'vet'])
+
+    def test_a_formatting_failure_stops_the_run_before_the_build(self):
+        graph = (sorted(PACKAGES), [name for name in sorted(PACKAGES) if name != 'tests'], IMPORTS)
+        started = []
+
+        def fail(command, **settings):
+            started.append(command)
+            raise subprocess.CalledProcessError(1, command)
+
+        with patch.object(changed, 'module_graph', return_value=graph), \
+                patch.object(changed.subprocess, 'run', side_effect=fail), \
+                contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(subprocess.CalledProcessError):
+                changed.run(['internal/aeo/provider.go'])
+        self.assertEqual(started, [FORMAT])
 
     def test_a_plan_without_changed_paths_tests_every_package(self):
         started, lines = self.run_with(None, tests_only=True)

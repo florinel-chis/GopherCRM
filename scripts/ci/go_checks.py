@@ -13,6 +13,45 @@ from gophercrm_runner.evidence import named_go_tests
 from gophercrm_runner.readiness import verification_environment
 
 TEST = re.compile(r'^func\s+(Test[A-Za-z0-9_]+)\s*\(\s*\w+\s+\*testing\.T\s*\)', re.MULTILINE)
+UNFORMATTED = 'Go files that are not gofmt-formatted (run gofmt -w on them):'
+
+
+def gofmt_binary(root=ROOT):
+    """gofmt from PATH, or the one that ships with the `go` on PATH."""
+    import shutil
+    found = shutil.which('gofmt')
+    if found:
+        return found
+    goroot = subprocess.check_output(['go', 'env', 'GOROOT'], cwd=root, text=True).strip()
+    return str(Path(goroot) / 'bin' / 'gofmt')
+
+
+def unformatted(root=ROOT):
+    """The tracked Go files gofmt would rewrite, as repository-relative paths.
+
+    Tracked files only: untracked sources (a local snapshot under docs/, a
+    scratch file) are never read. A tracked path that is gone from the working
+    tree is skipped. A file gofmt cannot parse raises GateError with its report.
+    """
+    root = Path(root)
+    listed = subprocess.check_output(['git', 'ls-files', '-z', '--', '*.go'], cwd=root, text=True)
+    files = [path for path in listed.split('\0') if path and (root / path).is_file()]
+    gofmt, found = gofmt_binary(root), []
+    # Bounded argument lists: the command line has a size limit.
+    for start in range(0, len(files), 200):
+        result = subprocess.run([gofmt, '-l', '--', *files[start:start + 200]], cwd=root,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            raise GateError('gofmt failed:\n' + (result.stderr.strip() or f'exit status {result.returncode}'))
+        found.extend(line for line in result.stdout.splitlines() if line)
+    return sorted(found)
+
+
+def check_format(root=ROOT):
+    """Fail, naming them one per line, when a tracked Go file is not gofmt-formatted."""
+    found = unformatted(root)
+    if found:
+        raise GateError('\n'.join([UNFORMATTED, *found]))
 
 
 def discover(sources, *, root=ROOT, label='Go'):

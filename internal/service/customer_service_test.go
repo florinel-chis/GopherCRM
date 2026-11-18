@@ -290,6 +290,7 @@ func (suite *CustomerServiceTestSuite) TestList_RepoError() {
 func TestCustomerServiceTestSuite(t *testing.T) {
 	suite.Run(t, new(CustomerServiceTestSuite))
 }
+
 // --- ExportAll ---------------------------------------------------------------
 
 func (suite *CustomerServiceTestSuite) TestExportAll_Success() {
