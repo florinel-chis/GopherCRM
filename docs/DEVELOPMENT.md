@@ -1551,6 +1551,69 @@ The E2E suite needs a real backend and database. Admin accounts
 cannot be self-registered — `gocrm-ui/e2e/global-setup.ts` seeds them by shelling out to
 `cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [ADMIN_TESTING.md](ADMIN_TESTING.md).
 
+### System-role route matrix (#322)
+
+`cmd/testdata/system_role_route_matrix.json` records what the router `setupRouter` builds answers
+to each of the four system roles (admin, sales, support, customer) on every protected route: the
+HTTP status and the envelope's `error.code` (`""` on success or a body that is not an envelope).
+`cmd/system_role_route_matrix_test.go` holds the harness and five tests. It runs on a SQLite file
+only, on purpose: one golden characterises the router's guards, and the database roots keep
+covering MySQL and MariaDB behaviour of the handlers.
+
+- **Cases.** A route with a path parameter has `own`, `foreign`, `missing` and `malformed`; a
+  route without one has only `own`, the valid request; a route whose handler binds a body also has
+  `malformed_body` (invalid JSON, on the own id). `own` is a record the caller owns or is assigned
+  (lead, deal, quote and company owner; task and ticket assignee; the customer record assigned to a
+  staff caller or linked to the customer login, and a ticket of that customer; the caller's own
+  user id, API key and notification). `foreign` is a live record of another user; for a resource
+  without an owner it is a second existing record. `missing` is a well-formed id no row has, not
+  even a soft-deleted one; `malformed` is a non-numeric id. Where the parameter is not a record id
+  (`/configurations/:key`, `/configurations/category/:category`) the route's `note` says what the
+  four cases mean.
+- **Parents.** On a parent-scoped list (`/customers/:id/deals`, `/customers/:id/quotes`,
+  `/customers/:id/tickets`, `/deals/:id/quotes`, `/deals/:id/tasks`, `/companies/:id/deals`) the
+  cases refer to the parent record. On the four two-parameter routes
+  (`PUT|DELETE /quotes/:id/lines/:lineId`, `DELETE /customers/:id/external-ids/:mappingId`,
+  `DELETE /products/:id/external-ids/:mappingId`) the parent is the caller's own parent in every
+  case and the child id varies; `foreign` is an existing child of another parent, and the `note`
+  says so.
+- **Notes.** The own request carries a valid body, so admin `own` is 2xx. Where it cannot be (an
+  administrator deactivating or deleting itself, an AEO call with no provider configured) the
+  route's `note` says why; generation fails on a non-2xx admin `own` without a note.
+- **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
+  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes and the
+  six `/forms/public` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
+- **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
+  followed by a restore of every table from a snapshot. Each request has a client address of its
+  own, because the authenticated rate tier is live in a normal build; a 401 or 429 in a cell is a
+  harness failure, never a recorded value. Nothing leaves the process (no SMTP host, no reCAPTCHA
+  keys, no AEO provider keys or egress origins, inactive webhook endpoints).
+
+A pull request that adds or changes a protected route declares the request in `matrixRequests`
+(fixture kind, valid body, note) and regenerates the golden in the same pull request:
+
+```bash
+go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix
+```
+
+Two generations in a row are byte-identical, with and without `-race`. `base_commit` is `main` at
+the point the branch started (`git merge-base origin/main HEAD`); after a rebase, regenerate and
+re-stamp `routeMatrixBaseCommit` in the test together with the file. Review the diff of the golden
+as carefully as the route change: a status that looks wrong is recorded as observed and reported,
+never adjusted by hand.
+
+The fixture anchors (`TestRouteMatrixFixtureAnchors`) do not read the golden, because the golden
+is written by the harness that replays it. They assert from the database that each `own`,
+`foreign` and `missing` fixture is what its name says, and send a hand-written table of documented
+ownership rules to the live router (sales on its own and a foreign lead, deal, quote and task;
+support and customer on tickets; admin on each foreign record). Extend that table by hand when an
+ownership rule is added; never derive it from the golden.
+
+Once a route file (`cmd/main.go` or a non-test `internal/handler/*routes*.go`) uses
+`RequirePermission` or `RequireAnyPermission`, generation refuses and writes nothing, while the
+replay test keeps running against the frozen golden: from then on the file is the record of the
+system roles before permission guards, not something to regenerate.
+
 ## Gotchas
 
 Traps that have already cost time here. Each is stated as the wrong move and the correct one.

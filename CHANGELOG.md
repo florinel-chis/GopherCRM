@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **System-role route matrix (#322, part of #259), tests only.**
+  `cmd/testdata/system_role_route_matrix.json` records what the router production builds answers
+  (HTTP status and `error.code`) to each of the four system roles on all 157 protected routes, for
+  an own record, a foreign record, a missing id, a malformed id and, where the handler binds a
+  body, a malformed body. Five tests in `cmd/system_role_route_matrix_test.go` keep it honest: the
+  replay against the live router, route coverage (every route is recorded or on the explicit
+  public list), hand-written fixture anchors that do not read the file, the provenance of the
+  golden, and the comparison itself. A pull request that adds or changes a protected route
+  regenerates the file with
+  `go test ./cmd -run '^TestSystemRoleRouteMatrix$' -update-route-matrix`; generation refuses once
+  a route file uses `RequirePermission` or `RequireAnyPermission`, while the replay keeps running
+  against the frozen file. No production code changes.
 - **Signed outbound webhooks for created leads, customers and tickets (#345).** Admins register
   HTTPS endpoints under `/webhooks/endpoints` (list, create, read, update, delete) with a subset of
   `lead.created`, `customer.created` and `ticket.created` and an active flag; each endpoint gets a
