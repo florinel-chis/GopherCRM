@@ -390,7 +390,7 @@ in the same transaction and whatever the status (#245).
 | total_cents | int64 | Yes | 0 | Σ line_total_cents | Net total: after the per-line discounts, before tax |
 | tax_cents | int64 | Yes | 0 (column `DEFAULT 0`) | Σ quote_lines.tax_cents; computed, read-only (#324) | 0 on quotes written before line tax existed |
 | gross_total_cents | int64 | Yes | 0 (column `DEFAULT 0`) | total_cents + tax_cents, at most 10^12; computed, read-only (#324) | Backfilled to total_cents + tax_cents for existing rows |
-| valid_until | date | No | - | `YYYY-MM-DD` on the wire, stored as local midnight (the deal date convention) | Acceptance is refused once this date has passed; expiry itself is a manual status |
+| valid_until | date | No | - | `YYYY-MM-DD` on the wire, stored as local midnight (the deal date convention) | Acceptance is refused once this date has passed; expiry itself is a manual status. The client response link of the quote email (#382) stops working when this day ends (server's local date) |
 | notes | text | No | - | max 65535 bytes | Free text shown on the document and in the email |
 | sent_at | datetime | No | - | set on draft→sent, cleared on sent→draft | UTC |
 | closed_at | datetime | No | - | set on accepted, rejected and expired; cleared on sent→draft | UTC |
@@ -489,8 +489,35 @@ row of the quote with `to_status = 'draft'` and an id above the one read before 
 | quote_id | uint | Yes | indexed, no FK | The quote |
 | from_status | string | No | null on the creating row | Status left |
 | to_status | string | Yes | a status value | Status entered |
-| changed_by_id | uint | Yes | FK to users | Who made the change |
+| changed_by_id | uint | Yes | FK to users | Who made the change; the quote owner on a row written by a client answer (#382) |
 | changed_at | datetime | Yes | UTC | When |
+
+### Quote Response Token
+
+`quote_response_tokens` (#382) holds the single-use tokens behind the client response link of a
+quote email. Only the HMAC-SHA256 hash of a token is stored (keyed by `API_KEY_SECRET`, else
+`JWT_SECRET`); the plain value exists in the mailed link alone. There is no foreign key and no
+`deleted_at`, and a row holds a hash, the quote id, timestamps and the decision, so no personal
+data: erasure leaves the table in place. A row is usable while `used_at` is NULL, `expires_at`
+is NULL or in the future, and its quote is live and `sent`; the read and the claim carry the
+same predicates in one statement. A quote has at most one usable row, the one of its latest
+email.
+
+| Field | Type | Required | Default | Constraints | Description |
+|-------|------|----------|---------|-------------|-------------|
+| id | uint | Yes | auto | primary key | |
+| created_at, updated_at | datetime | No | | `datetime(3)` | |
+| quote_id | uint | Yes | | `idx_quote_response_tokens_quote_id`, no FK | The quote the link answers |
+| token_hash | string | Yes | | `varchar(255)`; `idx_quote_response_tokens_token_hash` (unique) | hex(HMAC-SHA256(token)); `json:"-"` |
+| expires_at | datetime | No | NULL | `datetime(3)`, UTC | Start of the day after the quote's `valid_until` in the server's local zone; NULL when the quote has no `valid_until` |
+| used_at | datetime | No | NULL | `datetime(3)`, UTC | Set when the client answers, and when a newer email or a staff status change away from sent invalidates the row |
+| decision | string | No | NULL | `varchar(20)` | `accept` or `decline` on a row the client spent; NULL on an unused or invalidated row |
+
+A client answer claims the row, moves the quote `sent → accepted | rejected` and writes one
+`quote_status_changes` row (naming the quote owner) in one transaction; this row, with `used_at`
+and `decision`, is the record that the client answered. MySQL and MariaDB get the table from
+`20261121120000_add_quote_response_tokens` (created only when missing; the down drops it);
+SQLite from `MigrateDatabase`.
 
 ## Follow-up Automation
 

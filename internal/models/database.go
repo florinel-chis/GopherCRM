@@ -226,6 +226,9 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&Quote{},
 		&QuoteLine{},
 		&QuoteStatusChange{},
+		// The single-use tokens of the client response link (#382): a hash and
+		// ids only, no foreign key.
+		&QuoteResponseToken{},
 		&Ticket{},
 		&TicketComment{},
 		// Ticket comment mail deliveries (#219): ids only, no foreign key.

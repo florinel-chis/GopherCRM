@@ -8,7 +8,8 @@ the DealDetail section, the print page, the email dialog, the nav entries and th
 its cases are section 15.8. Product external-id mappings (2026-11, issue #239) are section 15.9.
 The per-line tax rate and the tax and gross totals (2026-11, issue #324) are section 15.10; their
 web UI (issue #325) is TC-PQ-037 in that section. The web UI for fractional line quantities
-(issue #346, over the API of #343) is TC-PQ-038 in section 15.11.
+(issue #346, over the API of #343) is TC-PQ-038 in section 15.11. The client response link of the
+quote email and its two public routes (issue #382, backend only) are section 15.12.
 
 Every **Expected** states what the build does **today**, traced to the handlers, service,
 repositories and React pages; every automated case names the exact test that pins it. Sections
@@ -17,7 +18,7 @@ single test of `gocrm-ui/e2e/tests/admin-quotes.spec.ts`, which walks the admin 
 to accepted quote (TC-PQ-018 to 021 are *automated (partial)* by it, as in 14-deals: the spec
 asserts the core outcome, the rest is pinned in Vitest).
 
-38 cases: 38 automated (31 Go, 7 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 22 P0, 14 P1, 2 P2.
+46 cases: 46 automated (39 Go, 7 Vitest and Playwright), 0 planned, 0 blocked. Priorities: 27 P0, 17 P1, 2 P2.
 
 **Sources**
 
@@ -845,3 +846,157 @@ quote totals are always the server's; the browser computes none of them.
   request, a fulfilled 400 with `details.quantity` on the field, and the print page).
   `admin-quotes.spec.ts` and `admin-quotes-tax.spec.ts`, which fill whole quantities, run
   unchanged.
+
+## 15.12 Client response link (#382, backend)
+
+Since #382 the email of a sent quote ends with a single-use link,
+`APP_BASE_URL/quote-response?token=<token>`. Only the HMAC-SHA256 hash of the token is stored
+(`quote_response_tokens`). Two unauthenticated routes on the strict rate tier answer it:
+`GET /quotes/public/response?token=` shows the quote and never writes; `POST
+/quotes/public/response` `{token, decision}` claims the token and moves the quote `sent → accepted
+| rejected` in one transaction. Every refusal is the same 400 `BAD_REQUEST` "Invalid or expired
+quote link". There is no page behind the link yet, so these cases are API and service level.
+
+Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/service/quote_response.go`,
+`internal/repository/quote_response_token_repository.go`, `internal/handler/quote_public_handler.go`,
+`internal/handler/quote_public_routes.go`, `internal/models/quote_response_token.go`,
+`migrations/20261121120000_add_quote_response_tokens.{up,down}.sql`.
+
+### TC-PQ-039 — The email of a sent quote carries a single-use response link
+- **Priority:** P0
+- **Type:** functional, security
+- **Preconditions:** A sent quote with lines and a live customer; the recording mailer; logs captured at debug level.
+- **Steps:**
+  1. `POST /quotes/{id}/email`; read the mail body and the `quote_response_tokens` rows of the quote.
+  2. Email the same quote again.
+  3. Email an accepted quote, a sent quote whose `valid_until` was yesterday, and a sent quote without `valid_until`.
+  4. Make the mailer fail and email a sent quote.
+- **Expected:** Step 1: the body is the rendering of the quote followed by one final block with
+  `<APP_BASE_URL>/quote-response?token=<token>` (no doubled slash when `APP_BASE_URL` ends in one);
+  exactly one row with `used_at` NULL exists, its `token_hash` is the HMAC-SHA256 hex of the mailed
+  token, `expires_at` is the start of the day after `valid_until` in the server's local zone, and
+  no log line contains the token, its hash or the link. Step 2: a new token; the first row has
+  `used_at` set and `decision` NULL, one row is unused, and the first link is rejected. Step 3: the
+  accepted quote and the quote past `valid_until` are mailed without a link and store no row; the
+  quote without `valid_until` gets a row with `expires_at` NULL. Step 4: 502
+  `MAIL_DELIVERY_FAILED`; the error text does not contain the token; the stored row stays and the
+  next email stamps it.
+- **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailResponseLink`.
+
+### TC-PQ-040 — A quote that changed before the link is stored is refused and nothing is sent
+- **Priority:** P1
+- **Type:** functional, concurrency
+- **Preconditions:** A sent quote; a status change committed between the service's read of the quote and the transaction that stores the token.
+- **Steps:**
+  1. Let the quote move to accepted, or to draft, in that window, then let the email continue.
+  2. Let the quote move to draft, gain a line and move to sent again in that window.
+  3. Let the quote move to draft and back to sent while the mail is in flight.
+- **Expected:** Step 1: 409 (`ErrQuoteNotSent`), no token row, no mail. Step 2: 409
+  (`ErrQuoteChangedDuringSend`), no token row, no mail; a later email mails a link to the revised
+  quote. Step 3: 409 as before #382 (the mail has gone out), and the link in that mail is already
+  rejected because the transition stamped its token.
+- **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailResponseLink`.
+
+### TC-PQ-041 — The link shows the quote without spending the token
+- **Priority:** P0
+- **Type:** functional, security
+- **Preconditions:** A sent quote with two lines, emailed; no credentials.
+- **Steps:**
+  1. `GET /quotes/public/response?token=<token>` twice.
+  2. The same with an unknown token, an empty token and no token.
+  3. The same after the token was used, and with the clock past the end of the `valid_until` day.
+- **Expected:** Step 1: 200 with exactly `number`, `status` (`sent`), `currency`, `valid_until`
+  (`YYYY-MM-DD`, omitted when unset), `lines` (each `description`, `quantity`, `unit_price_cents`,
+  `discount_bp`, `line_total_cents`, `tax_rate_bp`, `tax_cents`) and `subtotal_cents`,
+  `discount_cents`, `total_cents`, `tax_cents`, `gross_total_cents`; no id, title, notes, owner,
+  customer, deal or product reference; the token row is unchanged (`used_at` NULL) after both
+  calls. Steps 2 and 3: 400, `error.code` `BAD_REQUEST`, message `Invalid or expired quote link`.
+  No log line contains the token.
+- **Automation:** automated — `internal/service/quote_response_test.go` `TestQuoteResponseView`;
+  `internal/handler/quote_public_handler_test.go` `TestQuotePublicView`.
+
+### TC-PQ-042 — The client accepts or declines through the link
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A sent quote of a deal, emailed; no credentials.
+- **Steps:**
+  1. `POST /quotes/public/response` with `{token, decision: "maybe"}`, then with a malformed body and with `token` missing.
+  2. `POST` with `decision: "accept"` (and, on another quote, `"decline"`).
+  3. `POST` again with the same token; `GET` with it.
+- **Expected:** Step 1: 400 `VALIDATION_ERROR`, decided before any token lookup; the token stays
+  usable. Step 2: 200 with the public view and `status` `accepted` (`rejected`); the quote has
+  `closed_at` set and `sent_at` kept; exactly one new `quote_status_changes` row (`sent →
+  accepted | rejected`, `changed_by_id` = the quote owner); the token row has `used_at` set and
+  `decision` `accept` (`decline`); the deal's `stage` and `closed_at` are unchanged. Step 3: the
+  generic 400, and no quote, history or token row changes.
+- **Automation:** automated — `internal/service/quote_response_test.go` `TestQuoteResponseDecision`;
+  `internal/handler/quote_public_handler_test.go` `TestQuotePublicRespond`.
+- **Known issue:** the history row names the quote owner, so `GET /quotes/{id}/history` shows a
+  client answer as the owner's (`docs/ROADMAP.md`).
+
+### TC-PQ-043 — Two answers with one token commit exactly one
+- **Priority:** P0
+- **Type:** concurrency
+- **Preconditions:** A sent quote whose `valid_until` is today, emailed. SQLite on the one-connection pool; MySQL 8 and MariaDB 10.11 on a disposable `TEST_MYSQL_DSN` schema.
+- **Steps:**
+  1. Start two `RespondPublic` calls with the same token behind one barrier (accept against decline, and accept twice).
+  2. Race one `RespondPublic` against a staff `ChangeStatus` to rejected.
+  3. Email two different sent quotes at the same moment, each for the first time and then both again.
+- **Expected:** Step 1: one call succeeds, the other is `ErrQuoteResponseRejected`; one committed
+  history row; the token row carries the winner's decision; the deal is unchanged. Step 2: exactly
+  one of the two commits; when staff wins the token is stamped with `decision` NULL and the client
+  is rejected; when the client wins staff gets `INVALID_STATUS_TRANSITION`. Step 3: both emails
+  succeed on every engine (no deadlock between the token writes of two quotes) and each quote ends
+  with exactly one unused token row.
+- **Automation:** automated — `internal/service/quote_response_regression_test.go`
+  `TestQuoteResponseConcurrent{SQLite,MySQL}`.
+
+### TC-PQ-044 — A failure after the claim keeps the link usable
+- **Priority:** P1
+- **Type:** functional, transaction
+- **Preconditions:** A sent quote, emailed; the history insert fails once.
+- **Steps:**
+  1. `RespondPublic(token, accept)` with the failing history write.
+  2. `RespondPublic(token, accept)` again.
+- **Expected:** Step 1: an error that is not the generic rejection (HTTP 500) and does not contain
+  the token; the quote is still sent with `closed_at` NULL, no history row was added and the
+  token's `used_at` is NULL. Step 2: success.
+- **Automation:** automated — `internal/service/quote_response_test.go`
+  `TestQuoteResponseRollbackKeepsLink`.
+
+### TC-PQ-045 — Every way a link dies
+- **Priority:** P0
+- **Type:** functional, security
+- **Preconditions:** Sent quotes, emailed; a settable service clock.
+- **Steps:**
+  1. Clock at 23:59:59 local on the `valid_until` day, then at 00:00:00 local the next day.
+  2. Staff move the quote from sent to accepted, rejected, expired or draft.
+  3. Staff move it to draft and to sent again without a new email; then email it again.
+  4. A quote without `valid_until`, the clock ten years on.
+  5. An admin deletes the sent quote.
+- **Expected:** Step 1: `GET` and `POST` succeed at 23:59:59 and are both rejected from 00:00:00;
+  `expires_at` is the start of the next local day whatever location the stored date was read in.
+  Step 2: the transition stamps the token (`decision` NULL) and both calls are rejected. Step 3:
+  the old link stays rejected while the quote is sent again; the link of the new email works.
+  Step 4: the link still works. Step 5: both calls are rejected and the token row is unchanged.
+  Every rejection leaves the quote, history, token and deal rows unchanged.
+- **Automation:** automated — `internal/service/quote_response_test.go`
+  `TestQuoteResponseDeadLinks`; `internal/repository/quote_response_token_repository_test.go`
+  `TestQuoteResponseTokenRepository`.
+
+### TC-PQ-046 — The public routes sit next to the guarded quote routes; the migration
+- **Priority:** P1
+- **Type:** security, migration
+- **Preconditions:** The public and the protected route groups on one engine; MySQL 8 and MariaDB 10.11 for the migration.
+- **Steps:**
+  1. `GET` and `POST /quotes/public/response` without credentials; `GET /quotes/1` and `GET /quotes/public` without credentials.
+  2. Apply `20261121120000_add_quote_response_tokens` on a fresh schema, on the previous head, and on a schema `MigrateDatabase` built first; roll back; reapply.
+- **Expected:** Step 1: the two public routes reach the public handler; `/quotes/1` and
+  `/quotes/public` (the `:id` route) answer 401; no other path under `/quotes/public` exists.
+  Step 2: the table equals what `MigrateDatabase` builds (unique `idx_quote_response_tokens_token_hash`,
+  `idx_quote_response_tokens_quote_id`, no foreign key), rows created first are kept, rollback
+  drops only this table, and no existing table is altered.
+- **Automation:** automated — `internal/handler/routes_test.go`
+  `TestQuotePublicRoutesWinOverTheIDParameter`, `TestAllRouteSetupsCoexist`;
+  `cmd/migrate/quote_response_tokens_migration_test.go` `TestQuoteResponseTokensMigrationFiles`,
+  `TestQuoteResponseTokensMigration`.

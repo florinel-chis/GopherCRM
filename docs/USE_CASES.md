@@ -257,8 +257,9 @@ renewals are not modelled.
 
 - Quote limits, which apply to every quote recipe: one tax rate per line only (no tax categories,
   reverse charge or per-country rules; the API carries it since #324 and the web UI shows and
-  edits it since #325); staff record acceptance, and there is no client
-  accept link; acceptance does not move the deal; expiry is a manual status (acceptance is refused
+  edits it since #325); the email of a sent quote carries a single-use
+  client accept/decline link (#382, backend only: the page behind the link is not built yet, and
+  staff can still record the answer); acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:92-95`); no PDF, only browser print
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
 - A task's `deal_id` (set by a deal rule, through the API, or with the task form's deal picker by
@@ -268,7 +269,8 @@ renewals are not modelled.
 
 ### Do not promise
 
-Invoicing, e-signature, client accept links, timesheets, or fractional hours on quote lines.
+Invoicing, e-signature, a client-facing accept page (the emailed link and its API exist since
+#382, the page does not), timesheets, or fractional hours on quote lines.
 
 ## 3. Product or SaaS company: inbound capture plus single-brand AEO monitoring
 
@@ -481,7 +483,7 @@ planning around an issue number.
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
 | Delivered: more than one automation worker on MySQL/MariaDB — lease-based run claims, owner-fenced writes and a stale sweep at boot and on every tick. Still open: several processes on one SQLite file; the window between the pre-send check and the relay call (an email can go out once after it was recorded `email_unconfirmed`, never resent) | 1 | `internal/service/automation_engine.go`; `docs/DEVELOPMENT.md`, "Run leases (#237)" | #237 |
-| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346). Still open: tax categories, reverse charge, per-country rules, client accept link, PDF quotes | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346 |
+| Delivered: one tax rate per quote line with stored line tax and quote tax/gross totals (#324; shown and edited in the web UI, #325); fractional line quantities with up to three decimal places through the API (#343; web UI #346); a single-use client accept/decline link in the quote email with its two public API routes (#382, backend only). Still open: tax categories, reverse charge, per-country rules, the public page behind the client link, PDF quotes | 2, 5 | `internal/models/quote.go`, `internal/models/quote_quantity.go`; `docs/FEATURES.md` 4d | #233, #324, #325, #343, #346, #382 |
 | Delivered: product external-id mappings as the ERP key (API only). Still open: no UI for the mappings; SKUs stay non-unique by design | 5 | `docs/DEVELOPMENT.md`, "Product external ids (#239)" | #239 |
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |

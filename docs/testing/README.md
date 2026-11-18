@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-11-08). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -34,9 +34,9 @@ blocked.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
-| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, and the products/quotes screens | 22 | 13 | 7 | 2 | 22 | 0 | 0 |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, and the client response link | 46 | 27 | 17 | 2 | 46 | 0 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **674** | **230** | **295** | **149** | **276** | **315** | **83** |
+| **Total** | | **698** | **244** | **305** | **149** | **300** | **315** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -93,6 +93,10 @@ five UI cases of section 15.8: each names its Vitest file and test titles, and t
 including the print page under Playwright's print-media emulation (TC-PQ-018 to 021 are
 *automated (partial)* by that spec: the sales behaviour and the support/customer redirects are
 pinned in Vitest, as the role-login e2e helper still does not exist). Nothing is blocked.
+The row was recounted on 2026-11-18 (#382) from the file's `### TC-PQ-` headings: it had stayed at
+the 22 cases of 2026-10-28 while sections 15.9 to 15.11 (#239, #324, #325, #346) added sixteen.
+Section 15.12 (#382) adds eight cases for the client response link of the quote email, all
+automated at the Go level (service, repository, handler, route and migration roots).
 
 [16-follow-up-automation.md](16-follow-up-automation.md) was added 2026-10-28 with the follow-up
 automation and notifications API (issue #164). Twenty-seven cases are automated at the Go level

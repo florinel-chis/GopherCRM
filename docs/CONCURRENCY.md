@@ -52,6 +52,29 @@ discovered state, so it never locks through `idx_webhook_deliveries_status_next`
 transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
 the chains above.
 
+**Quote response links (#382), a self-contained order.** Three flows take `quotes →
+quote_response_tokens`, each starting with the locking read of the quote by primary key
+(`QuoteRepository.GetByIDForUpdate`) and writing token rows only after it. The email mint
+(`internal/service/quote_email.go`, `mintResponseLink`) re-checks that the quote is still sent and
+that no history row was written since the marker read before the send, stamps the quote's unused
+token rows and inserts the new one, in one short transaction that ends before the mail goes out.
+A staff status change (`internal/service/quote_service.go`, `ChangeStatus`) that leaves `sent`
+stamps the unused token rows after its status claim. The client response
+(`internal/service/quote_response.go`, `RespondPublic`) finds the token with a plain read outside
+the transaction, then claims it with one conditional `UPDATE` by primary key
+(`internal/repository/quote_response_token_repository.go`, `Claim`: unused, unexpired, quote live
+and sent, all in the statement), claims the status (`WHERE status = 'sent'`) and inserts the
+history row. Two answers with one token serialise on the quote lock (on the single connection on
+SQLite) and the second claims nothing. Transactions of two different quotes share no quote lock, so
+the token writes must not meet in the table either: `InvalidateForQuote` reads the ids of the
+quote's unused rows with a plain `SELECT` (complete, because every writer of those rows holds the
+quote lock before the first read of its transaction) and stamps them by primary key, with no
+`UPDATE` at all when there is none. No statement locks through
+`idx_quote_response_tokens_quote_id`, so no gap lock is held when the mint inserts; an `UPDATE`
+filtered on `quote_id` took one under REPEATABLE READ on MySQL and MariaDB and two first emails of
+two quotes deadlocked (error 1213). No flow reads `users`, `customers`, `leads` or `deals` under
+these locks, so they add no lock edge to the chains above.
+
 **Cross-chain order (undecided).** No source specifies the order for flows spanning several
 chains: an erasure reaches users, customers and leads from whichever root it starts at, and the
 session and credential flows touch users while lead conversion touches leads and customers. `C4`

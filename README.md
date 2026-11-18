@@ -821,7 +821,20 @@ authentication and live on the moderate tier:
   customer or when the quote was revised during the send; 502 `MAIL_DELIVERY_FAILED` when the mailer
   fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
   password reset applies: the mail is logged, not delivered, and the call still answers 200 and
-  stamps `last_emailed_at`)*
+  stamps `last_emailed_at`. The email of a sent quote ends with a single-use client response
+  link, `APP_BASE_URL/quote-response?token=...`; each email invalidates the previous link, a
+  status change away from sent invalidates the current one, and the link works until the end of
+  the `valid_until` day. An accepted quote and a sent quote past `valid_until` get no link)*
+- `GET /api/v1/quotes/public/response?token=` - **No authentication.** Show the quote behind a
+  client response link *(number, status, currency, `valid_until`, lines and totals only; never
+  spends the token; any unusable token is 400 "Invalid or expired quote link"; strict rate
+  tier)*
+- `POST /api/v1/quotes/public/response` - **No authentication.** Answer the quote
+  `{token, decision}` with `accept` or `decline` *(single use: claims the token and moves the
+  quote sent→accepted or sent→rejected with one history row in one transaction; the history row
+  names the quote owner; the deal is not changed; an invalid body is 400 `VALIDATION_ERROR`, any
+  unusable token the same generic 400; strict rate tier. Backend only: the page behind the link
+  is not built yet)*
 - `GET /api/v1/deals/:id/quotes` - The deal's quotes, paginated *(sales: its own deals and its own quotes only)*
 - `GET /api/v1/customers/:id/quotes` - The customer's quotes, paginated *(sales sees only its own)*
 

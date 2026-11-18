@@ -273,6 +273,11 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		// still reads both, so a personal value ever written there would show.
 		"webhook_endpoints",
 		"webhook_deliveries",
+		// #382: the tokens of the client response link of a quote email hold
+		// a hash of a random token, the quote id, timestamps and the client's
+		// decision, so no personal data, and the erasure leaves them in place.
+		// The sweep still reads the table.
+		"quote_response_tokens",
 	} {
 		assert.Contains(t, tables, expected,
 			"the sweep must run against a database that has %s, or nothing it says about %s means anything", expected, expected)

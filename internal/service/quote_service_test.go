@@ -53,6 +53,7 @@ func migrateQuoteTestSchema(t *testing.T, db *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{},
 		&models.Product{}, &models.Quote{}, &models.QuoteLine{}, &models.QuoteStatusChange{},
+		&models.QuoteResponseToken{},
 	))
 }
 
@@ -75,6 +76,14 @@ func openQuoteTestSQLite(t *testing.T) *gorm.DB {
 // the root skips; a configured but unreachable server fails.
 func openQuoteTestMySQL(t *testing.T, maxConns int) *gorm.DB {
 	t.Helper()
+	return openQuoteTestMySQLIn(t, maxConns, nil)
+}
+
+// openQuoteTestMySQLIn is openQuoteTestMySQL with the connection's time zone
+// set to loc when it is not nil. The application connects with loc=Local, and
+// only then does a DATE column keep the local calendar day it was given.
+func openQuoteTestMySQLIn(t *testing.T, maxConns int, loc *time.Location) *gorm.DB {
+	t.Helper()
 	raw := os.Getenv("TEST_MYSQL_DSN")
 	if raw == "" {
 		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
@@ -83,6 +92,9 @@ func openQuoteTestMySQL(t *testing.T, maxConns int) *gorm.DB {
 	require.NoError(t, err)
 	cfg.DBName = ""
 	cfg.ParseTime = true
+	if loc != nil {
+		cfg.Loc = loc
+	}
 	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, quoteTestTimeout, quoteTestTimeout
 	server, err := sql.Open("mysql", cfg.FormatDSN())
 	require.NoError(t, err)

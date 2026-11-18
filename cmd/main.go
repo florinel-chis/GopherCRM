@@ -111,6 +111,8 @@ import (
 // @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of lead.created, customer.created and ticket.created events.
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
+// @tag.name public-quotes
+// @tag.description Unauthenticated endpoints behind the client response link of a quote email: show the quote and accept or decline it with the single-use token of the link.
 
 // revision is the commit the binary was built from, set by the release build
 // (-ldflags "-X main.revision=<sha>"). The deploy pipeline waits for /health to
@@ -354,7 +356,16 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	productExternalIDRepo := repository.NewProductExternalIDRepository(models.DB)
 	productService := service.NewProductService(productRepo, configService,
 		service.WithProductExternalIDs(productExternalIDRepo, txManager))
-	quoteService := service.NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager)
+	// The email of a sent quote carries a single-use client response link
+	// (#382): the link is built on APP_BASE_URL and only the hash of its
+	// token is stored, keyed like the other opaque tokens (API_KEY_SECRET,
+	// else JWT_SECRET).
+	quoteTokenSecret := cfg.API.APIKeySecret
+	if quoteTokenSecret == "" {
+		quoteTokenSecret = cfg.JWT.Secret
+	}
+	quoteService := service.NewQuoteServiceWithResponseLinks(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager,
+		repository.NewQuoteResponseTokenRepository(models.DB), cfg.App.BaseURL, quoteTokenSecret)
 	bulkService := service.NewBulkStatusService(
 		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
 		service.WithBulkAutomationEvents(automationRepo),
@@ -428,6 +439,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	dealHandler := handler.NewDealHandler(dealService)
 	productHandler := handler.NewProductHandler(productService).WithExternalIDs(service.NewProductExternalIDService(productExternalIDRepo, txManager))
 	quoteHandler := handler.NewQuoteHandler(quoteService)
+	quotePublicHandler := handler.NewQuotePublicHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService)
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
@@ -529,6 +541,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		// pages. Per-route rate tiers are set inside (generous on reads, strict
 		// on submits and confirms).
 		handler.SetupFormPublicRoutes(public, formPublicHandler)
+
+		// The client response link of a quote email (#382): show the quote
+		// and accept or decline it, both on one strict tier.
+		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
 	// Protected routes with moderate rate limiting

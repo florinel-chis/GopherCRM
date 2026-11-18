@@ -26,6 +26,7 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestRoleMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesSchema'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesDownDemotesCustomUsers'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteResponseTokensMigration'),
     }
     migration_roots = len(required)
     if migrations_only:

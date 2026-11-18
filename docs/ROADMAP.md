@@ -202,6 +202,17 @@ included. Found by reading the code path unless noted.
   change-password and reset confirm; no endpoint checks the byte length first.
 - **Database failures reported as 404** — `GET /users/{id}`, `GET /users/me` and the user lookup of
   `POST /customers/{id}/assign` map every lookup error to not found.
+- **A client's answer to a quote is attributed to the quote owner in the history (#382).**
+  `quote_status_changes.changed_by_id` is NOT NULL with a foreign key to `users`, so the row a
+  client writes through the response link names the quote owner; that the client answered is
+  recorded on the `quote_response_tokens` row (`used_at`, `decision`), which no endpoint exposes.
+  `GET /quotes/{id}/history` therefore shows a client acceptance as the owner's. The follow-up
+  ticket decides how the history labels it (a nullable actor column or a join on the token row).
+- **The client response link has no page yet (#382).** The quote email links to
+  `APP_BASE_URL/quote-response?token=...`, and the two `/quotes/public/response` routes answer
+  it, but the SPA has no such route until the follow-up ships; a client who opens the link today
+  lands on the application without the quote. Erasing the customer of a sent quote leaves a
+  mailed link usable until the quote leaves sent (the public view holds no personal data).
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

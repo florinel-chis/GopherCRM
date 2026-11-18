@@ -887,6 +887,60 @@ the recipient is never copied onto the quote, the body (`RenderQuoteEmail`) ends
 `TestQuoteEmail{Delivery,LogsOmitPersonalData,RevisedDuringSend}` (`internal/service/quote_email_test.go`)
 and `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
 
+**Quote response link: a single-use token claimed with the transition (#382)** — a quote service
+built with `NewQuoteServiceWithResponseLinks(..., tokenRepo, appBaseURL, tokenSecret)` (what
+`cmd/main.go` wires, with `APP_BASE_URL` and `API_KEY_SECRET`, else `JWT_SECRET`) appends
+`<APP_BASE_URL>/quote-response?token=<token>` to the email of a *sent* quote. `NewQuoteService`
+keeps its signature for callers that send no link: its emails carry none and both public methods
+answer `apperrors.ErrQuoteResponseRejected` (the `NewAuthService` / `NewAuthServiceWithSessions`
+precedent). The token is 256 random bits (`generateOpaqueToken`); only `hashOpaqueToken` of it is
+stored, in `quote_response_tokens`, and neither the token nor the link reaches a log field or an
+error text.
+
+- **Mint.** After the recipient checks and before `Mailer.Send`, `mintResponseLink` runs one short
+  transaction: `GetByIDForUpdate(quote)`, the re-check that it is still sent (`ErrQuoteNotSent`
+  otherwise), the re-read of the latest history id against the marker read at the start
+  (`ErrQuoteChangedDuringSend` when it moved: a revision and re-send in between would mail the old
+  rendering with a live link to the new quote), `InvalidateForQuote`, `Create`. Both refusals are
+  409 and send nothing. No transaction is held during the send. A failed send leaves the stored
+  hash in place: its plain value was never delivered, and the next email stamps it.
+- **Expiry.** `expires_at` is the start of the day after `valid_until` in `time.Local`, stored in
+  UTC (`quoteResponseExpiry`), the same day `dateBefore` allows a staff acceptance; NULL without a
+  `valid_until`. A sent quote whose `valid_until` has passed is still emailed, without a link and
+  without a row; an accepted quote is emailed as before.
+- **Read.** `GetPublicResponse(token)` hashes, calls `FindUsableByHash` and loads the quote. It
+  never writes, so mail scanners and previews do not spend the link.
+- **Claim.** `RespondPublic(token, decision)` reads the token by hash, then in one transaction, in
+  the order `quotes → quote_response_tokens`: `GetByIDForUpdate(quote)`, `Claim` (one conditional
+  `UPDATE` setting `used_at`, `decision` and `updated_at` `WHERE id = ? AND used_at IS NULL AND
+  (expires_at IS NULL OR expires_at > ?) AND EXISTS (the quote is live and sent)`; exactly one row,
+  else `gorm.ErrRecordNotFound`), `ClaimStatus(sent → accepted | rejected)` with `closed_at`, and
+  the history row with `changed_by_id` = the quote owner. A failure after the claim rolls it back
+  and the link stays usable. The deal repository is not touched. This is the single-use token
+  shape of the form confirmation and the password reset; do not pre-check then update.
+- **Invalidation.** `ChangeStatus` stamps the quote's unused rows in its own transaction whenever
+  it leaves `sent` (`InvalidateForQuote`, `decision` stays NULL), so a link stays dead after
+  sent → draft → sent until the next email mints a new one. `InvalidateForQuote` reads the ids
+  with a plain `SELECT` and stamps them by primary key (no statement when there is none): an
+  `UPDATE` filtered on `quote_id` gap-locks the index on MySQL and MariaDB and deadlocked the
+  first emails of two different quotes. Call it only after the locking read of the quote.
+- **HTTP.** `SetupQuotePublicRoutes` mounts `GET` and `POST /quotes/public/response` on the public
+  group with one shared `RateLimitStrict()` instance and no Auth. The body is validated before any
+  token lookup (400 `VALIDATION_ERROR`); every `ErrQuoteResponseRejected` is 400 `BAD_REQUEST`
+  "Invalid or expired quote link"; the response is `models.QuotePublicView` (number, status,
+  currency, `valid_until`, lines, five totals; no id, title, notes, owner, customer, deal or
+  product reference).
+
+Roots: `TestQuoteEmailResponseLink` (`internal/service/quote_email_test.go`);
+`TestQuoteResponse{View,Decision,RollbackKeepsLink,DeadLinks}`
+(`internal/service/quote_response_test.go`); `TestQuoteResponseConcurrent{SQLite,MySQL}`
+(`internal/service/quote_response_regression_test.go`; the MySQL root connects with `loc=Local`
+like the application, skips without `TEST_MYSQL_DSN` and is not part of a CI gate, like the other
+quote concurrency roots); `TestQuoteResponseTokenRepository` (`internal/repository`);
+`TestQuotePublic{View,Respond}`, `TestQuotePublicRoutesWinOverTheIDParameter` (`internal/handler`);
+`TestQuoteResponseTokensMigrationFiles` (it holds the newest-migration assertion) and
+`TestQuoteResponseTokensMigration` (`cmd/migrate`).
+
 **The SMTP transport refuses CR/LF in headers** — `SMTPMailer.Send` and `SendPasswordReset` return
 an error matching `mailer.ErrInvalidHeader` (through `errors.Is`) for a recipient or subject that
 contains `\r` or `\n`, before any relay is dialled: either character would end the header line and
@@ -1659,8 +1713,8 @@ covering MySQL and MariaDB behaviour of the handlers.
   administrator deactivating or deleting itself, an AEO call with no provider configured) the
   route's `note` says why; generation fails on a non-2xx admin `own` without a note.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
-  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes and the
-  six `/forms/public` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
+  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes, the
+  six `/forms/public` routes and the two `/quotes/public/response` routes. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its
   own, because the authenticated rate tier is live in a normal build; a 401 or 429 in a cell is a

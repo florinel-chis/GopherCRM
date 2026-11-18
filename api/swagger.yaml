@@ -3714,6 +3714,84 @@ definitions:
         example: Seller
         type: string
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.QuotePublicLine:
+    properties:
+      description:
+        description: Line description as it stands on the quote.
+        example: Annual licence
+        type: string
+      discount_bp:
+        description: Line discount in basis points (1250 = 12.5 percent).
+        example: 1250
+        type: integer
+      line_total_cents:
+        description: Net line total after the discount, in minor units.
+        example: 210000
+        type: integer
+      quantity:
+        description: Quantity, a decimal number with up to three decimals.
+        example: 3
+        type: number
+      tax_cents:
+        description: Tax of the line, in minor units.
+        example: 44100
+        type: integer
+      tax_rate_bp:
+        description: Tax rate in basis points (2100 = 21 percent).
+        example: 2100
+        type: integer
+      unit_price_cents:
+        description: Unit price in minor units.
+        example: 80000
+        type: integer
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.QuotePublicView:
+    properties:
+      currency:
+        description: ISO 4217 code shared by every amount.
+        example: EUR
+        type: string
+      discount_cents:
+        description: Money taken off by the line discounts, in minor units.
+        example: 30000
+        type: integer
+      gross_total_cents:
+        description: 'Gross total: total_cents plus tax_cents, in minor units.'
+        example: 254100
+        type: integer
+      lines:
+        description: The priced lines in display order; an empty array, never null.
+        items:
+          $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuotePublicLine'
+        type: array
+      number:
+        description: Quote number as printed in the email, for example Q-000042.
+        example: Q-000042
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteStatus'
+        description: |-
+          Status of the quote: sent while the link is usable, accepted or
+          rejected in the answer to a decision.
+        example: sent
+      subtotal_cents:
+        description: Sum of the lines before discounts, in minor units.
+        example: 240000
+        type: integer
+      tax_cents:
+        description: Sum of the lines' tax, in minor units.
+        example: 44100
+        type: integer
+      total_cents:
+        description: Net total after discounts and before tax, in minor units.
+        example: 210000
+        type: integer
+      valid_until:
+        description: Last day the offer is valid, YYYY-MM-DD. Omitted when not set.
+        example: "2026-12-31"
+        type: string
+    type: object
   github_com_florinel-chis_gophercrm_internal_models.QuoteStatus:
     enum:
     - draft
@@ -6992,6 +7070,20 @@ definitions:
         maximum: 1000000000000
         minimum: 0
         type: integer
+    type: object
+  internal_handler.QuotePublicResponseRequest:
+    properties:
+      decision:
+        description: The client's answer. Required.
+        enum:
+        - accept
+        - decline
+        example: accept
+        type: string
+      token:
+        description: The token from the link in the quote email. Required.
+        example: 3q2-7wEXAMPLEtokenEXAMPLEtokenEXAMPLEtoken0
+        type: string
     type: object
   internal_handler.QuoteRequest:
     properties:
@@ -20396,6 +20488,7 @@ paths:
       description: |-
         Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
         Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
+        The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each email of a sent quote invalidates the link of the previous one, and any status change away from sent invalidates the current one. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent.
       parameters:
       - description: Quote ID
         in: path
@@ -21077,6 +21170,127 @@ paths:
       summary: Move a quote to another status
       tags:
       - quotes
+  /quotes/public/response:
+    get:
+      description: |-
+        Unauthenticated. Returns the quote the token of an emailed response link belongs to: its number, status, currency, validity date, lines and the five totals, and nothing else (no id, title, notes, owner, customer, deal or product reference). The request never writes, so opening the link does not spend the token.
+        A token is usable while it is unused, the quote is still sent and not deleted, and the day of the quote's valid_until (server's local date) has not ended; a quote without valid_until keeps its link while it is sent. A newer quote email and any staff status change away from sent invalidate the link. A missing, empty, unknown, used, expired or invalidated token is the same 400 'Invalid or expired quote link', so validity cannot be probed. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+      parameters:
+      - description: The token from the link in the quote email; missing or empty
+          is the generic 400
+        in: query
+        name: token
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The quote as the client may see it; status is sent
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuotePublicView'
+              type: object
+        "400":
+          description: 'BAD_REQUEST ''Invalid or expired quote link'': the token is
+            missing, unknown, used, expired or invalidated, or its quote is no longer
+            sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: strict tier, 10 requests per minute, burst
+            5, per client IP, one bucket shared by both /quotes/public/response routes
+            (lifted by DISABLE_RATE_LIMIT=true); error.details.retry_after is ''60s'';
+            no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: unexpected failure; the message is always
+            ''An unexpected error occurred'''
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Show the quote behind a client response link
+      tags:
+      - public-quotes
+    post:
+      consumes:
+      - application/json
+      description: |-
+        Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row names the quote owner as changed_by, and the token itself records that the client answered. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.
+        The body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+      parameters:
+      - description: The token and the decision
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.QuotePublicResponseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The quote with its new status, accepted or rejected
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuotePublicView'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: malformed JSON, token missing or empty,
+            or decision not accept or decline (details names the field). BAD_REQUEST
+            ''Invalid or expired quote link'': the token is unknown, used, expired
+            or invalidated, or its quote is no longer sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: strict tier, 10 requests per minute, burst
+            5, per client IP, one bucket shared by both /quotes/public/response routes
+            (lifted by DISABLE_RATE_LIMIT=true); error.details.retry_after is ''60s'';
+            no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: unexpected failure; the message is always
+            ''An unexpected error occurred'''
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      summary: Accept or decline a quote through its client response link
+      tags:
+      - public-quotes
   /roles:
     get:
       description: |-
@@ -25010,3 +25224,7 @@ tags:
     confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS
     is open to any origin without credentials.'
   name: public-forms
+- description: 'Unauthenticated endpoints behind the client response link of a quote
+    email: show the quote and accept or decline it with the single-use token of the
+    link.'
+  name: public-quotes

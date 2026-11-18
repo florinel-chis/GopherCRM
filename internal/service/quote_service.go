@@ -25,6 +25,13 @@ type quoteService struct {
 	mailer       mailer.Mailer
 	txManager    *utils.TransactionManager
 	now          func() time.Time
+
+	// The client response link (#382). tokenRepo is nil on a service built
+	// with NewQuoteService: the email then carries no link and both public
+	// methods answer apperrors.ErrQuoteResponseRejected.
+	tokenRepo   repository.QuoteResponseTokenRepository
+	appBaseURL  string
+	tokenSecret string
 }
 
 // NewQuoteService wires the quotes module. currency is the configuration read
@@ -56,6 +63,33 @@ func NewQuoteService(
 	}
 }
 
+// NewQuoteServiceWithResponseLinks is NewQuoteService plus the client response
+// link (#382): the email of a sent quote carries
+// <appBaseURL>/quote-response?token=..., whose HMAC-SHA256 hash (keyed by
+// tokenSecret) is stored through tokenRepo, and GetPublicResponse and
+// RespondPublic answer it. NewQuoteService stays for callers that send no
+// link; it refuses the two public methods instead of running them without a
+// token store.
+func NewQuoteServiceWithResponseLinks(
+	quoteRepo repository.QuoteRepository,
+	productRepo repository.ProductRepository,
+	dealRepo repository.DealRepository,
+	customerRepo repository.CustomerRepository,
+	userRepo repository.UserRepository,
+	currency DealCurrencySource,
+	m mailer.Mailer,
+	txManager *utils.TransactionManager,
+	tokenRepo repository.QuoteResponseTokenRepository,
+	appBaseURL string,
+	tokenSecret string,
+) QuoteService {
+	svc := NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, currency, m, txManager).(*quoteService)
+	svc.tokenRepo = tokenRepo
+	svc.appBaseURL = strings.TrimRight(strings.TrimSpace(appBaseURL), "/")
+	svc.tokenSecret = tokenSecret
+	return svc
+}
+
 // stamp is the time written to sent_at, closed_at, last_emailed_at and
 // quote_status_changes.changed_at, always in UTC like GORM's own timestamps:
 // SQLite stores these columns as text with the offset, so mixed offsets would
@@ -75,6 +109,27 @@ func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, pr
 			return utils.ErrNoTransaction
 		}
 		return fn(s.quoteRepo.WithTx(tx), s.productRepo.WithTx(tx), s.customerRepo.WithTx(tx), s.userRepo.WithTx(tx), s.dealRepo.WithTx(tx))
+	})
+}
+
+// inQuoteTokenTransaction runs fn with the quote repository and the response
+// token repository bound to one transaction. tokens is nil on a service
+// without response links. Every caller touches the quotes row first, with a
+// locking read, and the token rows after it (quotes → quote_response_tokens).
+func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error) error {
+	if s.txManager == nil {
+		return utils.ErrNoTransaction
+	}
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		var tokens repository.QuoteResponseTokenRepository
+		if s.tokenRepo != nil {
+			tokens = s.tokenRepo.WithTx(tx)
+		}
+		return fn(s.quoteRepo.WithTx(tx), tokens)
 	})
 }
 
@@ -504,7 +559,10 @@ func (s *quoteService) DeleteLine(quoteID, lineID uint) (*models.Quote, error) {
 // draft→sent — the line count read with a locking read after the claim, and
 // the history row. A zero count rolls the claim back. Of two competing
 // transitions exactly one claims the row: the other blocks on the lock,
-// re-reads the winner's status and finds no allowed move from it.
+// re-reads the winner's status and finds no allowed move from it. A move away
+// from sent also stamps the quote's unused response tokens in the same
+// transaction (#382), so a mailed link stays dead after sent→draft→sent until
+// the next email mints a new one.
 func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint) (*models.Quote, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"quote_id": id,
@@ -516,7 +574,7 @@ func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint
 	}
 
 	var from models.QuoteStatus
-	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository) error {
+	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
 		quote, err := repo.GetByIDForUpdate(id)
 		if err != nil {
 			if isNotFound(err) {
@@ -549,6 +607,11 @@ func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint
 		}
 		if rows != 1 {
 			return fmt.Errorf("quote %d is no longer %s: %w", id, from, apperrors.ErrInvalidQuoteTransition)
+		}
+		if from == models.QuoteStatusSent && tokens != nil {
+			if err := tokens.InvalidateForQuote(id, now); err != nil {
+				return err
+			}
 		}
 		if to == models.QuoteStatusSent {
 			count, err := repo.CountLinesForUpdate(id)
@@ -721,6 +784,7 @@ var quoteRefusals = []error{
 	apperrors.ErrCustomerNotFound, apperrors.ErrAssigneeNotFound, apperrors.ErrDealNotFound,
 	apperrors.ErrQuoteLocked, apperrors.ErrQuoteCurrencyLocked, apperrors.ErrQuoteCurrencyMismatch,
 	apperrors.ErrInvalidQuoteTransition, apperrors.ErrQuoteHasNoLines, apperrors.ErrQuoteExpired,
+	apperrors.ErrQuoteNotSent, apperrors.ErrQuoteChangedDuringSend, apperrors.ErrQuoteResponseRejected,
 }
 
 // logServiceOutcome logs a refused write at warn level when it is a domain
