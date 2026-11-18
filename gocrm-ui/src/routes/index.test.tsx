@@ -219,6 +219,24 @@ vi.mock('@/api/endpoints/quotes', async (importOriginal) => {
   };
 });
 
+vi.mock('@/api/endpoints/quoteResponse', () => ({
+  quoteResponseApi: {
+    getQuoteResponse: vi.fn().mockResolvedValue({
+      number: 'Q-000042',
+      status: 'sent',
+      currency: 'EUR',
+      valid_until: null,
+      lines: [],
+      subtotal_cents: 0,
+      discount_cents: 0,
+      total_cents: 0,
+      tax_cents: 0,
+      gross_total_cents: 0,
+    }),
+    respond: vi.fn(),
+  },
+}));
+
 vi.mock('@/api/endpoints/tickets', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/endpoints/tickets')>();
   return {
@@ -745,6 +763,31 @@ describe('lead and customer creation routes', () => {
 
     expect(await view.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
     expect(view.queryByRole('heading', { name: 'Create New Customer' })).not.toBeInTheDocument();
+    view.unmount();
+  }, 30000);
+});
+
+// The page behind the link of a quote email is public (#383): the client has
+// no account, so the route sits outside ProtectedRoute and the shell.
+describe('quote response route', () => {
+  it('renders the page for a signed-out visitor and stays on /quote-response', async () => {
+    setAuth(null, false);
+    const memoryRouter = createMemoryRouter(router.routes as unknown as RouteObject[], {
+      initialEntries: ['/quote-response?token=t'],
+    });
+    const view = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={memoryRouter} />
+      </QueryClientProvider>
+    );
+
+    expect(await view.findByRole('button', { name: 'Accept' }, { timeout: 15000 })).toBeInTheDocument();
+    expect(view.getByRole('heading', { name: 'Quote Q-000042' })).toBeInTheDocument();
+    expect(memoryRouter.state.location.pathname).toBe('/quote-response');
+    expect(memoryRouter.state.location.search).toBe('?token=t');
+    // Outside the shell: the mocked MainLayout and the sign-in page are absent.
+    expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+    expect(view.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument();
     view.unmount();
   }, 30000);
 });

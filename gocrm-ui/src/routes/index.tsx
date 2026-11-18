@@ -618,6 +618,13 @@ export const router = createBrowserRouter([
       },
     ],
   },
+  // The public page behind the link of a quote email (#383): reached without
+  // a session, outside the guard and the application shell.
+  {
+    path: '/quote-response',
+    lazy: () => import('@/pages/quotes/QuoteResponse'),
+    errorElement: <RouteErrorBoundary />,
+  },
   {
     path: '*',
     element: <NotFound />,

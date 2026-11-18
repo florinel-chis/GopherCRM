@@ -683,6 +683,45 @@ export class ApiClient {
     return this.client;
   }
 
+  private publicClient: AxiosInstance | null = null;
+
+  /**
+   * A client for public endpoints that are answered without a session (the
+   * quote response link). It shares the base URL, timeout and transport of
+   * `getClient()` and unwraps the success and error envelopes the same way,
+   * but has no request interceptor: it never sends the stored session's
+   * `Authorization` header, and a 401 is neither refreshed nor replayed.
+   */
+  public getPublicClient(): AxiosInstance {
+    if (this.publicClient === null) {
+      const { baseURL, timeout, adapter } = this.client.defaults;
+      const instance = axios.create({
+        baseURL,
+        timeout,
+        headers: { 'Content-Type': 'application/json' },
+        ...(adapter ? { adapter } : {}),
+      });
+      instance.interceptors.response.use(
+        (response) => {
+          if (response.data && response.data.success && response.data.data !== undefined) {
+            const envelope = response.data as { data: unknown; meta?: ApiMeta };
+            response.data = envelope.data;
+            (response as ApiResponseWithMeta<unknown>).meta = envelope.meta;
+          }
+          return response;
+        },
+        (error: AxiosError<APIError | ApiErrorEnvelope>) => {
+          if (error.response?.data && 'success' in error.response.data && 'error' in error.response.data) {
+            error.response.data = error.response.data.error;
+          }
+          return Promise.reject(error);
+        }
+      );
+      this.publicClient = instance;
+    }
+    return this.publicClient;
+  }
+
   private localArea(): Storage {
     return this.storages?.local ?? localStorage;
   }
@@ -767,3 +806,4 @@ export class ApiClient {
 
 export const apiClient = new ApiClient();
 export const api = apiClient.getClient();
+export const publicApi = apiClient.getPublicClient();
