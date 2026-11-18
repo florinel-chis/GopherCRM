@@ -9,6 +9,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -154,15 +155,15 @@ func (h *CompanyHandler) Create(c *gin.Context) {
 	req.apply(company)
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
+	mayAssignOwner := hasPermission(c, permissions.CompaniesAssignOwner)
 	if req.OwnerID != nil && *req.OwnerID != 0 {
 		// Only admins hand a company to somebody else; the owner rule of leads.
-		if currentUserRole != string(models.RoleAdmin) && *req.OwnerID != currentUserID {
+		if !mayAssignOwner && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign companies to yourself")
 			return
 		}
 		company.OwnerID = req.OwnerID
-	} else if currentUserRole != string(models.RoleAdmin) {
+	} else if !mayAssignOwner {
 		company.OwnerID = &currentUserID
 	}
 
@@ -307,16 +308,16 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
+	mayAssignOwner := hasPermission(c, permissions.CompaniesAssignOwner)
 	if req.OwnerID != nil {
 		switch {
 		case *req.OwnerID == 0:
-			if currentUserRole != string(models.RoleAdmin) {
+			if !mayAssignOwner {
 				utils.RespondForbidden(c, "Only administrators can clear a company's owner")
 				return
 			}
 			company.OwnerID = nil
-		case currentUserRole != string(models.RoleAdmin) && *req.OwnerID != currentUserID:
+		case !mayAssignOwner && *req.OwnerID != currentUserID:
 			utils.RespondForbidden(c, "You can only assign companies to yourself")
 			return
 		default:
@@ -450,7 +451,7 @@ func (h *CompanyHandler) ListLeads(c *gin.Context) {
 
 	// Sales users only ever see their own leads, here as on GET /leads.
 	var ownerID *uint
-	if c.GetString("user_role") != string(models.RoleAdmin) {
+	if !hasPermissionOnAll(c, permissions.LeadsView) {
 		userID := c.GetUint("user_id")
 		ownerID = &userID
 	}

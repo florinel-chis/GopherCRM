@@ -19,6 +19,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/forms"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -565,7 +566,7 @@ func (s *formService) checkLeadOwner(form *models.Form) error {
 	if !owner.IsActive {
 		return FieldErrors{"default_owner_id": "the lead owner is deactivated"}
 	}
-	if owner.Role != models.RoleAdmin && owner.Role != models.RoleSales {
+	if !permissions.ForUser(owner).Has(permissions.AssignmentFormOwner) {
 		return FieldErrors{"default_owner_id": "leads can only be owned by an admin or sales user"}
 	}
 	return nil

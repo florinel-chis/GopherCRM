@@ -939,7 +939,7 @@ func resolveAssignTarget(users repository.UserRepository, cfg models.AutomationS
 	if err != nil || !available {
 		return nil, false, err
 	}
-	if rec.entityType == models.AutomationEntityTicket && !isTicketAssigneeRole(target.Role) {
+	if rec.entityType == models.AutomationEntityTicket && !isTicketAssignee(target) {
 		return nil, false, nil
 	}
 	return target, true, nil

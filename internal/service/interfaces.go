@@ -383,6 +383,11 @@ type ProductService interface {
 	List(offset, limit int, filter repository.ProductListFilter) ([]models.Product, int64, error)
 }
 
+// QuoteCreatePolicy says what the caller of QuoteService.CreateWithPolicy may
+// do beyond quoting its own deals for itself. The type lives in models so the
+// service mocks, which this package's tests import, can name it.
+type QuoteCreatePolicy = models.QuoteCreatePolicy
+
 // QuoteService drives the quotes module. The line input and patch types live
 // in models (models.QuoteLineInput, models.QuoteLinePatch) so the shared mock
 // in internal/mocks can name them without importing this package. Every write to a quote or its lines
@@ -402,6 +407,10 @@ type QuoteService interface {
 	// apperrors.ErrDealClosed; a sales caller (role) naming another owner's
 	// deal or another owner is apperrors.ErrForbidden.
 	Create(quote *models.Quote, actorID uint, role models.UserRole) error
+	// CreateWithPolicy is Create with its two decisions named one by one, for
+	// a caller whose permissions are not those of a system role. Create
+	// delegates to it with both set for an admin and neither for anyone else.
+	CreateWithPolicy(quote *models.Quote, actorID uint, policy QuoteCreatePolicy) error
 	// GetByID returns the quote with its owner, customer, deal and lines.
 	GetByID(id uint) (*models.Quote, error)
 	// Update saves the editable fields of a draft as given. A currency change

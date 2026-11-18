@@ -8,6 +8,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 )
 
 // Codes of a RuleFieldError.
@@ -218,7 +219,7 @@ func (s *automationService) validateRule(rule *models.AutomationRule) error {
 			// through the ticket API (#242); other staff may still receive a
 			// notification or a task of a ticket rule.
 			if rule.EntityType == models.AutomationEntityTicket && rule.Steps[index].StepType == models.AutomationStepAssignOwner &&
-				!isTicketAssigneeRole(user.Role) {
+				!isTicketAssignee(user) {
 				c.add(field, RuleErrorUnknownReference, "the user is not a support or admin user",
 					fmt.Errorf("user %d is not a support or admin user: %w", id, apperrors.ErrAssigneeNotFound))
 			}
@@ -227,10 +228,10 @@ func (s *automationService) validateRule(rule *models.AutomationRule) error {
 	return c.result()
 }
 
-// isTicketAssigneeRole reports whether a user of the role may be assigned a
-// ticket.
-func isTicketAssigneeRole(role models.UserRole) bool {
-	return role == models.RoleSupport || role == models.RoleAdmin
+// isTicketAssignee reports whether the user may be assigned a ticket: it holds
+// assignment.ticket_assignee, as the system roles support and admin do.
+func isTicketAssignee(user *models.User) bool {
+	return permissions.ForUser(user).Has(permissions.AssignmentTicketAssignee)
 }
 
 // staffUserProblem requires the id to name a live, active staff account. It

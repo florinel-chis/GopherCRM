@@ -47,13 +47,14 @@ type UpdateLabelRequest struct {
 
 // List godoc
 // @Summary List labels
-// @Description Every label, ordered by name ascending, as a bare array (no pagination). Roles: every authenticated role. Each label carries task_count, the number of live (not soft-deleted) tasks using it, counted across all assignees whatever the caller's role.
+// @Description Every label, ordered by name ascending, as a bare array (no pagination). Roles: every system role, and a custom role holding labels.view. Each label carries task_count, the number of live (not soft-deleted) tasks using it, counted across all assignees whatever the caller's role.
 // @Tags labels
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
 // @Success 200 {object} utils.APIResponse{data=[]models.Label} "All labels; an empty array when none"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller does not hold labels.view (every system role does; a custom role needs it)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /labels [get]

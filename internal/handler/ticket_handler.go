@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -161,10 +162,9 @@ func (h *TicketHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Create")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Only support and admin users can create tickets
-	if currentUserRole != string(models.RoleSupport) && currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.TicketsCreate) {
 		utils.RespondForbidden(c, "Only support and admin users can create tickets")
 		return
 	}
@@ -238,10 +238,8 @@ func (h *TicketHandler) Create(c *gin.Context) {
 func (h *TicketHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.List")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Customer users cannot list all tickets
-	if currentUserRole == string(models.RoleCustomer) {
+	if !hasPermission(c, permissions.TicketsView) {
 		utils.RespondForbidden(c, "Customers cannot list all tickets")
 		return
 	}
@@ -298,6 +296,7 @@ func (h *TicketHandler) List(c *gin.Context) {
 	var tickets []models.Ticket
 	var total int64
 	var err error
+	assignedOnly := hasPermissionOnOwnOnly(c, permissions.TicketsView)
 
 	// Support users only ever see tickets assigned to them, as on the detail
 	// route. The scope is part of the query, so the rows and the total both
@@ -307,12 +306,12 @@ func (h *TicketHandler) List(c *gin.Context) {
 	// unchanged.
 	if status != "" || priority != "" {
 		filter := repository.TicketListFilter{Search: search, Status: status, Priority: priority}
-		if currentUserRole == string(models.RoleSupport) {
+		if assignedOnly {
 			assigneeID := c.GetUint("user_id")
 			filter.AssigneeID = &assigneeID
 		}
 		tickets, total, err = h.ticketService.ListFiltered(filter, offset, limit, sortBy, sortOrder)
-	} else if currentUserRole == string(models.RoleSupport) {
+	} else if assignedOnly {
 		tickets, total, err = h.ticketService.ListAssigned(c.GetUint("user_id"), search, offset, limit, sortBy, sortOrder)
 	} else if search != "" {
 		tickets, total, err = h.ticketService.Search(search, offset, limit, sortBy, sortOrder)
@@ -369,7 +368,7 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 
 	// Customer users may only list tickets belonging to their own customer record.
 	currentUserID := c.GetUint("user_id")
-	if c.GetString("user_role") == string(models.RoleCustomer) {
+	if !hasPermission(c, permissions.TicketsView) {
 		if h.customerService == nil {
 			utils.RespondForbidden(c, "Customers can only view their own tickets")
 			return
@@ -387,7 +386,7 @@ func (h *TicketHandler) ListByCustomer(c *gin.Context) {
 	var total int64
 	// Support users get the customer's tickets that are assigned to them: the
 	// intersection drives both the rows and the total.
-	if c.GetString("user_role") == string(models.RoleSupport) {
+	if hasPermissionOnOwnOnly(c, permissions.TicketsView) {
 		tickets, total, err = h.ticketService.GetByCustomerAndAssignee(uint(customerID), currentUserID, offset, limit)
 	} else {
 		tickets, total, err = h.ticketService.GetByCustomer(uint(customerID), offset, limit)
@@ -430,10 +429,9 @@ func (h *TicketHandler) ListMyTickets(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.ListMyTickets")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Only support and admin users can have tickets assigned
-	if currentUserRole == string(models.RoleCustomer) {
+	if !hasPermission(c, permissions.TicketsView) {
 		utils.RespondForbidden(c, "Customers cannot have tickets assigned to them")
 		return
 	}
@@ -499,10 +497,9 @@ func (h *TicketHandler) Get(c *gin.Context) {
 
 	// Check permissions
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Customer users can only view tickets for their associated customer record
-	if currentUserRole == string(models.RoleCustomer) {
+	if !hasPermission(c, permissions.TicketsView) {
 		if h.customerService == nil {
 			utils.RespondForbidden(c, "Customers can only view their own tickets")
 			return
@@ -533,7 +530,7 @@ func (h *TicketHandler) Get(c *gin.Context) {
 	}
 
 	// Support users can only view assigned tickets
-	if currentUserRole == string(models.RoleSupport) &&
+	if hasPermissionOnOwnOnly(c, permissions.TicketsView) &&
 		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
 		utils.RespondForbidden(c, "You can only view tickets assigned to you")
 		return
@@ -565,17 +562,11 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Update")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
-	// Customers cannot update tickets
-	if currentUserRole == string(models.RoleCustomer) {
-		utils.RespondForbidden(c, "Customers cannot update tickets")
-		return
-	}
-
-	// Sales users are read-only on tickets
-	if currentUserRole == string(models.RoleSales) {
-		utils.RespondForbidden(c, "Sales users cannot update tickets")
+	// Customers cannot update tickets and sales users are read-only on them
+	if !hasPermission(c, permissions.TicketsUpdate) {
+		utils.RespondForbidden(c, refusalMessage(c, "Customers cannot update tickets",
+			"Sales users cannot update tickets", "Insufficient permissions"))
 		return
 	}
 
@@ -614,7 +605,7 @@ func (h *TicketHandler) Update(c *gin.Context) {
 	}
 
 	// Check permissions
-	if currentUserRole == string(models.RoleSupport) &&
+	if hasPermissionOnOwnOnly(c, permissions.TicketsUpdate) &&
 		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
 		utils.RespondForbidden(c, "You can only update tickets assigned to you")
 		return
@@ -679,10 +670,8 @@ func (h *TicketHandler) Update(c *gin.Context) {
 func (h *TicketHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.Delete")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can delete tickets
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.TicketsDelete) {
 		utils.RespondForbidden(c, "Only administrators can delete tickets")
 		return
 	}
@@ -746,10 +735,9 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	includeInternal := true
-	if currentUserRole == string(models.RoleCustomer) {
+	if !hasPermission(c, permissions.TicketsView) {
 		if h.customerService == nil {
 			utils.RespondForbidden(c, "Customers can only view their own tickets")
 			return
@@ -760,7 +748,7 @@ func (h *TicketHandler) ListComments(c *gin.Context) {
 			return
 		}
 		includeInternal = false
-	} else if currentUserRole == string(models.RoleSupport) {
+	} else if hasPermissionOnOwnOnly(c, permissions.TicketsView) {
 		if ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID {
 			utils.RespondForbidden(c, "You can only view comments on tickets assigned to you")
 			return
@@ -800,18 +788,10 @@ func (h *TicketHandler) CreateComment(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TicketHandler.CreateComment")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
-	if currentUserRole == string(models.RoleCustomer) {
-		utils.RespondForbidden(c, "Customers cannot add comments")
-		return
-	}
-	if currentUserRole == string(models.RoleSales) {
-		utils.RespondForbidden(c, "Sales users cannot add comments")
-		return
-	}
-	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSupport) {
-		utils.RespondForbidden(c, "Only support and admin users can add comments")
+	if !hasPermission(c, permissions.TicketsComment) {
+		utils.RespondForbidden(c, refusalMessage(c, "Customers cannot add comments",
+			"Sales users cannot add comments", "Only support and admin users can add comments"))
 		return
 	}
 
@@ -833,7 +813,7 @@ func (h *TicketHandler) CreateComment(c *gin.Context) {
 		return
 	}
 
-	if currentUserRole == string(models.RoleSupport) &&
+	if hasPermissionOnOwnOnly(c, permissions.TicketsComment) &&
 		(ticket.AssignedToID == nil || *ticket.AssignedToID != currentUserID) {
 		utils.RespondForbidden(c, "You can only comment on tickets assigned to you")
 		return

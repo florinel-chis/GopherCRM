@@ -8,6 +8,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -111,10 +112,8 @@ func newConfigurationResponses(configs []models.Configuration) []ConfigurationRe
 func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetAll")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can view all configurations
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.SettingsView) {
 		utils.RespondForbidden(c, "Only admin users can view configurations")
 		return
 	}
@@ -149,10 +148,8 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetByCategory")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can view configurations
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.SettingsView) {
 		utils.RespondForbidden(c, "Only admin users can view configurations")
 		return
 	}
@@ -194,10 +191,8 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.GetByKey")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can view configurations
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.SettingsView) {
 		utils.RespondForbidden(c, "Only admin users can view configurations")
 		return
 	}
@@ -248,10 +243,8 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 func (h *ConfigurationHandler) Set(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.Set")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can modify configurations
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.SettingsUpdate) {
 		utils.RespondForbidden(c, "Only admin users can modify configurations")
 		return
 	}
@@ -330,10 +323,8 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "ConfigurationHandler.Reset")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can reset configurations
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.SettingsUpdate) {
 		utils.RespondForbidden(c, "Only admin users can reset configurations")
 		return
 	}

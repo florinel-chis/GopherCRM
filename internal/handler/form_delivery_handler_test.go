@@ -176,7 +176,7 @@ func TestFormDeliveryRoutesRoles(t *testing.T) {
 		require.NotEqual(t, -1, detail)
 		assert.Less(t, list, detail)
 		assert.Less(t, retry, detail)
-		assert.Contains(t, text, "write := middleware.RequireRole(models.RoleAdmin, models.RoleSales)")
+		assert.Contains(t, text, "write := middleware.RequirePermission(permissions.FormsManage)")
 	})
 
 	for _, c := range []struct {

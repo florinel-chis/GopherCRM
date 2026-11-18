@@ -5,6 +5,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
 
@@ -74,7 +75,7 @@ func checkDealLink(dealRepo repository.DealRepository, userRepo repository.UserR
 		return nil, err
 	}
 
-	viewer, err := leadViewerOf(userRepo, actorID)
+	viewer, err := dealViewerOf(userRepo, actorID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,4 +87,10 @@ func checkDealLink(dealRepo repository.DealRepository, userRepo repository.UserR
 
 func unknownDealError(dealID uint) error {
 	return fmt.Errorf("unknown deal_id %d: %w", dealID, apperrors.ErrDealNotFound)
+}
+
+// dealViewerOf loads the acting user as the deal-visibility policy sees it:
+// deals.view decides, not leads.view.
+func dealViewerOf(userRepo repository.UserRepository, actorID uint) (LeadViewer, error) {
+	return viewerOf(userRepo, actorID, permissions.DealsView)
 }

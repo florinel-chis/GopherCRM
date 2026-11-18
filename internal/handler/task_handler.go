@@ -8,6 +8,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -106,10 +107,9 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Create")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Role-based access control
-	if currentUserRole != string(models.RoleAdmin) && currentUserRole != string(models.RoleSupport) && currentUserRole != string(models.RoleSales) {
+	if !hasPermission(c, permissions.TasksCreate) {
 		utils.RespondForbidden(c, "Only admin, support, and sales users can create tasks")
 		return
 	}
@@ -121,7 +121,7 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	// Non-admin users can only assign tasks to themselves or other users in same hierarchy
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.TasksAssignOthers) {
 		if req.AssignedToID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign tasks to yourself")
 			return
@@ -185,6 +185,12 @@ func (h *TaskHandler) Create(c *gin.Context) {
 func (h *TaskHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Get")
 
+	// The route carries no guard: tasks.view is decided here, before the id
+	// is read, so a caller without it never learns whether a task exists.
+	if denyWithoutPermission(c, permissions.TasksView) {
+		return
+	}
+
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
 		utils.RespondBadRequest(c, "Invalid task ID")
@@ -205,11 +211,10 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 	// Check permissions
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Admin can view all tasks
 	// Non-admin users can only view tasks assigned to them
-	if currentUserRole != string(models.RoleAdmin) && task.AssignedToID != currentUserID {
+	if !hasPermissionOnAll(c, permissions.TasksView) && task.AssignedToID != currentUserID {
 		utils.RespondForbidden(c, "You can only view tasks assigned to you")
 		return
 	}
@@ -235,6 +240,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 // @Param label_id query int false "Only tasks carrying this label; non-admins still see only their own tasks"
 // @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of tasks; meta carries page, per_page, total and total_pages"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks [get]
@@ -242,7 +248,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.List")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
+	seesEveryTask := hasPermissionOnAll(c, permissions.TasksView)
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
@@ -291,11 +297,11 @@ func (h *TaskHandler) List(c *gin.Context) {
 	var err error
 
 	// Admin can list all tasks, non-admin users can only list their own tasks
-	if labelID != 0 && currentUserRole != string(models.RoleAdmin) {
+	if labelID != 0 && !seesEveryTask {
 		tasks, total, err = h.taskService.ListByLabelForAssignee(currentUserID, labelID, offset, limit, sortBy, sortOrder)
 	} else if labelID != 0 {
 		tasks, total, err = h.taskService.ListByLabel(labelID, offset, limit, sortBy, sortOrder)
-	} else if currentUserRole != string(models.RoleAdmin) {
+	} else if !seesEveryTask {
 		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, limit)
 	} else if search != "" {
 		tasks, total, err = h.taskService.Search(search, offset, limit, sortBy, sortOrder)
@@ -327,7 +333,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 
 // ListMyTasks godoc
 // @Summary List tasks assigned to the current user
-// @Description One page of the tasks assigned to the caller, in ascending id order. Roles: every authenticated role; admins also see only their own tasks here. No sorting, search or label filter. Pagination as on GET /tasks (page overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued object on this endpoint (the assignee is not loaded). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
+// @Description One page of the tasks assigned to the caller, in ascending id order. Roles: every system role, and a custom role holding tasks.view; admins also see only their own tasks here. No sorting, search or label filter. Pagination as on GET /tasks (page overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued object on this endpoint (the assignee is not loaded). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -337,6 +343,7 @@ func (h *TaskHandler) List(c *gin.Context) {
 // @Param limit query int false "Page size; clamped to 100" default(20)
 // @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of the caller's tasks"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/my [get]
@@ -388,7 +395,7 @@ const (
 
 // GetUpcoming godoc
 // @Summary List tasks due in the next N days
-// @Description The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending (then id). Roles: every authenticated role; admins see every assignee's tasks, every other role only the tasks assigned to them. Completed and cancelled tasks and tasks without a due date are excluded; the window starts at the current instant, so overdue tasks are NOT included. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned and there is no pagination. Labels are not loaded here (labels is omitted). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
+// @Description The open tasks whose due date falls between now and N days from now, as a bare array ordered by due date ascending (then id). Roles: every system role, and a custom role holding tasks.view; admins see every assignee's tasks, every other role only the tasks assigned to them. Completed and cancelled tasks and tasks without a due date are excluded; the window starts at the current instant, so overdue tasks are NOT included. An absent, unparseable or non-positive days value falls back to 7, and anything above 90 is clamped to 90 rather than rejected. At most 100 tasks are returned and there is no pagination. Labels are not loaded here (labels is omitted). lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -396,6 +403,7 @@ const (
 // @Param days query int false "Size of the look-ahead window in days; clamped to 1-90" minimum(1) maximum(90) default(7)
 // @Success 200 {object} utils.APIResponse{data=[]models.Task} "Up to 100 upcoming tasks; an empty array when none"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or invalid, expired or revoked credentials"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - the caller does not hold tasks.view (every system role does; a custom role needs it)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic exceeded; error.details.retry_after is 60s"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; details are logged, never returned"
 // @Router /tasks/upcoming [get]
@@ -417,7 +425,7 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 
 	var tasks []models.Task
 	var err error
-	if c.GetString("user_role") == string(models.RoleAdmin) {
+	if hasPermissionOnAll(c, permissions.TasksView) {
 		tasks, err = h.taskService.GetDueWithin(from, to, upcomingTasksMaxResults)
 	} else {
 		tasks, err = h.taskService.GetDueWithinByAssignee(c.GetUint("user_id"), from, to, upcomingTasksMaxResults)
@@ -460,6 +468,12 @@ func (h *TaskHandler) GetUpcoming(c *gin.Context) {
 func (h *TaskHandler) ListByDeal(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.ListByDeal")
 
+	// The route guard is deals.view; what comes back are tasks, so tasks.view
+	// is needed as well and decides which of the deal's tasks are returned.
+	if denyWithoutPermission(c, permissions.TasksView) {
+		return
+	}
+
 	id, ok := pathID(c, "Invalid deal ID")
 	if !ok {
 		return
@@ -469,7 +483,7 @@ func (h *TaskHandler) ListByDeal(c *gin.Context) {
 		return
 	}
 
-	tasks, total, err := h.taskService.ListByDeal(leadViewer(c), id, offset, limit, sortBy, sortOrder)
+	tasks, total, err := h.taskService.ListByDeal(dealTaskViewer(c), id, offset, limit, sortBy, sortOrder)
 	if err != nil {
 		switch {
 		case errors.Is(err, apperrors.ErrDealNotFound):
@@ -498,16 +512,14 @@ func (h *TaskHandler) ListByDeal(c *gin.Context) {
 // task about to be returned. Every handler answering with a task goes through
 // this or redactTaskLinksOfPage.
 func redactTaskLinks(c *gin.Context, task *models.Task) {
-	viewer := leadViewer(c)
-	service.RedactTaskLead(viewer, task)
-	service.RedactTaskDeal(viewer, task)
+	service.RedactTaskLead(leadViewer(c), task)
+	service.RedactTaskDeal(dealViewer(c), task)
 }
 
 // redactTaskLinksOfPage is redactTaskLinks for a page of tasks.
 func redactTaskLinksOfPage(c *gin.Context, tasks []models.Task) {
-	viewer := leadViewer(c)
-	service.RedactTaskLeads(viewer, tasks)
-	service.RedactTaskDeals(viewer, tasks)
+	service.RedactTaskLeads(leadViewer(c), tasks)
+	service.RedactTaskDeals(dealViewer(c), tasks)
 }
 
 // Update godoc
@@ -532,7 +544,6 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Update")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -562,7 +573,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	// Check permissions
 	// Admin can update any task
 	// Non-admin users can only update tasks assigned to them
-	if currentUserRole != string(models.RoleAdmin) && task.AssignedToID != currentUserID {
+	if !hasPermissionOnAll(c, permissions.TasksUpdate) && task.AssignedToID != currentUserID {
 		utils.RespondForbidden(c, "You can only update tasks assigned to you")
 		return
 	}
@@ -586,7 +597,7 @@ func (h *TaskHandler) Update(c *gin.Context) {
 	// Only an actual change of assignee counts as a reassignment; clients routinely
 	// echo back the current assigned_to_id when editing other fields.
 	if req.AssignedToID != 0 && req.AssignedToID != task.AssignedToID {
-		if currentUserRole != string(models.RoleAdmin) {
+		if !hasPermission(c, permissions.TasksAssignOthers) {
 			utils.RespondForbidden(c, "Only admins can reassign tasks")
 			return
 		}
@@ -653,10 +664,8 @@ func (h *TaskHandler) Update(c *gin.Context) {
 func (h *TaskHandler) Delete(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "TaskHandler.Delete")
 
-	currentUserRole := c.GetString("user_role")
-
 	// Only admin users can delete tasks
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.TasksDelete) {
 		utils.RespondForbidden(c, "Only administrators can delete tasks")
 		return
 	}

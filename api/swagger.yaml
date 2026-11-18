@@ -3275,6 +3275,14 @@ definitions:
         example: 7
         type: integer
     type: object
+  github_com_florinel-chis_gophercrm_internal_models.PermissionScope:
+    enum:
+    - all
+    - own
+    type: string
+    x-enum-varnames:
+    - PermissionScopeAll
+    - PermissionScopeOwn
   github_com_florinel-chis_gophercrm_internal_models.Product:
     properties:
       created_at:
@@ -6087,7 +6095,8 @@ definitions:
         type: integer
     type: object
   internal_handler.DashboardStats:
-    description: System-wide counters of the dashboard; never narrowed to the caller.
+    description: 'Counters of the dashboard: system-wide for the four system roles,
+      narrowed by its own permissions for a custom role.'
     properties:
       conversion_rate:
         description: |-
@@ -6535,6 +6544,110 @@ definitions:
           unread).
         example: 3
         type: integer
+    type: object
+  internal_handler.MePermission:
+    description: One effective permission of the calling account.
+    properties:
+      key:
+        description: Permission key, group.action, for example leads.view.
+        example: leads.view
+        type: string
+      scope:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.PermissionScope'
+        description: |-
+          Which records the permission reaches: all of them, or own, the records
+          the account owns or is assigned.
+        enum:
+        - all
+        - own
+        example: own
+    type: object
+  internal_handler.MeResponse:
+    description: The calling account (the fields of a user) plus the name of its role
+      and its effective permissions.
+    properties:
+      created_at:
+        description: When the record was created (RFC 3339 date-time), set by the
+          server. Read-only.
+        example: "2026-10-01T09:30:00Z"
+        readOnly: true
+        type: string
+      deleted_at:
+        description: Soft-deletion time (RFC 3339 date-time) or null. Always present
+          in the JSON. Reads exclude soft-deleted rows, so records returned by the
+          API carry null here. Read-only.
+        format: date-time
+        readOnly: true
+        type: string
+        x-nullable: true
+      email:
+        description: |-
+          Login email address, unique among all accounts, including erased ones
+          (erasure replaces the address, which frees it for reuse).
+        example: jane.doe@example.com
+        format: email
+        type: string
+      first_name:
+        description: Given name.
+        example: Jane
+        type: string
+      id:
+        description: Unique identifier, assigned by the server on creation. Read-only.
+        example: 42
+        readOnly: true
+        type: integer
+      is_active:
+        description: |-
+          False for a deactivated account: it cannot log in, and its bearer tokens and
+          API keys are rejected. Changed only by an admin.
+        example: true
+        type: boolean
+      last_login_at:
+        description: |-
+          Time of the last successful password login (RFC 3339). Absent when the
+          account has never logged in. Server-maintained, read-only.
+        example: "2026-10-30T08:15:00Z"
+        readOnly: true
+        type: string
+      last_name:
+        description: Family name.
+        example: Doe
+        type: string
+      locked_until:
+        description: |-
+          End of the login lockout set after 5 consecutive failed logins (15 minutes,
+          RFC 3339). Absent when no lock is recorded; it may lie in the past, since a
+          lapsed lock is cleared only by the next login attempt. Server-maintained,
+          read-only.
+        example: "2026-10-30T08:30:00Z"
+        readOnly: true
+        type: string
+      permissions:
+        description: |-
+          Effective permissions of the account, sorted by key. Resolved on every
+          request, so a role change shows on the next call.
+        items:
+          $ref: '#/definitions/internal_handler.MePermission'
+        type: array
+      role:
+        allOf:
+        - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.UserRole'
+        description: Role of the account; only an admin can change it (PUT /users/{id},
+          POST /users).
+        example: sales
+      role_name:
+        description: |-
+          Name of the account's role: admin, sales, support or customer for a
+          system role, the role's own name for a custom role.
+        example: sales
+        type: string
+      updated_at:
+        description: When the record was last written (RFC 3339 date-time), set by
+          the server on every update. Read-only.
+        example: "2026-10-02T14:05:00Z"
+        readOnly: true
+        type: string
     type: object
   internal_handler.MessageResponse:
     description: A confirmation message.
@@ -14041,7 +14154,9 @@ paths:
         converted, with 0 when no lead holds it; a status found in the data but unknown
         to the model is appended afterwards in alphabetical order rather than dropped.
         System-wide: not narrowed to the caller''s own leads (support, which cannot
-        read leads elsewhere, sees these counts too).'
+        read leads elsewhere, sees these counts too). For a custom role the counts
+        follow leads.view: every lead at scope all, the leads it owns at scope own,
+        and all zero without it.'
       produces:
       - application/json
       responses:
@@ -14333,7 +14448,9 @@ paths:
         12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the
         last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the
         last 5 years (2026). Any other period falls back to month. System-wide: not
-        narrowed to the caller''s leads.'
+        narrowed to the caller''s leads. For a custom role the conversions follow
+        leads.view: every lead at scope all, the leads it owns at scope own, and none
+        without it.'
       parameters:
       - default: month
         description: Bucket size and window; any other value gives month
@@ -14409,7 +14526,12 @@ paths:
         system-wide counts: live leads, live customers, tickets in open or in_progress,
         tasks in pending or in_progress, and conversion_rate = customers / leads *
         100 (0 without leads). Deliberately not narrowed to the caller: a sales or
-        support user sees the same totals as an admin.'
+        support user sees the same totals as an admin. The four system roles get these
+        system-wide totals; a custom role is counted by its own permissions instead:
+        leads by leads.view, customers by customers.view, tickets by tickets.view
+        and tasks by tasks.view, each at the scope it holds (own counts only the leads
+        it owns and the tickets and tasks assigned to it), and a kind whose permission
+        it lacks counts as 0.'
       produces:
       - application/json
       responses:
@@ -14475,7 +14597,9 @@ paths:
         Every status is always present, in the order pending, in_progress, completed,
         cancelled, with 0 when no task holds it; a status found in the data but unknown
         to the model is appended afterwards in alphabetical order. System-wide: not
-        narrowed to the caller''s assignments.'
+        narrowed to the caller''s assignments. For a custom role the counts follow
+        tasks.view: every task at scope all, the tasks assigned to it at scope own,
+        and all zero without it.'
       produces:
       - application/json
       responses:
@@ -14541,7 +14665,9 @@ paths:
         Tickets. Every priority is always present, in the order low, medium, high,
         urgent, with 0 when no ticket holds it; a priority found in the data but unknown
         to the model is appended afterwards in alphabetical order. System-wide: not
-        narrowed to the caller''s assignments.'
+        narrowed to the caller''s assignments. For a custom role the counts follow
+        tickets.view: every ticket at scope all, the tickets assigned to it at scope
+        own, and all zero without it.'
       produces:
       - application/json
       responses:
@@ -16975,9 +17101,9 @@ paths:
   /labels:
     get:
       description: 'Every label, ordered by name ascending, as a bare array (no pagination).
-        Roles: every authenticated role. Each label carries task_count, the number
-        of live (not soft-deleted) tasks using it, counted across all assignees whatever
-        the caller''s role.'
+        Roles: every system role, and a custom role holding labels.view. Each label
+        carries task_count, the number of live (not soft-deleted) tasks using it,
+        counted across all assignees whatever the caller''s role.'
       produces:
       - application/json
       responses:
@@ -16995,6 +17121,16 @@ paths:
         "401":
           description: UNAUTHORIZED - missing or malformed Authorization header, or
             invalid, expired or revoked credentials
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - the caller does not hold labels.view (every system
+            role does; a custom role needs it)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -20675,6 +20811,16 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "403":
+          description: FORBIDDEN - the caller does not hold tasks.view (every system
+            role does; a custom role needs it)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic
             exceeded; error.details.retry_after is 60s
@@ -21207,13 +21353,13 @@ paths:
   /tasks/my:
     get:
       description: 'One page of the tasks assigned to the caller, in ascending id
-        order. Roles: every authenticated role; admins also see only their own tasks
-        here. No sorting, search or label filter. Pagination as on GET /tasks (page
-        overrides offset; limit default 20, clamped to 100). assigned_to is a zero-valued
-        object on this endpoint (the assignee is not loaded). lead_id and lead are
-        omitted whenever the caller may not see the linked lead (admins see every
-        lead, sales users only the leads they own, every other role none), decided
-        again on every read.'
+        order. Roles: every system role, and a custom role holding tasks.view; admins
+        also see only their own tasks here. No sorting, search or label filter. Pagination
+        as on GET /tasks (page overrides offset; limit default 20, clamped to 100).
+        assigned_to is a zero-valued object on this endpoint (the assignee is not
+        loaded). lead_id and lead are omitted whenever the caller may not see the
+        linked lead (admins see every lead, sales users only the leads they own, every
+        other role none), decided again on every read.'
       parameters:
       - description: Page number (1-based); overrides offset when greater than 0
         in: query
@@ -21253,6 +21399,16 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "403":
+          description: FORBIDDEN - the caller does not hold tasks.view (every system
+            role does; a custom role needs it)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: TOO_MANY_REQUESTS - per-IP rate limit for authenticated traffic
             exceeded; error.details.retry_after is 60s
@@ -21283,15 +21439,16 @@ paths:
     get:
       description: 'The open tasks whose due date falls between now and N days from
         now, as a bare array ordered by due date ascending (then id). Roles: every
-        authenticated role; admins see every assignee''s tasks, every other role only
-        the tasks assigned to them. Completed and cancelled tasks and tasks without
-        a due date are excluded; the window starts at the current instant, so overdue
-        tasks are NOT included. An absent, unparseable or non-positive days value
-        falls back to 7, and anything above 90 is clamped to 90 rather than rejected.
-        At most 100 tasks are returned and there is no pagination. Labels are not
-        loaded here (labels is omitted). lead_id and lead are omitted whenever the
-        caller may not see the linked lead (admins see every lead, sales users only
-        the leads they own, every other role none), decided again on every read.'
+        system role, and a custom role holding tasks.view; admins see every assignee''s
+        tasks, every other role only the tasks assigned to them. Completed and cancelled
+        tasks and tasks without a due date are excluded; the window starts at the
+        current instant, so overdue tasks are NOT included. An absent, unparseable
+        or non-positive days value falls back to 7, and anything above 90 is clamped
+        to 90 rather than rejected. At most 100 tasks are returned and there is no
+        pagination. Labels are not loaded here (labels is omitted). lead_id and lead
+        are omitted whenever the caller may not see the linked lead (admins see every
+        lead, sales users only the leads they own, every other role none), decided
+        again on every read.'
       parameters:
       - default: 7
         description: Size of the look-ahead window in days; clamped to 1-90
@@ -21317,6 +21474,16 @@ paths:
         "401":
           description: UNAUTHORIZED - missing or malformed Authorization header, or
             invalid, expired or revoked credentials
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - the caller does not hold tasks.view (every system
+            role does; a custom role needs it)
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22928,19 +23095,24 @@ paths:
       - users
   /users/me:
     get:
-      description: Any authenticated role. Returns the account the credential belongs
-        to.
+      description: 'Any authenticated account; no permission is needed. Returns the
+        account the credential belongs to, the name of its role (role_name: admin,
+        sales, support or customer for a system role, the role''s own name for a custom
+        role) and its effective permissions (permissions: key and scope, sorted by
+        key). The permissions are resolved on every request from the account''s current
+        role, for a Bearer token and an API key alike, so a role change shows on the
+        next call. Every user field keeps its name and value.'
       produces:
       - application/json
       responses:
         "200":
-          description: The caller's account
+          description: The caller's account with role_name and permissions
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
             - properties:
                 data:
-                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
+                  $ref: '#/definitions/internal_handler.MeResponse'
               type: object
         "401":
           description: 'UNAUTHORIZED: missing or malformed Authorization header, or

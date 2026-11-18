@@ -350,7 +350,7 @@ func (s *taskService) settleDealLink(logger *logrus.Entry, task, existing *model
 		return nil, nil
 	}
 	if dealIDSent {
-		viewer, err := leadViewerOf(s.userRepo, actorID)
+		viewer, err := dealViewerOf(s.userRepo, actorID)
 		if err != nil {
 			logger.WithError(utils.LogError(err)).Error("Failed to load the actor of a deal link clear")
 			return nil, err
@@ -485,7 +485,11 @@ func (s *taskService) ListByDeal(viewer LeadViewer, dealID uint, offset, limit i
 	}
 
 	var assigneeID *uint
-	if viewer.Role != models.RoleAdmin {
+	ownTasksOnly := viewer.Role != models.RoleAdmin
+	if viewer.TaskScope != "" {
+		ownTasksOnly = viewer.TaskScope != models.PermissionScopeAll
+	}
+	if ownTasksOnly {
 		id := viewer.UserID
 		assigneeID = &id
 	}

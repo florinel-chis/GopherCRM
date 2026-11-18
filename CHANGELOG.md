@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Permission catalogue and deny-by-default enforcement (#347, slice S3 of #259).** The new
+  `internal/permissions` package holds the permission tree (`entity.action` leaves, each with an
+  `all` or `own` scope where the leaf allows it), the matrices of the four system roles (pinned by
+  `internal/permissions/testdata/system_roles.golden.json`) and `permissions.RouteKeys`, the one
+  table that says which key opens which protected route. `middleware.RequirePermission` and
+  `middleware.RequireAnyPermission` replace every `RequireRole` guard in the route files, and
+  handlers and services decide by key and scope, so a user with `role = custom` gets exactly what
+  its role row grants and 403 `FORBIDDEN` everywhere else, on the next request after the row
+  changes and for `ApiKey` credentials as well. The permission check comes before any ownership
+  check: a caller without the key is refused on its own records too. Ten self-service routes need
+  authentication only (`GET`/`PUT /users/me`, the five `/api-keys` routes, `GET /configurations/ui`,
+  `POST /auth/logout`, `POST /auth/change-password`). `GET /users/me` now also returns `role_name`
+  (the system role key, or the name of the custom role) and `permissions` (`[{key, scope}]` sorted
+  by key). Two keys go beyond the catalogue designed in #259 because their routes arrived later:
+  `leads.export` (`GET /leads/export`) and `webhooks.manage` (the six `/webhooks` routes). The
+  eligibility checks follow keys too: ticket assignee `assignment.ticket_assignee`, customer
+  assignee `assignment.customer_assignee`, form default owner and lead owner
+  `assignment.form_owner`. What the four system roles are answered is unchanged: the route matrix
+  of #322 replays byte-identical. There is no role API yet (custom roles exist only as rows), and
+  the API-docs gate does not yet require a 403 on a permission-guarded route.
 - **System-role route matrix (#322, part of #259), tests only.**
   `cmd/testdata/system_role_route_matrix.json` records what the router built by `setupRouter`
   answers (HTTP status and `error.code`) to each of the four system roles on all 157 protected routes, for

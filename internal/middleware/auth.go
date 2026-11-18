@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,9 @@ func Auth(authService service.AuthService) gin.HandlerFunc {
 		// request authenticated: an API-key caller must never be handed a
 		// browser session (refresh token or JWT).
 		c.Set(service.AuthMethodContextKey, method)
+		// The effective permissions, resolved on every request, for Bearer
+		// and ApiKey alike: a role change applies to the very next request.
+		publishPermissions(c, permissions.ForUser(user))
 
 		c.Next()
 	}

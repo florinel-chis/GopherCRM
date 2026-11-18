@@ -91,12 +91,12 @@ the frontend gating.
   1. Log in as the sales user.
   2. Navigate to `/leads`.
   3. Compare the visible rows against the leads owned by the sales user.
-- **Expected:** 200. Only leads whose `owner_id` is the sales user appear — `lead_handler.go:221`
+- **Expected:** 200. Only leads whose `owner_id` is the sales user appear — `lead_handler.go:222`
   routes sales users to `leadService.GetByOwner()`. The search box, the classification dropdown and
   the column sort headers still send their parameters, but the sales branch is taken before any of
   them are consulted, so they have no effect at all for this role.
 - **Known issue:** For a sales user, search / classification / sort are silently ignored rather
-  than rejected (`lead_handler.go:221-239`); the swagger description on `List` documents this.
+  than rejected (`lead_handler.go:222-240`); the swagger description on `List` documents this.
 - **Automation:** blocked — needs a sales role-login helper; only
   `gocrm-ui/e2e/helpers/admin-auth.ts` exists
 
@@ -130,7 +130,7 @@ the frontend gating.
   3. Navigate directly to `/leads`.
 - **Expected:** Same as TC-LEAD-004 — nav entry hidden, every lead route redirects to
   `/unauthorized`; `GET /api/v1/leads` with the customer's token is 403 "Insufficient
-  permissions". The `!isAdminOrSales` branch at `lead_handler.go:224` is unreachable through the
+  permissions". The `!isAdminOrSales` branch at `lead_handler.go:225` is unreachable through the
   router.
 - **Automation:** automated (Vitest) — `src/routes/index.test.tsx`; browser case planned in
   `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new customer-role block; the account can be created
@@ -209,7 +209,7 @@ the frontend gating.
 - **Known issue:** Two defects compound here. (a) The frontend offers a `lost` status that the
   backend does not accept, and does not offer `unqualified` which it does —
   `LeadForm.tsx:27` / `LeadList.tsx:34` versus `models/lead.go` and the `oneof` binding tag on
-  `CreateLeadRequest.Status` (`lead_handler.go:32`). (b) The error-mapping code in `LeadForm.tsx:89`
+  `CreateLeadRequest.Status` (`lead_handler.go:33`). (b) The error-mapping code in `LeadForm.tsx:89`
   reads `error.response.data.details`, but the API envelope nests the payload under
   `error` (`utils.RespondError`, `response.go:74`), so `details` is always `undefined` and every
   server-side validation failure degrades to the generic message.
@@ -239,7 +239,7 @@ the frontend gating.
   1. Create a lead through the UI form.
   2. Open the created lead's detail page.
 - **Expected:** 201. `LeadForm.tsx` omits `owner_id` for non-admins, and
-  `lead_handler.go:138` defaults `OwnerID` to the caller. The detail page's Owner field shows the
+  `lead_handler.go:139` defaults `OwnerID` to the caller. The detail page's Owner field shows the
   sales user's first and last name.
 - **Automation:** blocked — needs a sales role-login helper
 
@@ -251,7 +251,7 @@ the frontend gating.
   1. Issue `POST /api/v1/leads` with the sales user's token and an `owner_id` belonging to the
      other user.
 - **Expected:** **403** `{"error":{"message":"You can only assign leads to yourself"}}`
-  (`lead_handler.go:127`). No lead is created.
+  (`lead_handler.go:128`). No lead is created.
 - **Known issue:** API-level only — the create form exposes no owner field, so this cannot be
   driven through the UI.
 - **Automation:** blocked — needs a sales role-login helper; the assertion itself is an API call
@@ -264,7 +264,7 @@ the frontend gating.
 - **Steps:**
   1. Issue `POST /api/v1/leads` with a valid body that omits `owner_id`.
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"Owner ID is required for admin
-  users"}}` (`lead_handler.go:135`). The UI never hits this because `LeadForm.tsx` injects the
+  users"}}` (`lead_handler.go:136`). The UI never hits this because `LeadForm.tsx` injects the
   admin's own id, so the case is API-level.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new, via the `request`
   fixture)
@@ -313,11 +313,11 @@ the frontend gating.
   3. Submit, then reopen the lead's detail page.
 - **Expected:** `PUT /leads/{id}` returns **200** and the success snackbar appears, but the Notes
   block on the detail page still shows the original text. The update handler builds its updates map
-  only from non-empty strings (`if req.Notes != ""`, `lead_handler.go:387`), so an emptied optional
+  only from non-empty strings (`if req.Notes != ""`, `lead_handler.go:386`), so an emptied optional
   field is dropped rather than written.
 - **Known issue:** No text field on a lead can be blanked through the UI; the same
   `!= ""` pattern applies to phone, company, position, source and external_id
-  (`lead_handler.go:357-389`).
+  (`lead_handler.go:358-386`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
 ### TC-LEAD-018 — A sales user cannot edit a lead owned by someone else
@@ -327,10 +327,10 @@ the frontend gating.
 - **Steps:**
   1. Navigate directly to `/leads/{otherLeadId}/edit`.
 - **Expected:** The prefill request `GET /leads/{id}` already returns **403**
-  `{"error":{"message":"You can only view your own leads"}}` (`lead_handler.go:297`), so the form
+  `{"error":{"message":"You can only view your own leads"}}` (`lead_handler.go:298`), so the form
   renders with empty defaults rather than the lead's data. Submitting sends
   `PUT /leads/{id}`, which returns **403** "You can only update your own leads"
-  (`lead_handler.go:351`); the UI shows "Failed to update lead".
+  (`lead_handler.go:352`); the UI shows "Failed to update lead".
 - **Known issue:** The page does not distinguish "forbidden" from "empty form" — a sales user
   reaching another owner's edit URL sees a blank create-shaped form.
 - **Automation:** blocked — needs a sales role-login helper
@@ -342,7 +342,7 @@ the frontend gating.
 - **Steps:**
   1. Issue `PUT /api/v1/leads/{ownLeadId}` with `{"owner_id": <admin id>}`.
 - **Expected:** **403** `{"error":{"message":"Only administrators can reassign leads"}}`
-  (`lead_handler.go:394`). The same call as admin returns 200 and moves the lead. A sales user hands
+  (`lead_handler.go:389`). The same call as admin returns 200 and moves the lead. A sales user hands
   over its own lead through `POST /leads/{id}/assign` instead (TC-LEAD-055).
 - **Known issue:** The edit form has no Owner control at all, so reassignment is unreachable from
   the UI. The endpoint client used to drop `owner_id`
@@ -390,7 +390,7 @@ the frontend gating.
   `{"error":{"code":"NOT_FOUND","message":"Lead not found"}}`. The page renders the `Loading`
   spinner indefinitely, because `LeadDetail.tsx:126` returns `<Loading />` for
   `isLoading || !lead` and never handles the error state. Navigating to `/leads/abc` instead
-  returns **400** "Invalid lead ID" (`lead_handler.go:281`) with the same stuck spinner.
+  returns **400** "Invalid lead ID" (`lead_handler.go:282`) with the same stuck spinner.
 - **Known issue:** No not-found or error UI on the lead detail page; verified live against
   `GET /api/v1/leads/999999` and `/leads/abc`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
@@ -488,7 +488,7 @@ the frontend gating.
 - **Steps:**
   1. Issue `DELETE /api/v1/leads/{otherLeadId}` with the sales user's token.
 - **Expected:** **403** `{"error":{"message":"You can only delete your own leads"}}`
-  (`lead_handler.go:450`). The lead is untouched. Deleting a lead the sales user *does* own returns
+  (`lead_handler.go:445`). The lead is untouched. Deleting a lead the sales user *does* own returns
   204.
 - **Automation:** blocked — needs a sales role-login helper
 
@@ -564,7 +564,7 @@ the frontend gating.
   1. Search for the shared token.
   2. Click the "Created" column header.
 - **Expected:** The request carries both `search` and `sort_by=created_at`; 200. The search branch
-  (`lead_handler.go:227`) forwards `sortBy`/`sortOrder` to `leadService.Search`, which builds the
+  (`lead_handler.go:228`) forwards `sortBy`/`sortOrder` to `leadService.Search`, which builds the
   ORDER BY through `utils.SafeOrderClause` (`lead_repository.go:210`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search and
   sort together"
@@ -579,7 +579,7 @@ the frontend gating.
      classifications.
 - **Expected:** The request contains both `classification=spam` and `search=<token>`, and the
   response contains leads of *any* classification: the handler's branch chain checks `search`
-  before `classification` (`lead_handler.go:227-232`), so the classification is dropped. Verified
+  before `classification` (`lead_handler.go:228-233`), so the classification is dropped. Verified
   live: `?classification=spam&search=gmail` returned 11 rows while `?classification=spam` alone
   returned 0.
 - **Known issue:** The two dropdown/search controls appear to compose but do not; the UI still
@@ -625,7 +625,7 @@ the frontend gating.
 - **Expected:** The requests carry `sort_by=company`, `first_name`, `email`, `status`,
   `classification`, `source` respectively (the Contact column maps to `first_name`,
   `LeadList.tsx:248`), each returns 200, and the visible order changes accordingly. All six are in
-  the handler's `allowedSortColumns` allowlist (`lead_handler.go:189`).
+  the handler's `allowedSortColumns` allowlist (`lead_handler.go:190`).
 - **Known issue:** Gap **G21** in `docs/FEATURES.md` — only `created_at` has E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended; closes
   G21)
@@ -639,7 +639,7 @@ the frontend gating.
   2. Click the "Phone" column header.
 - **Expected:** The request carries `sort_by=phone`, returns **200**, and the row order is
   **unchanged**. `phone` is absent from `allowedSortColumns`, so the handler blanks `sortBy`
-  (`lead_handler.go:201`) and falls through to the plain `List` branch. The header nonetheless
+  (`lead_handler.go:202`) and falls through to the plain `List` branch. The header nonetheless
   renders its active-sort arrow, implying a sort that did not happen. Verified live:
   `?sort_by=notes&sort_order=up` returned 200 in default order.
 - **Known issue:** Unknown sort columns and unknown sort orders are silently ignored rather than
@@ -712,7 +712,7 @@ the frontend gating.
   2. Click the "Email" column header.
 - **Expected:** The request carries both `classification=<value>` and `sort_by=email&sort_order=desc`,
   returns 200, and the rows come back in insertion order, not email order. The
-  classification branch precedes the sort branch (`lead_handler.go:230-235`) and
+  classification branch precedes the sort branch (`lead_handler.go:231-236`) and
   `GetByClassification` accepts no sort arguments. Verified live: with
   `classification=unclassified&sort_by=email&sort_order=desc` the first emails were
   `Kitty53@…, Ada26@…, Salvatore.Bernier@…`, while `sort_by=email&sort_order=desc` alone returned
@@ -741,12 +741,12 @@ the frontend gating.
 - **Expected:** `POST /api/v1/leads/{id}/convert` returns **200** with the new customer object
   (`{id, first_name, last_name, email, …}`). A "Lead converted to customer successfully" snackbar
   shows. The lead's status becomes `converted` and `leads.customer_id` is set
-  (`lead_service.go:1191`); the lead row remains in the list with a green "Converted" chip.
+  (`lead_service.go:1192`); the lead row remains in the list with a green "Converted" chip.
   The browser then navigates to **`/customers/undefined`**, which leaves the customer detail page
   on its loading spinner rather than showing the new customer.
 - **Known issue:** `endpoints/leads.ts convertLead` types the response as `{customer_id: number}`,
   but the API returns a `models.Customer` whose id field is `id` (`customer.go`,
-  `lead_handler.go:537`). `data.customer_id` is therefore `undefined` and both
+  `lead_handler.go:531`). `data.customer_id` is therefore `undefined` and both
   `LeadList.tsx:135` and `LeadDetail.tsx:114` navigate to `/customers/undefined`. The conversion
   itself succeeded — only the redirect is broken.
 - **Concurrency (#182):** the conversion locks the lead's company row before the lead. A company
@@ -814,8 +814,8 @@ the frontend gating.
      button is hidden once the status is `converted`, per TC-LEAD-043).
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
-  transaction (`lead_service.go:1026`, `:1117`), and the handler classifies it with `errors.Is`
-  (`lead_handler.go:528`). No second customer is created. Driven through the UI the conversion dialog
+  transaction (`lead_service.go:1027`, `:1117`), and the handler classifies it with `errors.Is`
+  (`lead_handler.go:522`). No second customer is created. Driven through the UI the conversion dialog
   stays open and shows the server's message above the form, and the page re-reads the lead (since
   #117; from 1.2.0 a snackbar showed it, before that it read "Failed to convert lead"). The same 400
   answers a lead that already has a `customer_id` but whose status was later moved back (for
@@ -843,7 +843,7 @@ the frontend gating.
 - **Steps:**
   1. Issue `POST /api/v1/leads/{otherLeadId}/convert` with the sales user's token.
 - **Expected:** **403** `{"error":{"message":"You can only convert your own leads"}}`
-  (`lead_handler.go:510`). No customer is created and the lead's status is unchanged. The same call
+  (`lead_handler.go:504`). No customer is created and the lead's status is unchanged. The same call
   against a lead the sales user owns returns 200.
 - **Automation:** blocked — needs a sales role-login helper
 
@@ -857,7 +857,7 @@ the frontend gating.
 - **Expected:** **500** `{"error":{"code":"INTERNAL_ERROR", …}}`. `customers.email` carries a
   unique index (`models/customer.go`), the insert inside the conversion transaction fails, and the
   handler only classifies `ErrLeadConverted` — every other error falls into
-  `utils.RespondInternalError` (`lead_handler.go:531`). The UI shows "Failed to convert lead"; the
+  `utils.RespondInternalError` (`lead_handler.go:525`). The UI shows "Failed to convert lead"; the
   transaction rolls back, so no partial customer is left behind.
 - **Known issue:** A duplicate-email conflict is reported as 500 rather than the 409 that
   `apperrors.ErrDuplicateEmail` supports elsewhere (see the API-defect list in
@@ -1126,7 +1126,7 @@ handler is an empty `// TODO`. `leadsApi.bulkUpdateStatus` in
   2. Post 101 ids.
   3. Post a valid id list with a non-existent id.
 - **Expected:** (1) and (2) return **400** — the binding tag is
-  `required,min=1,max=100,dive,gt=0` (`bulk_handler.go:371`). (3) returns **404** with the missing
+  `required,min=1,max=100,dive,gt=0` (`bulk_handler.go:None`). (3) returns **404** with the missing
   ids listed in `error.details` (`bulk_status_service.go:189`) and nothing written.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new API-level block)
 

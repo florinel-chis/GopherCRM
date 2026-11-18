@@ -7,6 +7,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ type CreateProductExternalIDRequest struct {
 // productExternalIDWriterRole repeats the route guard: admin only, as every
 // product write is.
 func productExternalIDWriterRole(c *gin.Context) bool {
-	return c.GetString("user_role") == string(models.RoleAdmin)
+	return hasPermission(c, permissions.ProductsUpdate)
 }
 
 // CreateExternalID godoc

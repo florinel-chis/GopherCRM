@@ -7,6 +7,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -48,8 +49,7 @@ func respondExternalIDFieldError(c *gin.Context, fieldErr *service.CustomerExter
 // externalIDWriterRole repeats the route guard: admin and sales, the roles
 // that may update a customer.
 func externalIDWriterRole(c *gin.Context) bool {
-	role := c.GetString("user_role")
-	return role == string(models.RoleAdmin) || role == string(models.RoleSales)
+	return hasPermission(c, permissions.CustomersUpdate)
 }
 
 // CreateExternalID godoc

@@ -38,7 +38,7 @@ wiring is in `setupDependencies` (`cmd/main.go:259`).
 | Forms | admin `/forms` read admin+sales+support; public `/forms/public/*` | spam layers in fixed order; double opt-in claim, lead write and submission update in one transaction | `internal/service/form_service_test.go`, `form_confirmation_regression_test.go`, `internal/handler/form_public_handler_test.go` |
 | Follow-up automation | rules admin; runs admin+sales (sales never sees ticket runs) | outbox event per lead/deal/ticket write (#242); conditional run advance after a locking read of the record; ticket delete cancels the ticket's open runs; lease-based claims with a stale sweep at boot and every tick (#237) | `internal/service/automation_runtime_test.go`, `internal/service/automation_run_lease*_test.go`, `cmd/automation_runtime_test.go`, `internal/service/ticket_automation_*_test.go` |
 | AEO (answer-engine tracking) | admin+sales+support; run and generate admin+sales | keys encrypted at rest; environment-only egress allowlist | `internal/service/aeo_service_test.go`, `aeo_egress_boundary_test.go`, `docs/AEO_SECURITY.md` |
-| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:738-746`) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245). Ticket and task deletes are soft deletes that scrub no text (`internal/repository/ticket_repository.go`, `task_repository.go:53`; a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
+| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:731-739`) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245). Ticket and task deletes are soft deletes that scrub no text (`internal/repository/ticket_repository.go`, `task_repository.go:53`; a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
 | Dashboard | admin+sales+support | activity lists scoped inside the query | `internal/repository/dashboard_queries_test.go` |
 | Configuration | `/configurations/ui` any user; the rest admin | seeding never overwrites a stored value; sensitive values encrypted and masked | `internal/repository/configuration_repository_test.go`, `internal/service/configuration_service_test.go` |
 
@@ -63,8 +63,8 @@ Checked by searching the tracked tree on `4dfe404`:
 - No quote PDF, and tax is one rate per quote line only: no tax categories, reverse charge or
   per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
   #324, #233).
-- CSV export covers customers and leads only (`internal/handler/customer_handler.go:582`,
-  `lead_handler.go:915`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
+- CSV export covers customers and leads only (`internal/handler/customer_handler.go:569`,
+  `lead_handler.go:914`, #234); other list views and PDF are `docs/ROADMAP.md` "Data export".
 - Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
   not apply and the server ships no CSRF protection (README "Known Limitations"). A cookie session
   added in a fork must ship with session-bound CSRF protection (#261).
@@ -176,7 +176,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 ### 2.4 Calling the API with a key
 
 API keys go in the `Authorization` header with the `ApiKey` scheme
-(`internal/middleware/auth.go:19-28`). A bare `ApiKey:` header is rejected with 401. The API
+(`internal/middleware/auth.go:20-29`). A bare `ApiKey:` header is rejected with 401. The API
 reference (`api/index.html`, generated from `cmd/main.go`) documents the same
 `Authorization: ApiKey <key>` form.
 
@@ -319,7 +319,7 @@ Configuration comes from three places:
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
 | `JWT_SECRET` | none (required) | `config.go:261` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:305`, `internal/service/form_service.go:346` | see the rotation callout below |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:305`, `internal/service/form_service.go:347` | see the rotation callout below |
 | `DB_DRIVER` | `mysql` | `config.go:274` | `mysql` or `sqlite`; anything else stops startup |
 | `DB_PATH` | `gophercrm.db` | `config.go:275` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:276-280` | MySQL only |
@@ -344,7 +344,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
 >   (`cmd/main.go:318`), refresh and password-reset tokens (`cmd/main.go:300`), form confirmation
->   tokens and time-trap signatures (`internal/service/form_service.go:340-351`), and the
+>   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
 >   encryption of sensitive settings (`cmd/main.go:303`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
@@ -381,7 +381,7 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
-  (`internal/handler/ticket_handler.go:107-110`).
+  (`internal/handler/ticket_handler.go:108-111`).
 - `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:292`, used at
   `internal/service/auth_service.go:573`) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:297`). `JWT_ACCESS_TOKEN_MINUTES` is read

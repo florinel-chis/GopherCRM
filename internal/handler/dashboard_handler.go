@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -21,6 +22,46 @@ type DashboardHandler struct {
 	ticketService   service.TicketService
 	taskService     service.TaskService
 	dealService     service.DealService
+	// scoped serves the aggregates of a custom-role caller that holds a key
+	// at scope own; nil until WithScopedCounts, and then such a caller counts
+	// nothing.
+	scoped service.DashboardScopeService
+}
+
+// WithScopedCounts wires the aggregates narrowed to one owner or assignee,
+// which a custom role holding leads.view, tickets.view or tasks.view at scope
+// own gets instead of the system-wide ones.
+func (h *DashboardHandler) WithScopedCounts(scoped service.DashboardScopeService) *DashboardHandler {
+	h.scoped = scoped
+	return h
+}
+
+// scopedCount reads one counter at the scope the caller's aggregate is
+// computed at: the system-wide read at scope all, the narrowed read at scope
+// own, and zero for a caller that does not hold the key.
+func (h *DashboardHandler) scopedCount(scope models.PermissionScope, everything func() (int64, error), own func(service.DashboardScopeService) (int64, error)) (int64, error) {
+	switch scope {
+	case models.PermissionScopeAll:
+		return everything()
+	case models.PermissionScopeOwn:
+		if h.scoped != nil {
+			return own(h.scoped)
+		}
+	}
+	return 0, nil
+}
+
+// scopedCounts is scopedCount for a count per label.
+func (h *DashboardHandler) scopedCounts(scope models.PermissionScope, everything func() (map[string]int64, error), own func(service.DashboardScopeService) (map[string]int64, error)) (map[string]int64, error) {
+	switch scope {
+	case models.PermissionScopeAll:
+		return everything()
+	case models.PermissionScopeOwn:
+		if h.scoped != nil {
+			return own(h.scoped)
+		}
+	}
+	return map[string]int64{}, nil
 }
 
 func NewDashboardHandler(
@@ -39,7 +80,7 @@ func NewDashboardHandler(
 	}
 }
 
-// @Description System-wide counters of the dashboard; never narrowed to the caller.
+// @Description Counters of the dashboard: system-wide for the four system roles, narrowed by its own permissions for a custom role.
 type DashboardStats struct {
 	// Number of live leads, every status included.
 	TotalLeads int64 `json:"total_leads" example:"120"`
@@ -57,7 +98,7 @@ type DashboardStats struct {
 
 // GetStats godoc
 // @Summary Dashboard counters
-// @Description Admin, sales and support (route guard; customer gets 403). Returns system-wide counts: live leads, live customers, tickets in open or in_progress, tasks in pending or in_progress, and conversion_rate = customers / leads * 100 (0 without leads). Deliberately not narrowed to the caller: a sales or support user sees the same totals as an admin.
+// @Description Admin, sales and support (route guard; customer gets 403). Returns system-wide counts: live leads, live customers, tickets in open or in_progress, tasks in pending or in_progress, and conversion_rate = customers / leads * 100 (0 without leads). Deliberately not narrowed to the caller: a sales or support user sees the same totals as an admin. The four system roles get these system-wide totals; a custom role is counted by its own permissions instead: leads by leads.view, customers by customers.view, tickets by tickets.view and tasks by tasks.view, each at the scope it holds (own counts only the leads it owns and the tickets and tasks assigned to it), and a kind whose permission it lacks counts as 0.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -71,8 +112,11 @@ type DashboardStats struct {
 func (h *DashboardHandler) GetStats(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetStats")
 
+	userID := c.GetUint("user_id")
+
 	// Get total leads
-	totalLeads, err := h.leadService.GetCount()
+	totalLeads, err := h.scopedCount(aggregateScope(c, permissions.LeadsView), h.leadService.GetCount,
+		func(s service.DashboardScopeService) (int64, error) { return s.LeadCountByOwner(userID) })
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get leads count")
 		utils.RespondInternalError(c)
@@ -80,7 +124,7 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	}
 
 	// Get total customers
-	totalCustomers, err := h.customerService.GetCount()
+	totalCustomers, err := h.scopedCount(aggregateScope(c, permissions.CustomersView), h.customerService.GetCount, nil)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get customers count")
 		utils.RespondInternalError(c)
@@ -88,7 +132,8 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	}
 
 	// Get open tickets count
-	openTickets, err := h.ticketService.GetOpenCount()
+	openTickets, err := h.scopedCount(aggregateScope(c, permissions.TicketsView), h.ticketService.GetOpenCount,
+		func(s service.DashboardScopeService) (int64, error) { return s.OpenTicketCountByAssignee(userID) })
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get open tickets count")
 		utils.RespondInternalError(c)
@@ -96,7 +141,8 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 	}
 
 	// Get pending tasks count
-	pendingTasks, err := h.taskService.GetPendingCount()
+	pendingTasks, err := h.scopedCount(aggregateScope(c, permissions.TasksView), h.taskService.GetPendingCount,
+		func(s service.DashboardScopeService) (int64, error) { return s.PendingTaskCountByAssignee(userID) })
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get pending tasks count")
 		utils.RespondInternalError(c)
@@ -358,7 +404,7 @@ func bucketTimestamps(buckets []timeBucket, timestamps []time.Time) []int64 {
 
 // GetLeadsByStatus godoc
 // @Summary Lead count by status
-// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live leads across statuses as chart data with one dataset labelled Leads. Every status is always present, in the order new, contacted, qualified, unqualified, converted, with 0 when no lead holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order rather than dropped. System-wide: not narrowed to the caller's own leads (support, which cannot read leads elsewhere, sees these counts too).
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live leads across statuses as chart data with one dataset labelled Leads. Every status is always present, in the order new, contacted, qualified, unqualified, converted, with 0 when no lead holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order rather than dropped. System-wide: not narrowed to the caller's own leads (support, which cannot read leads elsewhere, sees these counts too). For a custom role the counts follow leads.view: every lead at scope all, the leads it owns at scope own, and all zero without it.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -372,7 +418,11 @@ func bucketTimestamps(buckets []timeBucket, timestamps []time.Time) []int64 {
 func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetLeadsByStatus")
 
-	counts, err := h.leadService.GetStatusCounts()
+	userID := c.GetUint("user_id")
+	counts, err := h.scopedCounts(aggregateScope(c, permissions.LeadsView), h.leadService.GetStatusCounts,
+		func(s service.DashboardScopeService) (map[string]int64, error) {
+			return s.LeadStatusCountsByOwner(userID)
+		})
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get lead status counts")
 		utils.RespondInternalError(c)
@@ -386,7 +436,7 @@ func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 
 // GetTicketsByPriority godoc
 // @Summary Ticket count by priority
-// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tickets across priorities as chart data with one dataset labelled Tickets. Every priority is always present, in the order low, medium, high, urgent, with 0 when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tickets across priorities as chart data with one dataset labelled Tickets. Every priority is always present, in the order low, medium, high, urgent, with 0 when no ticket holds it; a priority found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments. For a custom role the counts follow tickets.view: every ticket at scope all, the tickets assigned to it at scope own, and all zero without it.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -400,7 +450,11 @@ func (h *DashboardHandler) GetLeadsByStatus(c *gin.Context) {
 func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetTicketsByPriority")
 
-	counts, err := h.ticketService.GetPriorityCounts()
+	userID := c.GetUint("user_id")
+	counts, err := h.scopedCounts(aggregateScope(c, permissions.TicketsView), h.ticketService.GetPriorityCounts,
+		func(s service.DashboardScopeService) (map[string]int64, error) {
+			return s.TicketPriorityCountsByAssignee(userID)
+		})
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get ticket priority counts")
 		utils.RespondInternalError(c)
@@ -414,7 +468,7 @@ func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 
 // GetTasksByStatus godoc
 // @Summary Task count by status
-// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tasks across statuses as chart data with one dataset labelled Tasks. Every status is always present, in the order pending, in_progress, completed, cancelled, with 0 when no task holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments.
+// @Description Admin, sales and support (route guard; customer gets 403). Distribution of live tasks across statuses as chart data with one dataset labelled Tasks. Every status is always present, in the order pending, in_progress, completed, cancelled, with 0 when no task holds it; a status found in the data but unknown to the model is appended afterwards in alphabetical order. System-wide: not narrowed to the caller's assignments. For a custom role the counts follow tasks.view: every task at scope all, the tasks assigned to it at scope own, and all zero without it.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -428,7 +482,11 @@ func (h *DashboardHandler) GetTicketsByPriority(c *gin.Context) {
 func (h *DashboardHandler) GetTasksByStatus(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetTasksByStatus")
 
-	counts, err := h.taskService.GetStatusCounts()
+	userID := c.GetUint("user_id")
+	counts, err := h.scopedCounts(aggregateScope(c, permissions.TasksView), h.taskService.GetStatusCounts,
+		func(s service.DashboardScopeService) (map[string]int64, error) {
+			return s.TaskStatusCountsByAssignee(userID)
+		})
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get task status counts")
 		utils.RespondInternalError(c)
@@ -442,7 +500,7 @@ func (h *DashboardHandler) GetTasksByStatus(c *gin.Context) {
 
 // GetSalesPerformance godoc
 // @Summary Lead conversions over time
-// @Description Admin, sales and support (route guard; customer gets 403). Lead conversions over time as chart data with one dataset labelled Conversions: the number of leads in the converted status whose updated_at falls in each bucket. It counts conversions, not revenue. A lead has no converted_at column, so updated_at stands in for the conversion time and a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned in the server's time zone and end with the one containing now: week gives the last 12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the last 5 years (2026). Any other period falls back to month. System-wide: not narrowed to the caller's leads.
+// @Description Admin, sales and support (route guard; customer gets 403). Lead conversions over time as chart data with one dataset labelled Conversions: the number of leads in the converted status whose updated_at falls in each bucket. It counts conversions, not revenue. A lead has no converted_at column, so updated_at stands in for the conversion time and a converted lead edited later moves to the bucket of that edit. Buckets are calendar-aligned in the server's time zone and end with the one containing now: week gives the last 12 weeks starting on Monday, labelled by that Monday (2026-08-03); month the last 12 months (2026-08); quarter the last 8 quarters (2026-Q3); year the last 5 years (2026). Any other period falls back to month. System-wide: not narrowed to the caller's leads. For a custom role the conversions follow leads.view: every lead at scope all, the leads it owns at scope own, and none without it.
 // @Tags dashboard
 // @Produce json
 // @Security BearerAuth
@@ -460,7 +518,16 @@ func (h *DashboardHandler) GetSalesPerformance(c *gin.Context) {
 	period := c.DefaultQuery("period", "month")
 	buckets := buildTimeBuckets(period, time.Now())
 
-	timestamps, err := h.leadService.GetConversionTimestamps(buckets[0].start)
+	var timestamps []time.Time
+	var err error
+	switch aggregateScope(c, permissions.LeadsView) {
+	case models.PermissionScopeAll:
+		timestamps, err = h.leadService.GetConversionTimestamps(buckets[0].start)
+	case models.PermissionScopeOwn:
+		if h.scoped != nil {
+			timestamps, err = h.scoped.LeadConversionTimestampsByOwner(c.GetUint("user_id"), buckets[0].start)
+		}
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to get lead conversion timestamps")
 		utils.RespondInternalError(c)
@@ -500,7 +567,7 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetActivities")
 
 	limit := parseDashboardLimit(c, defaultActivityLimit)
-	role := c.GetString("user_role")
+	leadScope := permissionScope(c, permissions.LeadsView)
 	userID := c.GetUint("user_id")
 	activities := make([]Activity, 0, limit)
 
@@ -514,10 +581,10 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	// API, reads no lead at all.
 	var createdLeads, convertedLeads []models.Lead
 	var err error
-	switch role {
-	case string(models.RoleAdmin):
+	switch leadScope {
+	case models.PermissionScopeAll:
 		createdLeads, err = h.leadService.GetRecent(limit)
-	case string(models.RoleSales):
+	case models.PermissionScopeOwn:
 		createdLeads, err = h.leadService.GetRecentByOwner(userID, limit)
 	}
 	if err != nil {
@@ -537,10 +604,10 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 		})
 	}
 
-	switch role {
-	case string(models.RoleAdmin):
+	switch leadScope {
+	case models.PermissionScopeAll:
 		convertedLeads, err = h.leadService.GetRecentlyConverted(limit)
-	case string(models.RoleSales):
+	case models.PermissionScopeOwn:
 		convertedLeads, err = h.leadService.GetRecentlyConvertedByOwner(userID, limit)
 	}
 	if err != nil {
@@ -560,11 +627,12 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 		})
 	}
 
-	allTickets := seesEveryTicket(role)
+	ticketScope := permissionScope(c, permissions.TicketsView)
 	var createdTickets []models.Ticket
-	if allTickets {
+	switch ticketScope {
+	case models.PermissionScopeAll:
 		createdTickets, err = h.ticketService.GetRecent(limit)
-	} else {
+	case models.PermissionScopeOwn:
 		createdTickets, err = h.ticketService.GetRecentByAssignee(userID, limit)
 	}
 	if err != nil {
@@ -585,9 +653,10 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	}
 
 	var resolvedTickets []models.Ticket
-	if allTickets {
+	switch ticketScope {
+	case models.PermissionScopeAll:
 		resolvedTickets, err = h.ticketService.GetRecentlyResolved(limit)
-	} else {
+	case models.PermissionScopeOwn:
 		resolvedTickets, err = h.ticketService.GetRecentlyResolvedByAssignee(userID, limit)
 	}
 	if err != nil {
@@ -610,9 +679,10 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 	// Task events follow GetUpcomingTasks: admin sees every assignee, every
 	// other role only its own assignments.
 	var completedTasks []models.Task
-	if role == string(models.RoleAdmin) {
+	switch permissionScope(c, permissions.TasksView) {
+	case models.PermissionScopeAll:
 		completedTasks, err = h.taskService.GetRecentlyCompleted(limit)
-	} else {
+	case models.PermissionScopeOwn:
 		completedTasks, err = h.taskService.GetRecentlyCompletedByAssignee(userID, limit)
 	}
 	if err != nil {
@@ -640,13 +710,6 @@ func (h *DashboardHandler) GetActivities(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, activities)
 	utils.RespondSuccess(c, http.StatusOK, activities)
-}
-
-// seesEveryTicket reports whether a role sees every ticket on the dashboard.
-// Admin and sales do, mirroring the ticket list; support, and any role this
-// code does not know, sees only the tickets assigned to it.
-func seesEveryTicket(role string) bool {
-	return role == string(models.RoleAdmin) || role == string(models.RoleSales)
 }
 
 // sortActivities orders the merged feed newest first. Equal timestamps, which
@@ -722,9 +785,10 @@ func (h *DashboardHandler) GetUpcomingTasks(c *gin.Context) {
 
 	var tasks []models.Task
 	var err error
-	if c.GetString("user_role") == string(models.RoleAdmin) {
+	switch permissionScope(c, permissions.TasksView) {
+	case models.PermissionScopeAll:
 		tasks, err = h.taskService.GetUpcoming(limit)
-	} else {
+	case models.PermissionScopeOwn:
 		tasks, err = h.taskService.GetUpcomingByAssignee(c.GetUint("user_id"), limit)
 	}
 	if err != nil {
@@ -762,9 +826,10 @@ func (h *DashboardHandler) GetRecentTickets(c *gin.Context) {
 
 	var tickets []models.Ticket
 	var err error
-	if seesEveryTicket(c.GetString("user_role")) {
+	switch permissionScope(c, permissions.TicketsView) {
+	case models.PermissionScopeAll:
 		tickets, err = h.ticketService.GetRecent(limit)
-	} else {
+	case models.PermissionScopeOwn:
 		tickets, err = h.ticketService.GetRecentByAssignee(c.GetUint("user_id"), limit)
 	}
 	if err != nil {
@@ -798,14 +863,13 @@ func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetNewLeads")
 
 	limit := parseDashboardLimit(c, defaultWidgetLimit)
-	role := c.GetString("user_role")
 
 	var leads []models.Lead
 	var err error
-	switch role {
-	case string(models.RoleAdmin):
+	switch permissionScope(c, permissions.LeadsView) {
+	case models.PermissionScopeAll:
 		leads, err = h.leadService.GetRecent(limit)
-	case string(models.RoleSales):
+	case models.PermissionScopeOwn:
 		// Sales users own a subset of the pipeline and see only that subset,
 		// exactly as LeadHandler.List narrows them.
 		leads, err = h.leadService.GetRecentByOwner(c.GetUint("user_id"), limit)
@@ -828,10 +892,6 @@ func (h *DashboardHandler) GetNewLeads(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, leads)
 }
 
-// dashboardDealRoles are the roles that see the deal widgets: deals are admin
-// and sales only, so support, which passes the dashboard guard, does not.
-var dashboardDealRoles = map[models.UserRole]bool{models.RoleAdmin: true, models.RoleSales: true}
-
 // GetPipeline godoc
 // @Summary Deal pipeline and won-this-month widgets
 // @Description Admin and sales. Support passes the dashboard route guard but is refused by the handler with 403, as the customer role is by the guard. Admin sees every live deal, sales only its own. data.stages is the payload of GET /deals/pipeline without filters: all five stages in pipeline order (qualification, proposal, negotiation, won, lost), each present even when empty, with count and per-currency totals of amount_cents and weighted_cents = round_half_up(sum of amount_cents x probability / 100), rounded once per stage-and-currency total. data.won_this_month counts the deals in the won stage whose closed_at falls in the current calendar month in UTC (first instant of the month inclusive to first instant of the next exclusive), with the amounts per currency. Amounts in different currencies are never added together; totals are sorted by currency code and empty lists are [], never null.
@@ -848,9 +908,11 @@ var dashboardDealRoles = map[models.UserRole]bool{models.RoleAdmin: true, models
 func (h *DashboardHandler) GetPipeline(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "DashboardHandler.GetPipeline")
 
-	role := models.UserRole(c.GetString("user_role"))
-	if !dashboardDealRoles[role] {
-		logger.WithField("role", role).Warn("Deal widgets refused")
+	// The deal widgets need deals.view next to the route's dashboard.view:
+	// support, which passes the dashboard guard, does not hold it.
+	role, ok := callRole(c, permissions.DealsView)
+	if !hasPermission(c, permissions.DealsView) || !ok {
+		logger.WithField("role", callerRoleForLog(c)).Warn("Deal widgets refused")
 		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 		return
 	}

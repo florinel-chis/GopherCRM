@@ -8,6 +8,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -54,6 +55,31 @@ type UpdateUserRequest struct {
 	// stop working); unlike POST /users/{id}/deactivate this path does not stop
 	// an admin from deactivating itself.
 	IsActive *bool `json:"is_active,omitempty" example:"true"`
+}
+
+// MePermission is one effective permission of the calling account.
+//
+// @Description One effective permission of the calling account.
+type MePermission struct {
+	// Permission key, group.action, for example leads.view.
+	Key string `json:"key" example:"leads.view"`
+	// Which records the permission reaches: all of them, or own, the records
+	// the account owns or is assigned.
+	Scope models.PermissionScope `json:"scope" enums:"all,own" example:"own"`
+}
+
+// MeResponse is the body of GET /users/me: the account with its role name
+// and effective permissions.
+//
+// @Description The calling account (the fields of a user) plus the name of its role and its effective permissions.
+type MeResponse struct {
+	models.User
+	// Name of the account's role: admin, sales, support or customer for a
+	// system role, the role's own name for a custom role.
+	RoleName string `json:"role_name" example:"sales"`
+	// Effective permissions of the account, sorted by key. Resolved on every
+	// request, so a role change shows on the next call.
+	Permissions []MePermission `json:"permissions"`
 }
 
 // UpdateMeRequest carries the profile fields of PUT /users/me.
@@ -246,9 +272,8 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 	// Check permissions - users can only view themselves unless admin
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
-	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
+	if uint(id) != currentUserID && !hasPermission(c, permissions.UsersView) {
 		utils.RespondForbidden(c, "You can only view your own profile")
 		return
 	}
@@ -294,9 +319,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	// Check permissions - users can only update themselves unless admin
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
-	if uint(id) != currentUserID && currentUserRole != string(models.RoleAdmin) {
+	if uint(id) != currentUserID && !hasPermission(c, permissions.UsersUpdate) {
 		utils.RespondForbidden(c, "You can only update your own profile")
 		return
 	}
@@ -319,11 +343,14 @@ func (h *UserHandler) Update(c *gin.Context) {
 		updates["last_name"] = req.LastName
 	}
 
-	// Only admins can update role and active status
-	if currentUserRole == string(models.RoleAdmin) {
+	// Role and active status each need their own permission (admins hold
+	// both); without it the field is silently ignored, as it always was.
+	if hasPermission(c, permissions.UsersAssignRole) {
 		if req.Role != "" {
 			updates["role"] = req.Role
 		}
+	}
+	if hasPermission(c, permissions.UsersActivate) {
 		if req.IsActive != nil {
 			updates["is_active"] = *req.IsActive
 		}
@@ -380,8 +407,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	}
 
 	// Only admins can delete users
-	currentUserRole := c.GetString("user_role")
-	if currentUserRole != string(models.RoleAdmin) {
+	if !hasPermission(c, permissions.UsersDelete) {
 		utils.RespondForbidden(c, "Only administrators can delete users")
 		return
 	}
@@ -413,12 +439,12 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 // GetMe godoc
 // @Summary Get the caller's account
-// @Description Any authenticated role. Returns the account the credential belongs to.
+// @Description Any authenticated account; no permission is needed. Returns the account the credential belongs to, the name of its role (role_name: admin, sales, support or customer for a system role, the role's own name for a custom role) and its effective permissions (permissions: key and scope, sorted by key). The permissions are resolved on every request from the account's current role, for a Bearer token and an API key alike, so a role change shows on the next call. Every user field keeps its name and value.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Success 200 {object} utils.APIResponse{data=models.User} "The caller's account"
+// @Success 200 {object} utils.APIResponse{data=MeResponse} "The caller's account with role_name and permissions"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account could not be read (erased after authentication, or a database error)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
@@ -436,7 +462,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 	}
 
 	utils.LogHandlerResponse(logger, http.StatusOK, user)
-	utils.RespondSuccess(c, http.StatusOK, user)
+	utils.RespondSuccess(c, http.StatusOK, meResponse(user))
 }
 
 // UpdateMe godoc

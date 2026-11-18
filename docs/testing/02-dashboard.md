@@ -213,7 +213,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Read `total_leads`, `total_customers` and `conversion_rate` from `GET /dashboard/stats`.
   2. Read the Conversion Rate card on `/`.
 - **Expected:** `conversion_rate == total_customers / total_leads * 100`
-  (`dashboard_handler.go:96`), rendered to one decimal. On the current seeded database that is
+  (`dashboard_handler.go:141`), rendered to one decimal. On the current seeded database that is
   `95 / 71 * 100 = 133.8 %`; the screenshot run captured `90 / 65 * 100 = 138.5 %`. The card shows a
   value above 100 % and no clamping occurs.
 - **Known issue:** the formula divides two unrelated populations. `total_customers` counts **all**
@@ -232,7 +232,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Route-intercept `**/dashboard/stats` and fulfil with a payload whose `total_leads` is 0.
   2. Navigate to `/`.
 - **Expected:** the card shows `0.0%`. The handler guards the division with `if totalLeads > 0`
-  (`dashboard_handler.go:95`), so no `NaN`/`+Inf` reaches the JSON. The frontend's
+  (`dashboard_handler.go:140`), so no `NaN`/`+Inf` reaches the JSON. The frontend's
   `(stats?.conversion_rate || 0).toFixed(1)` gives the same result if the field is missing.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 

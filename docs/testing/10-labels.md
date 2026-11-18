@@ -208,7 +208,7 @@ where the behaviour is surprising a **Known issue** line names it.
   1. Navigate to `/labels` and click the edit icon on the label's row.
   2. Replace the name, click a different preset swatch, submit.
   3. Open the task's detail page.
-- **Expected:** The dialog opens prefilled with the current name and colour. `PUT /api/v1/labels/{id}` returns 200 and the response carries the refreshed `task_count` (the handler re-reads after the write, `label_handler.go:156`). The row shows the new name and colour, the task count is unchanged at `1` — renaming never detaches anything — and the task detail page shows the new name because tasks carry labels by reference.
+- **Expected:** The dialog opens prefilled with the current name and colour. `PUT /api/v1/labels/{id}` returns 200 and the response carries the refreshed `task_count` (the handler re-reads after the write, `label_handler.go:157`). The row shows the new name and colour, the task count is unchanged at `1` — renaming never detaches anything — and the task detail page shows the new name because tasks carry labels by reference.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "admin can rename and recolour a label"
 
 ### TC-LABEL-017 — Recolouring without renaming is not a duplicate
@@ -369,7 +369,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open `/tasks/{id}/edit`, remove the chip with its delete icon, save.
   2. Open the task detail page.
-- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`task_handler.go:49`) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
+- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`task_handler.go:50`) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "editing a task replaces its label set"
 
 ### TC-LABEL-033 — An unknown label id rejects the whole write

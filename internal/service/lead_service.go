@@ -10,6 +10,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -138,7 +139,7 @@ func checkLeadOwner(logger *logrus.Entry, users repository.UserRepository, leadI
 	if !owner.IsActive {
 		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalInactive)
 	}
-	if owner.Role != models.RoleAdmin && owner.Role != models.RoleSales {
+	if !permissions.ForUser(owner).Has(permissions.AssignmentFormOwner) {
 		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalRole)
 	}
 	return nil

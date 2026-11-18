@@ -11,6 +11,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -225,7 +226,7 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
+	mayAssignOwner := hasPermission(c, permissions.LeadsAssignOwner)
 
 	lead := &models.Lead{
 		FirstName:      req.FirstName,
@@ -267,14 +268,14 @@ func (h *LeadHandler) Create(c *gin.Context) {
 	// Set owner - if not specified, assign to current user (for sales), or require for admin
 	if req.OwnerID != nil {
 		// Only admins can assign leads to other users
-		if currentUserRole != string(models.RoleAdmin) && *req.OwnerID != currentUserID {
+		if !mayAssignOwner && *req.OwnerID != currentUserID {
 			utils.RespondForbidden(c, "You can only assign leads to yourself")
 			return
 		}
 		lead.OwnerID = *req.OwnerID
 	} else {
 		// Default to current user for sales, require explicit assignment for admin
-		if currentUserRole == string(models.RoleAdmin) {
+		if mayAssignOwner {
 			utils.RespondBadRequest(c, "Owner ID is required for admin users")
 			return
 		}
@@ -374,21 +375,15 @@ func (h *LeadHandler) List(c *gin.Context) {
 	search := c.Query("search")
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	var leads []models.Lead
 	var total int64
 	var err error
 
-	// Role-based filtering: only admin and sales users can see all leads
-	// Other roles can only see their own leads
-	isAdminOrSales := currentUserRole == string(models.RoleAdmin) || currentUserRole == string(models.RoleSales)
-
-	if currentUserRole == string(models.RoleSales) {
-		// For sales users, only show their own leads
-		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
-	} else if !isAdminOrSales {
-		// Non-admin, non-sales users can only see their own leads
+	// Scope filtering: only a caller holding leads.view on every lead (admin)
+	// gets the search, the classification filter and the sort; every other
+	// caller (sales, at scope own) sees the leads it owns.
+	if !hasPermissionOnAll(c, permissions.LeadsView) {
 		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 	} else if search != "" {
 		// Search across lead fields
@@ -497,9 +492,8 @@ func (h *LeadHandler) Get(c *gin.Context) {
 
 	// Permission check: sales users can only view their own leads
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
-	if currentUserRole == string(models.RoleSales) && lead.OwnerID != currentUserID {
+	if hasPermissionOnOwnOnly(c, permissions.LeadsView) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only view your own leads")
 		return
 	}
@@ -557,10 +551,9 @@ func (h *LeadHandler) Update(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Permission check: sales users can only update their own leads
-	if currentUserRole == string(models.RoleSales) && lead.OwnerID != currentUserID {
+	if hasPermissionOnOwnOnly(c, permissions.LeadsUpdate) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only update your own leads")
 		return
 	}
@@ -603,7 +596,7 @@ func (h *LeadHandler) Update(c *gin.Context) {
 
 	// Only admins can reassign leads
 	if req.OwnerID != nil {
-		if currentUserRole != string(models.RoleAdmin) {
+		if !hasPermission(c, permissions.LeadsAssignOwner) {
 			utils.RespondForbidden(c, "Only administrators can reassign leads")
 			return
 		}
@@ -686,7 +679,7 @@ func (h *LeadHandler) Assign(c *gin.Context) {
 		return
 	}
 
-	lead, err := h.leadService.Assign(c.Request.Context(), uint(id), req.UserID, leadViewer(c))
+	lead, err := h.leadService.Assign(c.Request.Context(), uint(id), req.UserID, viewerFor(c, permissions.LeadsUpdate))
 	if err != nil {
 		switch {
 		case errors.Is(err, apperrors.ErrInvalidLeadOwner):
@@ -744,15 +737,22 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Permission check: only admins or lead owners can delete
-	if currentUserRole != string(models.RoleAdmin) && lead.OwnerID != currentUserID {
+	if !hasPermissionOnAll(c, permissions.LeadsDelete) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only delete your own leads")
 		return
 	}
 
-	if err := h.leadService.Delete(uint(id), models.UserRole(currentUserRole)); err != nil {
+	// Erasing a converted lead also erases the customer it became, which is
+	// its own permission: the role handed to the service comes from
+	// leads.erase_converted alone, never from the leads.delete scope.
+	eraseRole, ok := callRole(c, permissions.LeadsEraseConverted)
+	if !ok {
+		utils.RespondForbidden(c, "Insufficient permissions")
+		return
+	}
+	if err := h.leadService.Delete(uint(id), eraseRole); err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
 			utils.RespondForbidden(c, "Only an admin can delete a converted lead: it also erases the customer it became")
 			return
@@ -820,10 +820,9 @@ func (h *LeadHandler) ConvertToCustomer(c *gin.Context) {
 	}
 
 	currentUserID := c.GetUint("user_id")
-	currentUserRole := c.GetString("user_role")
 
 	// Permission check: only admins or lead owners can convert
-	if currentUserRole != string(models.RoleAdmin) && lead.OwnerID != currentUserID {
+	if !hasPermissionOnAll(c, permissions.LeadsConvert) && lead.OwnerID != currentUserID {
 		utils.RespondForbidden(c, "You can only convert your own leads")
 		return
 	}
@@ -927,18 +926,17 @@ var leadExportSortColumns = map[string]bool{
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: unexpected failure; the message is always 'An unexpected error occurred'"
 // @Router /leads/export [get]
 func (h *LeadHandler) Export(c *gin.Context) {
-	role := c.GetString("user_role")
 	// The log lines carry the operation, the role, the user id, presence flags
 	// and the count only: never the search term, the raw sort or a lead's data.
 	logger := utils.Logger.WithFields(map[string]interface{}{
 		"operation": "LeadHandler.Export",
-		"role":      role,
+		"role":      callerRoleForLog(c),
 		"user_id":   c.GetUint("user_id"),
 	})
 
-	// Belt and braces with the group's RequireRole(admin, sales) guard; the
-	// service refuses any other role as well.
-	if role != string(models.RoleAdmin) && role != string(models.RoleSales) {
+	// Belt and braces with the route's leads.export permission guard; the
+	// service refuses a caller without it as well.
+	if !hasPermission(c, permissions.LeadsExport) {
 		logger.Warn("Lead export refused for this role")
 		utils.RespondForbidden(c, "Insufficient permissions")
 		return
@@ -962,7 +960,7 @@ func (h *LeadHandler) Export(c *gin.Context) {
 
 	// Every row is read before a byte is written: a failure halfway through a
 	// stream would reach the client after a 200 as a file that looks complete.
-	leads, err := h.leadService.ExportForActor(leadViewer(c), service.LeadExportParams{
+	leads, err := h.leadService.ExportForActor(viewerFor(c, permissions.LeadsExport), service.LeadExportParams{
 		Search:         search,
 		Classification: classification,
 		SortBy:         sortBy,

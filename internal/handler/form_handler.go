@@ -8,6 +8,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -262,6 +263,12 @@ func (h *FormHandler) Create(c *gin.Context) {
 // @Router /forms/{id} [get]
 func (h *FormHandler) Get(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "FormHandler.Get")
+
+	// The route line carries no guard of its own (its text is pinned by the
+	// route-order test): forms.view is decided here, first.
+	if denyWithoutPermission(c, permissions.FormsView) {
+		return
+	}
 
 	id, ok := formPathID(c, "Invalid form ID")
 	if !ok {
