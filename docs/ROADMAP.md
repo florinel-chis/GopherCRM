@@ -166,7 +166,7 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   takes its token before the `users` row and is not retried, so against an erasure it may fail
   with error 1213 and nothing written (on MariaDB 10.11 also when the erasure already holds the
   token row, because the confirm's claim locks through `idx_password_reset_tokens_deleted_at`
-  first); inside a caller's transaction the erasure's re-check of the reverse links
+  first; tracked in #407); inside a caller's transaction the erasure's re-check of the reverse links
   answers from the caller's snapshot; and nothing locks the `users` row when `customers.user_id`
   is set (no shipped code path sets it; it comes from a seed, an import or SQL), so a customer
   linked to the login after the erasure's re-check and before its commit is not erased. Login (#336), refresh

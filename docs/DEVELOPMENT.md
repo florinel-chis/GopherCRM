@@ -2396,7 +2396,7 @@ Known limits of the erasure, in one place:
   side, and a governed delete replayed after the other erasure committed answers 404); the
   password-reset confirm takes its token before the user row and is not retried, so it may fail
   with error 1213 against an erasure (on MariaDB 10.11 also against one that already holds the
-  token row: the confirm's claim locks the `deleted_at` index entry first); inside a caller's transaction the re-check of the
+  token row: the confirm's claim locks the `deleted_at` index entry first, tracked in #407); inside a caller's transaction the re-check of the
   reverse links answers from the caller's snapshot; and a write of `customers.user_id` takes no
   lock on the user row (no shipped code path writes it), so a customer linked to the login after
   the erasure's re-check and before its commit escapes the cascade. Login (#336), refresh rotation, the

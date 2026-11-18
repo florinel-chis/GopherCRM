@@ -93,7 +93,8 @@ A governed delete that is replayed after the other erasure committed finds the a
 already erased and answers not found (404), as a delete of an erased user does.
 On MariaDB 10.11 the confirm's claim is served through `idx_password_reset_tokens_deleted_at` and
 locks that index entry before the row, so it can also be the 1213 victim of an erasure that
-already holds the token row; MySQL 8 claims by primary key and the confirm is refused.
+already holds the token row; MySQL 8 claims by primary key and the confirm is refused. The
+MariaDB case is tracked in #407.
 
 ## Retry rule
 
@@ -189,7 +190,8 @@ A governed delete that is replayed after the other erasure committed finds the a
 already erased and answers not found (404), as a delete of an erased user does.
 On MariaDB 10.11 the confirm's claim is served through `idx_password_reset_tokens_deleted_at` and
 locks that index entry before the row, so it can also be the 1213 victim of an erasure that
-already holds the token row; MySQL 8 claims by primary key and the confirm is refused.
+already holds the token row; MySQL 8 claims by primary key and the confirm is refused. The
+MariaDB case is tracked in #407.
 
 Known gaps of the re-check. Inside a caller's transaction the reverse re-read answers from the
 caller's snapshot, so a customer linked to the login while a governed user erasure is in flight

@@ -805,7 +805,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   governed user write holds the target's `users` row before the nested erasure locks leads and
   customers (replayed by either side; a governed delete replayed after the other erasure
   committed answers 404, the account being erased already), and the password-reset confirm takes
-  its token before the `users` row and is not retried. The new seams (`repository.ErasureHooks`) are test-only, and
+  its token before the `users` row and is not retried (it may fail with error 1213 against an
+  erasure; on MariaDB 10.11 also against one that already holds the token row, tracked in #407).
+  The new seams (`repository.ErasureHooks`) are test-only, and
   the regression roots (`internal/repository/erasure_lock_order_test.go`,
   `internal/service/erasure_credential_order_test.go`) are registered in the
   `scripts/ci/check-go.py transaction` gate.
