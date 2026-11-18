@@ -1536,7 +1536,10 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   and `docs/{DEVELOPMENT,FORKING,DOCKER,USE_CASES,ROADMAP,EXTENDING,SETUP}.md`). A documentation-only
   pull request runs no Go test, so it can break one of those pins and still be green; the next change
   that selects `internal/config` then fails for a reason outside its diff. Run
-  `go test -count=1 ./internal/config` after editing those files.
+  `go test -count=1 ./internal/config` after editing those files. `internal/permissions` pins
+  `docs/AUTHORIZATION.md` in the same way (its catalogue and matrix tables against the code, and
+  the pointers to it in `README.md`, `docs/FEATURES.md` and `CHANGELOG.md`): run
+  `go test -count=1 ./internal/permissions` after editing any of those four.
 
 Since 11 November 2026 CI runs no browser spec outside a release: the complete browser matrix on
 MySQL, MariaDB and SQLite runs only when the release workflow calls CI with `full: true`. Browser

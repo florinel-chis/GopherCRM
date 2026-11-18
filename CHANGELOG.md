@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Authorization guide `docs/AUTHORIZATION.md` (#349, slice S5 of #259), with a test.** The
+  guide holds the phased plan of #259, the permission catalogue, the matrix of the four system
+  roles, custom roles and scopes, the self-service routes, the service-boundary
+  adapter table, the last-admin invariant, the escalation rule, the audit trail, and a design note
+  for phase 2 (#261: single sign-on, identity linking, provisioning), which is not implemented.
+  `internal/permissions/authorization_guide_test.go` compares the guide's tables with
+  `permissions.Leaves()` and `permissions.ForSystemRole`, and pins the pointers to the guide in
+  README, `docs/FEATURES.md` and this file. No route, schema or SPA change.
 - **Role API, last-admin invariant, escalation rule and audit trail (#348, slice S4 of #259).**
   Eight new routes: `GET /permissions/catalogue`, `GET` and `POST /roles`, `GET`, `PUT` and
   `DELETE /roles/{id}`, `POST /roles/{id}/clone` and `GET /roles/audit`. Reading the catalogue and
