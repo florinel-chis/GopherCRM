@@ -378,3 +378,15 @@ func (r *userRepository) CountLiveRoleHolders() (map[string]int64, map[uint]int6
 	}
 	return bySystemRole, byRoleID, nil
 }
+
+// HasLinkedCustomerRecord implements UserRoleMaintenance with one plain count
+// of the customers rows whose user_id is userID, erased rows included: the
+// rows the erasure of a customer login follows. It takes no lock.
+func (r *userRepository) HasLinkedCustomerRecord(userID uint) (bool, error) {
+	var linked int64
+	if err := r.db.Unscoped().Model(&models.Customer{}).
+		Where("user_id = ?", userID).Count(&linked).Error; err != nil {
+		return false, fmt.Errorf("count the customer records of user %d: %w", userID, err)
+	}
+	return linked > 0, nil
+}

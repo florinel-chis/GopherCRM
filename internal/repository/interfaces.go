@@ -64,6 +64,9 @@ type UserRoleMaintenance interface {
 	// CountLiveRoleHolders counts the live users per system role (by
 	// users.role) and per custom role (by users.role_id).
 	CountLiveRoleHolders() (bySystemRole map[string]int64, byRoleID map[uint]int64, err error)
+	// HasLinkedCustomerRecord reports whether a customers row names the user
+	// in user_id, erased rows included. A plain, non-locking read.
+	HasLinkedCustomerRecord(userID uint) (bool, error)
 }
 
 // RoleRepository is the persistence of RBAC roles (#259, #344); the role

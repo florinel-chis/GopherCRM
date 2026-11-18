@@ -20,7 +20,7 @@ import (
 //	roles of actor, target and the requested role (ascending id)
 //
 // re-reads all of them under the locks and then refuses, in this order: an
-// actor that lost the route's key (ErrForbidden), ErrRoleEscalation,
+// actor that lacks a key the write needs (ErrForbidden), ErrRoleEscalation,
 // ErrCustomerLoginRole, ErrLastAdmin. A missing target is ErrNotFound and a
 // missing requested role ErrRoleNotFound, both before the refusals. A changed
 // role or role_id commits with its user_role_changed audit row.
@@ -251,7 +251,11 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 		if err != nil {
 			return err
 		}
-		if err := acting.requireKeys(change.keys...); err != nil {
+		keys, err := tx.keysFor(target, change)
+		if err != nil {
+			return err
+		}
+		if err := acting.requireKeys(keys...); err != nil {
 			return err
 		}
 
@@ -340,4 +344,32 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 		return nil, err
 	}
 	return result, nil
+}
+
+// keysFor is the keys a governed write to target needs: the keys of the change
+// and, for a customer login with a linked customer record, the customer key of
+// what the write reaches. Erasing such a login erases its customer records
+// with it, so it needs customers.delete; changing its email needs
+// customers.update. The link is read from the stored role and email, with a
+// plain read inside the transaction.
+func (tx *governedTx) keysFor(target *models.User, change governedChange) ([]string, error) {
+	keys := append([]string{}, change.keys...)
+	if target.Role != models.RoleCustomer {
+		return keys, nil
+	}
+	changesEmail := !change.erase && change.email != nil && *change.email != target.Email
+	if !change.erase && !changesEmail {
+		return keys, nil
+	}
+	linked, err := tx.userRoles.HasLinkedCustomerRecord(target.ID)
+	if err != nil {
+		return nil, err
+	}
+	if !linked {
+		return keys, nil
+	}
+	if change.erase {
+		return append(keys, permissions.CustomersDelete), nil
+	}
+	return append(keys, permissions.CustomersUpdate), nil
 }
