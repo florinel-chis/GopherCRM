@@ -33,8 +33,8 @@ type RegisterRequest struct {
 	// account (409 otherwise).
 	Email string `json:"email" binding:"required,email" format:"email" example:"jane.doe@example.com"`
 	// Password: at least 10 characters with an uppercase letter, a lowercase
-	// letter, a digit and a special character (punctuation or symbol). bcrypt
-	// cannot hash more than 72 bytes; a longer password is answered with 400.
+	// letter, a digit and a special character (punctuation or symbol). At most
+	// 72 bytes (the bcrypt limit); a longer password is answered with 400.
 	Password string `json:"password" binding:"required,min=10" minLength:"10" example:"Str0ng!Passw0rd"`
 	// Given name; required, non-empty.
 	FirstName string `json:"first_name" binding:"required" example:"Jane"`
@@ -104,8 +104,8 @@ type ChangePasswordRequest struct {
 	// The account's current password; a wrong value is a 400.
 	CurrentPassword string `json:"current_password" binding:"required" example:"Str0ng!Passw0rd"`
 	// New password: at least 10 characters with an uppercase letter, a
-	// lowercase letter, a digit and a special character. More than 72 bytes
-	// fails with 500 (bcrypt limit).
+	// lowercase letter, a digit and a special character. At most 72 bytes
+	// (the bcrypt limit); a longer password is answered with 400.
 	NewPassword string `json:"new_password" binding:"required,min=10" minLength:"10" example:"N3w!Passw0rd2026"`
 	// Optional: the caller's current refresh token. With bearer
 	// authentication it renews that session (the response then carries new
@@ -143,7 +143,7 @@ type PasswordResetConfirmRequest struct {
 	Token string `json:"token" binding:"required" example:"q8Zt3Lm0Xw5Rv9Kp2Hn6Bc1Yd4Fg7Js0Ua3Ei6Oo9Pq"`
 	// New password: at least 10 characters with an uppercase letter, a
 	// lowercase letter, a digit and a special character. More than 72 bytes
-	// fails with 500 (bcrypt limit) without spending the token.
+	// (the bcrypt limit) is answered with 400 without spending the token.
 	NewPassword string `json:"new_password" binding:"required,min=10" minLength:"10" example:"N3w!Passw0rd2026"`
 }
 
@@ -156,18 +156,18 @@ type MessageResponse struct {
 // Register godoc
 // @Summary Register a new customer account
 // @Description Public self-service sign-up, open only while the security.allow_public_registration setting is true (it ships false; GET /auth/registration reports the current state). The gate fails closed: a setting that cannot be read is treated as false. The account is always created with the customer role and active; the body has no role field and nothing in it can change the role. Elevated roles come only from the admin-guarded POST /users.
-// @Description On success the response carries a JWT for the new account and the user, but no refresh token: the client signs in through POST /auth/login to obtain one. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character (punctuation or symbol); bcrypt rejects more than 72 bytes.
+// @Description On success the response carries a JWT for the new account and the user, but no refresh token: the client signs in through POST /auth/login to obtain one. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character (punctuation or symbol), and at most 72 bytes: a longer password is refused before anything is stored.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, one bucket shared by every unauthenticated /auth route. No side effects besides the new user row: no mail is sent and no automation event is recorded.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body RegisterRequest true "Registration details"
 // @Success 201 {object} utils.APIResponse{data=AuthResponse} "Account created; token and user returned (no refresh_token)"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a field failed its binding rule (details maps each Go field name, e.g. Email, to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password fails the complexity policy (message names the missing class), or the user could not be stored (the underlying message is returned, e.g. a password over 72 bytes)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a field failed its binding rule (details maps each Go field name, e.g. Email, to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password is longer than 72 bytes (password must be at most 72 bytes long; checked first), or it fails the complexity policy (message names the missing class)"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: public registration is disabled or the setting could not be read"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: an account already uses this email"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: strict /auth tier exceeded; details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the token could not be signed (the account has already been created)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be stored (the cause is logged, never returned), or the token could not be signed (the account has already been created)"
 // @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.Register")
@@ -178,7 +178,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
-	if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+	if err := utils.ValidateNewPassword(req.Password); err != nil {
 		utils.RespondBadRequest(c, err.Error())
 		return
 	}
@@ -191,12 +191,15 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if err := h.userService.Register(user, req.Password); err != nil {
-		logger.WithError(utils.LogError(err)).Warn("Registration failed")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			logger.WithError(utils.LogError(err)).Warn("Registration failed")
 			utils.RespondConflict(c, "user with this email already exists")
-		} else {
-			utils.RespondBadRequest(c, err.Error())
+			return
 		}
+		// Anything else is a failure of the store, not of the request: the
+		// detail goes to the log and the client gets the generic answer.
+		logger.WithError(utils.LogError(err)).Error("Registration failed")
+		utils.RespondInternalError(c)
 		return
 	}
 
@@ -369,11 +372,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param request body ChangePasswordRequest true "Current and new password, optionally the current refresh token"
 // @Success 200 {object} utils.APIResponse{data=ChangePasswordResponse} "Password changed; refresh tokens revoked; renewed credentials when a refresh_token was presented with a bearer token"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing or new_password is shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), new_password fails the complexity policy, or The current password is incorrect"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing or new_password is shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), new_password is longer than 72 bytes (password must be at most 72 bytes long; checked first, nothing changes), new_password fails the complexity policy, or The current password is incorrect"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or invalid credentials, or the account was deactivated or erased during the request"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "SESSION_STALE: the presented refresh_token is not a live session of the caller; nothing was changed"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded; details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: storage failure (nothing changed when it came before the commit; a failed COMMIT is ambiguous), or a new_password over 72 bytes (bcrypt limit)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: storage failure (nothing changed when it came before the commit; a failed COMMIT is ambiguous)"
 // @Router /auth/change-password [post]
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.ChangePassword")
@@ -390,7 +393,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+	if err := utils.ValidateNewPassword(req.NewPassword); err != nil {
 		utils.RespondBadRequest(c, err.Error())
 		return
 	}
@@ -471,9 +474,9 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 // @Produce json
 // @Param request body PasswordResetConfirmRequest true "Reset token and new password"
 // @Success 200 {object} utils.APIResponse{data=MessageResponse} "Password reset; every refresh token revoked"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: token or new_password missing, or new_password shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), new_password fails the complexity policy, or Invalid or expired reset token"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: token or new_password missing, or new_password shorter than 10 characters (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), new_password is longer than 72 bytes (password must be at most 72 bytes long; checked first, the token is not spent), new_password fails the complexity policy, or Invalid or expired reset token"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: strict /auth tier exceeded; details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: storage failure (before the commit: rolled back and the link stays usable; a failed COMMIT is ambiguous and the reset may have taken effect) or a new_password over 72 bytes (bcrypt limit; the token is not spent)"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: storage failure (before the commit: rolled back and the link stays usable; a failed COMMIT is ambiguous and the reset may have taken effect)"
 // @Router /auth/password-reset/confirm [post]
 func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthHandler.ConfirmPasswordReset")
@@ -484,7 +487,7 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		return
 	}
 
-	if err := utils.ValidatePasswordComplexity(req.NewPassword); err != nil {
+	if err := utils.ValidateNewPassword(req.NewPassword); err != nil {
 		utils.RespondBadRequest(c, err.Error())
 		return
 	}

@@ -637,6 +637,52 @@ func (suite *UserHandlerTestSuite) TestDeactivate_SelfDeactivationPrevented() {
 	assert.Contains(suite.T(), response.Error.Message, "cannot deactivate your own account")
 }
 
+// The order of the answers to a failed create: duplicate email, then the
+// role-governance refusals, then 500 for everything else. A refusal keeps its
+// code and a failure of the store never reaches the client as text.
+func (suite *UserHandlerTestSuite) TestCreate_ServiceErrorMapping() {
+	suite.router.POST("/users", suite.handler.Create)
+
+	for _, tc := range []struct {
+		name    string
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{"governance refusal", fmt.Errorf("actor lost users.create: %w", apperrors.ErrForbidden),
+			http.StatusForbidden, "FORBIDDEN", "Insufficient permissions"},
+		{"store failure", errors.New("Error 1213: Deadlock found when trying to get lock; INSERT INTO users"),
+			http.StatusInternalServerError, "INTERNAL_ERROR", "An unexpected error occurred"},
+	} {
+		payload := CreateUserRequest{
+			Email:     "new@example.com",
+			Password:  "Str0ng!Pass",
+			FirstName: "New",
+			LastName:  "User",
+			Role:      models.RoleCustomer,
+		}
+		suite.mockService.On("CreateAs", mock.Anything, mock.Anything, mock.Anything, payload.Password).
+			Return(tc.err).Once()
+
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/users", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		suite.router.ServeHTTP(rec, req)
+
+		assert.Equal(suite.T(), tc.status, rec.Code, tc.name)
+		var response utils.APIResponse
+		suite.Require().NoError(json.Unmarshal(rec.Body.Bytes(), &response), tc.name)
+		suite.Require().NotNil(response.Error, tc.name)
+		assert.Equal(suite.T(), tc.code, response.Error.Code, tc.name)
+		assert.Equal(suite.T(), tc.message, response.Error.Message, tc.name)
+		assert.NotContains(suite.T(), rec.Body.String(), "Deadlock", tc.name)
+		assert.NotContains(suite.T(), rec.Body.String(), "INSERT", tc.name)
+	}
+}
+
 func TestUserHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(UserHandlerTestSuite))
 }

@@ -5253,8 +5253,8 @@ definitions:
       new_password:
         description: |-
           New password: at least 10 characters with an uppercase letter, a
-          lowercase letter, a digit and a special character. More than 72 bytes
-          fails with 500 (bcrypt limit).
+          lowercase letter, a digit and a special character. At most 72 bytes
+          (the bcrypt limit); a longer password is answered with 400.
         example: N3w!Passw0rd2026
         minLength: 10
         type: string
@@ -6215,8 +6215,8 @@ definitions:
       password:
         description: |-
           Initial password: at least 10 characters with an uppercase letter, a
-          lowercase letter, a digit and a special character. More than 72 bytes is
-          answered with 400 (bcrypt limit).
+          lowercase letter, a digit and a special character. At most 72 bytes (the
+          bcrypt limit); a longer password is answered with 400.
         example: Str0ng!Passw0rd
         minLength: 10
         type: string
@@ -6839,7 +6839,7 @@ definitions:
         description: |-
           New password: at least 10 characters with an uppercase letter, a
           lowercase letter, a digit and a special character. More than 72 bytes
-          fails with 500 (bcrypt limit) without spending the token.
+          (the bcrypt limit) is answered with 400 without spending the token.
         example: N3w!Passw0rd2026
         minLength: 10
         type: string
@@ -7258,8 +7258,8 @@ definitions:
       password:
         description: |-
           Password: at least 10 characters with an uppercase letter, a lowercase
-          letter, a digit and a special character (punctuation or symbol). bcrypt
-          cannot hash more than 72 bytes; a longer password is answered with 400.
+          letter, a digit and a special character (punctuation or symbol). At most
+          72 bytes (the bcrypt limit); a longer password is answered with 400.
         example: Str0ng!Passw0rd
         minLength: 10
         type: string
@@ -10160,8 +10160,10 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: a required field is missing or new_password
             is shorter than 10 characters (details maps the Go field name to a message).
-            BAD_REQUEST: malformed JSON (Invalid request format), new_password fails
-            the complexity policy, or The current password is incorrect'
+            BAD_REQUEST: malformed JSON (Invalid request format), new_password is
+            longer than 72 bytes (password must be at most 72 bytes long; checked
+            first, nothing changes), new_password fails the complexity policy, or
+            The current password is incorrect'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10201,8 +10203,7 @@ paths:
               type: object
         "500":
           description: 'INTERNAL_ERROR: storage failure (nothing changed when it came
-            before the commit; a failed COMMIT is ambiguous), or a new_password over
-            72 bytes (bcrypt limit)'
+            before the commit; a failed COMMIT is ambiguous)'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10430,8 +10431,10 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: token or new_password missing, or new_password
             shorter than 10 characters (details maps the Go field name to a message).
-            BAD_REQUEST: malformed JSON (Invalid request format), new_password fails
-            the complexity policy, or Invalid or expired reset token'
+            BAD_REQUEST: malformed JSON (Invalid request format), new_password is
+            longer than 72 bytes (password must be at most 72 bytes long; checked
+            first, the token is not spent), new_password fails the complexity policy,
+            or Invalid or expired reset token'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10452,8 +10455,7 @@ paths:
         "500":
           description: 'INTERNAL_ERROR: storage failure (before the commit: rolled
             back and the link stays usable; a failed COMMIT is ambiguous and the reset
-            may have taken effect) or a new_password over 72 bytes (bcrypt limit;
-            the token is not spent)'
+            may have taken effect)'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10542,7 +10544,7 @@ paths:
       - application/json
       description: |-
         Public self-service sign-up, open only while the security.allow_public_registration setting is true (it ships false; GET /auth/registration reports the current state). The gate fails closed: a setting that cannot be read is treated as false. The account is always created with the customer role and active; the body has no role field and nothing in it can change the role. Elevated roles come only from the admin-guarded POST /users.
-        On success the response carries a JWT for the new account and the user, but no refresh token: the client signs in through POST /auth/login to obtain one. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character (punctuation or symbol); bcrypt rejects more than 72 bytes.
+        On success the response carries a JWT for the new account and the user, but no refresh token: the client signs in through POST /auth/login to obtain one. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character (punctuation or symbol), and at most 72 bytes: a longer password is refused before anything is stored.
         Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, one bucket shared by every unauthenticated /auth route. No side effects besides the new user row: no mail is sent and no automation event is recorded.
       parameters:
       - description: Registration details
@@ -10566,9 +10568,9 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: a field failed its binding rule (details
             maps each Go field name, e.g. Email, to a message). BAD_REQUEST: malformed
-            JSON (Invalid request format), the password fails the complexity policy
-            (message names the missing class), or the user could not be stored (the
-            underlying message is returned, e.g. a password over 72 bytes)'
+            JSON (Invalid request format), the password is longer than 72 bytes (password
+            must be at most 72 bytes long; checked first), or it fails the complexity
+            policy (message names the missing class)'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10606,7 +10608,8 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "500":
-          description: 'INTERNAL_ERROR: the token could not be signed (the account
+          description: 'INTERNAL_ERROR: the user could not be stored (the cause is
+            logged, never returned), or the token could not be signed (the account
             has already been created)'
           schema:
             allOf:
@@ -24052,7 +24055,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the caller chose.
+        Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character, and at most 72 bytes. No mail is sent; the new user signs in with the password the caller chose.
         The account is written in one transaction that locks the caller's account and the custom role, reads the caller's permissions again and applies the escalation rule: a caller that is not on the admin system role cannot give a role whose permissions are above its own (a missing permission, or all where it holds own). The customer role never counts as above the caller. The role the account is created with is recorded in the role audit log (user_role_changed) in the same transaction.
       parameters:
       - description: New account
@@ -24077,11 +24080,11 @@ paths:
           description: 'VALIDATION_ERROR: a required field is missing, email is invalid,
             password is shorter than 10 characters or role is not one of admin, sales,
             support, customer, custom (details maps the Go field name to a message).
-            BAD_REQUEST: malformed JSON (Invalid request format), the password fails
-            the complexity policy, or the user could not be stored (the underlying
-            message is returned, e.g. a password over 72 bytes). INVALID_ROLE_ASSIGNMENT:
-            role custom without role_id, role_id with any other role, or a role_id
-            that names a system role'
+            BAD_REQUEST: malformed JSON (Invalid request format), the password is
+            longer than 72 bytes (password must be at most 72 bytes long; checked
+            first), or it fails the complexity policy. INVALID_ROLE_ASSIGNMENT: role
+            custom without role_id, role_id with any other role, or a role_id that
+            names a system role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -24135,6 +24138,16 @@ paths:
           description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
             burst 30, per client IP); details.retry_after is 60s and no Retry-After
             header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the user could not be stored (the cause is
+            logged, never returned); nothing was written'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

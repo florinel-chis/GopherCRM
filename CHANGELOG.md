@@ -797,6 +797,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Registration and `POST /users` no longer return the service error text, and an over-long
+  password is refused the same way everywhere (#397).** `POST /auth/register` and `POST /users`
+  used to answer 400 `BAD_REQUEST` with the raw error for any failure of the write, a database
+  error included. A user that cannot be stored is now 500 `INTERNAL_ERROR` with the generic
+  message and the cause goes to the log only; a duplicate email stays 409 `CONFLICT`, a weak
+  password 400, and the role refusals of `POST /users` keep their codes. The four routes that
+  take a new password (`POST /auth/register`, `POST /users`, `POST /auth/change-password`,
+  `POST /auth/password-reset/confirm`) now check its length before anything else and answer
+  400 `BAD_REQUEST` `password must be at most 72 bytes long` for more than 72 bytes (bytes,
+  not characters: the bcrypt limit). Change-password and reset confirm used to answer 500
+  there, registration and `POST /users` a 400 with the bcrypt text. Nothing is stored or
+  changed and a reset link is not spent. `PUT /users/{id}` and `PUT /users/me` accept no
+  password and are unchanged. **Compatibility:** a client that treated every 400 of the two
+  create routes as a correctable input error now sees 500 for a server-side failure.
+
 - **`PUT /leads/{id}` can clear the optional text fields (#398).** `phone`, `company`,
   `position`, `source`, `external_id` and `notes` used to apply only when non-empty, so a lead
   form saved with an emptied Phone or Notes answered 200 and the old text came back on reload.

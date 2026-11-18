@@ -771,9 +771,9 @@ file, not by trusting the coverage matrix.
 ### TC-AUTH-037a — Reset confirmation is atomic and single-use
 - **Priority:** P0
 - **Type:** regression
-- **Expected:** `POST /auth/password-reset/confirm` validates the complexity policy and hashes the
-  new password before anything is written, so a weak password, or one bcrypt refuses (over 72
-  bytes), leaves the link usable. The token claim — a conditional update that stamps `used_at`
+- **Expected:** `POST /auth/password-reset/confirm` validates the length (at most 72 bytes) and
+  the complexity policy and hashes the new password before anything is written, so a weak or
+  over-long password leaves the link usable. The token claim — a conditional update that stamps `used_at`
   only while the row is unused and strictly unexpired and must affect exactly one row — the owner
   re-check, the password, lockout and `token_version` update (one write; the increment ends every
   earlier access token, #236) and the revocation of every refresh token of the
@@ -793,10 +793,10 @@ file, not by trusting the coverage matrix.
   the owner is revoked, the losers are told the link is invalid and did not change the
   password, and a replay cannot alter that outcome. A successful reset clears the lockout, so
   the owner signs in immediately with only the new password.
-- **Known issue:** a policy-compliant password longer than bcrypt's 72-byte limit passes the
-  handler's `min=10` binding and the complexity check, is refused by the service without
-  spending the token, and is reported as **500** rather than 400 because the handler classifies
-  only the token sentinel. The link stays usable.
+  A password longer than bcrypt's 72-byte limit is refused by the handler before the service is
+  called: **400** `BAD_REQUEST` `password must be at most 72 bytes long` (#397; it used to be a
+  500; `internal/handler/auth_password_length_test.go` `TestPasswordLengthLimit`). The service
+  still refuses such a password itself without spending the token.
 - **Automation:** `internal/service/auth_password_reset_regression_test.go` runs every scenario
   on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
   created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable

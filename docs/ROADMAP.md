@@ -233,9 +233,6 @@ included. Found by reading the code path unless noted.
 - **`PUT /users/{id}` accepts an admin's own deactivation or demotion while another active admin
   remains**, which `POST /users/{id}/deactivate` refuses with 400 for every caller's own account.
   The last active admin is protected on both routes since #348 (409 `LAST_ADMIN`).
-- **Registration and `POST /users` answer 400 with the raw service error text** for any failure,
-  database errors included. A password over bcrypt's 72-byte limit is a 400 there but a 500 on
-  change-password and reset confirm; no endpoint checks the byte length first.
 - **Database failures reported as 404** — these lookups report every lookup error, a database
   failure included, as a missing record or reference:
   - `GET`, `PUT` and `DELETE /leads/{id}` and the pre-read of `POST /leads/{id}/convert` answer
