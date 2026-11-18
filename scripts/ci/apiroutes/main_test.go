@@ -292,7 +292,9 @@ func TestExtractRepositoryRouter(t *testing.T) {
 		t.Fatalf("got %d routes, %d outside the base path", len(routes), outside)
 	}
 	for _, r := range routes {
+		// /quotes/public/ is the client response link of a quote email (#382).
 		public := r.Path == "/health" || strings.HasPrefix(r.Path, "/forms/public/") ||
+			strings.HasPrefix(r.Path, "/quotes/public/") ||
 			(strings.HasPrefix(r.Path, "/auth/") && r.Path != "/auth/logout" && r.Path != "/auth/change-password")
 		if r.Auth == public {
 			t.Errorf("%s %s: auth = %t", r.Method, r.Path, r.Auth)

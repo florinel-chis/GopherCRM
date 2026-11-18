@@ -7,10 +7,14 @@ package service
 // carry ids only.
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -355,4 +359,225 @@ func (r *revisingReadRepository) GetByID(id uint) (*models.Quote, error) {
 		r.revise()
 	}
 	return quote, err
+}
+
+// flippingReadRepository runs change once, right after the service's plain
+// read of the quote, so the change commits between that read and the
+// transaction that mints the response link.
+type flippingReadRepository struct {
+	repository.QuoteRepository
+	change func()
+	fired  bool
+}
+
+func (r *flippingReadRepository) GetByID(id uint) (*models.Quote, error) {
+	quote, err := r.QuoteRepository.GetByID(id)
+	if err == nil && !r.fired {
+		r.fired = true
+		r.change()
+	}
+	return quote, err
+}
+
+// The email of a sent quote carries a single-use client response link
+// (#382): one usable token row per quote, only its HMAC-SHA256 hash stored,
+// earlier rows stamped, the plain token in no log line and no error text. An
+// accepted quote and a sent quote past its valid_until are emailed without a
+// link, and a quote that changed between the read and the mint is refused
+// before anything is sent.
+func TestQuoteEmailResponseLink(t *testing.T) {
+	db := openQuoteTestSQLite(t)
+	env := newQuoteResponseEnv(t, db)
+	output, _ := capturePrivacyLogs(t)
+
+	t.Run("a sent quote is mailed with a link whose hash is the only stored form", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		env.mailer.reset(nil, nil)
+		output.Reset()
+		emailed, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		require.NotNil(t, emailed.LastEmailedAt)
+
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1)
+		body := messages[0].Body
+		token := responseTokenFromBody(t, body)
+		assert.Contains(t, body, quoteResponseTestBaseURL+"/quote-response?token="+token)
+		assert.NotContains(t, body, "//quote-response", "a trailing slash of APP_BASE_URL is not doubled")
+		assert.Equal(t, 1, strings.Count(body, "quote-response?token="), "one link")
+		assert.True(t, strings.HasPrefix(body, RenderQuoteEmail(quote)), "the rendering of the quote comes first, unchanged")
+		assert.True(t, strings.HasSuffix(strings.TrimSpace(body), token), "the link is the final block")
+		assert.GreaterOrEqual(t, len(token), 43, "a 256-bit token")
+
+		rows := env.tokenRows(quote.ID)
+		require.Len(t, rows, 1)
+		assert.Nil(t, rows[0].UsedAt)
+		assert.Nil(t, rows[0].Decision)
+		mac := hmac.New(sha256.New, []byte(quoteResponseTestSecret))
+		mac.Write([]byte(token))
+		assert.Equal(t, hex.EncodeToString(mac.Sum(nil)), rows[0].TokenHash, "token_hash is the HMAC-SHA256 hex of the mailed token")
+		assert.NotEqual(t, token, rows[0].TokenHash)
+		require.NotNil(t, rows[0].ExpiresAt, "the quote has a valid_until")
+		day := *quote.ValidUntil
+		assert.True(t, rows[0].ExpiresAt.Equal(time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, time.Local)))
+
+		logs := output.String()
+		require.NotEmpty(t, logs, "the send is logged at debug level")
+		assert.NotContains(t, logs, token, "no log line carries the plain token")
+		assert.NotContains(t, logs, rows[0].TokenHash)
+		assert.NotContains(t, logs, "quote-response")
+
+		// A second email mints a new token and stamps the first.
+		second := env.emailForToken(quote.ID)
+		require.NotEqual(t, token, second)
+		rows = env.tokenRows(quote.ID)
+		require.Len(t, rows, 2)
+		require.NotNil(t, rows[0].UsedAt, "the earlier unused row is stamped")
+		assert.Nil(t, rows[0].Decision, "without a decision")
+		unused := env.unusedTokenRows(quote.ID)
+		require.Len(t, unused, 1, "exactly one usable row")
+		assert.Equal(t, hashOpaqueToken(second, quoteResponseTestSecret), unused[0].TokenHash)
+		_, err = env.svc.GetPublicResponse(token)
+		assert.True(t, errors.Is(err, apperrors.ErrQuoteResponseRejected), "the first link is dead: %v", err)
+		_, err = env.svc.GetPublicResponse(second)
+		require.NoError(t, err)
+	})
+
+	t.Run("an accepted quote is mailed without a link and stores no row", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		_, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusAccepted, env.owner.ID)
+		require.NoError(t, err)
+		env.mailer.reset(nil, nil)
+		emailed, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		assert.NotNil(t, emailed.LastEmailedAt)
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1)
+		assert.Equal(t, RenderQuoteEmail(env.quote(quote.ID)), messages[0].Body, "the body is the rendering alone")
+		assert.NotContains(t, messages[0].Body, "quote-response")
+		assert.Empty(t, env.tokenRows(quote.ID))
+	})
+
+	t.Run("a sent quote past its valid_until is mailed without a link", func(t *testing.T) {
+		quote := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.ValidUntil = dateDaysFromNow(t, -1) })
+		env.mailer.reset(nil, nil)
+		_, err := env.svc.Email(quote.ID)
+		require.NoError(t, err, "the quote is still emailable, as before")
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1)
+		assert.NotContains(t, messages[0].Body, "quote-response", "a link that would be dead on arrival is not mailed")
+		assert.Empty(t, env.tokenRows(quote.ID), "and nothing is stored for it")
+
+		// On the valid_until day itself the link is still minted.
+		today := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.ValidUntil = dateDaysFromNow(t, 0) })
+		token := env.emailForToken(today.ID)
+		_, err = env.svc.GetPublicResponse(token)
+		require.NoError(t, err)
+	})
+
+	t.Run("a quote without valid_until gets a link without an expiry", func(t *testing.T) {
+		quote := env.newQuote(models.QuoteStatusSent, 1)
+		env.emailForToken(quote.ID)
+		rows := env.tokenRows(quote.ID)
+		require.Len(t, rows, 1)
+		assert.Nil(t, rows[0].ExpiresAt)
+	})
+
+	t.Run("a failed send keeps the token out of the error and the logs", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		var mailed string
+		env.mailer.reset(nil, func(_, _, body string) error {
+			mailed = body
+			return errors.New("451 4.3.0 temporary failure")
+		})
+		output.Reset()
+		_, err := env.svc.Email(quote.ID)
+		require.Error(t, err)
+		require.True(t, errors.Is(err, apperrors.ErrMailDelivery), "%v", err)
+		token := responseTokenFromBody(t, mailed)
+		assert.NotContains(t, err.Error(), token, "the wrapped delivery error does not carry the token")
+		assert.NotContains(t, err.Error(), "quote-response")
+		assert.NotContains(t, output.String(), token)
+		assert.NotContains(t, output.String(), "quote-response")
+		assert.Empty(t, env.mailer.messages())
+		assert.Nil(t, env.quote(quote.ID).LastEmailedAt)
+		// The stored hash stays: its plain value was never delivered, and the
+		// next email stamps it.
+		require.Len(t, env.unusedTokenRows(quote.ID), 1)
+		env.emailForToken(quote.ID)
+		assert.Len(t, env.tokenRows(quote.ID), 2)
+		assert.Len(t, env.unusedTokenRows(quote.ID), 1)
+	})
+
+	t.Run("a quote that left sent before the mint is refused without a token or a send", func(t *testing.T) {
+		for _, to := range []models.QuoteStatus{models.QuoteStatusAccepted, models.QuoteStatusDraft} {
+			quote := env.sentQuoteWithLines(t)
+			hooked := &flippingReadRepository{QuoteRepository: env.repo}
+			hooked.change = func() {
+				_, err := env.svc.ChangeStatus(quote.ID, to, env.owner.ID)
+				require.NoError(t, err)
+			}
+			env.mailer.reset(nil, nil)
+			_, err := env.responseService(hooked).Email(quote.ID)
+			require.Error(t, err, to)
+			assert.Truef(t, errors.Is(err, apperrors.ErrQuoteNotSent), "%s: %v", to, err)
+			require.True(t, hooked.fired)
+			assert.Empty(t, env.mailer.messages(), "%s: nothing is sent", to)
+			assert.Empty(t, env.tokenRows(quote.ID), "%s: no token row", to)
+			assert.Nil(t, env.quote(quote.ID).LastEmailedAt)
+		}
+	})
+
+	t.Run("a quote revised and re-sent before the mint is refused without a token or a send", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		hooked := &flippingReadRepository{QuoteRepository: env.repo}
+		hooked.change = func() {
+			_, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusDraft, env.owner.ID)
+			require.NoError(t, err)
+			_, err = env.svc.AddLine(quote.ID, models.QuoteLineInput{ProductID: env.product.ID, Quantity: models.QuoteQuantityFromUnits(5)})
+			require.NoError(t, err)
+			_, err = env.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, env.owner.ID)
+			require.NoError(t, err)
+		}
+		env.mailer.reset(nil, nil)
+		_, err := env.responseService(hooked).Email(quote.ID)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, apperrors.ErrQuoteChangedDuringSend), "the old rendering must not go out with a live link: %v", err)
+		assert.Empty(t, env.mailer.messages(), "nothing is sent")
+		assert.Empty(t, env.tokenRows(quote.ID), "no token row")
+		assert.Equal(t, models.QuoteStatusSent, env.quote(quote.ID).Status)
+
+		// Emailed again, with nothing racing, the revised quote gets its link.
+		token := env.emailForToken(quote.ID)
+		view, err := env.svc.GetPublicResponse(token)
+		require.NoError(t, err)
+		assert.Len(t, view.Lines, 3)
+	})
+
+	t.Run("a revision during the send leaves a link that the revision already killed", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		var mailed string
+		env.mailer.reset(nil, func(_, _, body string) error {
+			mailed = body
+			if _, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusDraft, env.owner.ID); err != nil {
+				return err
+			}
+			_, err := env.svc.ChangeStatus(quote.ID, models.QuoteStatusSent, env.owner.ID)
+			return err
+		})
+		_, err := env.svc.Email(quote.ID)
+		require.True(t, errors.Is(err, apperrors.ErrQuoteChangedDuringSend), "%v", err)
+		env.assertResponseRejected(quote.ID, responseTokenFromBody(t, mailed), "the link mailed before the revision")
+	})
+
+	t.Run("a service without response links mails no link", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		env.mailer.reset(nil, nil)
+		_, err := env.service(env.repo).Email(quote.ID)
+		require.NoError(t, err)
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1)
+		assert.Equal(t, RenderQuoteEmail(quote), messages[0].Body)
+		assert.Empty(t, env.tokenRows(quote.ID))
+	})
 }

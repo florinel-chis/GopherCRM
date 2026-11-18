@@ -21,7 +21,7 @@ moves faster than this page.
 
 Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:259`).
+wiring is in `setupDependencies` (`cmd/main.go:261`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -326,10 +326,10 @@ Configuration comes from three places:
 | `DB_PATH` | `gophercrm.db` | `config.go:275` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:276-280` | MySQL only |
 | `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:284-285` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:286` | `production` switches Gin to release mode (`cmd/main.go:219-221`) |
+| `SERVER_MODE` | `development` | `config.go:286` | `production` switches Gin to release mode (`cmd/main.go:221-223`) |
 | `TRUSTED_PROXIES` | trust none | `config.go:287` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:288` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `config.go:315` | the UI origin; password-reset links |
+| `APP_BASE_URL` | `http://localhost:5173` | `config.go:315` | the UI origin; password-reset links and the client response link of a quote email (`/quote-response?token=`) |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:343` | this backend's public origin; form confirmation links |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:308-312` | empty host means log-only mail |
 | `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:344-345` | both or the layer is skipped |
@@ -345,9 +345,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:346`), refresh and password-reset tokens (`cmd/main.go:300`), form confirmation
+>   (`cmd/main.go:348`), refresh and password-reset tokens (`cmd/main.go:302`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
->   encryption of sensitive settings (`cmd/main.go:303`, `internal/utils/secretbox.go`). Rotating
+>   encryption of sensitive settings (`cmd/main.go:305`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
@@ -368,7 +368,8 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   noisy user locks out everyone on `/auth`.
 > - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
 > - **`PUBLIC_BASE_URL` versus `APP_BASE_URL`.** The first is the API's public origin, used in form
->   confirmation links; the second is the UI's, used in password-reset links. Left at their
+>   confirmation links; the second is the UI's, used in password-reset links and in the client
+>   response link of a quote email. Left at their
 >   defaults, both send recipients to `localhost`.
 > - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
 >   reports success (README "Known Limitations"); form mail and ticket comment mail
@@ -586,7 +587,7 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:259` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` in `cmd/main.go:261` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
 | the AutoMigrate list in `internal/models/database.go:114-156` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |

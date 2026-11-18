@@ -102,6 +102,11 @@ var (
 	// the read and the stamp of an email (409); the mail went out but the
 	// quote is not marked as emailed.
 	ErrQuoteChangedDuringSend = errors.New("quote was revised while the email was being sent")
+	// ErrQuoteResponseRejected is every refusal of the client response link
+	// (#382): an unknown, used, expired or invalidated token, and a quote that
+	// is no longer sent or no longer exists. One sentinel on purpose, so the
+	// public routes cannot tell the cases apart (400).
+	ErrQuoteResponseRejected = errors.New("invalid or expired quote link")
 	// ErrMailDelivery wraps a mailer failure (502 MAIL_DELIVERY_FAILED).
 	ErrMailDelivery = errors.New("mail delivery failed")
 	// ErrFormDeliveryNotRetryable refuses a retry of a form mail delivery

@@ -33,8 +33,8 @@ var webhookMigrationTables = []string{"webhook_endpoints", "webhook_deliveries"}
 
 // TestWebhookMigrationFiles needs no database: the pair exists with its
 // headers, creates both tables only when missing with the model's columns and
-// index names, drops only them, is the newest migration of the directory, and
-// latestMigrationVersion names it.
+// index names and drops only them. It is no longer the newest migration
+// (#382).
 func TestWebhookMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, webhooksMigrationName+".up.sql"))
@@ -91,21 +91,12 @@ func TestWebhookMigrationFiles(t *testing.T) {
 		assert.Contains(t, tag, fragment, field)
 	}
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestRoleMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, webhooksMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestQuoteResponseTokensMigrationFiles (#382).
+	version, err := strconv.Atoi(strings.SplitN(webhooksMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, webhooksVersion, version)
-	assert.Equal(t, webhooksVersion, latestMigrationVersion)
+	assert.Less(t, webhooksVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, webhooksVersion, webhooksPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")
@@ -172,7 +163,9 @@ func TestWebhookMigration(t *testing.T) {
 
 	t.Run("Fresh", func(t *testing.T) {
 		tdb := openMigrationTestDB(t, baseDSN, "whk_fresh")
-		require.NoError(t, tdb.m.Up())
+		// Up to this migration, not to the head: the step back below must
+		// undo this one, and newer migrations follow it (#382).
+		require.NoError(t, tdb.m.Migrate(webhooksVersion))
 		assert.Equal(t, want, snapshotWebhookTables(t, tdb), "a fresh SQL schema carries what MigrateDatabase creates")
 		insertMigrationWebhookRows(t, tdb.sql, 1)
 
@@ -180,7 +173,7 @@ func TestWebhookMigration(t *testing.T) {
 		require.NoError(t, tdb.m.Steps(-1))
 		assert.Equal(t, without(tablesBefore, webhookMigrationTables), listTables(t, tdb.sql, tdb.name),
 			"rollback drops the two tables and nothing else")
-		require.NoError(t, tdb.m.Up())
+		require.NoError(t, tdb.m.Migrate(webhooksVersion))
 		assert.Equal(t, want, snapshotWebhookTables(t, tdb))
 
 		require.NoError(t, tdb.m.Down())

@@ -683,6 +683,26 @@ type QuoteRepository interface {
 	WithTx(tx *gorm.DB) QuoteRepository
 }
 
+// QuoteResponseTokenRepository stores the single-use tokens of the client
+// response link of a quote email (#382). A row is usable while it is unused,
+// not past expires_at, and its quote is live and sent; the read and the claim
+// carry the same predicates. Lock order: a transaction that writes here locks
+// its quotes row first (quotes → quote_response_tokens).
+type QuoteResponseTokenRepository interface {
+	Create(token *models.QuoteResponseToken) error
+	// FindUsableByHash returns the usable row with that hash, read at now;
+	// anything else is gorm.ErrRecordNotFound. It never writes.
+	FindUsableByHash(tokenHash string, now time.Time) (*models.QuoteResponseToken, error)
+	// Claim stamps used_at and decision with one conditional update whose
+	// predicates are the usable ones: one affected row is success, zero is
+	// gorm.ErrRecordNotFound.
+	Claim(id uint, decision string, now time.Time) error
+	// InvalidateForQuote stamps used_at on every unused row of the quote and
+	// leaves decision NULL.
+	InvalidateForQuote(quoteID uint, now time.Time) error
+	WithTx(tx *gorm.DB) QuoteResponseTokenRepository
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)

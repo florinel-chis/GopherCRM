@@ -231,3 +231,39 @@ func (_m *QuoteService) Email(id uint) (*models.Quote, error) {
 	}
 	return r0, ret.Error(1)
 }
+
+// GetPublicResponse provides a mock function with given fields: token
+func (_m *QuoteService) GetPublicResponse(token string) (*models.QuotePublicView, error) {
+	ret := _m.Called(token)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetPublicResponse")
+	}
+
+	var r0 *models.QuotePublicView
+	if rf, ok := ret.Get(0).(func(string) (*models.QuotePublicView, error)); ok {
+		return rf(token)
+	}
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.QuotePublicView)
+	}
+	return r0, ret.Error(1)
+}
+
+// RespondPublic provides a mock function with given fields: token, decision
+func (_m *QuoteService) RespondPublic(token string, decision string) (*models.QuotePublicView, error) {
+	ret := _m.Called(token, decision)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RespondPublic")
+	}
+
+	var r0 *models.QuotePublicView
+	if rf, ok := ret.Get(0).(func(string, string) (*models.QuotePublicView, error)); ok {
+		return rf(token, decision)
+	}
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).(*models.QuotePublicView)
+	}
+	return r0, ret.Error(1)
+}

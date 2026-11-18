@@ -2,10 +2,13 @@ package service
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -26,6 +29,10 @@ func QuoteEmailSubject(quoteID uint, productName string) string {
 // also refused: the rendering that went out may predate it. The logs carry
 // the quote id and the customer id only: never the address, the name or the
 // body.
+//
+// A sent quote also gets a client response link (#382), minted in one short
+// transaction after the recipient checks and before the send; see
+// mintResponseLink. An accepted quote is emailed without one.
 func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("quote_id", id), "QuoteService", "Email")
 
@@ -83,9 +90,19 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	// The product name is read now, with no transaction held; a failed read
 	// falls back to "GopherCRM" and never blocks the send (#292).
 	productName := ResolveMailProductName(s.currency)
-	if err := s.mailer.Send(to, QuoteEmailSubject(quote.ID, productName), RenderQuoteEmail(quote)); err != nil {
+	body := RenderQuoteEmail(quote)
+	if s.mintsResponseLink(quote) {
+		link, err := s.mintResponseLink(id, latestHistoryID)
+		if err != nil {
+			logServiceOutcome(logger, err, "Quote email refused")
+			return nil, err
+		}
+		body += renderQuoteResponseLink(link)
+	}
+	if err := s.mailer.Send(to, QuoteEmailSubject(quote.ID, productName), body); err != nil {
 		// The mailer's own error is kept for errors.Is but not logged here:
-		// a transport error may quote the address.
+		// a transport error may quote the address. A response token minted
+		// above stays stored: its plain value was never delivered.
 		logger.Error("Quote email failed: mail delivery error")
 		return nil, fmt.Errorf("quote %d: %w: %w", id, apperrors.ErrMailDelivery, err)
 	}
@@ -103,6 +120,87 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 
 	logger.Info("Quote emailed")
 	return s.GetByID(id)
+}
+
+// mintsResponseLink reports whether the email of this quote carries a client
+// response link: the service has a token store and a base URL, the quote is
+// sent (an accepted quote is emailed without a link), and its valid_until has
+// not passed. A sent quote past its valid_until is still emailed, as before,
+// but without a link: the link would be dead on arrival, and nothing is
+// stored for it.
+func (s *quoteService) mintsResponseLink(quote *models.Quote) bool {
+	if s.tokenRepo == nil || s.appBaseURL == "" || quote.Status != models.QuoteStatusSent {
+		return false
+	}
+	return quote.ValidUntil == nil || !dateBefore(*quote.ValidUntil, s.now())
+}
+
+// mintResponseLink stores a fresh response token for the quote and returns
+// the link that carries its plain value. One short transaction, in the order
+// quotes → quote_response_tokens: the locking read of the quote, the re-check
+// that it is still sent (apperrors.ErrQuoteNotSent otherwise) and that no
+// history row was written since the marker the caller read before the quote
+// (apperrors.ErrQuoteChangedDuringSend: a revision and re-send in between
+// would otherwise mail the old rendering with a live link to the new quote),
+// the invalidation of the quote's earlier unused tokens, and the insert. So a
+// quote has at most one usable link, the one of its latest email. Only the
+// hash is stored; the plain token and the link reach no log field and no
+// error text.
+func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, error) {
+	plain, err := generateOpaqueToken()
+	if err != nil {
+		return "", err
+	}
+	now := s.stamp()
+	err = s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+		locked, err := repo.GetByIDForUpdate(id)
+		if err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("quote %d not found: %w", id, apperrors.ErrQuoteNotFound)
+			}
+			return err
+		}
+		if locked.Status != models.QuoteStatusSent {
+			return fmt.Errorf("quote %d is %s: %w", id, locked.Status, apperrors.ErrQuoteNotSent)
+		}
+		latest, err := repo.LatestStatusChangeID(id)
+		if err != nil {
+			return err
+		}
+		if latest != latestHistoryID {
+			return fmt.Errorf("quote %d changed before the send: %w", id, apperrors.ErrQuoteChangedDuringSend)
+		}
+		if err := tokens.InvalidateForQuote(id, now); err != nil {
+			return err
+		}
+		return tokens.Create(&models.QuoteResponseToken{
+			QuoteID:   id,
+			TokenHash: hashOpaqueToken(plain, s.tokenSecret),
+			ExpiresAt: quoteResponseExpiry(locked.ValidUntil),
+		})
+	})
+	if err != nil {
+		return "", err
+	}
+	return s.appBaseURL + "/quote-response?token=" + url.QueryEscape(plain), nil
+}
+
+// quoteResponseExpiry is when a response token stops working: the start of
+// the day after valid_until in the server's local zone, stored in UTC, so the
+// link works through the whole valid_until day, the same day dateBefore
+// allows a staff acceptance. nil without a valid_until: the link then lives
+// as long as the quote is sent.
+func quoteResponseExpiry(validUntil *time.Time) *time.Time {
+	if validUntil == nil {
+		return nil
+	}
+	expiry := time.Date(validUntil.Year(), validUntil.Month(), validUntil.Day()+1, 0, 0, 0, 0, time.Local).UTC()
+	return &expiry
+}
+
+// renderQuoteResponseLink is the final block of the email of a sent quote.
+func renderQuoteResponseLink(link string) string {
+	return "\nTo accept or decline this quote, open this link (it works once):\n" + link + "\n"
 }
 
 // RenderQuoteEmail is the plaintext body: the number, the title, every line

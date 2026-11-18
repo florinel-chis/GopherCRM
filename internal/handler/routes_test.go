@@ -3,9 +3,13 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/florinel-chis/gophercrm/internal/mocks"
+	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
 // Gin panics at registration time when the route tree conflicts (for example a
@@ -47,6 +51,9 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 	// side by side, which is the arrangement most likely to blow up at
 	// registration.
 	SetupFormPublicRoutes(group, &FormPublicHandler{})
+	// The client response link of a quote email (#382) puts the static
+	// /quotes/public segment next to /quotes/:id.
+	SetupQuotePublicRoutes(group, &QuotePublicHandler{})
 
 	// A request to a static path that shares a prefix with a parameter route
 	// must dispatch without a panic; the nil-service handler may then blow up,
@@ -65,6 +72,7 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		"/api/v1/forms",
 		"/api/v1/forms/public/confirm",
 		"/api/v1/forms/public/abc/submissions",
+		"/api/v1/quotes/public/response",
 	} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		w := httptest.NewRecorder()
@@ -162,6 +170,9 @@ func TestAllRouteSetupsCoexist(t *testing.T) {
 		{http.MethodPost, "/api/v1/quotes/1/status"},
 		{http.MethodGet, "/api/v1/quotes/1/history"},
 		{http.MethodPost, "/api/v1/quotes/1/email"},
+		// The public response link next to /quotes/:id.
+		{http.MethodGet, "/api/v1/quotes/public/response"},
+		{http.MethodPost, "/api/v1/quotes/public/response"},
 		{http.MethodGet, "/api/v1/deals/1/quotes"},
 		{http.MethodGet, "/api/v1/deals/1/tasks"},
 		{http.MethodGet, "/api/v1/customers/1/quotes"},
@@ -264,4 +275,66 @@ func TestAutomationDraftDryRunRouteIsStatic(t *testing.T) {
 			t.Errorf("%s %s matched %q, want %q", route.method, route.path, matched, route.want)
 		}
 	}
+}
+
+// The client response link (#382) is mounted on the public group while
+// /quotes/:id sits on the protected one. The static /quotes/public/response
+// must reach the public handler on both verbs without a credential, the
+// guarded routes must stay guarded, and nothing else under /quotes/public may
+// become reachable: /quotes/public is still the :id route behind the guard.
+func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
+	ensureHandlerTestLogger(t)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	api := router.Group("/api/v1")
+
+	var matched string
+	note := func(c *gin.Context) { matched = c.FullPath() }
+	public := api.Group("", note)
+	protected := api.Group("", note, func(c *gin.Context) {
+		// Stands in for middleware.Auth: no credential, no entry.
+		c.AbortWithStatus(http.StatusUnauthorized)
+	})
+
+	quotes := new(mocks.QuoteService)
+	view := &models.QuotePublicView{Number: "Q-000001", Status: models.QuoteStatusSent, Currency: "EUR", Lines: []models.QuotePublicLine{}}
+	quotes.On("GetPublicResponse", "tok").Return(view, nil).Once()
+	quotes.On("RespondPublic", "tok", "accept").Return(view, nil).Once()
+	SetupQuotePublicRoutes(public, NewQuotePublicHandler(quotes))
+	SetupQuoteRoutes(protected, &QuoteHandler{})
+
+	for _, route := range []struct {
+		method, path, body, want string
+		status                   int
+	}{
+		{http.MethodGet, "/api/v1/quotes/public/response?token=tok", "", "/api/v1/quotes/public/response", http.StatusOK},
+		{http.MethodPost, "/api/v1/quotes/public/response", `{"token":"tok","decision":"accept"}`, "/api/v1/quotes/public/response", http.StatusOK},
+		{http.MethodGet, "/api/v1/quotes/1", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/quotes/public", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
+		{http.MethodPut, "/api/v1/quotes/public", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/quotes/1/history", "", "/api/v1/quotes/:id/history", http.StatusUnauthorized},
+		{http.MethodPost, "/api/v1/quotes/1/email", "", "/api/v1/quotes/:id/email", http.StatusUnauthorized},
+		{http.MethodGet, "/api/v1/quotes", "", "/api/v1/quotes", http.StatusUnauthorized},
+	} {
+		matched = ""
+		req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if matched != route.want || w.Code != route.status {
+			t.Errorf("%s %s matched %q with %d, want %q with %d", route.method, route.path, matched, w.Code, route.want, route.status)
+		}
+	}
+	// No route exists under /quotes/public but the two.
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/quotes/public/other"},
+		{http.MethodDelete, "/api/v1/quotes/public/response"},
+	} {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s answered %d, want no route", route.method, route.path, w.Code)
+		}
+	}
+	quotes.AssertExpectations(t)
 }

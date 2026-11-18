@@ -487,8 +487,21 @@ type QuoteService interface {
 	// Email renders the quote as plaintext and sends it to the linked
 	// customer's current address, then stamps last_emailed_at with a
 	// conditional update. See the sentinels in internal/errors for the
-	// refusals; a mailer failure is apperrors.ErrMailDelivery.
+	// refusals; a mailer failure is apperrors.ErrMailDelivery. On a service
+	// built with NewQuoteServiceWithResponseLinks the email of a sent quote
+	// ends with a single-use client response link (#382).
 	Email(id uint) (*models.Quote, error)
+	// GetPublicResponse shows the quote behind a client response token and
+	// never writes, so opening the link does not spend it. Every refusal is
+	// apperrors.ErrQuoteResponseRejected.
+	GetPublicResponse(token string) (*models.QuotePublicView, error)
+	// RespondPublic spends the token and moves the quote from sent to
+	// accepted (decision accept) or rejected (decline) with closed_at and one
+	// history row, in one transaction; a failure after the claim rolls it
+	// back and the link stays usable. The history row names the quote owner.
+	// A decision outside the two is apperrors.ErrValidation; every other
+	// refusal is apperrors.ErrQuoteResponseRejected.
+	RespondPublic(token, decision string) (*models.QuotePublicView, error)
 }
 
 type APIKeyService interface {

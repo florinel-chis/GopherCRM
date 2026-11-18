@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Client accept/decline link in the quote email, backend (#382).** The email of a *sent* quote
+  (`POST /quotes/{id}/email`) now ends with a single-use response link,
+  `APP_BASE_URL/quote-response?token=...`. Only the HMAC-SHA256 hash of the token is stored, in
+  the new table `quote_response_tokens` (keyed by `API_KEY_SECRET`, else `JWT_SECRET`, like the
+  other opaque tokens). Two unauthenticated routes on the strict rate tier answer the link:
+  `GET /quotes/public/response?token=` shows the quote (number, status, currency, `valid_until`,
+  lines and the five totals, nothing else) without spending the token, and
+  `POST /quotes/public/response` with `{token, decision}` (`accept` or `decline`) claims the
+  token and moves the quote `sent → accepted | rejected` with `closed_at` and one history row,
+  in one transaction. Every refusal (unknown, used, expired or invalidated token, a quote that
+  is no longer sent or was deleted) is the same 400 `BAD_REQUEST` "Invalid or expired quote
+  link"; an invalid body is 400 `VALIDATION_ERROR` and leaves the link usable. Of two concurrent
+  answers with one token exactly one commits; a failure after the claim rolls it back and the
+  link stays usable. The linked deal is not changed.
+  - **Life of a link.** It works until the end of the quote's `valid_until` day (server's local
+    date), or while the quote is sent when `valid_until` is not set. Each new email of the quote
+    invalidates the previous link, and any staff status change away from sent invalidates the
+    current one, so a link stays dead after sent → draft → sent until the next email. An
+    accepted quote, and a sent quote whose `valid_until` has passed, are emailed without a link.
+    A quote that left sent, or had any status change recorded, between the start of the email
+    request and the storing of the link is refused with 409 and nothing is sent.
+  - **History attribution.** `quote_status_changes.changed_by_id` must be a user, so the history
+    row of a client answer names the quote owner; the token row (`used_at`, `decision`) is the
+    record that the client answered. No existing table is altered.
+  - **Not included.** The public page behind `/quote-response` and a "client" label in the staff
+    history are the follow-up; until the page ships the link opens the SPA without a matching
+    route. The public view holds no personal data, and erasing the customer of a sent quote
+    leaves a mailed link usable until the quote leaves sent.
+  - **Schema:** migration `20261121120000_add_quote_response_tokens` on MySQL/MariaDB (one
+    `CREATE TABLE IF NOT EXISTS`, no foreign key), `MigrateDatabase` on SQLite; rollback drops
+    the table.
+
 - **Role screens in Settings and a role picker on the user form (#381, second part of S6 of
   #260).** Settings gains "Roles" (`/settings/roles`, shown with `roles.view`): the four system
   roles and the custom ones with their user and permission counts. With `roles.manage` a system
