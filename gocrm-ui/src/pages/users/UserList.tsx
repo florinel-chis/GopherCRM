@@ -31,6 +31,7 @@ import { usersApi, type UserFilters } from '@/api/endpoints';
 import type { User } from '@/types';
 import { formatDate } from '@/utils/date';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const roleOptions = [
   { value: '', label: 'All Roles' },
@@ -60,6 +61,7 @@ export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
   const { user: currentUser } = useAuth();
+  const { can } = usePermissions();
   
   const [filters, setFilters] = useState<UserFilters>({
     page: 1,
@@ -243,13 +245,16 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  const isAdmin = currentUser?.role === 'admin';
+  const canCreate = can('users.create');
+  const canUpdate = can('users.update');
+  const canDelete = can('users.delete');
+  const canActivate = can('users.activate');
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Users</Typography>
-        {isAdmin && (
+        {canCreate && (
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -318,9 +323,9 @@ export const Component: React.FC = () => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(user) => navigate(`/users/${user.id}`)}
-        onEdit={isAdmin ? (user) => navigate(`/users/${user.id}/edit`) : undefined}
-        onDelete={isAdmin ? (user) => setDeleteDialog({ open: true, user }) : undefined}
-        rowActions={isAdmin ? renderRowActions : undefined}
+        onEdit={canUpdate ? (user) => navigate(`/users/${user.id}/edit`) : undefined}
+        onDelete={canDelete ? (user) => setDeleteDialog({ open: true, user }) : undefined}
+        rowActions={canActivate ? renderRowActions : undefined}
       />
 
       <ConfirmDialog

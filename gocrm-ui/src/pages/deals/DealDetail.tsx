@@ -34,7 +34,7 @@ import {
 import { AxiosError } from 'axios';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, type ChangeDealStageData } from '@/api/endpoints';
 import { DEAL_STAGES, isClosedDealStage, type DealStage } from '@/types';
@@ -78,12 +78,12 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can, canOnRecord } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   const dealId = Number(id);
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
+  const canDelete = can('deals.delete');
+  const canCreateQuote = can('quotes.create');
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [lostDialog, setLostDialog] = useState(false);
@@ -159,6 +159,8 @@ export const Component: React.FC = () => {
   }
 
   const closed = isClosedDealStage(deal.stage);
+  // deals.update at scope own covers only the deals the caller owns.
+  const canUpdate = canOnRecord('deals.update', deal.owner_id);
   const pastDue = !closed && isPastCalendarDate(deal.expected_close_date);
 
   return (
@@ -169,7 +171,7 @@ export const Component: React.FC = () => {
           <DealStageChip stage={deal.stage} size="medium" />
         </Box>
         <Box display="flex" gap={1} alignItems="center">
-          {canWrite && (
+          {canUpdate && (
             <FormControl size="small" sx={{ minWidth: 170 }}>
               <InputLabel id="deal-stage-label">Stage</InputLabel>
               <Select
@@ -188,7 +190,7 @@ export const Component: React.FC = () => {
               </Select>
             </FormControl>
           )}
-          {canWrite && (
+          {canUpdate && (
             <Button variant="outlined" startIcon={<EditIcon />} onClick={() => navigate(`/deals/${id}/edit`)}>
               Edit
             </Button>
@@ -295,7 +297,7 @@ export const Component: React.FC = () => {
 
       {/* Quotes share the deal guard (admin and sales); the section hides
           "New quote" once the deal is won or lost, which the API refuses. */}
-      <DealQuotesSection deal={deal} canWrite={canWrite} />
+      <DealQuotesSection deal={deal} canWrite={canCreateQuote} />
 
       {/* The deal's tasks (admin every task; sales only its own assignments,
           filtered by the API). Tasks are linked from the task form. */}

@@ -12,6 +12,7 @@ import { useParams } from 'react-router-dom';
 import { formatDate } from '@/utils/date';
 import type { AutomationRunStatus, User } from '@/types';
 import { AUTOMATION_DATETIME } from './automationFormat';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -42,6 +43,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

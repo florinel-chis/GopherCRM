@@ -6,6 +6,7 @@ import { Dashboard } from './Dashboard';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
 import { formatDealAmount } from './deals/dealFormat';
+import { permissionsOf } from '@/test/permissions';
 
 // recharts' ResponsiveContainer needs ResizeObserver, which jsdom lacks.
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -66,6 +67,7 @@ const pipelineResponse = {
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),
@@ -240,6 +242,20 @@ describe('Dashboard', () => {
       expect(mockGetSalesPerformance).not.toHaveBeenCalled();
       expect(mockGetUpcomingTasks).not.toHaveBeenCalled();
     });
+  });
+
+  // The /customers route needs customers.view; the quick action must not
+  // send a caller without it to /unauthorized.
+  it('hides View Customers from a caller without customers.view', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'customer' })));
+    const customerView = renderDashboard();
+    expect(await screen.findByRole('button', { name: 'New Task' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View Customers' })).not.toBeInTheDocument();
+    customerView.unmount();
+
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'support' })));
+    renderDashboard();
+    expect(await screen.findByRole('button', { name: 'View Customers' })).toBeInTheDocument();
   });
 
   describe('deal widgets', () => {

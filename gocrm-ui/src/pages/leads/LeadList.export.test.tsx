@@ -5,6 +5,7 @@ import { Component as LeadList } from './LeadList';
 import { leadsApi } from '@/api/endpoints';
 import { createMockLead, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 
@@ -44,6 +45,7 @@ const OBJECT_URL = 'blob:http://localhost/lead-export';
 const signIn = (role: User['role']) => {
   mockUseAuth.mockReturnValue({
     user: createMockUser({ role }),
+    permissions: permissionsOf(createMockUser({ role })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),

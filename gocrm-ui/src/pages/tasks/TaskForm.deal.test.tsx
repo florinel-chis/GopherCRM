@@ -9,6 +9,7 @@ import { pickAutocompleteOption } from '@/test/autocomplete';
 import { createProductionQueryClient } from '@/test/productionQueryClient';
 import { isInvalidated, withClient } from '@/test/dealQueryCache';
 import type { Task, User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -44,6 +45,7 @@ vi.mock('@/api/endpoints', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

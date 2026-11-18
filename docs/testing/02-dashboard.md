@@ -304,7 +304,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   FEATURES.md row 2.2 is **untested**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
-### TC-DASH-016 — Quick Actions are shown to every role, New Ticket only to admin and support
+### TC-DASH-016 — Quick Actions: New Ticket only for admin and support, View Customers not for the customer role
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** a customer account registered by the test.
@@ -312,12 +312,15 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Land on `/` after registration.
   2. Assert which Quick Action buttons are visible.
   3. Compare against the sidebar.
-- **Expected:** "New Lead", "New Task" and "View Customers" are visible; "New Ticket" is not. The
-  Quick Actions panel sits **outside** the `canViewStats` guard in `Dashboard.tsx`; only "New
-  Ticket" has a role check (`canCreateTicket`, admin and support, matching ticket create on the API
-  and the `/tickets/new` route; since #241 it is hidden from sales as well). `MainLayout`'s
-  `navItems` hides Leads (admin+sales), Customers and Tickets (admin+sales+support) from a
-  customer, so the sidebar and the remaining Quick Actions still disagree on the same page.
+- **Expected:** "New Lead" and "New Task" are visible; "New Ticket" and "View Customers" are not.
+  The Quick Actions panel sits **outside** the `canViewStats` guard in `Dashboard.tsx`; "New
+  Ticket" is shown with the `tickets.create` permission (`canCreateTicket`: admin and support,
+  matching ticket create on the API and the `/tickets/new` route; since #241 it is hidden from
+  sales as well) and, since #380, "View Customers" with `customers.view` (`canViewCustomers`:
+  admin, sales and support; the customer role would only be redirected from `/customers`).
+  `MainLayout` hides Leads (`leads.view`), Customers (`customers.view`) and Tickets
+  (`tickets.view`) from a customer, so the sidebar and the remaining "New Lead" Quick Action
+  still disagree on the same page.
 - **Known issue:** the panel advertises actions the caller cannot perform. Backend guards still hold
   — `/leads` is `RequireRole(admin, sales)` — so this is a UI affordance defect, not an
   authorization hole. Vitest covers the New Ticket gating (`Dashboard.test.tsx`).
@@ -330,28 +333,28 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Steps:**
   1. Navigate directly to `/tickets/new` (the dashboard offers the customer no "New Ticket" button).
 - **Expected:** the URL becomes `/unauthorized` and the Unauthorized page renders. `tickets/new`
-  sits under the pathless `ProtectedRoute requiredRole={['admin','support']}` layout route in
-  `routes/index.tsx`, which issues `<Navigate to="/unauthorized" replace />`.
+  sits under the pathless `ProtectedRoute requiredPermission="tickets.create"` layout route in
+  `routes/index.tsx` (admin and support hold the key), which issues `<Navigate to="/unauthorized" replace />`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
-### TC-DASH-018 — Customer clicking "New Lead" reaches the lead form, which then fails on the API
+### TC-DASH-018 — Customer clicking "New Lead" is redirected to /unauthorized
 - **Priority:** P0
 - **Type:** rbac
 - **Preconditions:** a customer account registered by the test, on `/`.
 - **Steps:**
   1. Click "New Lead".
   2. Fill the form with `generateLeadData()` and submit.
-- **Expected:** the URL becomes `/leads/new` and the `LeadForm` page renders — the `leads/*` routes
-  carry **no** `requiredRole` in `routes/index.tsx`, so the client-side guard does not fire. The
-  submit issues `POST /leads`, which the backend rejects with **403 / `Insufficient permissions`**
-  (the whole `/leads` group is `RequireRole(admin, sales)`), and the form surfaces the error rather
-  than navigating away.
-- **Known issue:** the front end and the back end disagree: `/tickets/new` is route-guarded but
-  `/leads/new`, `/tasks/new` and `/customers` are not, so all three Quick Actions a customer is
-  shown lead into a page it cannot use.
+- **Expected:** the URL becomes `/unauthorized`: since #120 `leads/new` sits under a pathless
+  `ProtectedRoute` (since #380 `requiredPermission="leads.create"`, which the customer role does
+  not hold), so the form never renders. A direct `POST /leads` with the customer's token is
+  rejected with **403 / `Insufficient permissions`** (the whole `/leads` group is
+  `RequireRole(admin, sales)`). The button itself is still shown: a dead end, left as it is.
+- **Known issue:** "New Lead" is offered to a role whose click ends on `/unauthorized`, and "New
+  Task" opens a form the API refuses for the customer role (TC-TASK-015). "View Customers" is no
+  longer shown to it (#380).
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
-### TC-DASH-019 — Support clicking "New Lead" reaches a form it cannot submit
+### TC-DASH-019 — Support clicking "New Lead" is redirected to /unauthorized
 - **Priority:** P1
 - **Type:** rbac
 - **Preconditions:** a support user created by an admin via `POST /users`, then logged in, on `/`.
@@ -359,8 +362,9 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Confirm the sidebar shows no "Leads" item.
   2. Click the "New Lead" Quick Action.
   3. Fill the form and submit.
-- **Expected:** the sidebar hides Leads (`navItems` restricts it to admin+sales) yet the Quick Action
-  navigates to `/leads/new`; `POST /leads` returns **403**.
+- **Expected:** the sidebar hides Leads (the entry needs `leads.view`, held by admin and sales) yet
+  the Quick Action navigates to `/leads/new`, which redirects to `/unauthorized`
+  (`leads.create`); `POST /leads` returns **403**.
 - **Automation:** blocked — needs a role-login helper
 
 ---
@@ -431,7 +435,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   ISO week; `quarter` → 8 labels formatted `YYYY-QN`; `year` → 5 labels formatted `YYYY`;
   `banana` and the omitted case → the 12-month series (the `default` arm of `buildTimeBuckets`).
   No 400 is returned for an unrecognised period.
-- **Known issue:** the UI can never exercise the other windows — `Dashboard.tsx:114` hardcodes
+- **Known issue:** the UI can never exercise the other windows — `Dashboard.tsx:113` hardcodes
   `dashboardApi.getSalesPerformance('month')` and renders no period selector, even though
   `dashboardApi` types the parameter as `'week' | 'month' | 'quarter' | 'year'`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new; API-level assertions
@@ -512,7 +516,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Route-intercept `**/dashboard/activities**` and fulfil with `{"success":true,"data":[]}`.
   2. Navigate to `/`.
 - **Expected:** the Recent Activities paper shows the text "Nothing yet" in the secondary text
-  colour and no list items (`Dashboard.tsx:300`). The same placeholder applies to Upcoming Tasks.
+  colour and no list items (`Dashboard.tsx:304`). The same placeholder applies to Upcoming Tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-043 — The activity feed is scoped to the caller before the limit
@@ -684,7 +688,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Log in.
   2. Assert the URL is `/`.
   3. Navigate to `/leads` (or any reachable page) and click the sidebar "Dashboard" item.
-- **Expected:** login lands on `/`; the sidebar's Dashboard entry carries no `roles` restriction in
+- **Expected:** login lands on `/`; the sidebar's Dashboard entry carries no `permission` key in
   `MainLayout`'s `navItems`, so it is visible to admin, sales, support and customer alike, and
   clicking it returns to `/`.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/login.spec.ts` "successful login

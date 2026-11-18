@@ -35,6 +35,7 @@ import {
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi } from '@/api/endpoints';
 import type { Ticket } from '@/types';
@@ -75,6 +76,7 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { can, canOnRecord } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -124,15 +126,12 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  // Mirrors the backend policy: admins may update any ticket, support only the
-  // tickets assigned to them, and only admins may delete. Sales and customer
-  // users can read a ticket but every write is rejected with a 403.
-  const canEdit =
-    user?.role === 'admin' ||
-    (user?.role === 'support' &&
-      ticket.assigned_to_id !== undefined &&
-      ticket.assigned_to_id === user.id);
-  const canDelete = user?.role === 'admin';
+  // Mirrors the API: tickets.update at scope all edits any ticket, at scope
+  // own only the tickets assigned to the caller; tickets.delete deletes. A
+  // caller with a read key alone gets no write control (the API would answer
+  // 403).
+  const canEdit = canOnRecord('tickets.update', ticket.assigned_to_id);
+  const canDelete = can('tickets.delete');
   const customer = ticket.customer;
   const customerName =
     customer && ('company_name' in customer ? customer.company_name : customer.company);

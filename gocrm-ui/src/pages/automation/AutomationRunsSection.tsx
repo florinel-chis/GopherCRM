@@ -16,7 +16,7 @@ import {
   Typography,
 } from '@mui/material';
 import { automationApi, type AutomationRunFilters } from '@/api/endpoints';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import type { AutomationEntityType } from '@/types';
 import { getAPIError } from '@/utils/apiError';
 import { formatDate } from '@/utils/date';
@@ -38,8 +38,8 @@ export interface AutomationRunsSectionProps {
  * renders nothing for the other roles and never issues the request for them.
  */
 export const AutomationRunsSection: React.FC<AutomationRunsSectionProps> = ({ entityType, entityId }) => {
-  const { user } = useAuth();
-  const canView = user?.role === 'admin' || user?.role === 'sales';
+  const { can } = usePermissions();
+  const canView = can('automation.runs_view');
   const [paging, setPaging] = useState({ page: 0, limit: 5 });
 
   const filters: AutomationRunFilters = {

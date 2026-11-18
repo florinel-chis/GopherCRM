@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@/test/test-utils';
 import { Component as FormDetail } from './FormDetail';
 import { formsApi, type Form } from '@/api/endpoints/forms';
 import { createMockUser } from '@/test/factories';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => mockUseAuth() }));
@@ -56,6 +57,7 @@ describe('FormDetail', () => {
     vi.clearAllMocks();
     mockUseAuth.mockReturnValue({
       user: createMockUser({ id: 1, role: 'admin' }),
+      permissions: permissionsOf(createMockUser({ id: 1, role: 'admin' })),
       isLoading: false,
       isAuthenticated: true,
       login: vi.fn(),

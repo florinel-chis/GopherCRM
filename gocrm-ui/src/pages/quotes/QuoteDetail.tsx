@@ -31,7 +31,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { quotesApi } from '@/api/endpoints';
 import { canEmailQuote, isDraftQuote, type Quote, type QuoteLine } from '@/types';
@@ -74,11 +74,11 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { scopeOf } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   const quoteId = Number(id);
-  const isAdmin = user?.role === 'admin';
+  const deleteScope = scopeOf('quotes.delete');
 
   const [editOpen, setEditOpen] = useState(false);
   const [lineDialog, setLineDialog] = useState<{ open: boolean; line: QuoteLine | null }>({ open: false, line: null });
@@ -148,9 +148,9 @@ export const Component: React.FC = () => {
   }
 
   const draft = isDraftQuote(quote.status);
-  // Admin deletes any quote; a sales owner only its own drafts (the API
-  // answers 409 otherwise).
-  const canDelete = isAdmin || draft;
+  // quotes.delete at scope all deletes any quote; at scope own only the
+  // caller's own drafts (the API answers 409 otherwise).
+  const canDelete = deleteScope === 'all' || (deleteScope === 'own' && draft);
 
   return (
     <Box>

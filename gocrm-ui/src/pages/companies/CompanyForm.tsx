@@ -18,7 +18,7 @@ import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { AxiosError } from 'axios';
 import { FormTextField, FormSelect } from '@/components/form';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { companiesApi, usersApi, type CreateCompanyData } from '@/api/endpoints';
 import { COMPANY_EMPLOYEE_RANGES, type User } from '@/types';
@@ -83,15 +83,16 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
   const isEditMode = !!id;
 
-  // Only an admin may hand a company to another account manager; the API
-  // gives sales its own id regardless of what is sent.
-  const isAdmin = user?.role === 'admin';
+  // Only a caller with companies.assign_owner may hand a company to another
+  // account manager (the API gives anyone else its own id regardless of what
+  // is sent); the picker lists the users through GET /users (users.view).
+  const canAssignOwner = can('companies.assign_owner') && can('users.view');
   const [owner, setOwner] = useState<User | null>(null);
-  // Set once the admin changes the picker. An untouched owner is not sent, so
+  // Set once the picker is changed. An untouched owner is not sent, so
   // an update keeps whatever the company has; a cleared one is sent as 0,
   // which is how the API removes an owner.
   const [ownerTouched, setOwnerTouched] = useState(false);
@@ -110,7 +111,7 @@ export const Component: React.FC = () => {
   const { data: usersData } = useQuery({
     queryKey: ['users', { is_active: true }],
     queryFn: () => usersApi.getUsers({ is_active: true }),
-    enabled: isAdmin,
+    enabled: canAssignOwner,
   });
 
   useEffect(() => {
@@ -154,11 +155,11 @@ export const Component: React.FC = () => {
     showError(fallback);
   };
 
-  // Sales never sends owner_id: the API assigns the company to the caller.
-  // An admin sends the picked owner, 0 to clear one on update, and nothing
+  // Without the picker owner_id is never sent: the API assigns the company
+  // to the caller. With it the picked owner is sent, 0 to clear one on update, and nothing
   // when the picker was left alone (create: unowned; update: unchanged).
   const ownerPatch = (): Pick<CreateCompanyData, 'owner_id'> => {
-    if (!isAdmin || !ownerTouched) {
+    if (!canAssignOwner || !ownerTouched) {
       return {};
     }
     if (owner) {
@@ -243,7 +244,7 @@ export const Component: React.FC = () => {
                 <FormTextField name="phone" label="Phone" />
               </Box>
 
-              {isAdmin && (
+              {canAssignOwner && (
                 <Autocomplete
                   value={owner}
                   onChange={(_, newValue) => {

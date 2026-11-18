@@ -10,6 +10,16 @@ export interface User {
   last_login_at?: string;
 }
 
+// One effective permission of the signed-in user, as GET /users/me lists it.
+export interface Permission {
+  key: string;
+  scope: 'all' | 'own';
+}
+
+// The answer of GET /users/me: the user plus the name of its role and the
+// permissions that role grants.
+export type CurrentUser = User & { role_name?: string; permissions?: Permission[] };
+
 export interface Lead {
   id: number;
   company_name: string;

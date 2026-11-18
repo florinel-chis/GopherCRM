@@ -2,7 +2,8 @@
 
 Playwright end-to-end cases for the admin Users area (`/users`, `/users/new`, `/users/:id`,
 `/users/:id/edit`) and for the "My Profile" entry under Settings. The whole `/users` route subtree is
-admin-only on the frontend (a pathless `ProtectedRoute requiredRole="admin"` layout route) and the
+admin-only on the frontend (pathless `ProtectedRoute` layout routes asking for `users.view`,
+`users.create` and `users.update`, which only the admin system role holds) and the
 list/create/delete handlers are admin-only on the backend (`middleware.RequireRole`), so this area
 plus the `create-admin` CLI are the only ways an elevated role can ever be issued. Every case below
 states the behaviour the code exhibits today; where that behaviour is broken or surprising the
@@ -73,7 +74,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Inspect the left navigation drawer.
   3. Navigate directly to `/users`.
   4. Repeat 1–3 as the support user.
-- **Expected:** The drawer has no "Users" item (`MainLayout.tsx` gates it with `roles: ['admin']`).
+- **Expected:** The drawer has no "Users" item (`MainLayout.tsx` gates it with `permission: 'users.view'`).
   Navigating to `/users` redirects to `/unauthorized`, which shows the heading "Access Denied" and
   the sub-heading "You don't have permission to access this page". No `GET /users` request is issued
   — the guard runs before the page loads.
@@ -90,7 +91,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   2. Navigate to `/users`, then to `/users/new` and `/users/1/edit`.
 - **Expected:** All three redirect to `/unauthorized`. The drawer shows Dashboard, Tasks and
   Settings (Profile, API Keys) but no Leads, Customers or Tickets — `MainLayout.tsx` gates Customers
-  to admin/sales/support — and no Users and no Settings → Configuration entry.
+  with `customers.view` (admin/sales/support) — and no Users and no Settings → Configuration entry.
 - **Automation:** planned — `gocrm-ui/e2e/tests/registration.spec.ts` (extended)
 
 ### TC-USER-004 — Confirm the API guard is narrower than the UI guard

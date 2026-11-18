@@ -38,8 +38,9 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **`/aeo` is closed to `customer`.** `SetupAEORoutes` guards the whole group with
   `RequireRole(admin, sales, support)`; writes (profile, prompts, generate, run) additionally
   require admin or sales, and prompt deletion requires admin. The SPA mirrors this: one pathless
-  `ProtectedRoute requiredRole={['admin','sales','support']}` wraps all four routes and the sidebar
-  entry carries the same roles.
+  `ProtectedRoute requiredPermission="aeo.view"` wraps all four routes and the sidebar
+  entry asks for the same key (admin, sales and support hold it); the manage and delete controls
+  follow `aeo.manage` and `aeo.delete_prompts`.
 - **Only the admin account is available to e2e.** Sales and support accounts need an
   admin-authenticated `POST /users` plus a role-login helper that still does not exist; a
   *customer* is obtainable through public registration. Cases needing a non-admin, non-customer

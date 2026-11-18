@@ -1,8 +1,11 @@
 import { createContext } from 'react';
-import type { User, LoginRequest, RegisterRequest } from '@/types';
+import type { User, Permission, LoginRequest, RegisterRequest } from '@/types';
 
 export interface AuthContextType {
   user: User | null;
+  // The effective permissions GET /users/me listed for the user; empty while
+  // signed out and when the API listed none.
+  permissions: Permission[];
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (data: LoginRequest) => Promise<void>;

@@ -108,11 +108,12 @@ the frontend gating.
   1. Log in as the support user.
   2. Inspect the left navigation drawer.
   3. Navigate directly to `/leads` by URL.
-- **Expected:** The "Leads" nav entry is absent — `MainLayout.tsx` restricts it to
-  `roles: ['admin','sales']`. Direct navigation to `/leads`, `/leads/new`, `/leads/{id}` or
-  `/leads/{id}/edit` lands on `/unauthorized` ("Access Denied"): since #120 every lead route sits
-  under a pathless `ProtectedRoute requiredRole={['admin','sales']}` in
-  `gocrm-ui/src/routes/index.tsx`, matching `RequireRole(admin, sales)` on the API group
+- **Expected:** The "Leads" nav entry is absent — `MainLayout.tsx` shows it with
+  `permission: 'leads.view'`, which support does not hold. Direct navigation to `/leads`,
+  `/leads/new`, `/leads/{id}` or `/leads/{id}/edit` lands on `/unauthorized` ("Access Denied"):
+  since #120 every lead route sits under a pathless `ProtectedRoute` in
+  `gocrm-ui/src/routes/index.tsx` (since #380 with `requiredPermission` `leads.view`,
+  `leads.create` or `leads.update`), matching `RequireRole(admin, sales)` on the API group
   (`routes.go:24`). While the session check is still loading the guard shows a spinner, not the
   page.
 - **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
@@ -151,7 +152,7 @@ the frontend gating.
 - **Expected:** `POST /api/v1/leads` returns **201**. The payload is transformed by
   `endpoints/leads.ts`: `contact_name` is split on the first space into `first_name`/`last_name`,
   `company_name` becomes `company`, and `owner_id` is set to the logged-in admin's own id
-  (`LeadForm.tsx:173`). A "Lead created successfully" snackbar shows and the browser navigates
+  (`LeadForm.tsx:175`). A "Lead created successfully" snackbar shows and the browser navigates
   to `/leads`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can create a new lead
   successfully"
@@ -208,8 +209,8 @@ the frontend gating.
   and the form stays on `/leads/new` with the entered data intact.
 - **Known issue:** Two defects compound here. (a) The frontend offers a `lost` status that the
   backend does not accept, and does not offer `unqualified` which it does —
-  `LeadForm.tsx:27` / `LeadList.tsx:34` versus `models/lead.go` and the `oneof` binding tag on
-  `CreateLeadRequest.Status` (`lead_handler.go:33`). (b) The error-mapping code in `LeadForm.tsx:89`
+  `LeadForm.tsx:28` / `LeadList.tsx:34` versus `models/lead.go` and the `oneof` binding tag on
+  `CreateLeadRequest.Status` (`lead_handler.go:33`). (b) The error-mapping code in `LeadForm.tsx:91`
   reads `error.response.data.details`, but the API envelope nests the payload under
   `error` (`utils.RespondError`, `response.go:74`), so `details` is always `undefined` and every
   server-side validation failure degrades to the generic message.
@@ -294,7 +295,7 @@ the frontend gating.
   3. Click "Update Lead".
 - **Expected:** `PUT /api/v1/leads/{id}` returns **200** with the updated lead. Snackbar "Lead
   updated successfully"; navigation back to `/leads`. The form is prefilled from
-  `GET /leads/{id}` on mount (`LeadForm.tsx:74`).
+  `GET /leads/{id}` on mount (`LeadForm.tsx:75`).
   Concurrency (#182): the update locks the lead's stored company and the sent `company_id`
   before the lead. Setting a company that is deleted meanwhile is **400** `INVALID_REFERENCE`
   with the lead unchanged; an edit that commits first is unlinked by the delete; a lead whose
@@ -528,7 +529,7 @@ the frontend gating.
 - **Steps:**
   1. Clear the search box.
 - **Expected:** A fresh `GET /leads` without `search` is issued and the unfiltered list and total
-  return. Each keystroke resets `page` to 1 (`LeadList.tsx:232`).
+  return. Each keystroke resets `page` to 1 (`LeadList.tsx:233`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should clear search
   and show all leads"
 
@@ -599,7 +600,7 @@ the frontend gating.
   2. Click the "Created" column header.
 - **Expected:** `GET /api/v1/leads?...&sort_by=created_at&sort_order=asc` returns 200 and the rows
   re-render. `LeadList.handleSort` maps the column id through `fieldMap` before sending
-  (`LeadList.tsx:245`).
+  (`LeadList.tsx:246`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should sort by
   Created column descending"
 
@@ -624,7 +625,7 @@ the frontend gating.
      the outgoing request plus the first rows.
 - **Expected:** The requests carry `sort_by=company`, `first_name`, `email`, `status`,
   `classification`, `source` respectively (the Contact column maps to `first_name`,
-  `LeadList.tsx:248`), each returns 200, and the visible order changes accordingly. All six are in
+  `LeadList.tsx:249`), each returns 200, and the visible order changes accordingly. All six are in
   the handler's `allowedSortColumns` allowlist (`lead_handler.go:190`).
 - **Known issue:** Gap **G21** in `docs/FEATURES.md` — only `created_at` has E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended; closes
@@ -680,7 +681,7 @@ the frontend gating.
   1. Page forward to page 2.
   2. Change the Status dropdown to any value.
 - **Expected:** The next request carries `page=1`; the pagination footer returns to the first page
-  (`handleStatusChange` sets `page: 1`, `LeadList.tsx:236`). The rows themselves are those of page
+  (`handleStatusChange` sets `page: 1`, `LeadList.tsx:237`). The rows themselves are those of page
   1 unfiltered, per TC-LEAD-038.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
@@ -747,7 +748,7 @@ the frontend gating.
 - **Known issue:** `endpoints/leads.ts convertLead` types the response as `{customer_id: number}`,
   but the API returns a `models.Customer` whose id field is `id` (`customer.go`,
   `lead_handler.go:531`). `data.customer_id` is therefore `undefined` and both
-  `LeadList.tsx:135` and `LeadDetail.tsx:114` navigate to `/customers/undefined`. The conversion
+  `LeadList.tsx:136` and `LeadDetail.tsx:114` navigate to `/customers/undefined`. The conversion
   itself succeeded — only the redirect is broken.
 - **Concurrency (#182):** the conversion locks the lead's company row before the lead. A company
   deleted while the lead converts yields a customer without `company_id` (the delete committed
@@ -878,7 +879,7 @@ the frontend gating.
   2. Click the next-page arrow in the pagination footer.
   3. Click the previous-page arrow.
 - **Expected:** Step 2 issues `GET /leads?page=2&limit=10` (MUI's zero-based page index is
-  incremented in `handlePageChange`, `LeadList.tsx:260`), returns 200 with a disjoint set of rows,
+  incremented in `handlePageChange`, `LeadList.tsx:261`), returns 200 with a disjoint set of rows,
   and `meta.page` is 2. Step 3 returns to the original rows. Verified live:
   `?limit=10&page=3` returned `meta {page: 3, per_page: 10, total: 71, total_pages: 8}`.
 - **Known issue:** Row 3.11 in `docs/FEATURES.md` — pagination is unit-tested only; there is no E2E
@@ -893,7 +894,7 @@ the frontend gating.
   1. Navigate to page 2.
   2. Change "Rows per page" to 25 (options are 5, 10, 25, 50).
 - **Expected:** A request with `limit=25&page=1`; 200; the footer shows page 1 and up to 25 rows
-  (`handleRowsPerPageChange`, `LeadList.tsx:263`). The backend caps `limit` at 100 and never
+  (`handleRowsPerPageChange`, `LeadList.tsx:264`). The backend caps `limit` at 100 and never
   returns a zero limit — `?limit=0` falls back to 20 rather than 500ing
   (`utils.ParseOffsetLimit`; verified live, `meta.per_page` came back as 20).
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (new)

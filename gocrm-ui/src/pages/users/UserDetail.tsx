@@ -38,6 +38,7 @@ import { usersApi, tasksApi, ticketsApi } from '@/api/endpoints';
 import type { User } from '@/types';
 import { formatDate } from '@/utils/date';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -81,6 +82,7 @@ export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
   const { user: currentUser } = useAuth();
+  const { can } = usePermissions();
   
   const [tabValue, setTabValue] = useState(0);
   const [deleteDialog, setDeleteDialog] = useState(false);
@@ -141,11 +143,11 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  const isAdmin = currentUser?.role === 'admin';
   const isOwnProfile = currentUser?.id === user.id;
-  const canEdit = isAdmin || isOwnProfile;
-  const canDelete = isAdmin && !isOwnProfile;
-  const canToggleStatus = isAdmin && !isOwnProfile;
+  const canEdit = can('users.update') || isOwnProfile;
+  const canDelete = can('users.delete') && !isOwnProfile;
+  const canToggleStatus = can('users.activate') && !isOwnProfile;
+  const canSeeStatistics = can('users.view') || isOwnProfile;
 
   const openTasks = tasksData?.data.filter(t => t.status !== 'completed' && t.status !== 'cancelled').length || 0;
   const openTickets = ticketsData?.data.filter(t => t.status === 'open' || t.status === 'in_progress').length || 0;
@@ -214,7 +216,7 @@ export const Component: React.FC = () => {
         >
           <Tab label="Overview" />
           <Tab label="Activity" />
-          {(isAdmin || isOwnProfile) && <Tab label="Statistics" />}
+          {canSeeStatistics && <Tab label="Statistics" />}
         </Tabs>
 
         <TabPanel value={tabValue} index={0}>
@@ -345,7 +347,7 @@ export const Component: React.FC = () => {
           </Box>
         </TabPanel>
 
-        {(isAdmin || isOwnProfile) && (
+        {canSeeStatistics && (
           <TabPanel value={tabValue} index={2}>
             <Box sx={{ p: 3 }}>
               <Typography variant="h6" gutterBottom>

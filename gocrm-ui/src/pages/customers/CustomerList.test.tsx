@@ -4,6 +4,7 @@ import { Component as CustomerList } from './CustomerList';
 import { customersApi } from '@/api/endpoints';
 import { createMockCustomer } from '@/test/factories';
 import { useNavigate } from 'react-router-dom';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -20,6 +21,7 @@ vi.mock('@/hooks/useAuth', async () => {
   return {
     useAuth: () => ({
       user,
+      permissions: permissionsOf(user),
       isLoading: false,
       isAuthenticated: true,
       login: vi.fn(),

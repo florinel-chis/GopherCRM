@@ -82,9 +82,9 @@ blocked until the page is built.
   1. Log in as the customer.
   2. Expand the "Settings" group in the left navigation.
   3. Click "API Keys".
-- **Expected:** The "API Keys" nav item is visible — the item carries no `roles` restriction in
-  `MainLayout.tsx`, unlike "Configuration" which is `roles: ['admin']`. The route
-  `settings/api-keys` sits outside the admin-guarded pathless route in `routes/index.tsx`, so the
+- **Expected:** The "API Keys" nav item is visible — the item carries no `permission` key in
+  `MainLayout.tsx`, unlike "Configuration" which needs `settings.view`. The route
+  `settings/api-keys` sits outside every guarded pathless route in `routes/index.tsx`, so the
   page loads and shows the heading. This matches the backend: `SetupAPIKeyRoutes` installs no
   `RequireRole`, so any authenticated role may manage its own keys.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-apikeys.spec.ts` (new; closes part of G13)
@@ -573,10 +573,10 @@ blocked until the page is built.
   1. Log in as each non-admin role in turn.
   2. Expand the "Settings" nav group.
   3. Navigate directly to `/settings/configuration`.
-- **Expected:** The "Configuration" nav item is absent for all three (`roles: ['admin']` in
+- **Expected:** The "Configuration" nav item is absent for all three (`permission: 'settings.view'` in
   `MainLayout.tsx`), while "Profile" and "API Keys" remain. The deep link redirects to
   `/unauthorized` — `settings/configuration` is a child of the pathless
-  `ProtectedRoute requiredRole="admin"` route, and `ProtectedRoute` issues
+  `ProtectedRoute requiredPermission="settings.view"` route, and `ProtectedRoute` issues
   `<Navigate to="/unauthorized" replace />`. The Configuration Settings heading never renders and no
   `GET /configurations` request is made.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (needs a role-login

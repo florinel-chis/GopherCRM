@@ -11,6 +11,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { usersApi, type CreateUserData, type UpdateUserData } from '@/api/endpoints';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { getAPIError } from '@/utils/apiError';
 
 const createUserSchema = z
@@ -51,6 +52,7 @@ export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
   const { user: currentUser } = useAuth();
+  const { can } = usePermissions();
   const isEditMode = !!id;
 
   const createMethods = useForm<CreateUserFormData>({
@@ -146,15 +148,17 @@ export const Component: React.FC = () => {
     return <Loading />;
   }
 
-  const isAdmin = currentUser?.role === 'admin';
-  const canEditRole = isAdmin;
-  const canEditActiveStatus = isAdmin && user?.id !== currentUser?.id;
+  // The fields save through PUT /users/:id (edit) or POST /users (new); the
+  // role and the active switch have their own keys on the API.
+  const canWrite = can(isEditMode ? 'users.update' : 'users.create');
+  const canEditRole = can('users.assign_role');
+  const canEditActiveStatus = can('users.activate') && user?.id !== currentUser?.id;
 
   const fields = (
     <Stack spacing={3}>
       <Typography variant="h6">Account Information</Typography>
 
-      <FormTextField name="email" label="Email" type="email" required disabled={!isAdmin} />
+      <FormTextField name="email" label="Email" type="email" required disabled={!canWrite} />
 
       {!isEditMode && (
         <>
@@ -163,14 +167,14 @@ export const Component: React.FC = () => {
             label="Password"
             type="password"
             required
-            disabled={!isAdmin}
+            disabled={!canWrite}
           />
           <FormTextField
             name="confirmPassword"
             label="Confirm Password"
             type="password"
             required
-            disabled={!isAdmin}
+            disabled={!canWrite}
           />
         </>
       )}
@@ -180,8 +184,8 @@ export const Component: React.FC = () => {
       <Typography variant="h6">Personal Information</Typography>
 
       <Box display="grid" gridTemplateColumns={{ xs: '1fr', md: '1fr 1fr' }} gap={2}>
-        <FormTextField name="first_name" label="First Name" required disabled={!isAdmin} />
-        <FormTextField name="last_name" label="Last Name" required disabled={!isAdmin} />
+        <FormTextField name="first_name" label="First Name" required disabled={!canWrite} />
+        <FormTextField name="last_name" label="Last Name" required disabled={!canWrite} />
       </Box>
 
       <Divider />
@@ -202,7 +206,7 @@ export const Component: React.FC = () => {
           type="submit"
           variant="contained"
           startIcon={<SaveIcon />}
-          disabled={!isAdmin || createMutation.isPending || updateMutation.isPending}
+          disabled={!canWrite || createMutation.isPending || updateMutation.isPending}
         >
           {isEditMode ? 'Update' : 'Create'} User
         </Button>
@@ -216,7 +220,7 @@ export const Component: React.FC = () => {
         <Typography variant="h4">{isEditMode ? 'Edit User' : 'Create New User'}</Typography>
       </Box>
 
-      {!isAdmin && (
+      {!canWrite && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           Only administrators can create or edit users.
         </Alert>

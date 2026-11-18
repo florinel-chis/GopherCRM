@@ -64,6 +64,10 @@ describe('AuthContext', () => {
       session.generation += 1;
       await revoke('captured-access-token');
     });
+    // A sign-in asks /users/me for the user and its permissions before it
+    // publishes anything.
+    vi.mocked(authApi.getCurrentUser).mockReset();
+    vi.mocked(authApi.getCurrentUser).mockResolvedValue(mockUser);
   });
 
   it('provides auth context to children', () => {
@@ -110,6 +114,7 @@ describe('AuthContext', () => {
   });
 
   it('handles login successfully', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue(null);
     const loginResponse = {
       token: 'test-token',
       refresh_token: 'test-refresh-token',
@@ -131,6 +136,7 @@ describe('AuthContext', () => {
     });
 
     expect(apiClient.startSession).toHaveBeenCalledWith('test-token', 'test-refresh-token', true);
+    expect(authApi.getCurrentUser).toHaveBeenCalledTimes(1);
     expect(result.current.user).toEqual(mockUser);
   });
 
@@ -205,6 +211,7 @@ describe('AuthContext', () => {
   });
 
   it('handles registration', async () => {
+    vi.mocked(apiClient.getToken).mockReturnValue(null);
     vi.mocked(authApi.register).mockResolvedValue({
       token: 'test-token',
       user: mockUser,
@@ -229,6 +236,8 @@ describe('AuthContext', () => {
 
     expect(authApi.register).toHaveBeenCalled();
     expect(apiClient.startSession).toHaveBeenCalledWith('test-token', undefined, true);
+    expect(authApi.getCurrentUser).toHaveBeenCalledTimes(1);
+    expect(result.current.user).toEqual(mockUser);
   });
 
   it('clears query cache on logout when QueryClientProvider is present', async () => {
@@ -397,6 +406,7 @@ describe('AuthContext', () => {
     vi.mocked(authApi.login)
       .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve; }))
       .mockResolvedValueOnce({ token: 'second-token', refresh_token: 'second-refresh', user: otherUser });
+    vi.mocked(authApi.getCurrentUser).mockResolvedValue(otherUser);
 
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.isLoading).toBe(false));

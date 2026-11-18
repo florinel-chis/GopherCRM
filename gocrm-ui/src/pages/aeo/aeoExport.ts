@@ -92,6 +92,6 @@ export const saveAEOExport = (blob: Blob, filename: string): void => {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 };
 
-// Only staff reach the AEO pages; the controls are hidden from anyone else.
-export const canExportAEO = (role: string | undefined): boolean =>
-  role === 'admin' || role === 'sales' || role === 'support';
+// The exports read through GET /aeo/*, so they need the AEO read key; the
+// controls are hidden from anyone else.
+export const canExportAEO = (can: (key: string) => boolean): boolean => can('aeo.view');

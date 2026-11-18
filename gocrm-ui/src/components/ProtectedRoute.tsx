@@ -2,14 +2,17 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { CircularProgress, Box } from '@mui/material';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: string | string[];
+  // One permission key, or a list of which any one is enough.
+  requiredPermission?: string | string[];
 }
 
-export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredRole }) => {
-  const { user, isLoading, isAuthenticated } = useAuth();
+export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredPermission }) => {
+  const { isLoading, isAuthenticated } = useAuth();
+  const { can } = usePermissions();
   const location = useLocation();
 
   if (isLoading) {
@@ -29,11 +32,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requir
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (requiredRole) {
-    const roles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
-    if (user && !roles.includes(user.role)) {
-      return <Navigate to="/unauthorized" replace />;
-    }
+  if (requiredPermission && !can(requiredPermission)) {
+    return <Navigate to="/unauthorized" replace />;
   }
 
   return <>{children}</>;

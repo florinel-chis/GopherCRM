@@ -22,6 +22,7 @@ import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { ticketsApi, type TicketFilters } from '@/api/endpoints';
 import type { Ticket } from '@/types';
@@ -77,15 +78,16 @@ export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
-  // Mirrors the backend policy: only support and admin may create a ticket, and
-  // only admins may delete one. Row-level edit is offered to admin and support;
-  // whether a given ticket is assigned to this support user is enforced per
-  // ticket on the detail page (and by the API).
-  const canCreate = user?.role === 'admin' || user?.role === 'support';
-  const canEdit = canCreate;
-  const canDelete = user?.role === 'admin';
+  // Mirrors the API: tickets.create, tickets.update and tickets.delete each
+  // open their own control. Row-level edit is offered at either scope of
+  // tickets.update; whether a given ticket is assigned to a caller at scope
+  // own is enforced per ticket on the detail page (and by the API).
+  const canCreate = can('tickets.create');
+  const canEdit = can('tickets.update');
+  const canDelete = can('tickets.delete');
 
   const [filters, setFilters] = useState<TicketFilters>({
     page: 1,

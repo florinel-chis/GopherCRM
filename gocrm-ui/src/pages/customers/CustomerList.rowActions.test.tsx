@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, within, requireElement } from '@/test/test-utils';
 import { useNavigate } from 'react-router-dom';
 import { Component as CustomerList } from './CustomerList';
 import { customersApi, type CustomerFilters } from '@/api/endpoints';
 import { createMockCustomer, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -26,6 +27,7 @@ vi.mock('@/hooks/useAuth', () => ({
 const signedInAs = (role: User['role']) =>
   mockUseAuth.mockReturnValue({
     user: createMockUser({ id: 1, role }),
+    permissions: permissionsOf(createMockUser({ id: 1, role })),
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),
@@ -146,5 +148,28 @@ describe('CustomerList row actions', () => {
     } else {
       expect(button).not.toBeInTheDocument();
     }
+  });
+
+  // The /customers/:id/edit route needs customers.update; a row must not
+  // offer a navigation that ends on /unauthorized.
+  it('shows the edit action only with customers.update', async () => {
+    for (const role of ['admin', 'sales'] as const) {
+      signedInAs(role);
+      const view = render(<CustomerList />);
+      await screen.findByText('Alpha Customers');
+
+      expect(screen.getAllByTestId('EditIcon')).toHaveLength(3);
+      fireEvent.click(requireElement(screen.getAllByTestId('EditIcon')[0].closest('button')));
+      expect(mockNavigate).toHaveBeenCalledWith('/customers/1/edit');
+      view.unmount();
+    }
+
+    signedInAs('support');
+    render(<CustomerList />);
+    await screen.findByText('Alpha Customers');
+
+    expect(screen.queryByTestId('EditIcon')).not.toBeInTheDocument();
+    // Delete is not gated here: the API refuses it, as before.
+    expect(screen.getAllByTestId('DeleteIcon')).toHaveLength(3);
   });
 });

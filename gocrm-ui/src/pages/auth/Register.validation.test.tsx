@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Register } from './Register';
+import { permissionsOf } from '@/test/permissions';
 
 // The registerSchema is module-private, so the password rules are exercised
 // through the rendered form: type a password, submit, assert the zod message
@@ -16,6 +17,7 @@ const mockRegister = vi.fn();
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: null,
+    permissions: permissionsOf(null),
     isLoading: false,
     isAuthenticated: false,
     login: vi.fn(),

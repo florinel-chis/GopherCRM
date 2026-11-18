@@ -54,14 +54,16 @@ export const router = createBrowserRouter([
         element: <Dashboard />,
       },
       {
-        // The whole /leads API group is RequireRole(admin, sales), and so is
-        // POST /customers; support and customer users must not reach those
-        // pages through a deep link. Customer list, detail and edit stay open
-        // to every authenticated role because the API scopes them itself.
-        // Same pathless-layout shape as the admin block — a static `element`
-        // on the children themselves would shadow `lazy`.
+        // Every guard in this table names the permission key the API asks for the
+        // page's main call (internal/permissions/routes.go). The keys come from
+        // GET /users/me, never from the role name; a caller without the key lands
+        // on /unauthorized instead of a page of refused requests.
+        //
+        // The guards are pathless layout routes: a static `element` on a child
+        // itself would take precedence over `lazy` and silently discard the real
+        // page component.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales']}>
+          <ProtectedRoute requiredPermission="leads.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -71,17 +73,45 @@ export const router = createBrowserRouter([
             lazy: () => import('@/pages/leads/LeadList'),
           },
           {
-            path: 'leads/new',
-            lazy: () => import('@/pages/leads/LeadForm'),
-          },
-          {
             path: 'leads/:id',
             lazy: () => import('@/pages/leads/LeadDetail'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="leads.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Static segment: ranks above leads/:id.
+            path: 'leads/new',
+            lazy: () => import('@/pages/leads/LeadForm'),
+          },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="leads.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'leads/:id/edit',
             lazy: () => import('@/pages/leads/LeadForm'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="customers.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             // Static segment: ranks above customers/:id.
             path: 'customers/new',
@@ -90,24 +120,41 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: 'customers',
-        lazy: () => import('@/pages/customers/CustomerList'),
-      },
-      {
-        path: 'customers/:id',
-        lazy: () => import('@/pages/customers/CustomerDetail'),
-      },
-      {
-        path: 'customers/:id/edit',
-        lazy: () => import('@/pages/customers/CustomerForm'),
-      },
-      {
-        // Companies mirror the API guard: admin, sales and support read; the
-        // customer role gets no entry. Writes are narrowed further below.
-        // Same pathless-layout shape as the admin block — a static `element`
-        // on the children themselves would shadow `lazy`.
+        // The customer pages need the read key: a caller without it (the customer
+        // system role) is redirected instead of shown a list the API refuses.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+          <ProtectedRoute requiredPermission="customers.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'customers',
+            lazy: () => import('@/pages/customers/CustomerList'),
+          },
+          {
+            path: 'customers/:id',
+            lazy: () => import('@/pages/customers/CustomerDetail'),
+          },
+        ],
+      },
+      {
+        // The edit form saves through PUT /customers/:id.
+        element: (
+          <ProtectedRoute requiredPermission="customers.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'customers/:id/edit',
+            lazy: () => import('@/pages/customers/CustomerForm'),
+          },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="companies.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -120,34 +167,39 @@ export const router = createBrowserRouter([
             path: 'companies/:id',
             lazy: () => import('@/pages/companies/CompanyDetail'),
           },
+        ],
+      },
+      {
+        // A read-only caller must not reach the form through a deep link.
+        element: (
+          <ProtectedRoute requiredPermission="companies.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
-            // POST and PUT /companies are admin and sales only; support is
-            // read-only and a deep link to the form must not reach it.
-            element: (
-              <ProtectedRoute requiredRole={['admin', 'sales']}>
-                <Outlet />
-              </ProtectedRoute>
-            ),
-            children: [
-              {
-                path: 'companies/new',
-                lazy: () => import('@/pages/companies/CompanyForm'),
-              },
-              {
-                path: 'companies/:id/edit',
-                lazy: () => import('@/pages/companies/CompanyForm'),
-              },
-            ],
+            // Static segment: ranks above companies/:id.
+            path: 'companies/new',
+            lazy: () => import('@/pages/companies/CompanyForm'),
           },
         ],
       },
       {
-        // Deals are admin and sales only on the API (support and customer get
-        // 403 on everything), so the whole group sits under one pathless
-        // guard. Same shape as the admin block — a static `element` on the
-        // children themselves would shadow `lazy`.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales']}>
+          <ProtectedRoute requiredPermission="companies.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'companies/:id/edit',
+            lazy: () => import('@/pages/companies/CompanyForm'),
+          },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="deals.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -162,13 +214,34 @@ export const router = createBrowserRouter([
             lazy: () => import('@/pages/deals/DealBoard'),
           },
           {
-            path: 'deals/new',
-            lazy: () => import('@/pages/deals/DealForm'),
-          },
-          {
             path: 'deals/:id',
             lazy: () => import('@/pages/deals/DealDetail'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="deals.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Static segment: ranks above deals/:id.
+            path: 'deals/new',
+            lazy: () => import('@/pages/deals/DealForm'),
+          },
+        ],
+      },
+      {
+        // Whether this caller may edit this deal (scope own) is decided by the
+        // buttons on the detail page and by the API.
+        element: (
+          <ProtectedRoute requiredPermission="deals.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'deals/:id/edit',
             lazy: () => import('@/pages/deals/DealForm'),
@@ -176,14 +249,8 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        // Products and quotes share the deal guard on the API: admin and
-        // sales only, support and customer get 403 on everything. The product
-        // writes are admin only, so the form routes sit under a nested,
-        // narrower guard, as the company forms do. Same pathless-layout shape
-        // as the admin block — a static `element` on the children themselves
-        // would shadow `lazy`.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales']}>
+          <ProtectedRoute requiredPermission="products.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -192,23 +259,41 @@ export const router = createBrowserRouter([
             path: 'products',
             lazy: () => import('@/pages/products/ProductList'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="products.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
-            element: (
-              <ProtectedRoute requiredRole="admin">
-                <Outlet />
-              </ProtectedRoute>
-            ),
-            children: [
-              {
-                path: 'products/new',
-                lazy: () => import('@/pages/products/ProductForm'),
-              },
-              {
-                path: 'products/:id/edit',
-                lazy: () => import('@/pages/products/ProductForm'),
-              },
-            ],
+            path: 'products/new',
+            lazy: () => import('@/pages/products/ProductForm'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="products.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'products/:id/edit',
+            lazy: () => import('@/pages/products/ProductForm'),
+          },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="quotes.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'quotes',
             lazy: () => import('@/pages/quotes/QuoteList'),
@@ -226,11 +311,10 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        // The run history is admin and sales on the API (sales narrowed to its
-        // own leads and deals inside the query); cancelling is admin-only and
-        // gated on the page. Same pathless-layout shape as the admin block.
+        // The run history; the API narrows a caller at scope own to the runs of
+        // its own leads and deals. Cancelling is gated on the page.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales']}>
+          <ProtectedRoute requiredPermission="automation.runs_view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -251,9 +335,31 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        // A staff user's own notifications: RequireRole(admin, sales, support).
+        // Every /automation/rules call (and the dry run) asks for this key.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+          <ProtectedRoute requiredPermission="automation.rules_manage">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'automation/rules',
+            lazy: () => import('@/pages/automation/AutomationRuleList'),
+          },
+          {
+            path: 'automation/rules/new',
+            lazy: () => import('@/pages/automation/AutomationRuleForm'),
+          },
+          {
+            path: 'automation/rules/:id/edit',
+            lazy: () => import('@/pages/automation/AutomationRuleForm'),
+          },
+        ],
+      },
+      {
+        // The caller's own notifications.
+        element: (
+          <ProtectedRoute requiredPermission="notifications.use">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -265,28 +371,50 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: 'tickets',
-        lazy: () => import('@/pages/tickets/TicketList'),
-      },
-      {
-        path: 'tickets/:id',
-        lazy: () => import('@/pages/tickets/TicketDetail'),
-      },
-      {
-        // Ticket writes are support/admin only on the API; keep the forms out of
-        // reach of a deep link. Per-assignment precision (support may only update
-        // its own tickets) is not expressible at the route level and is carried by
-        // the action buttons on the detail page plus the API itself.
+        // The ticket list and detail open with either read key:
+        // tickets.view_own_customer is the read of a customer login, narrowed by
+        // the API to the tickets of its linked customer record.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'support']}>
+          <ProtectedRoute requiredPermission={['tickets.view', 'tickets.view_own_customer']}>
             <Outlet />
           </ProtectedRoute>
         ),
         children: [
           {
+            path: 'tickets',
+            lazy: () => import('@/pages/tickets/TicketList'),
+          },
+          {
+            path: 'tickets/:id',
+            lazy: () => import('@/pages/tickets/TicketDetail'),
+          },
+        ],
+      },
+      {
+        // Keeps the ticket forms out of reach of a deep link.
+        element: (
+          <ProtectedRoute requiredPermission="tickets.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Static segment: ranks above tickets/:id.
             path: 'tickets/new',
             lazy: () => import('@/pages/tickets/TicketForm'),
           },
+        ],
+      },
+      {
+        // Per-assignment precision (scope own: only the caller's own tickets) is
+        // not expressible at the route level; the action buttons on the detail
+        // page and the API carry it.
+        element: (
+          <ProtectedRoute requiredPermission="tickets.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'tickets/:id/edit',
             lazy: () => import('@/pages/tickets/TicketForm'),
@@ -294,34 +422,51 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        path: 'tasks',
-        lazy: () => import('@/pages/tasks/TaskList'),
-      },
-      {
-        path: 'tasks/new',
-        lazy: () => import('@/pages/tasks/TaskForm'),
-      },
-      {
-        path: 'tasks/:id',
-        lazy: () => import('@/pages/tasks/TaskDetail'),
-      },
-      {
-        path: 'tasks/:id/edit',
-        lazy: () => import('@/pages/tasks/TaskForm'),
-      },
-      {
-        // Labels are readable by every authenticated role, like tasks; the
-        // create/edit/delete affordances are gated inside the page.
-        path: 'labels',
-        lazy: () => import('@/pages/labels/LabelList'),
-      },
-      {
-        // AEO is internal marketing data: the whole /aeo/* group is staff-only,
-        // matching the server-side RequireRole(admin, sales, support) on the API
-        // group. Same pathless-layout shape as the admin block below — a static
-        // `element` on the children themselves would shadow `lazy`.
+        // Tasks: the read key opens every task page; the API decides which
+        // tasks the caller sees and may change.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+          <ProtectedRoute requiredPermission="tasks.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'tasks',
+            lazy: () => import('@/pages/tasks/TaskList'),
+          },
+          {
+            // Static segment: ranks above tasks/:id.
+            path: 'tasks/new',
+            lazy: () => import('@/pages/tasks/TaskForm'),
+          },
+          {
+            path: 'tasks/:id',
+            lazy: () => import('@/pages/tasks/TaskDetail'),
+          },
+          {
+            path: 'tasks/:id/edit',
+            lazy: () => import('@/pages/tasks/TaskForm'),
+          },
+        ],
+      },
+      {
+        // The create, edit and delete affordances are gated inside the page.
+        element: (
+          <ProtectedRoute requiredPermission="labels.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'labels',
+            lazy: () => import('@/pages/labels/LabelList'),
+          },
+        ],
+      },
+      {
+        // AEO is internal marketing data: the whole group needs aeo.view.
+        element: (
+          <ProtectedRoute requiredPermission="aeo.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -345,13 +490,11 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        // Forms are staff-only, matching the RequireRole(admin, sales, support)
-        // on the API group. Support is read-only: the builder renders without
-        // its save affordances, and the API refuses the write anyway. Same
-        // pathless-layout shape as the AEO block above — a static `element` on
-        // the children themselves would shadow `lazy`.
+        // Forms open with the read key. A caller without forms.manage is
+        // read-only: the builder renders without its save affordances, and the
+        // API refuses the write anyway.
         element: (
-          <ProtectedRoute requiredRole={['admin', 'sales', 'support']}>
+          <ProtectedRoute requiredPermission="forms.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -375,12 +518,8 @@ export const router = createBrowserRouter([
         ],
       },
       {
-        // Pathless layout route: applies the admin guard to every child below.
-        // The guard must not live on the child routes themselves — a statically
-        // defined `element` takes precedence over `lazy`, which would silently
-        // discard the real page component.
         element: (
-          <ProtectedRoute requiredRole="admin">
+          <ProtectedRoute requiredPermission="users.view">
             <Outlet />
           </ProtectedRoute>
         ),
@@ -390,37 +529,53 @@ export const router = createBrowserRouter([
             lazy: () => import('@/pages/users/UserList'),
           },
           {
-            path: 'users/new',
-            lazy: () => import('@/pages/users/UserForm'),
-          },
-          {
             path: 'users/:id',
             lazy: () => import('@/pages/users/UserDetail'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="users.create">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            // Static segment: ranks above users/:id.
+            path: 'users/new',
+            lazy: () => import('@/pages/users/UserForm'),
+          },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="users.update">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'users/:id/edit',
             lazy: () => import('@/pages/users/UserForm'),
           },
+        ],
+      },
+      {
+        element: (
+          <ProtectedRoute requiredPermission="settings.view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
           {
             path: 'settings/configuration',
             lazy: () => import('@/pages/settings/ConfigurationSettings'),
           },
-          {
-            // Every /automation/rules route (and the dry run) is
-            // RequireRole(admin) on the API.
-            path: 'automation/rules',
-            lazy: () => import('@/pages/automation/AutomationRuleList'),
-          },
-          {
-            path: 'automation/rules/new',
-            lazy: () => import('@/pages/automation/AutomationRuleForm'),
-          },
-          {
-            path: 'automation/rules/:id/edit',
-            lazy: () => import('@/pages/automation/AutomationRuleForm'),
-          },
         ],
       },
+      // The dashboard above, the profile and the caller's own API keys need no
+      // key: every signed-in user reaches them.
       {
         path: 'settings/profile',
         lazy: () => import('@/pages/settings/Profile'),

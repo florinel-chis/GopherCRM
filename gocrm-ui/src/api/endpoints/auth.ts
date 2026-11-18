@@ -1,5 +1,5 @@
 import { api, apiClient } from '../client';
-import type { LoginRequest, LoginResponse, RegisterRequest, User } from '@/types';
+import type { CurrentUser, LoginRequest, LoginResponse, RegisterRequest } from '@/types';
 
 export interface RegistrationStatus {
   enabled: boolean;
@@ -36,8 +36,8 @@ export const authApi = {
     );
   },
 
-  getCurrentUser: async (): Promise<User> => {
-    const response = await api.get<User>('/users/me');
+  getCurrentUser: async (): Promise<CurrentUser> => {
+    const response = await api.get<CurrentUser>('/users/me');
     return response.data;
   },
 

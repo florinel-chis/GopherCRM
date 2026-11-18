@@ -11,10 +11,12 @@ import {
   type ConfigurationContextType,
 } from '@/contexts/configuration-context';
 import { configurationsApi } from '@/api/endpoints';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: null,
+    permissions: permissionsOf(null),
     isLoading: false,
     isAuthenticated: false,
     login: vi.fn(),

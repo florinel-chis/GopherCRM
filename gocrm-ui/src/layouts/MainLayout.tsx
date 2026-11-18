@@ -52,6 +52,7 @@ import {
 } from '@mui/icons-material';
 import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useProductName } from '@/hooks/useProductName';
 
 const drawerWidth = 280;
@@ -59,7 +60,9 @@ const drawerWidth = 280;
 interface NavEntry {
   title: string;
   icon: React.ReactNode;
-  roles?: string[];
+  // The permission key the entry needs, or a list of which any one is
+  // enough. An entry without one is shown to every signed-in user.
+  permission?: string | string[];
 }
 
 type NavLink = NavEntry & { path: string; children?: undefined };
@@ -75,47 +78,49 @@ const navItems: NavItem[] = [
     title: 'Leads',
     path: '/leads',
     icon: <ContactPhone />,
-    roles: ['admin', 'sales'],
+    permission: 'leads.view',
   },
   {
-    // Same roles as the API group: admin and sales only.
+    // Shown to a caller that may read deals.
     title: 'Deals',
     path: '/deals',
     icon: <Handshake />,
-    roles: ['admin', 'sales'],
+    permission: 'deals.view',
   },
   {
-    // The catalogue is read by admin and sales (the API group guard); only
-    // admin writes it, which the page itself narrows.
+    // Shown to a caller that may read the catalogue; the page itself narrows
+    // the writes.
     title: 'Products',
     path: '/products',
     icon: <Inventory2 />,
-    roles: ['admin', 'sales'],
+    permission: 'products.view',
   },
   {
-    // Quotes share the deal guard: admin and sales only.
+    // Shown to a caller that may read quotes.
     title: 'Quotes',
     path: '/quotes',
     icon: <RequestQuote />,
-    roles: ['admin', 'sales'],
+    permission: 'quotes.view',
   },
   {
-    // Rules are admin-only; the run history is admin and sales (the API
-    // narrows sales to its own leads and deals).
+    // The group shows when either child does: the rules need
+    // automation.rules_manage, the run history automation.runs_view (the API
+    // narrows a caller at scope own to its own leads and deals).
     title: 'Automation',
     icon: <AutoMode />,
-    roles: ['admin', 'sales'],
+    permission: ['automation.rules_manage', 'automation.runs_view'],
     children: [
       {
         title: 'Rules',
         path: '/automation/rules',
         icon: <Rule />,
-        roles: ['admin'],
+        permission: 'automation.rules_manage',
       },
       {
         title: 'Runs',
         path: '/automation/runs',
         icon: <History />,
+        permission: 'automation.runs_view',
       },
     ],
   },
@@ -123,47 +128,50 @@ const navItems: NavItem[] = [
     title: 'Customers',
     path: '/customers',
     icon: <Business />,
-    roles: ['admin', 'sales', 'support'],
+    permission: 'customers.view',
   },
   {
-    // Same read roles as the API group; the customer role never sees it.
+    // Shown to a caller that may read companies.
     title: 'Companies',
     path: '/companies',
     icon: <Apartment />,
-    roles: ['admin', 'sales', 'support'],
+    permission: 'companies.view',
   },
   {
-    // Same read roles as the API: sales reads every ticket, read-only (the
-    // ticket pages offer it no create, edit or delete).
+    // Shown with tickets.view. A caller holding only tickets.view_own_customer
+    // gets no entry, although the route admits it. The ticket pages narrow
+    // create, edit and delete by their own keys.
     title: 'Tickets',
     path: '/tickets',
     icon: <Assignment />,
-    roles: ['admin', 'sales', 'support'],
+    permission: 'tickets.view',
   },
   {
     title: 'Tasks',
     path: '/tasks',
     icon: <Task />,
+    permission: 'tasks.view',
   },
   {
     title: 'Labels',
     path: '/labels',
     icon: <LocalOffer />,
+    permission: 'labels.view',
   },
   {
-    // Web forms served to external sites. Staff-only, mirroring the API group
-    // guard; support sees the pages read-only.
+    // Web forms served to external sites. A caller without forms.manage sees
+    // the pages read-only.
     title: 'Forms',
     path: '/forms',
     icon: <DynamicForm />,
-    roles: ['admin', 'sales', 'support'],
+    permission: 'forms.view',
   },
   {
-    // Answer Engine Optimization. Staff-only, mirroring the API group guard;
-    // the customer role never sees the entry and is bounced by the route guard.
+    // Answer Engine Optimization. A caller without aeo.view never sees the
+    // entry and is bounced by the route guard.
     title: 'AEO',
     icon: <Insights />,
-    roles: ['admin', 'sales', 'support'],
+    permission: 'aeo.view',
     children: [
       {
         title: 'Dashboard',
@@ -191,7 +199,7 @@ const navItems: NavItem[] = [
     title: 'Users',
     path: '/users',
     icon: <People />,
-    roles: ['admin'],
+    permission: 'users.view',
   },
   {
     title: 'Settings',
@@ -211,7 +219,7 @@ const navItems: NavItem[] = [
         title: 'Configuration',
         path: '/settings/configuration',
         icon: <Tune />,
-        roles: ['admin'],
+        permission: 'settings.view',
       },
     ],
   },
@@ -225,6 +233,7 @@ export const MainLayout: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { can } = usePermissions();
   const productName = useProductName();
 
   const handleDrawerToggle = () => {
@@ -249,8 +258,10 @@ export const MainLayout: React.FC = () => {
   };
 
   const canViewNavItem = (item: NavItem): boolean => {
-    if (!item.roles || !user) return true;
-    return item.roles.includes(user.role);
+    if (item.permission && !can(item.permission)) return false;
+    // A group with no visible child is not shown.
+    if (item.children) return item.children.some((child) => canViewNavItem(child));
+    return true;
   };
 
   const drawer = (

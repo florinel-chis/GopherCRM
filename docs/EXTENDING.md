@@ -197,10 +197,13 @@ wrong mock lets a test pass for the wrong reason (`REVIEW.md`, last paragraph).
   receive `data` directly. Error envelopes are unwrapped flat (`client.ts:237`); read them with
   `getAPIError` (`src/utils/apiError.ts`), which returns `{code, message, details}`.
 - Pages under `gocrm-ui/src/pages/<entity>/` (TanStack Query, react-hook-form with zod), lazily
-  imported in `gocrm-ui/src/routes/index.tsx` behind `<ProtectedRoute requiredRole={[...]}>` with
-  the same roles as the API group (products: lines 178-211).
-- Navigation entry in `gocrm-ui/src/layouts/MainLayout.tsx` with matching `roles` (products: line
-  89). The UI role check only hides things; the server guard is the authorization.
+  imported in `gocrm-ui/src/routes/index.tsx` behind `<ProtectedRoute requiredPermission="...">`
+  with the permission key the API asks for the page's main call (products: the `products.view`,
+  `products.create` and `products.update` guards). Buttons inside a page ask
+  `usePermissions()` (`src/hooks/usePermissions.ts`) for the key of the call behind them.
+- Navigation entry in `gocrm-ui/src/layouts/MainLayout.tsx` with the matching `permission` key
+  (products: `products.view`). The keys come from `GET /users/me`; the UI check only hides
+  things; the server guard is the authorization.
 - Render dates through `src/utils/date.ts`, never a raw `format(new Date(x))`.
 - Vitest next to each page and endpoint module (`ProductList.test.tsx`, `products.test.ts`).
 
@@ -389,7 +392,7 @@ in `validateValues` (`internal/service/form_service.go:781`, called from `Submit
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
-`z.enum` in `gocrm-ui/src/pages/forms/FormBuilder.tsx:48,85`.
+`z.enum` in `gocrm-ui/src/pages/forms/FormBuilder.tsx:49,86`.
 Do not reorder the spam layers in `SubmitPublic` and do not change the success-shaped response for
 spam: both are deliberate (`REVIEW.md`, "Skip"). Mapping a field to a new lead column is a schema
 change (section 3).
@@ -463,9 +466,11 @@ several layers at once:
   checks for automation assignees in `automation_validation.go`, `staffUserProblem`);
 - user management: the `oneof=admin sales support customer custom` binding in
   `internal/handler/user_handler.go:39,56`; registration always creates `customer`;
-- the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,499` and
-  `src/api/endpoints/users.ts:18,25`, `ProtectedRoute` guards in `src/routes/index.tsx`, and `roles`
-  on nav entries in `MainLayout.tsx`.
+- the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,525` and
+  `src/api/endpoints/users.ts:18,25`, and the system-role fixture the UI tests are fed from
+  (`src/permissions/systemRoleFixture.ts`, compared with the golden matrix by
+  `systemRoleFixture.test.ts`). Routes, navigation and buttons read permission keys, not role
+  names (`src/permissions/noRoleGating.test.ts` fails on a role-name gate).
 
 Measured on 4dfe404: 28 non-test Go files reference `models.Role`
 (`command grep -rl "models\.Role" internal cmd --include='*.go' | command grep -v _test.go | wc -l`)
@@ -480,8 +485,9 @@ Recipe:
 3. Add the constant, then walk every hit of both greps above, plus the role's matrix in
    `internal/permissions/system_roles.go` and the helpers of `permission_context.go` (handlers no
    longer read `user_role` themselves), and decide each one explicitly.
-4. Extend the handler role tests and the frontend `ProtectedRoute` and nav tests
-   (`src/routes/index.test.tsx`).
+4. Extend the handler role tests, add the role to the frontend system-role fixture
+   (`src/permissions/systemRoleFixture.ts`) and extend the per-role route and nav tests
+   (`src/routes/index.test.tsx`, `src/layouts/MainLayout.test.tsx`).
 5. Keep public registration creating `customer` only, and keep elevated roles coming only from
    `POST /users` or `cmd/create-admin`.
 
@@ -514,7 +520,7 @@ it is the cleanest removal.
 | Configuration | `AEOConfig` and its block (`internal/config/config.go:135,317`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
-| Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:319-346`), the AEO nav group (`MainLayout.tsx`, from line 161), the AEO case in `ConfigurationSettings.test.tsx` |
+| Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:466-491`, the `aeo.view` guard), the AEO nav group (`MainLayout.tsx`, from line 169), the AEO case in `ConfigurationSettings.test.tsx` |
 | Tests and CI | AEO tests; `aeo-providers.spec.ts`; screenshot spec `10-aeo.spec.ts`; the `aeo` profile, `AEO_REQUIRED_ROOTS` and the `aeo` entry in `validation.py` (imported by `scripts/ci/check-go.py:7`); the AEO port and variables in `scripts/e2e/run.sh`; `internal/aeo/tls_roots_e2e.go` goes with the package |
 | Docs | `docs/AEO_SECURITY.md`, `docs/testing/11-aeo.md`, README and FEATURES sections |
 

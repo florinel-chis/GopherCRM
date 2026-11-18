@@ -6,7 +6,7 @@ import { Add as AddIcon, Search as SearchIcon } from '@mui/icons-material';
 import { DataTable, type Column } from '@/components/DataTable';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { companiesApi, type CompanyFilters } from '@/api/endpoints';
 import type { Company } from '@/types';
@@ -27,13 +27,14 @@ interface ListState {
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   // Mirrors the API policy: admin and sales write, only admin deletes;
   // support reads.
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
+  const canCreate = can('companies.create');
+  const canUpdate = can('companies.update');
+  const canDelete = can('companies.delete');
 
   const [state, setState] = useState<ListState>({ page: 1, limit: 10, search: '' });
   const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; company?: Company }>({
@@ -129,7 +130,7 @@ export const Component: React.FC = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Companies</Typography>
-        {canWrite && (
+        {canCreate && (
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -173,7 +174,7 @@ export const Component: React.FC = () => {
         onPageChange={handlePageChange}
         onRowsPerPageChange={handleRowsPerPageChange}
         onRowClick={(company) => navigate(`/companies/${company.id}`)}
-        onEdit={canWrite ? (company) => navigate(`/companies/${company.id}/edit`) : undefined}
+        onEdit={canUpdate ? (company) => navigate(`/companies/${company.id}/edit`) : undefined}
         onDelete={canDelete ? (company) => setDeleteDialog({ open: true, company }) : undefined}
       />
 

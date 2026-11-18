@@ -78,7 +78,7 @@ gating); where the two disagree, that disagreement gets its own case.
   populated `customer` object. Assert `N/A` *and* assert (via `page.waitForResponse`) that the
   `GET /tickets` payload contains `tickets[].customer.company` with the expected company name — the
   data is present, only the rendering is wrong.
-- **Known issue:** `TicketList.tsx:142` formats the column as `value?.company_name`, but the backend
+- **Known issue:** `TicketList.tsx:144` formats the column as `value?.company_name`, but the backend
   serialises the field as `company` (`internal/models/customer.go:9`) and
   `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts:46`) does not map the nested
   customer the way `transformCustomerFromBackend` (`endpoints/customers.ts:31`) does. Same root
@@ -108,8 +108,10 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Confirm the left navigation shows a **Tickets** item.
   2. Click it.
 - **Expected:** The nav item is present (`MainLayout.tsx` gives the Tickets entry
-  `roles: ['admin','sales','support']` since #241, matching the API) and opens `/tickets`, which has
-  no `ProtectedRoute requiredRole` in `routes/index.tsx`; `GET /tickets` returns 200 for sales
+  `permission: 'tickets.view'`, held by admin, sales and support, matching the API) and opens
+  `/tickets`, which since #380 sits under
+  `ProtectedRoute requiredPermission={['tickets.view', 'tickets.view_own_customer']}` in
+  `routes/index.tsx` (every system role holds one of the two); `GET /tickets` returns 200 for sales
   (`TicketHandler.List` rejects only the `customer` role). The table renders every ticket. The
   "Create Ticket" button is hidden and rows expose neither Edit nor Delete
   (`TicketList.tsx` `canCreate`/`canEdit`/`canDelete`).
@@ -126,7 +128,7 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** The API returns **403** with `error.message` "Customers cannot list all tickets"
   (`ticket_handler.go` List). The page still renders the "Tickets" heading, the filter bar and the
   table header, with zero body rows and no error message: `client.ts` has no 403 branch, and
-  `TicketList.tsx:313` falls back to `data?.data || []`. The "Create Ticket" button is hidden.
+  `TicketList.tsx:315` falls back to `data?.data || []`. The "Create Ticket" button is hidden.
 - **Known issue:** A 403 is silently indistinguishable from "no tickets exist"; the pattern is
   pinned by `TicketList.test.tsx` "handles API errors gracefully", which asserts only the header row
   survives.
@@ -150,7 +152,7 @@ gating); where the two disagree, that disagreement gets its own case.
   "Create Ticket" button **is** visible (support may create) and every row offers Edit, but not
   Delete.
 - **Known issue:** The row-level Edit affordance is granted to all support users
-  (`TicketList.tsx:90` sets `canEdit = canCreate`), while the API only permits editing one's own
+  (`TicketList.tsx:92` sets `canEdit = canCreate`), while the API only permits editing one's own
   assignments — see TC-TICK-023.
 - **Automation:** API half automated — `TestTicketListVisibility{SQLite,MySQL}` in
   `internal/integration/ticket_visibility_integration_test.go`; UI half planned —
@@ -301,7 +303,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Navigate to `/tickets`; confirm "Create Ticket" is visible; click it.
   2. Observe the Customer and the "Assign to Support Agent (Optional)" pickers.
   3. Fill subject, description, select a customer, submit.
-- **Expected:** `/tickets/new` renders — `ProtectedRoute requiredRole={['admin','support']}`
+- **Expected:** `/tickets/new` renders — `ProtectedRoute requiredPermission="tickets.create"`
   admits support. The Customer picker is populated (`GET /customers` has no role guard). The agent
   picker is **empty**: `GET /users` is `RequireRole(admin)` (`routes.go:13`) and returns 403 for
   support. Submitting still yields **201** and the ticket is assigned to the creating support user
@@ -318,7 +320,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Navigate directly to `/tickets/new`.
   2. Separately, issue `POST /api/v1/tickets` with the sales user's bearer token via
      `request.post()`.
-- **Expected:** The SPA redirects to `/unauthorized` (`ProtectedRoute.tsx:35`,
+- **Expected:** The SPA redirects to `/unauthorized` (`ProtectedRoute.tsx:36`,
   `<Navigate to="/unauthorized" replace />`) and the form never mounts. The direct API call returns
   **403** with "Only support and admin users can create tickets" (`ticket_handler.go` Create); note
   the handler rejects *before* binding the body, so a malformed payload also yields 403, not 400.
@@ -464,11 +466,11 @@ gating); where the two disagree, that disagreement gets its own case.
   3. Also open `/tickets/<B>` and inspect the header buttons.
 - **Expected:** Ticket A: `PUT` returns 200 and the app navigates back to `/tickets`. Ticket B: the
   row-level Edit icon **is** offered and `/tickets/<B>/edit` renders (the route guard only checks
-  the role), but the `PUT` returns **403** "You can only update tickets assigned to you"
+  that `tickets.update` is held, at either scope), but the `PUT` returns **403** "You can only update tickets assigned to you"
   (`ticket_handler.go` Update); the UI shows "Failed to update ticket" and stays on the form. On
-  `/tickets/<B>` neither Edit nor Delete is rendered (`TicketDetail.tsx:125-130`) — but see
+  `/tickets/<B>` neither Edit nor Delete is rendered (`TicketDetail.tsx:129-134`) — but see
   TC-TICK-027, that page never finishes loading for this user anyway.
-- **Known issue:** The list-level affordance (`TicketList.tsx:90`) is coarser than the API rule;
+- **Known issue:** The list-level affordance (`TicketList.tsx:92`) is coarser than the API rule;
   only the detail page mirrors it.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
@@ -482,7 +484,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. As sales, `PUT /api/v1/tickets/<id>` directly with a valid body.
   3. Repeat both as the customer-role user.
 - **Expected:** Both roles are redirected to `/unauthorized` by
-  `ProtectedRoute requiredRole={['admin','support']}`. The direct `PUT` returns **403** with
+  `ProtectedRoute requiredPermission="tickets.update"` (neither role holds the key). The direct `PUT` returns **403** with
   "Sales users cannot update tickets" for sales and "Customers cannot update tickets" for the
   customer role; both checks run before the body is bound and before the ticket is looked up, so a
   non-existent id still yields 403 rather than 404.
@@ -504,7 +506,7 @@ gating); where the two disagree, that disagreement gets its own case.
   (`first_name last_name`), not the user who created the ticket. "Assigned To" is correct.
   `docs/screenshots/tickets/03-detail.png` captures exactly this state: `Customer: N/A` beside
   `Created By: Gregg Nader`.
-- **Known issue:** Two separate defects. (a) `TicketDetail.tsx:183` reads
+- **Known issue:** Two separate defects. (a) `TicketDetail.tsx:182` reads
   `ticket.customer?.company_name`, which the backend never sends — it sends `company`
   (`internal/models/customer.go:9`); the association *is* preloaded
   (`ticket_repository.go` `GetByID` does `Preload("Customer")`), so the screenshot's `N/A` is a
@@ -524,7 +526,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Navigate to `/tickets/999999`.
 - **Expected:** Case 1: `GET /tickets/<id>` returns **403** "You can only view tickets assigned to
   you" (`ticket_handler.go` Get). Case 2: **404** "Ticket not found". In both cases the page shows
-  the loading spinner indefinitely and never renders an error: `TicketDetail.tsx:118` short-circuits
+  the loading spinner indefinitely and never renders an error: `TicketDetail.tsx:125` short-circuits
   on `isLoading || !ticket`, and a failed query leaves `ticket` undefined forever. Assert the
   spinner is still present after the query has settled and that no ticket heading appears.
 - **Known issue:** No 403/404 surface on the detail route; the same trap applies to a customer-role
@@ -562,8 +564,10 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** admin → Edit + Delete. S → Edit only. S2 → neither (and the page never leaves the
   spinner, per TC-TICK-027). sales → neither. customer-role → neither, and the request 403s unless
   the ticket belongs to their own customer record. The rule is
-  `canEdit = admin || (support && assigned_to_id === user.id)`, `canDelete = admin`
-  (`TicketDetail.tsx:125-130`), mirrored by `TicketDetail.test.tsx` (6 unit tests).
+  `canEdit` = `tickets.update` at scope all (admin), or at scope own (support) when
+  `assigned_to_id === user.id`; `canDelete` = `tickets.delete` (admin)
+  (`TicketDetail.tsx:129-134`), mirrored by `TicketDetail.test.tsx` (6 unit tests) and, for custom
+  permission lists, `TicketDetail.permissions.test.tsx`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
 ---
@@ -609,8 +613,8 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Steps:**
   1. As each non-admin role, load `/tickets` and `/tickets/<id>` and look for delete controls.
   2. As each, issue `DELETE /api/v1/tickets/<id>` directly.
-- **Expected:** No delete icon anywhere for any non-admin (`canDelete = user?.role === 'admin'` in
-  both `TicketList.tsx:91` and `TicketDetail.tsx:130`). Every direct `DELETE` returns **403**
+- **Expected:** No delete icon anywhere for any non-admin (`canDelete = can('tickets.delete')` in
+  both `TicketList.tsx:90` and `TicketDetail.tsx:134`). Every direct `DELETE` returns **403**
   "Only administrators can delete tickets" — including for the support user the ticket is assigned
   to, and including for a non-existent id, because the role check precedes the id parse
   (`ticket_handler.go` Delete). The ticket still exists afterwards.
@@ -808,7 +812,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   1. Navigate to `/tickets`; click the "Subject" column header, then click it again.
   2. Repeat for "Status", "Priority", "Created" and "Last Updated".
 - **Expected:** The first click issues `sort_by=title&sort_order=asc` (the UI maps `subject` →
-  `title`, `TicketList.tsx:211-219`), the second `sort_order=desc`, and the rows reorder accordingly.
+  `title`, `TicketList.tsx:213-221`), the second `sort_order=desc`, and the rows reorder accordingly.
   `created_at`, `updated_at`, `title`, `status` and `priority` are the whole allowlist in
   `TicketHandler.List`; the repository routes them through `utils.SafeOrderClause`. Sorting also
   resets to page 1.
@@ -909,7 +913,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   1. Open `/customers/<A>` and switch to the Tickets tab.
   2. Look for customer B's ticket in the list.
 - **Expected:** Customer B's ticket **is** listed under customer A. The page calls
-  `ticketsApi.getTickets({ customer_id })` (`CustomerDetail.tsx:80-82`), i.e.
+  `ticketsApi.getTickets({ customer_id })` (`CustomerDetail.tsx:83-85`), i.e.
   `GET /tickets?customer_id=<id>` — and `customer_id` is not among the query parameters
   `TicketHandler.List` reads, so it is ignored and every ticket comes back. The purpose-built
   `GET /customers/:id/tickets` route is never called by the frontend.

@@ -19,7 +19,7 @@ import { Cancel as CancelIcon } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { automationApi } from '@/api/endpoints';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { isActiveRunStatus } from '@/types';
 import { DATE_FALLBACK, formatDate } from '@/utils/date';
@@ -50,9 +50,10 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const runId = Number(id);
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
-  const isAdmin = user?.role === 'admin';
+  const canCancelRuns = can('automation.runs_cancel');
+  const canManageRules = can('automation.rules_manage');
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   const { data: run, isLoading, error, refetch, isFetching } = useQuery({
@@ -115,7 +116,7 @@ export const Component: React.FC = () => {
   }
 
   const ruleText = `${runRuleLabel(run)} · version ${run.rule_version}`;
-  const canCancel = isAdmin && isActiveRunStatus(run.status);
+  const canCancel = canCancelRuns && isActiveRunStatus(run.status);
   const steps = run.steps ?? [];
 
   return (
@@ -143,7 +144,7 @@ export const Component: React.FC = () => {
         <Grid container spacing={2}>
           <Fact label="Rule">
             {/* A deleted rule has no editor page to link to. */}
-            {isAdmin && !run.rule_deleted ? (
+            {canManageRules && !run.rule_deleted ? (
               <Link component={RouterLink} to={`/automation/rules/${run.rule_id}/edit`}>
                 {ruleText}
               </Link>

@@ -7,6 +7,7 @@ import { createProductionQueryClient } from '@/test/productionQueryClient';
 import { isInvalidated, withClient } from '@/test/dealQueryCache';
 import { notificationKeys } from '@/pages/automation/automationQueries';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/api/endpoints/notifications', () => ({
   notificationsApi: {
@@ -30,6 +31,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

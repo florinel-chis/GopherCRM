@@ -5,6 +5,7 @@ import type { RouteObject } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 // Regression tests for the admin routes bug: routes used to define BOTH a
 // static `element` (a hardcoded placeholder like <div>Users List (Admin only)</div>)
@@ -53,6 +54,7 @@ const setAuth = (user: User | null, loading: boolean) => {
 
 const authValue = () => ({
   user: authUser,
+  permissions: permissionsOf(authUser),
   isLoading: authLoading,
   isAuthenticated: !authLoading && authUser !== null,
   login: vi.fn(),
@@ -692,16 +694,27 @@ describe('lead and customer creation routes', () => {
     }
   }, 90000);
 
-  it('keep the customer list reachable for support and customer users', async () => {
-    for (const role of ['support', 'customer'] as const) {
-      setAuth(createMockUser({ role }), false);
+  it('keep the customer list reachable for support, redirect customer users, and redirect support from the customer edit form', async () => {
+    setAuth(createMockUser({ role: 'support' }), false);
+    const list = renderAt('/customers');
+    expect(await list.findByRole('heading', { name: 'Customers' }, { timeout: 15000 })).toBeInTheDocument();
+    expect(list.queryByText('Access Denied')).not.toBeInTheDocument();
+    list.unmount();
 
-      const view = renderAt('/customers');
+    // The customer role holds no customers.view: the list would only be a
+    // page of refused requests.
+    setAuth(createMockUser({ role: 'customer' }), false);
+    const refused = renderAt('/customers');
+    expect(await refused.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+    expect(refused.queryByRole('heading', { name: 'Customers' })).not.toBeInTheDocument();
+    refused.unmount();
 
-      expect(await view.findByRole('heading', { name: 'Customers' }, { timeout: 15000 })).toBeInTheDocument();
-      expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
-      view.unmount();
-    }
+    // Support reads customers but holds no customers.update.
+    setAuth(createMockUser({ role: 'support' }), false);
+    const edit = renderAt('/customers/1/edit');
+    expect(await edit.findByText('Access Denied', {}, { timeout: 15000 })).toBeInTheDocument();
+    expect(edit.queryByRole('heading', { name: 'Edit Customer' })).not.toBeInTheDocument();
+    edit.unmount();
   }, 60000);
 
   it('hold a deep link on the spinner while the session loads, then render the lead list for sales', async () => {

@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Component as AEODashboard } from './AEODashboard';
 import type { AEODashboard as AEODashboardData } from '@/api/endpoints/aeo';
+import { permissionsOf } from '@/test/permissions';
 
 // recharts' ResponsiveContainer needs ResizeObserver, which jsdom lacks.
 global.ResizeObserver = vi.fn().mockImplementation(() => ({
@@ -23,7 +24,12 @@ vi.mock('@/api/endpoints/aeo', () => ({
 // The header's export controls read the role and report errors through the
 // snackbar; AEODashboard.export.test.tsx covers them.
 vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ user: { id: 1, role: 'admin' }, isLoading: false, isAuthenticated: true }),
+  useAuth: () => ({
+    user: { id: 1, role: 'admin' },
+    permissions: permissionsOf({ role: 'admin' }),
+    isLoading: false,
+    isAuthenticated: true,
+  }),
 }));
 
 vi.mock('@/hooks/useSnackbar', () => ({

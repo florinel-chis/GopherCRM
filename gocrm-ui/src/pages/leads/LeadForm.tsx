@@ -19,6 +19,7 @@ import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { leadsApi, type CreateLeadData, type UpdateLeadData } from '@/api/endpoints';
 import type { Company } from '@/types';
 
@@ -78,6 +79,7 @@ export const Component: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
   const { user } = useAuth();
+  const { can } = usePermissions();
   const isEditMode = !!id;
 
   // The curated link to a Company record, kept next to the free-text
@@ -250,10 +252,11 @@ export const Component: React.FC = () => {
     if (isEditMode) {
       updateMutation.mutate({ id: Number(id), data: { ...data, ...companyIdPatch() } });
     } else {
-      // For admin users, include the owner_id (assign to themselves by default)
+      // A caller holding leads.assign_owner names the owner (itself by
+      // default); the API requires the key once owner_id is sent.
       const createData: CreateLeadData = {
         ...data,
-        ...(user?.role === 'admin' && { owner_id: user.id }),
+        ...(can('leads.assign_owner') && user && { owner_id: user.id }),
         ...companyIdPatch(),
       };
       createMutation.mutate(createData);

@@ -242,7 +242,7 @@ lost deal.
 - Set `deals.default_currency` in Settings (`internal/models/configuration.go:344`).
 - Create the products (admin only) and the sales users. Configure SMTP for quote email.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
-  `gocrm-ui/src/routes/index.tsx:53,161`), both admin and sales. An integration reads the same
+  `gocrm-ui/src/routes/index.tsx:53,213`), both admin and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
   (`internal/handler/routes.go:225`).
 - The quote email subject reads "Quote Q-… from" followed by the `general.company_name` setting,
@@ -340,7 +340,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   customer, assignee and resolution, and nothing else (`Ticket`, `internal/models/ticket.go`).
 - A customer user can read its own ticket at `GET /tickets/:id`, with internal comments removed
   (`internal/handler/ticket_handler.go:384-404`), and `TicketDetail` renders it read-only
-  (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:127-135`). `GET /tickets` and `GET /tickets/my`
+  (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:129-134`). `GET /tickets` and `GET /tickets/my`
   refuse customers (`ticket_handler.go:154,316`), but `GET /customers/:id/tickets` lists the
   tickets of the customer record linked to the caller's account and refuses any other id
   (`internal/handler/routes.go:150`, `ticket_handler.go:248-258`; tested in

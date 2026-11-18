@@ -7,6 +7,7 @@ import { ConfigurationProvider } from '@/contexts/ConfigurationContext';
 import { authApi, configurationsApi } from '@/api/endpoints';
 import { createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
 
@@ -21,6 +22,7 @@ vi.mock('@/api/endpoints', () => ({
 
 const authState = (user: User | null) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: !!user,
   login: vi.fn(),

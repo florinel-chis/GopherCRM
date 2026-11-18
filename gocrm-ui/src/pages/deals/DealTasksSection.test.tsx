@@ -4,6 +4,7 @@ import { DealTasksSection } from './DealTasksSection';
 import { tasksApi } from '@/api/endpoints';
 import { createMockTask, createMockUser } from '@/test/factories';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('@/api/endpoints', () => ({
   tasksApi: {
@@ -21,6 +22,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

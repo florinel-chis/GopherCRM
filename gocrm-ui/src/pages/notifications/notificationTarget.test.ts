@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { notificationTarget } from './notificationTarget';
 import { createMockNotification } from '@/test/factories';
+import { canAs } from '@/test/permissions';
 
 describe('notificationTarget', () => {
   it('maps lead and deal notifications to their detail pages for admin and sales', () => {
@@ -8,8 +9,8 @@ describe('notificationTarget', () => {
     const deal = createMockNotification({ entity_type: 'deal', entity_id: 9 });
 
     for (const role of ['admin', 'sales'] as const) {
-      expect(notificationTarget(lead, role)).toBe('/leads/5');
-      expect(notificationTarget(deal, role)).toBe('/deals/9');
+      expect(notificationTarget(lead, canAs(role))).toBe('/leads/5');
+      expect(notificationTarget(deal, canAs(role))).toBe('/deals/9');
     }
   });
 
@@ -18,9 +19,9 @@ describe('notificationTarget', () => {
     const deal = createMockNotification({ entity_type: 'deal', entity_id: 9 });
 
     for (const role of ['support', 'customer'] as const) {
-      expect(notificationTarget(lead, role)).toBeNull();
-      expect(notificationTarget(deal, role)).toBeNull();
+      expect(notificationTarget(lead, canAs(role))).toBeNull();
+      expect(notificationTarget(deal, canAs(role))).toBeNull();
     }
-    expect(notificationTarget(lead, undefined)).toBeNull();
+    expect(notificationTarget(lead, canAs(undefined))).toBeNull();
   });
 });

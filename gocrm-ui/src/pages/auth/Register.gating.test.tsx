@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Register } from './Register';
+import { permissionsOf } from '@/test/permissions';
 
 const mockGetRegistrationStatus = vi.fn();
 
@@ -15,6 +16,7 @@ vi.mock('@/api/endpoints', () => ({
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     user: null,
+    permissions: permissionsOf(null),
     isLoading: false,
     isAuthenticated: false,
     login: vi.fn(),

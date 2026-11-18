@@ -7,6 +7,7 @@ import { createMockCompany, createMockUser } from '@/test/factories';
 import { pickAutocompleteOption } from '@/test/autocomplete';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User } from '@/types';
+import { permissionsOf } from '@/test/permissions';
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -41,6 +42,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 const authState = (user: User) => ({
   user,
+  permissions: permissionsOf(user),
   isLoading: false,
   isAuthenticated: true,
   login: vi.fn(),

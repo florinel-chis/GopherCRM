@@ -34,7 +34,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
-import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { companiesApi, dealsApi } from '@/api/endpoints';
 import { DealsSection } from '@/pages/deals/DealsSection';
@@ -64,17 +64,18 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { can } = usePermissions();
   const { showSuccess, showError } = useSnackbar();
 
   const companyId = Number(id);
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  const canDelete = user?.role === 'admin';
-  // GET /companies/:id/leads is admin+sales; support has no leads access at
-  // all, so the section is not rendered rather than shown as a 403.
-  const canSeeLeads = user?.role === 'admin' || user?.role === 'sales';
-  // Deals are admin and sales on the API, like leads.
-  const canSeeDeals = canSeeLeads;
+  const canUpdate = can('companies.update');
+  const canDelete = can('companies.delete');
+  const canAddCustomer = can('customers.create');
+  // GET /companies/:id/leads needs leads.view; without it the section is
+  // not rendered rather than shown as a 403. The deals section likewise.
+  const canSeeLeads = can('leads.view');
+  const canSeeDeals = can('deals.view');
+  const canCreateDeal = can('deals.create');
 
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [customersPage, setCustomersPage] = useState({ page: 0, limit: 5 });
@@ -136,7 +137,7 @@ export const Component: React.FC = () => {
           {company.employee_range && <Chip label={`${company.employee_range} employees`} />}
         </Box>
         <Box display="flex" gap={1}>
-          {canWrite && (
+          {canUpdate && (
             <Button
               variant="outlined"
               startIcon={<EditIcon />}
@@ -249,7 +250,7 @@ export const Component: React.FC = () => {
           <Typography variant="h6" id="company-customers-heading">
             Customers{company.customer_count !== undefined && ` (${company.customer_count})`}
           </Typography>
-          {canWrite && (
+          {canAddCustomer && (
             <Button
               variant="outlined"
               size="small"
@@ -357,7 +358,7 @@ export const Component: React.FC = () => {
           queryKey={['company', id, 'deals']}
           fetchDeals={(params) => dealsApi.getCompanyDeals(companyId, params)}
           newDealPath={`/deals/new?company_id=${company.id}`}
-          canWrite={canWrite}
+          canWrite={canCreateDeal}
           headingId="company-deals-heading"
           emptyText="No deals for this company"
         />
