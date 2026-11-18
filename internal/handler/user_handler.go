@@ -27,8 +27,8 @@ type CreateUserRequest struct {
 	// Login email address; must be valid and not used by any account (409).
 	Email string `json:"email" binding:"required,email" format:"email" example:"sam.sales@example.com"`
 	// Initial password: at least 10 characters with an uppercase letter, a
-	// lowercase letter, a digit and a special character. More than 72 bytes is
-	// answered with 400 (bcrypt limit).
+	// lowercase letter, a digit and a special character. At most 72 bytes (the
+	// bcrypt limit); a longer password is answered with 400.
 	Password string `json:"password" binding:"required,min=10" minLength:"10" example:"Str0ng!Passw0rd"`
 	// Given name; required, non-empty.
 	FirstName string `json:"first_name" binding:"required" example:"Sam"`
@@ -120,7 +120,7 @@ type UpdateMeRequest struct {
 
 // Create godoc
 // @Summary Create a user
-// @Description Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character. No mail is sent; the new user signs in with the password the caller chose.
+// @Description Needs users.create (route guard; the admin system role holds it). Creates an active account with the requested role, unlike the public POST /auth/register, which always creates a customer. role custom needs role_id, the id of a custom role, and any other role forbids it. A caller without users.assign_role can only create a customer: any other role is 403 FORBIDDEN, answered before role_id is looked at. Password policy: at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character, and at most 72 bytes. No mail is sent; the new user signs in with the password the caller chose.
 // @Description The account is written in one transaction that locks the caller's account and the custom role, reads the caller's permissions again and applies the escalation rule: a caller that is not on the admin system role cannot give a role whose permissions are above its own (a missing permission, or all where it holds own). The customer role never counts as above the caller. The role the account is created with is recorded in the role audit log (user_role_changed) in the same transaction.
 // @Tags users
 // @Accept json
@@ -129,12 +129,13 @@ type UpdateMeRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateUserRequest true "New account"
 // @Success 201 {object} utils.APIResponse{data=models.User} "User created"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password fails the complexity policy, or the user could not be stored (the underlying message is returned, e.g. a password over 72 bytes). INVALID_ROLE_ASSIGNMENT: role custom without role_id, role_id with any other role, or a role_id that names a system role"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: a required field is missing, email is invalid, password is shorter than 10 characters or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format), the password is longer than 72 bytes (password must be at most 72 bytes long; checked first), or it fails the complexity policy. INVALID_ROLE_ASSIGNMENT: role custom without role_id, role_id with any other role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold users.create, or asks for a role other than customer without users.assign_role (Insufficient permissions), also when it lost the permission while the request waited. ROLE_ESCALATION: the requested role's permissions are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "ROLE_NOT_FOUND: role_id names no role"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: an account already uses this email"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the user could not be stored (the cause is logged, never returned); nothing was written"
 // @Router /users [post]
 func (h *UserHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.Create")
@@ -145,7 +146,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		return
 	}
 
-	if err := utils.ValidatePasswordComplexity(req.Password); err != nil {
+	if err := utils.ValidateNewPassword(req.Password); err != nil {
 		utils.RespondBadRequest(c, err.Error())
 		return
 	}
@@ -172,12 +173,19 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	if err := h.userService.CreateAs(c.Request.Context(), requestActor(c), user, req.Password); err != nil {
-		logger.WithError(utils.LogError(err)).Warn("Failed to create user")
 		if errors.Is(err, apperrors.ErrDuplicateEmail) {
+			logger.WithError(utils.LogError(err)).Warn("Failed to create user")
 			utils.RespondConflict(c, "user with this email already exists")
-		} else if !respondRoleGovernanceError(c, err) {
-			utils.RespondBadRequest(c, err.Error())
+			return
 		}
+		if respondRoleGovernanceError(c, err) {
+			logger.WithError(utils.LogError(err)).Warn("Failed to create user")
+			return
+		}
+		// Anything else is a failure of the store, not of the request: the
+		// detail goes to the log and the client gets the generic answer.
+		logger.WithError(utils.LogError(err)).Error("Failed to create user")
+		utils.RespondInternalError(c)
 		return
 	}
 

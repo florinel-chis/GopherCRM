@@ -338,6 +338,34 @@ func (suite *AuthHandlerTestSuite) TestRegister_DuplicateEmail_Conflict() {
 	assert.False(suite.T(), response.Success)
 }
 
+// A user that cannot be stored is a failure of the server: 500 with the
+// generic message, never the service error text.
+func (suite *AuthHandlerTestSuite) TestRegister_StoreFailure_InternalError() {
+	suite.mockUserService.On("Register", mock.AnythingOfType("*models.User"), "SecurePass1!").
+		Return(errors.New("Error 1213: Deadlock found when trying to get lock; INSERT INTO users"))
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"email":      "store@example.com",
+		"password":   "SecurePass1!",
+		"first_name": "Store",
+		"last_name":  "Failure",
+	})
+	req := httptest.NewRequest("POST", "/auth/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(w, req)
+
+	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)
+	var response utils.APIResponse
+	suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &response))
+	suite.Require().NotNil(response.Error)
+	assert.Equal(suite.T(), "INTERNAL_ERROR", response.Error.Code)
+	assert.Equal(suite.T(), "An unexpected error occurred", response.Error.Message)
+	assert.NotContains(suite.T(), w.Body.String(), "Deadlock")
+	suite.mockAuthService.AssertNotCalled(suite.T(), "GenerateJWT", mock.Anything)
+}
+
 func (suite *AuthHandlerTestSuite) TestRegister_WeakPassword_BadRequest() {
 	requestBody := map[string]interface{}{
 		"email":      "weak@example.com",

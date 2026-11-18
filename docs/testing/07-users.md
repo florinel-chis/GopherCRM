@@ -410,6 +410,52 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can handle duplicate
   email validation"
 
+### TC-USER-043 — Reject a password longer than 72 bytes
+- **Priority:** P1
+- **Type:** validation
+- **Preconditions:** Admin bearer token.
+- **Steps:**
+  1. `POST /users` with a valid body whose password is policy-compliant and 73 bytes long
+     (`Aa1!` followed by 69 `x`).
+  2. Repeat with `Aa1!` followed by 35 `é` (39 characters, 74 bytes).
+  3. Repeat with a 72-byte password (`Aa1!` followed by 68 `x`).
+- **Expected:** Steps 1 and 2 return **400** with `error.code = BAD_REQUEST` and
+  `error.message = "password must be at most 72 bytes long"`; the length is counted in bytes and
+  checked in the handler before the complexity policy and before the service is called, so no
+  account is created. A password that is both weak and over 72 bytes gets the same length
+  message. Step 3 returns **201**. `POST /auth/register`, `POST /auth/change-password` and
+  `POST /auth/password-reset/confirm` give the identical answer (see TC-AUTH-037a for the reset
+  link, which is not spent). `PUT /users/<id>` ignores a `password` key and `PUT /users/me`
+  refuses one with `PASSWORD_FIELD_NOT_ACCEPTED`, so neither has a length answer. The SPA forms
+  set no upper bound and show the server message.
+- **Automation:** automated — `internal/handler/auth_password_length_test.go`
+  `TestPasswordLengthLimit` (the four routes, mocked services), `internal/utils/password_test.go`
+  `TestValidateNewPassword`, and the control subtest of `tests/auth_user_write_errors_test.go`
+  `TestUserWriteFailureIsInternalError` (real stack: 72 bytes stored, 73 refused, row count
+  unchanged). No browser case.
+
+### TC-USER-044 — A user that cannot be stored is a 500 without the database error
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** Admin bearer token; the insert into `users` fails in the database.
+- **Steps:**
+  1. `POST /users` with a valid body while the insert fails (a deadlock that is replayed and
+     abandoned, or an error that is not retried).
+  2. `POST /auth/register` with a valid body under the same failure.
+- **Expected:** Both return **500** with `error.code = INTERNAL_ERROR` and
+  `error.message = "An unexpected error occurred"`; the body carries no driver text (no error
+  number, no statement, no table name) and no trace of the retries. The handler logs one
+  error-level entry with the redacted cause and no warning. No account is created. A duplicate
+  email stays **409** `CONFLICT` (logged as a warning), a weak password **400** `BAD_REQUEST`,
+  and the role refusals of `POST /users` keep their codes (`ROLE_NOT_FOUND`, `FORBIDDEN`,
+  `ROLE_ESCALATION`, `INVALID_ROLE_ASSIGNMENT`).
+- **Automation:** automated — `tests/auth_user_write_errors_test.go`
+  `TestUserWriteFailureIsInternalError` (real handlers, services and repositories on SQLite with
+  the role governance wired; the insert is failed by a GORM callback);
+  `internal/handler/user_handler_test.go` `TestCreate_ServiceErrorMapping` and
+  `internal/handler/auth_handler_test.go` `TestRegister_StoreFailure_InternalError` pin the
+  order duplicate, governance refusal, 500.
+
 ### TC-USER-023 — Abandon the create form
 - **Priority:** P2
 - **Type:** functional
