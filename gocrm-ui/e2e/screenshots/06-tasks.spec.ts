@@ -113,12 +113,12 @@ test.describe('Screenshots - Tasks', () => {
 
   test('05 - delete confirmation', async ({ page }) => {
     await createTask(page, tasksPage, generateTaskData());
-    await createTask(page, tasksPage, generateTaskData());
+    const task = await createTask(page, tasksPage, generateTaskData());
 
     await tasksPage.goto();
     await tasksPage.tableRows.first().waitFor({ state: 'visible' });
 
-    await tasksPage.clickDeleteOnRow(0);
+    await tasksPage.clickDeleteOnRow(task.title);
 
     const dialog = page.getByRole('dialog', { name: 'Delete Task' });
     await expect(dialog).toBeVisible();

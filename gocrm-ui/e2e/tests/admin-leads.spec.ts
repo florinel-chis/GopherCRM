@@ -47,7 +47,7 @@ test.describe('Admin - Leads Management', () => {
     await leadsPage.goto();
     await leadsPage.searchLeads(originalLeadData.companyName);
     await expect(leadsPage.tableRows).toHaveCount(1);
-    await leadsPage.editLead(0);
+    await leadsPage.editLead(originalLeadData.companyName);
 
     await leadsPage.companyNameInput.clear();
     await leadsPage.companyNameInput.fill(updatedCompany);
@@ -96,7 +96,7 @@ test.describe('Admin - Leads Management', () => {
     await expect(ownRow).toHaveCount(1);
     await expect(leadsPage.tableRows).toHaveCount(1);
 
-    await leadsPage.deleteLead(0);
+    await leadsPage.deleteLead(leadData.companyName);
     // The delete invalidates the narrowed query; the old row stays rendered
     // until the refetch lands, so this retrying check proves it is gone.
     await expect(ownRow).toHaveCount(0);
@@ -226,25 +226,30 @@ test.describe('Admin - Leads Management', () => {
   });
 
   test('admin can navigate between leads efficiently', async ({ page }) => {
-    // Create multiple leads
-    for (let i = 0; i < 2; i++) {
-      const leadData = { ...generateLeadData(), contactName: `TestLead${i}` };
+    // Two leads of this test's own. Neither company name contains the other:
+    // the list search and the row filter both match substrings.
+    const stamp = Date.now();
+    const leads: { companyName: string; id: number }[] = [];
+    for (const letter of ['A', 'B']) {
+      // The generated two-word contact name is kept: the API answers 400 to
+      // a contact without a last name.
+      const leadData = { ...generateLeadData(), companyName: `E2E Nav ${letter} ${stamp}` };
       await leadsPage.goto();
       await leadsPage.clickNewLead();
       await leadsPage.fillLeadForm(leadData);
-      await leadsPage.saveLead();
+      const response = await leadsPage.saveAndWaitForResponse();
+      expect(response.status()).toBe(201);
+      const id = (await response.json())?.data?.id;
+      expect(typeof id).toBe('number');
+      leads.push({ companyName: leadData.companyName, id });
     }
+    expect(leads[0].id).not.toBe(leads[1].id);
 
-    await leadsPage.goto();
-    await leadsPage.viewLead(0);
-    const firstLeadUrl = page.url();
-
-    await leadsPage.goto();
-    await leadsPage.viewLead(1);
-    const secondLeadUrl = page.url();
-
-    expect(firstLeadUrl).not.toBe(secondLeadUrl);
-    expect(firstLeadUrl).toMatch(/\/leads\/\d+$/);
-    expect(secondLeadUrl).toMatch(/\/leads\/\d+$/);
+    // Each detail page opened from the list is the lead that was created.
+    for (const lead of leads) {
+      await leadsPage.goto();
+      await leadsPage.viewLead(lead.companyName);
+      await expect(page).toHaveURL(new RegExp(`/leads/${lead.id}$`));
+    }
   });
 });

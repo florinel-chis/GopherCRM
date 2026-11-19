@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Locator, Page, expect } from '@playwright/test';
 
 export class LeadsPage {
   readonly page: Page;
@@ -128,36 +128,44 @@ export class LeadsPage {
     return await responsePromise;
   }
 
-  async editLead(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const editBtn = row.locator('[data-testid="EditIcon"]').first();
-    if (await editBtn.isVisible()) {
-      await editBtn.click();
-    } else {
-      await row.locator('button').nth(1).click();
-    }
+  /**
+   * Narrows the list to one record and returns its row.
+   *
+   * The list is paginated and server-sorted and every run adds records, so a
+   * row's position says nothing about which record it holds. A test that acts
+   * on the record it created passes a value only that record carries
+   * (its company name); the list is searched for it and the matching row comes back.
+   */
+  async rowMatching(uniqueText: string): Promise<Locator> {
+    await this.searchLeads(uniqueText);
+    const row = this.tableRows.filter({ hasText: uniqueText }).first();
+    await expect(row).toBeVisible({ timeout: 10000 });
+    return row;
+  }
+
+  /**
+   * Clicks one of a row's action icons, addressed by its test id through a
+   * retrying expectation: the table can render before its rows paint, and a
+   * missing icon must fail the test instead of sending the click elsewhere.
+   */
+  private async clickRowAction(row: Locator, iconTestId: string) {
+    const button = row.locator(`[data-testid="${iconTestId}"]`).first();
+    await expect(button).toBeVisible({ timeout: 10000 });
+    await button.click();
+  }
+
+  async editLead(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'EditIcon');
     await this.page.waitForURL('**/leads/**/edit');
   }
 
-  async viewLead(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const viewBtn = row.locator('[data-testid="VisibilityIcon"]').first();
-    if (await viewBtn.isVisible()) {
-      await viewBtn.click();
-    } else {
-      await row.locator('button').nth(0).click();
-    }
-    await this.page.waitForURL('**/leads/**');
+  async viewLead(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'VisibilityIcon');
+    await this.page.waitForURL(/\/leads\/\d+$/);
   }
 
-  async clickDeleteOnRow(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const deleteBtn = row.locator('[data-testid="DeleteIcon"]').first();
-    if (await deleteBtn.isVisible()) {
-      await deleteBtn.click();
-    } else {
-      await row.locator('button').last().click();
-    }
+  async clickDeleteOnRow(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'DeleteIcon');
   }
 
   /**
@@ -180,10 +188,15 @@ export class LeadsPage {
     await this.deleteDialog.waitFor({ state: 'hidden' });
   }
 
-  async deleteLead(rowIndex: number = 0) {
-    const initialCount = await this.getLeadCount();
-
-    await this.clickDeleteOnRow(rowIndex);
+  /**
+   * Deletes the matching lead and waits for the dialog to close.
+   *
+   * The row count is not the completion signal: the list is paginated, so on
+   * a full page the deleted row is replaced by the next record and the count
+   * never drops.
+   */
+  async deleteLead(uniqueText: string) {
+    await this.clickDeleteOnRow(uniqueText);
 
     // Set up response listener before clicking confirm
     const responsePromise = this.page.waitForResponse(
@@ -197,16 +210,8 @@ export class LeadsPage {
       throw new Error(`Delete failed with status ${response.status()}`);
     }
 
+    await this.deleteDialog.waitFor({ state: 'hidden' });
     await this.page.waitForLoadState('networkidle');
-
-    // Wait for count to decrease
-    let attempts = 0;
-    while (attempts < 10) {
-      const currentCount = await this.getLeadCount();
-      if (currentCount < initialCount) break;
-      await this.page.waitForTimeout(500);
-      attempts++;
-    }
   }
 
   async searchLeads(searchTerm: string) {
@@ -231,25 +236,6 @@ export class LeadsPage {
     } catch {
       return 0;
     }
-  }
-
-  async getLeadData(rowIndex: number = 0): Promise<{
-    companyName: string;
-    contactName: string;
-    email: string;
-    phone: string;
-    status: string;
-  }> {
-    const row = this.tableRows.nth(rowIndex);
-    const cells = row.locator('td');
-
-    return {
-      companyName: await cells.nth(0).textContent() || '',
-      contactName: await cells.nth(1).textContent() || '',
-      email: await cells.nth(2).textContent() || '',
-      phone: await cells.nth(3).textContent() || '',
-      status: await cells.nth(4).textContent() || '',
-    };
   }
 
   async getErrorMessage(): Promise<string | null> {

@@ -47,7 +47,7 @@ test.describe('Admin - Tasks Management', () => {
     await tasksPage.goto();
     await tasksPage.searchTasks(originalTaskData.title);
     await expect(tasksPage.tableRows).toHaveCount(1);
-    await tasksPage.editTask(0);
+    await tasksPage.editTask(originalTaskData.title);
 
     await tasksPage.titleInput.clear();
     await tasksPage.titleInput.fill(updatedTitle);
@@ -89,9 +89,10 @@ test.describe('Admin - Tasks Management', () => {
     // its own records, and the list is not ordered newest-first.
     await tasksPage.goto();
     await tasksPage.searchTasks(taskData.title);
-    await expect(tasksPage.taskRow(taskData.title)).toBeVisible();
+    await expect(tasksPage.taskRow(taskData.title)).toHaveCount(1);
+    await expect(tasksPage.tableRows).toHaveCount(1);
 
-    await tasksPage.deleteTask(0);
+    await tasksPage.deleteTask(taskData.title);
 
     await expect(tasksPage.taskRow(taskData.title)).toHaveCount(0);
   });

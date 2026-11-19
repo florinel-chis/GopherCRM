@@ -745,6 +745,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The leads, tasks, tickets and users E2E page objects act on the row that matches a value
+  unique to the test (#401).** Edit, view and delete take that value (lead company, task title,
+  ticket subject, user email), search the list for it and click the action icon through a
+  retrying expectation, as the customers page object already did. The index-based actions, the
+  one-shot visibility check and the positional button fallback behind it are removed, and so are
+  the unused positional row readers. The specs open and assert the record they created; the
+  ticket cases that need a seeded ticket stay `fixme`. Test code only: the product does not
+  change.
 - **The backend image prints quotes with `chrome-headless-shell` instead of the full Chromium
   (#393).** What a quote PDF looks like does not change, and a full Chrome or Chromium named
   by `QUOTE_PDF_CHROME_PATH` keeps working: the server starts both kinds of binary with the
