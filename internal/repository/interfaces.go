@@ -786,6 +786,11 @@ type UserIdentityRepository interface {
 	GetByIssuerSubject(issuer, subject string) (*models.UserIdentity, error)
 	// Create inserts the row; a unique violation is ErrUserIdentityTaken.
 	Create(identity *models.UserIdentity) error
+	// ExistsForUser reports whether any identity is linked to the user
+	// (#444): a plain, non-locking read. The password-reset request and
+	// confirm call it inside their transactions after the users row is
+	// locked, so it keeps the users → user_identities order.
+	ExistsForUser(userID uint) (bool, error)
 	WithTx(tx *gorm.DB) UserIdentityRepository
 }
 

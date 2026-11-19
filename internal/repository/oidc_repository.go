@@ -47,6 +47,16 @@ func (r *userIdentityRepository) Create(identity *models.UserIdentity) error {
 	return nil
 }
 
+// ExistsForUser reports whether the user has at least one linked identity,
+// with a plain read (no locking clause).
+func (r *userIdentityRepository) ExistsForUser(userID uint) (bool, error) {
+	var count int64
+	if err := r.db.Model(&models.UserIdentity{}).Where("user_id = ?", userID).Limit(1).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *userIdentityRepository) WithTx(tx *gorm.DB) UserIdentityRepository {
 	return &userIdentityRepository{db: tx}
 }

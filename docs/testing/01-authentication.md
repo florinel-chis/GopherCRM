@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:121-144`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:220-243`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:262-266`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go:282-285`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:231-260`), so a correct password
+  password result is examined (`internal/service/auth_service.go:245-279`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -1033,12 +1033,15 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
 - **Steps:**
   1. Start, sign in at the issuer, `POST /api/v1/auth/oidc/callback` `{code, state}`.
   2. Change the mapped role in `/settings/sso` and sign in again; then once more unchanged.
+  3. `POST /api/v1/auth/password-reset` `{email}` with the provisioned user's address.
 - **Expected:** Step 1: **200** with `token`, `refresh_token` and `user`, as `POST /auth/login`
   answers; one active user with the mapped role and no usable password, one `user_identities` row,
   one `role_audit_log` row with `auth_method` `oidc`; the access token authenticates and the
   refresh token rotates. Step 2: the same user with the new role and one more `oidc` audit row; the
-  unchanged sign-in adds none. `last_login_at` is not touched.
-- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/second_sign_in_reapplies_mapping`
+  unchanged sign-in adds none. `last_login_at` is not touched. Step 3: **200** with the same
+  message as for any address, but no `password_reset_tokens` row and no mail (#444); a token of
+  that account is refused by `/auth/password-reset/confirm` with the generic 400 and stays unspent.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
 
 ### TC-AUTH-051 — An IdP email that matches an existing account is never linked
 - **Priority:** P0
