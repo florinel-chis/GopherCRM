@@ -1022,8 +1022,13 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   with `response_type=code`, the stored `client_id`, `code_challenge_method=S256` and a
   `code_challenge`, a `state` and a `nonce`, `redirect_uri=<APP_BASE_URL>/auth/callback` and the
   effective `scope`. One `oidc_login_attempts` row holds the HMAC of the state (never the state),
-  expiring ten minutes later. No `Set-Cookie`.
-- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler`
+  expiring ten minutes later. No `Set-Cookie`. After the callback, whether it signed in or was
+  refused after the claim, the row is spent (`used_at` set) and its `nonce` and `code_verifier`
+  are empty; a callback on an expired attempt answers the generic 401 and empties both without
+  spending the row, also when that clearing fails. Rows created more than a day ago are deleted by
+  the stale bulk-operation sweep (#453). Each `oidc_sign_in` log line carries `request_id` and
+  `attempt_id` (#453).
+- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`, `/attempt_cleared_when_used`, `/attempt_cleared_when_expired`, `/attempt_claim_lost_after_read`, `/attempts_pruned_after_a_day`, `/log_correlation`, `TestOIDCClaimExpiredClearFails`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler` (incl. `request_id_reaches_service`); `cmd/bulk_recovery_runtime_test.go` `TestBulkOperationRecoveryProductionWiring`
 
 ### TC-AUTH-050 — A first sign-in provisions the user, a later one re-applies the mapping
 - **Priority:** P0
@@ -1035,7 +1040,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   2. Change the mapped role in `/settings/sso` and sign in again; then once more unchanged.
   3. `POST /api/v1/auth/password-reset` `{email}` with the provisioned user's address.
 - **Expected:** Step 1: **200** with `token`, `refresh_token` and `user`, as `POST /auth/login`
-  answers; one active user with the mapped role and no usable password, one `user_identities` row,
+  answers; one active user with the mapped role and no usable password, named from `given_name`/
+  `family_name`, or, when both are absent, from `name` split at the first whitespace (#453), one
+  `user_identities` row,
   one `role_audit_log` row with `auth_method` `oidc`; the access token authenticates and the
   refresh token rotates. Step 2: the same user with the new role and one more `oidc` audit row; the
   unchanged sign-in adds none. `last_login_at` is not touched. Step 3: **200** with the same
@@ -1043,7 +1050,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   no `password_reset_tokens` row and no mail (#444), and a token of that account is refused by
   `/auth/password-reset/confirm` with the generic 400 and stays unspent. With the setting on the
   account is treated like a local one (TC-AUTH-057).
-- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/names_split_from_name`, `/names_absent`, `TestOIDCProfileNames`, `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
 
 ### TC-AUTH-051 — An IdP email that matches an existing account is never linked
 - **Priority:** P0

@@ -5,12 +5,13 @@ import "time"
 // OIDCLoginAttempt is one started OpenID Connect sign-in (#435): what the
 // callback needs to finish it. Only the HMAC-SHA256 of the state is stored,
 // keyed like the other opaque tokens; the raw state exists in the
-// authorization URL alone. The row is single-use: the callback spends it with
-// one conditional update (used_at IS NULL AND expires_at > now) before it
-// talks to the issuer. The nonce and the PKCE verifier are kept because the
-// callback needs them, and they are worthless once the row is spent or
-// expired. No foreign key, no user data; expired rows are purged by the next
-// starts.
+// authorization URL alone. The row is single-use: before it talks to the
+// issuer, the callback reads the row by its state hash and then spends it with
+// one conditional update by id (used_at IS NULL AND expires_at > now). The
+// nonce and the PKCE verifier are blanked (set to the empty string) when that
+// update spends the row, or when the callback finds the row expired (#453).
+// No foreign key, no user data; the stale bulk operation sweep prunes rows one
+// day after their creation.
 type OIDCLoginAttempt struct {
 	ID        uint      `gorm:"primarykey" json:"id"`
 	CreatedAt time.Time `json:"created_at"`

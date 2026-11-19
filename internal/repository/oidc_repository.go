@@ -63,28 +63,79 @@ func (r *userIdentityRepository) WithTx(tx *gorm.DB) UserIdentityRepository {
 
 type oidcLoginAttemptRepository struct {
 	db *gorm.DB
+	// claimAfterRead is a test seam run between Claim's read and its update;
+	// nil in production.
+	claimAfterRead func()
+}
+
+// OIDCLoginAttemptRepositoryOption configures NewOIDCLoginAttemptRepository.
+// Production passes none.
+type OIDCLoginAttemptRepositoryOption func(*oidcLoginAttemptRepository)
+
+// WithOIDCClaimAfterRead runs fn after Claim has read the row and before it
+// updates it; tests only.
+func WithOIDCClaimAfterRead(fn func()) OIDCLoginAttemptRepositoryOption {
+	return func(r *oidcLoginAttemptRepository) { r.claimAfterRead = fn }
 }
 
 // NewOIDCLoginAttemptRepository returns the persistence of
 // oidc_login_attempts (#435).
-func NewOIDCLoginAttemptRepository(db *gorm.DB) OIDCLoginAttemptRepository {
-	return &oidcLoginAttemptRepository{db: db}
+func NewOIDCLoginAttemptRepository(db *gorm.DB, opts ...OIDCLoginAttemptRepositoryOption) OIDCLoginAttemptRepository {
+	r := &oidcLoginAttemptRepository{db: db}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *oidcLoginAttemptRepository) Create(attempt *models.OIDCLoginAttempt) error {
 	return r.db.Create(attempt).Error
 }
 
-// Claim spends the attempt with one conditional update whose predicates are
-// part of the statement, so of two callbacks presenting the same state only
-// one stamps the row. Exactly one affected row is success and the row is then
-// read back by its hash; zero is gorm.ErrRecordNotFound (unknown, used or
-// expired, indistinguishable).
+// Claim spends the attempt (#453) in statements that each commit on their
+// own, with no transaction and no locking read:
+//
+//   - a plain read of the row by its state hash; no row, or a used one, is
+//     gorm.ErrRecordNotFound;
+//   - an expired row has its nonce and PKCE verifier blanked by a conditional
+//     update by id and is gorm.ErrRecordNotFound all the same;
+//   - otherwise one conditional update by id, whose predicates
+//     (used_at IS NULL AND expires_at > now) are part of the statement,
+//     stamps used_at and blanks the nonce and verifier, so of two callbacks
+//     presenting the same state only one spends the row. One affected row is
+//     success and the row from the read is returned with UsedAt set, still
+//     holding the verifier and nonce the caller needs; zero is
+//     gorm.ErrRecordNotFound.
+//
+// Unknown, used and expired attempts stay indistinguishable to the caller.
 func (r *oidcLoginAttemptRepository) Claim(stateHash string, now time.Time) (*models.OIDCLoginAttempt, error) {
 	stamp := now.UTC()
+	var attempt models.OIDCLoginAttempt
+	if err := r.db.Where("state_hash = ?", stateHash).First(&attempt).Error; err != nil {
+		return nil, err
+	}
+	if attempt.UsedAt != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	if r.claimAfterRead != nil {
+		r.claimAfterRead()
+	}
+	if !attempt.ExpiresAt.After(stamp) {
+		err := r.db.Model(&models.OIDCLoginAttempt{}).
+			Where("id = ? AND used_at IS NULL AND expires_at <= ?", attempt.ID, stamp).
+			Updates(map[string]interface{}{"nonce": "", "code_verifier": ""}).Error
+		if err != nil {
+			// A failed clear still answers like an unknown state: a 500 or
+			// 503 here would tell the caller that an expired row exists.
+			// The row holds nothing usable once expired, and the stale bulk
+			// operation sweep prunes it within a day.
+			return nil, errors.Join(gorm.ErrRecordNotFound, fmt.Errorf("clear expired oidc login attempt: %w", err))
+		}
+		return nil, gorm.ErrRecordNotFound
+	}
 	result := r.db.Model(&models.OIDCLoginAttempt{}).
-		Where("state_hash = ? AND used_at IS NULL AND expires_at > ?", stateHash, stamp).
-		Update("used_at", &stamp)
+		Where("id = ? AND used_at IS NULL AND expires_at > ?", attempt.ID, stamp).
+		Updates(map[string]interface{}{"used_at": &stamp, "nonce": "", "code_verifier": ""})
 	if result.Error != nil {
 		return nil, result.Error
 	}
@@ -93,27 +144,24 @@ func (r *oidcLoginAttemptRepository) Claim(stateHash string, now time.Time) (*mo
 	case 0:
 		return nil, gorm.ErrRecordNotFound
 	default:
-		// The unique index makes this unreachable; it is still refused rather
+		// The primary key makes this unreachable; it is still refused rather
 		// than reported as a single-use claim.
 		return nil, fmt.Errorf("oidc login attempt claim affected %d rows", result.RowsAffected)
 	}
-	var attempt models.OIDCLoginAttempt
-	if err := r.db.Where("state_hash = ?", stateHash).First(&attempt).Error; err != nil {
-		return nil, err
-	}
+	attempt.UsedAt = &stamp
 	return &attempt, nil
 }
 
-// PurgeExpired deletes at most limit attempts whose expiry lies before
-// before, oldest id first: a plain read of the ids, then a delete by primary
-// key, so no range of the expiry is locked.
-func (r *oidcLoginAttemptRepository) PurgeExpired(before time.Time, limit int) (int64, error) {
+// PruneCreatedBefore deletes at most limit attempts created before before,
+// oldest id first: a plain read of the ids, then a delete by primary key that
+// repeats the predicate, so no range of created_at is locked.
+func (r *oidcLoginAttemptRepository) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
 	var ids []uint
 	if err := r.db.Model(&models.OIDCLoginAttempt{}).
-		Where("expires_at < ?", before.UTC()).
+		Where("created_at < ?", before.UTC()).
 		Order("id ASC").Limit(limit).
 		Pluck("id", &ids).Error; err != nil {
 		return 0, err
@@ -121,10 +169,10 @@ func (r *oidcLoginAttemptRepository) PurgeExpired(before time.Time, limit int) (
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	result := r.db.Where("id IN ? AND expires_at < ?", ids, before.UTC()).Delete(&models.OIDCLoginAttempt{})
+	result := r.db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.OIDCLoginAttempt{})
 	return result.RowsAffected, result.Error
 }
 
 func (r *oidcLoginAttemptRepository) WithTx(tx *gorm.DB) OIDCLoginAttemptRepository {
-	return &oidcLoginAttemptRepository{db: tx}
+	return &oidcLoginAttemptRepository{db: tx, claimAfterRead: r.claimAfterRead}
 }

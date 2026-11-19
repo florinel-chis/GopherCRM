@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -670,6 +671,7 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.issuer.setTokenStatus(0)
 	f.issuer.setDiscoveryRedirect(false)
 	f.svc.beforeJITInsert = nil
+	f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db)
 	f.svc.entraIssuerHost = oidcEntraIssuerHost
 	f.svc.graphBaseURL = oidcGraphBaseURL
 	f.svc.graphTimeout = oidcGraphTimeout
@@ -1371,7 +1373,7 @@ var oidcSignInCases = []struct {
 		// The empty access token: the oauth2 exchange itself refuses a token
 		// response without access_token, so the guard is driven directly.
 		f.reset(t)
-		ctx, provider, err := f.svc.discover(context.Background(), f.issuer.URL())
+		ctx, provider, err := f.svc.discover(context.Background(), f.issuer.URL(), 0)
 		require.NoError(t, err)
 		_, err = f.svc.resolveUserInfoGroups(ctx, provider, "", "subject-ui-no-access")
 		assert.ErrorIs(t, err, errUserInfoNoAccessToken)
@@ -1418,6 +1420,209 @@ var oidcSignInCases = []struct {
 				}
 			}
 		}
+	}},
+	{"log_correlation", func(t *testing.T, f *oidcFixture) {
+		previous := utils.Logger
+		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+		var output bytes.Buffer
+		utils.Logger.SetOutput(&output)
+		t.Cleanup(func() { utils.Logger = previous })
+
+		// segment runs fn and returns the oidc_sign_in lines it logged.
+		segment := func(fn func()) []map[string]interface{} {
+			t.Helper()
+			from := output.Len()
+			fn()
+			var lines []map[string]interface{}
+			for _, raw := range strings.Split(strings.TrimSpace(output.String()[from:]), "\n") {
+				var line map[string]interface{}
+				if raw == "" || json.Unmarshal([]byte(raw), &line) != nil || line["component"] != "oidc_sign_in" {
+					continue
+				}
+				lines = append(lines, line)
+			}
+			return lines
+		}
+		assertLine := func(t *testing.T, line map[string]interface{}, msg, requestID string, attemptID uint) {
+			t.Helper()
+			assert.Equal(t, msg, line["msg"])
+			assert.Equal(t, requestID, line["request_id"], "request_id of %q", msg)
+			require.Contains(t, line, "attempt_id", "attempt_id of %q", msg)
+			assert.Equal(t, float64(attemptID), line["attempt_id"], "attempt_id of %q", msg)
+		}
+		attemptOf := func(t *testing.T, state string) models.OIDCLoginAttempt {
+			t.Helper()
+			var attempt models.OIDCLoginAttempt
+			require.NoError(t, f.db.Where("state_hash = ?", hashOpaqueToken(state, f.auth.sessionTokenSecret())).First(&attempt).Error)
+			return attempt
+		}
+
+		okCtx := utils.WithRequestID(context.Background(), "req-453-ok")
+		const sub, email = "subject-correlated-0453", "correlated-0453@idp.example.test"
+		var authURL string
+		started := segment(func() {
+			var err error
+			authURL, err = f.svc.Start(okCtx)
+			require.NoError(t, err)
+		})
+		code, state := f.issuer.authorize(t, authURL, oidcValid(sub, email))
+		okAttempt := attemptOf(t, state)
+		require.Len(t, started, 1)
+		assertLine(t, started[0], "Single sign-on started", "req-453-ok", okAttempt.ID)
+		succeeded := segment(func() {
+			_, err := f.svc.Callback(okCtx, code, state)
+			require.NoError(t, err)
+		})
+		require.Len(t, succeeded, 1)
+		assertLine(t, succeeded[0], "Signed in through single sign-on", "req-453-ok", okAttempt.ID)
+		assert.Contains(t, succeeded[0], "user_id")
+		goodToken := f.issuer.lastIDToken()
+
+		badCtx := utils.WithRequestID(context.Background(), "req-453-bad")
+		bad := oidcValid("subject-correlated-bad-0453", "correlated-bad-0453@idp.example.test")
+		bad.nonce = "wrong-nonce-0453"
+		var badURL string
+		badStarted := segment(func() {
+			var err error
+			badURL, err = f.svc.Start(badCtx)
+			require.NoError(t, err)
+		})
+		badCode, badState := f.issuer.authorize(t, badURL, bad)
+		badAttempt := attemptOf(t, badState)
+		require.NotEqual(t, okAttempt.ID, badAttempt.ID)
+		require.Len(t, badStarted, 1)
+		assertLine(t, badStarted[0], "Single sign-on started", "req-453-bad", badAttempt.ID)
+		refused := segment(func() {
+			_, err := f.svc.Callback(badCtx, badCode, badState)
+			require.ErrorIs(t, err, ErrSSOSignInFailed)
+		})
+		require.Len(t, refused, 1)
+		assertLine(t, refused[0], "Single sign-on refused", "req-453-bad", badAttempt.ID)
+		assert.Equal(t, "nonce_mismatch", refused[0]["error_code"])
+		badToken := f.issuer.lastIDToken()
+
+		unknownCtx := utils.WithRequestID(context.Background(), "req-453-unknown")
+		unknown := segment(func() {
+			_, err := f.svc.Callback(unknownCtx, "code-unknown-0453", "state-unknown-0453")
+			require.ErrorIs(t, err, ErrSSOSignInFailed)
+		})
+		require.Len(t, unknown, 1)
+		assertLine(t, unknown[0], "Single sign-on refused", "req-453-unknown", 0)
+		assert.Equal(t, "state_invalid", unknown[0]["error_code"])
+
+		logs := output.String()
+		for _, secret := range []string{code, state, okAttempt.Nonce, okAttempt.CodeVerifier, goodToken, sub, email,
+			badCode, badState, badAttempt.Nonce, badAttempt.CodeVerifier, badToken, bad.sub, bad.email, "state-unknown-0453", "code-unknown-0453"} {
+			require.NotEmpty(t, secret)
+			assert.NotContains(t, logs, secret)
+		}
+	}},
+	{"attempt_cleared_when_used", func(t *testing.T, f *oidcFixture) {
+		check := func(t *testing.T, spec oidcTokenSpec, wantErr bool) {
+			t.Helper()
+			code, state := f.issuer.authorize(t, f.start(t), spec)
+			hash := hashOpaqueToken(state, f.auth.sessionTokenSecret())
+			var before models.OIDCLoginAttempt
+			require.NoError(t, f.db.Where("state_hash = ?", hash).First(&before).Error)
+			assert.NotEmpty(t, before.Nonce, "the nonce is stored until the callback")
+			assert.NotEmpty(t, before.CodeVerifier, "the verifier is stored until the callback")
+			_, err := f.svc.Callback(context.Background(), code, state)
+			if wantErr {
+				assert.Equal(t, "nonce_mismatch", oidcErrorCode(err))
+			} else {
+				require.NoError(t, err)
+			}
+			var after models.OIDCLoginAttempt
+			require.NoError(t, f.db.Where("state_hash = ?", hash).First(&after).Error)
+			assert.Equal(t, before.ID, after.ID)
+			assert.NotNil(t, after.UsedAt, "the row is spent")
+			assert.Equal(t, "", after.Nonce, "the nonce is cleared")
+			assert.Equal(t, "", after.CodeVerifier, "the verifier is cleared")
+		}
+		check(t, oidcValid("subject-cleared", "cleared@idp.example.test"), false)
+		bad := oidcValid("subject-cleared-bad", "cleared-bad@idp.example.test")
+		bad.nonce = "not-the-nonce-0453"
+		check(t, bad, true)
+	}},
+	{"attempt_cleared_when_expired", func(t *testing.T, f *oidcFixture) {
+		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-expired-clear", "expired-clear@idp.example.test"))
+		hash := hashOpaqueToken(state, f.auth.sessionTokenSecret())
+		f.advance(10*time.Minute + time.Second)
+		tokens, err := f.svc.Callback(context.Background(), code, state)
+		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
+		var after models.OIDCLoginAttempt
+		require.NoError(t, f.db.Where("state_hash = ?", hash).First(&after).Error)
+		assert.Nil(t, after.UsedAt, "an expired row is not spent")
+		assert.Equal(t, "", after.Nonce, "the nonce is cleared")
+		assert.Equal(t, "", after.CodeVerifier, "the verifier is cleared")
+	}},
+	{"attempt_claim_lost_after_read", func(t *testing.T, f *oidcFixture) {
+		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-lost", "lost@idp.example.test"))
+		hash := hashOpaqueToken(state, f.auth.sessionTokenSecret())
+		competitor := repository.NewOIDCLoginAttemptRepository(f.competitor)
+		var competing *models.OIDCLoginAttempt
+		var competingErr error
+		var once sync.Once
+		f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db, repository.WithOIDCClaimAfterRead(func() {
+			// A second callback with the same state claims the row between
+			// this claim's read and its update.
+			once.Do(func() { competing, competingErr = competitor.Claim(hash, f.now().UTC()) })
+		}))
+		tokens, err := f.svc.Callback(context.Background(), code, state)
+		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
+		require.NoError(t, competingErr, "the competing claim succeeded")
+		require.NotNil(t, competing)
+		assert.NotNil(t, competing.UsedAt)
+		assert.NotEmpty(t, competing.CodeVerifier, "the winner still holds the verifier in memory")
+		var after models.OIDCLoginAttempt
+		require.NoError(t, f.db.Where("state_hash = ?", hash).First(&after).Error)
+		assert.Equal(t, competing.ID, after.ID)
+		assert.NotNil(t, after.UsedAt)
+		assert.Equal(t, "", after.Nonce)
+		assert.Equal(t, "", after.CodeVerifier)
+	}},
+	{"attempts_pruned_after_a_day", func(t *testing.T, f *oidcFixture) {
+		now := f.now()
+		cutoff := now.Add(-OIDCLoginAttemptRetention)
+		insert := func(t *testing.T, created time.Time, tag string) uint {
+			t.Helper()
+			attempt := &models.OIDCLoginAttempt{
+				CreatedAt:    created,
+				StateHash:    hashOpaqueToken("prune-0453-"+tag, f.auth.sessionTokenSecret()),
+				Nonce:        "n-" + tag,
+				CodeVerifier: "v-" + tag,
+				Issuer:       f.issuer.URL(),
+				ExpiresAt:    created.Add(10 * time.Minute),
+			}
+			require.NoError(t, f.db.Create(attempt).Error)
+			return attempt.ID
+		}
+		oldID := insert(t, now.Add(-24*time.Hour-time.Minute), "old")
+		recentID := insert(t, now.Add(-23*time.Hour), "recent")
+		n := f.count(t, "oidc_login_attempts", "created_at < ?", cutoff)
+		require.GreaterOrEqual(t, n, int64(1))
+		pruned, err := PruneOIDCLoginAttempts(context.Background(), repository.NewOIDCLoginAttemptRepository(f.db), now)
+		require.NoError(t, err)
+		assert.Equal(t, n, pruned)
+		assert.Zero(t, f.count(t, "oidc_login_attempts", "created_at < ?", cutoff), "no row older than a day remains")
+		assert.Zero(t, f.count(t, "oidc_login_attempts", "id = ?", oldID), "the day-old row is gone")
+		assert.Equal(t, int64(1), f.count(t, "oidc_login_attempts", "id = ?", recentID), "the 23-hour-old row stays")
+	}},
+	{"names_split_from_name", func(t *testing.T, f *oidcFixture) {
+		spec := oidcValid("subject-name-split", "name-split@idp.example.test")
+		spec.extra = map[string]interface{}{"name": "José María García"}
+		tokens, err := f.signIn(t, spec)
+		require.NoError(t, err)
+		created := f.user(t, tokens.User.ID)
+		assert.Equal(t, "José", created.FirstName)
+		assert.Equal(t, "María García", created.LastName)
+	}},
+	{"names_absent", func(t *testing.T, f *oidcFixture) {
+		tokens, err := f.signIn(t, oidcValid("subject-name-absent", "name-absent@idp.example.test"))
+		require.NoError(t, err)
+		created := f.user(t, tokens.User.ID)
+		assert.Equal(t, "", created.FirstName)
+		assert.Equal(t, "", created.LastName)
 	}},
 }
 
@@ -1616,6 +1821,62 @@ func TestOIDCResolveEntraGroups(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestOIDCClaimExpiredClearFails: when blanking the nonce and verifier of an
+// expired attempt fails, the callback still answers the generic state_invalid
+// refusal (401), never a 500 or a 503 that would reveal the row exists.
+func TestOIDCClaimExpiredClearFails(t *testing.T) {
+	db, competitor := openOIDCTestSQLite(t)
+	f := newOIDCFixture(t, db, competitor)
+	f.reset(t)
+	errForced := errors.New("forced update failure")
+	// The handle is this test's own, so the callback needs no restoring. It
+	// fails updates of oidc_login_attempts only, so Start's insert and the
+	// settings writes go through.
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:fail_oidc_attempt_update", func(tx *gorm.DB) {
+		if tx.Statement.Table == "oidc_login_attempts" {
+			_ = tx.AddError(errForced)
+		}
+	}))
+
+	code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-clear-fails", "clear-fails@idp.example.test"))
+	f.advance(10*time.Minute + time.Second)
+	tokens, err := f.svc.Callback(context.Background(), code, state)
+	f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
+	assert.NotErrorIs(t, err, ErrSSOUnavailable)
+	assert.NotErrorIs(t, err, errForced, "the database error does not reach the caller")
+
+	var after models.OIDCLoginAttempt
+	require.NoError(t, db.Where("state_hash = ?", hashOpaqueToken(state, f.auth.sessionTokenSecret())).First(&after).Error)
+	assert.NotEmpty(t, after.Nonce, "the clearing update really failed")
+	assert.Nil(t, after.UsedAt)
+}
+
+func TestOIDCProfileNames(t *testing.T) {
+	long := strings.Repeat("é", 60) // 120 bytes
+	cases := []struct {
+		name                string
+		given, family, full string
+		first, last         string
+	}{
+		{"given_only", "Ada", "", "", "Ada", ""},
+		{"family_only", "", "Lovelace", "", "", "Lovelace"},
+		{"both", "Ada", "Lovelace", "", "Ada", "Lovelace"},
+		{"name_one_word", "", "", "Cher", "Cher", ""},
+		{"name_extra_whitespace", "", "", "  Ada \t Augusta\n  King  ", "Ada", "Augusta King"},
+		{"multibyte_truncation", "", "", long + " " + long, strings.Repeat("é", 50), strings.Repeat("é", 50)},
+		{"given_wins_over_name", "Ada", "", "Someone Else", "Ada", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			first, last := oidcProfileNames(tc.given, tc.family, tc.full)
+			assert.Equal(t, tc.first, first)
+			assert.Equal(t, tc.last, last)
+			assert.LessOrEqual(t, len(first), oidcNameMaxBytes)
+			assert.LessOrEqual(t, len(last), oidcNameMaxBytes)
 		})
 	}
 }

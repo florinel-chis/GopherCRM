@@ -63,6 +63,15 @@ func WithBulkRecoveryTicker(newTicker func(interval time.Duration) (<-chan time.
 	}
 }
 
+// WithOIDCAttemptPruning makes every Sweep also prune the
+// oidc_login_attempts rows older than OIDCLoginAttemptRetention (#453),
+// independently of the bulk operation result.
+func WithOIDCAttemptPruning(repo repository.OIDCLoginAttemptRepository) BulkOperationRecoveryOption {
+	return func(r *BulkOperationRecoveryRuntime) {
+		r.oidcAttempts = repo
+	}
+}
+
 // WithBulkRecoveryInterval replaces BulkOperationSweepInterval; a
 // non-positive value keeps it.
 func WithBulkRecoveryInterval(interval time.Duration) BulkOperationRecoveryOption {
@@ -84,6 +93,8 @@ type BulkOperationRecoveryRuntime struct {
 	now       func() time.Time
 	newTicker func(time.Duration) (<-chan time.Time, func())
 	interval  time.Duration
+	// oidcAttempts, when set, is pruned on every sweep (#453).
+	oidcAttempts repository.OIDCLoginAttemptRepository
 
 	mu      sync.Mutex
 	started bool
@@ -115,9 +126,12 @@ func NewBulkOperationRecoveryRuntime(repo repository.BulkOperationRepository, lo
 // Interval is the time between two scheduled sweeps.
 func (r *BulkOperationRecoveryRuntime) Interval() time.Duration { return r.interval }
 
-// Sweep runs one pass with the runtime's clock and logs its count.
+// Sweep runs one pass with the runtime's clock and logs its count. With
+// WithOIDCAttemptPruning it then prunes the old sign-in attempts; that prune
+// is logged on its own and never changes the returned count or error.
 func (r *BulkOperationRecoveryRuntime) Sweep(ctx context.Context) (int64, error) {
-	failed, err := SweepStaleBulkOperations(ctx, r.repo, r.now())
+	now := r.now()
+	failed, err := SweepStaleBulkOperations(ctx, r.repo, now)
 	entry := r.log().WithField("failed", failed)
 	switch {
 	case err == nil && failed > 0:
@@ -129,7 +143,27 @@ func (r *BulkOperationRecoveryRuntime) Sweep(ctx context.Context) (int64, error)
 	default:
 		entry.WithError(utils.LogError(err)).Warn("bulk operation recovery sweep failed")
 	}
+	r.pruneOIDCAttempts(ctx, now)
 	return failed, err
+}
+
+// pruneOIDCAttempts deletes the sign-in attempts created more than
+// OIDCLoginAttemptRetention before now, when the option is set.
+func (r *BulkOperationRecoveryRuntime) pruneOIDCAttempts(ctx context.Context, now time.Time) {
+	if r.oidcAttempts == nil {
+		return
+	}
+	pruned, err := PruneOIDCLoginAttempts(ctx, r.oidcAttempts, now)
+	entry := r.log().WithField("pruned", pruned)
+	switch {
+	case err == nil && pruned > 0:
+		entry.Info("pruned single sign-on attempts")
+	case err == nil:
+	case ctx.Err() != nil:
+		entry.Info("single sign-on attempt prune interrupted")
+	default:
+		entry.WithError(utils.LogError(err)).Warn("single sign-on attempt prune failed")
+	}
 }
 
 func (r *BulkOperationRecoveryRuntime) log() *logrus.Logger {

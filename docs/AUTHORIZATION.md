@@ -452,6 +452,17 @@ redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S
 a failing token endpoint is 503 `SSO_UNAVAILABLE`; every refusal is the same 401 "Single sign-on
 failed", with the reason logged as an `error_code` only.
 
+**Attempt hygiene and logs (#453).** A used or expired attempt has its verifier and nonce
+cleared: the claim (a plain read by the state hash, then one conditional `UPDATE` by id) blanks
+the nonce and the PKCE verifier in the same statement that spends the row, and a callback that
+finds the row expired blanks them without spending it. When that clearing fails the callback
+still answers the same 401 as for an unknown state. The stale bulk-operation sweep (at boot and
+every 15 minutes, on every replica) prunes sign-in attempts older than one day; the sign-in
+itself deletes nothing. Every `oidc_sign_in` log line carries the `request_id` of the HTTP
+request (from `X-Request-ID` when the client sends one, logged only as a field) and the
+`attempt_id` of the attempt row, `0` before the row exists or has been claimed (an unknown, used
+or expired state).
+
 **Identity.** The identity is the exact `(iss, sub)` pair in `user_identities` (unique,
 `utf8mb4_bin` on MySQL/MariaDB, BINARY on SQLite). A `sub` that is empty, longer than 255 bytes,
 not printable ASCII, or has leading or trailing whitespace is refused on every engine, because
@@ -501,7 +512,9 @@ a changed role commits one `role_audit_log` row with `auth_method` `oidc` and th
 as actor. An unchanged role writes no row.
 
 **JIT provisioning.** An unknown identity creates an active user with the mapped role, the
-`email` claim as given and `given_name`/`family_name` (cut to 100 bytes), and a password that is
+`email` claim as given and `given_name`/`family_name` (cut to 100 bytes; when both are absent,
+`name` split at the first whitespace into a first name and the rest as the last name, #453), and
+a password that is
 the hash of discarded random bytes, so password login cannot succeed for it. It needs an `email`
 claim; when any account, live or erased, already holds that address in any letter case, the
 sign-in is refused and nothing is linked to that account (`LOWER(email)` on every engine, so

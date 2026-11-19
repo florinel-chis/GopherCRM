@@ -845,6 +845,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on: sign-in hygiene (#453).** Every `oidc_sign_in` log line now carries a
+  `request_id` (the HTTP request's, passed to the service on its context) and an `attempt_id` (the
+  `oidc_login_attempts` row, `0` before Start created it or the callback claimed it); codes,
+  states, nonces, verifiers, tokens, emails, subjects, names and claims are still never logged.
+  The callback's claim is now a plain read by the state hash followed by one conditional `UPDATE`
+  by id that also blanks the PKCE verifier and the nonce; a callback that finds the attempt
+  expired blanks them too and still answers the generic 401, even when that clearing fails. The
+  per-start purge of attempts that expired an hour ago is gone: the stale bulk-operation sweep (at
+  boot and every 15 minutes, on every replica) now prunes attempts created more than one day ago.
+  A first sign-in whose ID token has neither `given_name` nor `family_name` takes the names from
+  `name`, split at the first whitespace. No schema change: clearing writes the empty string to the
+  NOT NULL columns.
 - **Single sign-on: groups are read from the userinfo endpoint when the ID token has none
   (#451).** When the role mapping has a `groups` entry, the ID token has no `groups` claim (an
   empty `[]` counts as present) and no Entra ID overage is being resolved through Graph, the

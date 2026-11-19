@@ -11,7 +11,9 @@ import (
 // bulkRecoveryBackground owns the stale bulk operation sweep of this process
 // (#196). It runs on every replica: at boot, then every
 // service.BulkOperationSweepInterval, it fails the pending bulk_operations rows
-// older than service.BulkOperationStaleAfter. Stop is what main calls at
+// older than service.BulkOperationStaleAfter, and deletes the
+// oidc_login_attempts rows created more than service.OIDCLoginAttemptRetention
+// (one day) before (#453). Stop is what main calls at
 // shutdown, through the combined handle setupDependencies returns
 // (combineStops: automation, form retention, this, then AEO), under the one
 // drain deadline main passes, aeoDrainTimeout (15 s).
@@ -19,9 +21,11 @@ type bulkRecoveryBackground struct {
 	runtime *service.BulkOperationRecoveryRuntime
 }
 
-// newBulkRecoveryBackground builds the sweep over the bulk history repository.
-func newBulkRecoveryBackground(repo repository.BulkOperationRepository) *bulkRecoveryBackground {
-	return &bulkRecoveryBackground{runtime: service.NewBulkOperationRecoveryRuntime(repo, utils.Logger)}
+// newBulkRecoveryBackground builds the sweep over the bulk history repository
+// and the single sign-on attempt repository it also prunes.
+func newBulkRecoveryBackground(repo repository.BulkOperationRepository, oidcAttempts repository.OIDCLoginAttemptRepository) *bulkRecoveryBackground {
+	return &bulkRecoveryBackground{runtime: service.NewBulkOperationRecoveryRuntime(repo, utils.Logger,
+		service.WithOIDCAttemptPruning(oidcAttempts))}
 }
 
 // start arms the sweep on a context derived from ctx. The first sweep runs

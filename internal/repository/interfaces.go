@@ -800,13 +800,18 @@ type UserIdentityRepository interface {
 // state.
 type OIDCLoginAttemptRepository interface {
 	Create(attempt *models.OIDCLoginAttempt) error
-	// Claim stamps used_at with one conditional update
-	// (state_hash = ? AND used_at IS NULL AND expires_at > now) and then
-	// reads the row; zero affected rows is gorm.ErrRecordNotFound.
+	// Claim reads the row by its state hash with a plain read, then spends it
+	// with one conditional update by id (used_at IS NULL AND expires_at > now)
+	// that stamps used_at and blanks the nonce and PKCE verifier; the
+	// returned attempt still carries both. An expired row has them blanked by
+	// a conditional update by id instead. Unknown, used, expired or lost to a
+	// competing claim is gorm.ErrRecordNotFound (errors.Is), also when
+	// blanking an expired row failed.
 	Claim(stateHash string, now time.Time) (*models.OIDCLoginAttempt, error)
-	// PurgeExpired deletes at most limit rows that expired before before and
-	// returns how many it deleted.
-	PurgeExpired(before time.Time, limit int) (int64, error)
+	// PruneCreatedBefore deletes at most limit rows created before before,
+	// oldest id first (a plain read of the ids, then a delete by primary key),
+	// and returns how many it deleted.
+	PruneCreatedBefore(before time.Time, limit int) (int64, error)
 	WithTx(tx *gorm.DB) OIDCLoginAttemptRepository
 }
 
