@@ -201,7 +201,7 @@ func TestEnvExample_QuotePDFChromePathDocumented(t *testing.T) {
 		t.Fatal("the entry has no comment block")
 	}
 	block := text[start:end]
-	for _, needle := range []string{"APP_BASE_URL", "CORS_ALLOWED_ORIGINS", "quote-render", "font", "15 seconds", "PDF_UNAVAILABLE", "text only"} {
+	for _, needle := range []string{"APP_BASE_URL", "CORS_ALLOWED_ORIGINS", "quote-render", "font", "15 seconds", "PDF_UNAVAILABLE", "text only", "chrome-headless-shell"} {
 		assert.Contains(t, block, needle, "the comment block mentions %s", needle)
 	}
 }

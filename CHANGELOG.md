@@ -59,11 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     55-second request timeout (the default stays 30 seconds), so it no longer reports a failure
     for a mail the server still delivers. A reverse proxy in front needs a read timeout of 60
     seconds or more (the nginx default).
-  - **Docker image.** The runtime image now installs `chromium` and `font-liberation` and sets
-    `QUOTE_PDF_CHROME_PATH=/usr/bin/chromium-browser`, so PDF output is on by default in the
-    image, which grows from about 53 MiB to about 655 MiB (`docs/DOCKER.md`). The image also
-    installs `tini` and starts the server under it (`ENTRYPOINT ["/sbin/tini", "--", "gophercrm"]`),
-    so the browser's orphaned helper processes are reaped; a deployment that replaces the
+  - **Docker image.** The runtime image now installs a browser and a font and sets
+    `QUOTE_PDF_CHROME_PATH`, so PDF output is on by default in the image, which grows from
+    about 53 MiB to about 655 MiB (`docs/DOCKER.md`). The image also installs `tini` and starts
+    the server under it, so the browser's orphaned helper processes are reaped; which browser,
+    which path and which init path the image ends up with is in the #393 entry under Changed; a deployment that replaces the
     entrypoint should keep an init. `docker-compose.yml` and
     `docker-compose.sqlite.yml` set the variable empty: their `APP_BASE_URL`
     (`http://localhost:<UI_PORT>`) is not reachable from the backend container, so the
@@ -719,6 +719,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit and confirm answers are unchanged, and nothing retries automatically.
 
 ### Changed
+
+- **The backend image prints quotes with `chrome-headless-shell` instead of the full Chromium
+  (#393).** What a quote PDF looks like does not change, and a full Chrome or Chromium named
+  by `QUOTE_PDF_CHROME_PATH` keeps working: the server starts both kinds of binary with the
+  same arguments.
+  - **Base and binary.** The runtime stage moves from `alpine:3.20` to `debian:bookworm-slim`
+    and installs the Debian package `chromium-headless-shell`, pinned by
+    `ARG HEADLESS_SHELL_VERSION=156.0.8078.79` in the Dockerfile, in place of the full
+    `chromium` package. Alpine has no headless shell package and the prebuilt binaries need
+    glibc. Debian's security repository keeps only the newest version, so the argument has to
+    be raised when the image build reports that the version was not found (`docs/DOCKER.md`).
+  - **Size.** 700,980,224 bytes against 686,689,600 bytes before (linux/arm64): the image is
+    not smaller, the package's library dependencies make up for the missing browser UI.
+  - **Health check.** The image installs `wget`, which both compose files call for the backend
+    health check and the new base lacks. It has no `curl` and no `ps`.
+  - **Upgrade notes.** The image's default is now
+    `QUOTE_PDF_CHROME_PATH=/usr/local/bin/quote-pdf-browser`, a launcher that execs the
+    headless shell with the two container flags. `/usr/bin/chromium-browser` no longer exists
+    in the image: an override that sets `QUOTE_PDF_CHROME_PATH: /usr/bin/chromium-browser`
+    switches PDF output off on the new image (one warning in the log, text-only quote emails,
+    503 `PDF_UNAVAILABLE`); set it to `/usr/local/bin/quote-pdf-browser` or drop the line.
+    `tini` moved from `/sbin/tini` to `/usr/bin/tini`: an override that names the entrypoint
+    needs the new path. `/etc/chromium/chromium.conf` is gone; the flags are in the launcher.
+  - **Checks.** `scripts/e2e/quote-pdf-chain.sh local|image` runs the real chain (browser,
+    render page, API, text of the PDF) with a full Chrome or with the built image and stops
+    what it started; `scripts/e2e/quote-pdf-smoke.sh` now creates a taxed line and also prints
+    `total=` and `gross_total=`. The render in the image was verified on linux/arm64 only.
 
 - **Frontend unit tests hold up better on a busy machine (#403).** `make verify-frontend` runs
   Vitest on three workers (`npm test -- --run --maxWorkers=3`) and `make verify` runs the frontend

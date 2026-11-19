@@ -216,6 +216,65 @@ done`, envFile, argsFile)))
 	assert.True(t, os.IsNotExist(statErr), "the temp dir is removed after the render")
 }
 
+// The launch arguments are one list for chrome-headless-shell and for a full
+// Chrome or Chromium (#393). The keychain switches are what keeps a full
+// browser from waiting on a keychain or keyring it cannot reach, --headless is
+// what a full browser needs to start without a window, and the sandbox is
+// never switched off from Go: an image that has to does it in the launcher
+// QUOTE_PDF_CHROME_PATH names.
+func TestChromeQuotePDFRendererLaunchArguments(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, "env.txt")
+	argsFile := filepath.Join(dir, "args.txt")
+	renderer, err := NewChromeQuotePDFRenderer(fakeChrome(t, fmt.Sprintf(`env > %q
+for arg in "$@"; do
+  echo "$arg" >> %q
+  case "$arg" in --print-to-pdf=*) printf '%%%%PDF-1.4 fake' > "${arg#--print-to-pdf=}" ;; esac
+done`, envFile, argsFile)))
+	require.NoError(t, err)
+
+	const pageURL = "http://127.0.0.1:9/quote-render#launch-arguments"
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pdf, err := renderer.Render(ctx, pageURL)
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(pdf, []byte("%PDF")))
+
+	rawArgs, err := os.ReadFile(argsFile)
+	require.NoError(t, err)
+	args := strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
+	assert.Contains(t, args, "--use-mock-keychain", "a macOS Chrome must not wait for a login keychain")
+	assert.Contains(t, args, "--password-store=basic", "a Linux Chrome must not look for a desktop keyring")
+	assert.Contains(t, args, "--headless", "a full Chrome or Chromium needs it to start without a window")
+	var profile, output string
+	for _, arg := range args {
+		assert.NotEqual(t, "--no-sandbox", arg, "the sandbox is never switched off from Go")
+		assert.Falsef(t, strings.HasPrefix(arg, "--no-sandbox"), "no form of --no-sandbox either: %q", arg)
+		if value, ok := strings.CutPrefix(arg, "--user-data-dir="); ok {
+			profile = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--print-to-pdf="); ok {
+			output = value
+		}
+	}
+	require.NotEmpty(t, output, "the output path is passed as --print-to-pdf=")
+	require.NotEmpty(t, profile, "the profile directory is passed as --user-data-dir=")
+	renderDir := filepath.Dir(output)
+	assert.Truef(t, strings.HasPrefix(profile, renderDir+string(filepath.Separator)),
+		"the profile lies inside the render's directory: %q not under %q", profile, renderDir)
+	assert.Equal(t, pageURL, args[len(args)-1], "the page URL is the last argument")
+
+	rawEnv, err := os.ReadFile(envFile)
+	require.NoError(t, err)
+	home := ""
+	for _, line := range strings.Split(strings.TrimSpace(string(rawEnv)), "\n") {
+		if value, ok := strings.CutPrefix(line, "HOME="); ok {
+			home = value
+		}
+	}
+	assert.Equal(t, renderDir, home, "HOME is the render's directory")
+}
+
 // The one test that drives a real browser. It skips without
 // QUOTE_PDF_CHROME_PATH and is deliberately named in no no-skip gate: CI has
 // no browser for it.

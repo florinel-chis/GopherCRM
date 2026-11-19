@@ -61,7 +61,8 @@ Checked by searching the tracked tree on `4dfe404`:
   `ticket_mail_deliveries` (backend only; no retry). A ticket channel field and inbound mail remain
   later work.
 - No internationalisation framework in `gocrm-ui/package.json`.
-- Quote PDF output needs a Chrome or Chromium binary on the server (`QUOTE_PDF_CHROME_PATH`,
+- Quote PDF output needs a browser binary on the server, `chrome-headless-shell` or a full
+  Chrome or Chromium (`QUOTE_PDF_CHROME_PATH`,
   off by default outside the Docker image; `docs/FEATURES.md` row 4d.14, #384), and tax is one
   rate per quote line only: no tax categories, reverse charge or
   per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
@@ -333,7 +334,7 @@ Configuration comes from three places:
 | `TRUSTED_PROXIES` | trust none | `config.go:294` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:295` | every browser origin of your UI |
 | `APP_BASE_URL` | `http://localhost:5173` | `config.go:322` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
-| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/bin/chromium-browser` in the Docker image, empty again in the two development Compose files | `config.go:323` | the Chrome or Chromium binary that prints quotes to PDF; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
+| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `config.go:323` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:351` | this backend's public origin; form confirmation links |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:315-319` | empty host means log-only mail |
 | `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:352-353` | both or the layer is skipped |

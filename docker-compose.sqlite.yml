@@ -38,7 +38,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_FORMAT: json
       APP_BASE_URL: http://localhost:${UI_PORT:-3000}
-      # Quote PDF output is off in this stack: the image's Chromium would have
+      # Quote PDF output is off in this stack: the image's browser would have
       # to open APP_BASE_URL, and http://localhost:<UI_PORT> is this container
       # itself, not the UI. Quote emails go out as text only and GET
       # /quotes/:id/pdf answers 503 PDF_UNAVAILABLE. See docs/DOCKER.md.

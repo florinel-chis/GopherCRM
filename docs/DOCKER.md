@@ -172,21 +172,48 @@ Notes on the wiring:
 
 ### Quote PDF output
 
-The backend image ships what quote PDF output needs: the Alpine `chromium` package, the
-`font-liberation` font (without a font the PDF is a valid file with no readable text) and
-`QUOTE_PDF_CHROME_PATH=/usr/bin/chromium-browser`. The server prints a quote by running that
-browser headless on `APP_BASE_URL/quote-render`, a public page of the web application that
-loads the quote from the API with a short-lived, single-quote, read-only credential.
+The backend image ships what quote PDF output needs: `chrome-headless-shell` (the browser's old
+headless mode as its own binary, without the full browser), the `fonts-liberation` fonts
+(without a font the PDF is a valid file with no readable text) and
+`QUOTE_PDF_CHROME_PATH=/usr/local/bin/quote-pdf-browser`, a launcher of that binary. The server
+prints a quote by running it on `APP_BASE_URL/quote-render`, a public page of the web
+application that loads the quote from the API with a short-lived, single-quote, read-only
+credential. The full `chromium` package is no longer installed (#393); a deployment that
+prefers one can still point `QUOTE_PDF_CHROME_PATH` at a full Chrome or Chromium, or at a
+launcher for it: the server starts both kinds of binary with the same arguments.
 
-- **Image size.** Chromium is most of the image now: the backend image built from this
-  Dockerfile measures 686,689,600 bytes (about 655 MiB) against 55,708,069 bytes (about 53 MiB)
-  before (`docker image inspect --format '{{.Size}}'`, linux/arm64, alpine 3.20, Chromium 131).
-- **Flags and init, in the image only.** The Alpine launcher reads
-  `/etc/chromium/chromium.conf`, where the image sets `--no-sandbox` (as uid 10001 in a
-  container Chromium cannot set up its own sandbox; the container is the boundary) and
-  `--disable-dev-shm-usage` (a container's `/dev/shm` is 64 MB; shared memory goes to `/tmp`).
-  The server itself never passes either flag. The image starts the server under `tini`
-  (`ENTRYPOINT ["/sbin/tini", "--", "gophercrm"]`): a render kills the browser's whole process
+- **Where the binary comes from.** The runtime stage is `debian:bookworm-slim` and installs
+  the Debian package `chromium-headless-shell`. Alpine, the base before #393, has no headless
+  shell package (3.20 and 3.22 offer only the full `chromium` and its add-ons), and the
+  prebuilt binaries are linked against glibc, so the base had to change. The other candidate,
+  copying the binary from the `chromedp/headless-shell` image, was dropped: its builds
+  (157 to 159, linux/arm64) wrote no file for `--print-to-pdf` and ran until the time bound.
+- **Pinned version.** `ARG HEADLESS_SHELL_VERSION=156.0.8078.79` in the Dockerfile is the one
+  place the browser version is written; the package is installed as
+  `chromium-headless-shell=<version>-1~deb12u1`. Debian's security repository keeps only the
+  newest version, so after the next Chromium update of bookworm the build stops at
+  `Version '...' for 'chromium-headless-shell' was not found`. Raise the argument then to the
+  candidate that
+  `docker run --rm debian:bookworm-slim sh -c 'apt-get update -qq && apt-cache policy chromium-headless-shell'`
+  prints (or pass `--build-arg HEADLESS_SHELL_VERSION=<version>`), and run
+  `scripts/e2e/quote-pdf-chain.sh image` before you ship the image.
+- **Image size.** The browser and the libraries its package depends on are most of the image:
+  700,980,224 bytes (about 669 MiB) with `chrome-headless-shell` 156 on `debian:bookworm-slim`,
+  against 686,689,600 bytes (about 655 MiB) before with the full Chromium 131 on alpine 3.20
+  (`docker image inspect --format '{{.Size}}'`, linux/arm64). The image did not get smaller:
+  the headless shell itself is 211 MB and its package pulls in the Mesa and LLVM libraries.
+- **Other consequences of the new base.** The image installs `wget` only because both compose
+  files health-check the backend with it and `debian:bookworm-slim` has none; it has no `curl`
+  and no `ps`. The init is at `/usr/bin/tini`, not where the Alpine image had it (see the
+  upgrade notes of #393 in `CHANGELOG.md`).
+- **Flags and init, in the image only.** `/usr/local/bin/quote-pdf-browser` is a two-line
+  script that execs `/usr/lib/chromium/chromium-headless-shell` with `--no-sandbox` (as uid
+  10001 in a container the browser cannot set up its own sandbox and refuses to start; the
+  container is the boundary) and `--disable-dev-shm-usage` (a container's `/dev/shm` is 64 MB;
+  shared memory goes to `/tmp`). It uses `exec` so that the process the server started, whose
+  process group it kills, is the browser itself. The server never passes either flag. The
+  image starts the server under `tini`
+  (`ENTRYPOINT ["/usr/bin/tini", "--", "gophercrm"]`): a render kills the browser's whole process
   group, the helpers orphaned that way are handed to PID 1, and an init reaps them where the
   server would leave zombies. If you replace the entrypoint, keep an init (`docker run --init`,
   `init: true` in Compose).
@@ -201,8 +228,8 @@ loads the quote from the API with a short-lived, single-quote, read-only credent
   503 `PDF_UNAVAILABLE`, `GET /api/v1/configurations/ui` reports `quotes.pdf_available` `false`
   and the quote page shows no Download PDF button.
 - **Switching it on.** The production override example does not forward the variable, so the
-  stack it is applied to keeps PDF output off. Add `QUOTE_PDF_CHROME_PATH: /usr/bin/chromium-browser`
-  to the backend `environment` in your own override, together with an `APP_BASE_URL` that meets
+  stack it is applied to keeps PDF output off. Add `QUOTE_PDF_CHROME_PATH: /usr/local/bin/quote-pdf-browser`
+  (the image's default) to the backend `environment` in your own override, together with an `APP_BASE_URL` that meets
   both conditions:
   - it is **reachable from inside the backend container**. A public origin works when the
     container can resolve and reach it (through your TLS proxy); `http://ui`, the UI service on
@@ -275,7 +302,7 @@ file rather than editing the shipped files. The committed
 `docker-compose.production.example.yml` covers the common production set; see
 [Production override example](#production-override-example) below. In the
 SQLite stack the backend also loads `/data/.env` from its volume
-(`Dockerfile:52-54`); variables set in `environment` take precedence over it.
+(`Dockerfile:73-75`); variables set in `environment` take precedence over it.
 
 ### Production override example
 

@@ -60,10 +60,16 @@ for tool in flock rsync mysqldump gzip curl tar systemctl nginx certbot; do
 done
 ```
 
-Optional, for quote PDF output (see [Quote PDF output](#quote-pdf-output)): a Chromium or Chrome
-package and at least one font package, for example `apt-get install chromium fonts-liberation`
-on Debian (the browser package is `chromium-browser`, a snap, on Ubuntu; verify the name and the
-path of the binary for your release). `bootstrap.sh` neither checks for nor installs them.
+Optional, for quote PDF output (see [Quote PDF output](#quote-pdf-output)): a browser and at
+least one font package. The default choice is `chrome-headless-shell`, the browser's headless
+mode as its own binary, which is what the Docker image ships:
+`apt-get install chromium-headless-shell fonts-liberation` on Debian 12 (binary
+`/usr/bin/chromium-headless-shell`). Where the distribution has no such package, take the
+`chrome-headless-shell` build of Chrome for Testing for your platform, or install a full
+Chromium or Chrome instead (`apt-get install chromium fonts-liberation` on Debian; the browser
+package is `chromium-browser`, a snap, on Ubuntu): a full browser is still accepted. Verify the
+name and the path of the binary for your release. `bootstrap.sh` neither checks for nor
+installs them.
 
 ## Service user
 
@@ -129,8 +135,8 @@ LOG_FORMAT=json
 # SMTP_FROM=no-reply@example.com
 # FORM_RETENTION_DAYS=30
 # AUTOMATION_ENABLED=true
-# Quote PDF output: the Chromium or Chrome binary; leave unset to keep it off.
-# QUOTE_PDF_CHROME_PATH=/usr/bin/chromium
+# Quote PDF output: chrome-headless-shell, or a full Chromium or Chrome; unset keeps it off.
+# QUOTE_PDF_CHROME_PATH=/usr/bin/chromium-headless-shell
 ```
 
 ```bash
@@ -175,10 +181,11 @@ starts; a path that does not resolve is one warning in the journal.
 
 To switch it on:
 
-1. Install Chromium (or Chrome) and at least one font package (see *Packages*). Without a font
-   the PDF is a valid file with no readable text.
-2. Uncomment `QUOTE_PDF_CHROME_PATH` in the environment file and set it to the binary, then
-   restart the service.
+1. Install `chrome-headless-shell` (or a full Chromium or Chrome) and at least one font package
+   (see *Packages*). Without a font the PDF is a valid file with no readable text.
+2. Uncomment `QUOTE_PDF_CHROME_PATH` in the environment file and set it to the binary
+   (`/usr/bin/chromium-headless-shell` for the Debian package; the path of a full Chrome or
+   Chromium works the same way), then restart the service.
 3. Check the two conditions of a render. The backend starts the browser headless, the browser
    opens `APP_BASE_URL/quote-render`, and that page loads the quote from the API with a
    short-lived, single-quote, read-only credential:
@@ -195,9 +202,10 @@ To switch it on:
 `PrivateTmp=yes` provides, and removes it afterwards; `ProtectHome=yes` and `ProtectSystem=strict`
 stay as they are. The browser process does not inherit the service's environment: it gets `PATH`,
 the locale, `TZ` and those directories, so no value of the environment file reaches it. The
-backend never passes `--no-sandbox`; if your Chromium cannot start its sandbox as the service
-user, point `QUOTE_PDF_CHROME_PATH` at a small wrapper script that adds the flag, and treat that
-as your own decision. The browser's helper processes that lose their parent when a render ends
+backend never passes `--no-sandbox`; if your browser cannot start its sandbox as the service
+user, point `QUOTE_PDF_CHROME_PATH` at a small wrapper script that adds the flag and starts the
+browser with `exec` (as the Docker image's `/usr/local/bin/quote-pdf-browser` does), and treat
+that as your own decision. The browser's helper processes that lose their parent when a render ends
 are reaped by the host's init, as for any service.
 
 **Not verified on a systemd host.** For this feature the systemd deployment was not run on a real

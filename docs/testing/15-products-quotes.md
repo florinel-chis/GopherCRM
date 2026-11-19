@@ -1144,8 +1144,9 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
 
 ## 15.14 Quote PDF output (#384)
 
-Since #384 the server prints the quote document to PDF with a headless Chrome or Chromium named
-by `QUOTE_PDF_CHROME_PATH` (empty, or not an executable file: PDF output off). The browser opens
+Since #384 the server prints the quote document to PDF with a headless browser named by
+`QUOTE_PDF_CHROME_PATH` (empty, or not an executable file: PDF output off): since #393
+`chrome-headless-shell` in the Docker image, a full Chrome or Chromium wherever one is named. The browser opens
 the public page `/quote-render#<credential>` of the web application, which loads the quote
 through `POST /quotes/public/render` with a credential minted for that one render. The PDF is
 served by `GET /quotes/{id}/pdf`, attached to the quote email, announced as `quotes.pdf_available`
@@ -1157,7 +1158,8 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
 `internal/handler/quote_handler.go` (`PDF`), `quote_public_handler.go` (`Render`),
 `configuration_handler.go`, `internal/mailer/smtp.go` (`SendWithAttachment`),
 `gocrm-ui/src/pages/quotes/QuoteDocument.tsx`, `QuoteRender.tsx`, `QuoteDetail.tsx`,
-`gocrm-ui/src/api/endpoints/quotes.ts`, `quoteRender.ts`, `scripts/e2e/quote-pdf-smoke.sh`.
+`gocrm-ui/src/api/endpoints/quotes.ts`, `quoteRender.ts`, `scripts/e2e/quote-pdf-smoke.sh`,
+`scripts/e2e/quote-pdf-chain.sh`, `Dockerfile`.
 
 ### TC-PQ-052 — Download: the PDF route answers the file, with the refusals of the quote read
 - **Priority:** P0
@@ -1280,26 +1282,34 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
   `timeout: 55000`, above 45 s and below 60 s.
 - **Automation:** automated — `internal/service/quote_pdf_test.go` `TestQuotePDFRender`,
   `TestQuotePDFTimeoutBudget`; `internal/service/quote_pdf_chrome_test.go`
-  `TestChromeQuotePDFRendererTimeout`, `TestChromeQuotePDFRendererEnvironment`; `quotes.test.ts`.
+  `TestChromeQuotePDFRendererTimeout`, `TestChromeQuotePDFRendererEnvironment`,
+  `TestChromeQuotePDFRendererLaunchArguments` (the keychain switches and `--headless` are
+  passed, `--no-sandbox` is not, profile and `HOME` lie inside the render's directory);
+  `quotes.test.ts`.
 
-### TC-PQ-058 — Real chain: Chrome prints the web application's render page
+### TC-PQ-058 — Real chain: the browser prints the web application's render page
 - **Priority:** P1
 - **Type:** end-to-end, manual
-- **Preconditions:** A backend of the build under test on `localhost` with `QUOTE_PDF_CHROME_PATH` set to a real Chrome or Chromium and an `APP_BASE_URL` that serves the web application of the same build; an admin; `pdftotext` and `pdffonts` (poppler-utils). Recipe in `docs/DEVELOPMENT.md`.
+- **Preconditions:** A checkout of the build under test with `gocrm-ui/node_modules`; a full Chrome or Chromium on the machine; Docker with Compose v2 (for step 2, and for `pdftotext`/`pdffonts` when poppler-utils is not installed). `scripts/e2e/quote-pdf-chain.sh` starts and stops everything else. Recipe in `docs/DEVELOPMENT.md`.
 - **Steps:**
-  1. `BASE_URL=... ADMIN_EMAIL=... ADMIN_PASSWORD=... bash scripts/e2e/quote-pdf-smoke.sh out.pdf`.
-  2. `pdftotext out.pdf out.txt`; look for the printed `number=` and `line=` values in `out.txt`; `pdffonts out.pdf`.
-  3. Stop the web application and run the script again.
-  4. Repeat steps 1 and 2 against the Docker image running as uid 10001 with a read-only root file system and only `/tmp` and `/data` writable.
-- **Expected:** Step 1: exit 0 and exactly two lines, `number=<quote number>` and
-  `line=PDF smoke line <hex>`; the file starts with `%PDF`. Step 2: both values are in the text
-  and at least one font is embedded. Step 3: a non-zero exit naming 503 `PDF_RENDER_FAILED`.
-  Step 4: as steps 1 and 2; no browser process and no temporary directory is left in the
-  container.
-- **Automation:** planned — manual release check (`scripts/e2e/quote-pdf-smoke.sh`); the e2e
-  backend runs with `QUOTE_PDF_CHROME_PATH` pinned empty. `TestChromeQuotePDFRendererRealBinary`
-  (`internal/service/quote_pdf_chrome_test.go`) drives a real binary against a static page when
-  `QUOTE_PDF_CHROME_PATH` is set and skips otherwise.
+  1. `QUOTE_PDF_CHROME_PATH=<full Chrome or Chromium> bash scripts/e2e/quote-pdf-chain.sh local`.
+  2. `bash scripts/e2e/quote-pdf-chain.sh image` (the image built from the checkout, its own default `chrome-headless-shell`, uid 10001, read-only root file system, only `/tmp` and `/data` writable, ten renders).
+  3. `bash scripts/e2e/quote-pdf-chain.sh local` without `QUOTE_PDF_CHROME_PATH`.
+  4. By hand, against a backend with PDF output on and the web application stopped: `BASE_URL=... ADMIN_EMAIL=... ADMIN_PASSWORD=... bash scripts/e2e/quote-pdf-smoke.sh out.pdf`.
+- **Expected:** Step 1: exit 0; the smoke script's four lines, `number=<quote number>`,
+  `line=PDF smoke line <hex>`, `total=246.90` and `gross_total=293.81`, and each of the four
+  values reported as found in the text of the PDF. Step 2: exit 0; the backend `healthy`, the
+  container's `QUOTE_PDF_CHROME_PATH` equal to the image's default, the browser version of
+  `HEADLESS_SHELL_VERSION`, ten renders, the four values found, at least one embedded font, no
+  browser process and no zombie in the backend container within 10 s, a stop in under 10 s with
+  an exit code other than 137. After both: no process, container, network, volume or image tag
+  of the run is left. Step 3: a non-zero exit with a usage message. Step 4: a non-zero exit
+  naming 503 `PDF_RENDER_FAILED`.
+- **Automation:** planned — manual release check (`scripts/e2e/quote-pdf-chain.sh`, which runs
+  `scripts/e2e/quote-pdf-smoke.sh`); the e2e backend runs with `QUOTE_PDF_CHROME_PATH` pinned
+  empty. `TestChromeQuotePDFRendererRealBinary` (`internal/service/quote_pdf_chrome_test.go`)
+  drives a real binary against a static page when `QUOTE_PDF_CHROME_PATH` is set and skips
+  otherwise.
 
 ## 15.15 Response links and the erasure of the customer (#395)
 
