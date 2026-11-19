@@ -24,7 +24,7 @@ regression anchors, not endorsements.
 **Constraints**
 
 - `SetupTaskRoutes` (`internal/handler/routes.go:64`) installs **no** `RequireRole` guard on the
-  `/tasks` group, and the `Tasks` sidebar entry (`MainLayout.tsx:150`) and the `tasks/*` routes ask for
+  `/tasks` group, and the `Tasks` sidebar entry (`MainLayout.tsx:151`) and the `tasks/*` routes ask for
   `tasks.view`, which all four system roles hold. Every authenticated system role, customer
   included, can open `/tasks`; a custom role without the key is redirected to `/unauthorized`. Role differences on that group are
   enforced inside the handlers only. The one guarded route it registers is the deal sub-list
@@ -106,7 +106,7 @@ regression anchors, not endorsements.
   1. Log in as the customer.
   2. Observe the sidebar.
   3. Click "Tasks".
-- **Expected:** "Tasks" is present in the sidebar (`MainLayout.tsx:150` asks for `tasks.view`, which the customer role holds), `/tasks` renders, and `GET /api/v1/tasks` returns 200 with an empty task array for a customer who has never been assigned one. The "Create Task" button is visible even though `POST /tasks` will refuse the role (see TC-TASK-015).
+- **Expected:** "Tasks" is present in the sidebar (`MainLayout.tsx:151` asks for `tasks.view`, which the customer role holds), `/tasks` renders, and `GET /api/v1/tasks` returns 200 with an empty task array for a customer who has never been assigned one. The "Create Task" button is visible even though `POST /tasks` will refuse the role (see TC-TASK-015).
 - **Known issue:** Contrast with Tickets, whose sidebar entry and routes are role-gated. Tasks are visible to a role that cannot meaningfully use them.
 - **Automation:** blocked — needs a customer-role login helper
 
