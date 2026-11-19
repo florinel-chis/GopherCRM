@@ -78,7 +78,7 @@ file, not by trusting the coverage matrix.
   3. Navigate to `/users`.
 - **Expected:** The register call returns **201**; the response `data.user.role` is `customer`.
   Gin's binder silently drops the unknown `role` key because `handler.RegisterRequest` has no such
-  field (`internal/handler/auth_handler.go:29`), and the handler hard-codes
+  field (`internal/handler/auth_handler.go:46`), and the handler hard-codes
   `Role: models.RoleCustomer`. `/users` redirects to `/unauthorized`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/registration.spec.ts` (extended)
 
@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:252-275`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:252-278`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:314-317`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go:317-320`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:277-311`), so a correct password
+  password result is examined (`internal/service/auth_service.go:280-314`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -1214,3 +1214,71 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   endpoint, and a redirect target receives none. The access token never appears in the logs or
   in any table.
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `userinfo_groups_mapped`, `userinfo_groups_absent`, `userinfo_not_called`, `userinfo_subject_mismatch`, `userinfo_unavailable`, `userinfo_token_privacy` (and `group_overage`, `graph_overage_match` for the zero-request checks)
+
+### TC-AUTH-060 — Every sign-in outcome writes one audit row with its reason
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** A sales account with a password; a second account that is deactivated, one
+  that is locked, one linked to single sign-on (with `allow_password` off) and one with an API
+  key; single sign-on on with a role mapping.
+- **Steps:**
+  1. Sign in with the right password, a wrong password, an unknown email, and as each of the
+     locked, deactivated and linked accounts.
+  2. Refresh with a live refresh token, an unknown one, and one whose owner was deactivated or
+     erased meanwhile.
+  3. Call a protected route with `ApiKey` and an unknown, an expired key and the key of a
+     deactivated or erased owner; then with a bad `Bearer` token.
+  4. Finish a single sign-on that succeeds, one with an unknown state and one whose groups match
+     no mapping entry.
+  5. Send one request with an `X-Request-ID` of 100 characters or with a space.
+- **Expected:** Every answer is the same as before (200, the generic 401, 503 for an operational
+  refresh failure). Each step 1–4 request adds exactly one `auth_audit_log` row: `password`
+  `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
+  account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
+  `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`; `api_key`
+  `key_invalid`, `key_expired`, `account_inactive`, `account_erased` (the account's `user_id` when
+  the key was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
+  bad Bearer token adds no row. Every row carries the request id and the client's `/24`; the
+  request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
+  `audit_id`.
+- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}`, `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
+
+### TC-AUTH-061 — The audit log and its log lines hold no personal or secret values
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A database with the sign-in audit log; the client at `198.51.100.77` with a
+  Chrome on Windows user agent.
+- **Steps:**
+  1. Run a single sign-on that succeeds and one refused after the ID token verified, a password
+     sign-in with a wrong password, a refresh and a request with an unknown API key.
+  2. Read every column of every `auth_audit_log` row and the server log of those requests.
+- **Expected:** Neither holds the email, the password, the subject, the access or refresh token,
+  the API key, the code, the state, the nonce, the full IP address or the full user agent. The
+  rows hold `198.51.100.0/24` and `Chrome on Windows`. A failed audit write is logged once as
+  `audit_write_failed` and the sign-in answers as without the audit.
+- **Automation:** automated — Go: `TestAuthAuditPrivacy{SQLite,MySQL}`, `TestAuthAuditWriteFailure`
+
+### TC-AUTH-062 — A refused single sign-on identity is recorded as a stable keyed reference
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Single sign-on on; `API_KEY_SECRET` set.
+- **Steps:**
+  1. Sign in twice as the same person whose groups match no mapping entry.
+  2. Sign in as another person refused the same way, and as the same subject at another issuer.
+  3. Restart with another `API_KEY_SECRET` and repeat step 1.
+  4. Sign in successfully, and with a wrong nonce.
+- **Expected:** Step 1 stores the same 64-hex `subject_ref` twice; steps 2 and 3 store different
+  ones; step 4 stores NULL (success, and a refusal before the nonce matched).
+- **Automation:** automated — Go: `TestAuthAuditSubjectReference`, `TestOIDCSignIn{SQLite,MySQL}` subtests `audit_success_row`, `audit_refusal_row`, `audit_id_on_refusal_log`
+
+### TC-AUTH-063 — Audit rows older than the retention are deleted
+- **Priority:** P2
+- **Type:** functional
+- **Preconditions:** `AUTH_AUDIT_RETENTION_DAYS` unset (90 days); audit rows 91 days and 1 day
+  old.
+- **Steps:**
+  1. Start the server.
+  2. Set `AUTH_AUDIT_RETENTION_DAYS` to `abc`, `0`, `-5`, `30` and `99999` in turn.
+- **Expected:** Step 1: the boot sweep deletes the 91-day-old row and keeps the 1-day-old one; it
+  runs again every 15 minutes. Step 2: the retention is 90, 90, 90, 30 and 36500 days.
+- **Automation:** automated — Go: `TestBulkOperationRecoveryProductionWiring`, `TestAuthAuditPrune{SQLite,MySQL}`, `TestBulkOperationRecoveryAuthAuditPruning`, `TestLoadAuthAuditRetentionDays`

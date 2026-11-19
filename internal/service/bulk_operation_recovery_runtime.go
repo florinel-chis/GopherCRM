@@ -72,6 +72,16 @@ func WithOIDCAttemptPruning(repo repository.OIDCLoginAttemptRepository) BulkOper
 	}
 }
 
+// WithAuthAuditPruning makes every Sweep also prune the auth_audit_log rows
+// older than retentionDays days (#454), independently of the bulk operation
+// result.
+func WithAuthAuditPruning(repo repository.AuthAuditRepository, retentionDays int) BulkOperationRecoveryOption {
+	return func(r *BulkOperationRecoveryRuntime) {
+		r.authAudit = repo
+		r.authAuditRetentionDays = retentionDays
+	}
+}
+
 // WithBulkRecoveryInterval replaces BulkOperationSweepInterval; a
 // non-positive value keeps it.
 func WithBulkRecoveryInterval(interval time.Duration) BulkOperationRecoveryOption {
@@ -95,6 +105,10 @@ type BulkOperationRecoveryRuntime struct {
 	interval  time.Duration
 	// oidcAttempts, when set, is pruned on every sweep (#453).
 	oidcAttempts repository.OIDCLoginAttemptRepository
+	// authAudit, when set, is pruned on every sweep to
+	// authAuditRetentionDays (#454).
+	authAudit              repository.AuthAuditRepository
+	authAuditRetentionDays int
 
 	mu      sync.Mutex
 	started bool
@@ -127,8 +141,9 @@ func NewBulkOperationRecoveryRuntime(repo repository.BulkOperationRepository, lo
 func (r *BulkOperationRecoveryRuntime) Interval() time.Duration { return r.interval }
 
 // Sweep runs one pass with the runtime's clock and logs its count. With
-// WithOIDCAttemptPruning it then prunes the old sign-in attempts; that prune
-// is logged on its own and never changes the returned count or error.
+// WithOIDCAttemptPruning it then prunes the old sign-in attempts, and with
+// WithAuthAuditPruning the old audit rows; each prune is logged on its own and
+// never changes the returned count or error.
 func (r *BulkOperationRecoveryRuntime) Sweep(ctx context.Context) (int64, error) {
 	now := r.now()
 	failed, err := SweepStaleBulkOperations(ctx, r.repo, now)
@@ -144,7 +159,27 @@ func (r *BulkOperationRecoveryRuntime) Sweep(ctx context.Context) (int64, error)
 		entry.WithError(utils.LogError(err)).Warn("bulk operation recovery sweep failed")
 	}
 	r.pruneOIDCAttempts(ctx, now)
+	r.pruneAuthAudit(ctx, now)
 	return failed, err
+}
+
+// pruneAuthAudit deletes the audit rows older than the retention, when the
+// option is set.
+func (r *BulkOperationRecoveryRuntime) pruneAuthAudit(ctx context.Context, now time.Time) {
+	if r.authAudit == nil {
+		return
+	}
+	pruned, err := PruneAuthAuditLog(ctx, r.authAudit, now, r.authAuditRetentionDays)
+	entry := r.log().WithField("pruned", pruned)
+	switch {
+	case err == nil && pruned > 0:
+		entry.Info("pruned sign-in audit rows")
+	case err == nil:
+	case ctx.Err() != nil:
+		entry.Info("sign-in audit prune interrupted")
+	default:
+		entry.WithError(utils.LogError(err)).Warn("sign-in audit prune failed")
+	}
 }
 
 // pruneOIDCAttempts deletes the sign-in attempts created more than

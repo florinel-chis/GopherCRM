@@ -236,6 +236,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		// login attempts hold a hash and no foreign key.
 		&UserIdentity{},
 		&OIDCLoginAttempt{},
+		// Sign-in audit log (#454): ids only, no foreign key.
+		&AuthAuditLog{},
 		&Ticket{},
 		&TicketComment{},
 		// Ticket comment mail deliveries (#219): ids only, no foreign key.

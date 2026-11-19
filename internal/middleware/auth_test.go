@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -342,4 +344,96 @@ func TestAuth_RecordsAuthenticationMethod(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Contains(t, w.Body.String(), `"auth_method":"`+method+`"`, header)
 	}
+}
+
+// recordingAudit is a sign-in audit writer that keeps what it was given.
+type recordingAudit struct {
+	apiKeyFailures []recordedAPIKeyFailure
+	other          int
+}
+
+type recordedAPIKeyFailure struct {
+	ctx context.Context
+	err error
+}
+
+func (r *recordingAudit) Record(context.Context, service.AuthAuditEntry) uint { r.other++; return 1 }
+
+func (r *recordingAudit) RecordPassword(context.Context, *service.AuthTokens, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordRefresh(context.Context, *service.AuthTokens, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordAPIKeyFailure(ctx context.Context, err error) uint {
+	r.apiKeyFailures = append(r.apiKeyFailures, recordedAPIKeyFailure{ctx: ctx, err: err})
+	return 1
+}
+
+func setupAuditedAuthRouter(authSvc *MockAuthService, audit *recordingAudit) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("request_id", "req-454"); c.Next() })
+	r.Use(Auth(authSvc, WithAPIKeyAudit(audit)))
+	r.GET("/protected", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{}) })
+	return r
+}
+
+func TestAuth_RecordsAPIKeyFailure(t *testing.T) {
+	refusal := errors.New("invalid API key")
+	mockAuth := new(MockAuthService)
+	mockAuth.On("ValidateAPIKey", "bogus").Return(nil, refusal)
+	mockAuth.On("ValidateAPIKey", "good").Return(&models.User{BaseModel: models.BaseModel{ID: 3}, Role: models.RoleSales}, nil)
+	audit := &recordingAudit{}
+	router := setupAuditedAuthRouter(mockAuth, audit)
+
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "ApiKey bogus")
+	req.Header.Set("User-Agent", "curl/8.7.1")
+	req.RemoteAddr = "198.51.100.77:4321"
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "Invalid credentials", "the answer is unchanged")
+	if assert.Len(t, audit.apiKeyFailures, 1, "recorded once") {
+		got := audit.apiKeyFailures[0]
+		assert.Same(t, refusal, got.err)
+		assert.Equal(t, "req-454", utils.RequestIDFromContext(got.ctx))
+		assert.Equal(t, utils.ClientInfo{IP: "198.51.100.77", UserAgent: "curl/8.7.1"}, utils.ClientInfoFromContext(got.ctx))
+	}
+	assert.Zero(t, audit.other)
+
+	// A valid key records nothing.
+	req = httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "ApiKey good")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Len(t, audit.apiKeyFailures, 1)
+	mockAuth.AssertExpectations(t)
+}
+
+func TestAuth_DoesNotRecordBearerFailure(t *testing.T) {
+	mockAuth := new(MockAuthService)
+	mockAuth.On("ValidateToken", "bad-token").Return(nil, errors.New("invalid token"))
+	audit := &recordingAudit{}
+	router := setupAuditedAuthRouter(mockAuth, audit)
+
+	for _, header := range []string{"Bearer bad-token", "", "Basic abc"} {
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		if header != "" {
+			req.Header.Set("Authorization", header)
+		}
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code, header)
+	}
+	assert.Empty(t, audit.apiKeyFailures, "a Bearer or missing credential is never recorded")
+	assert.Zero(t, audit.other)
+	mockAuth.AssertExpectations(t)
 }

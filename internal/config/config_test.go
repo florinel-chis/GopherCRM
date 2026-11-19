@@ -32,6 +32,8 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		// Forms keys, for the same reason as the AEO ones.
 		"PUBLIC_BASE_URL", "RECAPTCHA_SITE_KEY", "RECAPTCHA_SECRET_KEY", "RECAPTCHA_MIN_SCORE",
 		"FORM_RETENTION_DAYS",
+		// Sign-in audit log retention (#454).
+		"AUTH_AUDIT_RETENTION_DAYS",
 		// Database driver selection, so a developer shell pointing at SQLite
 		// cannot flip the default-value assertions.
 		"DB_DRIVER", "DB_PATH",
@@ -156,6 +158,44 @@ func TestLoadFormRetentionDays(t *testing.T) {
 				cfg, err := Load()
 				assert.NoError(t, err)
 				assert.Equalf(t, tc.want, cfg.Forms.RetentionDays, "FORM_RETENTION_DAYS=%q", tc.raw)
+			})
+		})
+	}
+}
+
+// AUTH_AUDIT_RETENTION_DAYS (#454) defaults to 90 for every value that is
+// not a positive number and is capped at 36500.
+func TestLoadAuthAuditRetentionDays(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
+			cfg, err := Load()
+			assert.NoError(t, err)
+			assert.Equal(t, 90, cfg.AuthAudit.RetentionDays)
+		})
+	})
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", 90},
+		{"abc", 90},
+		{"0", 90},
+		{"-5", 90},
+		{"-99999999999999999999999", 90},
+		{"1", 1},
+		{"30", 30},
+		{"36500", 36500},
+		{"99999", 36500},
+		{"99999999999999999999999", 36500},
+	} {
+		t.Run("value "+tc.raw, func(t *testing.T) {
+			withCleanEnv(t, map[string]string{
+				"JWT_SECRET":                validSecret(),
+				"AUTH_AUDIT_RETENTION_DAYS": tc.raw,
+			}, func() {
+				cfg, err := Load()
+				assert.NoError(t, err)
+				assert.Equalf(t, tc.want, cfg.AuthAudit.RetentionDays, "AUTH_AUDIT_RETENTION_DAYS=%q", tc.raw)
 			})
 		})
 	}

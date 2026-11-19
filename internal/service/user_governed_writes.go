@@ -412,7 +412,8 @@ type oidcSignIn struct {
 // identity row and its audit row, refused when any user, erased ones
 // included, holds the address in any letter case. The session is issued last,
 // inside the same transaction. Every refusal is ErrSSOSignInFailed (through
-// oidcRefuse) and writes nothing.
+// oidcRefuse) and writes nothing; a refusal of a linked account names its
+// user for the audit row (#454).
 func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*AuthTokens, error) {
 	if s.governance == nil {
 		return nil, errRoleGovernanceUnavailable
@@ -442,10 +443,10 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			}
 			target := users[identity.UserID]
 			if target == nil {
-				return oidcRefuse("account_erased")
+				return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
 			}
 			if !target.IsActive {
-				return oidcRefuse("account_inactive")
+				return oidcRefusalForUser(oidcRefuse("account_inactive"), target.ID)
 			}
 			mapped := in.roleID
 			roles, err := tx.lockRoles(target.RoleID, &mapped)
@@ -457,10 +458,10 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				return err
 			}
 			if role == models.RoleCustom && target.Role == models.RoleCustomer {
-				return oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole)
+				return oidcRefusalForUser(oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole), target.ID)
 			}
 			if role != models.RoleAdmin && isLastActiveAdmin(admins, target.ID) {
-				return oidcRefuseWith("last_admin", apperrors.ErrLastAdmin)
+				return oidcRefusalForUser(oidcRefuseWith("last_admin", apperrors.ErrLastAdmin), target.ID)
 			}
 			if role != target.Role || !sameRoleID(roleID, target.RoleID) {
 				fields := map[string]interface{}{"role": role, "role_id": nil}
@@ -469,7 +470,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				}
 				if err := tx.users.UpdateFields(target.ID, fields); err != nil {
 					if isNotFound(err) {
-						return oidcRefuse("account_erased")
+						return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
 					}
 					return err
 				}
@@ -482,7 +483,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			}
 			if user, err = tx.users.GetByID(target.ID); err != nil {
 				if isNotFound(err) {
-					return oidcRefuse("account_erased")
+					return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
 				}
 				return err
 			}

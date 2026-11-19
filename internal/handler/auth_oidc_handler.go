@@ -112,7 +112,7 @@ func (h *AuthOIDCHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.oidc.Callback(utils.WithRequestID(c.Request.Context(), c.GetString("request_id")), req.Code, req.State)
+	tokens, err := h.oidc.Callback(auditContext(c), req.Code, req.State)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return

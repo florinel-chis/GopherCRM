@@ -314,6 +314,89 @@ user-role and role writes"; the order of the refusals, the error codes and the p
 are in [DEVELOPMENT.md](DEVELOPMENT.md), "RBAC persistence" and "Role API and governed user
 writes".
 
+## Sign-in audit log
+
+Since #454 every sign-in outcome writes one row to `auth_audit_log`: each `POST /auth/login`
+that passes request validation, each `POST /auth/oidc/callback` that passes request validation,
+each `POST /auth/refresh` that passes request validation, and each request whose `ApiKey`
+credential is refused. A successful API-key request writes nothing, and neither does a refused
+Bearer token, a 400, `POST /auth/oidc/start` or a rate-limited request. The row is written after
+the sign-in's own transaction has ended, as one `INSERT` of its own; a failed insert is logged
+once (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
+Answers, status codes and messages are the same as before.
+
+**Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
+`api_key`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
+account, when the account row was found, else NULL); `attempt_id` (the `oidc_login_attempts` row
+a callback claimed, else NULL); `request_id` (the request's `X-Request-ID`, stored only when it
+matches `^[A-Za-z0-9._:-]{1,64}$`, else empty); `subject_ref` (see below, else NULL);
+`claim_roles` and `claim_groups` (JSON arrays of the `roles` and `groups` values the role mapping
+used, after a Microsoft Graph or userinfo resolution; at most 100 values of at most 256 bytes
+each; NULL when the callback did not get that far or the claim was malformed); `client_network`
+(the client address as Gin resolves it behind `TRUSTED_PROXIES`, cut to `a.b.c.0/24` for IPv4
+and to the `/48` prefix for IPv6, empty when it does not parse); `user_agent_family`
+(`<browser> on <OS>` from fixed lists: Edge, Opera, Firefox, Chrome, Safari, curl or Other, on
+iOS, Android, ChromeOS, Windows, macOS, Linux or Other; empty without a `User-Agent`). There is
+no foreign key and no soft delete.
+
+**Never stored.** An email address, a name, a subject (`sub`), a password, an access, refresh,
+ID or API token, an authorization code, a state, a nonce, a PKCE verifier, the full IP address
+or the full user agent. Neither are they logged.
+
+**Reason codes.**
+
+- `password`: `invalid_credentials` (unknown email, `user_id` NULL; or a wrong password),
+  `account_locked`, `account_inactive`, `account_erased`, `password_changed` (the password
+  changed between the check and the owner lock), `sso_account` (an account linked to single
+  sign-on while `allow_password` is off), `internal_error`.
+- `refresh`: `token_invalid` (unknown, revoked, expired or already spent), `account_inactive`,
+  `account_erased`, `unavailable` (the 503 `SESSION_REFRESH_UNAVAILABLE` path).
+- `api_key`: `key_invalid` (no such key), `key_expired`, `account_inactive`, `account_erased`
+  (the owner row is gone). `key_revoked` exists for a revoked key the lookup returns; the
+  shipped lookup only returns active keys, so a revoked key is recorded as `key_invalid`.
+- `oidc`: the `error_code` of the refusal (`state_invalid`, `issuer_changed`, `id_token_missing`,
+  `id_token_invalid`, `nonce_mismatch`, `claims_invalid`, `group_overage`, `groups_malformed`,
+  `roles_malformed`, `subject_invalid`, `issuer_invalid`, `groups_unavailable`,
+  `userinfo_subject_mismatch`, `no_mapping_match`, `role_missing`, `identity_mismatch`,
+  `account_erased`, `account_inactive`, `customer_login_role`, `last_admin`, `email_missing`,
+  `email_taken`, `identity_taken`), the 503 codes `not_configured`, `discovery_failed` and
+  `token_exchange_failed`, `sso_disabled` (404) and `internal_error` (500). A refusal of a
+  linked account (`account_erased`, `account_inactive`, `customer_login_role`, `last_admin`)
+  carries that account's `user_id`.
+
+**Subject reference.** A single sign-on refusal decided after the ID token verified and its nonce
+matched stores `subject_ref`, the hex HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it
+is unset) of `auth-audit-subject:` + the byte length of the issuer + `:` + the issuer + the
+subject. The same identity always gives the same reference, so repeated refusals of one person
+can be grouped without storing who it is; whoever holds the secret and knows a candidate
+`(iss, sub)` can confirm it. A success, or a refusal before verification, stores NULL. Rotating the
+secret changes every future reference.
+
+**Retention.** Rows older than `AUTH_AUDIT_RETENTION_DAYS` (environment only, default 90; an
+unset, empty, zero, negative or unparseable value keeps 90, at most 36500) are deleted by the
+stale bulk-operation sweep, at boot and every 15 minutes on every replica, in chunks of 500.
+Erasure of a user does not touch the rows: they hold only ids, a network prefix and a family
+string, and they age out. API-key failures are recorded by the authentication middleware, which
+runs before the per-client moderate rate limiter, so every request with a bogus `ApiKey` header
+costs one `INSERT`: the retention bounds the age of the rows, not their number.
+
+**Debugging a refused sign-in.** A person reports "Single sign-on failed" (401). The response does
+not say why, on purpose. Ask for the time and, when the SPA or a proxy sets one, the
+`X-Request-ID`; then:
+
+1. Find the row: `SELECT * FROM auth_audit_log WHERE request_id = 'req-7f3a' ORDER BY id DESC;`
+   or, without a request id, the `oidc` rows around the reported time from the person's
+   `client_network`.
+2. Read `reason`. `no_mapping_match` with `claim_groups` `["3f2a…", "77c1…"]` means the issuer sent
+   those groups and none is in the role mapping: add the right group object id under Settings >
+   Single sign-on, or assign the person to a mapped group at the issuer. `groups_unavailable`
+   points at Microsoft Graph or the userinfo endpoint; `nonce_mismatch` or `state_invalid` at a
+   reused or stale browser tab; `account_inactive` with a `user_id` at a deactivated account.
+3. The `oidc_sign_in` log lines of the same request carry the same `request_id`, the
+   `attempt_id` and, on the `Single sign-on refused` line, `audit_id`, the row's `id`.
+4. To see whether the same person keeps failing, group by `subject_ref`:
+   `SELECT subject_ref, reason, COUNT(*) FROM auth_audit_log WHERE method = 'oidc' AND outcome = 'refused' GROUP BY subject_ref, reason;`
+
 ## Least-privilege integration user
 
 An API key has no scopes of its own. It acts with the permissions its owner holds at the moment
@@ -461,7 +544,9 @@ every 15 minutes, on every replica) prunes sign-in attempts older than one day; 
 itself deletes nothing. Every `oidc_sign_in` log line carries the `request_id` of the HTTP
 request (from `X-Request-ID` when the client sends one, logged only as a field) and the
 `attempt_id` of the attempt row, `0` before the row exists or has been claimed (an unknown, used
-or expired state).
+or expired state). Since #454 the `Single sign-on refused` line, the `Single sign-on unavailable`
+line of a 503 and the success line also carry `audit_id`, the id of the callback's
+[sign-in audit](#sign-in-audit-log) row (`0` when that write failed).
 
 **Identity.** The identity is the exact `(iss, sub)` pair in `user_identities` (unique,
 `utf8mb4_bin` on MySQL/MariaDB, BINARY on SQLite). A `sub` that is empty, longer than 255 bytes,

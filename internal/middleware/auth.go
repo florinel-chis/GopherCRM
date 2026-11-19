@@ -10,7 +10,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func Auth(authService service.AuthService) gin.HandlerFunc {
+// AuthOption configures Auth.
+type AuthOption func(*authOptions)
+
+type authOptions struct {
+	apiKeyAudit service.AuthAuditService
+}
+
+// WithAPIKeyAudit makes Auth record every failed ApiKey authentication in the
+// sign-in audit log (#454). Bearer failures are not recorded, and the answer
+// stays the same 401.
+func WithAPIKeyAudit(audit service.AuthAuditService) AuthOption {
+	return func(o *authOptions) { o.apiKeyAudit = audit }
+}
+
+func Auth(authService service.AuthService, opts ...AuthOption) gin.HandlerFunc {
+	var options authOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	return func(c *gin.Context) {
 		var user *models.User
 		var err error
@@ -34,6 +52,11 @@ func Auth(authService service.AuthService) gin.HandlerFunc {
 		}
 
 		if err != nil {
+			if method == service.AuthMethodAPIKey && options.apiKeyAudit != nil {
+				options.apiKeyAudit.RecordAPIKeyFailure(utils.WithClientInfo(
+					utils.WithRequestID(c.Request.Context(), c.GetString("request_id")),
+					c.ClientIP(), c.Request.UserAgent()), err)
+			}
 			utils.RespondUnauthorized(c, "Invalid credentials")
 			c.Abort()
 			return

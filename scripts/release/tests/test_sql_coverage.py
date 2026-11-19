@@ -39,6 +39,7 @@ class MigrationCoverageTests(unittest.TestCase):
                     'TestQuoteResponseTokensMigration',
                     'TestQuoteHistorySourceMigration',
                     'TestUserIdentitiesMigration',
+                    'TestAuthAuditLogMigration',
                 ],
                 'internal/models': [
                     'TestMigrateDatabase_SQLiteUpgradeFromV120',
@@ -68,7 +69,7 @@ class MigrationCoverageTests(unittest.TestCase):
                          migrations_only=True)
 
     def test_accepts_complete_sql_and_sqlite_evidence(self):
-        self.assertEqual(len(self.check()), 35)
+        self.assertEqual(len(self.check()), 36)
 
     def test_unavailable_database_cannot_pass_as_skips(self):
         for event in self.events:

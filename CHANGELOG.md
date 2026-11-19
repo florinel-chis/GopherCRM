@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sign-in audit log (#454).** A new `auth_audit_log` table (migration
+  `20261124120000_add_auth_audit_log`, and AutoMigrate) records one pseudonymous row per password
+  sign-in, single sign-on callback and refresh, and per refused `ApiKey` credential: the method,
+  the outcome, a stable reason code (for example `invalid_credentials`, `sso_account`,
+  `token_invalid`, `key_expired`, or the single sign-on `error_code` such as `no_mapping_match`),
+  the user id when the account was found, the sign-in attempt and request ids, an HMAC reference of
+  a single sign-on identity refused after its ID token verified, the role and group claim values
+  the mapping used, the client's `/24` or `/48` network and a user-agent family from a fixed list.
+  It never stores an email, a name, a subject, a token, a code, a state, a nonce, a password, the
+  full IP address or the full user agent. The row is written after the sign-in's transaction; a
+  failed write is logged and changes no answer, and no status, body or message changed. Rows older
+  than `AUTH_AUDIT_RETENTION_DAYS` (environment only, default 90) are deleted by the stale bulk
+  operation sweep; erasure leaves them to age out. The `oidc_sign_in` refusal, 503 and success log
+  lines carry `audit_id`. See the *Sign-in audit log* section of `docs/AUTHORIZATION.md`.
+
 - **Browser tests of single sign-on against a local test issuer (#446).** `make e2e` now builds
   and starts `scripts/e2e/oidc-issuer`, a disposable OpenID Connect issuer on
   `https://127.0.0.1:<E2E_OIDC_PORT>` (default the first free port from 18291) that serves the

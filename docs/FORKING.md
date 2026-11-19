@@ -25,7 +25,7 @@ wiring is in `setupDependencies` (`cmd/main.go:268`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
-| Auth, sessions, API keys | public `/auth`; own keys for any authenticated user | rotating refresh tokens, single-use reset tokens claimed inside one transaction, lockout after 5 failures, one generic 401 when login or `POST /auth/refresh` rejects the credential (an operational refresh failure is a retryable 503 `SESSION_REFRESH_UNAVAILABLE` and a malformed body a 400, `internal/handler/auth_handler.go:282-305`; change-password answers 400 for a wrong current password and 409 `SESSION_STALE` for a stale session, `:411-416`) | `internal/service/auth_password_reset_regression_test.go`, `auth_refresh_rotation_regression_test.go`, `internal/handler/apikey_handler_test.go` |
+| Auth, sessions, API keys | public `/auth`; own keys for any authenticated user | rotating refresh tokens, single-use reset tokens claimed inside one transaction, lockout after 5 failures, one generic 401 when login or `POST /auth/refresh` rejects the credential (an operational refresh failure is a retryable 503 `SESSION_REFRESH_UNAVAILABLE` and a malformed body a 400, `internal/handler/auth_handler.go:302-328`; change-password answers 400 for a wrong current password and 409 `SESSION_STALE` for a stale session, `:411-416`) | `internal/service/auth_password_reset_regression_test.go`, `auth_refresh_rotation_regression_test.go`, `internal/handler/apikey_handler_test.go` |
 | Registration | public, ships **off** | always creates a `customer`; fails closed on a settings read error | `internal/handler/auth_registration_test.go`, `internal/middleware/registration_test.go` |
 | Users | admin; self for get/update | deactivated users' bearer tokens are rejected; delete is erasure | `internal/handler/user_handler_test.go`, `internal/service/user_service_test.go` |
 | Leads | admin, sales (own leads only) | email or phone required; conversion rules from settings; one visibility policy; CSV export of the leads the caller may list in one totally ordered statement | `internal/service/lead_conversion_rules_test.go`, `lead_visibility_test.go`, `internal/integration/lead_visibility_integration_test.go`, `internal/repository/lead_export_traversal_test.go` |
@@ -124,7 +124,7 @@ go run ./cmd                     # or: make run
 ```
 
 The backend listens on `http://localhost:8080` and creates `gophercrm.db` in the working
-directory (`DB_PATH`, `internal/config/config.go:282`). The schema is created by auto-migration at
+directory (`DB_PATH`, `internal/config/config.go:284`). The schema is created by auto-migration at
 startup. `cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
 
 In a second terminal, create the first admin. Self-service registration only ever creates
@@ -163,7 +163,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret stops the app.** `internal/config/config.go:267-277` rejects an empty
+1. **The example JWT secret stops the app.** `internal/config/config.go:269-279` rejects an empty
    value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
    placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
    `.env.example` does not start. Replace the secret with the output of
@@ -184,7 +184,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 ### 2.4 Calling the API with a key
 
 API keys go in the `Authorization` header with the `ApiKey` scheme
-(`internal/middleware/auth.go:20-29`). A bare `ApiKey:` header is rejected with 401. The API
+(`internal/middleware/auth.go:38-47`). A bare `ApiKey:` header is rejected with 401. The API
 reference (`api/index.html`, generated from `cmd/main.go`) documents the same
 `Authorization: ApiKey <key>` form.
 
@@ -327,25 +327,26 @@ Configuration comes from three places:
 
 | Variable | Default | Read at | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | none (required) | `config.go:268` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:312`, `internal/service/form_service.go:347` | see the rotation callout below |
-| `DB_DRIVER` | `mysql` | `config.go:281` | `mysql` or `sqlite`; anything else stops startup |
-| `DB_PATH` | `gophercrm.db` | `config.go:282` | SQLite only; no `?`; local filesystem (WAL) |
-| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:283-287` | MySQL only |
-| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:291-292` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:293` | `production` switches Gin to release mode (`cmd/main.go:228-230`) |
-| `TRUSTED_PROXIES` | trust none | `config.go:294` | see below |
-| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:295` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `config.go:322` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
-| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `config.go:323` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:351` | this backend's public origin; form confirmation links |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:315-319` | empty host means log-only mail |
-| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:352-353` | both or the layer is skipped |
-| `FORM_RETENTION_DAYS` | off | `config.go:355` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
-| `AUTOMATION_ENABLED` | `true` | `config.go:358` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
-| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:345-346` | daily AEO run |
-| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:348` | environment only; see `docs/AEO_SECURITY.md` |
-| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:307-308` | SQL statements only at debug/trace |
+| `JWT_SECRET` | none (required) | `config.go:270` | at least 32 characters; replace the example (section 2.3) |
+| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:314`, `internal/service/form_service.go:347` | see the rotation callout below |
+| `DB_DRIVER` | `mysql` | `config.go:283` | `mysql` or `sqlite`; anything else stops startup |
+| `DB_PATH` | `gophercrm.db` | `config.go:284` | SQLite only; no `?`; local filesystem (WAL) |
+| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:285-289` | MySQL only |
+| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:293-294` | `127.0.0.1` behind a proxy on the same host |
+| `SERVER_MODE` | `development` | `config.go:295` | `production` switches Gin to release mode (`cmd/main.go:228-230`) |
+| `TRUSTED_PROXIES` | trust none | `config.go:296` | see below |
+| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:297` | every browser origin of your UI |
+| `APP_BASE_URL` | `http://localhost:5173` | `config.go:324` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
+| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `config.go:325` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:353` | this backend's public origin; form confirmation links |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:317-321` | empty host means log-only mail |
+| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:354-355` | both or the layer is skipped |
+| `FORM_RETENTION_DAYS` | off | `config.go:357` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
+| `AUTH_AUDIT_RETENTION_DAYS` | `90` | `config.go:367` | days a sign-in audit row (`auth_audit_log`, #454) is kept; unset, empty, zero, negative or unparseable keeps 90, 36500 ceiling. Pruned at boot and every 15 minutes by the stale bulk operation sweep; safe on every replica |
+| `AUTOMATION_ENABLED` | `true` | `config.go:360` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
+| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:347-348` | daily AEO run |
+| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:350` | environment only; see `docs/AEO_SECURITY.md` |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:309-310` | SQL statements only at debug/trace |
 
 The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
 environment. `docs/AEO_SECURITY.md` explains why.
@@ -360,7 +361,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `internal/service/auth_service.go:672-677`) and the UI silently trades them for new access
+>   `internal/service/auth_service.go:675-680`) and the UI silently trades them for new access
 >   tokens signed with the new secret (`gocrm-ui/src/api/client.ts:232-256`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
 >   change and a password reset revoke that user's refresh tokens and end the access tokens issued
@@ -393,20 +394,20 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:108-111`).
-- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:299`, used at
-  `internal/service/auth_service.go:642`) and the refresh-token lifetime from
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:304`). `JWT_ACCESS_TOKEN_MINUTES` is read
-  (`config.go:300`) but used by nothing.
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:301`, used at
+  `internal/service/auth_service.go:645`) and the refresh-token lifetime from
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:306`). `JWT_ACCESS_TOKEN_MINUTES` is read
+  (`config.go:302`) but used by nothing.
 
 The company name and colour settings are covered in
 section 3.1.
 
 ### 4.4 Module switches
 
-Only two exist: `AUTOMATION_ENABLED` (`config.go:358`) turns the automation worker off on an
-instance, and `AEO_SCHEDULE_ENABLED` (`config.go:345`) turns off the daily AEO run. Forms and AEO
+Only two exist: `AUTOMATION_ENABLED` (`config.go:360`) turns the automation worker off on an
+instance, and `AEO_SCHEDULE_ENABLED` (`config.go:347`) turns off the daily AEO run. Forms and AEO
 as a whole have no switch; removing a module is described in [EXTENDING.md](EXTENDING.md).
-`FORM_RETENTION_DAYS` (`config.go:355`) is the opposite kind of setting: the form retention purge
+`FORM_RETENTION_DAYS` (`config.go:357`) is the opposite kind of setting: the form retention purge
 stays off until you set it.
 
 ## 5. Deployment shapes

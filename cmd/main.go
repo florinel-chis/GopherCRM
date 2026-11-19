@@ -460,7 +460,12 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// It stays off until FORM_RETENTION_DAYS is configured.
 	formRetention := newFormRetentionBackground(cfg.Forms, formRepo, txManager)
 
+	// The sign-in audit log (#454): password, refresh, single sign-on and
+	// failed API-key outcomes, one row each, pruned by the bulk sweep below.
+	authAuditRepo := repository.NewAuthAuditRepository(models.DB)
+	authAudit := service.NewAuthAuditService(authAuditRepo)
 	authHandler := handler.NewAuthHandler(authService, userService)
+	authHandler.WithAudit(authAudit)
 	userHandler := handler.NewUserHandler(userService)
 	roleHandler := handler.NewRoleHandler(roleService)
 	leadHandler := handler.NewLeadHandler(leadService)
@@ -482,7 +487,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	authOIDCHandler := handler.NewAuthOIDCHandler(service.NewOIDCService(ssoSettings, authService,
 		userRepo, roleRepo, roleAuditRepo, refreshTokenRepo,
 		repository.NewUserIdentityRepository(models.DB), repository.NewOIDCLoginAttemptRepository(models.DB),
-		txManager, cfg.App.BaseURL))
+		txManager, cfg.App.BaseURL, service.WithOIDCAudit(authAudit)))
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
 		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(models.DB)))
 	bulkHandler := handler.NewBulkHandler(bulkService)
@@ -594,7 +599,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 
 	// Protected routes with moderate rate limiting
 	protected := router.Group("")
-	protected.Use(middleware.Auth(authService))
+	protected.Use(middleware.Auth(authService, middleware.WithAPIKeyAudit(authAudit)))
 	protected.Use(middleware.RateLimitModerate()) // 120 req/min, burst 30, for authenticated users
 	{
 		handler.SetupUserRoutes(protected, userHandler)
@@ -629,8 +634,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 
 	// The stale bulk operation sweep (#196) runs on every replica: at boot and
 	// every 15 minutes it fails pending bulk_operations rows older than an hour,
-	// whose batch never committed.
-	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo, repository.NewOIDCLoginAttemptRepository(models.DB))
+	// whose batch never committed, and prunes the day-old sign-in attempts and
+	// the audit rows older than AUTH_AUDIT_RETENTION_DAYS.
+	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo, repository.NewOIDCLoginAttemptRepository(models.DB),
+		authAuditRepo, cfg.AuthAudit.RetentionDays)
 	bulkRecovery.start(backgroundCtx)
 
 	// The outbound webhook sender (#345) runs on every replica: every

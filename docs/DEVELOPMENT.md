@@ -326,7 +326,11 @@ blanks the nonce and the PKCE verifier, as its own committed statement, so a sta
 even when the sign-in is then refused. A row found expired has the two values blanked by its own
 conditional `UPDATE` and is refused all the same; if that clearing fails the answer is still the
 generic 401 (#453). Rows are deleted one day after their creation by the stale bulk operation
-sweep (`service.PruneOIDCLoginAttempts`), not by the sign-in. The issuer client (`newOIDCHTTPClient`) has a 10 s
+sweep (`service.PruneOIDCLoginAttempts`), not by the sign-in. The same sweep deletes sign-in
+audit rows (`auth_audit_log`, #454) older than `AUTH_AUDIT_RETENTION_DAYS` (default 90,
+`service.PruneAuthAuditLog`, chunks of 500); `Callback` writes one such row per call after its
+transaction and logs `audit_id` with the outcome, as `POST /auth/login`, `POST /auth/refresh` and a
+refused `ApiKey` do (see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
 timeout, follows no redirect and ignores `HTTP(S)_PROXY`; tests trust their TLS issuer through
 `WithOIDCRootCAs`, and there is no option that replaces the client. After the code exchange
 (PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
@@ -2212,6 +2216,9 @@ settings:
   submissions with no linked lead are permanently removed. Unset, empty, 0, negative or unparseable
   keeps it off; 1 and 2 become the 3-day floor; above 36500 becomes 36500. The first boot with it
   set removes the existing backlog (see *Form retention purge*)
+- `AUTH_AUDIT_RETENTION_DAYS` (default 90) — days a sign-in audit row (`auth_audit_log`, #454) is
+  kept; the stale bulk operation sweep deletes older rows at boot and every 15 minutes. Unset,
+  empty, 0, negative or unparseable keeps 90; above 36500 becomes 36500. Environment only
 
 Frontend configuration lives in `gocrm-ui/.env` (see `gocrm-ui/.env.example`); `VITE_API_BASE_URL`
 points the Axios client at the backend.
@@ -2445,6 +2452,7 @@ What the erasure touches, and what it keeps on purpose:
 | `form_submissions` with no `lead_id` whose `email` matches the erased lead, customer or user (#214; live and soft-deleted, rows of soft-deleted forms, every status) | `email` → the erased row's placeholder; `data` → `{}`; `ip_address`, `user_agent`, `referrer` and the six attribution columns → `''`; their `form_confirmation_tokens` and `form_mail_deliveries` hard-deleted. Matched on the `email` column only, `email IN (original, lower(original))`: exact or lower-cased on SQLite; on MySQL/MariaDB the `utf8mb4_unicode_ci` collation decides (case- and accent-insensitive, trailing spaces ignored), the rule form intake's lead linking uses. The `data` JSON is not searched. Every submission from that address is affected, a shared inbox's included; a blank or placeholder original matches nothing | `form_id`, `status`, `lead_id` (NULL), the row's own deletion state |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
 | `user_identities` of an erased user (#435) | not touched | The row (issuer URL, opaque subject, `user_id`) stays linked to the erased user, so the erased person's next OIDC sign-in is refused (401) instead of provisioning a new account. It holds no name or address |
+| `auth_audit_log` | not touched | Ids only (`user_id`, `attempt_id`), a reason code, the request id, an HMAC subject reference, claim values, a `/24` or `/48` network prefix and a user-agent family; no foreign key. Rows age out after `AUTH_AUDIT_RETENTION_DAYS` (default 90) through the stale bulk operation sweep (#454) |
 | `oidc_login_attempts` | not touched | No user link: a state hash, a nonce and a PKCE verifier (both blanked once the row is used or found expired), the issuer and timestamps; the stale bulk operation sweep prunes rows a day after their creation |
 | `notifications` addressed to an erased user, whose entity is an erased lead, or whose entity is a deal reached below (#245) | hard-deleted | notifications about unreached deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |

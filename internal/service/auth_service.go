@@ -271,7 +271,10 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 	// Now check if user lookup failed
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Login failed - user not found")
-		return nil, errLoginInvalidCredentials
+		if !apperrors.IsNotFound(err) {
+			return nil, authRefusal(AuthAuditReasonInternalError, 0, errLoginInvalidCredentials)
+		}
+		return nil, authRefusal(AuthAuditReasonInvalidCredentials, 0, errLoginInvalidCredentials)
 	}
 
 	clock := time.Now
@@ -282,7 +285,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 	// Check if account is locked
 	if user.LockedUntil != nil && user.LockedUntil.After(now) {
 		logger.WithField("user_id", user.ID).Warn("Login failed - account locked")
-		return nil, errLoginAccountLocked
+		return nil, authRefusal(AuthAuditReasonAccountLocked, user.ID, errLoginAccountLocked)
 	}
 
 	// Check password result
@@ -307,13 +310,13 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 		if updateErr := s.userRepo.UpdateFields(user.ID, bookkeeping); updateErr != nil {
 			logger.WithError(utils.LogError(updateErr)).Warn("Failed to update failed login attempts")
 		}
-		return nil, errLoginInvalidCredentials
+		return nil, authRefusal(AuthAuditReasonInvalidCredentials, user.ID, errLoginInvalidCredentials)
 	}
 
 	// Check if account is active (after password verification to prevent account enumeration)
 	if !user.IsActive {
 		logger.WithField("user_id", user.ID).Warn("Login failed - account disabled")
-		return nil, errLoginInvalidCredentials // Use same error message
+		return nil, authRefusal(AuthAuditReasonAccountInactive, user.ID, errLoginInvalidCredentials) // Use same error message
 	}
 
 	if s.txManager != nil {
@@ -354,7 +357,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 				utils.Logger.WithField("user_id", user.ID).WithField("operation", "Login").
 					WithField("error_code", "login_transaction_failed").Warn("Login issuing transaction failed")
 			}
-			return nil, err
+			return nil, withAuthAuditUser(err, user.ID)
 		}
 		utils.Logger.WithField("user_id", user.ID).WithField("operation", "Login").
 			Info("User logged in successfully")
@@ -371,7 +374,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 		}); updateErr != nil {
 			if apperrors.IsNotFound(updateErr) {
 				logger.WithField("user_id", user.ID).Warn("Login failed - account erased during authentication")
-				return nil, errLoginInvalidCredentials
+				return nil, authRefusal(AuthAuditReasonAccountErased, user.ID, errLoginInvalidCredentials)
 			}
 			logger.WithError(utils.LogError(updateErr)).Warn("Failed to reset failed login attempts")
 		}
@@ -385,7 +388,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 	if err := s.userRepo.UpdateLastLogin(user.ID); err != nil {
 		if apperrors.IsNotFound(err) {
 			logger.WithField("user_id", user.ID).Warn("Login failed - account erased during authentication")
-			return nil, errLoginInvalidCredentials
+			return nil, authRefusal(AuthAuditReasonAccountErased, user.ID, errLoginInvalidCredentials)
 		}
 		logger.WithError(utils.LogError(err)).Warn("Failed to update last login time")
 	}
@@ -432,7 +435,7 @@ func (s *authService) loginInTransaction(
 	log := utils.Logger.WithField("user_id", userID).WithField("operation", "Login")
 	refuse := func(code string, err error) (*AuthTokens, error) {
 		log.WithField("error_code", code).Warn("Login refused under the owner lock")
-		return nil, err
+		return nil, authRefusal(code, userID, err)
 	}
 
 	// Owner first: users before refresh_tokens, the order every session
@@ -588,18 +591,18 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 		legacyHash := utils.HashAPIKey(key)
 		apiKey, err = s.apiKeyRepo.GetByKeyHash(legacyHash)
 		if err != nil {
-			return nil, errors.New("invalid API key")
+			return nil, authRefusal(AuthAuditReasonKeyInvalid, 0, errors.New("invalid API key"))
 		}
 	}
 
 	// Check if API key is active (not revoked)
 	if !apiKey.IsActive {
-		return nil, errors.New("API key has been revoked")
+		return nil, authRefusal(AuthAuditReasonKeyRevoked, apiKey.UserID, errors.New("API key has been revoked"))
 	}
 
 	// Check expiration
 	if apiKey.ExpiresAt != nil && apiKey.ExpiresAt.Before(time.Now()) {
-		return nil, errors.New("API key expired")
+		return nil, authRefusal(AuthAuditReasonKeyExpired, apiKey.UserID, errors.New("API key expired"))
 	}
 
 	// Defence in depth: a credential must never outlive its owner.
@@ -617,12 +620,12 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 	if err != nil {
 		utils.Logger.WithField("api_key_id", apiKey.ID).WithField("user_id", apiKey.UserID).
 			Warn("Rejected API key whose owner no longer exists")
-		return nil, errors.New("invalid API key")
+		return nil, authRefusal(AuthAuditReasonAccountErased, apiKey.UserID, errors.New("invalid API key"))
 	}
 	if !user.IsActive {
 		utils.Logger.WithField("api_key_id", apiKey.ID).WithField("user_id", apiKey.UserID).
 			Warn("Rejected API key of an inactive user")
-		return nil, errors.New("API key owner is not active")
+		return nil, authRefusal(AuthAuditReasonAccountInactive, apiKey.UserID, errors.New("API key owner is not active"))
 	}
 
 	// Update last used timestamp (best effort - don't fail validation if this fails)
@@ -769,6 +772,7 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 	var (
 		tokens        *AuthTokens
 		ownerRejected bool
+		ownerReason   string
 		tokenOwnerID  uint
 	)
 	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
@@ -787,6 +791,7 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 			hash)
 		tokenOwnerID = ownerID
 		if errors.Is(err, errRefreshOwnerRejected) {
+			ownerReason, _ = AuthAuditReason(err)
 			// Commit the containment: the claim has revoked a token whose
 			// owner is gone or disabled, and that revocation must survive
 			// the rejection rather than be rolled back with it.
@@ -809,10 +814,10 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 		}
 		utils.Logger.WithField("user_id", tokenOwnerID).
 			Warn("Rejected refresh token whose owner is missing or inactive")
-		return nil, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+		return nil, authRefusal(ownerReason, tokenOwnerID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken))
 	}
 	if err != nil {
-		return nil, err
+		return nil, withAuthAuditUser(err, tokenOwnerID)
 	}
 
 	utils.Logger.WithField("user_id", tokens.User.ID).Info("Refresh token rotated")
@@ -858,14 +863,14 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	// one is refused the same way. A lookup failure aborts before anything is
 	// written, leaving the token usable once the database recovers.
 	user, err := userRepo.GetByID(stored.UserID)
-	ownerRejected := false
+	ownerRejected := ""
 	if err != nil {
 		if !apperrors.IsNotFound(err) {
 			return nil, stored.UserID, fmt.Errorf("refresh token owner lookup failed: %w", err)
 		}
-		ownerRejected = true
+		ownerRejected = AuthAuditReasonAccountErased
 	} else if !user.IsActive {
-		ownerRejected = true
+		ownerRejected = AuthAuditReasonAccountInactive
 	}
 
 	// Claim the token. The claim is the one write competing requests contend
@@ -883,8 +888,8 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	// A token must never outlive or outrank its owner. A missing, erased or
 	// inactive owner is reported as errRefreshOwnerRejected so the caller
 	// commits the claim as containment and issues nothing.
-	if ownerRejected {
-		return nil, stored.UserID, errRefreshOwnerRejected
+	if ownerRejected != "" {
+		return nil, stored.UserID, authRefusal(ownerRejected, stored.UserID, errRefreshOwnerRejected)
 	}
 
 	// The successor is inserted and its access token signed inside the
