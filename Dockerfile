@@ -66,15 +66,16 @@ FROM debian:bookworm-slim
 # falls back to Liberation Mono and the quote's table columns wrap. The
 # libraries are the ones of the zip's deb.deps that the headless shell loads,
 # at start or later through dlopen (libnss3 also brings the NSS soft token);
-# its GTK, ATK bridge, Cairo, Pango, CUPS, curl and xdg-utils entries serve
-# the full browser, which shares that list. No Chromium package is installed.
+# the linux64 binary also links the ATK bridge, the linux-arm64 one does not.
+# Its GTK, Cairo, Pango, CUPS, curl and xdg-utils entries serve the full
+# browser, which shares that list. No Chromium package is installed.
 # tini is the init of the container (see ENTRYPOINT). wget is here for the
 # health checks of the compose files, which call it inside this container;
 # the base image has none.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates tzdata fonts-liberation fontconfig tini wget \
-        libasound2 libatk1.0-0 libatspi2.0-0 libdbus-1-3 libexpat1 libgbm1 libnspr4 libnss3 \
+        libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 libdbus-1-3 libexpat1 libgbm1 libnspr4 libnss3 \
         libudev1 libvulkan1 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
         libxfixes3 libxkbcommon0 libxrandr2 \
     && rm -rf /var/lib/apt/lists/* \

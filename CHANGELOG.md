@@ -759,7 +759,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `deb.deps`, and fails the build when `ldd` reports one as not found, plus `fontconfig`,
     whose font aliases the Debian package used to bring (without them every text is set in
     Liberation Mono). To change the version, set it and both checksums (`docs/DOCKER.md`).
-  - **Size.** 471,216,504 bytes against 700,980,224 bytes before (linux/arm64): the Mesa
+  - **Size.** 471,504,459 bytes against 700,980,224 bytes before (linux/arm64): the Mesa
     drivers and LLVM that the Debian package pulled in are gone.
   - **Workflow.** A new `Docker image` workflow (weekly, on demand, and on pull requests that
     change the `Dockerfile` or the workflow) builds the download stage for linux/amd64 and

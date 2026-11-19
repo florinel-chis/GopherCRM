@@ -208,11 +208,12 @@ launcher for it: the server starts both kinds of binary with the same arguments.
   compute their checksums with `sha256sum` (Google publishes none; the MD5 in the download's
   `x-goog-hash` header is a cross-check), set the three arguments and run
   `scripts/e2e/quote-pdf-chain.sh image` before you ship the image. The runtime stage installs
-  the shared libraries the binary loads, taken from the zip's `deb.deps`, and fails its build
-  when `ldd` reports one of them as `not found`. It also installs `fontconfig`, whose
+  the shared libraries the binary loads, taken from the zip's `deb.deps` (the linux64 binary
+  also links the ATK bridge, `libatk-bridge2.0-0`; the linux-arm64 one does not), and fails its
+  build when `ldd` reports one of them as `not found`. It also installs `fontconfig`, whose
   `/etc/fonts` aliases map Arial, `sans-serif` and `serif` to the Liberation fonts: without it
   every text falls back to Liberation Mono and the columns of the quote table wrap.
-- **Image size.** The browser is most of the image: 471,216,504 bytes (about 449 MiB) with
+- **Image size.** The browser is most of the image: 471,504,459 bytes (about 449 MiB) with
   `chrome-headless-shell` 156 from Chrome for Testing (#420), against 700,980,224 bytes (about
   669 MiB) with the Debian package of the same version (#393) and 686,689,600 bytes (about
   655 MiB) with the full Chromium 131 on alpine 3.20 (`docker image inspect --format '{{.Size}}'`,
