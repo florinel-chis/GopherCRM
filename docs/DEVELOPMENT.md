@@ -1041,7 +1041,8 @@ runs the smoke script, reads the text of the PDF (`pdftotext` and `pdffonts` fro
 otherwise from an `alpine:3.20` container; without either it fails) and fails unless the text
 holds the number, the line, the net total and the gross total. On exit it stops everything it
 started and checks that nothing is left. Run both modes before a release, and `image` after
-every change of `HEADLESS_SHELL_VERSION`:
+every change of `HEADLESS_SHELL_VERSION` and its two checksums,
+`HEADLESS_SHELL_SHA256_AMD64` and `HEADLESS_SHELL_SHA256_ARM64`:
 
 ```bash
 # a full Chrome or Chromium (or a headless shell) on this machine, backend and web app built

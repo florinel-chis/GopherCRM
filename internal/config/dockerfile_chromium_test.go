@@ -9,25 +9,59 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// dockerfileRuntimeStage returns the lines of the last stage of the backend
-// Dockerfile, with line continuations joined, comments and blank lines
-// dropped.
-func dockerfileRuntimeStage(t *testing.T) []string {
+// dockerfileLines returns the instructions of the backend Dockerfile, with
+// line continuations joined, comments and blank lines dropped.
+func dockerfileLines(t *testing.T) []string {
 	t.Helper()
 	text := strings.ReplaceAll(readRepositoryFile(t, "Dockerfile"), "\\\n", " ")
-	var stage []string
+	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if strings.HasPrefix(strings.ToUpper(line), "FROM ") {
-			stage = nil
-		}
-		stage = append(stage, line)
+		lines = append(lines, line)
 	}
-	require.NotEmpty(t, stage, "the Dockerfile has a runtime stage")
-	return stage
+	return lines
+}
+
+// dockerfileStages returns the stages of the backend Dockerfile in order,
+// each starting with its FROM line. Instructions before the first FROM (the
+// global ARGs) belong to no stage.
+func dockerfileStages(t *testing.T) [][]string {
+	t.Helper()
+	var stages [][]string
+	for _, line := range dockerfileLines(t) {
+		if strings.HasPrefix(strings.ToUpper(line), "FROM ") {
+			stages = append(stages, nil)
+		}
+		if len(stages) > 0 {
+			stages[len(stages)-1] = append(stages[len(stages)-1], line)
+		}
+	}
+	return stages
+}
+
+// dockerfileRuntimeStage returns the lines of the last stage of the backend
+// Dockerfile.
+func dockerfileRuntimeStage(t *testing.T) []string {
+	t.Helper()
+	stages := dockerfileStages(t)
+	require.NotEmpty(t, stages, "the Dockerfile has a runtime stage")
+	return stages[len(stages)-1]
+}
+
+// dockerfileStageNamed returns the stage declared with FROM ... AS name.
+func dockerfileStageNamed(t *testing.T, name string) []string {
+	t.Helper()
+	as := regexp.MustCompile(`(?i)^FROM\s.*\sAS\s+` + regexp.QuoteMeta(name) + `$`)
+	for _, stage := range dockerfileStages(t) {
+		if as.MatchString(stage[0]) {
+			return stage
+		}
+	}
+	t.Fatalf("the Dockerfile has no stage named %s", name)
+	return nil
 }
 
 // composeBackendBlock returns the text of services.backend of a compose file.
@@ -89,48 +123,99 @@ func dockerfileAptPackages(stage []string) (names []string, fields []string) {
 // package and the Debian binary use a hyphen, upstream builds an underscore.
 var headlessShellName = regexp.MustCompile(`headless[-_]shell`)
 
-// TestDockerfileShipsHeadlessShell pins what quote PDF output (#384, #393)
-// needs from the deployment files: the runtime image is Debian, installs
-// chrome-headless-shell at one pinned version instead of the full Chromium,
-// a font, an init and the command of the compose health checks, and points
-// QUOTE_PDF_CHROME_PATH at the browser or at a launcher that execs it; the Go
-// code is not the place the sandbox is switched off; and the two development
-// compose files, whose APP_BASE_URL the backend container cannot reach,
-// switch PDF output off.
+// TestDockerfileShipsHeadlessShell pins what quote PDF output (#384, #393,
+// #420) needs from the deployment files: the image takes chrome-headless-shell
+// from Chrome for Testing at one pinned version, checked against a SHA-256 per
+// architecture, instead of a Debian package whose pinned version the security
+// repository drops; the runtime image is Debian, installs no Chromium package,
+// fails its build on a missing library, and brings a font, an init and the
+// command of the compose health checks; QUOTE_PDF_CHROME_PATH points at the
+// browser or at a launcher that execs it; the Go code is not the place the
+// sandbox is switched off; and the two development compose files, whose
+// APP_BASE_URL the backend container cannot reach, switch PDF output off.
 func TestDockerfileShipsHeadlessShell(t *testing.T) {
 	stage := dockerfileRuntimeStage(t)
 	require.True(t, strings.HasPrefix(stage[0], "FROM debian:"), "the runtime stage is debian: %s", stage[0])
 
 	installed, fields := dockerfileAptPackages(stage)
 	require.NotEmpty(t, installed, "the runtime stage installs packages with apt-get install")
-	for _, pkg := range []string{"chromium", "chromium-browser"} {
-		assert.NotContains(t, installed, pkg, "the runtime stage does not install the full browser")
+	for _, pkg := range []string{"chromium", "chromium-browser", "chromium-headless-shell"} {
+		assert.NotContains(t, installed, pkg, "the runtime stage installs no Chromium package")
+	}
+	for _, field := range fields {
+		assert.NotContains(t, field, "deb12u1", "the runtime stage pins no Debian package revision")
+		assert.NotContains(t, field, "=", "the runtime stage pins no apt package version: %s", field)
 	}
 
-	// One literal for the browser version, used by the line that brings it.
+	// One literal for the browser version in the whole file: a global ARG
+	// that the stages re-declare without a value.
+	whole := dockerfileLines(t)
 	var version string
 	versionLines := 0
-	for _, line := range stage {
+	for _, line := range whole {
 		if match := regexp.MustCompile(`^ARG\s+HEADLESS_SHELL_VERSION=(.*)$`).FindStringSubmatch(line); match != nil {
 			versionLines++
 			version = strings.Trim(strings.TrimSpace(match[1]), `"`)
 		}
 	}
-	require.Equal(t, 1, versionLines, "the runtime stage declares ARG HEADLESS_SHELL_VERSION=<version> once")
-	assert.Regexp(t, `^\d+\.\d+\.\d+\.\d+$`, version, "the pinned browser version is a.b.c.d")
-	usesVersion := regexp.MustCompile(`\$\{HEADLESS_SHELL_VERSION\}|\$HEADLESS_SHELL_VERSION\b`)
-	brought := false
-	for _, field := range fields {
-		if headlessShellName.MatchString(field) && usesVersion.MatchString(field) {
-			brought = true
+	require.Equal(t, 1, versionLines, "the Dockerfile declares ARG HEADLESS_SHELL_VERSION=<version> once")
+	require.Regexp(t, `^\d+\.\d+\.\d+\.\d+$`, version, "the pinned browser version is a.b.c.d")
+	holding := 0
+	for _, line := range strings.Split(readRepositoryFile(t, "Dockerfile"), "\n") {
+		if strings.Contains(line, version) {
+			holding++
 		}
 	}
+	assert.Equal(t, 1, holding, "no other line of the Dockerfile writes the version %s", version)
+
+	// A checksum per architecture, 64 lower-case hex characters each.
+	for _, arch := range []string{"AMD64", "ARM64"} {
+		var sums []string
+		for _, line := range whole {
+			if match := regexp.MustCompile(`^ARG\s+HEADLESS_SHELL_SHA256_` + arch + `=(.*)$`).FindStringSubmatch(line); match != nil {
+				sums = append(sums, strings.Trim(strings.TrimSpace(match[1]), `"`))
+			}
+		}
+		require.Len(t, sums, 1, "the Dockerfile declares ARG HEADLESS_SHELL_SHA256_%s=<sha256> once", arch)
+		assert.Regexp(t, `^[0-9a-f]{64}$`, sums[0], "HEADLESS_SHELL_SHA256_%s is a SHA-256", arch)
+	}
+
+	// The runtime stage copies the browser from the download stage, which
+	// fetches the pinned version from Chrome for Testing for both
+	// architectures and checks it.
+	copyFrom := regexp.MustCompile(`^COPY\s+--from=(\S+)\s+(\S+)`)
+	var source string
 	for _, line := range stage {
-		if strings.HasPrefix(line, "COPY ") && headlessShellName.MatchString(line) && usesVersion.MatchString(line) {
-			brought = true
+		if match := copyFrom.FindStringSubmatch(line); match != nil && headlessShellName.MatchString(match[2]) {
+			source = match[1]
 		}
 	}
-	assert.True(t, brought, "a COPY line or an apt-get install package names headless-shell and uses HEADLESS_SHELL_VERSION: %v", fields)
+	require.NotEmpty(t, source, "the runtime stage copies the headless shell from another stage")
+	download := dockerfileStageNamed(t, source)
+	var fetches []string
+	for _, line := range download {
+		if strings.HasPrefix(line, "RUN ") && strings.Contains(line, "chrome-for-testing-public/${HEADLESS_SHELL_VERSION}/") {
+			fetches = append(fetches, line)
+		}
+	}
+	require.Len(t, fetches, 1, "one RUN of stage %s downloads from chrome-for-testing-public/${HEADLESS_SHELL_VERSION}/", source)
+	for _, needle := range []string{"https://", "linux64", "linux-arm64", "HEADLESS_SHELL_SHA256_AMD64", "HEADLESS_SHELL_SHA256_ARM64", "sha256sum -c"} {
+		assert.Contains(t, fetches[0], needle, "the download maps both architectures and checks the zip")
+	}
+	for _, arg := range []string{"HEADLESS_SHELL_VERSION", "HEADLESS_SHELL_SHA256_AMD64", "HEADLESS_SHELL_SHA256_ARM64", "TARGETARCH"} {
+		assert.Contains(t, download, "ARG "+arg, "stage %s re-declares %s without a value", source, arg)
+	}
+
+	// A library the binary links against but the image lacks breaks the
+	// build, not the first render.
+	lddCheck := false
+	for _, line := range stage {
+		if strings.HasPrefix(line, "RUN ") && regexp.MustCompile(`ldd \S*`+headlessShellName.String()).MatchString(line) &&
+			strings.Contains(line, "not found") && strings.Contains(line, "exit 1") {
+			lddCheck = true
+		}
+	}
+	assert.True(t, lddCheck, "the runtime stage fails the build when ldd reports a library as not found")
 
 	hasFont := false
 	for _, pkg := range installed {
@@ -207,4 +292,90 @@ func TestDockerfileShipsHeadlessShell(t *testing.T) {
 		assert.NotContains(t, readRepositoryFile(t, composeProductionExampleFile), "QUOTE_PDF_CHROME_PATH",
 			"the production example does not forward the variable: the stack it overrides decides")
 	})
+}
+
+// workflowBlock returns the lines indented deeper than the line that is
+// exactly key (with its indent), up to the next line at that indent or less.
+func workflowBlock(text, key string) (string, bool) {
+	lines := strings.Split(text, "\n")
+	indent := len(key) - len(strings.TrimLeft(key, " "))
+	for i, line := range lines {
+		if line != key {
+			continue
+		}
+		var block []string
+		for _, next := range lines[i+1:] {
+			if strings.TrimSpace(next) != "" && len(next)-len(strings.TrimLeft(next, " ")) <= indent {
+				break
+			}
+			block = append(block, next)
+		}
+		return strings.Join(block, "\n"), true
+	}
+	return "", false
+}
+
+// TestDockerImageWorkflow pins the workflow that keeps the image's browser
+// pin honest (#420): it runs weekly, on demand and on pull requests that
+// change the Dockerfile or the workflow, reads nothing but the repository,
+// uses actions pinned to a commit, builds the download stage for both
+// architectures and the whole image for linux/amd64, and prints a PDF with
+// the image's own launcher as the image's user, checking the file header and
+// that the browser is the version the Dockerfile pins.
+func TestDockerImageWorkflow(t *testing.T) {
+	const file = ".github/workflows/docker-image.yml"
+	text := readRepositoryFile(t, file)
+
+	on, ok := workflowBlock(text, "on:")
+	require.True(t, ok, "%s has a top-level on:", file)
+	schedule, ok := workflowBlock(on, "  schedule:")
+	require.True(t, ok, "the workflow runs on a schedule")
+	assert.Len(t, regexp.MustCompile(`(?m)^\s+- cron: "[^"]+"\s*$`).FindAllString(schedule, -1), 1, "with one cron")
+	assert.Regexp(t, `(?m)^  workflow_dispatch:\s*$`, on, "the workflow can be started by hand")
+	pullRequest, ok := workflowBlock(on, "  pull_request:")
+	require.True(t, ok, "the workflow runs on pull requests")
+	paths, ok := workflowBlock(pullRequest, "    paths:")
+	require.True(t, ok, "limited to paths")
+	for _, path := range []string{"Dockerfile", file} {
+		assert.Regexp(t, `(?m)^\s+- "?`+regexp.QuoteMeta(path)+`"?\s*$`, paths, "the pull_request paths include %s", path)
+	}
+
+	permissions, ok := workflowBlock(text, "permissions:")
+	require.True(t, ok, "the workflow sets top-level permissions")
+	assert.Equal(t, "  contents: read", strings.TrimRight(permissions, "\n "), "and reads the repository only")
+	assert.Equal(t, 1, strings.Count(text, "permissions:"), "no job widens the permissions")
+
+	uses := regexp.MustCompile(`(?m)^\s*(?:- )?uses:\s*(\S+)`).FindAllStringSubmatch(text, -1)
+	require.NotEmpty(t, uses, "the workflow checks out the repository with an action")
+	for _, use := range uses {
+		assert.Regexp(t, `@[0-9a-f]{40}$`, use[1], "the action is pinned to a commit")
+	}
+
+	// The commands in the order they run.
+	position := func(pattern string) int {
+		t.Helper()
+		loc := regexp.MustCompile(pattern).FindStringIndex(text)
+		require.NotNil(t, loc, "the workflow runs %s", pattern)
+		return loc[0]
+	}
+	amd64Stage := position(`docker buildx build --platform linux/amd64 --target headless-shell \.`)
+	arm64Stage := position(`docker buildx build --platform linux/arm64 --target headless-shell \.`)
+	fullBuild := regexp.MustCompile(`docker buildx build --platform linux/amd64 --load -t (\S+) \.`).FindStringSubmatchIndex(text)
+	require.NotNil(t, fullBuild, "the workflow builds and loads the whole image for linux/amd64")
+	tag := text[fullBuild[2]:fullBuild[3]]
+	render := regexp.MustCompile(`docker run --rm --entrypoint sh ` + regexp.QuoteMeta(tag) + ` -c '([^']*)'`).FindStringSubmatchIndex(text)
+	require.NotNil(t, render, "the workflow runs a shell in the image it built")
+	script := text[render[2]:render[3]]
+	assert.NotRegexp(t, `--user|\s-u\s`, text[render[0]:render[2]], "the render runs as the image's own user")
+	assert.Contains(t, script, "quote-pdf-browser --version", "it prints the browser version through the launcher")
+	assert.Regexp(t, `quote-pdf-browser --print-to-pdf=(\S+) "data:text/html,`, script, "it prints a page to PDF through the launcher")
+	assert.Contains(t, script, "head -c 4", "it reads the file header")
+	assert.Contains(t, script, `"%PDF"`, "and wants %PDF")
+	compare := position(`sed -n 's/\^ARG HEADLESS_SHELL_VERSION=//p' Dockerfile`)
+	assert.Less(t, amd64Stage, arm64Stage, "the amd64 download stage builds first")
+	assert.Less(t, arm64Stage, fullBuild[0], "then the arm64 download stage")
+	assert.Less(t, fullBuild[0], render[0], "then the whole image")
+	assert.Less(t, render[0], compare, "then the render, then the version comparison")
+	assert.Regexp(t, `case "\$reported" in\s+\*" \$pinned"\*\) ;;\s+\*\) .*exit 1 ;;`, text[compare:],
+		"the reported browser version must contain the pinned one")
 }
