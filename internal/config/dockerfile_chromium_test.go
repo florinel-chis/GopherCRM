@@ -171,7 +171,7 @@ func TestDockerfileShipsHeadlessShell(t *testing.T) {
 	}
 
 	// The image, not the server, decides about the browser's sandbox.
-	for _, file := range []string{"internal/service/quote_pdf_chrome.go", "internal/service/quote_pdf_chrome_unix.go", "internal/service/quote_pdf_chrome_other.go", "internal/service/quote_pdf.go", "cmd/main.go"} {
+	for _, file := range []string{"internal/service/quote_pdf_chrome.go", "internal/service/quote_pdf_chrome_pipe.go", "internal/service/quote_pdf_chrome_unix.go", "internal/service/quote_pdf_chrome_other.go", "internal/service/quote_pdf.go", "cmd/main.go"} {
 		for i, line := range strings.Split(readRepositoryFile(t, file), "\n") {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue

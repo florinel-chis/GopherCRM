@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,9 +26,10 @@ var (
 )
 
 // quotePDFVirtualTimeBudgetMS is how much virtual time the page gets after it
-// has loaded. Chrome holds virtual time while a network request is pending,
-// so the page's one API call finishes and React paints the document before
-// the print starts; the budget is spent in a fraction of that as real time.
+// has loaded (Emulation.setVirtualTimePolicy). Chrome holds virtual time while
+// a network request is pending, so the page's one API call finishes and React
+// paints the document before the print starts; the budget is spent in a
+// fraction of that as real time.
 const quotePDFVirtualTimeBudgetMS = 10000
 
 // ChromeQuotePDFRenderer prints a page to PDF with a browser binary run
@@ -36,9 +37,16 @@ const quotePDFVirtualTimeBudgetMS = 10000
 // (what the Docker image ships: the old headless mode as its own binary) or a
 // full Chrome or Chromium; the argument list of Render is valid for both.
 //
+// The browser is started with --remote-debugging-pipe and without a URL, and
+// is driven over that pipe (its file descriptors 3 and 4): open a tab,
+// navigate, wait for the page, print. The page URL, whose fragment is the
+// render credential, is therefore never on a command line, and no debugging
+// port is opened. File descriptors beyond the standard three cannot be handed
+// to a child on Windows, so the renderer needs a Unix host; elsewhere every
+// render fails with the fixed error.
+//
 // Every render gets a fresh temporary directory that holds the browser
-// profile, HOME, TMPDIR, the XDG directories and the output file, and is
-// removed afterwards: the browser needs nothing else writable, which is what
+// profile, HOME, TMPDIR and the XDG directories, and is removed afterwards: the browser needs nothing else writable, which is what
 // a read-only root filesystem and a hardened systemd unit (ProtectHome,
 // ProtectSystem=strict, PrivateTmp) leave it.
 //
@@ -78,8 +86,12 @@ func NewChromeQuotePDFRenderer(path string) (*ChromeQuotePDFRenderer, error) {
 
 // Render prints pageURL to PDF. The context bounds the whole render; when it
 // is done the browser and its children are killed. It returns as soon as the
-// output file is a whole PDF, or when the browser has exited; in both cases
-// the output must start with %PDF.
+// browser has answered the print command, or when the browser has failed,
+// closed its pipe or exited; the result must start with %PDF.
+//
+// The URL reaches the browser over the DevTools pipe, never as an argument:
+// the fragment holds the render credential, and a command line is readable
+// by every user of the host.
 func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]byte, error) {
 	dir, err := os.MkdirTemp("", "gophercrm-quote-pdf-")
 	if err != nil {
@@ -93,15 +105,31 @@ func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]
 			return nil, errQuotePDFChromeFailed
 		}
 	}
-	output := filepath.Join(dir, "quote.pdf")
+
+	// The two pipes of --remote-debugging-pipe: the browser reads commands
+	// on its file descriptor 3 and writes replies and events on 4.
+	browserIn, commands, err := os.Pipe()
+	if err != nil {
+		return nil, errQuotePDFChromeFailed
+	}
+	replies, browserOut, err := os.Pipe()
+	if err != nil {
+		closeQuotePDFFiles(browserIn, commands)
+		return nil, errQuotePDFChromeFailed
+	}
+	var closeOnce sync.Once
+	closePipe := func() { closeOnce.Do(func() { closeQuotePDFFiles(commands, replies) }) }
+	defer closePipe()
 
 	// One argument list for both kinds of binary, checked against
-	// chrome-headless-shell 156 and a full Chrome: a full browser needs
+	// chrome-headless-shell and a full Chrome: a full browser needs
 	// --headless to start without a window, the headless shell accepts it
 	// and is headless anyway; the first-run, extension, sync and keychain
 	// switches only do something in a full browser and are ignored by the
 	// headless shell, which has none of those parts. Neither needs a flag
-	// the other refuses.
+	// the other refuses. The list holds no URL and nothing of the page: the
+	// browser starts empty and is told what to do over the pipe. A debugging
+	// port or address is never asked for, so nothing listens on a socket.
 	cmd := exec.CommandContext(ctx, r.path,
 		"--headless",
 		"--disable-gpu",
@@ -120,28 +148,30 @@ func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]
 		"--use-mock-keychain",
 		"--password-store=basic",
 		"--user-data-dir="+profile,
-		"--no-pdf-header-footer",
-		"--print-to-pdf-no-header",
-		fmt.Sprintf("--virtual-time-budget=%d", quotePDFVirtualTimeBudgetMS),
-		"--run-all-compositor-stages-before-draw",
-		"--print-to-pdf="+output,
-		pageURL,
+		"--remote-debugging-pipe",
 	)
 	cmd.Env = quotePDFChromeEnv(dir)
-	// No pipes: the browser's output goes nowhere, so it can neither reach a
-	// log nor keep Wait from returning.
+	// Nothing on the standard streams: the browser's output goes nowhere, so
+	// it can neither reach a log nor keep Wait from returning.
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, nil, nil
+	// ExtraFiles[i] is file descriptor 3+i of the child. A platform without
+	// them (Windows) fails at Start, so a render there fails with the fixed
+	// error.
+	cmd.ExtraFiles = []*os.File{browserIn, browserOut}
 	configureQuotePDFProcessGroup(cmd)
 	// A helper that survives the kill must not hold Wait either.
 	cmd.WaitDelay = 2 * time.Second
 
-	if err := cmd.Start(); err != nil {
+	err = cmd.Start()
+	// The browser has its own copies now. While this process held these two
+	// open, a dead browser would never show as EOF on the pipe.
+	closeQuotePDFFiles(browserIn, browserOut)
+	if err != nil {
 		return nil, errQuotePDFChromeFailed
 	}
-	var runErr error
 	exited := make(chan struct{})
 	go func() {
-		runErr = cmd.Wait()
+		_ = cmd.Wait()
 		close(exited)
 	}()
 	// Whatever happens, nothing of the browser's process group is left
@@ -154,50 +184,35 @@ func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]
 		}
 	}()
 
-	// The render is done when the file is complete, not when the browser has
-	// exited: a headless Chrome can spend seconds in its own teardown after
-	// the PDF is written, and that time is not owed to it.
-	poll := time.NewTicker(quotePDFPollInterval)
-	defer poll.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, errQuotePDFChromeTimeout
-		case <-exited:
-			if ctx.Err() != nil {
-				return nil, errQuotePDFChromeTimeout
-			}
-			if runErr != nil {
-				return nil, errQuotePDFChromeFailed
-			}
-			pdf, err := os.ReadFile(output)
-			if err != nil || !bytes.HasPrefix(pdf, []byte("%PDF")) {
-				return nil, errQuotePDFChromeOutput
-			}
-			return pdf, nil
-		case <-poll.C:
-			if pdf, ok := completeQuotePDF(output); ok {
-				return pdf, nil
-			}
+	// A done context closes this side of the pipe, which ends a write the
+	// browser never reads and the reader's pending read. The reader is gone
+	// before Render returns: closing the pipe (deferred above, run before
+	// this wait is over) unblocks it.
+	stopClose := context.AfterFunc(ctx, closePipe)
+	defer stopClose()
+	stopReader := make(chan struct{})
+	messages := readQuotePDFPipe(replies, stopReader)
+	defer func() {
+		close(stopReader)
+		closePipe()
+		for range messages {
 		}
-	}
-}
+	}()
 
-// quotePDFPollInterval is how often Render looks for the finished file.
-const quotePDFPollInterval = 50 * time.Millisecond
-
-// completeQuotePDF reads the output file and reports whether it is a whole
-// PDF: it starts with %PDF and ends with the %%EOF marker, which a writer
-// puts last. A file that is missing or still being written is not.
-func completeQuotePDF(path string) ([]byte, bool) {
-	pdf, err := os.ReadFile(path)
-	if err != nil || !bytes.HasPrefix(pdf, []byte("%PDF")) {
-		return nil, false
+	pipe := &quotePDFPipe{commands: commands, messages: messages, exited: exited}
+	pdf, err := pipe.printPage(ctx, pageURL)
+	switch {
+	case ctx.Err() != nil:
+		return nil, errQuotePDFChromeTimeout
+	case errors.Is(err, errQuotePDFChromeOutput):
+		return nil, errQuotePDFChromeOutput
+	case err != nil:
+		// Whatever the browser said about the failure stays here.
+		return nil, errQuotePDFChromeFailed
+	case !bytes.HasPrefix(pdf, []byte("%PDF")):
+		return nil, errQuotePDFChromeOutput
 	}
-	if !bytes.HasSuffix(bytes.TrimRight(pdf, "\r\n \t"), []byte("%%EOF")) {
-		return nil, false
-	}
-	return pdf, true
+	return pdf, nil
 }
 
 // quotePDFChromeEnv is the environment of the browser process: the search

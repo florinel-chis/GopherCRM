@@ -1283,9 +1283,12 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
 - **Automation:** automated — `internal/service/quote_pdf_test.go` `TestQuotePDFRender`,
   `TestQuotePDFTimeoutBudget`; `internal/service/quote_pdf_chrome_test.go`
   `TestChromeQuotePDFRendererTimeout`, `TestChromeQuotePDFRendererEnvironment`,
-  `TestChromeQuotePDFRendererLaunchArguments` (the keychain switches and `--headless` are
-  passed, `--no-sandbox` is not, profile and `HOME` lie inside the render's directory);
-  `quotes.test.ts`.
+  `TestChromeQuotePDFRendererLaunchArguments` (the keychain switches, `--headless` and
+  `--remote-debugging-pipe` are passed, `--no-sandbox` and a debugging port switch are not, no
+  argument holds the page URL, which arrives whole in `Page.navigate` over the pipe, profile and
+  `HOME` lie inside the render's directory), `TestChromeQuotePDFRendererPipe` (a browser that
+  exits or answers with an error fails the render at once and without its words; a large PDF
+  answer arrives whole); `quotes.test.ts`.
 
 ### TC-PQ-058 — Real chain: the browser prints the web application's render page
 - **Priority:** P1
@@ -1308,8 +1311,10 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
 - **Automation:** planned — manual release check (`scripts/e2e/quote-pdf-chain.sh`, which runs
   `scripts/e2e/quote-pdf-smoke.sh`); the e2e backend runs with `QUOTE_PDF_CHROME_PATH` pinned
   empty. `TestChromeQuotePDFRendererRealBinary` (`internal/service/quote_pdf_chrome_test.go`)
-  drives a real binary against a static page when `QUOTE_PDF_CHROME_PATH` is set and skips
-  otherwise.
+  drives a real binary when `QUOTE_PDF_CHROME_PATH` is set and skips otherwise: the page holds
+  the render open with a late request, and meanwhile the host's `ps` output shows the browser
+  with `--remote-debugging-pipe`, shows the page URL and its fragment nowhere, and the profile
+  holds no `DevToolsActivePort` file.
 
 ## 15.15 Response links and the erasure of the customer (#395)
 

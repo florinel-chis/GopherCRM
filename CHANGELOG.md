@@ -745,6 +745,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Quote PDF: the render URL no longer appears on the browser's command line (#396).** The URL
+  of a render, with the render credential in its fragment, was the last argument of the browser
+  process and so readable in the host's process list for the life of the render. The browser is
+  now started with `--remote-debugging-pipe` and no URL, and the server drives it over its
+  DevTools pipe (the browser's file descriptors 3 and 4): it opens a tab, navigates, waits for
+  the page's request and paint, and prints with `Page.printToPDF`. No debugging port is
+  opened; only the backend process can talk to the browser. No Go dependency was added: the
+  pipe client is a small one on the standard library, and `go.mod` and `go.sum` are unchanged.
+  The 15 s bound, one render at a time, the process-group kill, the temporary profile and the
+  built environment are as before, and a browser that fails or exits now fails the render at
+  once. This closes the limit recorded in `docs/ROADMAP.md`.
+  - **For operators.** A launcher script named by `QUOTE_PDF_CHROME_PATH` must hand file
+    descriptors 3 and 4 through to the browser, that is, not close or redirect them; one that
+    execs the browser, as the Docker image's `/usr/local/bin/quote-pdf-browser` does, needs no
+    change. The renderer now needs a Unix host: on Windows the server still builds, but every
+    render fails (503 `PDF_RENDER_FAILED` on a download, text-only quote emails), where it
+    could render before.
 - **The four erasure roots that dominated the MySQL run of `internal/repository` share one migrated
   schema per root (#404).** `TestIdentityErasureMySQL`, `TestUnlinkedSubmissionErasureMySQL`,
   `TestLeadErasureScrubsDealAndQuoteTextMySQL` and `TestFormTicketKeyErasureMySQL` created and

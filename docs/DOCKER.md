@@ -247,8 +247,8 @@ launcher for it: the server starts both kinds of binary with the same arguments.
   the PDF download. A reverse proxy in front must keep a read timeout of 60 s or more
   (`proxy_read_timeout`, 60 s by default in nginx; the UI image's nginx does not lower it), or
   it answers 504 for a mail the backend still delivers.
-- Known limits (credentials per backend process, the render URL in the container's process list
-  for the life of a render, dates in the container's time zone, UTC) are in `docs/ROADMAP.md`.
+- Known limits (credentials per backend process, dates in the container's time zone, UTC) are
+  in `docs/ROADMAP.md`.
 
 ## Running Compose beyond localhost
 
