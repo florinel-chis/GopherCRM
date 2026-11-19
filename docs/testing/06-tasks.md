@@ -35,7 +35,8 @@ regression anchors, not endorsements.
   cases are marked *blocked* or *planned* with that note.
 - Tasks are **not** subject to GDPR erasure: `TaskHandler.Delete` performs a plain GORM soft delete
   (`internal/service/task_service.go` `Delete`). Even so, a case must only delete tasks it created
-  itself, because `TasksPage.deleteTask(0)` targets the first row of a shared list.
+  itself: the list is shared. `TasksPage.deleteTask(title)` takes the task's title, searches for it
+  and acts on the matching row.
 - `generateTaskData()` produces `title`, `description`, `priority`, `status` and a **future**
   `dueDate` (`YYYY-MM-DD`). It does not produce an assignee; see TC-TASK-008.
 

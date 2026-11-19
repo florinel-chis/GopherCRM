@@ -57,12 +57,14 @@ test.describe('Admin - Tickets Management', () => {
   });
 
   test.fixme('admin can edit an existing ticket', async ({ page }) => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
-    // If there are existing tickets, edit the first one
     const ticketCount = await ticketsPage.getTicketCount();
     if (ticketCount > 0) {
-      await ticketsPage.editTicket(0);
+      await ticketsPage.editTicket(subject);
 
       // Update ticket fields
       await ticketsPage.titleInput.clear();
@@ -75,21 +77,27 @@ test.describe('Admin - Tickets Management', () => {
   });
 
   test.fixme('admin can view ticket details', async ({ page }) => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
     if (ticketCount > 0) {
-      await ticketsPage.viewTicket(0);
+      await ticketsPage.viewTicket(subject);
       expect(page.url()).toMatch(/\/tickets\/\d+$/);
     }
   });
 
   test.fixme('admin can delete a ticket', async () => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
     const initialCount = await ticketsPage.getTicketCount();
     if (initialCount > 0) {
-      await ticketsPage.deleteTicket(0);
+      await ticketsPage.deleteTicket(subject);
       expect(true).toBe(true);
     }
   });
@@ -147,6 +155,9 @@ test.describe('Admin - Tickets Management', () => {
   });
 
   test.fixme('admin can navigate between tickets efficiently', async ({ page }) => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
     await expect(ticketsPage.ticketsTable).toBeVisible();
@@ -154,7 +165,7 @@ test.describe('Admin - Tickets Management', () => {
     const ticketCount = await ticketsPage.getTicketCount();
     if (ticketCount > 0) {
       // View a ticket
-      await ticketsPage.viewTicket(0);
+      await ticketsPage.viewTicket(subject);
       await page.waitForLoadState('networkidle');
 
       // Go back to list
@@ -162,7 +173,7 @@ test.describe('Admin - Tickets Management', () => {
       await expect(ticketsPage.ticketsTable).toBeVisible();
 
       // Edit a ticket
-      await ticketsPage.editTicket(0);
+      await ticketsPage.editTicket(subject);
       await page.waitForLoadState('networkidle');
 
       // Cancel and go back
@@ -172,11 +183,14 @@ test.describe('Admin - Tickets Management', () => {
   });
 
   test.fixme('admin can update ticket status', async ({ page }) => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
     if (ticketCount > 0) {
-      await ticketsPage.editTicket(0);
+      await ticketsPage.editTicket(subject);
       await ticketsPage.selectMuiOption('status', 'resolved');
       await ticketsPage.saveButton.click();
 
@@ -185,11 +199,14 @@ test.describe('Admin - Tickets Management', () => {
   });
 
   test.fixme('admin can update ticket priority', async ({ page }) => {
+    // The subject of the ticket this test owns. The ticket still has to be
+    // seeded (with its customer) before the test can be re-enabled.
+    const subject = generateTicketData().subject;
     await ticketsPage.goto();
 
     const ticketCount = await ticketsPage.getTicketCount();
     if (ticketCount > 0) {
-      await ticketsPage.editTicket(0);
+      await ticketsPage.editTicket(subject);
       await ticketsPage.selectMuiOption('priority', 'urgent');
       await ticketsPage.saveButton.click();
 

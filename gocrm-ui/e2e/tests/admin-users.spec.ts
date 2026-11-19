@@ -57,7 +57,7 @@ test.describe('Admin - Users Management', () => {
     await usersPage.searchUsers(originalUserData.email);
     await expect(ownRow).toHaveCount(1);
     await expect(usersPage.tableRows).toHaveCount(1);
-    await usersPage.editUser(0);
+    await usersPage.editUser(originalUserData.email);
 
     // Update fields (no password on edit)
     await usersPage.firstNameInput.clear();
@@ -80,14 +80,15 @@ test.describe('Admin - Users Management', () => {
       ...userData,
       confirmPassword: userData.password
     });
-    await usersPage.saveAndWaitForResponse();
+    const created = await usersPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
+    const userId = (await created.json())?.data?.id;
+    expect(typeof userId).toBe('number');
 
+    // Open the user this test created from the list, found by its email.
     await usersPage.goto();
-    const userCount = await usersPage.getUserCount();
-    const userIndex = userCount > 1 ? 1 : 0;
-
-    await usersPage.viewUser(userIndex);
-    expect(page.url()).toMatch(/\/users\/\d+$/);
+    await usersPage.viewUser(userData.email);
+    await expect(page).toHaveURL(new RegExp(`/users/${userId}$`));
   });
 
   test('admin can search users', async ({ page }) => {
@@ -252,7 +253,7 @@ test.describe('Admin - Users Management', () => {
     await usersPage.searchUsers(customerUserData.email);
     await expect(ownRow).toHaveCount(1);
     await expect(usersPage.tableRows).toHaveCount(1);
-    await usersPage.editUser(0);
+    await usersPage.editUser(customerUserData.email);
     await usersPage.selectMuiOption('role', 'sales');
     await usersPage.saveButton.click();
 

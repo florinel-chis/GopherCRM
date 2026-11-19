@@ -13,13 +13,6 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
   user activity
 - **Data export** — CSV/PDF export from the list views
 - **Accessibility pass** — keyboard navigation and screen reader review against WCAG 2.1 AA
-- **Row-0 page objects in the E2E suite** — `customers.page.ts` was reworked to act on the row
-  matching a value unique to the test (`rowMatching`) and to address action icons through a
-  retrying expectation. The leads, tasks, tickets and users page objects still carry the pattern it
-  replaced: `rowIndex = 0` on edit/view/delete, so they act on whatever row happens to sort first
-  rather than the record the test created, plus a one-shot `isVisible()` guard that falls through
-  to a positional `button` fallback when the icon has not painted yet. Green today, latently flaky —
-  port the customers approach across.
 - **Vitest cases that time out on a loaded machine** — reduced in #403, not closed for the whole suite.
   - **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
     running; load average up to 71):**

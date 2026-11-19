@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Locator, Page, expect } from '@playwright/test';
 
 export class TicketsPage {
   readonly page: Page;
@@ -110,36 +110,44 @@ export class TicketsPage {
     return await responsePromise;
   }
 
-  async editTicket(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const editBtn = row.locator('[data-testid="EditIcon"]').first();
-    if (await editBtn.isVisible()) {
-      await editBtn.click();
-    } else {
-      await row.locator('button').nth(1).click();
-    }
+  /**
+   * Narrows the list to one record and returns its row.
+   *
+   * The list is paginated and server-sorted and every run adds records, so a
+   * row's position says nothing about which record it holds. A test that acts
+   * on the record it created passes a value only that record carries
+   * (its subject); the list is searched for it and the matching row comes back.
+   */
+  async rowMatching(uniqueText: string): Promise<Locator> {
+    await this.searchTickets(uniqueText);
+    const row = this.tableRows.filter({ hasText: uniqueText }).first();
+    await expect(row).toBeVisible({ timeout: 10000 });
+    return row;
+  }
+
+  /**
+   * Clicks one of a row's action icons, addressed by its test id through a
+   * retrying expectation: the table can render before its rows paint, and a
+   * missing icon must fail the test instead of sending the click elsewhere.
+   */
+  private async clickRowAction(row: Locator, iconTestId: string) {
+    const button = row.locator(`[data-testid="${iconTestId}"]`).first();
+    await expect(button).toBeVisible({ timeout: 10000 });
+    await button.click();
+  }
+
+  async editTicket(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'EditIcon');
     await this.page.waitForURL('**/tickets/**/edit');
   }
 
-  async viewTicket(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const viewBtn = row.locator('[data-testid="VisibilityIcon"]').first();
-    if (await viewBtn.isVisible()) {
-      await viewBtn.click();
-    } else {
-      await row.locator('button').nth(0).click();
-    }
-    await this.page.waitForURL('**/tickets/**');
+  async viewTicket(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'VisibilityIcon');
+    await this.page.waitForURL(/\/tickets\/\d+$/);
   }
 
-  async clickDeleteOnRow(rowIndex: number = 0) {
-    const row = this.tableRows.nth(rowIndex);
-    const deleteBtn = row.locator('[data-testid="DeleteIcon"]').first();
-    if (await deleteBtn.isVisible()) {
-      await deleteBtn.click();
-    } else {
-      await row.locator('button').last().click();
-    }
+  async clickDeleteOnRow(uniqueText: string) {
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'DeleteIcon');
   }
 
   /**
@@ -162,11 +170,8 @@ export class TicketsPage {
     await this.deleteDialog.waitFor({ state: 'hidden' });
   }
 
-  async deleteTicket(rowIndex: number = 0) {
-    // Wait for the list to have painted its rows before addressing one.
-    await this.getTicketCount();
-
-    await this.clickDeleteOnRow(rowIndex);
+  async deleteTicket(uniqueText: string) {
+    await this.clickDeleteOnRow(uniqueText);
 
     const responsePromise = this.page.waitForResponse(
       response => response.url().includes('/tickets') && response.request().method() === 'DELETE'
@@ -212,25 +217,6 @@ export class TicketsPage {
     } catch {
       return 0;
     }
-  }
-
-  async getTicketData(rowIndex: number = 0): Promise<{
-    subject: string;
-    customer: string;
-    status: string;
-    priority: string;
-    assignee: string;
-  }> {
-    const row = this.tableRows.nth(rowIndex);
-    const cells = row.locator('td');
-
-    return {
-      subject: await cells.nth(0).textContent() || '',
-      customer: await cells.nth(1).textContent() || '',
-      status: await cells.nth(2).textContent() || '',
-      priority: await cells.nth(3).textContent() || '',
-      assignee: await cells.nth(4).textContent() || '',
-    };
   }
 
   async getErrorMessage(): Promise<string | null> {
