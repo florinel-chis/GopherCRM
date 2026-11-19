@@ -246,9 +246,14 @@ included. Found by reading the code path unless noted.
   recorded on the `quote_response_tokens` row (`used_at`, `decision`), which no endpoint exposes.
   `GET /quotes/{id}/history` therefore shows a client acceptance as the owner's. The follow-up
   ticket decides how the history labels it (a nullable actor column or a join on the token row).
-- **A mailed client response link outlives the erasure of its customer (#382).** Erasing the
-  customer of a sent quote leaves a mailed link usable until the quote leaves sent (the public
-  view and the `/quote-response` page hold no personal data).
+- **A quote email in flight during the erasure of its customer keeps its response link (#395).**
+  The erasure stamps the unused response tokens of the erased customer's quotes, reading their ids
+  from the snapshot of its transaction. A token minted after that snapshot, or by a
+  `POST /quotes/{id}/email` that read the customer before the erasure committed and mints after
+  it, is not stamped: that mail goes to the address the request read, and its link works until
+  the quote leaves sent or `valid_until` passes. Links mailed before the erasure are refused.
+  Closing the window needs a re-check of the customer under the quote lock in
+  `mintResponseLink`. The public view and the `/quote-response` page hold no personal data.
 - **Quote PDF: the render credential store is per process (#384).** A render credential lives
   in the memory of the backend process that minted it. With several backend instances behind one
   origin, a render succeeds only when the render page's `POST /quotes/public/render` reaches the

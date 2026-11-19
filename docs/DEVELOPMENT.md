@@ -1071,6 +1071,10 @@ error text.
   with a plain `SELECT` and stamps them by primary key (no statement when there is none): an
   `UPDATE` filtered on `quote_id` gap-locks the index on MySQL and MariaDB and deadlocked the
   first emails of two different quotes. Call it only after the locking read of the quote.
+  The erasure of the quote's customer (#395) stamps the same way, with the same statements
+  (`invalidateQuoteResponseTokens`), after its own update of the quote row: a link mailed before
+  the erasure gets the generic rejection and the quote stays `sent`. See "Response links" under
+  the erasure below for which quotes and for the open email-in-flight case.
 - **HTTP.** `SetupQuotePublicRoutes` mounts `GET` and `POST /quotes/public/response` on the public
   group with one shared `RateLimitStrict()` instance and no Auth. The body is validated before any
   token lookup (400 `VALIDATION_ERROR`); every `ErrQuoteResponseRejected` is 400 `BAD_REQUEST`
@@ -1109,7 +1113,12 @@ like the application, skips without `TEST_MYSQL_DSN` and is not part of a CI gat
 quote concurrency roots); `TestQuoteResponseTokenRepository` (`internal/repository`);
 `TestQuotePublic{View,Respond}`, `TestQuotePublicRoutesWinOverTheIDParameter` (`internal/handler`);
 `TestQuoteResponseTokensMigrationFiles` (it holds the newest-migration assertion) and
-`TestQuoteResponseTokensMigration` (`cmd/migrate`). Page and client: `QuoteResponse.test.tsx`,
+`TestQuoteResponseTokensMigration` (`cmd/migrate`). The erasure of the customer (#395):
+`TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`
+(`internal/service/quote_response_erasure_test.go`) and
+`TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}`,
+`TestErasureQuoteTokenWritesLeaveGapsFreeMySQL` (`internal/repository/erasure_quote_tokens_test.go`),
+both files in the transaction gate of `scripts/ci/check-go.py`. Page and client: `QuoteResponse.test.tsx`,
 `client.public.test.ts`, `quoteResponse.test.ts`, the "quote response route" block of
 `routes/index.test.tsx`, `gocrm-ui/e2e/tests/quote-response.spec.ts`, and
 `TestQuoteResponseLink{PrintsUsableLink,RefusesDraftQuote,RefusesNonE2EDatabase}`
@@ -2083,6 +2092,23 @@ What happens on `DELETE`:
   unit back, and the errors name tables and ids only. The fields are overwritten wholesale; there
   is no attempt to detect a name inside them. A locked (sent, accepted …) quote is rewritten all
   the same: the erasure is the only writer that may.
+- **Response links (#395).** After the text, the same step stamps `used_at` on every unused
+  `quote_response_tokens` row of the quotes whose `customer_id` is an erased customer (live and
+  soft-deleted quotes, every status) and leaves `decision` NULL
+  (`invalidateErasedCustomerQuoteLinks` in `business_text_erasure.go`). A response link mailed
+  before the erasure is then refused on both public routes with the generic 400 "Invalid or
+  expired quote link", and the quote keeps its status, dates, totals and history. A row the client
+  already spent is unchanged, and so are the tokens of a quote that was reached only through a
+  scrubbed deal and is addressed to another, live customer: that link was mailed to the other
+  customer. The rows are kept (a hash, ids and timestamps). The stamp runs after the unit's
+  update of those `quotes` rows (the order `quotes → quote_response_tokens`), reads the ids with a
+  plain `SELECT` and writes by primary key only, so it holds no gap of the `quote_id` index
+  ([CONCURRENCY.md](CONCURRENCY.md)); the table is probed with `HasTable` like the others. It is
+  part of the unit: a rollback hands the link back. Not covered: the ids come from the snapshot
+  of the erasure's transaction, so a token minted by a quote email that is in flight while the
+  erasure runs (or sent by an `Email` call that read the customer before the erasure committed)
+  is not stamped and that link stays usable until the quote leaves `sent`
+  (`docs/ROADMAP.md`, #395).
 - **One unit, exactly once.** The whole graph is one transaction; a repository obtained through
   `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction (released on success,
   rolled back on an error or a panic, sent past GORM's prepared-statement wrapper), so a caller
@@ -2136,8 +2162,10 @@ What happens on `DELETE`:
   `internal/service/erasure_credential_order_test.go` (`TestErasureVsCredentialFlows{SQLite,MySQL}`,
   `TestGovernedUserErasureVsCustomerErasureMySQL`, `TestGovernedWriteReplaysErasureGraphChange`,
   `TestPasswordResetConfirmRetrySQLite`),
-  through the test-only `repository.ErasureHooks`. CI limit: `erasure_lock_order_test.go` and
-  `erasure_credential_order_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI
+  through the test-only `repository.ErasureHooks`. CI limit: `erasure_lock_order_test.go`,
+  `erasure_credential_order_test.go` and, for the response links (#395),
+  `erasure_quote_tokens_test.go` and `quote_response_erasure_test.go` are discovered by
+  `scripts/ci/check-go.py transaction`. CI
   runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on
   MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs them on MariaDB 10.11
   only, without `-race` and without rejecting a skip.
@@ -2222,6 +2250,7 @@ What the erasure touches, and what it keeps on purpose:
 | `deals` whose `customer_id` is an erased customer or whose `lead_id` is an erased lead (live and soft-deleted; #245) | `title` → `[redacted]`; `notes`, `lost_reason` → `''` | stage, probability, amount, currency, `source`, every link, `owner_id`, dates, deletion state |
 | `quotes` whose `customer_id` is an erased customer or whose `deal_id` is a deal above (every status, live and soft-deleted; #245) | `title` → `[redacted]`; `notes` → `''` | status, currency, totals, `valid_until`, `sent_at`, `closed_at`, `last_emailed_at`, every link, `owner_id`, deletion state |
 | `quote_lines` of those quotes | `description` → the name of the line's product (soft-deleted products included) | product, quantity, prices, discount, total, position |
+| `quote_response_tokens` of the quotes whose `customer_id` is an erased customer (#395) | unused rows: `used_at` stamped, `decision` stays NULL, so a mailed response link is refused | the rows, `token_hash`, `quote_id`, `expires_at`; rows the client spent; the tokens of quotes addressed to another customer. A hash, ids and timestamps, no personal data |
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `companies` (`notes`), staff-written ticket comments, deals and quotes reached only through `owner_id` | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*). A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
 | `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys and scopes only, by contract (the #348 writers store role names, descriptions, permissions, `role` and `role_id` only). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
@@ -2254,6 +2283,16 @@ and `TestBusinessTextErasureWithoutDealTables` (SQLite, two schema subsets); the
 `TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory` (`test/integration`); and, over
 HTTP, `TestBusinessTextErasureAPISQLite` (`tests`). CI limit: the MySQL roots skip in
 `make verify-backend`, which has no DSN; registering them in a checker is an operator follow-up.
+
+Regression roots for the response links of an erased customer's quotes (#395), on SQLite and on
+a disposable `TEST_MYSQL_DSN` schema, both files registered in the transaction profile of
+`scripts/ci/check-go.py`: `internal/repository/erasure_quote_tokens_test.go`:
+`TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}` (customer, converted-lead and
+customer-login roots, spent and foreign tokens untouched, no sent quote, a `WithTx` rollback) and
+`TestErasureQuoteTokenWritesLeaveGapsFreeMySQL` (another session inserts tokens of other quotes
+while the erasure is open); `internal/service/quote_response_erasure_test.go`:
+`TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}` (mint, erase, both public calls refused;
+the erasure racing a client answer).
 
 **Unlinked submissions (#214).** `eraseRecord` reads the row's original address before it writes
 the placeholder (the plan's `AfterScrub` sees only the placeholder) and, after `AfterScrub` and

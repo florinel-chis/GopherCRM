@@ -4,8 +4,8 @@ One place for the row-lock order and the retry rule of every write that locks ro
 one table: the erasures, lead conversion and update, company delete, bulk status, the session and
 credential flows, and RBAC writes. It records what the code does at `a415cf1` (with Login updated
 for #336, the password-reset request and API-key create for #342, and the lead-rooted erasure
-against lead conversion for #337, the RBAC writes for #348, and the one erasure lock order with
-its retry for #385) and, separately, the target that #183 asks for. A flow whose order is only a target is marked
+against lead conversion for #337, the RBAC writes for #348, the one erasure lock order with
+its retry for #385, and the erasure's stamp of quote response links for #395) and, separately, the target that #183 asks for. A flow whose order is only a target is marked
 `not implemented` or `partial`; nothing here describes a target as current behaviour.
 
 Each flow lists five fields:
@@ -73,8 +73,33 @@ quote lock before the first read of its transaction) and stamps them by primary 
 `UPDATE` at all when there is none. No statement locks through
 `idx_quote_response_tokens_quote_id`, so no gap lock is held when the mint inserts; an `UPDATE`
 filtered on `quote_id` took one under REPEATABLE READ on MySQL and MariaDB and two first emails of
-two quotes deadlocked (error 1213). No flow reads `users`, `customers`, `leads` or `deals` under
-these locks, so they add no lock edge to the chains above.
+two quotes deadlocked (error 1213).
+
+The erasure of a quote's customer is the fourth writer of `quote_response_tokens` (#395), and it
+takes the same order. Its text scrub updates the quotes it reached by primary key
+(`scrubReachedQuotes`, `internal/repository/business_text_erasure.go`), which is its lock on each
+of those `quotes` rows; only after that does `invalidateErasedCustomerQuoteLinks` stamp `used_at`
+(`decision` stays NULL) on the unused token rows of the quotes addressed to an erased customer,
+with the statements of `InvalidateForQuote`: a plain `SELECT` of the ids, then an `UPDATE` by
+primary key that still requires `used_at IS NULL`, and no `UPDATE` when there is no id. It issues
+no locking read and no write filtered on `quote_id`, so it holds no gap of
+`idx_quote_response_tokens_quote_id` either. A quote reached only through a scrubbed deal and
+addressed to another customer keeps its tokens. For the three quote flows the plain id read is
+complete, as said above. For the erasure it is complete only for the tokens committed before the
+snapshot of its transaction, which is fixed before the quote locks (after the `users` lock; in
+`DELETE /users/{id}` by the governed write's first read): a client answer committed after the
+snapshot is read as unused and left alone by the `used_at IS NULL` predicate of the stamp, and a
+token minted after the snapshot by a quote email in flight is not seen and not stamped. That
+last case is open (`docs/ROADMAP.md`, #395); closing it needs a re-check of the customer under
+the quote lock in `mintResponseLink`.
+
+The erasure reaches `quotes` and then `quote_response_tokens` while it holds its `leads`,
+`customers`, `users` and credential locks and the `deals` rows it scrubbed, so there is a lock
+edge from the erasure order into this one. It closes no cycle: the three quote flows read
+`users`, `customers` and `deals` with plain reads only and take no lock on `users`, `customers`,
+`leads` or `deals` after the quote lock, so nothing waits in the opposite direction. An erasure
+and a client answer on one token queue on the `quotes` row: the answer commits and stands, or
+the erasure commits and the answer is refused with the generic rejection.
 
 **Erasure order (#385).** One order spans the chains for every erasure, whichever row it starts
 from: `automation runs → leads → customers → users → refresh_tokens → password_reset_tokens →
@@ -91,7 +116,10 @@ before the owner's `users` row and is replayed when it is the victim (`resetConf
 against an erasure it commits first or is refused with the generic `ErrInvalidResetToken`, its
 replay finding the token gone or the owner erased, while an erasure that is the victim is
 replayed. A governed delete that is replayed after the other erasure committed finds the account
-already erased and answers not found (404), as a delete of an erased user does.
+already erased and answers not found (404), as a delete of an erased user does. After the
+credential rows every erasure writes the text of the linked `deals` and `quotes` by primary key
+and then, last, stamps the unused `quote_response_tokens` rows of the erased customers' quotes by
+primary key (#395, see the quote response links above).
 
 ## Retry rule
 
@@ -138,10 +166,14 @@ governed user write does the same around its nested erasure.
   (`readErasedEmail`, `internal/repository/erasure.go:274`), the credential delete by `user_id`
   (`purgeCredentials`, `internal/repository/erasure.go:536`, which stays the authority for what
   is removed), then the text of the linked deals and quotes
-  (`internal/repository/erasure_cascade.go:797`).
+  (`internal/repository/erasure_cascade.go:797`), whose `deals`, `quotes` and `quote_lines` rows
+  are written by primary key or by `quote_id`, and last the unused `quote_response_tokens` rows of
+  the quotes addressed to an erased customer, stamped by primary key after those `quotes` rows
+  (#395).
 - **Order:** automation runs → leads → customers → users → refresh_tokens →
   password_reset_tokens → api_keys, ids ascending inside each table, after a discovery of the
-  graph with plain reads (`discoverErasureGraph`, `internal/repository/erasure_cascade.go:497`).
+  graph with plain reads (`discoverErasureGraph`, `internal/repository/erasure_cascade.go:497`);
+  after the credential rows, deals and quotes text, then `quote_response_tokens` (#395).
   The credential ids are read with a plain `SELECT … WHERE user_id IN (…)` after the `users`
   lock and then locked by primary key. No locking read filters on `leads.customer_id`,
   `customers.user_id`, `deleted_at` or a credential table's `user_id`: such a read locks an index
@@ -206,10 +238,13 @@ survive.
   credential rows: the statements of the user-rooted erasure, the graph being the same person. A
   staff account in `user_id` is locked (`internal/repository/erasure_cascade.go:874`, its role
   decides the link) and left alone. Each row's address is read by `readErasedEmail` during the
-  scrub.
+  scrub. The text scrub then writes the linked `deals` and `quotes`, and the unused
+  `quote_response_tokens` rows of the customers' quotes are stamped by primary key after those
+  `quotes` rows (#395).
 - **Order:** automation runs → leads → customers → users → refresh_tokens →
   password_reset_tokens → api_keys, ids ascending inside each table, with the discovery, the
-  re-read after the `users` lock and the snapshot rule of the user-rooted erasure. The leads of
+  re-read after the `users` lock and the snapshot rule of the user-rooted erasure; after the
+  credential rows, deals and quotes text, then `quote_response_tokens` (#395). The leads of
   the customer are found by the plain pluck by `customer_id`
   (`convertedLeadsOf`, `internal/repository/erasure_cascade.go:464`) in the discovery and again
   in the re-read, never by a locking read.
@@ -229,13 +264,17 @@ survive.
   non-admin refusal is decided on that locked row, and a `customer_id` that differs from the
   discovery ends the attempt), then the customer it was converted into
   (`internal/repository/erasure_cascade.go:853`) with that customer's other leads, its login and
-  the login's credential rows. `readErasedEmail` reads each address during the scrub.
+  the login's credential rows. `readErasedEmail` reads each address during the scrub. The text
+  scrub then writes the linked `deals` and `quotes`, and for a converted lead the unused
+  `quote_response_tokens` rows of the customer's quotes are stamped by primary key after those
+  `quotes` rows (#395).
 - **Order:** automation runs → leads → customers → users → refresh_tokens →
   password_reset_tokens → api_keys, ids ascending inside each table, with the discovery, the
   re-read after the `users` lock and the snapshot rule of the user-rooted erasure: automation
   runs (`cancelAutomationInTables`) → leads (locking read by id,
   `internal/repository/erasure_cascade.go:831`) → customers (locking read by id, `:853` in the
-  same file) → users (locking read by id, `:874`) → the credential rows → deals and quotes text.
+  same file) → users (locking read by id, `:874`) → the credential rows → deals and quotes text,
+  then `quote_response_tokens` (#395).
   `DeleteUnconverted` discovers and locks the root lead only and never reads or locks a customer
   or a user. The converted-lead pluck (`WHERE customer_id = ?`,
   `internal/repository/erasure_cascade.go:466-467`) stays a plain read: a locking read there

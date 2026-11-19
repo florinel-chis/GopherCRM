@@ -74,7 +74,8 @@ func (r *quoteResponseTokenRepository) Claim(id uint, decision string, now time.
 
 // InvalidateForQuote stamps used_at on the quote's unused rows and leaves
 // decision NULL: a newer email or a staff status change killed the link, the
-// client did not answer.
+// client did not answer. The erasure of the quote's customer stamps the same
+// way through the shared helper below (#395).
 //
 // It reads the ids with a plain SELECT and stamps them by primary key, and
 // issues no UPDATE when there is none. An UPDATE filtered on quote_id would
@@ -87,24 +88,41 @@ func (r *quoteResponseTokenRepository) Claim(id uint, decision string, now time.
 // quotes row before the first read of its transaction, and every writer of
 // the quote's token rows takes that lock first.
 func (r *quoteResponseTokenRepository) InvalidateForQuote(quoteID uint, now time.Time) error {
+	_, err := invalidateQuoteResponseTokens(r.db, []uint{quoteID}, now)
+	return err
+}
+
+// invalidateQuoteResponseTokens is the one statement pair that kills unused
+// links, shared by InvalidateForQuote and the erasure of a quote's customer
+// (business_text_erasure.go): a plain read of the unused ids of the quotes,
+// then a stamp by primary key that still requires used_at IS NULL. It returns
+// the ids it read. The stamp may affect fewer rows than were read, zero
+// included: a caller whose snapshot predates a committed client answer reads
+// that row as unused, and the predicate of the update leaves the answer's
+// used_at and decision alone.
+func invalidateQuoteResponseTokens(db *gorm.DB, quoteIDs []uint, now time.Time) ([]uint, error) {
+	if len(quoteIDs) == 0 {
+		return nil, nil
+	}
 	var ids []uint
-	err := r.db.Model(&models.QuoteResponseToken{}).
-		Where("quote_id = ? AND used_at IS NULL", quoteID).
+	err := db.Model(&models.QuoteResponseToken{}).
+		Where("quote_id IN ? AND used_at IS NULL", quoteIDs).
 		Order("id ASC").
 		Pluck("id", &ids).Error
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	stamp := now.UTC()
-	return r.db.Model(&models.QuoteResponseToken{}).
+	err = db.Model(&models.QuoteResponseToken{}).
 		Where("id IN ? AND used_at IS NULL", ids).
 		Updates(map[string]interface{}{
 			"used_at":    &stamp,
 			"updated_at": stamp,
 		}).Error
+	return ids, err
 }
 
 func (r *quoteResponseTokenRepository) WithTx(tx *gorm.DB) QuoteResponseTokenRepository {

@@ -218,6 +218,11 @@ Decide first whether the new table stores personal data or only refers to people
   (`internal/repository/business_text_erasure.go`, run by `eraseGraph` once the person's rows have
   been traversed): the linked deals and quotes are kept with their links and amounts and their
   text is overwritten. A new table with free-text columns belongs in the next bullet.
+  "Ids only" does not always mean "nothing to do" either: `quote_response_tokens` holds a hash,
+  ids and timestamps, yet a row is a credential mailed to the erased person, so since #395 the
+  same step stamps the unused rows of the erased customers' quotes (kept, no longer usable;
+  `internal/repository/erasure_quote_tokens_test.go`). A table of links, tokens or
+  subscriptions addressed to a person needs the same question.
   For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
   (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
@@ -230,7 +235,8 @@ Decide first whether the new table stores personal data or only refers to people
   `internal/repository/erasure_cascade.go` (`leadErasurePlan`; `customerErasurePlan` and
   `userErasurePlan` live in their repositories), using `Scrub` for columns and `AfterScrub` /
   `BeforeScrub` for rows outside the entity's own table (as `scrubLeadFormSubmissions` does), or add
-  a step to the cascade (as `scrubBusinessText` does for deals and quotes, probing each table with
+  a step to the cascade (as `scrubBusinessText` does for deals and quotes and, last, for the
+  response tokens of the erased customers' quotes, probing each table with
   `tx.Migrator().HasTable`). A unique column gets a placeholder, never a blank. Rows keyed by an
   external identifier under a unique key must be **deleted**, not blanked.
 - Extend `TestIdentityErasure{SQLite,MySQL}` (`internal/repository/identity_erasure_test.go`) and

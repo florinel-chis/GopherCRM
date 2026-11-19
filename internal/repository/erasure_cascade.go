@@ -640,8 +640,8 @@ func newErasureCascade(allowCustomers bool) *erasureCascade {
 //  4. Re-read the graph under the locks; when it differs from the discovery,
 //     roll back with ErrErasureGraphChanged.
 //  5. Decide the non-admin refusal on the locked lead, then scrub, purge and
-//     soft-delete every row, and the staff-typed text of the linked deals and
-//     quotes (business_text_erasure.go, #245).
+//     soft-delete every row, the staff-typed text of the linked deals and
+//     quotes (#245), then their unused response links (#395).
 //
 // Two erasures of one person therefore queue on its first row, whichever
 // roots they came from, where they used to deadlock.

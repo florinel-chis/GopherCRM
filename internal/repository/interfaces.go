@@ -687,7 +687,11 @@ type QuoteRepository interface {
 // response link of a quote email (#382). A row is usable while it is unused,
 // not past expires_at, and its quote is live and sent; the read and the claim
 // carry the same predicates. Lock order: a transaction that writes here locks
-// its quotes row first (quotes → quote_response_tokens).
+// its quotes row first (quotes → quote_response_tokens). The writers are the
+// three quote flows through this interface and the erasure of a quote's
+// customer (#395), which stamps the unused rows of that customer's quotes
+// with the statements of InvalidateForQuote after its own update of those
+// quotes rows (business_text_erasure.go).
 type QuoteResponseTokenRepository interface {
 	Create(token *models.QuoteResponseToken) error
 	// FindUsableByHash returns the usable row with that hash, read at now;

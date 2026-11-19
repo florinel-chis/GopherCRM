@@ -37,10 +37,10 @@ TRANSACTION_SOURCES = {
     'internal/utils': ('transaction*_test.go',),
     'internal/service': ('lead*_test.go', 'form*_test.go', 'deal*_test.go',
                          'company*_test.go', 'aeo*_test.go', 'bulk*_test.go',
-                         'erasure_credential_order_test.go'),
+                         'erasure_credential_order_test.go', 'quote_response_erasure_test.go'),
     'internal/repository': ('lead*_test.go', 'form*_test.go', 'deal*_test.go',
                             'company*_test.go', 'aeo*_test.go', 'bulk*_test.go',
-                            'erasure_lock_order_test.go'),
+                            'erasure_lock_order_test.go', 'erasure_quote_tokens_test.go'),
     'test/integration': ('lead*_test.go', 'company*_test.go', 'deal*_test.go',
                          'bulk*_test.go', 'form*_test.go', 'erasure_atomicity_test.go'),
 }

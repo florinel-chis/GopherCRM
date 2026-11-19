@@ -275,8 +275,8 @@ func TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates(t *testing.T
 		"webhook_deliveries",
 		// #382: the tokens of the client response link of a quote email hold
 		// a hash of a random token, the quote id, timestamps and the client's
-		// decision, so no personal data, and the erasure leaves them in place.
-		// The sweep still reads the table.
+		// decision, so no personal data: the erasure keeps the rows and only
+		// stamps the unused ones of an erased customer's quotes (#395).
 		"quote_response_tokens",
 	} {
 		assert.Contains(t, tables, expected,

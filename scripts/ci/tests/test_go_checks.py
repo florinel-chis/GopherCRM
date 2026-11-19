@@ -57,9 +57,12 @@ elif sys.argv[1] == 'test':
             for feature in ('Lead', 'Form', 'Deal', 'Company', 'AEO', 'Bulk'):
                 self.assertTrue(any(feature in name for name in selected[package]), (package, feature))
         self.assertIn('TestLeadConversionTransaction', selected['test/integration'])
-        for name in ('TestErasureCrossRootMySQL', 'TestErasureGraphChangedMySQL'):
+        for name in ('TestErasureCrossRootMySQL', 'TestErasureGraphChangedMySQL',
+                     'TestErasureInvalidatesQuoteResponseTokensMySQL',
+                     'TestErasureQuoteTokenWritesLeaveGapsFreeMySQL'):
             self.assertIn(name, selected['internal/repository'])
-        for name in ('TestErasureVsCredentialFlowsMySQL', 'TestGovernedUserErasureVsCustomerErasureMySQL'):
+        for name in ('TestErasureVsCredentialFlowsMySQL', 'TestGovernedUserErasureVsCustomerErasureMySQL',
+                     'TestQuoteResponseAfterCustomerErasureMySQL'):
             self.assertIn(name, selected['internal/service'])
 
     def test_missing_database_or_boundary_cannot_reduce_profile(self):

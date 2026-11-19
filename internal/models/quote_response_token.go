@@ -24,7 +24,8 @@ func IsQuoteResponseDecision(value string) bool {
 // names the quote owner, because quote_status_changes.changed_by_id must be a
 // user. Like quote_status_changes the table carries no foreign key and no
 // soft delete, and it holds a hash, ids and timestamps only, so erasure
-// leaves it in place.
+// keeps the rows; it stamps used_at on the unused ones of the quotes
+// addressed to an erased customer, which kills a link mailed earlier (#395).
 type QuoteResponseToken struct {
 	ID        uint      `gorm:"primarykey" json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -36,8 +37,8 @@ type QuoteResponseToken struct {
 	// The start of the day after the quote's valid_until (server's local
 	// date), in UTC; NULL when the quote has no valid_until.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	// When the row was spent by the client or invalidated by a newer email or
-	// a staff status change.
+	// When the row was spent by the client or invalidated by a newer email, a
+	// staff status change or the erasure of the quote's customer.
 	UsedAt *time.Time `json:"used_at,omitempty"`
 	// accept or decline on a row the client spent; NULL on an unused or an
 	// invalidated row.
