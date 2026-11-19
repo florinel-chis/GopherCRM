@@ -198,14 +198,16 @@ To switch it on:
      `PDF_RENDER_FAILED` and the email falls back to text.
 
 **The unit needs no change.** The renderer writes only below one temporary directory per render
-(the browser profile, `HOME`, `TMPDIR`, the XDG directories and the output file), which
+(the browser profile, `HOME`, `TMPDIR` and the XDG directories), which
 `PrivateTmp=yes` provides, and removes it afterwards; `ProtectHome=yes` and `ProtectSystem=strict`
 stay as they are. The browser process does not inherit the service's environment: it gets `PATH`,
 the locale, `TZ` and those directories, so no value of the environment file reaches it. The
 backend never passes `--no-sandbox`; if your browser cannot start its sandbox as the service
 user, point `QUOTE_PDF_CHROME_PATH` at a small wrapper script that adds the flag and starts the
 browser with `exec` (as the Docker image's `/usr/local/bin/quote-pdf-browser` does), and treat
-that as your own decision. The browser's helper processes that lose their parent when a render ends
+that as your own decision. The backend drives the browser over its DevTools pipe, so a wrapper
+must not close or redirect file descriptors 3 and 4: the browser it starts has to inherit them
+(a script that only adds flags does). The browser's helper processes that lose their parent when a render ends
 are reaped by the host's init, as for any service.
 
 **Not verified on a systemd host.** For this feature the systemd deployment was not run on a real

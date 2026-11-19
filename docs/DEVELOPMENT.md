@@ -961,15 +961,32 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
   never reach a browser process, and a hardened unit (`ProtectHome`, `ProtectSystem=strict`,
   `PrivateTmp`) or a read-only root file system leaves it everything it needs. The browser is the
   leader of its own process group and the whole group is killed at the bound and after every
-  render, so no helper survives. Flags: `--headless`, `--print-to-pdf`, `--no-pdf-header-footer`,
-  `--virtual-time-budget` (so the page's fetch finishes and is painted), `--use-mock-keychain`
-  and `--password-store=basic` (with `HOME` in a temp dir a macOS Chrome otherwise waits for a
-  login keychain it cannot find). The list is one for both kinds of binary, `chrome-headless-shell`
+  render, so no helper survives. Flags: `--headless`, `--remote-debugging-pipe`,
+  `--use-mock-keychain` and `--password-store=basic` (with `HOME` in a temp dir a macOS Chrome
+  otherwise waits for a login keychain it cannot find). The list is one for both kinds of binary, `chrome-headless-shell`
   (what the Docker image ships since #393) and a full Chrome or Chromium: the full browser needs
   `--headless` and the keychain switches, the headless shell accepts and ignores them.
   `--no-sandbox` is never passed from Go: an image that needs it sets it in its launcher (the
   Dockerfile writes `/usr/local/bin/quote-pdf-browser`, which execs the headless shell). Neither the URL,
-  its fragment nor the browser's stdout or stderr is logged or wrapped into an error.
+  its fragment nor anything the browser sent or wrote is logged or wrapped into an error.
+- **The browser is driven over its DevTools pipe (#396).** The argument list holds no URL. The
+  browser is started with `--remote-debugging-pipe`, reads commands on its file descriptor 3 and
+  writes replies and events on 4 (`cmd.ExtraFiles`; one JSON object and a NUL byte per message),
+  and a small client on the standard library (`quote_pdf_chrome_pipe.go`, no Go dependency)
+  sends `Target.createTarget` (`about:blank`), `Target.attachToTarget` (`flatten`),
+  `Page.enable`, `Page.navigate` with the render URL, waits for `Page.loadEventFired`, sets
+  `Emulation.setVirtualTimePolicy` (`pauseIfNetworkFetchesPending`, budget
+  `quotePDFVirtualTimeBudgetMS`) and waits for `Emulation.virtualTimeBudgetExpired`, so the
+  page's fetch finishes and is painted, then `Page.printToPDF` (`printBackground`, no header or
+  footer, `preferCSSPageSize`) and decodes the base64 answer. The render URL, whose fragment is
+  the credential, is therefore on no command line, and no TCP debugging port is opened: only the
+  backend process holds the other ends of the pipe. A reply with an error, a navigation that
+  reports an `errorText`, EOF on the pipe or a browser that exits fails the render at once
+  rather than at the bound, and an answer that does not start with `%PDF` is refused. The
+  renderer needs a Unix host: file descriptors beyond the standard three cannot be handed to a
+  child on Windows, where the server builds and every render fails (503 `PDF_RENDER_FAILED`).
+  A launcher script named by `QUOTE_PDF_CHROME_PATH` must not close or redirect file
+  descriptors 3 and 4.
 - **Time budget (a contract, tested).** `QuotePDFRenderTimeout` = 15 s is the only definition of
   the bound and covers the wait for the slot: one render at a time per process, and a render
   queued behind another fails within the same 15 s. `POST /quotes/:id/email` therefore takes at
@@ -988,10 +1005,16 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
   body every other call has.
 
 Roots: `TestQuotePDF{Off,Render,TimeoutBudget}`, `TestQuoteRenderCredential`
-(`internal/service/quote_pdf_test.go`); `TestChromeQuotePDFRenderer{MissingBinary,Timeout,Environment,LaunchArguments,RealBinary}`
-(`quote_pdf_chrome_test.go`; `LaunchArguments` pins the keychain switches, `--headless` and the
-absence of `--no-sandbox`; `RealBinary` drives the binary named by `QUOTE_PDF_CHROME_PATH` and
-skips without it, and none of the five is in a no-skip gate: CI has no browser);
+(`internal/service/quote_pdf_test.go`); `TestChromeQuotePDFRenderer{MissingBinary,Timeout,Environment,LaunchArguments,Pipe,RealBinary}`
+(`quote_pdf_chrome_test.go`; `LaunchArguments` pins the keychain switches, `--headless`,
+`--remote-debugging-pipe`, the absence of `--no-sandbox`, of a debugging port switch and of the
+page URL in every argument, and that the URL arrives whole in `Page.navigate`; `Pipe` pins a
+PDF answer over 1 MiB, a browser that exits or answers with an error, an answer that is not a
+PDF, and that no render leaves a file descriptor open; `RealBinary` drives the binary named by
+`QUOTE_PDF_CHROME_PATH`, holds the render open with a pending request of the page and reads the
+host's `ps` output meanwhile, and skips without the variable; none of the six is in a no-skip
+gate: CI has no browser. The stand-in browser of these roots is the test binary itself, run as
+`TestHelperQuotePDFBrowser`, which returns at once in an ordinary run);
 `TestQuoteEmailPDFAttachment` (`quote_email_test.go`, in `MAILER_CALLER_ROOTS`);
 `TestQuotePDFHandler`, `TestQuotePublicRender`, `TestUIConfigurationsQuotePDFAvailable`
 (`internal/handler`); `TestSMTPAttachment`, `TestLogMailerAttachment` (`internal/mailer`);
