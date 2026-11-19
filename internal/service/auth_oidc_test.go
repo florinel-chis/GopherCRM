@@ -580,6 +580,8 @@ type oidcFixture struct {
 	newSSO     func(base config.SSOConfig) SSOSettingsService
 	auth       *authService
 	svc        *oidcService
+	// audit is the sign-in audit writer Callback records through (#454).
+	audit AuthAuditService
 
 	mu    sync.Mutex
 	clock time.Time
@@ -625,9 +627,10 @@ func newOIDCFixture(t *testing.T, db, competitor *gorm.DB) *oidcFixture {
 		oidcTestAppBaseURL, oidcTestAPIKeySecret).(*authService)
 	f.defaultSSO = f.sso
 	f.newSSO = func(base config.SSOConfig) SSOSettingsService { return NewSSOSettingsService(configs, roleRepo, base) }
+	f.audit = NewAuthAuditService(repository.NewAuthAuditRepository(db))
 	f.svc = NewOIDCService(f.sso, f.auth, userRepo, roleRepo, repository.NewRoleAuditRepository(db), refreshRepo,
 		repository.NewUserIdentityRepository(db), repository.NewOIDCLoginAttemptRepository(db), txManager,
-		oidcTestAppBaseURL+"/", WithOIDCClock(f.now), WithOIDCRootCAs(f.issuer.rootCAs())).(*oidcService)
+		oidcTestAppBaseURL+"/", WithOIDCClock(f.now), WithOIDCRootCAs(f.issuer.rootCAs()), WithOIDCAudit(f.audit)).(*oidcService)
 
 	var roles []models.Role
 	require.NoError(t, db.Where("system_key IS NOT NULL").Find(&roles).Error)
@@ -662,9 +665,10 @@ func (f *oidcFixture) configure(t *testing.T, mapping []SSORoleMapping) {
 // clock and the issuer.
 func (f *oidcFixture) reset(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"refresh_tokens", "user_identities", "role_audit_log", "oidc_login_attempts", "users"} {
+	for _, table := range []string{"refresh_tokens", "user_identities", "role_audit_log", "oidc_login_attempts", "auth_audit_log", "users"} {
 		require.NoError(t, f.db.Exec("DELETE FROM "+table).Error, table)
 	}
+	require.Zero(t, f.count(t, "auth_audit_log", ""), "every subtest starts with an empty audit log")
 	f.mu.Lock()
 	f.clock = time.Now().UTC().Truncate(time.Millisecond)
 	f.mu.Unlock()
@@ -672,6 +676,7 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.issuer.setDiscoveryRedirect(false)
 	f.svc.beforeJITInsert = nil
 	f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db)
+	f.svc.audit = f.audit
 	f.svc.entraIssuerHost = oidcEntraIssuerHost
 	f.svc.graphBaseURL = oidcGraphBaseURL
 	f.svc.graphTimeout = oidcGraphTimeout
@@ -788,6 +793,28 @@ func (f *oidcFixture) assertRefused(t *testing.T, code string, tokens *AuthToken
 	assert.Equal(t, code, oidcErrorCode(err), "refused for the property under test")
 	assert.Equal(t, usersBefore, f.users(t), "no user is created")
 	assert.Equal(t, identitiesBefore, f.identities(t), "no identity is created")
+
+	// The audit row of the refusal (#454): the newest row, with the attempt
+	// the callback claimed (none for an unknown state).
+	row := f.lastAudit(t)
+	assert.Equal(t, AuthAuditMethodOIDC, row.Method)
+	assert.Equal(t, AuthAuditOutcomeRefused, row.Outcome)
+	assert.Equal(t, code, row.Reason, "the audit row carries the refusal code")
+	if code == "state_invalid" {
+		assert.Nil(t, row.AttemptID, "no attempt was claimed")
+	} else if assert.NotNil(t, row.AttemptID, "the claimed attempt") {
+		var newest models.OIDCLoginAttempt
+		require.NoError(t, f.db.Order("id DESC").First(&newest).Error)
+		assert.Equal(t, newest.ID, *row.AttemptID, "the attempt of this subtest")
+	}
+}
+
+// lastAudit is the newest auth_audit_log row.
+func (f *oidcFixture) lastAudit(t *testing.T) models.AuthAuditLog {
+	t.Helper()
+	var row models.AuthAuditLog
+	require.NoError(t, f.db.Order("id DESC").First(&row).Error, "an audit row was written")
+	return row
 }
 
 // valid is a token spec that signs in: a subject, an unused email and a
@@ -1607,6 +1634,78 @@ var oidcSignInCases = []struct {
 		assert.Zero(t, f.count(t, "oidc_login_attempts", "created_at < ?", cutoff), "no row older than a day remains")
 		assert.Zero(t, f.count(t, "oidc_login_attempts", "id = ?", oldID), "the day-old row is gone")
 		assert.Equal(t, int64(1), f.count(t, "oidc_login_attempts", "id = ?", recentID), "the 23-hour-old row stays")
+	}},
+	{"audit_success_row", func(t *testing.T, f *oidcFixture) {
+		tokens, err := f.signIn(t, oidcValid("subject-audit-ok-0454", "audit-ok-0454@idp.example.test"))
+		require.NoError(t, err)
+		require.Equal(t, int64(1), f.count(t, "auth_audit_log", ""), "one row per callback")
+		row := f.lastAudit(t)
+		assert.Equal(t, AuthAuditMethodOIDC, row.Method)
+		assert.Equal(t, AuthAuditOutcomeSuccess, row.Outcome)
+		assert.Equal(t, "", row.Reason)
+		require.NotNil(t, row.UserID)
+		assert.Equal(t, tokens.User.ID, *row.UserID)
+		require.NotNil(t, row.AttemptID)
+		require.NotNil(t, row.ClaimGroups)
+		assert.JSONEq(t, `["unrelated","`+oidcGroupSales+`"]`, *row.ClaimGroups)
+		require.NotNil(t, row.ClaimRoles)
+		assert.JSONEq(t, `[]`, *row.ClaimRoles, "an absent roles claim was read as empty")
+		assert.Nil(t, row.SubjectRef, "no subject reference on success")
+	}},
+	{"audit_refusal_row", func(t *testing.T, f *oidcFixture) {
+		usersBefore, identitiesBefore := f.users(t), f.identities(t)
+		const sub = "subject-audit-refused-0454"
+		spec := oidcTokenSpec{sub: sub, email: "audit-refused-0454@idp.example.test",
+			groups: []string{"nobody-0454", "also-nobody-0454"}, roles: []string{"no-role-0454"}}
+		tokens, err := f.signIn(t, spec)
+		f.assertRefused(t, "no_mapping_match", tokens, err, usersBefore, identitiesBefore)
+		row := f.lastAudit(t)
+		assert.Nil(t, row.UserID, "no account was named")
+		require.NotNil(t, row.SubjectRef, "a verified identity was refused")
+		assert.Regexp(t, `^[0-9a-f]{64}$`, *row.SubjectRef)
+		assert.Equal(t, AuthAuditSubjectRef(oidcTestAPIKeySecret, f.issuer.URL(), sub), *row.SubjectRef)
+		require.NotNil(t, row.ClaimGroups)
+		assert.JSONEq(t, `["nobody-0454","also-nobody-0454"]`, *row.ClaimGroups)
+		require.NotNil(t, row.ClaimRoles)
+		assert.JSONEq(t, `["no-role-0454"]`, *row.ClaimRoles)
+	}},
+	{"audit_linked_user_refusal", func(t *testing.T, f *oidcFixture) {
+		seeded := f.seedUser(t, "audit-inactive-0454@crm.example.test", models.RoleSales, false, "")
+		const sub = "subject-audit-inactive-0454"
+		f.link(t, seeded.ID, sub)
+		usersBefore, identitiesBefore := f.users(t), f.identities(t)
+		tokens, err := f.signIn(t, oidcValid(sub, "audit-inactive-0454@idp.example.test"))
+		f.assertRefused(t, "account_inactive", tokens, err, usersBefore, identitiesBefore)
+		row := f.lastAudit(t)
+		require.NotNil(t, row.UserID, "the linked account is named")
+		assert.Equal(t, seeded.ID, *row.UserID)
+		require.NotNil(t, row.SubjectRef)
+	}},
+	{"audit_id_on_refusal_log", func(t *testing.T, f *oidcFixture) {
+		previous := utils.Logger
+		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+		var output bytes.Buffer
+		utils.Logger.SetOutput(&output)
+		t.Cleanup(func() { utils.Logger = previous })
+
+		bad := oidcValid("subject-audit-log-0454", "audit-log-0454@idp.example.test")
+		bad.nonce = "wrong-nonce-0454"
+		_, err := f.signIn(t, bad)
+		require.ErrorIs(t, err, ErrSSOSignInFailed)
+		row := f.lastAudit(t)
+		assert.Nil(t, row.SubjectRef, "refused before the nonce matched: no subject reference")
+		var refused map[string]interface{}
+		for _, raw := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+			var line map[string]interface{}
+			if json.Unmarshal([]byte(raw), &line) == nil && line["msg"] == "Single sign-on refused" {
+				refused = line
+			}
+		}
+		require.NotNil(t, refused, "the refusal is logged")
+		assert.Equal(t, "nonce_mismatch", refused["error_code"])
+		require.Contains(t, refused, "audit_id")
+		assert.Equal(t, float64(row.ID), refused["audit_id"], "the log line names the audit row")
+		assert.NotZero(t, row.ID)
 	}},
 	{"names_split_from_name", func(t *testing.T, f *oidcFixture) {
 		spec := oidcValid("subject-name-split", "name-split@idp.example.test")

@@ -175,9 +175,47 @@ func TestBulkOperationRecoveryProductionWiring(t *testing.T) {
 		assert.True(t, attemptExists(recent), "an attempt younger than a day stays")
 	})
 
+	t.Run("the boot sweep prunes sign-in audit rows older than the retention", func(t *testing.T) {
+		boot := bootAutomation(t, false)
+		// What config.Load yields with AUTH_AUDIT_RETENTION_DAYS unset.
+		boot.cfg.AuthAudit.RetentionDays = 90
+		now := time.Now().UTC()
+		seedRow := func(createdAt time.Time) uint {
+			t.Helper()
+			row := &models.AuthAuditLog{CreatedAt: createdAt, Method: service.AuthAuditMethodPassword,
+				Outcome: service.AuthAuditOutcomeRefused, Reason: service.AuthAuditReasonInvalidCredentials}
+			require.NoError(t, models.DB.Create(row).Error)
+			return row.ID
+		}
+		rowExists := func(id uint) bool {
+			var n int64
+			require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("id = ?", id).Count(&n).Error)
+			return n == 1
+		}
+		old := seedRow(now.Add(-91 * 24 * time.Hour))
+		recent := seedRow(now.Add(-24 * time.Hour))
+
+		backgroundCtx, stopBackground := context.WithCancel(context.Background())
+		t.Cleanup(stopBackground)
+		_, stop := setupRouter(backgroundCtx, boot.cfg)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+			defer cancel()
+			_ = stop(ctx)
+		})
+
+		deadline := time.Now().Add(automationBootTimeout)
+		for rowExists(old) {
+			require.True(t, time.Now().Before(deadline), "the 91-day-old audit row is pruned at boot without any request")
+			time.Sleep(20 * time.Millisecond)
+		}
+		assert.True(t, rowExists(recent), "a 1-day-old audit row stays")
+	})
+
 	t.Run("the wiring helper sweeps every 15 minutes", func(t *testing.T) {
 		bootAutomation(t, false)
-		background := newBulkRecoveryBackground(repository.NewBulkOperationRepository(models.DB), repository.NewOIDCLoginAttemptRepository(models.DB))
+		background := newBulkRecoveryBackground(repository.NewBulkOperationRepository(models.DB), repository.NewOIDCLoginAttemptRepository(models.DB),
+			repository.NewAuthAuditRepository(models.DB), 90)
 		assert.Equal(t, service.BulkOperationSweepInterval, background.runtime.Interval())
 		assert.Equal(t, 15*time.Minute, service.BulkOperationSweepInterval)
 		assert.Equal(t, time.Hour, service.BulkOperationStaleAfter)

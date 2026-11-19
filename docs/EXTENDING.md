@@ -420,7 +420,7 @@ If a new named engine is still required:
 2. Register it in `LoadProvidersWithGuard` and `ProviderStatusesFor` in the same file.
 3. Add an egress key in `internal/config/aeo_egress.go` (constants and `aeoEgressKeys`, lines
    17-28) and the engine's official HTTPS origin in `officialOrigins` (`internal/aeo/egress.go:50`).
-4. Environment variables in `AEOConfig` (`internal/config/config.go:142`, defaults at line 317).
+4. Environment variables in `AEOConfig` (`internal/config/config.go:144`, defaults at line 317).
 5. Admin settings: the sensitive key in `DefaultConfigurations()` (next to the five existing keys),
    the model/base-URL overrides via `aeoConfigProviders` (`internal/models/aeo_configuration.go:11`),
    and the overlay in `EffectiveAEOConfig` (`internal/service/aeo_credentials.go:41`).
@@ -435,7 +435,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 
 - **Integration.** Create a dedicated user for each integration, issue an API key for it
   (`POST /api/v1/api-keys`) and send it as `Authorization: ApiKey <key>`
-  (`internal/middleware/auth.go:25-28`):
+  (`internal/middleware/auth.go:43-46`):
 
   ```bash
   curl -s -H "Authorization: ApiKey $GOPHERCRM_KEY" \
@@ -525,7 +525,7 @@ it is the cleanest removal.
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
 | Wiring | `cmd/main.go` (import line 12; construction lines 352-377; handler line 416; reconcile and scheduler lines 444-476; route line 534); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)` and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge, the stale bulk operation sweep and the webhook sender. The outbound webhook sender (#345) uses the AEO egress guard (`internal/aeo/egress.go`, `egress_public.go`: `(*aeo.EgressGuard).PublicHTTPClient`, `aeo.CheckPublicURL`); keep those two files, or move them to a package of their own, when removing the module. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
-| Configuration | `AEOConfig` and its block (`internal/config/config.go:142,325`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
+| Configuration | `AEOConfig` and its block (`internal/config/config.go:144,327`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
 | Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
 | Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:466-491`, the `aeo.view` guard), the AEO nav group (`MainLayout.tsx`, from line 169), the AEO case in `ConfigurationSettings.test.tsx` |
@@ -536,8 +536,8 @@ it is the cleanest removal.
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:358`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:558-562`, and `probeAutomationTables`, `erasure.go:581`, for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:292-293,370-393,466-468,588,603-604`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:360`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:558-562`, and `probeAutomationTables`, `erasure.go:581`, for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:292-293,370-393,471-473,593,608-609`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
 | Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:246-247`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,107`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:199`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of

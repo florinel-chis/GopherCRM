@@ -815,6 +815,17 @@ type OIDCLoginAttemptRepository interface {
 	WithTx(tx *gorm.DB) OIDCLoginAttemptRepository
 }
 
+// AuthAuditRepository is the persistence of auth_audit_log (#454): one
+// pseudonymous row per sign-in outcome, written on the root handle and never
+// inside a transaction.
+type AuthAuditRepository interface {
+	Create(entry *models.AuthAuditLog) error
+	// PruneCreatedBefore deletes at most limit rows created before before,
+	// oldest id first (a plain read of the ids, then a delete by primary key),
+	// and returns how many it deleted.
+	PruneCreatedBefore(before time.Time, limit int) (int64, error)
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)

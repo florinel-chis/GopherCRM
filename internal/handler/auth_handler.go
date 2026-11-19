@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -14,6 +15,8 @@ import (
 type AuthHandler struct {
 	authService service.AuthService
 	userService service.UserService
+	// audit, when set, records every login and refresh outcome (#454).
+	audit service.AuthAuditService
 }
 
 func NewAuthHandler(authService service.AuthService, userService service.UserService) *AuthHandler {
@@ -21,6 +24,20 @@ func NewAuthHandler(authService service.AuthService, userService service.UserSer
 		authService: authService,
 		userService: userService,
 	}
+}
+
+// WithAudit makes Login and Refresh write one sign-in audit row per call that
+// reaches the service (#454). The answers do not change.
+func (h *AuthHandler) WithAudit(audit service.AuthAuditService) *AuthHandler {
+	h.audit = audit
+	return h
+}
+
+// auditContext is the context an audit row reads its request facts from: the
+// request id, the client IP and the user agent.
+func auditContext(c *gin.Context) context.Context {
+	return utils.WithClientInfo(utils.WithRequestID(c.Request.Context(), c.GetString("request_id")),
+		c.ClientIP(), c.Request.UserAgent())
 }
 
 // RegisterRequest deliberately has no Role field. Self-service registration always
@@ -243,6 +260,9 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	tokens, err := h.authService.LoginWithTokens(req.Email, req.Password)
+	if h.audit != nil {
+		h.audit.RecordPassword(auditContext(c), tokens, err)
+	}
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Login failed")
 		utils.RespondUnauthorized(c, "Invalid email or password")
@@ -285,6 +305,9 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	tokens, err := h.authService.RefreshAccessToken(req.RefreshToken)
+	if h.audit != nil {
+		h.audit.RecordRefresh(auditContext(c), tokens, err)
+	}
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidRefreshToken) {
 			// Deliberately generic: every rejection of the token reads the

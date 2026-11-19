@@ -123,10 +123,13 @@ const (
 )
 
 // oidcRefusalError is a refusal with the error_code it is logged under. It is
-// ErrSSOSignInFailed to errors.Is, and also the cause it wraps, if any.
+// ErrSSOSignInFailed to errors.Is, and also the cause it wraps, if any. userID
+// names the account an identity row linked to, when the refusal concerns one
+// (the audit row's user_id, #454).
 type oidcRefusalError struct {
-	code  string
-	cause error
+	code   string
+	cause  error
+	userID uint
 }
 
 func (e *oidcRefusalError) Error() string { return "single sign-on failed: " + e.code }
@@ -139,6 +142,16 @@ func oidcRefuse(code string) error { return &oidcRefusalError{code: code} }
 
 func oidcRefuseWith(code string, cause error) error {
 	return &oidcRefusalError{code: code, cause: cause}
+}
+
+// oidcRefusalForUser sets the user a refusal concerns; err is returned as it
+// is when it is not a refusal.
+func oidcRefusalForUser(err error, userID uint) error {
+	var refusal *oidcRefusalError
+	if errors.As(err, &refusal) {
+		refusal.userID = userID
+	}
+	return err
 }
 
 // oidcErrorCode is the error_code a refusal is logged under.
@@ -156,6 +169,11 @@ type OIDCServiceOption func(*oidcService)
 // WithOIDCClock replaces the clock of the attempt expiry; tests only.
 func WithOIDCClock(now func() time.Time) OIDCServiceOption {
 	return func(s *oidcService) { s.now = now }
+}
+
+// WithOIDCAudit makes Callback write one auth_audit_log row per call (#454).
+func WithOIDCAudit(audit AuthAuditService) OIDCServiceOption {
+	return func(s *oidcService) { s.audit = audit }
 }
 
 // WithOIDCRootCAs makes the issuer client trust these roots instead of the
@@ -185,6 +203,8 @@ type oidcService struct {
 	graphTimeout    time.Duration
 	// userinfoTimeout is the deadline of the userinfo request (#451).
 	userinfoTimeout time.Duration
+	// audit, when set, records every callback (#454).
+	audit AuthAuditService
 }
 
 // NewOIDCService builds the sign-in from the single sign-on settings, the
@@ -324,7 +344,7 @@ func (s *oidcService) discover(ctx context.Context, issuer string, attemptID uin
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
-		return nil, nil, ErrSSOUnavailable
+		return nil, nil, ssoUnavailable("discovery_failed")
 	}
 	return ctx, provider, nil
 }
@@ -388,7 +408,7 @@ func (s *oidcService) Start(ctx context.Context) (string, error) {
 	}
 	if !ssoConfigured(cfg) {
 		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return "", ErrSSOUnavailable
+		return "", ssoUnavailable("not_configured")
 	}
 	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, 0)
 	if err != nil {
@@ -433,23 +453,79 @@ type oidcClaims struct {
 }
 
 func (s *oidcService) Callback(ctx context.Context, code, state string) (*AuthTokens, error) {
-	tokens, attemptID, err := s.callback(ctx, code, state)
+	tokens, facts, err := s.callback(ctx, code, state)
+	return s.finishCallback(ctx, tokens, facts, err)
+}
+
+// finishCallback writes the audit row of a callback and then logs its
+// outcome with the row id (audit_id, 0 when the write failed or there is no
+// audit service).
+func (s *oidcService) finishCallback(ctx context.Context, tokens *AuthTokens, facts oidcCallbackFacts, err error) (*AuthTokens, error) {
+	auditID := s.recordCallback(ctx, tokens, facts, err)
 	if err != nil {
 		if errorCode := oidcErrorCode(err); errorCode != "" {
-			oidcLogger(ctx, attemptID).WithField("error_code", errorCode).Warn("Single sign-on refused")
+			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
+				Warn("Single sign-on refused")
+		} else if errorCode := oidcUnavailableCode(err); errorCode != "" {
+			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
+				Warn("Single sign-on unavailable")
 		}
 		return nil, err
 	}
-	oidcLogger(ctx, attemptID).WithField("user_id", tokens.User.ID).Info("Signed in through single sign-on")
+	oidcLogger(ctx, facts.attemptID).WithField("user_id", tokens.User.ID).WithField("audit_id", auditID).
+		Info("Signed in through single sign-on")
 	return tokens, nil
 }
 
-// callback finishes the sign-in and also returns the id of the attempt it
-// claimed, 0 when the claim did not succeed, for the log line of Callback.
-func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTokens, uint, error) {
+// oidcUnavailableCode is the reason code of a 503, "" for any other error.
+func oidcUnavailableCode(err error) string {
+	var unavailable *ssoUnavailableError
+	if errors.As(err, &unavailable) {
+		return unavailable.code
+	}
+	return ""
+}
+
+// oidcCallbackFacts is what a callback learned before it ended, for the
+// audit row (#454): the claimed attempt, the verified identity, and the
+// claim values the mapping used.
+type oidcCallbackFacts struct {
+	// attemptID is the claimed attempt, 0 when the claim did not succeed.
+	attemptID uint
+	// verified is set once the ID token verified and its nonce matched;
+	// issuer and subject are its iss and sub.
+	verified        bool
+	issuer, subject string
+	// groups and roles are nil until they were read and well formed; groups
+	// is the resolved list once a Graph or userinfo resolution ran.
+	groups, roles []string
+}
+
+// recordCallback writes the audit row of one callback and returns its id, 0
+// without an audit service or when the write failed. subject_ref is set only
+// on a refusal decided after the ID token verified.
+func (s *oidcService) recordCallback(ctx context.Context, tokens *AuthTokens, facts oidcCallbackFacts, err error) uint {
+	if s.audit == nil {
+		return 0
+	}
+	entry := outcomeEntry(AuthAuditMethodOIDC, tokens, err, AuthAuditReasonInternalError)
+	entry.AttemptID = facts.attemptID
+	entry.ClaimGroups = facts.groups
+	entry.ClaimRoles = facts.roles
+	if err != nil && facts.verified && s.auth != nil {
+		entry.SubjectRef = AuthAuditSubjectRef(s.auth.sessionTokenSecret(), facts.issuer, facts.subject)
+	}
+	return s.audit.Record(ctx, entry)
+}
+
+// callback finishes the sign-in and also returns what it learned: the id of
+// the attempt it claimed (0 when the claim did not succeed), for the log line
+// of Callback, and the verified identity and claim values, for the audit row.
+func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTokens, oidcCallbackFacts, error) {
+	var facts oidcCallbackFacts
 	cfg, err := s.usableConfig(ctx)
 	if err != nil {
-		return nil, 0, err
+		return nil, facts, err
 	}
 
 	// The claim is its own committed statement: a plain read by the state's
@@ -460,42 +536,44 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	attempt, err := s.attempts.Claim(hashOpaqueToken(state, s.auth.sessionTokenSecret()), s.now().UTC())
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, 0, oidcRefuse("state_invalid")
+			return nil, facts, oidcRefuse("state_invalid")
 		}
-		return nil, 0, fmt.Errorf("claim the single sign-on attempt: %w", err)
+		return nil, facts, fmt.Errorf("claim the single sign-on attempt: %w", err)
 	}
+	facts.attemptID = attempt.ID
 	if attempt.Issuer != cfg.IssuerURL {
-		return nil, attempt.ID, oidcRefuse("issuer_changed")
+		return nil, facts, oidcRefuse("issuer_changed")
 	}
 	if !ssoConfigured(cfg) {
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, attempt.ID, ErrSSOUnavailable
+		return nil, facts, ssoUnavailable("not_configured")
 	}
 	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, attempt.ID)
 	if err != nil {
-		return nil, attempt.ID, err
+		return nil, facts, err
 	}
 
 	token, err := s.oauthConfig(provider, cfg).Exchange(ctx, code, oauth2.VerifierOption(attempt.CodeVerifier))
 	if err != nil {
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
-		return nil, attempt.ID, ErrSSOUnavailable
+		return nil, facts, ssoUnavailable("token_exchange_failed")
 	}
 	rawIDToken, _ := token.Extra("id_token").(string)
 	if rawIDToken == "" {
-		return nil, attempt.ID, oidcRefuse("id_token_missing")
+		return nil, facts, oidcRefuse("id_token_missing")
 	}
 	idToken, err := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}).Verify(ctx, rawIDToken)
 	if err != nil {
-		return nil, attempt.ID, oidcRefuse("id_token_invalid")
+		return nil, facts, oidcRefuse("id_token_invalid")
 	}
 	if idToken.Nonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(attempt.Nonce)) != 1 {
-		return nil, attempt.ID, oidcRefuse("nonce_mismatch")
+		return nil, facts, oidcRefuse("nonce_mismatch")
 	}
+	facts.verified, facts.issuer, facts.subject = true, idToken.Issuer, idToken.Subject
 
 	var claims oidcClaims
 	if err := idToken.Claims(&claims); err != nil {
-		return nil, attempt.ID, oidcRefuse("claims_invalid")
+		return nil, facts, oidcRefuse("claims_invalid")
 	}
 	// Distributed claims: an issuer that moved groups out of the token (a
 	// group overage). Without a groups mapping the overage does not matter;
@@ -507,55 +585,61 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	if len(claims.ClaimNames) > 0 {
 		var names map[string]json.RawMessage
 		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
-			return nil, attempt.ID, oidcRefuse("claims_invalid")
+			return nil, facts, oidcRefuse("claims_invalid")
 		}
 		if _, overage := names[SSOClaimGroups]; overage && mappingUsesGroups(cfg.RoleMapping) {
 			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-				return nil, attempt.ID, oidcRefuse("group_overage")
+				return nil, facts, oidcRefuse("group_overage")
 			}
 			resolveGroups = true
 		}
 	}
 	groups, ok := oidcStringArray(claims.Groups)
 	if !ok {
-		return nil, attempt.ID, oidcRefuse("groups_malformed")
+		return nil, facts, oidcRefuse("groups_malformed")
 	}
 	roles, ok := oidcStringArray(claims.Roles)
 	if !ok {
-		return nil, attempt.ID, oidcRefuse("roles_malformed")
+		return nil, facts, oidcRefuse("roles_malformed")
+	}
+	facts.roles = oidcClaimValues(roles)
+	if !resolveGroups && !(mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0) {
+		facts.groups = oidcClaimValues(groups)
 	}
 	subject := idToken.Subject
 	if !validOIDCSubject(subject) {
-		return nil, attempt.ID, oidcRefuse("subject_invalid")
+		return nil, facts, oidcRefuse("subject_invalid")
 	}
 	if len(idToken.Issuer) > oidcIssuerMaxBytes {
-		return nil, attempt.ID, oidcRefuse("issuer_invalid")
+		return nil, facts, oidcRefuse("issuer_invalid")
 	}
 	if resolveGroups {
 		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
 		if err != nil {
-			return nil, attempt.ID, oidcRefuse("groups_unavailable")
+			return nil, facts, oidcRefuse("groups_unavailable")
 		}
 		groups = resolved
+		facts.groups = oidcClaimValues(groups)
 	} else if mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
 		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
 		if err != nil {
 			if errors.Is(err, errUserInfoSubject) {
-				return nil, attempt.ID, oidcRefuse("userinfo_subject_mismatch")
+				return nil, facts, oidcRefuse("userinfo_subject_mismatch")
 			}
-			return nil, attempt.ID, oidcRefuse("groups_unavailable")
+			return nil, facts, oidcRefuse("groups_unavailable")
 		}
 		groups = resolved
+		facts.groups = oidcClaimValues(groups)
 	}
 
 	roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, roles)
 	if !matched {
-		return nil, attempt.ID, oidcRefuse("no_mapping_match")
+		return nil, facts, oidcRefuse("no_mapping_match")
 	}
 
 	passwordHash, err := oidcUnusablePasswordHash()
 	if err != nil {
-		return nil, attempt.ID, err
+		return nil, facts, err
 	}
 	firstName, lastName := oidcProfileNames(oidcString(claims.GivenName), oidcString(claims.FamilyName), oidcString(claims.Name))
 	tokens, err := s.users.ApplyOIDCSignIn(ctx, oidcSignIn{
@@ -570,7 +654,7 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 		issue:        s.issue,
 		beforeInsert: s.beforeJITInsert,
 	})
-	return tokens, attempt.ID, err
+	return tokens, facts, err
 }
 
 // Failures of the Microsoft Graph group resolution. They never carry a URL,
@@ -823,6 +907,15 @@ func oidcStringArray(raw json.RawMessage) ([]string, bool) {
 		return nil, false
 	}
 	return values, true
+}
+
+// oidcClaimValues is a read claim array for the audit row: never nil, so an
+// absent claim is stored as [] and not as NULL.
+func oidcClaimValues(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // oidcString is a string claim, or "" when it is absent or not a string.

@@ -27,6 +27,8 @@ type Config struct {
 	// SSO holds the boot-time OpenID Connect fallbacks (OIDC_*). Stored
 	// settings under security.sso.* win over them; see sso.go.
 	SSO SSOConfig
+	// AuthAudit holds the sign-in audit log retention (#454).
+	AuthAudit AuthAuditConfig
 }
 
 // AutomationConfig configures the follow-up automation worker: whether it is
@@ -361,7 +363,8 @@ func Load() (*Config, error) {
 			Enabled:             getEnvAsBool("AUTOMATION_ENABLED", true),
 			PollIntervalSeconds: clampAutomationPollInterval(getEnvAsInt("AUTOMATION_POLL_INTERVAL_SECONDS", AutomationPollIntervalDefault)),
 		},
-		SSO: loadSSOConfig(),
+		SSO:       loadSSOConfig(),
+		AuthAudit: AuthAuditConfig{RetentionDays: parseAuthAuditRetentionDays(os.Getenv("AUTH_AUDIT_RETENTION_DAYS"))},
 	}
 
 	switch config.Database.Driver {

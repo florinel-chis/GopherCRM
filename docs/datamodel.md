@@ -988,6 +988,31 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 | expires_at | datetime(3) | No | - | Ten minutes after the start |
 | used_at | datetime(3) | Yes | NULL | Set by the claim: a plain read by `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`) that spends the row |
 
+### auth_audit_log
+
+One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback, a
+refresh, or a refused API key. Written after the sign-in's transaction, on the root handle. No
+foreign key, no soft delete; erasure does not touch it. Rows older than
+`AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
+every 15 minutes). Migration `20261124120000_add_auth_audit_log`. Never holds an email, a name, a
+subject, a token, a code, a state, a nonce, a password, a full IP address or a full user agent.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | No | - | Written in UTC; index `idx_auth_audit_log_created_at` (the prune) |
+| method | varchar(16) | No | - | `password`, `oidc`, `refresh` or `api_key` |
+| outcome | varchar(16) | No | - | `success` or `refused` |
+| reason | varchar(64) | No | - | Stable reason code of a refusal (see [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log)); `''` on success |
+| user_id | bigint unsigned | Yes | NULL | The account, when the account row was found; index `idx_auth_audit_log_user_id`; no foreign key |
+| attempt_id | bigint unsigned | Yes | NULL | The `oidc_login_attempts` row a callback claimed |
+| request_id | varchar(64) | No | - | `X-Request-ID` when it matches `^[A-Za-z0-9._:-]{1,64}$`, else `''` |
+| subject_ref | varchar(64) | Yes | NULL | hex(HMAC-SHA256) keyed by `API_KEY_SECRET`, else `JWT_SECRET`, of the issuer and subject of a single sign-on identity refused after the ID token verified; index `idx_auth_audit_log_subject_ref` |
+| claim_roles | text | Yes | NULL | JSON array of the `roles` values the role mapping used (at most 100 of 256 bytes) |
+| claim_groups | text | Yes | NULL | JSON array of the `groups` values, after a Microsoft Graph or userinfo resolution |
+| client_network | varchar(64) | No | - | `a.b.c.0/24` (IPv4) or the IPv6 `/48` prefix; `''` when unknown |
+| user_agent_family | varchar(64) | No | - | `<browser> on <OS>` from a fixed vocabulary; `''` without a user agent |
+
 ## APIKey Model
 
 Represents API keys for programmatic access.

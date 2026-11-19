@@ -35,6 +35,8 @@ type fakeOIDCService struct {
 	// utils.RequestIDFromContext returned on the service's context.
 	startRequestID    string
 	callbackRequestID string
+	// callbackClient is what utils.ClientInfoFromContext returned (#454).
+	callbackClient utils.ClientInfo
 }
 
 func (f *fakeOIDCService) Start(ctx context.Context) (string, error) {
@@ -47,6 +49,7 @@ func (f *fakeOIDCService) Callback(ctx context.Context, code, state string) (*se
 	f.calls++
 	f.code, f.state = code, state
 	f.callbackRequestID = utils.RequestIDFromContext(ctx)
+	f.callbackClient = utils.ClientInfoFromContext(ctx)
 	return f.tokens, f.err
 }
 

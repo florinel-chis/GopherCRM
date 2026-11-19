@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -32,8 +31,8 @@ const (
 
 // TestUserIdentitiesMigrationFiles needs no database: the pair exists with
 // its headers, creates both tables only when missing with the model's columns,
-// collations and index names, drops only them, and is the newest migration of
-// the directory, which latestMigrationVersion names.
+// collations and index names, drops only them, and is older than the newest
+// migration, which latestMigrationVersion names.
 func TestUserIdentitiesMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, userIdentitiesMigrationName+".up.sql"))
@@ -90,21 +89,9 @@ func TestUserIdentitiesMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, tag, "uniqueIndex:idx_oidc_login_attempts_state_hash")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestQuoteHistorySourceMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, userIdentitiesMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, userIdentitiesVersion, version)
-	assert.Equal(t, userIdentitiesVersion, latestMigrationVersion)
+	// Older than the newest migration (the newest-migration assertions moved
+	// to TestAuthAuditLogMigrationFiles).
+	assert.Less(t, userIdentitiesVersion, latestMigrationVersion)
 	assert.Greater(t, userIdentitiesVersion, userIdentitiesPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")

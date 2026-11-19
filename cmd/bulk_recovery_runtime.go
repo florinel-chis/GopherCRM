@@ -13,7 +13,8 @@ import (
 // service.BulkOperationSweepInterval, it fails the pending bulk_operations rows
 // older than service.BulkOperationStaleAfter, and deletes the
 // oidc_login_attempts rows created more than service.OIDCLoginAttemptRetention
-// (one day) before (#453). Stop is what main calls at
+// (one day) before (#453) and the auth_audit_log rows older than
+// AUTH_AUDIT_RETENTION_DAYS (#454). Stop is what main calls at
 // shutdown, through the combined handle setupDependencies returns
 // (combineStops: automation, form retention, this, then AEO), under the one
 // drain deadline main passes, aeoDrainTimeout (15 s).
@@ -21,11 +22,13 @@ type bulkRecoveryBackground struct {
 	runtime *service.BulkOperationRecoveryRuntime
 }
 
-// newBulkRecoveryBackground builds the sweep over the bulk history repository
-// and the single sign-on attempt repository it also prunes.
-func newBulkRecoveryBackground(repo repository.BulkOperationRepository, oidcAttempts repository.OIDCLoginAttemptRepository) *bulkRecoveryBackground {
+// newBulkRecoveryBackground builds the sweep over the bulk history repository,
+// the single sign-on attempt repository it also prunes, and the sign-in audit
+// repository it prunes to authAuditRetentionDays.
+func newBulkRecoveryBackground(repo repository.BulkOperationRepository, oidcAttempts repository.OIDCLoginAttemptRepository,
+	authAudit repository.AuthAuditRepository, authAuditRetentionDays int) *bulkRecoveryBackground {
 	return &bulkRecoveryBackground{runtime: service.NewBulkOperationRecoveryRuntime(repo, utils.Logger,
-		service.WithOIDCAttemptPruning(oidcAttempts))}
+		service.WithOIDCAttemptPruning(oidcAttempts), service.WithAuthAuditPruning(authAudit, authAuditRetentionDays))}
 }
 
 // start arms the sweep on a context derived from ctx. The first sweep runs

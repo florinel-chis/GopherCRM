@@ -155,7 +155,7 @@ support and customer from the customer edit form.
   loaded and no `GET /api/v1/users` request is issued. Issuing that request directly from an
   `APIRequestContext` with the sales token returns **403** with
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
-  (`internal/middleware/auth.go:68`).
+  (`internal/middleware/auth.go:91`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
 
 ### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
