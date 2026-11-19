@@ -430,9 +430,10 @@ case or padding of the key. Since #435 the backend signs in with those settings 
 [OIDC sign-in](#oidc-sign-in-435) below): the authorization code flow with PKCE, identity
 linking by `(iss, sub)` in `user_identities`, JIT provisioning and the role mapping re-applied
 on every sign-in. Since #436 the SPA offers the sign-in (see
-[SPA sign-in and settings](#spa-sign-in-and-settings-436) below). SCIM is not implemented, and
-Okta's userinfo groups for thin tokens are not read; those are later work. The rest of the note records
-the conditions phase 2 has to meet, which the sign-in below follows.
+[SPA sign-in and settings](#spa-sign-in-and-settings-436) below). Since #451 an ID token without
+a `groups` claim has its groups read from the issuer's userinfo endpoint when the mapping uses
+groups (see Mapping below). SCIM is not implemented; that is later work. The rest of the note
+records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)
 
@@ -465,8 +466,35 @@ entry the overage is ignored and `roles` decides; when the mapping has a `groups
 issuer is Entra ID (host `login.microsoftonline.com`), the group object ids are read from
 Microsoft Graph (see the Entra ID example) and go through the same first-match mapping, any Graph
 failure refusing with `groups_unavailable`; for any other issuer it is refused
-(`group_overage`), never read as "no groups". `_claim_sources` is never read. The mapping is
-re-applied on every sign-in through the governed role write (the mapping is the administrator's
+(`group_overage`), never read as "no groups". `_claim_sources` is never read.
+
+When the mapping has a `groups` entry, the ID token has no `groups` key at all (an empty `[]` is
+a present claim) and no Entra ID overage is being resolved through Graph, the groups are read
+from the issuer's userinfo endpoint (#451), after every other token check has passed. The
+callback sends one `GET` to the `userinfo_endpoint` from discovery with the access token of the
+same code exchange, within 5 seconds, through the issuer client (no redirect followed, no proxy),
+and reads at most 1 MiB. The endpoint must be an absolute `https` URL without credentials, and
+the answer must be a 200 `application/json` object: signed userinfo (`application/jwt`) is not
+supported. The userinfo `sub` must be a string equal to the ID token's `sub`, byte for byte;
+otherwise the sign-in is refused as `userinfo_subject_mismatch`. Only the `groups` member is
+read (email, names, `roles` and everything else come from the ID token or not at all); it must
+be an array of strings, and when it is absent the person has no groups, so a `roles` entry may
+still match or the result is `no_mapping_match`. Any other failure (no endpoint in discovery, an
+`http` endpoint, a non-200 answer or a redirect, the timeout, an oversized, non-JSON or malformed
+body, a `groups` that is not an array of strings) refuses with `groups_unavailable`. The access
+token is never logged or stored and the answer is not cached. A mapping without a `groups` entry
+never calls userinfo, and an Entra overage still goes to Graph only, so a callback waits on at
+most one of the two.
+
+This also applies to Entra ID: Entra leaves the `groups` claim out for a person in no groups, or
+when the groups claim is not configured on the app registration. With a `groups` entry in the
+mapping such a person's sign-in now calls Entra's userinfo endpoint
+(`https://graph.microsoft.com/oidc/userinfo`), and a failure there (for example an access token
+issued for another API audience) refuses the sign-in as `groups_unavailable`, even when a
+`roles` entry would have matched. An administrator who maps both groups and app roles should
+know that a group-less person now depends on userinfo.
+
+The mapping is re-applied on every sign-in through the governed role write (the mapping is the administrator's
 grant, so the actor-key and escalation checks do not apply): the last active admin cannot be
 demoted (401, nothing written, no session), a custom role is not given to a customer login, and
 a changed role commits one `role_audit_log` row with `auth_method` `oidc` and the signed-in user
@@ -514,10 +542,27 @@ person's next sign-in is 401 rather than a fresh account. Deactivation also answ
 (those with no identity row), whatever `allow_password` says. An account linked to single sign-on
 starts with no usable password; it can set and use one only while `allow_password` is on.
 
-**Example: Okta.** An OIDC web application with the authorization code grant and PKCE; sign-in
-redirect URI `https://crm.example.com/auth/callback` (APP_BASE_URL `https://crm.example.com`). On
-the custom authorization server add a `groups` claim to the ID token, filtered to the CRM groups
-(for example "Starts with `crm-`"). Configure, through `/settings/sso` or the environment:
+**Example: Okta.** Live Okta verification is manual; these are the steps.
+
+1. In the Okta Admin Console, under Applications, create an app integration: sign-in method
+   **OIDC - OpenID Connect**, application type **Web Application**, grant type **Authorization
+   Code** (GopherCRM always sends PKCE S256 and the client secret).
+2. Set the **Sign-in redirect URI** to `https://crm.example.com/auth/callback` (APP_BASE_URL
+   `https://crm.example.com` followed by `/auth/callback`, exactly). Note the client id and client
+   secret.
+3. Under **Assignments**, assign the people or the groups who may sign in. Okta refuses the others
+   before they reach the CRM.
+4. Have the groups put into a `groups` claim:
+   - **Org authorization server** (issuer `https://<org>.okta.com`): on the app's **Sign On** tab,
+     edit the **Groups claim filter**: claim name `groups`, filter for example "Starts with"
+     `crm-`. Okta puts the matching group names into the ID token; where it returns a thin token
+     instead, GopherCRM reads them from the userinfo endpoint (below).
+   - **Custom authorization server** (issuer `https://<org>.okta.com/oauth2/default` or another
+     server): under Security > API > Authorization Servers > Claims add a claim named `groups`,
+     value type Groups, the same filter, included in the ID token (or in userinfo only).
+5. Request the `groups` scope: put it into `OIDC_SCOPES` (GopherCRM does not add it).
+6. On the GopherCRM side configure, through `/settings/sso` (Settings > Single sign-on) or the
+   environment, a role mapping by group name:
 
 ```
 OIDC_ENABLED=true
@@ -528,8 +573,13 @@ OIDC_SCOPES=openid profile email groups
 OIDC_ROLE_MAPPING=[{"claim":"groups","value":"crm-admins","role_id":1},{"claim":"groups","value":"crm-sales","role_id":2}]
 ```
 
-Okta group names are the values the filtered claim carries; keep them stable. A flow that returns
-a thin ID token without groups is not supported yet (the userinfo endpoint is not read).
+Okta group names are the values the filtered claim carries; keep them stable. For the org server
+use `OIDC_ISSUER_URL=https://<org>.okta.com`. When Okta returns a thin ID token without a `groups`
+claim, the callback reads `groups` from Okta's userinfo endpoint with the access token of the
+sign-in (#451, see Mapping above): the userinfo `sub` must equal the ID token's
+(`userinfo_subject_mismatch` otherwise), only `groups` is used, and any failure refuses as
+`groups_unavailable`. Okta answers userinfo as plain JSON; signed `application/jwt` userinfo is
+not supported.
 
 **Example: Entra ID.** An app registration with a Web redirect URI
 `https://crm.example.com/auth/callback`, a client secret, and app roles (for example `CRM.Admin`,
@@ -570,6 +620,10 @@ person's groups from Microsoft Graph:
   stored or logged, and Graph results are not cached.
 - Sovereign clouds (`login.microsoftonline.us`, `login.chinacloudapi.cn`) are not supported: their
   overage is refused as `group_overage` because their Graph host differs.
+
+Without an overage, a `groups` mapping and an ID token without a `groups` claim (a person in no
+groups, or no groups claim configured) make the callback read Entra's userinfo endpoint instead
+(see Mapping above); a failure there refuses the sign-in even when a `roles` entry would match.
 
 App roles remain the recommended setup: they have no overage limit, need no extra permission and
 no Graph call. Role ids are those of `GET /roles`.

@@ -845,6 +845,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on: groups are read from the userinfo endpoint when the ID token has none
+  (#451).** When the role mapping has a `groups` entry, the ID token has no `groups` claim (an
+  empty `[]` counts as present) and no Entra ID overage is being resolved through Graph, the
+  callback now sends one `GET` to the issuer's discovered `userinfo_endpoint` with the access
+  token of the same code exchange (Okta and other issuers that return thin tokens). The request
+  has a 5-second deadline, follows no redirect, uses no proxy, needs an absolute `https` endpoint
+  and reads at most 1 MiB of `application/json`; signed `application/jwt` userinfo is not
+  supported. The userinfo `sub` must equal the ID token's `sub` or the sign-in is refused as
+  `userinfo_subject_mismatch`; every other failure refuses as `groups_unavailable`. Only `groups`
+  is read (absent means no groups, so a `roles` entry may still match); email, names and roles
+  still come from the ID token. The access token and the userinfo answer are never stored,
+  logged or cached. This also applies to an Entra ID issuer: with a `groups` mapping, a
+  group-less person (no `groups` claim and no overage) now depends on Entra's userinfo endpoint,
+  and a failure there refuses the sign-in even when a `roles` entry would match.
+  docs/AUTHORIZATION.md gains a step-by-step Okta setup. No setting, migration or scope changes;
+  Okta's `groups` scope comes from `OIDC_SCOPES`.
 - **Single sign-on: an Entra ID group overage is resolved through Microsoft Graph instead of
   refused (#450).** When an Entra ID ID token (issuer host `login.microsoftonline.com`) moves its
   groups into `_claim_names` and the role mapping has a `groups` entry, the callback now reads the

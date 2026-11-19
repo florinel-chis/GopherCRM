@@ -1180,3 +1180,30 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   host receives none. Step 5: signed in with no Graph request. The access token never appears in
   the logs or in any table.
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `graph_overage_match`, `graph_overage_no_match`, `graph_error`, `graph_timeout`, `graph_paging_bound`, `graph_foreign_host`, `graph_redirect`, `graph_no_overage`, `graph_roles_mapping`, `graph_scope_requested`, `graph_token_privacy`; `TestOIDCGraphDefaults`, `TestOIDCResolveEntraGroups`
+
+### TC-AUTH-059 — Groups are read from userinfo when the ID token has none
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Single sign-on on (an Okta org server, for example) with a role mapping that
+  has a `groups` entry for `crm-sales` and a `roles` entry for `CRM.Support`; the issuer advertises
+  a `userinfo_endpoint` in discovery.
+- **Steps:**
+  1. Sign in as a person whose ID token has no `groups` claim while userinfo answers the same
+     `sub` with `groups` holding `crm-sales`.
+  2. Repeat with userinfo answering no `groups` member and an ID token carrying `roles`
+     `CRM.Support`.
+  3. Sign in with a `groups` claim in the ID token (also an empty `[]`), and with a mapping of only
+     `roles` entries; repeat with an overage on a non-Entra issuer and an Entra overage resolved
+     through Graph.
+  4. Sign in while userinfo answers another `sub`, or no `sub`.
+  5. Sign in while discovery has no userinfo endpoint or an `http://` one, or userinfo answers 500,
+     answers slower than 5 s, redirects, sends more than 1 MiB, answers `application/jwt`, answers
+     a JSON array, or sends `groups` as a string, `null` or an array of numbers.
+- **Expected:** Step 1: signed in as sales after exactly one `GET` to the userinfo endpoint with
+  `Authorization: Bearer <access token of that exchange>`. Step 2: signed in as support. Step 3:
+  no userinfo request (the overage cases keep `group_overage` and Graph respectively). Step 4:
+  **401** "Single sign-on failed" logged as `userinfo_subject_mismatch`, nothing written. Step 5:
+  **401** each time, logged as `groups_unavailable`, nothing written; no request without an https
+  endpoint, and a redirect target receives none. The access token never appears in the logs or
+  in any table.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `userinfo_groups_mapped`, `userinfo_groups_absent`, `userinfo_not_called`, `userinfo_subject_mismatch`, `userinfo_unavailable`, `userinfo_token_privacy` (and `group_overage`, `graph_overage_match` for the zero-request checks)

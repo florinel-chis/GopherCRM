@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,7 +39,10 @@ import (
 // own, exchanges the code, verifies the ID token (signature, iss, aud, exp and
 // the nonce), maps its groups or roles claim to a role (the first matching
 // entry, in stored order; an Entra ID group overage is read from Microsoft
-// Graph, #450) and then runs one governed transaction
+// Graph, #450; when a groups mapping meets an ID token without a groups claim
+// and no overage, the groups are read from the issuer's userinfo endpoint,
+// whose sub must equal the token's, #451) and then runs one governed
+// transaction
 // (userService.ApplyOIDCSignIn):
 //
 //	admin set → users → roles → user_identities → refresh_tokens
@@ -105,6 +109,14 @@ const (
 	oidcGraphMemberObjectsIn = `{"securityEnabledOnly":true}`
 )
 
+// Userinfo group resolution of an ID token without a groups claim (#451).
+const (
+	// oidcUserInfoTimeout is the one deadline of the userinfo request.
+	oidcUserInfoTimeout = 5 * time.Second
+	// oidcUserInfoMaxBytes bounds the userinfo response body.
+	oidcUserInfoMaxBytes = 1 << 20
+)
+
 // oidcRefusalError is a refusal with the error_code it is logged under. It is
 // ErrSSOSignInFailed to errors.Is, and also the cause it wraps, if any.
 type oidcRefusalError struct {
@@ -166,6 +178,8 @@ type oidcService struct {
 	entraIssuerHost string
 	graphBaseURL    string
 	graphTimeout    time.Duration
+	// userinfoTimeout is the deadline of the userinfo request (#451).
+	userinfoTimeout time.Duration
 }
 
 // NewOIDCService builds the sign-in from the single sign-on settings, the
@@ -199,6 +213,7 @@ func NewOIDCService(
 		entraIssuerHost: oidcEntraIssuerHost,
 		graphBaseURL:    oidcGraphBaseURL,
 		graphTimeout:    oidcGraphTimeout,
+		userinfoTimeout: oidcUserInfoTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -445,7 +460,8 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	// group overage). Without a groups mapping the overage does not matter;
 	// on Entra ID the groups are read from Microsoft Graph below, after every
 	// other check; any other issuer fails closed. _claim_sources is never
-	// read.
+	// read. A groups mapping and a token without a groups claim (and no
+	// overage) read the groups from the userinfo endpoint instead.
 	resolveGroups := false
 	if len(claims.ClaimNames) > 0 {
 		var names map[string]json.RawMessage
@@ -477,6 +493,15 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	if resolveGroups {
 		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
 		if err != nil {
+			return nil, oidcRefuse("groups_unavailable")
+		}
+		groups = resolved
+	} else if mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
+		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
+		if err != nil {
+			if errors.Is(err, errUserInfoSubject) {
+				return nil, oidcRefuse("userinfo_subject_mismatch")
+			}
 			return nil, oidcRefuse("groups_unavailable")
 		}
 		groups = resolved
@@ -640,6 +665,89 @@ func graphStringArray(raw json.RawMessage) ([]string, bool) {
 		values = append(values, value)
 	}
 	return values, true
+}
+
+// Failures of the userinfo group resolution. Like the Graph errors they never
+// carry a URL, a token, a status text or a response body.
+var (
+	errUserInfoNoAccessToken = errors.New("userinfo: no access token")
+	errUserInfoEndpoint      = errors.New("userinfo: endpoint refused")
+	errUserInfoRequest       = errors.New("userinfo: request failed")
+	errUserInfoStatus        = errors.New("userinfo: unexpected status")
+	errUserInfoContentType   = errors.New("userinfo: not a JSON response")
+	errUserInfoTooLarge      = errors.New("userinfo: response too large")
+	errUserInfoBody          = errors.New("userinfo: malformed response")
+	errUserInfoSubject       = errors.New("userinfo: subject mismatch")
+)
+
+// resolveUserInfoGroups reads the groups member of the issuer's userinfo
+// response (#451) with the access token of the code exchange: one GET to the
+// discovered userinfo_endpoint (an absolute https URL without credentials),
+// through the issuer client (no redirects, no proxy), under one deadline
+// (userinfoTimeout), with a body of at most oidcUserInfoMaxBytes of
+// application/json (signed application/jwt userinfo is not supported). The
+// response's sub must equal the ID token's subject byte for byte; only groups
+// is read, an absent groups member is an empty list. provider.UserInfo is not
+// used: it reads the body without a bound and puts it into its errors. The
+// token is only put into the request header; it is never logged, stored or
+// put into an error.
+func (s *oidcService) resolveUserInfoGroups(ctx context.Context, provider *oidc.Provider, accessToken, subject string) ([]string, error) {
+	if accessToken == "" {
+		return nil, errUserInfoNoAccessToken
+	}
+	endpoint := provider.UserInfoEndpoint()
+	parsed, err := url.Parse(endpoint)
+	if endpoint == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return nil, errUserInfoEndpoint
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.userinfoTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, errUserInfoRequest
+	}
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	response, err := newOIDCHTTPClient(s.rootCAs).Do(request)
+	if err != nil {
+		return nil, errUserInfoRequest
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, errUserInfoStatus
+	}
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return nil, errUserInfoContentType
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, oidcUserInfoMaxBytes+1))
+	if err != nil {
+		return nil, errUserInfoRequest
+	}
+	if len(body) > oidcUserInfoMaxBytes {
+		return nil, errUserInfoTooLarge
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
+		return nil, errUserInfoBody
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, errUserInfoBody
+	}
+	rawSub, found := members["sub"]
+	var sub string
+	if !found || !strings.HasPrefix(strings.TrimSpace(string(rawSub)), `"`) || json.Unmarshal(rawSub, &sub) != nil || sub != subject {
+		return nil, errUserInfoSubject
+	}
+	rawGroups, found := members["groups"]
+	if !found {
+		return []string{}, nil
+	}
+	groups, ok := graphStringArray(rawGroups)
+	if !ok {
+		return nil, errUserInfoBody
+	}
+	return groups, nil
 }
 
 // issue issues the session on the transaction handle exactly as a wired login
