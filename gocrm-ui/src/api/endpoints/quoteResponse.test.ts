@@ -35,13 +35,17 @@ describe('quoteResponseApi', () => {
     vi.clearAllMocks();
   });
 
-  it('reads the quote with the token as a query parameter on the public client', async () => {
+  it('reads the quote with the token in the X-Quote-Token header on the public client', async () => {
     vi.mocked(publicApi.get).mockResolvedValue({ data: backendView });
 
     const view = await quoteResponseApi.getQuoteResponse('t');
 
     expect(publicApi.get).toHaveBeenCalledTimes(1);
-    expect(publicApi.get).toHaveBeenCalledWith('/quotes/public/response', { params: { token: 't' } });
+    expect(publicApi.get).toHaveBeenCalledWith('/quotes/public/response', {
+      headers: { 'X-Quote-Token': 't' },
+    });
+    // The token is never a query parameter.
+    expect(vi.mocked(publicApi.get).mock.calls[0][1]).not.toHaveProperty('params');
     expect(view).toEqual(backendView);
     expect(api.get).not.toHaveBeenCalled();
   });

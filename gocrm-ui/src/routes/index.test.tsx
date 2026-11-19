@@ -818,7 +818,9 @@ describe('quote response route', () => {
     expect(await view.findByRole('button', { name: 'Accept' }, { timeout: 15000 })).toBeInTheDocument();
     expect(view.getByRole('heading', { name: 'Quote Q-000042' })).toBeInTheDocument();
     expect(memoryRouter.state.location.pathname).toBe('/quote-response');
-    expect(memoryRouter.state.location.search).toBe('?token=t');
+    // The page drops the token from the address with a replace navigation.
+    expect(memoryRouter.state.location.search).toBe('');
+    expect(memoryRouter.state.historyAction).toBe('REPLACE');
     // Outside the shell: the mocked MainLayout and the sign-in page are absent.
     expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
     expect(view.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument();

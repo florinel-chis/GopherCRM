@@ -1,11 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { formatDate } from '@/utils/date';
 import { formatMoney } from './quoteFormat';
 import { QuoteResponse } from './QuoteResponse';
+
+// react-router's data router builds `new Request(url, { signal })` with the
+// global (undici) Request and a jsdom AbortController signal, which undici
+// rejects. No real fetch happens here, so drop the foreign signal (as in
+// src/routes/index.test.tsx).
+const NativeRequest = globalThis.Request;
+class TestRequest extends NativeRequest {
+  constructor(input: RequestInfo | URL, init?: RequestInit) {
+    if (init && 'signal' in init) {
+      const rest: RequestInit = { ...init };
+      delete rest.signal;
+      super(input, rest);
+    } else {
+      super(input, init);
+    }
+  }
+}
+vi.stubGlobal('Request', TestRequest);
 
 const mockGetQuoteResponse = vi.fn();
 const mockRespond = vi.fn();
@@ -49,12 +67,13 @@ const rejection = (status: number, code?: string) => ({
   response: { status, data: code ? { code, message: 'Invalid or expired quote link' } : {} },
 });
 
-const renderPage = (url = '/quote-response?token=t') =>
-  render(
-    <MemoryRouter initialEntries={[url]}>
-      <QuoteResponse />
-    </MemoryRouter>
-  );
+const renderPage = (url = '/quote-response?token=t') => {
+  const router = createMemoryRouter([{ path: '/quote-response', element: <QuoteResponse /> }], {
+    initialEntries: [url],
+  });
+  const view = render(<RouterProvider router={router} />);
+  return { ...view, router };
+};
 
 const expectNoQuote = () => {
   expect(screen.queryByText(/Q-000042/)).toBeNull();
@@ -108,6 +127,28 @@ describe('QuoteResponse page', () => {
     expect(screen.queryByRole('link')).toBeNull();
     // The token is never rendered.
     expect(document.body.textContent).not.toContain('token');
+  });
+
+  it('reads the token once, then drops it from the address with a replace navigation', async () => {
+    const user = userEvent.setup();
+    const { router } = renderPage();
+
+    expect(await screen.findByRole('heading', { name: 'Quote Q-000042' })).toBeInTheDocument();
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(router.state.location.pathname).toBe('/quote-response');
+    expect(router.state.historyAction).toBe('REPLACE');
+    expect(mockGetQuoteResponse).toHaveBeenCalledTimes(1);
+    expect(mockGetQuoteResponse).toHaveBeenCalledWith('t');
+
+    // The answer still carries the token read from the link.
+    await user.click(screen.getByRole('button', { name: 'Accept' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Accept quote Q-000042?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('You have accepted quote Q-000042.')).toBeInTheDocument();
+    expect(mockRespond).toHaveBeenCalledWith('t', 'accept');
+    expect(mockGetQuoteResponse).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
   });
 
   it('omits the validity row when the quote has no validity date', async () => {

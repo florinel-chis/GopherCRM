@@ -99,7 +99,7 @@ describe('ApiClient.getPublicClient', () => {
   it('sends no Authorization header while a session is stored; getClient() sends the bearer token', async () => {
     tab.client.startSession('access-1', 'refresh-1', true);
 
-    await tab.client.getPublicClient().get('/quotes/public/response', { params: { token: 't' } });
+    await tab.client.getPublicClient().get('/quotes/public/response', { headers: { 'X-Quote-Token': 't' } });
     await tab.client.getClient().get('/quotes');
 
     expect(tab.sent).toHaveLength(2);

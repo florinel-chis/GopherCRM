@@ -193,7 +193,7 @@ an admin through the app.
 | `leads-sorting-search.spec.ts` | 8 | Leads — column sorting and search behaviour |
 | `admin-entity-suite.spec.ts` | 6 | Cross-entity — navigation, CRM workflow, data isolation, quick creation, sidebar |
 | `labels.spec.ts` | 11 | Task labels — create, duplicate name, attach to a task, inline creation, chips in list and detail, chip and dropdown filtering, rename/recolour, delete and detach |
-| `quote-response.spec.ts` | 1 | Quote response link — an admin-created sent quote (API), its emailed link opened in a signed-out browser context, Accept and Confirm, the staff page showing the quote accepted, and the reopened link showing the invalid-link message without buttons |
+| `quote-response.spec.ts` | 1 | Quote response link — an admin-created sent quote (API), its emailed link opened in a signed-out browser context, the token gone from the address bar and sent in the `X-Quote-Token` header of one read (no query string, `Cache-Control: no-store`), Accept and Confirm, the staff page showing the quote accepted, and the reopened link showing the invalid-link message without buttons |
 
 `quote-response.spec.ts` needs the link of the quote email, which exists only in the mail body
 (the e2e backend's log-only mailer writes none). It shells out to

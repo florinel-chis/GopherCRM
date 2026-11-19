@@ -745,6 +745,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Quote response token leaves the URL after the first read; public quote responses and the
+  PDF are not cached; a render credential is single use (#431).**
+  - **Response page and API.** The `/quote-response` page takes the token from the emailed link
+    once, then removes it from the address bar and that browser history entry with a replace
+    navigation; reloading the page afterwards shows the invalid-link message, and the client
+    opens the mailed link again. `GET /quotes/public/response` now reads the token from the
+    `X-Quote-Token` request header only; a token sent as `?token=` is not read and gets the
+    generic 400 "Invalid or expired quote link". The answer still sends the token in the body of
+    `POST /quotes/public/response`, and the emailed link is unchanged. The strict CORS policy
+    allows the `X-Quote-Token` header.
+  - **No caching.** `GET` and `POST /quotes/public/response`, `POST /quotes/public/render` and
+    `GET /quotes/{id}/pdf` answer with `Cache-Control: no-store`, error answers included.
+  - **Render credential.** A PDF render credential can be redeemed once: a second redemption,
+    concurrent or not, is the generic 400 "Invalid or expired render link" and that render fails
+    (log reason `credential_redeemed_more_than_once`).
+  - **Docs.** `docs/SERVER_PROVISIONING.md` and `docs/DOCKER.md` explain how to keep the query
+    string of `/quote-response` out of a reverse proxy's access log, with an nginx example.
 - **The backend image downloads `chrome-headless-shell` from Chrome for Testing instead of
   installing the Debian package (#420).** The image build no longer breaks when Debian's
   security repository drops the pinned `chromium-headless-shell` version. The browser stays on

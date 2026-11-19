@@ -315,7 +315,7 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 		method, path, body, want string
 		status                   int
 	}{
-		{http.MethodGet, "/api/v1/quotes/public/response?token=tok", "", "/api/v1/quotes/public/response", http.StatusOK},
+		{http.MethodGet, "/api/v1/quotes/public/response", "", "/api/v1/quotes/public/response", http.StatusOK},
 		{http.MethodPost, "/api/v1/quotes/public/response", `{"token":"tok","decision":"accept"}`, "/api/v1/quotes/public/response", http.StatusOK},
 		{http.MethodPost, "/api/v1/quotes/public/render", `{"token":"tok"}`, "/api/v1/quotes/public/render", http.StatusOK},
 		{http.MethodGet, "/api/v1/quotes/1", "", "/api/v1/quotes/:id", http.StatusUnauthorized},
@@ -330,6 +330,8 @@ func TestQuotePublicRoutesWinOverTheIDParameter(t *testing.T) {
 		matched = ""
 		req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
 		req.Header.Set("Content-Type", "application/json")
+		// The response read takes its token from this header.
+		req.Header.Set("X-Quote-Token", "tok")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		if matched != route.want || w.Code != route.status {

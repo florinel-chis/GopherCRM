@@ -931,9 +931,10 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
 - **Render step.** `RenderPDF(id)` (behind `GET /quotes/:id/pdf`) and `Email` call
   `renderQuotePDF`: take the single render slot, mint a credential, call
   `QuotePDFRenderer.Render(ctx, APP_BASE_URL + "/quote-render#" + token)`, and require that the
-  page redeemed the credential before the bytes count. Every failure is
-  `apperrors.ErrQuotePDFRenderFailed` (503 `PDF_RENDER_FAILED`) with a reason in the log
-  (`no_turn_within_bound`, `timeout`, `renderer_error`, `page_never_loaded_the_quote`); the
+  page redeemed the credential exactly once and loaded the quote with it before the bytes
+  count. Every failure is `apperrors.ErrQuotePDFRenderFailed` (503 `PDF_RENDER_FAILED`) with a
+  reason in the log (`no_turn_within_bound`, `timeout`, `renderer_error`,
+  `page_never_loaded_the_quote`, `credential_redeemed_more_than_once`); the
   renderer's own error is dropped, because nothing guarantees it is free of the URL. PDF off is
   `apperrors.ErrQuotePDFUnavailable` (503 `PDF_UNAVAILABLE`).
 - **Render credential.** 32 random bytes (`generateOpaqueToken`), stored only as a hash in an
@@ -943,7 +944,11 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
   (`QuoteService.GetRenderView`), which returns `models.QuoteRenderView` (the quote as
   `GET /quotes/:id` serialises it, and the trimmed `general.company_name`) for the credential's
   own quote and nothing the caller names. Every refusal is `apperrors.ErrQuoteRenderRejected`,
-  one generic 400. It is not a session: the Auth middleware does not know it. A browser that
+  one generic 400. It is single use: the lookup, the expiry check and the count of
+  presentations are one critical section, so only the first presentation gets the quote; a
+  second one, concurrent or not, is the rejection and fails that render. The render page
+  (`QuoteRender.tsx`) therefore sends its one request behind a ref, also under StrictMode's
+  development double effect. It is not a session: the Auth middleware does not know it. A browser that
   exits cleanly without the credential having been redeemed printed something else (an error
   page: `APP_BASE_URL` unreachable, CORS refusing the call), so that render fails.
 - **Fallback in the email.** `Email` renders after the recipient checks and before
@@ -1115,7 +1120,12 @@ error text.
   the erasure gets the generic rejection and the quote stays `sent`. See "Response links" under
   the erasure below for which quotes and for the open email-in-flight case.
 - **HTTP.** `SetupQuotePublicRoutes` mounts `GET` and `POST /quotes/public/response` on the public
-  group with one shared `RateLimitStrict()` instance and no Auth. The body is validated before any
+  group with one shared `RateLimitStrict()` instance and no Auth. The `GET` reads the token from
+  the `X-Quote-Token` request header only (a token in the query string is not read; the strict
+  CORS policy allows the header); the `POST` reads it from the body. A group-level handler sets
+  `Cache-Control: no-store` before the rate limiters, so every answer of the three
+  `/quotes/public` routes carries it, 429 included; `GET /quotes/:id/pdf` sets it as its first
+  statement. The body is validated before any
   token lookup (400 `VALIDATION_ERROR`); every `ErrQuoteResponseRejected` is 400 `BAD_REQUEST`
   "Invalid or expired quote link"; the response is `models.QuotePublicView` (number, status,
   currency, `valid_until`, lines, five totals; no id, title, notes, owner, customer, deal or
@@ -1125,7 +1135,13 @@ error text.
   (`gocrm-ui/src/pages/quotes/QuoteResponse.tsx`). It issues one `GET` per mount (no retry, no
   refetch: the strict bucket is shared with the `POST`), asks for a confirmation before the one
   `POST`, and treats a 400 on the `GET`, or a 400 `BAD_REQUEST` on the `POST`, as a dead link.
-  The token is read from the query string and never rendered or logged.
+  It takes the token from the link once (a `useState` initialiser, so StrictMode's development
+  remount keeps it), then removes it from the address bar with a replace navigation
+  (`setSearchParams({}, { replace: true })`, in an effect), sends it in the `X-Quote-Token`
+  header of the `GET` and in the body of the `POST`, and never renders, logs or stores it in web
+  storage. Accepted consequence: reloading the page after the token is gone shows the
+  invalid-link message, and the client opens the mailed link again. The mailed link itself stays
+  `APP_BASE_URL/quote-response?token=...`.
 - **Public client.** The page's endpoint module (`gocrm-ui/src/api/endpoints/quoteResponse.ts`)
   calls through `publicApi`, which is `apiClient.getPublicClient()`: a second axios instance
   with the base URL, timeout, transport and envelope unwrapping of `api` and no request

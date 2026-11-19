@@ -371,38 +371,92 @@ func TestQuoteRenderCredential(t *testing.T) {
 		var offset atomic.Int64
 		env.svc.now = func() time.Time { return base.Add(time.Duration(offset.Load())) }
 		defer func() { env.svc.now = time.Now }()
+		renderer.redeem = false
+		defer func() { renderer.redeem = true }()
 
-		var early, late error
-		renderer.during = func(token string, _ *models.QuoteRenderView, viewErr error) {
-			early = viewErr
-			// One instant before the expiry it still works...
+		// One instant before the expiry the one redemption still works and
+		// the render gives the PDF...
+		var early error
+		renderer.during = func(token string, _ *models.QuoteRenderView, _ error) {
 			offset.Store(int64(env.svc.pdf.timeout - time.Millisecond))
-			_, err := env.svc.GetRenderView(token)
-			require.NoError(t, err)
-			// ...and at the expiry it does not.
-			offset.Store(int64(env.svc.pdf.timeout))
-			_, late = env.svc.GetRenderView(token)
+			_, early = env.svc.GetRenderView(token)
 		}
 		_, err := env.svc.RenderPDF(quoteA.ID)
 		require.NoError(t, err)
 		require.NoError(t, early)
+
+		// ...and at the expiry a fresh credential is refused and its render
+		// fails.
+		offset.Store(0)
+		var late error
+		renderer.during = func(token string, _ *models.QuoteRenderView, _ error) {
+			offset.Store(int64(env.svc.pdf.timeout))
+			_, late = env.svc.GetRenderView(token)
+		}
+		_, err = env.svc.RenderPDF(quoteA.ID)
+		require.ErrorIs(t, err, apperrors.ErrQuotePDFRenderFailed)
 		require.ErrorIs(t, late, apperrors.ErrQuoteRenderRejected)
 	})
 
 	t.Run("quote A's credential never yields quote B", func(t *testing.T) {
 		var viewA *models.QuoteRenderView
-		renderer.during = func(token string, view *models.QuoteRenderView, _ error) {
-			viewA = view
-			// Again, with quote B live in the same store.
-			again, err := env.svc.GetRenderView(token)
-			require.NoError(t, err)
-			assert.Equal(t, quoteA.ID, again.Quote.ID)
-		}
+		renderer.during = func(_ string, view *models.QuoteRenderView, _ error) { viewA = view }
 		_, err := env.svc.RenderPDF(quoteA.ID)
 		require.NoError(t, err)
 		require.NotNil(t, viewA)
 		assert.Equal(t, quoteA.ID, viewA.Quote.ID)
 		assert.NotEqual(t, quoteB.ID, viewA.Quote.ID)
+	})
+
+	t.Run("a second redemption is refused and the render fails", func(t *testing.T) {
+		var first, second error
+		var again *models.QuoteRenderView
+		renderer.during = func(token string, _ *models.QuoteRenderView, viewErr error) {
+			first = viewErr
+			again, second = env.svc.GetRenderView(token)
+		}
+		pdf, err := env.svc.RenderPDF(quoteA.ID)
+		require.ErrorIs(t, err, apperrors.ErrQuotePDFRenderFailed)
+		assert.Nil(t, pdf)
+		require.NoError(t, first)
+		require.ErrorIs(t, second, apperrors.ErrQuoteRenderRejected)
+		assert.Nil(t, again)
+	})
+
+	t.Run("two concurrent redemptions: exactly one succeeds, the render fails", func(t *testing.T) {
+		renderer.redeem = false
+		defer func() { renderer.redeem = true }()
+		var views [2]*models.QuoteRenderView
+		var errs [2]error
+		renderer.during = func(token string, _ *models.QuoteRenderView, _ error) {
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for i := range views {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					<-start
+					views[i], errs[i] = env.svc.GetRenderView(token)
+				}(i)
+			}
+			close(start)
+			wg.Wait()
+		}
+		_, err := env.svc.RenderPDF(quoteA.ID)
+		require.ErrorIs(t, err, apperrors.ErrQuotePDFRenderFailed)
+
+		succeeded := 0
+		for i := range views {
+			if errs[i] == nil {
+				succeeded++
+				require.NotNil(t, views[i])
+				assert.Equal(t, quoteA.ID, views[i].Quote.ID)
+				continue
+			}
+			require.ErrorIs(t, errs[i], apperrors.ErrQuoteRenderRejected)
+			assert.Nil(t, views[i])
+		}
+		assert.Equal(t, 1, succeeded)
 	})
 
 	t.Run("an empty, unknown or foreign token is the one rejection", func(t *testing.T) {

@@ -783,6 +783,7 @@ func (h *QuoteHandler) Email(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param id path int true "Quote ID"
 // @Success 200 {file} file "The PDF, with Content-Type application/pdf and Content-Disposition attachment; filename='Quote-Q-000042.pdf' (double quotes on the wire) for quote 42"
+// @Header 200 {string} Cache-Control "no-store"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: id is not an unsigned integer ('Invalid quote ID')"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales; or FORBIDDEN 'You can only view your own quotes': a sales user addressed a quote it does not own"
@@ -792,6 +793,8 @@ func (h *QuoteHandler) Email(c *gin.Context) {
 // @Failure 503 {object} utils.APIResponse{error=utils.APIError} "PDF_UNAVAILABLE 'PDF output is switched off': the server has no browser binary or no APP_BASE_URL. PDF_RENDER_FAILED 'The PDF could not be produced': the render failed or did not finish within 15 seconds"
 // @Router /quotes/{id}/pdf [get]
 func (h *QuoteHandler) PDF(c *gin.Context) {
+	// The PDF and every error answer of this route are not stored by caches.
+	c.Header("Cache-Control", "no-store")
 	logger := utils.LogHandlerStart(c, "QuoteHandler.PDF")
 
 	// The same refusals as GET /quotes/:id, before anything else is looked at.
