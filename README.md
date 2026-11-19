@@ -822,7 +822,7 @@ authentication and live on the moderate tier:
 - `GET /api/v1/quotes/:id/pdf` - Download the quote as a PDF file *(admin and sales, the same
   refusals as `GET /quotes/:id`; the raw file with `Content-Type: application/pdf` and
   `Content-Disposition: attachment; filename="Quote-Q-000042.pdf"`, printed by a headless
-  Chrome or Chromium on the server in at most 15 seconds; 503 `PDF_UNAVAILABLE` when PDF output
+  browser (`chrome-headless-shell`, Chrome or Chromium) on the server in at most 15 seconds; 503 `PDF_UNAVAILABLE` when PDF output
   is off (`QUOTE_PDF_CHROME_PATH` empty or not an executable file), 503 `PDF_RENDER_FAILED`
   when the render fails or runs out of time; `GET /configurations/ui` reports
   `quotes.pdf_available`)*
@@ -1135,10 +1135,12 @@ gophercrm/
   ticket comment mail (`email_customer`) are the exception: each delivery is recorded `log_only`,
   not `sent`. Fine for development, useless in production.
 - **Quote PDF output needs a browser on the server.** The PDF of a quote (download and email
-  attachment) is printed by a headless Chrome or Chromium named by `QUOTE_PDF_CHROME_PATH`.
+  attachment) is printed by a headless browser named by `QUOTE_PDF_CHROME_PATH`
+  (`chrome-headless-shell`, or a full Chrome or Chromium).
   Without it, and in the two development Compose stacks, PDF output is off: the quote email is
-  text only and the download answers 503 `PDF_UNAVAILABLE`. The Docker image ships Chromium and
-  a font; the limits of the renderer are listed in `docs/ROADMAP.md`.
+  text only and the download answers 503 `PDF_UNAVAILABLE`. The Docker image ships
+  `chrome-headless-shell` and a font; a full Chrome or Chromium is accepted as well. The limits
+  of the renderer are listed in `docs/ROADMAP.md`.
 - **Form mail is retried by hand only.** Every form mail (confirmation, follow-up, one notification
   per address) is recorded and shown on the submission and in `GET /api/v1/forms/deliveries`;
   admin and sales retry a failed, log-only or stuck one with

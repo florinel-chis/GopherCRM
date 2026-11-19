@@ -961,8 +961,11 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
   render, so no helper survives. Flags: `--headless`, `--print-to-pdf`, `--no-pdf-header-footer`,
   `--virtual-time-budget` (so the page's fetch finishes and is painted), `--use-mock-keychain`
   and `--password-store=basic` (with `HOME` in a temp dir a macOS Chrome otherwise waits for a
-  login keychain it cannot find). `--no-sandbox` is never passed from Go: an image that needs it
-  sets it in its launcher (the Dockerfile writes `/etc/chromium/chromium.conf`). Neither the URL,
+  login keychain it cannot find). The list is one for both kinds of binary, `chrome-headless-shell`
+  (what the Docker image ships since #393) and a full Chrome or Chromium: the full browser needs
+  `--headless` and the keychain switches, the headless shell accepts and ignores them.
+  `--no-sandbox` is never passed from Go: an image that needs it sets it in its launcher (the
+  Dockerfile writes `/usr/local/bin/quote-pdf-browser`, which execs the headless shell). Neither the URL,
   its fragment nor the browser's stdout or stderr is logged or wrapped into an error.
 - **Time budget (a contract, tested).** `QuotePDFRenderTimeout` = 15 s is the only definition of
   the bound and covers the wait for the slot: one render at a time per process, and a render
@@ -982,57 +985,64 @@ too). The pieces, all in `internal/service/quote_pdf.go` and `quote_pdf_chrome*.
   body every other call has.
 
 Roots: `TestQuotePDF{Off,Render,TimeoutBudget}`, `TestQuoteRenderCredential`
-(`internal/service/quote_pdf_test.go`); `TestChromeQuotePDFRenderer{MissingBinary,Timeout,Environment,RealBinary}`
-(`quote_pdf_chrome_test.go`; `RealBinary` drives the binary named by `QUOTE_PDF_CHROME_PATH` and
-skips without it, and none of the four is in a no-skip gate: CI has no browser);
+(`internal/service/quote_pdf_test.go`); `TestChromeQuotePDFRenderer{MissingBinary,Timeout,Environment,LaunchArguments,RealBinary}`
+(`quote_pdf_chrome_test.go`; `LaunchArguments` pins the keychain switches, `--headless` and the
+absence of `--no-sandbox`; `RealBinary` drives the binary named by `QUOTE_PDF_CHROME_PATH` and
+skips without it, and none of the five is in a no-skip gate: CI has no browser);
 `TestQuoteEmailPDFAttachment` (`quote_email_test.go`, in `MAILER_CALLER_ROOTS`);
 `TestQuotePDFHandler`, `TestQuotePublicRender`, `TestUIConfigurationsQuotePDFAvailable`
 (`internal/handler`); `TestSMTPAttachment`, `TestLogMailerAttachment` (`internal/mailer`);
-`TestDockerfileShipsChromium`, `TestLoad_QuotePDFChromePath` (`internal/config`).
+`TestDockerfileShipsHeadlessShell`, `TestLoad_QuotePDFChromePath` (`internal/config`).
 
 *The real chain is checked by hand, and belongs to the release checks.* The e2e backend runs
 with `QUOTE_PDF_CHROME_PATH` pinned empty (`scripts/e2e/run.sh`), and the tests above use fake
 renderers, so nothing automatic notices a change to `QuoteDocument`, the render route or the
 browser flags that makes the PDF show the loading state or an empty page: "the credential was
 redeemed" proves the page's request arrived, not that the answer was painted.
-`scripts/e2e/quote-pdf-smoke.sh` checks exactly that chain (Chrome, the SPA's `/quote-render`,
-`POST /quotes/public/render`, the text of the printed file) against a backend on `localhost`. It
-logs in, creates a customer, a product and a quote with one line `PDF smoke line <hex>`,
-downloads `GET /quotes/<id>/pdf`, fails unless the answer is 200 `application/pdf` starting with
-`%PDF`, writes the file and prints `number=` and `line=` (with `SMOKE_EMAIL=1` it also sends and
-emails the quote and prints `emailed=yes`). Run it before a release, locally and against the
-built image:
+`scripts/e2e/quote-pdf-smoke.sh` checks exactly that chain (the browser, the SPA's
+`/quote-render`, `POST /quotes/public/render`, the printed file) against a backend on
+`localhost`. It logs in, creates a customer, a product and a quote with one taxed line
+`PDF smoke line <hex>` (2 x 123.45 at 19 percent), downloads `GET /quotes/<id>/pdf`, fails
+unless the answer is 200 `application/pdf` starting with `%PDF`, writes the file and prints
+four lines, `number=`, `line=`, `total=` (the net total, 246.90) and `gross_total=` (293.81),
+the totals taken from the API's answer and required to differ (with `SMOKE_EMAIL=1` it also
+sends and emails the quote and prints `emailed=yes`). It starts nothing, prints no token and no
+password and refuses a `BASE_URL` whose host is not `localhost` or `127.0.0.1` (it creates
+data).
+
+`scripts/e2e/quote-pdf-chain.sh` is the one command around it: it starts what the chain needs,
+runs the smoke script, reads the text of the PDF (`pdftotext` and `pdffonts` from this machine,
+otherwise from an `alpine:3.20` container; without either it fails) and fails unless the text
+holds the number, the line, the net total and the gross total. On exit it stops everything it
+started and checks that nothing is left. Run both modes before a release, and `image` after
+every change of `HEADLESS_SHELL_VERSION`:
 
 ```bash
-S=$(mktemp -d)                                   # outside the repository
-go build -o "$S/gophercrm" ./cmd && go build -o "$S/create-admin" ./cmd/create-admin
-(cd gocrm-ui && VITE_API_BASE_URL=http://localhost:18095/api/v1 npx vite build --outDir "$S/dist")
+# a full Chrome or Chromium (or a headless shell) on this machine, backend and web app built
+# into a temporary directory, SQLite, free ports
+QUOTE_PDF_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  bash scripts/e2e/quote-pdf-chain.sh local
 
-# the same environment for the server and for create-admin
-export DB_DRIVER=sqlite DB_PATH="$S/pdf.db" SERVER_HOST=127.0.0.1 SERVER_PORT=18095 \
-  SERVER_MODE=development API_PREFIX=/api/v1 JWT_SECRET="$(openssl rand -base64 32)" SMTP_HOST= \
-  APP_BASE_URL=http://localhost:15195 CORS_ALLOWED_ORIGINS=http://localhost:15195 \
-  QUOTE_PDF_CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-"$S/gophercrm" &                                 # terminal 1
-"$S/create-admin" -non-interactive -email admin@example.com -name Admin -password '<throwaway>'
-(cd gocrm-ui && npx vite preview --outDir "$S/dist" --port 15195 --strictPort) &   # terminal 2
-
-BASE_URL=http://localhost:18095/api/v1 ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD='<throwaway>' \
-  bash scripts/e2e/quote-pdf-smoke.sh "$S/local.pdf"
-# the text of the file must hold both printed values (poppler-utils; from a container if not installed)
-docker run --rm -v "$S":/w alpine:3.20 sh -c 'apk add -q poppler-utils && pdftotext /w/local.pdf /w/local.txt'
-command grep -cF '<number>' "$S/local.txt"; command grep -cF '<line>' "$S/local.txt"   # each 1 or more
+# the image built from this checkout with its own default browser (chrome-headless-shell)
+bash scripts/e2e/quote-pdf-chain.sh image
 ```
 
-Negative control: stop `vite preview` and run the script again; it must exit non-zero with 503
-`PDF_RENDER_FAILED`. For the image, start the SQLite Compose stack with an override that sets
-`read_only: true`, `tmpfs: [/tmp]`, `APP_BASE_URL: http://ui`,
-`CORS_ALLOWED_ORIGINS: http://ui,http://localhost:<UI_PORT>` and
-`QUOTE_PDF_CHROME_PATH: /usr/bin/chromium-browser` on the backend, run the script with
-`BASE_URL=http://localhost:<UI_PORT>/api/v1`, and check the text the same way plus `pdffonts`
-(at least one embedded font). The script starts nothing, prints no token and no password, refuses
-a `BASE_URL` whose host is not `localhost` or `127.0.0.1` (it creates data), and is referenced by
-no workflow, Makefile target or gate.
+`local` needs `QUOTE_PDF_CHROME_PATH` from the caller and `gocrm-ui/node_modules`; it builds the
+web app with an absolute `VITE_API_BASE_URL` into its own directory (`gocrm-ui/dist` is not
+touched) and serves it with `vite preview`. `image` needs Docker with Compose v2. It writes a
+complete compose file of its own into the temporary directory (not an override of the
+repository's files): the backend with a read-only root file system, `/tmp` on tmpfs, SQLite on
+a volume and `APP_BASE_URL: http://ui`, the UI on a free local port. The file never sets
+`QUOTE_PDF_CHROME_PATH`; the script fails unless the container's value equals the image's
+configured default. It then waits for the backend's health check, prints the browser's version
+and the image size, renders ten quotes, checks the text and at least one embedded font, polls
+`docker compose top` for up to 10 seconds until no browser process and no zombie is left, and
+requires the backend to stop in under 10 seconds with an exit code other than 137. Admin
+password and JWT secret are generated per run and never printed. Neither script is referenced
+by a workflow, a Makefile target or a gate.
+
+Negative control, by hand: with a backend from the recipe of `local` running and the web app
+stopped, the smoke script must exit non-zero with 503 `PDF_RENDER_FAILED`.
 
 **Quote response link: a single-use token claimed with the transition (#382)** — a quote service
 built with `NewQuoteServiceWithResponseLinks(..., tokenRepo, appBaseURL, tokenSecret)` (what

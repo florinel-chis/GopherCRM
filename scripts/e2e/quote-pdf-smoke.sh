@@ -4,17 +4,23 @@
 # POST /quotes/public/render -> the printed document. Nothing is faked.
 #
 # It logs in as an admin, creates a customer, a product and one quote with one
-# line whose description is unique, downloads GET /quotes/<id>/pdf and fails
-# unless the answer is 200 application/pdf starting with %PDF. The file is
-# written to the path given as the first argument. On success it prints
-# exactly two lines:
+# taxed line (2 x 123.45 at 19 percent: net 246.90, tax 46.91, gross 293.81)
+# whose description is unique, downloads GET /quotes/<id>/pdf and fails unless
+# the answer is 200 application/pdf starting with %PDF. The file is written to
+# the path given as the first argument. On success it prints four lines:
 #
 #   number=<quote number>
 #   line=<line description>
+#   total=<net total of the quote, e.g. 246.90>
+#   gross_total=<gross total of the quote, e.g. 293.81>
 #
-# so the caller can look both up in the text of the file, for example with
-# pdftotext. With SMOKE_EMAIL=1 it also marks the quote sent and emails it,
-# and prints a third line, emailed=yes: with SMTP_HOST empty the server's log
+# The two totals come from total_cents and gross_total_cents of the API's
+# answer; the script fails when the answer lacks one or when they are equal.
+#
+# The caller can look all four up in the text of the file, for example with
+# pdftotext (scripts/e2e/quote-pdf-chain.sh does, and starts what this script
+# needs). With SMOKE_EMAIL=1 it also marks the quote sent and emails it, and
+# prints a fifth line, emailed=yes: with SMTP_HOST empty the server's log
 # then names the attachment.
 #
 #   BASE_URL=http://localhost:18095/api/v1 \
@@ -93,8 +99,24 @@ PRODUCT_ID=$(api POST products "$(body "name=PDF smoke product $SUFFIX" unit_pri
 [ -n "$PRODUCT_ID" ] || fail "the product was not created"
 QUOTE_ID=$(api POST quotes "$(body "title=PDF smoke quote $SUFFIX" "customer_id=$CUSTOMER_ID" currency=EUR)" | field 'd["data"]["id"]') || exit 1
 [ -n "$QUOTE_ID" ] || fail "the quote was not created"
-NUMBER=$(api POST "quotes/$QUOTE_ID/lines" "$(body "product_id=$PRODUCT_ID" quantity=2 discount_bp=0 "description=$LINE")" | field 'd["data"]["number"]') || exit 1
+api POST "quotes/$QUOTE_ID/lines" "$(body "product_id=$PRODUCT_ID" quantity=2 discount_bp=0 tax_rate_bp=1900 "description=$LINE")" > "$WORK/quote.json" || exit 1
+NUMBER=$(field 'd["data"]["number"]' < "$WORK/quote.json")
 [ -n "$NUMBER" ] || fail "the line was not added"
+# money <key> prints an integer amount of minor units as 246.90; nothing when
+# the answer has no such integer.
+money() {
+  python3 -c '
+import sys, json
+value = json.load(sys.stdin)["data"][sys.argv[1]]
+if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    sys.exit(1)
+print("%d.%02d" % divmod(value, 100))' "$1" < "$WORK/quote.json" 2>/dev/null
+}
+TOTAL=$(money total_cents)
+GROSS_TOTAL=$(money gross_total_cents)
+[ -n "$TOTAL" ] || fail "the answer has no total_cents"
+[ -n "$GROSS_TOTAL" ] || fail "the answer has no gross_total_cents"
+[ "$TOTAL" != "$GROSS_TOTAL" ] || fail "net and gross total are equal ($TOTAL): the line carries no tax"
 
 # The download: the status, the content type and the first bytes all count.
 STATUS=$(curl -sS -m 60 -o "$WORK/quote.pdf" -D "$WORK/headers.txt" -w '%{http_code}' \
@@ -108,6 +130,8 @@ cp "$WORK/quote.pdf" "$OUTPUT" || fail "cannot write $OUTPUT"
 
 echo "number=$NUMBER"
 echo "line=$LINE"
+echo "total=$TOTAL"
+echo "gross_total=$GROSS_TOTAL"
 
 if [ "${SMOKE_EMAIL:-}" = "1" ]; then
   api POST "quotes/$QUOTE_ID/status" "$(body status=sent)" > /dev/null || exit 1

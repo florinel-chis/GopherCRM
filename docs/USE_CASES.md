@@ -261,7 +261,8 @@ renewals are not modelled.
   client accept/decline link that opens a public page of the web application (#382, #383; staff
   can still record the answer); acceptance does not move the deal; expiry is a manual status (acceptance is refused
   once `valid_until` has passed, `internal/models/quote.go:92-95`); a PDF of the quote (download and email
-  attachment) exists when the server has a Chrome or Chromium binary (`QUOTE_PDF_CHROME_PATH`,
+  attachment) exists when the server has a browser binary, `chrome-headless-shell` or a full
+  Chrome or Chromium (`QUOTE_PDF_CHROME_PATH`,
   #384), otherwise browser print only
   (`docs/FEATURES.md`, section 4d). Tracked in #233.
 - A task's `deal_id` (set by a deal rule, through the API, or with the task form's deal picker by

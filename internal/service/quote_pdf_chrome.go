@@ -31,8 +31,10 @@ var (
 // the print starts; the budget is spent in a fraction of that as real time.
 const quotePDFVirtualTimeBudgetMS = 10000
 
-// ChromeQuotePDFRenderer prints a page to PDF with a Chrome or Chromium
-// binary run headless, one process per render.
+// ChromeQuotePDFRenderer prints a page to PDF with a browser binary run
+// headless, one process per render. The binary is either chrome-headless-shell
+// (what the Docker image ships: the old headless mode as its own binary) or a
+// full Chrome or Chromium; the argument list of Render is valid for both.
 //
 // Every render gets a fresh temporary directory that holds the browser
 // profile, HOME, TMPDIR, the XDG directories and the output file, and is
@@ -93,6 +95,13 @@ func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]
 	}
 	output := filepath.Join(dir, "quote.pdf")
 
+	// One argument list for both kinds of binary, checked against
+	// chrome-headless-shell 156 and a full Chrome: a full browser needs
+	// --headless to start without a window, the headless shell accepts it
+	// and is headless anyway; the first-run, extension, sync and keychain
+	// switches only do something in a full browser and are ignored by the
+	// headless shell, which has none of those parts. Neither needs a flag
+	// the other refuses.
 	cmd := exec.CommandContext(ctx, r.path,
 		"--headless",
 		"--disable-gpu",
@@ -107,7 +116,7 @@ func (r *ChromeQuotePDFRenderer) Render(ctx context.Context, pageURL string) ([]
 		// The profile lives for one render and HOME is the render's temp
 		// dir: without these a macOS Chrome waits forever for a login
 		// keychain it cannot find, and a Linux one may look for a desktop
-		// keyring.
+		// keyring. The headless shell has no keychain and ignores both.
 		"--use-mock-keychain",
 		"--password-store=basic",
 		"--user-data-dir="+profile,

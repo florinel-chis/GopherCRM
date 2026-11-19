@@ -12,8 +12,8 @@ run", instead of repeating it here. Docker users read [DOCKER.md](DOCKER.md).
 - Either MySQL 8.0+ / MariaDB 10.11 (the default driver), or nothing at all for SQLite
   (`DB_DRIVER=sqlite`, see step 3).
 - Git.
-- Optional, for quote PDF output: Chrome or Chromium and at least one font (see
-  `QUOTE_PDF_CHROME_PATH` in step 3). Without it everything else works.
+- Optional, for quote PDF output: `chrome-headless-shell` or a full Chrome or Chromium, and at
+  least one font (see `QUOTE_PDF_CHROME_PATH` in step 3). Without it everything else works.
 
 ### 2. Database (MySQL only)
 
@@ -47,8 +47,11 @@ Then edit `.env`. The settings that matter for a first run (all read in `interna
 - `SERVER_PORT` (default 8080) and `SERVER_HOST` (empty = every interface; `127.0.0.1` behind a reverse
   proxy).
 
-- `QUOTE_PDF_CHROME_PATH` (optional, default empty): the Chrome or Chromium binary the backend runs
-  headless to print a quote to PDF, for example `/usr/bin/chromium` or, on macOS,
+- `QUOTE_PDF_CHROME_PATH` (optional, default empty): the browser binary the backend runs headless
+  to print a quote to PDF. `chrome-headless-shell` is enough and is what the Docker image ships
+  (Debian 12: `apt-get install chromium-headless-shell fonts-liberation`, then
+  `/usr/bin/chromium-headless-shell`; elsewhere the Chrome for Testing build); a full Chrome or
+  Chromium is accepted as well, for example `/usr/bin/chromium` or, on macOS,
   `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`. Empty, or a path that is not an
   executable file, switches PDF output off: the server starts as usual (one warning for a path
   that does not resolve), quote emails go out as text only, `GET /quotes/:id/pdf` answers 503
