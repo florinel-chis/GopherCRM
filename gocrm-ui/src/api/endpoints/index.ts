@@ -20,3 +20,4 @@ export * from './forms';
 export * from './automation';
 export * from './notifications';
 export * from './webhooks';
+export * from './ssoSettings';

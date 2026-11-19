@@ -1,0 +1,218 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, within } from '@/test/test-utils';
+import { Component as SSOSettings } from './SSOSettings';
+import { rolesApi, ssoSettingsApi, type SSOSettings as SSOSettingsData } from '@/api/endpoints';
+import type { Role } from '@/api/endpoints/roles';
+
+vi.mock('@/api/endpoints', () => ({
+  ssoSettingsApi: {
+    get: vi.fn(),
+    update: vi.fn(),
+  },
+  rolesApi: {
+    getRoles: vi.fn(),
+  },
+}));
+
+const SECRET = 'oidc-client-secret-6Hq2';
+
+const role = (id: number, name: string): Role => ({
+  id,
+  name,
+  description: '',
+  system_key: null,
+  is_system: false,
+  user_count: 0,
+  permissions: [],
+});
+
+const ROLES: Role[] = [role(1, 'admin'), role(2, 'sales'), role(3, 'support')];
+
+const stored: SSOSettingsData = {
+  enabled: true,
+  issuer_url: 'https://issuer.example/tenant',
+  client_id: 'gophercrm',
+  scopes: ['openid', 'profile', 'email'],
+  role_mapping: [
+    { claim: 'groups', value: 'crm-admins', role_id: 1 },
+    { claim: 'roles', value: 'crm-sales', role_id: 2 },
+  ],
+  client_secret_set: true,
+  sources: {
+    enabled: 'settings',
+    issuer_url: 'settings',
+    client_id: 'env',
+    client_secret: 'settings',
+    scopes: 'default',
+    role_mapping: 'settings',
+  },
+};
+
+const lastBody = () => {
+  const calls = vi.mocked(ssoSettingsApi.update).mock.calls;
+  return calls[calls.length - 1][0];
+};
+
+const save = async () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(ssoSettingsApi.update).toHaveBeenCalled());
+};
+
+const renderPage = async () => {
+  const view = render(<SSOSettings />);
+  await screen.findByLabelText('Issuer URL');
+  return view;
+};
+
+describe('SSOSettings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(ssoSettingsApi.get).mockResolvedValue(stored);
+    vi.mocked(ssoSettingsApi.update).mockImplementation(async (body) => ({
+      ...stored,
+      enabled: body.enabled,
+      issuer_url: body.issuer_url,
+      client_id: body.client_id,
+      scopes: body.scopes,
+      role_mapping: body.role_mapping,
+      client_secret_set: body.client_secret === undefined ? stored.client_secret_set : body.client_secret !== '',
+    }));
+    vi.mocked(rolesApi.getRoles).mockResolvedValue(ROLES);
+  });
+
+  it('shows the effective values, the sources and the secret status, never a secret', async () => {
+    const { container } = await renderPage();
+
+    expect(screen.getByLabelText('Issuer URL')).toHaveValue('https://issuer.example/tenant');
+    expect(screen.getByLabelText('Client ID')).toHaveValue('gophercrm');
+    expect(screen.getByLabelText('Scopes')).toHaveValue('openid profile email');
+    expect(screen.getByLabelText('Enabled')).toBeChecked();
+    expect(screen.getByText('From the environment (OIDC_*)')).toBeInTheDocument();
+    expect(screen.getByText('Default value')).toBeInTheDocument();
+    expect(screen.getByText('A client secret is set')).toBeInTheDocument();
+    expect(screen.getByLabelText('Client secret')).toHaveValue('');
+    expect(screen.getByText(/first row whose claim carries the value decides the role/)).toBeInTheDocument();
+    expect(container.innerHTML).not.toContain(SECRET);
+  });
+
+  it('reports that no client secret is set', async () => {
+    vi.mocked(ssoSettingsApi.get).mockResolvedValue({ ...stored, client_secret_set: false });
+    await renderPage();
+    expect(screen.getByText('No client secret is set')).toBeInTheDocument();
+  });
+
+  it('sends the mapping unchanged and in order, and no client_secret key without a typed secret', async () => {
+    await renderPage();
+    await waitFor(() => expect(within(screen.getByTestId('sso-mapping-row-1')).getByText('sales')).toBeInTheDocument());
+
+    await save();
+
+    const body = lastBody();
+    expect(body).not.toHaveProperty('client_secret');
+    expect(body).toEqual({
+      enabled: true,
+      issuer_url: 'https://issuer.example/tenant',
+      client_id: 'gophercrm',
+      scopes: ['openid', 'profile', 'email'],
+      role_mapping: [
+        { claim: 'groups', value: 'crm-admins', role_id: 1 },
+        { claim: 'roles', value: 'crm-sales', role_id: 2 },
+      ],
+    });
+  });
+
+  it('sends a typed secret once and drops it from the page after the save', async () => {
+    const { container } = await renderPage();
+
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: SECRET } });
+    await save();
+
+    expect(lastBody().client_secret).toBe(SECRET);
+    await waitFor(() => expect(screen.getByLabelText('Client secret')).toHaveValue(''));
+    expect(container.innerHTML).not.toContain(SECRET);
+    expect(screen.getByText('A client secret is set')).toBeInTheDocument();
+  });
+
+  it('sends an empty client_secret after "Clear client secret"', async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear client secret' }));
+    await save();
+
+    expect(lastBody()).toHaveProperty('client_secret', '');
+    expect(await screen.findByText('No client secret is set')).toBeInTheDocument();
+  });
+
+  it('sends an added row with the role chosen from the role list', async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add mapping' }));
+    const row = within(screen.getByTestId('sso-mapping-row-2'));
+    fireEvent.change(row.getByLabelText('Value'), { target: { value: 'crm-support' } });
+    fireEvent.mouseDown(row.getByRole('combobox', { name: 'Role' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'support' }));
+    await save();
+
+    expect(lastBody().role_mapping).toEqual([
+      { claim: 'groups', value: 'crm-admins', role_id: 1 },
+      { claim: 'roles', value: 'crm-sales', role_id: 2 },
+      { claim: 'groups', value: 'crm-support', role_id: 3 },
+    ]);
+  });
+
+  it('removes a row', async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove mapping 1' }));
+    await save();
+
+    expect(lastBody().role_mapping).toEqual([{ claim: 'roles', value: 'crm-sales', role_id: 2 }]);
+  });
+
+  it('keeps the role ids of existing rows when the role list fails', async () => {
+    vi.mocked(rolesApi.getRoles).mockRejectedValue(new Error('network down'));
+    await renderPage();
+
+    expect(await screen.findByText(/The role list could not be loaded/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('sso-mapping-row-0')).getByText('Role #1')).toBeInTheDocument();
+    await save();
+
+    expect(lastBody().role_mapping).toEqual(stored.role_mapping);
+  });
+
+  it('keeps a role id the role list does not name', async () => {
+    vi.mocked(ssoSettingsApi.get).mockResolvedValue({
+      ...stored,
+      role_mapping: [{ claim: 'groups', value: 'legacy', role_id: 42 }],
+    });
+    await renderPage();
+
+    expect(within(screen.getByTestId('sso-mapping-row-0')).getByText('Role #42')).toBeInTheDocument();
+    await save();
+
+    expect(lastBody().role_mapping).toEqual([{ claim: 'groups', value: 'legacy', role_id: 42 }]);
+  });
+
+  it('shows the refused fields of a 400 answer', async () => {
+    vi.mocked(ssoSettingsApi.update).mockRejectedValue(
+      Object.assign(new Error('400'), {
+        response: {
+          status: 400,
+          data: {
+            code: 'INVALID_REFERENCE',
+            message: 'The role mapping names a role that does not exist',
+            details: { 'role_mapping[0].role_id': 'names a role that does not exist' },
+          },
+        },
+      }),
+    );
+    await renderPage();
+
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: SECRET } });
+    await save();
+
+    expect(
+      await screen.findByText('role_mapping[0].role_id: names a role that does not exist'),
+    ).toBeInTheDocument();
+  });
+});

@@ -103,6 +103,22 @@ describe('MainLayout permission gating', () => {
     expect(navigation().queryByText('Webhooks')).not.toBeInTheDocument();
   });
 
+  it('shows Single sign-on under Settings only to a caller holding settings.sso_manage', async () => {
+    signedInWith('customer', customPermissions('settings.sso_manage'));
+    const held = render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Single sign-on')).toBeInTheDocument();
+    expect(navigation().queryByText('Configuration')).not.toBeInTheDocument();
+    held.unmount();
+
+    // The settings read key alone does not show the entry.
+    signedInWith('admin', customPermissions('settings.view'));
+    render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Configuration')).toBeInTheDocument();
+    expect(navigation().queryByText('Single sign-on')).not.toBeInTheDocument();
+  });
+
   it('shows the Automation group with only the child whose key is held', async () => {
     signedInWith('customer', customPermissions('automation.rules_manage'));
     render(<MainLayout />);

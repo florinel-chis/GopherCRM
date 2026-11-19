@@ -171,4 +171,26 @@ test.describe('Login Flow', () => {
     // Should be redirected to login
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
   });
+
+  test('hides the single sign-on button when single sign-on is disabled', async ({ page }) => {
+    // The e2e backend pins no OIDC_* setting, so single sign-on is off. The
+    // login page reads the switch from the public registration probe.
+    const probe = page.waitForResponse(
+      (response) => response.url().includes('/auth/registration') && response.request().method() === 'GET'
+    );
+    await page.goto('/login');
+    const response = await probe;
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.data.sso_enabled).toBe(false);
+
+    // The sign-up link renders from the same probe (global setup enables public
+    // registration), so once it is visible the probe's answer has been rendered
+    // and the absence check below cannot pass merely because it ran too early.
+    await expect(loginPage.signUpLink).toBeVisible({ timeout: 30000 });
+    await expect(page.getByRole('button', { name: 'Sign in with single sign-on' })).toHaveCount(0);
+    await expect(loginPage.emailInput).toBeVisible();
+    await expect(loginPage.passwordInput).toBeVisible();
+    await expect(loginPage.submitButton).toBeVisible();
+  });
 });

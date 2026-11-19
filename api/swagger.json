@@ -4327,17 +4327,17 @@
         },
         "/auth/registration": {
             "get": {
-                "description": "Public, unauthenticated probe of the security.allow_public_registration setting, so the login and sign-up screens can decide whether to offer registration (the authenticated GET /configurations/ui cannot serve a visitor without a session). A setting that cannot be read is reported as disabled, the same answer the gate on POST /auth/register enforces. Read-only, no side effects.\nRate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route (so polling it consumes the login budget).",
+                "description": "Public, unauthenticated probe of the security.allow_public_registration setting, so the login and sign-up screens can decide whether to offer registration (the authenticated GET /configurations/ui cannot serve a visitor without a session). A setting that cannot be read is reported as disabled, the same answer the gate on POST /auth/register enforces. Read-only, no side effects.\nThe probe also reports sso_enabled, the effective single sign-on switch, so the login screen can offer the single sign-on button; nothing else of the single sign-on configuration is exposed. A configuration that cannot be read is reported as off. POST /auth/oidc/start still enforces the switch.\nRate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route (so polling it consumes the login budget).",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "auth"
                 ],
-                "summary": "Report whether public registration is open",
+                "summary": "Report whether public registration is open and whether single sign-on is on",
                 "responses": {
                     "200": {
-                        "description": "Whether POST /auth/register accepts sign-ups",
+                        "description": "Whether POST /auth/register accepts sign-ups and whether single sign-on is on",
                         "schema": {
                             "allOf": [
                                 {
@@ -36045,11 +36045,16 @@
             }
         },
         "internal_handler.RegistrationStatusResponse": {
-            "description": "Whether public sign-up is open.",
+            "description": "Whether public sign-up is open and whether single sign-on is on.",
             "type": "object",
             "properties": {
                 "enabled": {
                     "description": "True when POST /auth/register currently accepts sign-ups; false when the\nsetting is off or could not be read.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "sso_enabled": {
+                    "description": "True when the effective single sign-on switch is on; false when it is\noff or cannot be read.",
                     "type": "boolean",
                     "example": false
                 }

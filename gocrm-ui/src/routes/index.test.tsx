@@ -58,6 +58,7 @@ const authValue = () => ({
   isLoading: authLoading,
   isAuthenticated: !authLoading && authUser !== null,
   login: vi.fn(),
+  loginWithSSO: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
   refreshUser: vi.fn(),
@@ -853,6 +854,33 @@ describe('quote render route', () => {
     expect(view.queryByRole('button')).not.toBeInTheDocument();
     expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
     window.location.hash = '';
+    view.unmount();
+  }, 30000);
+});
+
+// The page the identity provider redirects back to is public (#436): the
+// visitor has no session yet, so the route sits outside ProtectedRoute and
+// the shell. An error answer from the issuer is shown without any request.
+describe('single sign-on callback route', () => {
+  it('renders the page for a signed-out visitor and stays on /auth/callback', async () => {
+    setAuth(null, false);
+    const memoryRouter = createMemoryRouter(router.routes as unknown as RouteObject[], {
+      initialEntries: ['/auth/callback?error=access_denied'],
+    });
+    const view = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RouterProvider router={memoryRouter} />
+      </QueryClientProvider>
+    );
+
+    expect(
+      await view.findByText('Single sign-on failed. Try again or sign in with your password.', {}, { timeout: 15000 })
+    ).toBeInTheDocument();
+    expect(view.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
+    expect(memoryRouter.state.location.pathname).toBe('/auth/callback');
+    expect(memoryRouter.state.location.search).toBe('');
+    expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
+    expect(view.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument();
     view.unmount();
   }, 30000);
 });

@@ -32,6 +32,7 @@ const routeLabels: Record<string, string> = {
   settings: 'Settings',
   apikeys: 'API Keys',
   webhooks: 'Webhooks',
+  sso: 'Single sign-on',
   new: 'New',
   edit: 'Edit',
 };

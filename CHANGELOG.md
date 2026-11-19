@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenID Connect sign-in, SPA (#436).** `GET /auth/registration` also returns `sso_enabled`,
+  the effective single sign-on switch (false when it cannot be read; nothing else of the
+  configuration is exposed), so the login page needs no second request on the strict `/auth`
+  tier. While it is true the login page shows "Sign in with single sign-on", which starts the
+  sign-in through `POST /auth/oidc/start`; the password form stays. The new public
+  `/auth/callback` page removes `code` and `state` from the address bar, posts them once to
+  `POST /auth/oidc/callback` and keeps the session in sessionStorage (no remember-me across the
+  redirect); every failure shows one generic message with a link back to sign in. The new
+  Settings > Single sign-on screen (`settings.sso_manage`) edits `GET`/`PUT /settings/sso`: a
+  write-only client secret (set, kept or cleared), the scopes and the ordered role mapping, with
+  each field's source. A first save stores the environment-derived values shown as settings.
 - **OpenID Connect sign-in, backend (#435).** `POST /auth/oidc/start` returns the issuer's
   authorization URL (authorization code flow with PKCE, S256, a state and a nonce, redirect URI
   `APP_BASE_URL/auth/callback`) and `POST /auth/oidc/callback` `{code, state}` finishes the
@@ -29,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next sign-in is refused. Password login stays as break-glass. Migration
   `20261123120000_add_oidc_sign_in` creates the two tables; `docs/AUTHORIZATION.md` gains Okta and
   Entra ID examples. New dependencies: `github.com/coreos/go-oidc/v3` and `golang.org/x/oauth2`.
-  The SPA callback page is later work.
 - **Single sign-on settings, no sign-in yet (#434).** The backend half of the OpenID Connect
   configuration for RBAC phase 2. Six settings are seeded in the security category:
   `security.sso.enabled`, `issuer_url`, `client_id`, `client_secret`, `scopes` and

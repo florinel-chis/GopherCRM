@@ -33,6 +33,7 @@ vi.mock('@/api/endpoints', async () => {
     authApi: {
       getCurrentUser: vi.fn(),
       login: vi.fn(),
+      loginWithSSO: vi.fn(),
       register: vi.fn(),
       logout: vi.fn(),
     },
@@ -112,6 +113,7 @@ const authValue = (user: AuthContextType['user'], isLoading = false): AuthContex
   isLoading,
   isAuthenticated: !!user,
   login: vi.fn(),
+  loginWithSSO: vi.fn(),
   register: vi.fn(),
   logout: vi.fn(),
   refreshUser: vi.fn(),
@@ -485,6 +487,7 @@ describe('isQuotePdfAvailable', () => {
       isLoading: false,
       isAuthenticated: true,
       login: vi.fn(),
+      loginWithSSO: vi.fn(),
       register: vi.fn(),
       logout: vi.fn(),
       refreshUser: vi.fn(),

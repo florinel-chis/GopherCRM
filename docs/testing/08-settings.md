@@ -17,6 +17,8 @@ blocked until the page is built.
   `WebhookSecretDialog.tsx`, `WebhookDeliveryLog.tsx`, `gocrm-ui/src/api/endpoints/webhooks.ts`,
   `internal/handler/webhook_handler.go`, `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` (the
   webhook screen, TC-SET-036 to TC-SET-040)
+- `gocrm-ui/src/pages/settings/SSOSettings.tsx`, `gocrm-ui/src/api/endpoints/ssoSettings.ts`,
+  `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041)
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
   `gocrm-ui/src/api/endpoints/apikeys.test.ts`, `gocrm-ui/src/api/client.ts`
 - `gocrm-ui/src/contexts/ConfigurationContext.tsx`
@@ -820,3 +822,30 @@ can succeed.
   endpoint, sees the secret once, edits and deletes it" (the `http://` URL); Vitest
   `src/pages/settings/WebhookEndpointDialog.test.tsx` (all three URLs, the event detail and the
   two presence checks)
+
+### TC-SET-041 — Edit the single sign-on settings with a write-only client secret
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Signed in with `settings.sso_manage`; a client secret is stored and the role
+  mapping has two rows.
+- **Steps:**
+  1. Open Settings > Single sign-on.
+  2. Press Save without changing anything.
+  3. Type a new client secret and press Save.
+  4. Press "Clear client secret" and press Save.
+  5. Press "Add mapping", enter a value, choose a role from the list and press Save.
+  6. Open the screen with only `settings.view`.
+- **Expected:** Step 1: the Enabled switch, Issuer URL, Client ID, Scopes (separated by spaces),
+  an empty Client secret input with "A client secret is set", and the mapping rows in stored order
+  with the note that the first matching row wins; a field from the environment or the default
+  says so. A row whose role the list does not name, or every row when the role list fails (an
+  error alert), shows "Role #id" and keeps its id. Step 2: `PUT /settings/sso` with the shown
+  values, the two rows in the same order and no `client_secret` key. Step 3: the body carries the
+  secret; afterwards the input is empty and the secret appears nowhere on the page. Step 4: the
+  body carries `client_secret: ""` and the page shows "No client secret is set". Step 5: the new
+  row is sent last with the chosen `role_id`. A 400 lists the refused fields of `details` (for
+  example `role_mapping[0].role_id`). Step 6: `/unauthorized`, and the "Single sign-on" navigation
+  entry is shown only with `settings.sso_manage`.
+- **Known issue:** `PUT /settings/sso` is a full replacement, so the first save stores the
+  environment-derived values shown as settings; a later `OIDC_*` change no longer applies to them.
+- **Automation:** automated — Vitest `src/pages/settings/SSOSettings.test.tsx`, `src/routes/index.permissions.test.tsx` "open the single sign-on screen only with settings.sso_manage", `src/layouts/MainLayout.permissions.test.tsx` "shows Single sign-on under Settings only to a caller holding settings.sso_manage"

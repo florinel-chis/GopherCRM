@@ -654,8 +654,13 @@ client generator. The list below is the overview.
   under Settings > Configuration). **Always creates a `customer`**; a
   client-supplied role is ignored. Password policy: min 10 chars with upper, lower, digit and
   special character. A duplicate email returns `409`.
-- `GET /api/v1/auth/registration` - Report whether public registration is currently open
-  (`{"enabled": bool}`), for the login/register screens; no authentication required.
+- `GET /api/v1/auth/registration` - Report whether public registration is currently open and
+  whether single sign-on is on (`{"enabled": bool, "sso_enabled": bool}`), for the
+  login/register screens; no authentication required.
+- `POST /api/v1/auth/oidc/start` - Start an OpenID Connect sign-in: returns the issuer's
+  `authorization_url` (404 while single sign-on is off).
+- `POST /api/v1/auth/oidc/callback` - Finish it with `{code, state}` from the issuer's redirect;
+  returns the same tokens and user as `POST /auth/login`. The SPA's `/auth/callback` page calls it.
 - `POST /api/v1/auth/login` - User login. Returns an access token and a rotating refresh token.
 - `POST /api/v1/auth/refresh` - Exchange a refresh token for a new token pair. Rotation is strict:
   the presented token is revoked, replaying it returns `401`. The revocation is a single-use claim

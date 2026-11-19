@@ -67,6 +67,20 @@ func TestOIDCRoutesWired(t *testing.T) {
 				return recorder, envelope
 			}
 
+			// The public registration probe reports the effective single
+			// sign-on switch from the same settings service (#436).
+			probe := httptest.NewRecorder()
+			router.ServeHTTP(probe, httptest.NewRequest(http.MethodGet, boot.cfg.API.Prefix+"/auth/registration", nil))
+			require.Equal(t, http.StatusOK, probe.Code, probe.Body.String())
+			var status struct {
+				Data struct {
+					SSOEnabled *bool `json:"sso_enabled"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(probe.Body.Bytes(), &status))
+			require.NotNil(t, status.Data.SSOEnabled, "sso_enabled is reported: %s", probe.Body.String())
+			assert.Equal(t, tc.sso.Enabled, *status.Data.SSOEnabled)
+
 			recorder, envelope := post("/auth/oidc/start", "")
 			assert.Equal(t, tc.status, recorder.Code, recorder.Body.String())
 			require.NotNil(t, envelope.Error)

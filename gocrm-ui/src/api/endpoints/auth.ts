@@ -3,6 +3,13 @@ import type { CurrentUser, LoginRequest, LoginResponse, RegisterRequest } from '
 
 export interface RegistrationStatus {
   enabled: boolean;
+  // The effective single sign-on switch; the login page offers the single
+  // sign-on button only when this is true. Absent means off.
+  sso_enabled?: boolean;
+}
+
+export interface OIDCStartResponse {
+  authorization_url: string;
 }
 
 export const authApi = {
@@ -17,6 +24,21 @@ export const authApi = {
 
   login: async (data: LoginRequest): Promise<LoginResponse> => {
     const response = await api.post<LoginResponse>('/auth/login', data);
+    return response.data;
+  },
+
+  // Starts an OpenID Connect sign-in: the answer is the issuer URL the
+  // browser goes to. The backend refuses it while single sign-on is off.
+  startOIDC: async (): Promise<OIDCStartResponse> => {
+    const response = await api.post<OIDCStartResponse>('/auth/oidc/start');
+    return response.data;
+  },
+
+  // Exchanges the single-use code and state from the issuer's redirect for a
+  // session. The path stays under /auth/ so the client never tries a token
+  // refresh on its 401.
+  oidcCallback: async (code: string, state: string): Promise<LoginResponse> => {
+    const response = await api.post<LoginResponse>('/auth/oidc/callback', { code, state });
     return response.data;
   },
 
