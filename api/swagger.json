@@ -19718,7 +19718,7 @@
                 }
             },
             "post": {
-                "description": "Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row names the quote owner as changed_by, and the token itself records that the client answered. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.\nThe body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.",
+                "description": "Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.\nThe body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.",
                 "consumes": [
                     "application/json"
                 ],
@@ -20519,7 +20519,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "The quote's status changes, oldest first (changed_at, then id). Roles: admin (any quote) and sales (only the quotes it owns). The first row has from_status null and to_status draft. changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. data is the array; there is no pagination.",
+                "description": "The quote's status changes, oldest first (changed_at, then id). Roles: admin (any quote) and sales (only the quotes it owns). The first row has from_status null and to_status draft. source says who made the change: staff (a signed-in user, named by changed_by_id) or client (the client's answer through the response link of the quote email). changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. A client answer has no user: its changed_by_id is null and changed_by is absent. An answer recorded before source existed reads staff with the quote owner as its user. data is the array; there is no pagination.",
                 "produces": [
                     "application/json"
                 ],
@@ -31778,7 +31778,7 @@
                     "example": "2026-10-02T10:00:00Z"
                 },
                 "changed_by": {
-                    "description": "Summary of the acting user (no email). Omitted when that account no\nlonger exists.",
+                    "description": "Summary of the acting user (no email). Omitted when the client\nanswered through the response link (source client) and when that\naccount no longer exists.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteOwnerSummary"
@@ -31786,8 +31786,9 @@
                     ]
                 },
                 "changed_by_id": {
-                    "description": "User who made the change.",
+                    "description": "User who made the change; null when the client answered through the\nresponse link (source client).",
                     "type": "integer",
+                    "x-nullable": true,
                     "example": 7
                 },
                 "from_status": {
@@ -31809,6 +31810,15 @@
                     "description": "The quote this row belongs to.",
                     "type": "integer",
                     "example": 42
+                },
+                "source": {
+                    "description": "Who made the change: staff (a signed-in user, named by changed_by_id)\nor client (the client's answer through the response link of the quote\nemail, which has no user).",
+                    "type": "string",
+                    "enum": [
+                        "staff",
+                        "client"
+                    ],
+                    "example": "staff"
                 },
                 "to_status": {
                     "description": "Status after the change.",

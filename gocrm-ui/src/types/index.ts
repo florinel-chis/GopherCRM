@@ -329,15 +329,21 @@ export interface Quote {
   updated_at: string;
 }
 
+// Who made a quote status change: a signed-in user, or the client answering
+// through the response link of the quote email.
+export type QuoteChangeSource = 'staff' | 'client';
+
 // One row of GET /quotes/:id/history. `from_status` is null on the row written
-// when the quote was created.
+// when the quote was created. A client answer (`source: 'client'`) has no
+// user: `changed_by_id` is null and `changed_by` is absent.
 export interface QuoteStatusChange {
   id: number;
   quote_id: number;
   from_status: QuoteStatus | null;
   to_status: QuoteStatus;
-  changed_by_id: number;
+  changed_by_id: number | null;
   changed_by?: QuoteOwnerSummary;
+  source: QuoteChangeSource;
   changed_at: string;
 }
 

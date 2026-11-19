@@ -865,7 +865,8 @@ quote link". These cases are API and service level; the page that answers the li
 Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/service/quote_response.go`,
 `internal/repository/quote_response_token_repository.go`, `internal/handler/quote_public_handler.go`,
 `internal/handler/quote_public_routes.go`, `internal/models/quote_response_token.go`,
-`migrations/20261121120000_add_quote_response_tokens.{up,down}.sql`.
+`migrations/20261121120000_add_quote_response_tokens.{up,down}.sql`,
+`migrations/20261122120000_quote_history_source.{up,down}.sql` (#400).
 
 ### TC-PQ-039 — The email of a sent quote carries a single-use response link
 - **Priority:** P0
@@ -931,13 +932,14 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
 - **Expected:** Step 1: 400 `VALIDATION_ERROR`, decided before any token lookup; the token stays
   usable. Step 2: 200 with the public view and `status` `accepted` (`rejected`); the quote has
   `closed_at` set and `sent_at` kept; exactly one new `quote_status_changes` row (`sent →
-  accepted | rejected`, `changed_by_id` = the quote owner); the token row has `used_at` set and
+  accepted | rejected`, `changed_by_id` NULL, `source` `client`), which `GET /quotes/{id}/history`
+  returns with `"changed_by_id": null`, `"source": "client"` and no `changed_by`, next to the
+  staff rows with their user and `"source": "staff"` (#400); the token row has `used_at` set and
   `decision` `accept` (`decline`); the deal's `stage` and `closed_at` are unchanged. Step 3: the
   generic 400, and no quote, history or token row changes.
 - **Automation:** automated — `internal/service/quote_response_test.go` `TestQuoteResponseDecision`;
-  `internal/handler/quote_public_handler_test.go` `TestQuotePublicRespond`.
-- **Known issue:** the history row names the quote owner, so `GET /quotes/{id}/history` shows a
-  client answer as the owner's (`docs/ROADMAP.md`).
+  `internal/handler/quote_public_handler_test.go` `TestQuotePublicRespond`;
+  `internal/handler/quote_history_client_test.go` `TestQuoteHistoryClientAnswer`.
 
 ### TC-PQ-043 — Two answers with one token commit exactly one
 - **Priority:** P0
@@ -996,15 +998,25 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
 - **Steps:**
   1. `GET` and `POST /quotes/public/response` without credentials; `GET /quotes/1` and `GET /quotes/public` without credentials.
   2. Apply `20261121120000_add_quote_response_tokens` on a fresh schema, on the previous head, and on a schema `MigrateDatabase` built first; roll back; reapply.
+  3. The same for `20261122120000_quote_history_source` (#400) with an existing staff history row; insert a row with no user and `source` `client`, and one naming an unknown user; roll back; reapply. On SQLite run `MigrateDatabase` over a file with the previous `quote_status_changes`.
 - **Expected:** Step 1: the two public routes reach the public handler; `/quotes/1` and
   `/quotes/public` (the `:id` route) answer 401; no other path under `/quotes/public` exists.
   Step 2: the table equals what `MigrateDatabase` builds (unique `idx_quote_response_tokens_token_hash`,
   `idx_quote_response_tokens_quote_id`, no foreign key), rows created first are kept, rollback
   drops only this table, and no existing table is altered.
+  Step 3: `quote_status_changes` equals what `MigrateDatabase` builds (`source varchar(20) NOT
+  NULL DEFAULT 'staff'`, nullable `changed_by_id`, the index and the foreign key to `users`
+  kept); the existing row keeps its `changed_by_id` and reads `source` `staff`; the client row
+  is accepted and the unknown user refused; rollback gives the rows without a user the
+  `owner_id` of their quote (a soft-deleted quote's too), restores NOT NULL and drops `source`.
+  SQLite: the row, the index and the foreign key are kept and a client row is accepted.
 - **Automation:** automated — `internal/handler/routes_test.go`
   `TestQuotePublicRoutesWinOverTheIDParameter`, `TestAllRouteSetupsCoexist`;
   `cmd/migrate/quote_response_tokens_migration_test.go` `TestQuoteResponseTokensMigrationFiles`,
-  `TestQuoteResponseTokensMigration`.
+  `TestQuoteResponseTokensMigration`;
+  `cmd/migrate/quote_history_source_migration_test.go` `TestQuoteHistorySourceMigrationFiles`,
+  `TestQuoteHistorySourceMigration`;
+  `internal/models/database_sqlite_upgrade_test.go` `TestQuoteHistorySourceSQLiteUpgrade`.
 
 ---
 

@@ -703,7 +703,7 @@ func (h *QuoteHandler) ChangeStatus(c *gin.Context) {
 
 // History godoc
 // @Summary A quote's status history
-// @Description The quote's status changes, oldest first (changed_at, then id). Roles: admin (any quote) and sales (only the quotes it owns). The first row has from_status null and to_status draft. changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. data is the array; there is no pagination.
+// @Description The quote's status changes, oldest first (changed_at, then id). Roles: admin (any quote) and sales (only the quotes it owns). The first row has from_status null and to_status draft. source says who made the change: staff (a signed-in user, named by changed_by_id) or client (the client's answer through the response link of the quote email). changed_by is a summary of the acting user (id and names, no email), omitted when that account no longer exists. A client answer has no user: its changed_by_id is null and changed_by is absent. An answer recorded before source existed reads staff with the quote owner as its user. data is the array; there is no pagination.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth

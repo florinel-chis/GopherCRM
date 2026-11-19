@@ -240,6 +240,7 @@ export const createMockQuoteStatusChange = (
   to_status: 'draft',
   changed_by_id: 1,
   changed_by: { id: 1, first_name: 'Test', last_name: 'User' },
+  source: 'staff',
   changed_at: '2026-10-26T08:00:00Z',
   ...overrides,
 });

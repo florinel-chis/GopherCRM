@@ -138,10 +138,42 @@ test.describe('Quote response link', () => {
           new URL(response.url()).pathname.endsWith(`/quotes/${quoteId}`) && response.request().method() === 'GET',
         PAGE_LOAD
       );
+      const historyLoaded = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname.endsWith(`/quotes/${quoteId}/history`) &&
+          response.request().method() === 'GET',
+        PAGE_LOAD
+      );
       await page.goto(`/quotes/${quoteId}`);
       expect((await quoteLoaded).status()).toBe(200);
+      const historyResponse = await historyLoaded;
+      expect(historyResponse.status()).toBe(200);
       await expect(page.getByTestId('quote-number')).toHaveText(quoteNumber, PAGE_LOAD);
       await expect(page.getByTestId('quote-status-chip')).toHaveText('Accepted');
+      // The history shows the answer as the client's, not a staff user's (#400).
+      // The two staff rows before it (created, sent) keep their user.
+      const historyRows = page.getByTestId('quote-history-row');
+      await expect(historyRows).toHaveCount(3, PAGE_LOAD);
+      const lastHistoryRow = historyRows.last();
+      await expect(lastHistoryRow).toContainText('Sent to Accepted');
+      await expect(lastHistoryRow).toContainText(/Client · /);
+      await expect(lastHistoryRow).not.toContainText('user #');
+      await expect(historyRows.nth(0)).toContainText('Created as Draft');
+      await expect(historyRows.nth(0)).not.toContainText(/Client · /);
+      await expect(historyRows.nth(1)).toContainText('Draft to Sent');
+      await expect(historyRows.nth(1)).not.toContainText(/Client · /);
+      // What the page was given: the client row has no actor, the staff rows have one.
+      const history = await historyResponse.json();
+      const entries: Array<Record<string, unknown>> = Array.isArray(history) ? history : history.data;
+      expect(entries).toHaveLength(3);
+      expect(entries[2].source).toBe('client');
+      expect(entries[2].changed_by_id).toBeNull();
+      expect(entries[2]).not.toHaveProperty('changed_by');
+      for (const entry of entries.slice(0, 2)) {
+        expect(entry.source).toBe('staff');
+        expect(typeof entry.changed_by_id).toBe('number');
+        expect(entry).toHaveProperty('changed_by');
+      }
 
       // 5. The link worked once: reopened, it shows no quote and no buttons.
       await client.goto(`${UI_BASE_URL}${linkPath}`);

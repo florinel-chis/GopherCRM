@@ -124,7 +124,7 @@ func (f *businessTextFixture) quote(t *testing.T, label string, ownerID uint, cu
 			Description: fmt.Sprintf("Line %d of %s naming Bt %s", i+1, label, f.tag), Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: 1000,
 			DiscountBP: 500, LineTotalCents: 1900}).Error)
 	}
-	require.NoError(t, f.db.Create(&models.QuoteStatusChange{QuoteID: q.ID, ToStatus: status, ChangedByID: ownerID, ChangedAt: now}).Error)
+	require.NoError(t, f.db.Create(&models.QuoteStatusChange{QuoteID: q.ID, ToStatus: status, ChangedByID: &ownerID, ChangedAt: now}).Error)
 	if deleted {
 		require.NoError(t, f.db.Delete(&models.Quote{}, q.ID).Error)
 	}

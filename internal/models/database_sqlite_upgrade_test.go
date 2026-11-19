@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/stretchr/testify/assert"
@@ -252,4 +253,74 @@ func TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade(t *testing.T) {
 	var count int64
 	require.NoError(t, DB.Table("tickets").Count(&count).Error)
 	assert.Equal(t, upgradeFixtureCounts["tickets"], count, "the rejected ticket must not be stored")
+}
+
+// TestQuoteHistorySourceSQLiteUpgrade is the SQLite half of the quote history
+// source (#400): SQLite installs never run the SQL migration, so AutoMigrate
+// relaxes quote_status_changes.changed_by_id (a table rebuild) and adds
+// source. The file holds users, quotes and the history table in the shape the
+// previous release created it, with one staff row. The row stays with its
+// user and reads source staff, the index and the foreign key to users
+// survive, and a client answer without a user is accepted afterwards.
+func TestQuoteHistorySourceSQLiteUpgrade(t *testing.T) {
+	openV120Fixture(t)
+	require.NoError(t, MigrateDatabase())
+
+	// Put the history table back into its previous shape.
+	require.NoError(t, DB.Exec("DROP TABLE `quote_status_changes`").Error)
+	require.NoError(t, DB.Exec("CREATE TABLE `quote_status_changes` (`id` integer PRIMARY KEY AUTOINCREMENT,`quote_id` integer NOT NULL,"+
+		"`from_status` varchar(20),`to_status` varchar(20) NOT NULL,`changed_by_id` integer NOT NULL,`changed_at` datetime NOT NULL,"+
+		"CONSTRAINT `fk_quote_status_changes_changed_by` FOREIGN KEY (`changed_by_id`) REFERENCES `users`(`id`))").Error)
+	require.NoError(t, DB.Exec("CREATE INDEX `idx_quote_status_changes_quote_id` ON `quote_status_changes`(`quote_id`)").Error)
+	require.False(t, DB.Migrator().HasColumn("quote_status_changes", "source"), "the previous shape has no source")
+
+	var userID uint
+	require.NoError(t, DB.Raw("SELECT id FROM users ORDER BY id LIMIT 1").Scan(&userID).Error)
+	require.NotZero(t, userID)
+	quote := Quote{Title: "Upgrade", Status: QuoteStatusSent, Currency: "EUR", OwnerID: userID}
+	require.NoError(t, DB.Create(&quote).Error)
+	require.NoError(t, DB.Exec("INSERT INTO quote_status_changes (quote_id, from_status, to_status, changed_by_id, changed_at) VALUES (?, NULL, 'draft', ?, '2026-11-01 10:00:00')",
+		quote.ID, userID).Error)
+	require.Error(t, DB.Exec("INSERT INTO quote_status_changes (quote_id, from_status, to_status, changed_by_id, changed_at) VALUES (?, 'draft', 'sent', NULL, '2026-11-01 10:05:00')",
+		quote.ID).Error, "the previous shape needs a user")
+
+	require.NoError(t, MigrateDatabase())
+
+	assertUpgradedV120(t)
+
+	// The existing row: kept, same user, source staff.
+	var rows []QuoteStatusChange
+	require.NoError(t, DB.Order("id ASC").Find(&rows).Error)
+	require.Len(t, rows, 1, "the existing row is kept")
+	require.NotNil(t, rows[0].ChangedByID)
+	assert.Equal(t, userID, *rows[0].ChangedByID, "the existing row keeps its user")
+	assert.Equal(t, QuoteChangeSourceStaff, rows[0].Source, "the existing row reads source staff")
+	assert.Equal(t, QuoteStatusDraft, rows[0].ToStatus)
+	assert.Nil(t, rows[0].FromStatus)
+
+	// The schema: nullable actor, source, the index and the foreign key.
+	ddl := tableSQL(t, "quote_status_changes")
+	assert.NotContains(t, ddl, "`changed_by_id` integer NOT NULL", "changed_by_id is nullable, got DDL: %s", ddl)
+	assert.Contains(t, ddl, "`changed_by_id` integer")
+	assert.Contains(t, ddl, "`source` varchar(20) NOT NULL DEFAULT \"staff\"")
+	assert.Contains(t, ddl, "CONSTRAINT `fk_quote_status_changes_changed_by` FOREIGN KEY (`changed_by_id`) REFERENCES `users`(`id`)")
+	assert.NotEmpty(t, indexSQL(t, "quote_status_changes", "idx_quote_status_changes_quote_id"), "idx_quote_status_changes_quote_id must survive the rebuild")
+
+	// A client answer has no user; a user that does not exist is refused.
+	from := QuoteStatusSent
+	client := QuoteStatusChange{QuoteID: quote.ID, FromStatus: &from, ToStatus: QuoteStatusAccepted, Source: QuoteChangeSourceClient, ChangedAt: rows[0].ChangedAt.Add(time.Hour)}
+	require.NoError(t, DB.Create(&client).Error, "a client row without a user is accepted")
+	var stored QuoteStatusChange
+	require.NoError(t, DB.Preload("ChangedBy").First(&stored, client.ID).Error)
+	assert.Nil(t, stored.ChangedByID)
+	assert.Nil(t, stored.ChangedBy)
+	assert.Equal(t, QuoteChangeSourceClient, stored.Source)
+
+	err := DB.Exec("INSERT INTO quote_status_changes (quote_id, from_status, to_status, changed_by_id, source, changed_at) VALUES (?, 'draft', 'sent', 999999, 'staff', '2026-11-01 11:00:00')", quote.ID).Error
+	require.Error(t, err, "a changed_by_id naming no user must be refused")
+	assert.Contains(t, err.Error(), "FOREIGN KEY constraint failed")
+
+	var violations []map[string]interface{}
+	require.NoError(t, DB.Raw("PRAGMA foreign_key_check").Scan(&violations).Error)
+	assert.Empty(t, violations, "foreign_key_check must find nothing")
 }

@@ -480,7 +480,9 @@ or by restoring the pre-upgrade backup (SQLite).
 
 `quote_status_changes` is append-only, the `deal_stage_changes` pattern: one row per status the
 quote entered, the create included (`from_status` null), written in the same transaction as the
-change, never updated, kept when the quote is soft-deleted. There is no foreign key to `quotes`.
+change, never updated, kept when the quote is soft-deleted. There is no foreign key to `quotes`;
+`changed_by_id` has one to `users` (`fk_quote_status_changes_changed_by`) and is NULL on a row
+the client wrote through the response link (#400), which `source` names.
 Its id is also the marker the email stamp compares against: `last_emailed_at` is set only when no
 row of the quote with `to_status = 'draft'` and an id above the one read before the send exists.
 
@@ -489,7 +491,8 @@ row of the quote with `to_status = 'draft'` and an id above the one read before 
 | quote_id | uint | Yes | indexed, no FK | The quote |
 | from_status | string | No | null on the creating row | Status left |
 | to_status | string | Yes | a status value | Status entered |
-| changed_by_id | uint | Yes | FK to users | Who made the change; the quote owner on a row written by a client answer (#382) |
+| changed_by_id | uint | No | FK to users | The user who made the change; NULL on a client answer (#400). A client answer recorded before #400 holds the owner of the quote |
+| source | string | Yes | `varchar(20)`, default `staff` | `staff` (a signed-in user) or `client` (the client's answer through the response link) |
 | changed_at | datetime | Yes | UTC | When |
 
 ### Quote Response Token
@@ -516,10 +519,14 @@ email.
 | decision | string | No | NULL | `varchar(20)` | `accept` or `decline` on a row the client spent; NULL on an unused or invalidated row |
 
 A client answer claims the row, moves the quote `sent → accepted | rejected` and writes one
-`quote_status_changes` row (naming the quote owner) in one transaction; this row, with `used_at`
-and `decision`, is the record that the client answered. MySQL and MariaDB get the table from
+`quote_status_changes` row (no user, `source` `client`) in one transaction; this row, with
+`used_at` and `decision`, records which link was spent. MySQL and MariaDB get the table from
 `20261121120000_add_quote_response_tokens` (created only when missing; the down drops it);
-SQLite from `MigrateDatabase`.
+SQLite from `MigrateDatabase`. `20261122120000_quote_history_source` (#400) adds
+`quote_status_changes.source` and makes `changed_by_id` nullable, without a backfill; its down
+gives the rows without a user the `owner_id` of their quote, restores NOT NULL and drops
+`source`. On SQLite the AutoMigrate step of `MigrateDatabase` rebuilds the table, keeping the
+rows, the index and the foreign key.
 
 ## Follow-up Automation
 

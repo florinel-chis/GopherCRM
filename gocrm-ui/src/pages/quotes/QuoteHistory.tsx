@@ -9,7 +9,12 @@ export interface QuoteHistoryProps {
   isLoading?: boolean;
 }
 
+// A client answer through the response link has no user; it is told by its
+// source, never by a missing changed_by (a staff row can lack that too).
 const changedBy = (change: QuoteStatusChange): string => {
+  if (change.source === 'client') {
+    return 'Client';
+  }
   if (!change.changed_by) {
     return `user #${change.changed_by_id}`;
   }

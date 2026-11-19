@@ -1062,7 +1062,9 @@ error text.
   `UPDATE` setting `used_at`, `decision` and `updated_at` `WHERE id = ? AND used_at IS NULL AND
   (expires_at IS NULL OR expires_at > ?) AND EXISTS (the quote is live and sent)`; exactly one row,
   else `gorm.ErrRecordNotFound`), `ClaimStatus(sent → accepted | rejected)` with `closed_at`, and
-  the history row with `changed_by_id` = the quote owner. A failure after the claim rolls it back
+  the history row with `changed_by_id` NULL and `source` `client` (#400; staff transitions write
+  the acting user and `source` `staff`, and `GET /quotes/{id}/history` omits `changed_by` on a
+  client row). A failure after the claim rolls it back
   and the link stays usable. The deal repository is not touched. This is the single-use token
   shape of the form confirmation and the password reset; do not pre-check then update.
 - **Invalidation.** `ChangeStatus` stamps the quote's unused rows in its own transaction whenever
@@ -1112,8 +1114,11 @@ Roots: `TestQuoteEmailResponseLink` (`internal/service/quote_email_test.go`);
 like the application, skips without `TEST_MYSQL_DSN` and is not part of a CI gate, like the other
 quote concurrency roots); `TestQuoteResponseTokenRepository` (`internal/repository`);
 `TestQuotePublic{View,Respond}`, `TestQuotePublicRoutesWinOverTheIDParameter` (`internal/handler`);
-`TestQuoteResponseTokensMigrationFiles` (it holds the newest-migration assertion) and
-`TestQuoteResponseTokensMigration` (`cmd/migrate`). The erasure of the customer (#395):
+`TestQuoteResponseTokensMigrationFiles` and `TestQuoteResponseTokensMigration` (`cmd/migrate`).
+The history source (#400): `TestQuoteHistoryClientAnswer` (`internal/handler`, real routes and
+service), `TestQuoteHistorySourceMigrationFiles` (it holds the newest-migration assertion) and
+`TestQuoteHistorySourceMigration` (`cmd/migrate`, migration `20261122120000_quote_history_source`),
+`TestQuoteHistorySourceSQLiteUpgrade` (`internal/models`). The erasure of the customer (#395):
 `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`
 (`internal/service/quote_response_erasure_test.go`) and
 `TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}`,

@@ -79,9 +79,9 @@ func (s *quoteService) GetPublicResponse(token string) (*models.QuotePublicView,
 // token the second blocks on the quote lock on MySQL (on SQLite the single
 // connection serialises them) and then claims nothing. A failure after the
 // claim rolls the claim back, so the link stays usable. The deal is not
-// touched. The history row names the quote owner, because changed_by_id must
-// be a user; the token row (used_at, decision) is the record that the client
-// answered.
+// touched. The history row carries no user (changed_by_id NULL) and source
+// client, so the history shows the answer as the client's (#400); the token
+// row (used_at, decision) records which link was spent.
 func (s *quoteService) RespondPublic(token, decision string) (*models.QuotePublicView, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "quote"), "QuoteService", "RespondPublic")
 
@@ -133,7 +133,8 @@ func (s *quoteService) RespondPublic(token, decision string) (*models.QuotePubli
 			QuoteID:     quoteID,
 			FromStatus:  &from,
 			ToStatus:    to,
-			ChangedByID: quote.OwnerID,
+			ChangedByID: nil,
+			Source:      models.QuoteChangeSourceClient,
 			ChangedAt:   now,
 		})
 	})

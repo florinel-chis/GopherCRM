@@ -27,6 +27,7 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesSchema'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesDownDemotesCustomUsers'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteResponseTokensMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteHistorySourceMigration'),
     }
     migration_roots = len(required)
     if migrations_only:
@@ -37,6 +38,7 @@ def check(output, root, *, migrations_only=False):
             'TestCustomerWebsiteUpgradeFromSQLiteFixture',
             'TestTaskDealLinkSQLiteUpgradeFromV120',
             'TestRoleSQLiteUpgradeFromV120',
+            'TestQuoteHistorySourceSQLiteUpgrade',
         ))
         required.update(('github.com/florinel-chis/gophercrm/internal/repository', name) for name in (
             'TestLookupIndexesServeLookupsSQLite',

@@ -55,7 +55,7 @@ func (f quoteFixture) line(t *testing.T, repo QuoteRepository, quoteID uint, pos
 
 func (f quoteFixture) change(t *testing.T, repo QuoteRepository, quoteID uint, from *models.QuoteStatus, to models.QuoteStatus, at time.Time) *models.QuoteStatusChange {
 	t.Helper()
-	change := &models.QuoteStatusChange{QuoteID: quoteID, FromStatus: from, ToStatus: to, ChangedByID: f.owner.ID, ChangedAt: at}
+	change := &models.QuoteStatusChange{QuoteID: quoteID, FromStatus: from, ToStatus: to, ChangedByID: &f.owner.ID, Source: models.QuoteChangeSourceStaff, ChangedAt: at}
 	require.NoError(t, repo.CreateStatusChange(change))
 	return change
 }
@@ -291,7 +291,10 @@ func TestQuoteRepository_StatusChangesOldestFirstAndLatestID(t *testing.T) {
 	// Inserted out of chronological order on purpose.
 	middle := f.change(t, repo, quote.ID, statusPtr(models.QuoteStatusDraft), models.QuoteStatusSent, base.Add(time.Second))
 	oldest := f.change(t, repo, quote.ID, nil, models.QuoteStatusDraft, base)
-	newest := f.change(t, repo, quote.ID, statusPtr(models.QuoteStatusSent), models.QuoteStatusAccepted, base.Add(2*time.Second))
+	// The client's answer through the response link: no user (#400).
+	newest := &models.QuoteStatusChange{QuoteID: quote.ID, FromStatus: statusPtr(models.QuoteStatusSent), ToStatus: models.QuoteStatusAccepted,
+		Source: models.QuoteChangeSourceClient, ChangedAt: base.Add(2 * time.Second)}
+	require.NoError(t, repo.CreateStatusChange(newest))
 	other := f.quote(t, repo, models.QuoteStatusDraft, "Other")
 	f.change(t, repo, other.ID, nil, models.QuoteStatusDraft, base.Add(3*time.Second))
 
@@ -302,6 +305,13 @@ func TestQuoteRepository_StatusChangesOldestFirstAndLatestID(t *testing.T) {
 	assert.Nil(t, changes[0].FromStatus)
 	require.NotNil(t, changes[0].ChangedBy, "the acting user is preloaded")
 	assert.Equal(t, f.owner.ID, changes[0].ChangedBy.ID)
+	require.NotNil(t, changes[0].ChangedByID)
+	assert.Equal(t, f.owner.ID, *changes[0].ChangedByID)
+	assert.Equal(t, models.QuoteChangeSourceStaff, changes[0].Source)
+	assert.Equal(t, models.QuoteChangeSourceStaff, changes[1].Source)
+	assert.Nil(t, changes[2].ChangedByID, "a client answer is stored without a user")
+	assert.Nil(t, changes[2].ChangedBy, "and none is preloaded")
+	assert.Equal(t, models.QuoteChangeSourceClient, changes[2].Source)
 
 	latest, err := repo.LatestStatusChangeID(quote.ID)
 	require.NoError(t, err)

@@ -847,7 +847,7 @@ authentication and live on the moderate tier:
 - `POST /api/v1/quotes/public/response` - **No authentication.** Answer the quote
   `{token, decision}` with `accept` or `decline` *(single use: claims the token and moves the
   quote sent→accepted or sent→rejected with one history row in one transaction; the history row
-  names the quote owner; the deal is not changed; an invalid body is 400 `VALIDATION_ERROR`, any
+  has no user and `source` `client`; the deal is not changed; an invalid body is 400 `VALIDATION_ERROR`, any
   unusable token the same generic 400; strict rate tier. The web application's `/quote-response`
   page calls both routes without a bearer token)*
 - `POST /api/v1/quotes/public/render` - **No authentication.** The read the PDF render page

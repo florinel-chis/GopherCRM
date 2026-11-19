@@ -357,7 +357,7 @@ func TestThePersonalDataSweepCoversQuoteTables(t *testing.T) {
 	require.NoError(t, db.Create(quote).Error)
 	require.NoError(t, db.Create(&models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: canary.FirstName, Quantity: models.QuoteQuantityFromUnits(1), UnitPriceCents: 100, LineTotalCents: 100}).Error)
 	from := models.QuoteStatusDraft
-	require.NoError(t, db.Create(&models.QuoteStatusChange{QuoteID: quote.ID, FromStatus: &from, ToStatus: models.QuoteStatus(canary.LastName), ChangedByID: owner.ID, ChangedAt: time.Now()}).Error)
+	require.NoError(t, db.Create(&models.QuoteStatusChange{QuoteID: quote.ID, FromStatus: &from, ToStatus: models.QuoteStatus(canary.LastName), ChangedByID: &owner.ID, ChangedAt: time.Now()}).Error)
 	require.NoError(t, db.Delete(product).Error, "a soft-deleted product is still read")
 
 	assert.Equal(t, []string{"products", "quote_lines", "quote_status_changes", "quotes"}, tablesHolding(t, db, canary.identifiers()),

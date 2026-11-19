@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The quote history shows a client's answer as the client's (#400).** An accept or decline
+  through the response link of a quote email (#382) used to be recorded with the quote owner
+  as its user. The history row of such an answer now has no user and says who answered:
+  - **API.** Every entry of `GET /quotes/{id}/history` carries a new field `source`, `staff`
+    or `client`. A client answer has `"source": "client"`, `"changed_by_id": null` and no
+    `changed_by`; `changed_by_id` is therefore nullable. Staff changes read as before
+    (`source` `staff`, `changed_by_id` and `changed_by` of the acting user). The public
+    response routes and their errors are unchanged.
+  - **Web UI.** The status history on the quote page shows `Client` as the actor of such a row.
+  - **Schema:** migration `20261122120000_quote_history_source` on MySQL/MariaDB adds
+    `quote_status_changes.source` (`varchar(20) NOT NULL DEFAULT 'staff'`, only when missing)
+    and makes `changed_by_id` nullable (the foreign key to `users` stays); `MigrateDatabase`
+    does the same on SQLite by rebuilding the table, rows kept. Rollback gives every row
+    without a user the owner of its quote, restores `NOT NULL` and drops `source`.
+  - **Not backfilled.** Answers recorded before the upgrade keep the quote owner as their user
+    and read `source` `staff`.
+
 - **Quote PDF output (#384).** A quote can be downloaded as a PDF and the quote email carries
   it as an attachment. The server prints the document with a headless Chrome or Chromium: the
   same document as the print page, served by a new public page of the web application,
@@ -102,11 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     accepted quote, and a sent quote whose `valid_until` has passed, are emailed without a link.
     A quote that left sent, or had any status change recorded, between the start of the email
     request and the storing of the link is refused with 409 and nothing is sent.
-  - **History attribution.** `quote_status_changes.changed_by_id` must be a user, so the history
-    row of a client answer names the quote owner; the token row (`used_at`, `decision`) is the
-    record that the client answered. No existing table is altered.
-  - **Not included.** A "client" label in the staff history is the follow-up (the page that
-    answers the link is #383). The public view holds no personal data. Erasing the customer of
+  - **History attribution.** The history row of a client answer has no user and `source`
+    `client` (#400, above); the token row (`used_at`, `decision`) records which link was
+    spent. This migration alters no existing table; `20261122120000_quote_history_source`
+    (#400) changes `quote_status_changes`.
+  - **Not included.** The page that answers the link is #383. The public view holds no
+    personal data. Erasing the customer of
     a sent quote invalidates its mailed links since #395 (see Fixed).
   - **Schema:** migration `20261121120000_add_quote_response_tokens` on MySQL/MariaDB (one
     `CREATE TABLE IF NOT EXISTS`, no foreign key), `MigrateDatabase` on SQLite; rollback drops

@@ -203,8 +203,8 @@ describe('quotesApi', () => {
   it('reads the status history at /quotes/{id}/history', async () => {
     vi.mocked(api.get).mockResolvedValue({
       data: [
-        { id: 1, quote_id: 42, from_status: null, to_status: 'draft', changed_by_id: 1, changed_at: '2026-10-26T08:00:00Z' },
-        { id: 2, quote_id: 42, from_status: 'draft', to_status: 'sent', changed_by_id: 1, changed_at: '2026-10-27T08:00:00Z' },
+        { id: 1, quote_id: 42, from_status: null, to_status: 'draft', changed_by_id: 1, source: 'staff', changed_at: '2026-10-26T08:00:00Z' },
+        { id: 2, quote_id: 42, from_status: 'draft', to_status: 'sent', changed_by_id: 1, source: 'staff', changed_at: '2026-10-27T08:00:00Z' },
       ],
     });
 

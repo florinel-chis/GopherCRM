@@ -3831,12 +3831,16 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteOwnerSummary'
         description: |-
-          Summary of the acting user (no email). Omitted when that account no
-          longer exists.
+          Summary of the acting user (no email). Omitted when the client
+          answered through the response link (source client) and when that
+          account no longer exists.
       changed_by_id:
-        description: User who made the change.
+        description: |-
+          User who made the change; null when the client answered through the
+          response link (source client).
         example: 7
         type: integer
+        x-nullable: true
       from_status:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteStatus'
@@ -3853,6 +3857,16 @@ definitions:
         description: The quote this row belongs to.
         example: 42
         type: integer
+      source:
+        description: |-
+          Who made the change: staff (a signed-in user, named by changed_by_id)
+          or client (the client's answer through the response link of the quote
+          email, which has no user).
+        enum:
+        - staff
+        - client
+        example: staff
+        type: string
       to_status:
         allOf:
         - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuoteStatus'
@@ -20658,9 +20672,13 @@ paths:
     get:
       description: 'The quote''s status changes, oldest first (changed_at, then id).
         Roles: admin (any quote) and sales (only the quotes it owns). The first row
-        has from_status null and to_status draft. changed_by is a summary of the acting
-        user (id and names, no email), omitted when that account no longer exists.
-        data is the array; there is no pagination.'
+        has from_status null and to_status draft. source says who made the change:
+        staff (a signed-in user, named by changed_by_id) or client (the client''s
+        answer through the response link of the quote email). changed_by is a summary
+        of the acting user (id and names, no email), omitted when that account no
+        longer exists. A client answer has no user: its changed_by_id is null and
+        changed_by is absent. An answer recorded before source existed reads staff
+        with the quote owner as its user. data is the array; there is no pagination.'
       parameters:
       - description: Quote ID
         in: path
@@ -21453,7 +21471,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row names the quote owner as changed_by, and the token itself records that the client answered. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.
+        Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.
         The body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
       parameters:
       - description: The token and the decision
