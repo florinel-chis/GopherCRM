@@ -183,7 +183,7 @@ an admin through the app.
 | `login.spec.ts` | 11 | Auth — render, success, wrong password, unknown user, empty and invalid input, password visibility, register link, Enter key, protected routes, unauthenticated redirect |
 | `registration.spec.ts` | 18 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error, disabled switch (no sign-up link, notice instead of form, API 403) |
 | `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, search, status and priority filters, status and priority updates, long description; each case acts on a customer or ticket it seeds through the API |
-| `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, search, minimal data; the status and priority filter cases are `fixme` until `GET /tasks` reads the parameters (#427) |
+| `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, search, minimal data, status and priority filters (`GET /tasks` filters `status` and `priority` server-side since #427) |
 | `admin-users.spec.ts` | 14 | Users — list, create, edit, view, delete, search; the role filter case is `fixme` until `GET /users` reads the parameter (#428) |
 | `admin-leads.spec.ts` | 12 | Leads — list, create, edit, view, delete, search, minimal data, status filter (`GET /leads` filters `status` server-side since #426) |
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |

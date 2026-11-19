@@ -22776,7 +22776,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of tasks. Roles: every authenticated role. Admins see every task and may use search and sorting. Every other role is silently narrowed to the tasks assigned to them, and search, sort_by and sort_order are ignored for them, except with label_id, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search (search is ignored when both are sent); an unparseable or non-positive label_id is ignored, and an unknown one yields an empty page rather than 404. Precedence for admins: label_id, then search, then sort_by, then the plain list. search matches title or description with SQL LIKE. An unknown sort_by is ignored (unsorted, ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; offset defaults to 0; limit defaults to 20, non-positive or unparseable values fall back to the default and anything above 100 is clamped to 100. The non-admin path without label_id returns assigned_to as a zero-valued object. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.",
+                "description": "One page of tasks. Roles: every authenticated role. Admins see every task and may use search and sorting. Every other role is silently narrowed to the tasks assigned to them, and search, sort_by and sort_order are ignored for them, except with label_id, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search (search is ignored when both are sent); an unparseable or non-positive label_id is ignored, and an unknown one yields an empty page rather than 404. Precedence for admins: label_id, then search, then sort_by, then the plain list. search matches title or description with SQL LIKE. An unknown sort_by is ignored (unsorted, ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; offset defaults to 0; limit defaults to 20, non-positive or unparseable values fall back to the default and anything above 100 is clamped to 100. The non-admin path without label_id, status or priority returns assigned_to as a zero-valued object. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.\nstatus (#427) takes exactly one of pending, in_progress, completed or cancelled, and priority exactly one of low, medium or high, both matched case-sensitively. An empty value is ignored, a repeated parameter uses its first value, and any other value (done, Completed, urgent, HIGH, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed by the offending parameter name(s) and the value not echoed. With a status or priority, the filters are applied in the query before offset and limit, so tasks, total and meta count only the filtered set, and assigned_to is filled for every caller. For an admin they combine with each other, with label_id, with search (still ignored when label_id is given) and with sort_by/sort_order, all ANDed. For every other role they narrow only the caller's own tasks, combine with label_id, ignore search, and honour sort_by/sort_order only together with label_id (ascending id order otherwise).",
                 "produces": [
                     "application/json"
                 ],
@@ -22803,6 +22803,29 @@
                         "default": 20,
                         "description": "Page size; clamped to 100",
                         "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "pending",
+                            "in_progress",
+                            "completed",
+                            "cancelled"
+                        ],
+                        "type": "string",
+                        "description": "Only tasks in this status (exact, case-sensitive match); empty is ignored, any other value is 400. Combines with priority, label_id and, for admins, search and the sort; non-admins are still narrowed to their own tasks",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "low",
+                            "medium",
+                            "high"
+                        ],
+                        "type": "string",
+                        "description": "Only tasks with this priority (exact, case-sensitive match); empty is ignored, any other value is 400. Combines with status, label_id and, for admins, search and the sort; non-admins are still narrowed to their own tasks",
+                        "name": "priority",
                         "in": "query"
                     },
                     {
@@ -22859,6 +22882,24 @@
                                         },
                                         "meta": {
                                             "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - status or priority is not one of the listed values (error.details is keyed by the offending parameter name; the value is not echoed)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
                                         }
                                     }
                                 }
@@ -31898,7 +31939,7 @@
             "type": "object",
             "properties": {
                 "assigned_to": {
-                    "description": "The assignee's user record. Always present in the JSON. GET /tasks/{id}, PUT /tasks/{id}, GET /tasks/upcoming and the admin and label-filtered GET /tasks listings fill it in with the User object (see the User schema). POST /tasks, GET /tasks/my and the non-admin GET /tasks without label_id return a zero-valued placeholder instead (id 0, every string empty, role \"\" included, timestamps 0001-01-01T00:00:00Z), which is not a valid User, so this property is documented as a plain object. Use assigned_to_id.",
+                    "description": "The assignee's user record. Always present in the JSON. GET /tasks/{id}, PUT /tasks/{id}, GET /tasks/upcoming and the admin, label-filtered and status/priority-filtered GET /tasks listings fill it in with the User object (see the User schema). POST /tasks, GET /tasks/my and the non-admin GET /tasks without label_id, status or priority return a zero-valued placeholder instead (id 0, every string empty, role \"\" included, timestamps 0001-01-01T00:00:00Z), which is not a valid User, so this property is documented as a plain object. Use assigned_to_id.",
                     "type": "object"
                 },
                 "assigned_to_id": {

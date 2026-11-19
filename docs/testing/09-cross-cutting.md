@@ -640,37 +640,31 @@ into a sign-out test.
   sort by Created column descending" and "should toggle sort order on double click" cover leads
   only; G21 asks for the other columns.
 
-### TC-XCUT-038 — Task status and priority dropdowns do not filter anything
+### TC-XCUT-038 — Task status and priority dropdowns filter server-side
 - **Priority:** P1
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Logged in as the seeded admin; tasks in more than one status and priority.
 - **Steps:**
-  1. On `/tasks`, note the visible rows, then select **Status** and re-read the table.
+  1. On `/tasks`, note the visible rows and the pagination total, then select **Status** and
+     re-read the table.
   2. Repeat with **Priority**.
-     `/tickets`, `/users` and `/leads` are the exceptions: since #218 the backend filters ticket
-     status and priority server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and
-     TC-TICK-059 to 064 in [05-tickets.md](05-tickets.md); since #428 (resolved) it filters the
-     users `role` server-side, covered by TC-USER-013 in [07-users.md](07-users.md); and since #426
-     (resolved) it filters the lead `status` server-side, covered by TC-LEAD-038 in
-     [03-leads.md](03-leads.md). None of them is covered by this case.
-- **Expected:** In every case the request is re-issued with the extra query parameter
-  (`?status=pending`, `?priority=high`, …), the backend **ignores** it, and the rendered rows and the
-  total in the pagination footer are **unchanged**.
-- **Known issue:** FEATURES 6.5 and gap G34 describe these as *client-side filters over the current
-  page*. That is too generous: the task list page does not filter the fetched rows at all — the
-  only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
-  defect is filed as #427 and two browser cases wait for it, each with a real assertion that the
-  non-matching row is gone (#402): `admin-tasks.spec.ts` "admin can filter tasks by status (#427)"
-  and "admin can filter tasks by priority (#427)" are `test.fixme`. This no longer covers tickets:
-  `GET /tickets` filters `status` and `priority` server-side since #218 (FEATURES 5.5), and the
-  `admin-tickets.spec.ts` "admin can filter tickets by status" / "by priority" tests run against
-  tickets they seed. Nor does it cover users: #428 (resolved) made `GET /users` filter `role`
-  server-side (FEATURES 7.8), and `admin-users.spec.ts` "admin can filter users by role (#428)" now
-  runs as a plain test. Nor leads: #426 (resolved) made `GET /leads` filter `status` server-side
-  (FEATURES 3.8, `lead_handler.go:363`), and `admin-leads.spec.ts` "admin can filter leads by status
-  (#426)" now runs as a plain test.
-- **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
-  tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
+     `/tickets`, `/users` and `/leads` filter server-side as well: ticket status and priority since
+     #218 (TC-TICK-033, TC-TICK-034 and TC-TICK-059 to 064 in [05-tickets.md](05-tickets.md)), the
+     users `role` since #428 (TC-USER-013 in [07-users.md](07-users.md)) and the lead `status` since
+     #426 (TC-LEAD-038 in [03-leads.md](03-leads.md)). None of them is covered by this case.
+- **Expected:** The request is re-issued with the extra query parameter (`?status=pending`,
+  `?priority=high`, …) and, since #427, the backend filters on it in the query before offset and
+  limit: only matching rows are shown and the pagination total counts only them. Both filters
+  combine; for an admin they also combine with search, `label_id` and the sort, for every other
+  role they narrow only the caller's own tasks. An empty value ("All") is ignored, and a value
+  outside the task enums is 400 `VALIDATION_ERROR`.
+- **Known issue:** none since #427. Tasks now filter server-side like tickets (#218, FEATURES 5.5),
+  users (#428, FEATURES 7.8) and leads (#426, FEATURES 3.8): `TaskHandler.List` validates `status`
+  and `priority` (`task_handler.go:295`) and passes them to `TaskService.ListFiltered`
+  (FEATURES 6.5).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by
+  status (#427)" and "admin can filter tasks by priority (#427)", each asserting the non-matching
+  row is gone; backend `TestTaskListFilterHandler` and `TestTaskListFilterRepository{SQLite,MySQL}`.
 
 ---
 

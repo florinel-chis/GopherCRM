@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050; the 15-products-quotes row and the total on 2026-11-19 for TC-PQ-059, #395; the 08-settings row and the total on 2026-11-19 for the five webhook cases of #409, TC-SET-036 to TC-SET-040; the 05-tickets row and the total on 2026-11-19, #402: the row had stayed at 64 cases and 21 automated while the file held 77 and 34, and eight of its planned cases became automated; the 07-users row and the total on 2026-11-19 for TC-USER-013, #428; the 03-leads row and the total on 2026-11-19 for TC-LEAD-038, #426). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050; the 15-products-quotes row and the total on 2026-11-19 for TC-PQ-059, #395; the 08-settings row and the total on 2026-11-19 for the five webhook cases of #409, TC-SET-036 to TC-SET-040; the 05-tickets row and the total on 2026-11-19, #402: the row had stayed at 64 cases and 21 automated while the file held 77 and 34, and eight of its planned cases became automated; the 07-users row and the total on 2026-11-19 for TC-USER-013, #428; the 03-leads row and the total on 2026-11-19 for TC-LEAD-038, #426; the 06-tasks and 09-cross-cutting rows and the total on 2026-11-19 for TC-TASK-029, TC-TASK-030 and TC-XCUT-038, #427). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -26,17 +26,17 @@ blocked.
 | [03-leads.md](03-leads.md) | Lead CRUD, search/sort/filter, external-id lookup, CSV export, conversion, bulk status, owner validation and assignment | 77 | 18 | 43 | 16 | 44 | 25 | 8 |
 | [04-customers.md](04-customers.md) | Customer CRUD, export, assignment, tickets-by-customer, external identity mappings | 53 | 20 | 20 | 13 | 26 | 18 | 9 |
 | [05-tickets.md](05-tickets.md) | Ticket CRUD, role matrix, comments, my-tickets, SLA fields, server-side status/priority filters | 77 | 34 | 32 | 11 | 42 | 32 | 3 |
-| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 11 | 28 | 10 |
+| [06-tasks.md](06-tasks.md) | Task CRUD, assignment rules, due dates, my-tasks | 49 | 14 | 19 | 16 | 13 | 26 | 10 |
 | [07-users.md](07-users.md) | User admin, roles, activate/deactivate, erasure, profile | 50 | 20 | 23 | 7 | 25 | 25 | 0 |
 | [08-settings.md](08-settings.md) | API keys, configuration settings, role list and editor, webhook endpoints and delivery log | 40 | 12 | 19 | 9 | 9 | 14 | 17 |
-| [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 13 | 36 | 1 |
+| [09-cross-cutting.md](09-cross-cutting.md) | RBAC matrix, errors, pagination, rate limits, erasure UX | 50 | 13 | 24 | 13 | 14 | 35 | 1 |
 | [10-labels.md](10-labels.md) | Task labels: management page, chips, task attachment, filtering | 46 | 5 | 23 | 18 | 18 | 22 | 6 |
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
 | [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output, response links and erasure | 59 | 35 | 22 | 2 | 58 | 1 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **741** | **263** | **327** | **151** | **353** | **305** | **83** |
+| **Total** | | **741** | **263** | **327** | **151** | **356** | **302** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every

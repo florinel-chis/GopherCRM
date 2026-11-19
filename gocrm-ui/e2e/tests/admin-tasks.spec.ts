@@ -134,8 +134,7 @@ test.describe('Admin - Tasks Management', () => {
     }
   };
 
-  // fixme: GET /tasks ignores the status parameter, so the Status dropdown narrows nothing (#427).
-  test.fixme('admin can filter tasks by status (#427)', async ({ page }) => {
+  test('admin can filter tasks by status (#427)', async ({ page }) => {
     const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
     const pendingTitle = `${stamp} still pending`;
     const completedTitle = `${stamp} already completed`;
@@ -144,16 +143,15 @@ test.describe('Admin - Tasks Management', () => {
 
     await tasksPage.goto();
     await tasksPage.searchTasks(stamp);
-    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(1);
+    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(1, { timeout: 30_000 });
     await expect(tasksPage.taskRow(completedTitle)).toHaveCount(1);
 
     await tasksPage.filterByStatus('completed');
     await expect(tasksPage.taskRow(completedTitle)).toBeVisible();
-    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(0);
+    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(0, { timeout: 30_000 });
   });
 
-  // fixme: GET /tasks ignores the priority parameter, so the Priority dropdown narrows nothing (#427).
-  test.fixme('admin can filter tasks by priority (#427)', async ({ page }) => {
+  test('admin can filter tasks by priority (#427)', async ({ page }) => {
     const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
     const lowTitle = `${stamp} can wait`;
     const highTitle = `${stamp} cannot wait`;
@@ -162,12 +160,12 @@ test.describe('Admin - Tasks Management', () => {
 
     await tasksPage.goto();
     await tasksPage.searchTasks(stamp);
-    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(1);
+    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(1, { timeout: 30_000 });
     await expect(tasksPage.taskRow(highTitle)).toHaveCount(1);
 
     await tasksPage.filterByPriority('high');
     await expect(tasksPage.taskRow(highTitle)).toBeVisible();
-    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(0);
+    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(0, { timeout: 30_000 });
   });
 
   test('admin sees validation errors for invalid task data', async ({ page }) => {

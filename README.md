@@ -903,7 +903,9 @@ authentication and live on the moderate tier:
   automation events, origin `bulk`, in the batch transaction)*
 
 ### Tasks
-- `GET /api/v1/tasks` - List tasks *(non-admins see their own)*
+- `GET /api/v1/tasks` - List tasks (`page`, `limit`, `search`, `sort_by`, `sort_order`, `label_id`,
+  `status` (one of `pending`, `in_progress`, `completed`, `cancelled`) and `priority` (one of `low`,
+  `medium`, `high`)) *(non-admins see their own; the filters narrow only their own tasks)*
 - `POST /api/v1/tasks` - Create new task *(admin, support, sales; non-admins may only assign to themselves)*
 - `GET /api/v1/tasks/my` - Get current user's tasks
 - `GET /api/v1/tasks/upcoming` - Tasks due within `days` (1-90, default 7) *(non-admins see their

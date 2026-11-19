@@ -377,7 +377,7 @@ regression anchors, not endorsements.
 
 ## 6.5 Filter by Status / Priority
 
-### TC-TASK-029 — The Status dropdown does not filter anything
+### TC-TASK-029 — The Status dropdown narrows the rows and the total server-side
 - **Priority:** P1
 - **Type:** regression
 - **Preconditions:** Admin logged in; tasks in at least two different statuses exist (a fresh `pending` task plus one completed via TC-TASK-018).
@@ -385,30 +385,28 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks` and record the footer total and the visible Status chips.
   2. Select Status = "Completed".
   3. Wait for the refetch and re-read the table.
-- **Expected:** A request goes out as `GET /api/v1/tasks?page=1&limit=10&status=completed`, returns 200, and the result set is **identical** to the unfiltered one: the same total and the same mix of Pending and Completed rows. The dropdown shows "Completed" but the table is unchanged.
-- **Known issue:** `TaskHandler.List` reads only `page`, `offset`, `limit`, `sort_by`, `sort_order` and `search` (`task_handler.go:206-234`) — `status` is ignored server-side. Unlike the ticket list, `TaskList` also performs **no** client-side narrowing: it renders `data?.data` straight into `DataTable`, which does not filter (`TaskList.tsx:404`, `components/DataTable.tsx`). Confirmed live: `GET /tasks` and `GET /tasks?status=completed&priority=high` both return `total: 39` with mixed statuses. FEATURES.md row 6.5 and gap **G34** call this "client-side" filtering; that is inaccurate for tasks — no filtering happens anywhere. The defect is filed as #427.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by status (#427)" is `test.fixme` for #427: it seeds a pending and a completed task sharing a search token, filters by "Completed" and expects the pending row to be gone, which fails while `GET /tasks` ignores `status`.
+- **Expected:** A request goes out as `GET /api/v1/tasks?page=1&limit=10&status=completed`, returns 200 and lists only completed tasks; `total` and the pagination footer count only them (#427). The handler validates the value with `TaskStatus.IsValid` (`task_handler.go:295`) and passes it to `TaskService.ListFiltered` (`task_handler.go:349`), whose single repository predicate applies before offset and limit. Selecting "All" sends `status=`, which is ignored. Any value outside `pending`, `in_progress`, `completed`, `cancelled` (matched case-sensitively, so `Completed` too) is 400 `VALIDATION_ERROR` with `error.details.status`, the value not echoed. A non-admin is narrowed to the caller's own tasks first.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by status (#427)": it seeds a pending and a completed task sharing a search token, filters by "Completed" and asserts the pending row is gone. Backend: `TestTaskListFilterHandler`, `TestTaskListFilterRepository{SQLite,MySQL}`.
 
-### TC-TASK-030 — The Priority dropdown does not filter anything
+### TC-TASK-030 — The Priority dropdown narrows the rows and the total server-side
 - **Priority:** P1
 - **Type:** regression
 - **Preconditions:** Admin logged in; tasks of at least two priorities exist (TC-TASK-010).
 - **Steps:**
   1. Navigate to `/tasks` and record the visible Priority chips.
   2. Select Priority = "High".
-- **Expected:** `GET /api/v1/tasks?…&priority=high` returns 200 and Low, Medium and High rows all remain on screen; the total is unchanged.
-- **Known issue:** Same root cause as TC-TASK-029 — `priority` is not read by the handler and the page performs no local filtering. G34, filed as #427.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by priority (#427)" is `test.fixme` for #427: it seeds a low and a high task sharing a search token, filters by "High" and expects the low row to be gone, which fails while `GET /tasks` ignores `priority`.
+- **Expected:** `GET /api/v1/tasks?…&priority=high` returns 200 and only High rows remain; the total counts only them (#427). It combines with the Status dropdown (both ANDed). Any value outside `low`, `medium`, `high` (so `urgent`, a ticket priority, and `HIGH` too) is 400 `VALIDATION_ERROR` with `error.details.priority`, the value not echoed.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by priority (#427)": it seeds a low and a high task sharing a search token, filters by "High" and asserts the low row is gone. Backend: `TestTaskListFilterHandler`, `TestTaskEnumIsValid`, `TestTaskListFilterRepository{SQLite,MySQL}`.
 
-### TC-TASK-031 — Combining search with a filter drops neither, because only search is honoured
+### TC-TASK-031 — For an admin, search and a status filter both narrow
 - **Priority:** P2
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Admin logged in; a task titled `SearchTask_<timestamp>` in status `pending`.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Type the unique title fragment into "Search tasks...".
   3. Select Status = "Completed".
-- **Expected:** The request carries both `search` and `status`; the response is filtered by `search` alone, so the `pending` task remains visible despite the "Completed" filter.
+- **Expected:** The request carries both `search` and `status`; since #427 both narrow the result (ANDed, before pagination), so the `pending` task disappears and the table is empty. With `label_id` as well, `label_id` still overrides `search`. For a non-admin, `search` stays ignored and only the status narrows the caller's own tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ---
@@ -545,7 +543,7 @@ regression anchors, not endorsements.
   1. Navigate to `/users/{id}` for one of them.
   2. Open the tasks tab.
 - **Expected:** `GET /api/v1/tasks?assigned_to={id}` returns 200 with **every** task in the system, because `assigned_to` is not a parameter the handler reads. The tab therefore lists other users' tasks as if they belonged to this user.
-- **Known issue:** `UserDetail.tsx:96-99` sends a filter the API ignores; same root cause as TC-TASK-029. Not recorded in FEATURES.md.
+- **Known issue:** `UserDetail.tsx:96-99` sends a filter the API ignores: `GET /tasks` reads `status` and `priority` since #427 (TC-TASK-029), but not `assigned_to`. Not recorded in FEATURES.md.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---
