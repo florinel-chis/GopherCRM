@@ -263,6 +263,7 @@ type webhookEnv struct {
 	customers CustomerService
 	tickets   TicketService
 	forms     FormService
+	bulk      BulkStatusService
 }
 
 // newWebhookEnv wires every create path with hooks (nil: unwired).
@@ -307,6 +308,12 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	e.leads = NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, e.txManager, leadOpts...)
 	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, customerOpts...)
 	e.tickets = NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo, ticketOpts...)
+	bulkOpts := []BulkStatusServiceOption{WithBulkAutomationEvents(automation)}
+	if hooks != nil {
+		bulkOpts = append(bulkOpts, WithBulkWebhooks(hooks))
+	}
+	e.bulk = NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
+		e.txManager, utils.Logger, bulkOpts...)
 	e.forms = NewFormService(repository.NewFormRepository(db), leadRepo, userRepo, e.mailer, e.txManager,
 		config.FormsConfig{PublicBaseURL: formTestPublicBase}, formTestAPIPrefix, formOpts...)
 }
@@ -441,6 +448,27 @@ func (e *webhookEnv) newestTicketOf(customerID uint) *models.Ticket {
 		return nil
 	}
 	return &tickets[0]
+}
+
+// seedTicket writes a ticket of a new customer directly (no webhook).
+func (e *webhookEnv) seedTicket(status models.TicketStatus) *models.Ticket {
+	e.t.Helper()
+	ticket := e.newTicket(e.seedCustomer().ID)
+	ticket.Status = status
+	require.NoError(e.t, e.db.Create(ticket).Error)
+	return ticket
+}
+
+// updatedDeliveries counts the rows of every *.updated event type.
+func (e *webhookEnv) updatedDeliveries() int64 {
+	e.t.Helper()
+	return e.count(&models.WebhookDelivery{}, "event_type LIKE ?", "%.updated")
+}
+
+// clearDeliveries removes every delivery row.
+func (e *webhookEnv) clearDeliveries() {
+	e.t.Helper()
+	require.NoError(e.t, e.db.Where("1 = 1").Delete(&models.WebhookDelivery{}).Error)
 }
 
 // injectedFailure is the error the failing wrapper returns.

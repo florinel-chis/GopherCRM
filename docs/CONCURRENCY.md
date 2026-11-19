@@ -51,7 +51,17 @@ writes each row by primary key with a conditional `UPDATE` or `DELETE` that re-c
 discovered state, so it never locks through `idx_webhook_deliveries_status_next` or
 `idx_webhook_deliveries_updated_at`. The outbox rows a create path writes are inserts into its own
 transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
-the chains above.
+the chains above. The same holds for the updated events (#408): the lead update, the ticket update
+and the lead and ticket bulk status batches insert their rows after the record write, inside the
+transaction and under the row locks they already took, behind the same plain read of the endpoints
+(once per batch). The customer update is the one path that gained a transaction: wired with
+webhooks, `CustomerService.Update` (`updateWithWebhooks`, `internal/service/customer_service.go`)
+takes exactly one row lock, the `customers` row it writes (a locking read by primary key, then the
+`UPDATE`), and inserts its rows after it. Its duplicate-email and company checks are plain reads
+made before the transaction, and it never calls `CompanyRepository.LockLive` or any other locking
+read on `companies` or `leads`, so it sits at the `customers` step of
+`companies → leads → customers → deals` and cannot invert the order against a company delete
+(`UnlinkCustomers`).
 
 **Quote response links (#382), a self-contained order.** Three flows take `quotes →
 quote_response_tokens`, each starting with the locking read of the quote by primary key
@@ -137,7 +147,7 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
   same file): a deadlock has already destroyed the enclosing transaction, so only the enclosing
   root may replay the whole unit.
 
-The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1064`),
+The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1092`),
 login (`internal/service/auth_service.go:283`), the password-reset request
 (`internal/service/auth_service.go:1220`), the password-reset confirm
 (`internal/service/auth_service.go:1327`), API-key create
@@ -321,11 +331,11 @@ confirm and the gaps of the re-check.
 
 - **Rows locked:** the `companies` rows of the lead's stored company and of a caller-supplied
   `company_id` (`lockLeadCompanies`, `internal/service/lead_service.go:275`), then the `leads` row
-  (`lockedLeadRead`, `internal/service/lead_service.go:1123`); the new `customers` row is inserted
-  (`internal/service/lead_service.go:1186`). No deal is touched.
+  (`lockedLeadRead`, `internal/service/lead_service.go:1151`); the new `customers` row is inserted
+  (`internal/service/lead_service.go:1214`). No deal is touched.
 - **Order:** a plain read of the lead outside the transaction
-  (`internal/service/lead_service.go:1019`); in each attempt a plain read of `company_id`
-  (`internal/service/lead_service.go:1102`) → companies, ascending id
+  (`internal/service/lead_service.go:1047`); in each attempt a plain read of `company_id`
+  (`internal/service/lead_service.go:1130`) → companies, ascending id
   (`internal/service/lead_service.go:288`) → the locked lead → customers. A locked lead that names
   another company ends the attempt with `errLeadCompanyMoved`; at most `leadCompanyMaxRestarts`
   restarts (`internal/service/lead_service.go:214`). A conversion queued behind a lead erasure
@@ -334,8 +344,8 @@ confirm and the gaps of the re-check.
   (#337, see Lead-rooted erasure).
 - **Transaction:** a transaction root (an enclosing transaction is refused with
   `utils.ErrTransactionRootRequired`); `runLeadCompanyAttempts`
-  (`internal/service/lead_service.go:1063`) around one root transaction per attempt.
-- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1064`,
+  (`internal/service/lead_service.go:1091`) around one root transaction per attempt.
+- **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1092`,
   `:1053` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
   busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:334`) restarts
   the whole root at most `leadCompanyMaxRestarts` (3) times, on `errLeadCompanyMoved` only and only
@@ -385,7 +395,7 @@ confirm and the gaps of the re-check.
   task batch locks only its task rows (at the `UPDATE` in `SetTaskStatus`,
   `internal/repository/bulk_status_repository.go:114`) and its own `bulk_operations` row
   (`CompletePending`), so it can invert no cross-table order. The completed-task check
-  (`internal/service/bulk_status_service.go:370`) is a read before that `UPDATE` and is not
+  (`internal/service/bulk_status_service.go:383`) is a read before that `UPDATE` and is not
   protected by a row lock: a task completed by another transaction between the read and the
   `UPDATE` is moved out of `completed` (a ROADMAP gap).
 - **Transaction:** `WithTransaction` (`internal/service/bulk_status_service.go:158`); a

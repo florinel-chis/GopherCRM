@@ -64,6 +64,9 @@ elif sys.argv[1] == 'test':
         for name in ('TestErasureVsCredentialFlowsMySQL', 'TestGovernedUserErasureVsCustomerErasureMySQL',
                      'TestQuoteResponseAfterCustomerErasureMySQL'):
             self.assertIn(name, selected['internal/service'])
+        for name in ('TestWebhookUpdatedFanOutSQLite', 'TestWebhookUpdatedFanOutMySQL',
+                     'TestWebhookUpdatedAtomicitySQLite', 'TestWebhookUpdatedAtomicityMySQL'):
+            self.assertIn(name, selected['internal/service'])
 
     def test_missing_database_or_boundary_cannot_reduce_profile(self):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):

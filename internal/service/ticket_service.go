@@ -40,12 +40,15 @@ type ticketService struct {
 
 	// webhooks is the outbound webhook outbox (#345), set with the
 	// transaction manager by WithTicketWebhooks: Create then enqueues
-	// ticket.created in the ticket's transaction. Nil means no webhooks.
+	// ticket.created and Update ticket.updated (#408) in the ticket's
+	// transaction. Nil means no webhooks.
 	webhooks repository.WebhookRepository
 }
 
 // WithTicketWebhooks makes Create insert the ticket and enqueue
-// ticket.created in one transaction run by txManager (#345).
+// ticket.created in one transaction run by txManager (#345), and Update run
+// as one transaction with a locking read that enqueues ticket.updated when a
+// stored value changed (#408), also without automation events.
 func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) TicketServiceOption {
 	return func(s *ticketService) {
 		s.webhooks = repo
@@ -55,7 +58,8 @@ func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.Tran
 	}
 }
 
-// ticketWebhooksWired reports whether Create enqueues ticket.created.
+// ticketWebhooksWired reports whether Create enqueues ticket.created and
+// Update ticket.updated.
 func (s *ticketService) ticketWebhooksWired() bool {
 	return s.webhooks != nil && s.txManager != nil
 }
@@ -250,7 +254,7 @@ func (s *ticketService) GetByAssignee(assigneeID uint, offset, limit int) ([]mod
 func (s *ticketService) Update(ticket *models.Ticket) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", ticket.ID), "TicketService", "Update")
 
-	if s.ticketEventsWired() {
+	if s.ticketEventsWired() || s.ticketWebhooksWired() {
 		return s.updateWithEvents(ticket, logger)
 	}
 
@@ -277,7 +281,9 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 	return nil
 }
 
-// updateWithEvents is Update with automation events wired (#242): one
+// updateWithEvents is Update with automation events (#242) or webhooks
+// (#408) wired; with webhooks it also enqueues ticket.updated, in the same
+// transaction, when a stored value differs from the locked row's. It is one
 // transaction that locks the ticket row first (GetByIDForUpdate), runs the
 // closed-reopen and assignee checks against the row that locking read
 // returns, saves the ticket, and records ticket_updated plus, when the status
@@ -314,7 +320,13 @@ func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.E
 			logger.WithError(utils.LogError(err)).Error("Failed to update ticket")
 			return err
 		}
-		return automationTicketUpdated(s.automation.WithTx(tx), ticket.ID, locked.Status, ticket.Status, models.AutomationOriginUser, nil)
+		if err := automationTicketUpdated(automationTx(s.automation, tx), ticket.ID, locked.Status, ticket.Status, models.AutomationOriginUser, nil); err != nil {
+			return err
+		}
+		if !ticketStoredValuesChanged(locked, ticket) {
+			return nil
+		}
+		return enqueueWebhookEvent(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketUpdated, ticket.ID)
 	})
 	if err != nil {
 		return err
@@ -323,6 +335,19 @@ func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.E
 	attachTicketAssignee(ticket, validatedAssignee, existing)
 	logger.WithField("status_changed", existing.Status != ticket.Status).Info("Ticket updated successfully")
 	return nil
+}
+
+// ticketStoredValuesChanged reports whether an update changed any column a
+// ticket update can change: the rule of the ticket.updated webhook event
+// (#408). due_at is compared as an instant; updated_at is not part of it.
+func ticketStoredValuesChanged(before, after *models.Ticket) bool {
+	return before.Title != after.Title ||
+		before.Description != after.Description ||
+		before.Status != after.Status ||
+		before.Priority != after.Priority ||
+		!equalUintPtr(before.AssignedToID, after.AssignedToID) ||
+		before.Resolution != after.Resolution ||
+		!equalTimePtr(before.DueAt, after.DueAt)
 }
 
 // errTicketLockingReadUnavailable is returned by a wired Update whose ticket

@@ -32,7 +32,7 @@ const webhookSecretBytes = 32
 
 // webhookEventTypesMaxItems bounds the raw event_types array before
 // deduplication.
-const webhookEventTypesMaxItems = 10
+const webhookEventTypesMaxItems = 20
 
 // ErrWebhooksUnavailable is returned by a service built without its
 // repository or secret box. It is a plain error: the handler answers 500.
@@ -58,7 +58,7 @@ func (e *WebhookValidationError) Details() map[string]string {
 // Messages of the refusals; none quotes the value.
 const (
 	WebhookURLRule        = "must be an https URL of at most 2048 characters, without credentials, query string or fragment, whose host is not a private, loopback, link-local or metadata address"
-	WebhookEventTypesRule = "must list 1 to 3 of lead.created, customer.created and ticket.created"
+	WebhookEventTypesRule = "must list 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated"
 )
 
 // ValidateWebhookURL checks an endpoint URL before anything is stored: https,
@@ -276,7 +276,7 @@ func (s *webhookService) ListDeliveries(ctx context.Context, filter repository.W
 		return nil, 0, &WebhookValidationError{Field: "status", Message: "must be pending, sending, succeeded or failed"}
 	}
 	if filter.EventType != "" && !models.IsWebhookEventType(filter.EventType) {
-		return nil, 0, &WebhookValidationError{Field: "event_type", Message: "must be lead.created, customer.created or ticket.created"}
+		return nil, 0, &WebhookValidationError{Field: "event_type", Message: "must be lead.created, lead.updated, customer.created, customer.updated, ticket.created or ticket.updated"}
 	}
 	return s.repo.ListDeliveries(ctx, filter, offset, limit)
 }

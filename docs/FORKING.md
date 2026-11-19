@@ -48,8 +48,10 @@ wiring is in `setupDependencies` (`cmd/main.go:261`).
 
 Checked by searching the tracked tree on `4dfe404`:
 
-- Outbound webhooks cover only `lead.created`, `customer.created` and `ticket.created` (#345, the
-  first cut of #232): no update, delete or other events, and no web UI for the registry yet.
+- Outbound webhooks cover the created and updated events of leads, customers and tickets
+  (`lead.created`, `lead.updated`, `customer.created`, `customer.updated`, `ticket.created`,
+  `ticket.updated`; #345 and #408, the first cuts of #232): no delete events, no events of other
+  entities, and no web UI for the registry yet.
 - No MCP server.
 - API keys have no scopes of their own (`internal/models/apikey.go` holds only name, hash,
   prefix, owner, expiry and an active flag): a key acts with its owner's current permissions. A
