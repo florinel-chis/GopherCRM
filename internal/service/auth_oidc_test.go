@@ -62,6 +62,8 @@ const (
 	oidcGraphGroupSales     = "6f1c2a3b-0d4e-4f5a-8b6c-7d8e9f0a1b2c"
 	oidcGraphGroupUnrelated = "11111111-2222-4333-8444-555555555555"
 	oidcGraphPath           = "/graph/v1.0/me/getMemberObjects"
+
+	oidcUserInfoPath = "/userinfo"
 )
 
 // ------------------------------------------------------------ test issuer ---
@@ -107,6 +109,43 @@ type oidcTestIssuer struct {
 	lastAccess   string
 	graph        oidcFakeGraph
 	otherHits    int
+	// accessSubjects maps each issued access token to the sub of its grant.
+	accessSubjects map[string]string
+	userinfo       oidcFakeUserInfo
+}
+
+// Modes of the fake userinfo endpoint (#451).
+const (
+	userinfoModeJSON      = "json"
+	userinfoModeStatus500 = "status500"
+	userinfoModeSlow      = "slow"
+	userinfoModeRedirect  = "redirect"
+	userinfoModeOversized = "oversized"
+	userinfoModeJWT       = "jwt"
+	userinfoModeRaw       = "raw"
+)
+
+// oidcFakeUserInfo is the fake userinfo endpoint: how discovery advertises it,
+// what it answers and what it received. The default (JSON, sub echoed, no
+// groups) behaves the way an issuer did before #451 read userinfo.
+type oidcFakeUserInfo struct {
+	mode string
+	// omitEndpoint leaves userinfo_endpoint out of discovery; plainHTTP
+	// advertises an http:// URL instead.
+	omitEndpoint, plainHTTP bool
+	// sub is the sub answered; nil echoes the sub of the bearer's grant.
+	sub *string
+	// omitSub leaves sub out of the answer.
+	omitSub bool
+	// groups is the raw groups member; nil leaves it out.
+	groups json.RawMessage
+	// raw is the whole body of userinfoModeRaw.
+	raw      string
+	requests []oidcUserInfoRequest
+}
+
+type oidcUserInfoRequest struct {
+	method, authorization, accept string
 }
 
 // Modes of the fake Microsoft Graph.
@@ -137,12 +176,14 @@ func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 	require.NoError(t, err)
 	other, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, grants: map[string]oidcGrant{}, accessTokens: map[string]string{}}
+	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, grants: map[string]oidcGrant{}, accessTokens: map[string]string{},
+		accessSubjects: map[string]string{}, userinfo: oidcFakeUserInfo{mode: userinfoModeJSON}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", issuer.discovery)
 	mux.HandleFunc("/jwks", issuer.jwks)
 	mux.HandleFunc("/token", issuer.token)
 	mux.HandleFunc(oidcGraphPath, issuer.graphMemberObjects)
+	mux.HandleFunc(oidcUserInfoPath, issuer.userInfo)
 	issuer.server = httptest.NewTLSServer(mux)
 	t.Cleanup(issuer.server.Close)
 	issuer.other = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -217,6 +258,81 @@ func (i *oidcTestIssuer) graphMemberObjects(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(answer)
 }
 
+// userInfo is the fake userinfo endpoint. It answers 401 unless the bearer is
+// an access token this issuer returned from a code exchange.
+func (i *oidcTestIssuer) userInfo(w http.ResponseWriter, r *http.Request) {
+	authorization := r.Header.Get("Authorization")
+	i.mu.Lock()
+	i.userinfo.requests = append(i.userinfo.requests, oidcUserInfoRequest{
+		method: r.Method, authorization: authorization, accept: r.Header.Get("Accept"),
+	})
+	echoed, known := i.accessSubjects[strings.TrimPrefix(authorization, "Bearer ")]
+	info := i.userinfo
+	i.mu.Unlock()
+	if !strings.HasPrefix(authorization, "Bearer ") || !known {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	answer := map[string]interface{}{"email": "userinfo-only@idp.example.test", "roles": []string{oidcAppRole}}
+	if !info.omitSub {
+		answer["sub"] = echoed
+		if info.sub != nil {
+			answer["sub"] = *info.sub
+		}
+	}
+	if info.groups != nil {
+		answer["groups"] = info.groups
+	}
+	switch info.mode {
+	case userinfoModeStatus500:
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	case userinfoModeSlow:
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+	case userinfoModeRedirect:
+		http.Redirect(w, r, i.other.URL+oidcUserInfoPath, http.StatusFound)
+		return
+	case userinfoModeOversized:
+		answer["padding"] = strings.Repeat("x", 1<<20)
+	case userinfoModeJWT:
+		w.Header().Set("Content-Type", "application/jwt")
+		_, _ = w.Write([]byte("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."))
+		return
+	case userinfoModeRaw:
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(info.raw))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
+// setUserInfo replaces the userinfo behaviour, keeping the recorded requests.
+func (i *oidcTestIssuer) setUserInfo(info oidcFakeUserInfo) {
+	i.mu.Lock()
+	if info.mode == "" {
+		info.mode = userinfoModeJSON
+	}
+	info.requests = i.userinfo.requests
+	i.userinfo = info
+	i.mu.Unlock()
+}
+
+func (i *oidcTestIssuer) resetUserInfo() {
+	i.mu.Lock()
+	i.userinfo = oidcFakeUserInfo{mode: userinfoModeJSON}
+	i.mu.Unlock()
+}
+
+func (i *oidcTestIssuer) userInfoRequests() []oidcUserInfoRequest {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]oidcUserInfoRequest(nil), i.userinfo.requests...)
+}
+
 func (i *oidcTestIssuer) setGraph(mode string, pages ...[]string) {
 	i.mu.Lock()
 	i.graph.mode, i.graph.pages = mode, pages
@@ -261,13 +377,13 @@ func (i *oidcTestIssuer) rootCAs() *x509.CertPool {
 func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
 	i.mu.Lock()
 	redirect := i.discoveryRedirect
+	omitUserInfo, plainUserInfo := i.userinfo.omitEndpoint, i.userinfo.plainHTTP
 	i.mu.Unlock()
 	if redirect {
 		http.Redirect(w, r, i.server.URL+"/moved/.well-known/openid-configuration", http.StatusFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	document := map[string]interface{}{
 		"issuer":                                i.server.URL,
 		"authorization_endpoint":                i.server.URL + "/authorize",
 		"token_endpoint":                        i.server.URL + "/token",
@@ -276,7 +392,16 @@ func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 		"code_challenge_methods_supported":      []string{"S256"},
-	})
+	}
+	switch {
+	case omitUserInfo:
+	case plainUserInfo:
+		document["userinfo_endpoint"] = "http://" + strings.TrimPrefix(i.server.URL, "https://") + oidcUserInfoPath
+	default:
+		document["userinfo_endpoint"] = i.server.URL + oidcUserInfoPath
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(document)
 }
 
 func (i *oidcTestIssuer) jwks(w http.ResponseWriter, _ *http.Request) {
@@ -341,6 +466,7 @@ func (i *oidcTestIssuer) token(w http.ResponseWriter, r *http.Request) {
 	accessToken := "idp-access-token-" + r.PostForm.Get("code")
 	i.mu.Lock()
 	i.accessTokens[accessToken] = r.PostForm.Get("code")
+	i.accessSubjects[accessToken] = grant.spec.sub
 	i.lastAccess = accessToken
 	i.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
@@ -547,7 +673,9 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.svc.entraIssuerHost = oidcEntraIssuerHost
 	f.svc.graphBaseURL = oidcGraphBaseURL
 	f.svc.graphTimeout = oidcGraphTimeout
+	f.svc.userinfoTimeout = oidcUserInfoTimeout
 	f.issuer.resetGraph()
+	f.issuer.resetUserInfo()
 	f.useSSO(f.defaultSSO)
 	f.configure(t, f.mapping())
 }
@@ -858,6 +986,7 @@ var oidcSignInCases = []struct {
 		tokens, err := f.signIn(t, spec)
 		f.assertRefused(t, "group_overage", tokens, err, 0, 0)
 		assert.Empty(t, f.issuer.graphRequests(), "no Graph request")
+		assert.Empty(t, f.issuer.userInfoRequests(), "no userinfo request")
 	}},
 	{"last_admin_demotion_refused", func(t *testing.T, f *oidcFixture) {
 		admin := f.seedUser(t, "sole-admin@crm.example.test", models.RoleAdmin, true, "")
@@ -996,6 +1125,7 @@ var oidcSignInCases = []struct {
 		}
 		assert.Empty(t, requests[0].query, "the first page is getMemberObjects itself")
 		assert.Equal(t, "page=1", requests[1].query, "the second page follows the nextLink")
+		assert.Empty(t, f.issuer.userInfoRequests(), "an Entra overage goes to Graph only")
 	}},
 	{"graph_overage_no_match", func(t *testing.T, f *oidcFixture) {
 		f.entra(t)
@@ -1125,6 +1255,147 @@ var oidcSignInCases = []struct {
 		badAccess := f.issuer.lastAccessToken()
 		require.NotEqual(t, goodAccess, badAccess, "one access token per exchange")
 		require.Len(t, f.issuer.graphRequests(), 2)
+
+		logs := output.String()
+		require.Contains(t, logs, "groups_unavailable", "the refusal is logged with its error code")
+		tables, err := f.db.Migrator().GetTables()
+		require.NoError(t, err)
+		require.NotEmpty(t, tables)
+		for _, secret := range []string{goodAccess, badAccess} {
+			require.NotEmpty(t, secret)
+			assert.NotContains(t, logs, secret, "no access token in the logs")
+			for _, table := range tables {
+				var rows []map[string]interface{}
+				require.NoError(t, f.db.Table(table).Find(&rows).Error, table)
+				for _, row := range rows {
+					for column, value := range row {
+						if raw, ok := value.([]byte); ok {
+							value = string(raw)
+						}
+						assert.NotContains(t, fmt.Sprint(value), secret, "no access token in %s.%s", table, column)
+					}
+				}
+			}
+		}
+	}},
+	{"userinfo_groups_mapped", func(t *testing.T, f *oidcFixture) {
+		sub := "subject-userinfo-groups"
+		f.issuer.setUserInfo(oidcFakeUserInfo{sub: &sub, groups: json.RawMessage(`["unrelated","` + oidcGroupSales + `"]`)})
+		tokens, err := f.signIn(t, oidcTokenSpec{sub: sub, email: "userinfo-groups@idp.example.test"})
+		require.NoError(t, err)
+		require.NotNil(t, tokens.User)
+		assert.Equal(t, models.RoleSales, f.user(t, tokens.User.ID).Role, "mapped from the userinfo groups")
+		assert.Equal(t, "userinfo-groups@idp.example.test", f.user(t, tokens.User.ID).Email, "the email comes from the ID token")
+		requests := f.issuer.userInfoRequests()
+		require.Len(t, requests, 1, "exactly one userinfo request")
+		accessToken := f.issuer.lastAccessToken()
+		require.NotEmpty(t, accessToken)
+		assert.Equal(t, http.MethodGet, requests[0].method)
+		assert.Equal(t, "Bearer "+accessToken, requests[0].authorization, "the access token of this exchange")
+		assert.Equal(t, "application/json", requests[0].accept)
+	}},
+	{"userinfo_groups_absent", func(t *testing.T, f *oidcFixture) {
+		sub := "subject-userinfo-absent"
+		f.issuer.setUserInfo(oidcFakeUserInfo{sub: &sub})
+		tokens, err := f.signIn(t, oidcTokenSpec{sub: sub, email: "userinfo-absent@idp.example.test", roles: []string{oidcAppRole}})
+		require.NoError(t, err)
+		require.NotNil(t, tokens.User)
+		assert.Equal(t, models.RoleSupport, f.user(t, tokens.User.ID).Role, "the roles entry decides")
+		assert.Len(t, f.issuer.userInfoRequests(), 1)
+	}},
+	{"userinfo_not_called", func(t *testing.T, f *oidcFixture) {
+		// A userinfo answer that would refuse, so a stray request shows.
+		f.issuer.setUserInfo(oidcFakeUserInfo{mode: userinfoModeStatus500})
+		tokens, err := f.signIn(t, oidcValid("subject-ui-token-groups", "ui-token-groups@idp.example.test"))
+		require.NoError(t, err)
+		require.NotNil(t, tokens)
+
+		tokens, err = f.signIn(t, oidcTokenSpec{sub: "subject-ui-empty-groups", email: "ui-empty-groups@idp.example.test",
+			groups: []string{}, roles: []string{oidcAppRole}})
+		require.NoError(t, err, "a present [] groups claim counts as present")
+		assert.Equal(t, models.RoleSupport, f.user(t, tokens.User.ID).Role)
+
+		f.configure(t, []SSORoleMapping{{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]}})
+		tokens, err = f.signIn(t, oidcTokenSpec{sub: "subject-ui-roles-only", email: "ui-roles-only@idp.example.test", roles: []string{oidcAppRole}})
+		require.NoError(t, err, "a mapping without a groups entry")
+		assert.Equal(t, models.RoleSupport, f.user(t, tokens.User.ID).Role)
+
+		assert.Empty(t, f.issuer.userInfoRequests(), "no userinfo request")
+	}},
+	{"userinfo_subject_mismatch", func(t *testing.T, f *oidcFixture) {
+		other := "subject-other"
+		f.issuer.setUserInfo(oidcFakeUserInfo{sub: &other, groups: json.RawMessage(`["` + oidcGroupSales + `"]`)})
+		tokens, err := f.signIn(t, oidcTokenSpec{sub: "subject-ui-mismatch", email: "ui-mismatch@idp.example.test"})
+		f.assertRefused(t, "userinfo_subject_mismatch", tokens, err, 0, 0)
+
+		f.issuer.setUserInfo(oidcFakeUserInfo{omitSub: true, groups: json.RawMessage(`["` + oidcGroupSales + `"]`)})
+		tokens, err = f.signIn(t, oidcTokenSpec{sub: "subject-ui-nosub", email: "ui-nosub@idp.example.test"})
+		f.assertRefused(t, "userinfo_subject_mismatch", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.userInfoRequests(), 2)
+		assert.Equal(t, int64(0), f.count(t, "role_audit_log", ""), "no audit row")
+	}},
+	{"userinfo_unavailable", func(t *testing.T, f *oidcFixture) {
+		sales := json.RawMessage(`["` + oidcGroupSales + `"]`)
+		for _, tc := range []struct {
+			name     string
+			info     oidcFakeUserInfo
+			requests int
+		}{
+			{"no_endpoint", oidcFakeUserInfo{omitEndpoint: true, groups: sales}, 0},
+			{"http_endpoint", oidcFakeUserInfo{plainHTTP: true, groups: sales}, 0},
+			{"status_500", oidcFakeUserInfo{mode: userinfoModeStatus500, groups: sales}, 1},
+			{"slow", oidcFakeUserInfo{mode: userinfoModeSlow, groups: sales}, 1},
+			{"redirect", oidcFakeUserInfo{mode: userinfoModeRedirect, groups: sales}, 1},
+			{"oversized", oidcFakeUserInfo{mode: userinfoModeOversized, groups: sales}, 1},
+			{"jwt", oidcFakeUserInfo{mode: userinfoModeJWT, groups: sales}, 1},
+			{"groups_string", oidcFakeUserInfo{groups: json.RawMessage(`"` + oidcGroupSales + `"`)}, 1},
+			{"groups_null", oidcFakeUserInfo{groups: json.RawMessage(`null`)}, 1},
+			{"groups_numbers", oidcFakeUserInfo{groups: json.RawMessage(`[1]`)}, 1},
+			{"body_array", oidcFakeUserInfo{mode: userinfoModeRaw, raw: `[]`}, 1},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f.reset(t)
+				f.svc.userinfoTimeout = 300 * time.Millisecond
+				f.issuer.setUserInfo(tc.info)
+				sub := "subject-ui-" + strings.ReplaceAll(tc.name, "_", "-")
+				started := time.Now()
+				tokens, err := f.signIn(t, oidcTokenSpec{sub: sub, email: sub + "@idp.example.test"})
+				f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+				assert.Len(t, f.issuer.userInfoRequests(), tc.requests)
+				assert.Zero(t, f.issuer.otherRequests(), "a redirect is not followed")
+				if tc.name == "slow" {
+					assert.Less(t, time.Since(started), 2*time.Second, "the timeout ends the wait")
+				}
+			})
+		}
+		// The empty access token: the oauth2 exchange itself refuses a token
+		// response without access_token, so the guard is driven directly.
+		f.reset(t)
+		ctx, provider, err := f.svc.discover(context.Background(), f.issuer.URL())
+		require.NoError(t, err)
+		_, err = f.svc.resolveUserInfoGroups(ctx, provider, "", "subject-ui-no-access")
+		assert.ErrorIs(t, err, errUserInfoNoAccessToken)
+		assert.Empty(t, f.issuer.userInfoRequests(), "no request without an access token")
+	}},
+	{"userinfo_token_privacy", func(t *testing.T, f *oidcFixture) {
+		previous := utils.Logger
+		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+		var output bytes.Buffer
+		utils.Logger.SetOutput(&output)
+		t.Cleanup(func() { utils.Logger = previous })
+
+		f.issuer.setUserInfo(oidcFakeUserInfo{groups: json.RawMessage(`["` + oidcGroupSales + `"]`)})
+		_, err := f.signIn(t, oidcTokenSpec{sub: "subject-ui-private", email: "ui-private@idp.example.test"})
+		require.NoError(t, err)
+		goodAccess := f.issuer.lastAccessToken()
+
+		f.issuer.setUserInfo(oidcFakeUserInfo{mode: userinfoModeStatus500})
+		tokens, err := f.signIn(t, oidcTokenSpec{sub: "subject-ui-private-bad", email: "ui-private-bad@idp.example.test"})
+		require.ErrorIs(t, err, ErrSSOSignInFailed)
+		require.Nil(t, tokens)
+		badAccess := f.issuer.lastAccessToken()
+		require.NotEqual(t, goodAccess, badAccess, "one access token per exchange")
+		require.Len(t, f.issuer.userInfoRequests(), 2)
 
 		logs := output.String()
 		require.Contains(t, logs, "groups_unavailable", "the refusal is logged with its error code")
