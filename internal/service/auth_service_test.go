@@ -91,6 +91,19 @@ func (m *MockUserRepository) CountSearch(query string) (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockUserRepository) ListByFilter(filter repository.UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	args := m.Called(filter, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) CountByFilter(filter repository.UserListFilter) (int64, error) {
+	args := m.Called(filter)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockUserRepository) WithTx(tx *gorm.DB) repository.UserRepository {
 	return m
 }

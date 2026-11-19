@@ -6,6 +6,7 @@ import (
 	context "context"
 
 	models "github.com/florinel-chis/gophercrm/internal/models"
+	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	service "github.com/florinel-chis/gophercrm/internal/service"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -364,6 +365,21 @@ func (_m *UserService) Search(query string, offset int, limit int, sortBy string
 	}
 
 	return r0, r1, r2
+}
+
+// ListFiltered provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder
+func (_m *UserService) ListFiltered(filter repository.UserListFilter, offset int, limit int, sortBy string, sortOrder string) ([]models.User, int64, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListFiltered")
+	}
+
+	var r0 []models.User
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.User)
+	}
+	return r0, ret.Get(1).(int64), ret.Error(2)
 }
 
 // NewUserService creates a new instance of UserService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

@@ -32,9 +32,23 @@ type UserRepository interface {
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, error)
 	CountSearch(query string) (int64, error)
+	// Filtered collection of GET /users (#428). Both share one predicate;
+	// rows are ordered like ListSorted (id ascending without a sort).
+	ListByFilter(filter UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, error)
+	CountByFilter(filter UserListFilter) (int64, error)
 	Count() (int64, error)
 	UpdateLastLogin(id uint) error
 	WithTx(tx *gorm.DB) UserRepository
+}
+
+// UserListFilter narrows GET /users (#428). Every field is optional and they
+// combine with AND; an empty field is no filter. Role is matched exactly and
+// callers validate it first (models.UserRole.IsValid). The predicate is part
+// of the query, so it applies before offset and limit, and the count uses the
+// same predicate.
+type UserListFilter struct {
+	Search string
+	Role   string
 }
 
 // UserRoleMaintenance is the role half of the user repository (#259, #344,

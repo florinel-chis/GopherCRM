@@ -277,21 +277,22 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Preconditions:** Admin logged in; a test-created customer; a **sales** user created by the test
   (so a non-support, non-admin id is available).
 - **Steps:**
-  1. Open `/tickets/new` and fill subject, description and customer.
-  2. In "Assign to Support Agent (Optional)", pick the sales user (the picker is unfiltered — see
-     the Known issue).
-  3. Submit.
+  1. From an `APIRequestContext` holding the admin bearer token, send `POST /api/v1/tickets` with a
+     title, description, the customer id and `assigned_to_id` set to the sales user's id. The
+     form's picker no longer offers a sales user (see the Known issue), so this step goes through
+     the API.
+  2. Read the response.
 - **Expected:** `POST /tickets` returns **400** with message
   "tickets can only be assigned to support or admin users: tickets can only be assigned to support
   or admin users" — the handler responds with `err.Error()` and the service wraps
   `apperrors.ErrInvalidAssigneeRole` in `fmt.Errorf` with the sentinel's own text, so the phrase is
-  doubled (`ticket_service.go` Create, `ticket_handler.go` Create). The UI shows only the generic
-  "Failed to create ticket"
-  snackbar — `TicketForm.tsx:96` discards the server message — and stays on `/tickets/new`.
+  doubled (`ticket_service.go` Create, `ticket_handler.go` Create). Should the form ever submit such
+  an id, the UI shows only the generic "Failed to create ticket" snackbar — `TicketForm.tsx:96`
+  discards the server message — and stays on `/tickets/new`.
 - **Known issue:** The picker is labelled "Support Agent" and queries
-  `usersApi.getUsers({ role: 'support', is_active: true })`, but `UserHandler.List` reads only
-  `page`, `limit`, `search`, `sort_by`, `sort_order` — `role` and `is_active` are ignored, so the
-  dropdown lists the first 20 users of *any* role, customers included.
+  `usersApi.getUsers({ role: 'support', is_active: true })`. Since #428 `GET /users` filters `role`
+  server-side, so it now receives only support users: admins, though valid assignees, are not
+  offered, and `is_active` is still ignored, so inactive support users are listed.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
 ### TC-TICK-014 — Support user can create a ticket but has an empty agent picker

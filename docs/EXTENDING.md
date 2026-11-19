@@ -472,7 +472,7 @@ several layers at once:
 - service policies (`CanViewLead` and the redaction helpers, ticket and dashboard scoping, staff
   checks for automation assignees in `automation_validation.go`, `staffUserProblem`);
 - user management: the `oneof=admin sales support customer custom` binding in
-  `internal/handler/user_handler.go:39,56`; registration always creates `customer`;
+  `internal/handler/user_handler.go:40,57`; registration always creates `customer`;
 - the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,527` and
   `src/api/endpoints/users.ts:18,27` (the user ones include `custom`, which travels with
   `role_id`), and the system-role fixture the UI tests are fed from

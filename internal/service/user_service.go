@@ -228,3 +228,20 @@ func (s *userService) Search(query string, offset, limit int, sortBy, sortOrder 
 
 	return users, total, nil
 }
+
+// ListFiltered lists one page of the users matching filter and the number of
+// users the same filter matches before pagination. It logs nothing itself, so
+// neither the search term, the role nor the raw sort reaches a log line.
+func (s *userService) ListFiltered(filter repository.UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error) {
+	users, err := s.userRepo.ListByFilter(filter, offset, limit, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.userRepo.CountByFilter(filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}

@@ -79,7 +79,7 @@ system roles holding the key are named in brackets.
 | `/tickets`, `/tickets/:id` | any of `tickets.view`, `tickets.view_own_customer` [all four] (#380) | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
 | `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`routes/index.tsx:396,413`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:308`); `/configurations` is admin except `/configurations/ui` |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:333`); `/configurations` is admin except `/configurations/ui` |
 | `/settings/webhooks` | `webhooks.manage` [admin] (#409) | admin (Settings > Webhooks) | the whole `/webhooks` group needs `webhooks.manage`: 403 for sales, support and customer |
 | `/settings/profile`, `/settings/api-keys` | authenticated only (no key) | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
@@ -621,7 +621,7 @@ into a sign-out test.
   `lead_handler.go:202`) and the query falls back to the repository default ordering — there is no
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
-  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:251` and
+  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:265` and
   `customer_handler.go:274`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -640,36 +640,39 @@ into a sign-out test.
   sort by Created column descending" and "should toggle sort order on double click" cover leads
   only; G21 asks for the other columns.
 
-### TC-XCUT-038 — Lead, task and user status, priority and role dropdowns do not filter anything
+### TC-XCUT-038 — Lead and task status and priority dropdowns do not filter anything
 - **Priority:** P1
 - **Type:** negative
 - **Preconditions:** Logged in as the seeded admin; leads in more than one status, tasks in more
-  than one status and priority, users in more than one role.
+  than one status and priority.
 - **Steps:**
   1. On `/leads`, note the visible rows, then select **Status → New** and re-read the table.
-  2. Repeat on `/tasks` with **Status** and **Priority**, and on `/users` with **Role**.
-     `/tickets` is the exception: since #218 the backend filters ticket status and priority
-     server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and TC-TICK-059 to 064
-     in [05-tickets.md](05-tickets.md), not by this case.
+  2. Repeat on `/tasks` with **Status** and **Priority**.
+     `/tickets` and `/users` are the exceptions: since #218 the backend filters ticket status and
+     priority server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and TC-TICK-059
+     to 064 in [05-tickets.md](05-tickets.md), and since #428 (resolved) it filters the users
+     `role` server-side, covered by TC-USER-013 in [07-users.md](07-users.md); neither is covered
+     by this case.
 - **Expected:** In every case the request is re-issued with the extra query parameter
-  (`?status=new`, `?role=sales`, …), the backend **ignores** it, and the rendered rows and the total
-  in the pagination footer are **unchanged**. Verified live: `GET /leads?limit=5&status=new` returns
-  the same `total=71` and the same first row (status `contacted`) as the unfiltered call, and
-  `GET /users?limit=5&role=admin` returns non-admin users. The one dropdown that does work is the
+  (`?status=new`, `?priority=high`, …), the backend **ignores** it, and the rendered rows and the
+  total in the pagination footer are **unchanged**. Verified live: `GET /leads?limit=5&status=new`
+  returns the same `total=71` and the same first row (status `contacted`) as the unfiltered call.
+  The one dropdown that does work is the
   lead **Classification** filter, which `lead_handler.go:179` reads — and only when `search` is empty
   and the caller is an admin, because the search branch is evaluated first and sales users are routed
   to `GetByOwner` before either is considered.
-- **Known issue:** FEATURES 3.8, 6.5 and 7.8 and gap G34 describe these as *client-side filters
+- **Known issue:** FEATURES 3.8 and 6.5 and gap G34 describe these as *client-side filters
   over the current page*. That is too generous: no list page filters the fetched rows at all — the
   only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
-  defects are filed per endpoint (#426 leads, #427 tasks, #428 users) and four browser cases wait
-  for them, each with a real assertion that the non-matching row is gone (#402):
-  `admin-leads.spec.ts` "admin can filter leads by status (#426)", `admin-tasks.spec.ts` "admin can
-  filter tasks by status (#427)" and "admin can filter tasks by priority (#427)",
-  `admin-users.spec.ts` "admin can filter users by role (#428)" are `test.fixme`. This
-  no longer covers tickets: `GET /tickets` filters `status` and `priority` server-side since #218
-  (FEATURES 5.5), and the `admin-tickets.spec.ts` "admin can filter tickets by status" / "by
-  priority" tests run against tickets they seed.
+  defects are filed per endpoint (#426 leads, #427 tasks) and three browser cases wait for them,
+  each with a real assertion that the non-matching row is gone (#402): `admin-leads.spec.ts` "admin
+  can filter leads by status (#426)", `admin-tasks.spec.ts` "admin can filter tasks by status
+  (#427)" and "admin can filter tasks by priority (#427)" are `test.fixme`. This no longer covers
+  tickets: `GET /tickets` filters `status` and `priority` server-side since #218 (FEATURES 5.5),
+  and the `admin-tickets.spec.ts` "admin can filter tickets by status" / "by priority" tests run
+  against tickets they seed. Nor does it cover users: #428 (resolved) made `GET /users` filter
+  `role` server-side (FEATURES 7.8), and `admin-users.spec.ts` "admin can filter users by role
+  (#428)" now runs as a plain test.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
 
@@ -775,7 +778,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:497`) — not a 403.
+  account" (`user_handler.go:512`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4

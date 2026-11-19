@@ -9,6 +9,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/permissions"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -207,6 +208,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 // @Summary List users (admin)
 // @Description Admin only (route guard). Returns a page of live accounts as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Erased accounts are not listed. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. search matches a substring (SQL LIKE) of email, first_name or last_name and combines with the sort.
 // @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0); page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
+// @Description role keeps only the users whose role is exactly that value; the filter applies in the query before offset and limit, so meta counts only matching users, and it combines with search and the sort. An empty role is ignored; any other value is rejected before anything is read.
 // @Tags users
 // @Produce json
 // @Security BearerAuth
@@ -217,7 +219,9 @@ func (h *UserHandler) Create(c *gin.Context) {
 // @Param sort_by query string false "Sort column; any other value is ignored (ascending id order)" Enums(created_at, updated_at, email, first_name, last_name, role)
 // @Param sort_order query string false "Sort direction; any other value falls back to asc" Enums(asc, desc) default(asc)
 // @Param search query string false "Substring matched against email, first_name and last_name"
+// @Param role query string false "Only users with this role (exact, case-sensitive match); empty is ignored, an unknown value is 400" Enums(admin, sales, support, customer, custom)
 // @Success 200 {object} utils.APIResponse{data=[]models.User,meta=utils.APIMeta} "A page of users; pagination in meta"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: role is not one of admin, sales, support, customer, custom (error.details.role; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller is not an admin (Insufficient permissions)"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
@@ -225,6 +229,15 @@ func (h *UserHandler) Create(c *gin.Context) {
 // @Router /users [get]
 func (h *UserHandler) List(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "UserHandler.List")
+
+	// The role filter is validated before anything else is parsed or read.
+	// An empty value is no filter; it is not trimmed, so a blank is invalid.
+	role := c.Query("role")
+	if role != "" && !models.UserRole(role).IsValid() {
+		logger.Warn("Rejected user list: invalid role filter")
+		utils.RespondValidationError(c, gin.H{"role": "must be one of admin, sales, support, customer, custom"})
+		return
+	}
 
 	// Support both page-based and offset-based pagination
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "0"))
@@ -261,7 +274,9 @@ func (h *UserHandler) List(c *gin.Context) {
 	var total int64
 	var err error
 
-	if search != "" {
+	if role != "" {
+		users, total, err = h.userService.ListFiltered(repository.UserListFilter{Search: search, Role: role}, offset, limit, sortBy, sortOrder)
+	} else if search != "" {
 		users, total, err = h.userService.Search(search, offset, limit, sortBy, sortOrder)
 	} else if sortBy != "" {
 		users, total, err = h.userService.ListSorted(offset, limit, sortBy, sortOrder)

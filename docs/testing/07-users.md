@@ -247,27 +247,25 @@ Expected field still describes it and a **Known issue** line records the defect.
 
 ## 7.8 Filter by role and status
 
-### TC-USER-013 — Record that the Role dropdown does not filter
+### TC-USER-013 — Role dropdown filters the list server-side
 - **Priority:** P1
 - **Type:** regression
-- **Preconditions:** Admin logged in; at least one user of each of two different roles on the first
-  page (create a `sales` user in-test to guarantee it).
+- **Preconditions:** Admin logged in; a `sales` and a `support` user sharing a search token (create
+  them in-test).
 - **Steps:**
-  1. Open `/users`.
+  1. Open `/users` and search for the shared token.
   2. Open the "Role" select and choose "Sales".
   3. Compare the rows before and after.
-- **Expected:** The selection issues `GET /users?page=1&limit=10&role=sales`. The backend ignores the
-  `role` parameter entirely (`UserHandler.List` reads only `page`, `offset`, `limit`, `sort_by`,
-  `sort_order`, `search`) and `UserList` does not filter the returned array either — it hands
-  `data.data` straight to `DataTable`. The visible rows are therefore identical before and after,
-  still showing every role. A test asserting server-side filtering would be wrong; a test asserting
-  page-local filtering would also be wrong.
-- **Known issue:** FEATURES.md row 7.8 and gap G34. The row describes the filter as client-side over
-  the current page; in the code it is applied nowhere at all. The defect is filed as #428.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can filter users by
-  role (#428)" is `test.fixme` for #428: it seeds a sales and a support user sharing a search
-  token, filters by "Sales" and expects the support row to be gone, which fails while `GET /users`
-  ignores `role` (TC-XCUT-038).
+- **Expected:** The selection issues `GET /users?page=1&limit=10&role=sales` (with the search term).
+  `UserHandler.List` filters on the exact role in the query, before offset and limit, so only sales
+  rows come back and the total (`meta.total`, the pagination label) narrows to the sales users. The
+  support row disappears and the sales row stays. A role that is not one of `admin`, `sales`,
+  `support`, `customer`, `custom` (exact case) is answered 400 `VALIDATION_ERROR`; an empty `role=`
+  is ignored.
+- **Known issue:** none; the role filter was ignored until #428 (resolved).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can filter users by
+  role (#428)"; Go roots `TestUserListRoleFilterHandler`, `TestUserListRoleFilterRepository{SQLite,MySQL}`
+  and `TestUserListRoleFilters{SQLite,MySQL}`.
 
 ### TC-USER-014 — Record that the Active/Inactive toggle does not filter
 - **Priority:** P1
@@ -280,8 +278,8 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Expected:** Each click issues `GET /users?...&is_active=false|true` (the parameter is omitted for
   "All"). The backend ignores `is_active`, no client-side filtering runs, and the same mix of Active
   and Inactive rows stays on screen. Only the toggle's own pressed state changes.
-- **Known issue:** Same root cause as TC-USER-013 (gap G34); the status toggle is not even mentioned
-  in FEATURES.md row 7.8.
+- **Known issue:** `UserHandler.List` does not read `is_active` at all (gap G34); the status toggle
+  is not even mentioned in FEATURES.md row 7.8.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---

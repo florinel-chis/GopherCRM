@@ -24012,6 +24012,7 @@ paths:
       description: |-
         Admin only (route guard). Returns a page of live accounts as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). Erased accounts are not listed. Without sort_by the rows come in ascending id order; with an allowed sort_by they are ordered by that column, then by id, in the requested direction. search matches a substring (SQL LIKE) of email, first_name or last_name and combines with the sort.
         Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0); page, when a positive integer, overrides offset with (page - 1) * limit. An unknown sort_by is ignored rather than rejected.
+        role keeps only the users whose role is exactly that value; the filter applies in the query before offset and limit, so meta counts only matching users, and it combines with search and the sort. An empty role is ignored; any other value is rejected before anything is read.
       parameters:
       - description: 1-based page number; a positive value overrides offset
         in: query
@@ -24051,6 +24052,17 @@ paths:
         in: query
         name: search
         type: string
+      - description: Only users with this role (exact, case-sensitive match); empty
+          is ignored, an unknown value is 400
+        enum:
+        - admin
+        - sales
+        - support
+        - customer
+        - custom
+        in: query
+        name: role
+        type: string
       produces:
       - application/json
       responses:
@@ -24066,6 +24078,16 @@ paths:
                   type: array
                 meta:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: role is not one of admin, sales, support,
+            customer, custom (error.details.role; the value is not echoed)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "401":
           description: 'UNAUTHORIZED: missing or malformed Authorization header, or
