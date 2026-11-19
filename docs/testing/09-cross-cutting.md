@@ -80,6 +80,7 @@ system roles holding the key are named in brackets.
 | `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`routes/index.tsx:396,413`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
 | `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
 | `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:308`); `/configurations` is admin except `/configurations/ui` |
+| `/settings/webhooks` | `webhooks.manage` [admin] (#409) | admin (Settings > Webhooks) | the whole `/webhooks` group needs `webhooks.manage`: 403 for sales, support and customer |
 | `/settings/profile`, `/settings/api-keys` | authenticated only (no key) | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
 
@@ -123,7 +124,7 @@ support and customer from the customer edit form.
 - **Steps:** Navigate to `/no-such-page`.
 - **Expected:** The URL stays `/no-such-page` and the 404 page renders (`404`, "Page Not Found",
   "Go to Dashboard"). The catch-all `*` route is declared **outside** the `ProtectedRoute` branch
-  (`routes/index.tsx:637`), so an unknown path is never authentication-gated.
+  (`routes/index.tsx:651`), so an unknown path is never authentication-gated.
 - **Known issue:** The 404 page leaks the existence of the SPA shell to anonymous visitors and its
   "Go to Dashboard" button navigates to `/`, which then bounces to `/login`. Harmless, but the
   two-hop journey is easy to mistake for a bug.

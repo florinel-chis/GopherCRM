@@ -31,6 +31,7 @@ const routeLabels: Record<string, string> = {
   profile: 'Profile',
   settings: 'Settings',
   apikeys: 'API Keys',
+  webhooks: 'Webhooks',
   new: 'New',
   edit: 'Edit',
 };
