@@ -313,7 +313,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	authService := service.NewAuthServiceWithSessions(
 		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
 		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret,
-		service.WithAuthProductName(configService))
+		service.WithAuthProductName(configService), service.WithAuthIdentities(repository.NewUserIdentityRepository(models.DB)))
 	// Every role, role_id, activation and erasure write of the user routes is
 	// one transaction with the role repositories (#348): the last-admin
 	// invariant, the escalation rule and the audit row are decided under its

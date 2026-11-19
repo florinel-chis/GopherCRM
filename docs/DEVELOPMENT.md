@@ -237,7 +237,9 @@ repositories: the token is claimed by a conditional
 update (`used_at IS NULL AND expires_at > now`, exactly one affected row, else the generic
 rejection), the owner is re-read with a locking read (the transaction-bound `UserRepository`, `SELECT …
 FOR UPDATE` on MySQL, a plain read on SQLite where the dialector drops the clause) and refused if
-inactive or erased, the password is written with the lockout cleared, and every refresh token of
+inactive or erased, or, on a service built with `WithAuthIdentities` (as `cmd/main.go` does), if
+it has a linked OpenID Connect identity (#444, a plain read of `user_identities`), the password is
+written with the lockout cleared, and every refresh token of
 the account is revoked. The locking read matters on MySQL: a plain read inside the REPEATABLE READ
 transaction answers from the snapshot taken at the token lookup, so an account deactivated or
 erased by another connection just after that lookup would still look active and be reset. A failure of the password
@@ -305,8 +307,8 @@ revocation and the successor) and the logout (owner, then the revocation, then t
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
 (error 1213). The credential-issuing transactions follow the same owner-first rule (#342): the
-password-reset request locks the owner, then spends and inserts `password_reset_tokens` (users →
-password_reset_tokens), and API-key create locks the owner, then inserts into `api_keys` (users →
+password-reset request locks the owner, reads `user_identities` without a lock (#444), then spends
+and inserts `password_reset_tokens` (users → (read) user_identities → password_reset_tokens), and API-key create locks the owner, then inserts into `api_keys` (users →
 api_keys). The reset confirm (token first, then owner) inverts the request's order; see
 *Credential issuance under the owner lock* below. New session and credential flows must follow
 the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
@@ -348,7 +350,12 @@ issued only to a live, active owner.
   (`resetRequestMaxRetries` 3) on `context.Background()` that reads the owner by primary key
   through the user repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})` on a fresh
   `Session` (`lockLiveCredentialOwner`; `FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite).
-  A missing, erased (soft-deleted) or inactive locked row writes nothing. Otherwise
+  A missing, erased (soft-deleted) or inactive locked row writes nothing. With
+  `WithAuthIdentities` (`cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
+  repository skips the check) a plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read then
+  refuses an account with a linked OpenID Connect identity the same way (#444, `error_code`
+  `sso_account`): an account provisioned by single sign-on never obtains a password, and the
+  confirm refuses such an account's token with `ErrInvalidResetToken` too. Otherwise
   `InvalidateAllForUser` and `Create` run through `PasswordResetTokenRepository.WithTx`; a failure
   of either rolls both back. `SendPasswordReset` is called once, after the commit, with the address
   of the locked row. The method returns nil in every case (unknown, inactive, refused, rolled back,

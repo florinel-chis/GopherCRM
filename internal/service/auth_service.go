@@ -90,6 +90,9 @@ type authService struct {
 	// password reset mail (#292), set by WithAuthProductName. Nil means
 	// "GopherCRM".
 	productName MailProductNameSource
+	// identities refuses password reset to an account with a linked OpenID
+	// Connect identity (#444), set by WithAuthIdentities. Nil skips the check.
+	identities repository.UserIdentityRepository
 }
 
 // AuthServiceOption configures NewAuthServiceWithSessions.
@@ -101,6 +104,17 @@ type AuthServiceOption func(*authService)
 func WithAuthProductName(source MailProductNameSource) AuthServiceOption {
 	return func(s *authService) {
 		s.productName = source
+	}
+}
+
+// WithAuthIdentities makes the password reset request and confirm refuse an
+// account that has a linked OpenID Connect identity (a user_identities row,
+// #444): such an account is provisioned by single sign-on and must not obtain
+// a password. A nil repository (stateless or test callers) skips the check;
+// cmd/main.go must pass it.
+func WithAuthIdentities(repo repository.UserIdentityRepository) AuthServiceOption {
+	return func(s *authService) {
+		s.identities = repo
 	}
 }
 
@@ -1172,10 +1186,13 @@ func lockLiveCredentialOwner(userRepo repository.UserRepository, userID uint) (*
 // issued by one WithTransactionAndRetry transaction (#342,
 // resetRequestMaxRetries) that locks the owner row by primary key (`SELECT ...
 // FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and refuses, writing
-// nothing, when that row is missing, erased or inactive; otherwise the user's
+// nothing, when that row is missing, erased or inactive. With
+// WithAuthIdentities it then refuses the same way an account that has a linked
+// OpenID Connect identity (#444, a plain read of user_identities): an account
+// provisioned by single sign-on never obtains a password. Otherwise the user's
 // outstanding tokens are spent and the new one inserted through the
 // transaction-bound PasswordResetTokenRepository, in the order users →
-// password_reset_tokens. The mail goes out once, after the commit, to the
+// (read) user_identities → password_reset_tokens. The mail goes out once, after the commit, to the
 // address of the locked row. A deactivation or erasure that commits before the
 // lock therefore issues nothing, and one that commits after it ends the token
 // it issued (the erasure deletes it, the confirmation refuses an inactive
@@ -1229,6 +1246,18 @@ func (s *authService) RequestPasswordReset(email string) error {
 			user.ID)
 		if err != nil {
 			return err
+		}
+		// An account provisioned by single sign-on never gets a password
+		// (#444): a plain read of user_identities after the owner lock,
+		// refused like an unavailable owner, nothing written, no mail.
+		if s.identities != nil {
+			linked, err := s.identities.WithTx(tx).ExistsForUser(owner.ID)
+			if err != nil {
+				return fmt.Errorf("identity lookup failed: %w", err)
+			}
+			if linked {
+				return &credentialOwnerRefusal{code: "sso_account"}
+			}
 		}
 		resetRepo := s.resetTokenRepo.WithTx(tx)
 		// Only the newest link should work; stale outstanding tokens are spent
@@ -1291,7 +1320,10 @@ const resetConfirmMaxRetries = 3
 // spent on a reset that never happened. An inactive, erased or missing owner
 // is rejected inside the transaction and leaves the token unspent as well; the
 // owner is read with a locking read so that decision rests on the current
-// committed account, not on the transaction's snapshot.
+// committed account, not on the transaction's snapshot. With
+// WithAuthIdentities an owner that has a linked OpenID Connect identity (#444)
+// is refused the same way, after the owner check and before any write: the
+// token stays unspent and the answer is ErrInvalidResetToken.
 //
 // The transaction claims the token before it locks the owner, the reverse of
 // the order an erasure and a reset request take, so it can lose a deadlock or
@@ -1330,6 +1362,10 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 			return utils.ErrNoTransaction
 		}
 		var err error
+		var identities repository.UserIdentityRepository
+		if s.identities != nil {
+			identities = s.identities.WithTx(tx)
+		}
 		// The owner repository is bound to a locking handle so its read is
 		// `SELECT ... FOR UPDATE` on MySQL (SQLite drops the clause). The
 		// handle must be a fresh Session: Clauses alone returns a statement
@@ -1338,7 +1374,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 		// invalid query (SQLite reports an ambiguous `users.id`).
 		userID, err = s.confirmPasswordResetInTransaction(
 			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})), s.refreshTokenRepo.WithTx(tx),
-			hash, string(hashed))
+			identities, hash, string(hashed))
 		return err
 	}, resetConfirmMaxRetries)
 	if err != nil {
@@ -1352,11 +1388,14 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 
 // confirmPasswordResetInTransaction performs the reset on transaction-bound
 // repositories and returns the owner's id. Any error discards every write,
-// the token claim included.
+// the token claim included. identities is nil when the service was built
+// without WithAuthIdentities; otherwise an owner with a linked identity is
+// refused (#444).
 func (s *authService) confirmPasswordResetInTransaction(
 	resetRepo repository.PasswordResetTokenRepository,
 	userRepo repository.UserRepository,
 	refreshRepo repository.RefreshTokenRepository,
+	identities repository.UserIdentityRepository,
 	hash, passwordHash string,
 ) (uint, error) {
 	// The lookup already excludes used and expired tokens; the claim below
@@ -1405,6 +1444,18 @@ func (s *authService) confirmPasswordResetInTransaction(
 	}
 	if !user.IsActive {
 		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+	}
+	// An account provisioned by single sign-on never obtains a password
+	// (#444); a plain read after the owner lock. The rollback hands the claim
+	// back, as for the other owner refusals.
+	if identities != nil {
+		linked, err := identities.ExistsForUser(user.ID)
+		if err != nil {
+			return 0, fmt.Errorf("reset token owner identity lookup failed: %w", err)
+		}
+		if linked {
+			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		}
 	}
 
 	// Ownership of the mailbox has just been proven; clear any lockout so the

@@ -492,7 +492,12 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	}
 
 	assert.Contains(t, flow("Refresh rotation"), "users → refresh_tokens")
-	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → refresh_tokens")
+	// #444: both reset flows read user_identities (plain, no lock) after the
+	// owner lock and refuse an account provisioned by single sign-on.
+	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → (read) user_identities → refresh_tokens")
+	assert.Contains(t, flow("Password-reset request"), "users → (read) user_identities → password_reset_tokens")
+	assert.Contains(t, flow("Password-reset request"), "`ExistsForUser`")
+	assert.Contains(t, flow("Password-reset confirm"), "`ExistsForUser`")
 
 	// RBAC (#348): every governed write is one replayed root that takes the
 	// admin set, then users, then roles, and decides after the locks.

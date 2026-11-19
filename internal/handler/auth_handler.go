@@ -435,7 +435,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 // RequestPasswordReset godoc
 // @Summary Request a password reset link
-// @Description Public. Always the same 200 and the same message, whether or not an account exists for the email (anti-enumeration, like login). When an active account exists, its outstanding reset tokens are invalidated, a new single-use token valid for one hour is created and a link to APP_BASE_URL/reset-password?token=... is emailed (only logged when SMTP is not configured). A deactivated account receives nothing. Storage and delivery failures are logged server-side and never change the response.
+// @Description Public. Always the same 200 and the same message, whether or not an account exists for the email (anti-enumeration, like login). When an active account exists, its outstanding reset tokens are invalidated, a new single-use token valid for one hour is created and a link to APP_BASE_URL/reset-password?token=... is emailed (only logged when SMTP is not configured). A deactivated account receives nothing, and neither does an account provisioned by single sign-on (one with a linked OpenID Connect identity): such an account cannot obtain a password through reset. Storage and delivery failures are logged server-side and never change the response.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
 // @Tags auth
 // @Accept json
@@ -467,7 +467,7 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 
 // ConfirmPasswordReset godoc
 // @Summary Complete a password reset
-// @Description Public. Spends the token from the emailed link and sets new_password, which must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The policy is checked before the token is touched, so a weak password leaves the link usable. Tokens are single use and expire after one hour; an unknown, expired or used token, or one whose account is deactivated or erased, is the same generic 400.
+// @Description Public. Spends the token from the emailed link and sets new_password, which must meet the policy (at least 10 characters with an uppercase letter, a lowercase letter, a digit and a special character). The policy is checked before the token is touched, so a weak password leaves the link usable. Tokens are single use and expire after one hour; an unknown, expired or used token, or one whose account is deactivated or erased, is the same generic 400. The token of an account provisioned by single sign-on (one with a linked OpenID Connect identity) is refused with the same generic 400 and left unspent, so such an account cannot obtain a password through reset.
 // @Description In one transaction the token is claimed, the password written, the login lockout cleared and every refresh token of the account revoked. A failure before the commit rolls all of it back and the link stays usable; when the COMMIT itself fails the outcome is ambiguous (the password may have changed and the link been spent), so a retry may be refused as an invalid or expired link. The password write also increments the account token_version, so every access token issued before the reset is refused with 401 from then on. Rate limit: the strict /auth tier (10 per minute, burst 5, per client IP).
 // @Tags auth
 // @Accept json

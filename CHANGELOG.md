@@ -1021,6 +1021,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An account provisioned by single sign-on can no longer get a password through reset (#444).**
+  `POST /auth/password-reset` issues no token and sends no mail for an account with a linked
+  OpenID Connect identity (a `user_identities` row, which only the first OIDC sign-in creates), and
+  `POST /auth/password-reset/confirm` refuses such an account's token with the generic 400 and
+  leaves it unspent. The public answers are unchanged (the same 200 message, the same 400), so the
+  rule discloses nothing. Without it, anyone controlling the provisioned address could set a
+  password and keep signing in after the identity provider offboarded the person, bypassing the
+  role mapping. The #435 account's "no usable password" now holds. The check runs inside the
+  existing transactions, a plain read after the owner lock; `cmd/main.go` wires it through
+  `service.WithAuthIdentities`. Decision recorded with it: JIT provisioning still does not require
+  `email_verified=true` and does not read the claim, because Entra ID usually leaves it out of its
+  ID tokens, the email never links or authorizes an account, and with reset closed an unverified
+  address can no longer be turned into a password.
 - **The Tasks list Status and Priority dropdowns filter again (#427).** `GET /tasks` now reads its
   optional `status` (one of `pending`, `in_progress`, `completed`, `cancelled`) and `priority` (one
   of `low`, `medium`, `high`) query parameters on the server, each matched exactly and

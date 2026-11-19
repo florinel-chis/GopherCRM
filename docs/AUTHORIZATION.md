@@ -470,10 +470,24 @@ sign-in is refused and nothing is linked to that account (`LOWER(email)` on ever
 SQLite refuses what the MySQL/MariaDB collation refuses). A concurrent first sign-in of the same
 address or identity loses on the unique index and rolls back whole.
 
+**No password through reset (#444).** An account with a `user_identities` row, which only the
+first OIDC sign-in creates (an email never links an existing account) and erasure keeps, is an
+account provisioned by single sign-on. `POST /auth/password-reset` issues nothing for it (no
+token, no mail, the same 200 message) and `POST /auth/password-reset/confirm` refuses its token
+with the generic 400, leaving the token unspent. So the identity provider's offboarding and the
+role mapping cannot be bypassed by turning the provisioned address into a password.
+
+**`email_verified`.** JIT provisioning does not require `email_verified=true` and does not read
+the claim; the `email` claim is stored as given. Entra ID usually leaves the claim out of its ID
+tokens, the email never links or authorizes an account, and with reset refused an unverified
+address can no longer lead to a password.
+
 **Erasure.** Erasing a user keeps its `user_identities` row, linked to the erased user, so that
 person's next sign-in is 401 rather than a fresh account. Deactivation also answers 401.
 
-**Break-glass.** Password login is unchanged and stays available while single sign-on is on.
+**Break-glass.** Password login is unchanged and stays available while single sign-on is on, for
+password accounts only: an account provisioned by single sign-on has no usable password and cannot
+get one through reset.
 
 **Example: Okta.** An OIDC web application with the authorization code grant and PKCE; sign-in
 redirect URI `https://crm.example.com/auth/callback` (APP_BASE_URL `https://crm.example.com`). On
