@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Settings > Webhooks screen (#409).** Webhook endpoints and their delivery log no longer need
+  the API: `/settings/webhooks` lists the endpoints (URL, subscribed events, active flag, created
+  date) and creates, edits, activates, deactivates and deletes them, and its "Delivery log" tab
+  shows each delivery (event type, record id, status, attempts, last attempt, last response code)
+  newest first, with filters for endpoint, status and event type. The signing secret of a new
+  endpoint is shown once, with a copy button, and is not kept in the browser afterwards. The
+  server's refusal of a URL (not https, with credentials, with a query string) is shown in the
+  form as it is returned. Deleting an endpoint asks first and says that its delivery log is
+  removed with it. The Settings entry and the route appear only for a role that holds
+  `webhooks.manage` (the admin role by default). No API or schema change.
 - **Webhooks for updated leads, customers and tickets (#408).** Three new event types,
   `lead.updated`, `customer.updated` and `ticket.updated`, next to the three created events of
   #345. `PUT /leads/{id}`, `PUT /customers/{id}`, `PUT /tickets/{id}` and the bulk status

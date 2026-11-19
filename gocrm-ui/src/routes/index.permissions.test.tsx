@@ -64,6 +64,7 @@ vi.mock('@/pages/customers/CustomerDetail', () => ({ Component: () => <div>Custo
 vi.mock('@/pages/customers/CustomerForm', () => ({ Component: () => <div>Customer Form Page</div> }));
 vi.mock('@/pages/settings/RoleList', () => ({ Component: () => <div>Role List Page</div> }));
 vi.mock('@/pages/settings/RoleEditor', () => ({ Component: () => <div>Role Editor Page</div> }));
+vi.mock('@/pages/settings/Webhooks', () => ({ Component: () => <div>Webhooks Page</div> }));
 
 import { router } from './index';
 
@@ -162,5 +163,17 @@ describe('routes', () => {
     for (const path of ['/settings/roles', '/settings/roles/7', '/settings/roles/new']) {
       expect(await landOn(path, 'Access Denied'), path).toBe('/unauthorized');
     }
+  }, 120000);
+
+  it('open the webhooks screen only with webhooks.manage', async () => {
+    signedInWith(customPermissions('webhooks.manage'));
+    expect(await landOn('/settings/webhooks', 'Webhooks Page')).toBe('/settings/webhooks');
+
+    // The settings key and the role-managing key do not stand in for it.
+    signedInWith(customPermissions('settings.view', 'roles.manage'));
+    expect(await landOn('/settings/webhooks', 'Access Denied')).toBe('/unauthorized');
+
+    signedInWith([]);
+    expect(await landOn('/settings/webhooks', 'Access Denied')).toBe('/unauthorized');
   }, 120000);
 });

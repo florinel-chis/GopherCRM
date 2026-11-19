@@ -228,6 +228,13 @@ const navItems: NavItem[] = [
         icon: <People />,
         permission: 'roles.view',
       },
+      {
+        // Outbound webhook endpoints and the delivery log.
+        title: 'Webhooks',
+        path: '/settings/webhooks',
+        icon: <LinkIcon />,
+        permission: 'webhooks.manage',
+      },
     ],
   },
 ];

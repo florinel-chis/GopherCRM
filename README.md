@@ -458,8 +458,9 @@ It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-a
 
 ## Integrations: webhooks
 
-Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint with
-`POST /api/v1/webhooks/endpoints` and picks any of six event types:
+Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint in
+**Settings > Webhooks** (`/settings/webhooks`) or with `POST /api/v1/webhooks/endpoints` and picks
+any of six event types:
 
 | Event | Sent when |
 |---|---|
@@ -476,6 +477,14 @@ erasing a record, converting a lead (still `customer.created` alone), assigning 
 customer, a ticket comment, a repeat form enquiry, an automation rule step and a company delete
 that unlinks its records send no updated event. The event says that the record changed, not what
 changed: fetch the record to see its current state.
+
+**Settings > Webhooks.** The screen lists the endpoints with their events and active flag, and
+creates, edits, activates, deactivates and deletes them. It is shown to users whose role holds the
+`webhooks.manage` permission (the admin role, unless a custom role is given it). The signing secret
+of a new endpoint is shown once, right after it is created, with a copy button: it is not kept in
+the browser and neither the screen nor the API can show it again, so store it then. Deleting an
+endpoint removes its delivery log with it. The URL rules are checked by the server, and the form
+shows its refusal as is.
 
 **Thin payloads.** The body is exactly
 `{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
@@ -516,9 +525,11 @@ ignored. The AEO egress allowlists do not apply to webhooks. The secret is store
 `API_KEY_SECRET` (or `JWT_SECRET`); changing that secret makes existing endpoints fail with
 `secret_unavailable` until they are re-created.
 
-**Delivery log.** `GET /api/v1/webhooks/deliveries` shows each event per endpoint with its status
-(`pending`, `sending`, `succeeded`, `failed`), attempts, last HTTP status, error code and next
-attempt. Finished rows are deleted 30 days after their last change. The routes are listed under
+**Delivery log.** The "Delivery log" tab of Settings > Webhooks lists each event per endpoint,
+newest first, with its event type, record id, status, attempts, last attempt time and last
+response code, and filters by endpoint, status and event type. `GET /api/v1/webhooks/deliveries`
+returns the same rows (status `pending`, `sending`, `succeeded` or `failed`) and adds the error
+code and the next attempt. Finished rows are deleted 30 days after their last change. The routes are listed under
 [API Documentation](#webhooks-admin-only-sales-support-and-customer-get-403).
 
 ## Privacy: deleting a person erases their data

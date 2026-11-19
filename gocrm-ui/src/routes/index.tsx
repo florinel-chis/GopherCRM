@@ -606,6 +606,20 @@ export const router = createBrowserRouter([
           },
         ],
       },
+      {
+        // Outbound webhook endpoints and their delivery log.
+        element: (
+          <ProtectedRoute requiredPermission="webhooks.manage">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/webhooks',
+            lazy: () => import('@/pages/settings/Webhooks'),
+          },
+        ],
+      },
       // The dashboard above, the profile and the caller's own API keys need no
       // key: every signed-in user reaches them.
       {

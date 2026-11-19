@@ -13,6 +13,10 @@ blocked until the page is built.
 - `gocrm-ui/src/pages/settings/APIKeys.tsx`, `gocrm-ui/src/pages/settings/ConfigurationSettings.tsx`
 - `gocrm-ui/src/pages/settings/RoleList.tsx`, `gocrm-ui/src/pages/settings/RoleEditor.tsx`,
   `gocrm-ui/src/api/endpoints/roles.ts` (the role screens, TC-SET-035)
+- `gocrm-ui/src/pages/settings/Webhooks.tsx`, `WebhookEndpointDialog.tsx`,
+  `WebhookSecretDialog.tsx`, `WebhookDeliveryLog.tsx`, `gocrm-ui/src/api/endpoints/webhooks.ts`,
+  `internal/handler/webhook_handler.go`, `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` (the
+  webhook screen, TC-SET-036 to TC-SET-040)
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
   `gocrm-ui/src/api/endpoints/apikeys.test.ts`, `gocrm-ui/src/api/client.ts`
 - `gocrm-ui/src/contexts/ConfigurationContext.tsx`
@@ -695,3 +699,120 @@ blocked until the page is built.
   holder sees, and a re-granted permission arrives on focus"; Vitest
   `src/pages/settings/RoleList.test.tsx`, `src/pages/settings/RoleEditor.test.tsx`,
   `src/routes/index.permissions.test.tsx` and `src/layouts/MainLayout.permissions.test.tsx`
+
+## Webhooks
+
+The screen at `/settings/webhooks` (#409) manages the outbound webhook endpoints and shows their
+delivery log; the events, the signature and the retry schedule are in the README section
+"Integrations: webhooks". The browser spec registers its endpoints under the reserved `.invalid`
+domain, which never resolves, so nothing is delivered outside the machine and no delivery of it
+can succeed.
+
+### TC-SET-036 — Register a webhook endpoint and see its signing secret exactly once
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Seeded admin; no endpoint with the URL of step 2.
+- **Steps:**
+  1. Open Settings > Webhooks and press "Add endpoint".
+  2. Enter `https://e2e-hooks.invalid/a`, tick `lead.created`, leave Active on and press Create.
+  3. Read the dialog that opens, then press Done.
+  4. Reload the page.
+- **Expected:** The form offers one checkbox per event type (`customer.created`,
+  `customer.updated`, `lead.created`, `lead.updated`, `ticket.created`, `ticket.updated`: the list
+  of `src/api/endpoints/webhooks.ts`, held equal to the `event_types` enum of `api/swagger.json`).
+  Step 2: `POST /webhooks/endpoints` carries `url`, `event_types` and `is_active` → 201. Step 3:
+  the "Signing secret" dialog shows a read-only `whsec_` value, a "Copy signing secret" button
+  and the notice that it cannot be shown again. Step 4: the endpoint is listed with its URL, the
+  `lead.created` chip, "Active" and its created date; no `whsec_` text is in the page, in a field,
+  in `localStorage` or in `sessionStorage`. The secret is held in the page's component state only:
+  the list is fetched again after the create, never patched with the answer, and neither cache of
+  the query client holds it after the dialog closes. No other view renders a secret.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin registers an
+  endpoint, sees the secret once, edits and deletes it"; Vitest
+  `src/pages/settings/Webhooks.test.tsx`, `src/pages/settings/WebhookSecretDialog.test.tsx`,
+  `src/pages/settings/WebhookEndpointDialog.test.tsx` and `src/api/endpoints/webhooks.test.ts`
+
+### TC-SET-037 — Edit, deactivate and delete a webhook endpoint
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Seeded admin; the endpoint of TC-SET-036.
+- **Steps:**
+  1. Press Edit on the endpoint's row, tick `lead.updated`, switch Active off and press Save.
+  2. Reload the page.
+  3. Press Delete on the row, read the confirmation and confirm.
+  4. Reload the page.
+- **Expected:** The edit form opens with the stored URL and events. Step 1: `PUT
+  /webhooks/endpoints/<id>` carries `url`, `event_types` and `is_active` → 200. Step 2: the row
+  shows `lead.created` and `lead.updated` and "Inactive". The Activate / Deactivate button of a row
+  sends a `PUT` with `is_active` only. Step 3: the "Delete webhook endpoint" dialog names the URL
+  and says "Its delivery log is removed with it"; Cancel sends nothing; Delete sends `DELETE
+  /webhooks/endpoints/<id>` → 204. Step 4: the endpoint is gone from the list.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin registers an
+  endpoint, sees the secret once, edits and deletes it"; Vitest
+  `src/pages/settings/Webhooks.test.tsx` and `src/pages/settings/WebhookEndpointDialog.test.tsx`
+
+### TC-SET-038 — Keep a caller without webhooks.manage out of the Webhooks screen
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** A user whose `GET /users/me` permissions hold `settings.view` and
+  `roles.manage` but not `webhooks.manage`; a second one that holds `webhooks.manage`.
+- **Steps:**
+  1. As the first user, open the Settings group of the navigation, then navigate to
+     `/settings/webhooks`.
+  2. Repeat as the second user.
+- **Expected:** The first user sees no Webhooks entry under Settings and lands on
+  `/unauthorized`; the second sees the entry and the page. The permission list decides, never the
+  role name: among the system roles only admin holds the key, and `GET /webhooks/endpoints` and
+  `GET /webhooks/deliveries` answer 403 to every other caller.
+- **Automation:** automated — Vitest `src/routes/index.permissions.test.tsx` "open the webhooks
+  screen only with webhooks.manage", `src/layouts/MainLayout.permissions.test.tsx` "shows Webhooks
+  under Settings only to a caller holding webhooks.manage" and
+  `src/permissions/noRoleGating.test.ts`; the API refusal in `TestWebhookRoutesAdminOnly`
+  (`internal/handler`). No browser spec signs in with a role that lacks the key.
+
+### TC-SET-039 — Read the webhook delivery log and narrow it with its filters
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Seeded admin; endpoint A subscribed to `lead.created` and endpoint B to
+  `lead.created` and `lead.updated`, no other endpoint; then one lead created and one stored value
+  of it changed with `PUT /leads/<id>`.
+- **Steps:**
+  1. Open Settings > Webhooks and the "Delivery log" tab.
+  2. Choose endpoint A in the Endpoint filter.
+  3. Set Endpoint back to "All endpoints" and choose `lead.updated` in the Event type filter.
+  4. Set Event type back to "All event types" and choose `succeeded` in the Status filter.
+- **Expected:** Step 1: the columns Event type, Record ID, Status, Attempts, Last attempt and Last
+  response code (a dash while there is none); three rows in the order of the API, newest first:
+  `lead.updated`, then the two `lead.created`, each with the lead's id. Step 2: the request carries
+  `endpoint_id` and one `lead.created` row is left. Step 3: `event_type=lead.updated`, no
+  `endpoint_id`, one row. Step 4: `status=succeeded` and the text "No deliveries match these
+  filters." A filter set to All is left out of the request; a changed filter returns to the first
+  page; pagination uses `meta.total`. The rows stay `pending` (briefly `sending`) because the host
+  never resolves. The log shows no URL, secret, event id or payload.
+- **Known issue:** The Endpoint filter offers one API page, the 100 newest endpoints; the log has
+  no endpoint column, so rows of different endpoints are told apart only through the filter.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "the delivery log
+  lists the events newest first and narrows by endpoint, event type and status"; Vitest
+  `src/pages/settings/WebhookDeliveryLog.test.tsx` and `src/api/endpoints/webhooks.test.ts`
+
+### TC-SET-040 — Show the server's refusal of an invalid webhook URL
+- **Priority:** P1
+- **Type:** validation
+- **Preconditions:** Seeded admin.
+- **Steps:**
+  1. In the "Add webhook endpoint" form enter `http://e2e-hooks.invalid/a`, tick `lead.created`
+     and press Create.
+  2. Repeat with a URL that carries credentials (`https://user:pw@host/x`) and one with a query
+     string (`https://host/x?a=1`).
+  3. Press Create with the URL empty and no event ticked.
+- **Expected:** Steps 1 and 2: the form sends the request unchanged (it checks no scheme,
+  credentials or query string itself), `POST /webhooks/endpoints` answers 400, and the form shows
+  the alert "Validation failed" and, under the URL field, the rule of `details.url` ("must be an
+  https URL of at most 2048 characters, without credentials, query string or fragment, ..."); a
+  `details.event_types` text is shown under the checkboxes. The form stays open with what was
+  typed and no endpoint is created. Step 3: "Enter the URL of the endpoint" and "Select at least
+  one event" are shown and no request is sent.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin registers an
+  endpoint, sees the secret once, edits and deletes it" (the `http://` URL); Vitest
+  `src/pages/settings/WebhookEndpointDialog.test.tsx` (all three URLs, the event detail and the
+  two presence checks)
