@@ -24,6 +24,9 @@ type Config struct {
 	Forms    FormsConfig
 	// Automation holds the follow-up automation worker settings.
 	Automation AutomationConfig
+	// SSO holds the boot-time OpenID Connect fallbacks (OIDC_*). Stored
+	// settings under security.sso.* win over them; see sso.go.
+	SSO SSOConfig
 }
 
 // AutomationConfig configures the follow-up automation worker: whether it is
@@ -358,6 +361,7 @@ func Load() (*Config, error) {
 			Enabled:             getEnvAsBool("AUTOMATION_ENABLED", true),
 			PollIntervalSeconds: clampAutomationPollInterval(getEnvAsInt("AUTOMATION_POLL_INTERVAL_SECONDS", AutomationPollIntervalDefault)),
 		},
+		SSO: loadSSOConfig(),
 	}
 
 	switch config.Database.Driver {

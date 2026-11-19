@@ -21,7 +21,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open, design only |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; sign-in not implemented |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -33,7 +33,7 @@ picker lists the roles of `GET /roles`; the role API stays available for the sam
 
 A permission is a leaf of the catalogue tree, keyed `<group>.<action>`. The tree is the
 `catalogue` variable in `internal/permissions/catalogue.go`; `permissions.Leaves()` returns the
-leaves in display order and `GET /permissions/catalogue` serves the tree. There are 74 leaves in
+leaves in display order and `GET /permissions/catalogue` serves the tree. There are 75 leaves in
 19 groups. Sixteen can be held at scope `own` as well as `all` (`AllowsOwn`). One,
 `tickets.view_own_customer`, is system-only (`SystemOnly`): only the customer system role holds
 it, and no custom role can.
@@ -51,6 +51,7 @@ it, and no custom role can.
 | `roles.audit_view` | View the role audit log | all |
 | `settings.view` | View settings | all |
 | `settings.update` | Change settings | all |
+| `settings.sso_manage` | View and change single sign-on settings | all |
 | `leads.view` | View leads | all, own |
 | `leads.create` | Create leads | all |
 | `leads.update` | Edit leads | all, own |
@@ -121,7 +122,7 @@ The four system roles are fixed matrices in code (`systemRoles` in
 `internal/permissions/system_roles.go`, read through `permissions.ForSystemRole`), pinned by
 `internal/permissions/testdata/system_roles.golden.json`. They are not stored in
 `role_permissions`, and they can be neither edited nor deleted (409 `SYSTEM_ROLE_IMMUTABLE`).
-admin holds every leaf that is not system-only at `all` (73 grants); sales holds 37, support 17
+admin holds every leaf that is not system-only at `all` (74 grants); sales holds 37, support 17
 and customer 4. A cell is the scope the role holds the key at, or `-` when it does not hold it.
 
 | Permission | admin | sales | support | customer |
@@ -137,6 +138,7 @@ and customer 4. A cell is the scope the role holds the key at, or `-` when it do
 | `roles.audit_view` | all | - | - | - |
 | `settings.view` | all | - | - | - |
 | `settings.update` | all | - | - | - |
+| `settings.sso_manage` | all | - | - | - |
 | `leads.view` | all | own | - | - |
 | `leads.create` | all | all | - | - |
 | `leads.update` | all | own | - | - |
@@ -404,9 +406,22 @@ rules, rotation, revocation and deactivation.
 
 ## Phase 2 design note
 
-This section is a design note for #261 and is not implemented: there is no `user_identities`
-table, no OIDC code and no SCIM code in the tree, and sign-in is the local email and password
-login only. The note records what phase 1 leaves ready and the conditions a
+This section is a design note for #261. Since #434 the single sign-on settings exist: six
+reserved configuration entries, the `OIDC_*` environment fallbacks behind them, the admin-only
+`GET/PUT /settings/sso` pair guarded by `settings.sso_manage`, and the `SSOConfig` accessor that
+returns the effective values:
+
+- `security.sso.enabled` (`OIDC_ENABLED`); a read error keeps SSO off.
+- `security.sso.issuer_url` (`OIDC_ISSUER_URL`), an https issuer.
+- `security.sso.client_id` (`OIDC_CLIENT_ID`).
+- `security.sso.client_secret` (`OIDC_CLIENT_SECRET`), encrypted at rest and never returned.
+- `security.sso.scopes` (`OIDC_SCOPES`), default `openid profile email`.
+- `security.sso.role_mapping` (`OIDC_ROLE_MAPPING`), encrypted at rest; an unreadable stored
+  mapping is empty, never the environment one.
+
+The generic `/configurations` endpoints neither list nor write those entries, whatever the
+case or padding of the key. Everything else is not implemented: there is no OIDC sign-in, discovery or token code, no `user_identities` table
+and no SCIM code in the tree, and sign-in is the local email and password login only. The note records what phase 1 leaves ready and the conditions a
 phase 2 implementation has to meet.
 
 **Sign-in.** OIDC authorization code flow with PKCE, against one or more configured issuers (an

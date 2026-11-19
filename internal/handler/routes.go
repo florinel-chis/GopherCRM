@@ -212,6 +212,15 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 	}
 }
 
+// SetupSSOSettingsRoutes mounts the single sign-on settings (#434). They
+// have their own permission, settings.sso_manage: settings.view and
+// settings.update do not open them.
+func SetupSSOSettingsRoutes(router *gin.RouterGroup, handler *SSOSettingsHandler) {
+	guard := middleware.RequirePermission(permissions.SettingsSSOManage)
+	router.GET("/settings/sso", guard, handler.Get)
+	router.PUT("/settings/sso", guard, handler.Update)
+}
+
 func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 	dashboard := router.Group("/dashboard")
 	guard := middleware.RequirePermission(permissions.DashboardView)

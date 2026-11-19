@@ -100,6 +100,45 @@ func newConfigurationResponse(config models.Configuration) ConfigurationResponse
 	return response
 }
 
+// withoutReservedConfigurations drops the reserved single sign-on rows: they
+// are served by /settings/sso only. The check is on each row's own key, so a
+// category spelled in another case (which MySQL's collation also matches)
+// cannot list them.
+func withoutReservedConfigurations(configs []models.Configuration) []models.Configuration {
+	kept := make([]models.Configuration, 0, len(configs))
+	for _, config := range configs {
+		if !models.IsSSOConfigurationKey(config.Key) {
+			kept = append(kept, config)
+		}
+	}
+	return kept
+}
+
+// resolveGenericConfiguration looks an entry up for the generic key routes
+// and hides the reserved single sign-on rows. It decides on the RESOLVED
+// row's key, never on the path parameter: on MySQL and MariaDB the lookup is
+// case-insensitive and ignores trailing spaces, so SECURITY.SSO.ROLE_MAPPING
+// finds the real row. It answers 404 or 500 itself and returns false then.
+func (h *ConfigurationHandler) resolveGenericConfiguration(c *gin.Context, logger *logrus.Entry, key string) (*models.Configuration, bool) {
+	config, err := h.configService.GetByKey(key)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Configuration not found")
+			utils.RespondNotFound(c, "Configuration not found")
+			return nil, false
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to get configuration")
+		utils.RespondInternalError(c)
+		return nil, false
+	}
+	if models.IsSSOConfigurationKey(config.Key) {
+		logger.Warn("Reserved configuration requested through the generic endpoint")
+		utils.RespondNotFound(c, "Configuration not found")
+		return nil, false
+	}
+	return config, true
+}
+
 // newConfigurationResponses masks a list. It returns an empty slice rather than
 // nil so the JSON is always an array.
 func newConfigurationResponses(configs []models.Configuration) []ConfigurationResponse {
@@ -113,7 +152,7 @@ func newConfigurationResponses(configs []models.Configuration) []ConfigurationRe
 // GetAll returns all configurations
 // GetAll godoc
 // @Summary List all configurations (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them.
+// @Description Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them. The reserved single sign-on entries (security.sso.*) are left out; GET /settings/sso serves them.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -140,7 +179,7 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 		return
 	}
 
-	payload := gin.H{"configurations": newConfigurationResponses(configs)}
+	payload := gin.H{"configurations": newConfigurationResponses(withoutReservedConfigurations(configs))}
 	utils.LogHandlerResponse(logger, http.StatusOK, payload)
 	utils.RespondSuccess(c, http.StatusOK, payload)
 }
@@ -148,7 +187,7 @@ func (h *ConfigurationHandler) GetAll(c *gin.Context) {
 // GetByCategory returns configurations by category
 // GetByCategory godoc
 // @Summary List the configurations of a category (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
+// @Description Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. The reserved single sign-on entries (security.sso.*) are left out of the security category; GET /settings/sso serves them. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -182,7 +221,7 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 		return
 	}
 
-	payload := gin.H{"configurations": newConfigurationResponses(configs)}
+	payload := gin.H{"configurations": newConfigurationResponses(withoutReservedConfigurations(configs))}
 	utils.LogHandlerResponse(logger, http.StatusOK, payload)
 	utils.RespondSuccess(c, http.StatusOK, payload)
 }
@@ -190,7 +229,7 @@ func (h *ConfigurationHandler) GetByCategory(c *gin.Context) {
 // GetByKey returns a specific configuration
 // GetByKey godoc
 // @Summary Get a configuration entry (admin)
-// @Description Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it.
+// @Description Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 here; GET /settings/sso serves them.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -218,15 +257,8 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 		return
 	}
 
-	config, err := h.configService.GetByKey(key)
-	if err != nil {
-		if apperrors.IsNotFound(err) {
-			logger.WithError(utils.LogError(err)).Warn("Configuration not found")
-			utils.RespondNotFound(c, "Configuration not found")
-			return
-		}
-		logger.WithError(utils.LogError(err)).Error("Failed to get configuration")
-		utils.RespondInternalError(c)
+	config, ok := h.resolveGenericConfiguration(c, logger, key)
+	if !ok {
 		return
 	}
 
@@ -239,7 +271,7 @@ func (h *ConfigurationHandler) GetByKey(c *gin.Context) {
 // Set godoc
 // @Summary Change a configuration value (admin)
 // @Description Admin only (route guard, repeated in the handler). Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.
-// @Description A sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart.
+// @Description A sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not written; PUT /settings/sso writes them.
 // @Tags configurations
 // @Accept json
 // @Produce json
@@ -290,6 +322,10 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 		return
 	}
 
+	if _, ok := h.resolveGenericConfiguration(c, logger, key); !ok {
+		return
+	}
+
 	if err := h.configService.Set(key, value); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to set configuration")
 		switch {
@@ -321,7 +357,7 @@ func (h *ConfigurationHandler) Set(c *gin.Context) {
 // Reset resets a configuration to its default value
 // Reset godoc
 // @Summary Reset a configuration to its default (admin)
-// @Description Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked.
+// @Description Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not reset.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -347,6 +383,10 @@ func (h *ConfigurationHandler) Reset(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
 		utils.RespondBadRequest(c, "Key parameter is required")
+		return
+	}
+
+	if _, ok := h.resolveGenericConfiguration(c, logger, key); !ok {
 		return
 	}
 

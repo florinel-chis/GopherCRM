@@ -177,7 +177,7 @@ func (e *permissionEnv) roleState(id uint) string {
 func adminMatrixGrants(t *testing.T) []string {
 	t.Helper()
 	matrix := permissions.ForSystemRole(string(models.RoleAdmin)).List()
-	require.Len(t, matrix, 73, "the admin matrix")
+	require.Len(t, matrix, 74, "the admin matrix")
 	grants := make([]string, 0, len(matrix))
 	for _, grant := range matrix {
 		require.Equal(t, models.PermissionScopeAll, grant.Scope)
@@ -260,7 +260,7 @@ func runRoleAPI(t *testing.T, useMySQL bool) {
 		assert.True(t, byName["Admin"].IsSystem)
 		require.NotNil(t, byName["Admin"].SystemKey)
 		assert.Equal(t, "admin", *byName["Admin"].SystemKey)
-		assert.Len(t, byName["Admin"].Permissions, 73, "a system role's permissions come from the code matrix")
+		assert.Len(t, byName["Admin"].Permissions, 74, "a system role's permissions come from the code matrix")
 		assert.EqualValues(t, 1, byName["Admin"].UserCount, "counted by users.role")
 		assert.EqualValues(t, 1, byName[created.Name].UserCount)
 
