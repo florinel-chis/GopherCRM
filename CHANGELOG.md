@@ -63,8 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `QUOTE_PDF_CHROME_PATH`, so PDF output is on by default in the image, which grows from
     about 53 MiB to about 655 MiB (`docs/DOCKER.md`). The image also installs `tini` and starts
     the server under it, so the browser's orphaned helper processes are reaped; which browser,
-    which path and which init path the image ends up with is in the #393 entry under Changed; a deployment that replaces the
-    entrypoint should keep an init. `docker-compose.yml` and
+    which path and which init path the image ends up with is in the #393 entry under Changed.
+    A deployment that replaces the entrypoint should keep an init. `docker-compose.yml` and
     `docker-compose.sqlite.yml` set the variable empty: their `APP_BASE_URL`
     (`http://localhost:<UI_PORT>`) is not reachable from the backend container, so the
     development stacks ship with PDF output off.
