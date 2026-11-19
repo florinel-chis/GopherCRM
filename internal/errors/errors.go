@@ -214,6 +214,14 @@ var (
 	// with any other role, and a role_id naming a system role (400
 	// INVALID_ROLE_ASSIGNMENT).
 	ErrInvalidRoleAssignment = errors.New("role and role_id do not go together")
+	// ErrCurrentPasswordRequired refuses a change of the caller's own login
+	// email that carries no current password (400 CURRENT_PASSWORD_REQUIRED,
+	// #394).
+	ErrCurrentPasswordRequired = errors.New("changing your own email requires the current password")
+	// ErrCurrentPasswordIncorrect refuses a change of the caller's own login
+	// email whose current password does not match the stored one (400
+	// INVALID_CURRENT_PASSWORD, #394).
+	ErrCurrentPasswordIncorrect = errors.New("the current password is incorrect")
 	// ErrInvalidPermission refuses a permission list holding an unknown key, a
 	// system-only key, a repeated key or a scope the key does not allow (400
 	// INVALID_PERMISSION). InvalidPermissionError carries the keys.

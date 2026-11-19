@@ -124,6 +124,38 @@ func (s *userService) Update(id uint, updates map[string]interface{}) (*models.U
 	return user, nil
 }
 
+// CheckOwnEmailChange decides whether an account may change its own login
+// email with the password it supplied. The login email is where a password
+// reset is sent, so a stolen session or API key must not be able to move it:
+// the change needs the account's current password, as a password change does.
+//
+// The comparison with the stored email is the one Update makes, so a body
+// that repeats the stored email (the user form sends it on every save) needs
+// no password, and then the supplied value is not looked at. A wrong password
+// is not counted toward the login lockout, as on a password change.
+func (s *userService) CheckOwnEmailChange(id uint, email, currentPassword string) error {
+	if email == "" {
+		return nil
+	}
+	user, err := s.userRepo.GetByID(id)
+	if err != nil {
+		if isNotFound(err) {
+			return fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		return err
+	}
+	if email == user.Email {
+		return nil
+	}
+	if currentPassword == "" {
+		return apperrors.ErrCurrentPasswordRequired
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
+		return apperrors.ErrCurrentPasswordIncorrect
+	}
+	return nil
+}
+
 // Delete erases the user's personal data and then soft-deletes the row. It is a
 // GDPR Article 17 erasure and it is IRREVERSIBLE: the email is replaced with a
 // non-routable placeholder, the names are blanked, the password hash is made

@@ -225,11 +225,15 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
 Recorded while writing the API reference; the spec documents the current behaviour, warts
 included. Found by reading the code path unless noted.
 
-- **Changing the login email needs no current password** — `PUT /users/me` and `PUT /users/{id}`
-  change the address a password reset is mailed to without asking for the current password, so
-  whoever holds a live access token or API key can redirect the reset to their own address. Whether
-  to guard it is an owner decision (found with #254, which closed the password path of
-  `PUT /users/me` only).
+- ~~**Changing the login email needs no current password**~~ — done (#394): `PUT /users/me`, and
+  `PUT /users/{id}` on the caller's own id, change the email only when the body carries the
+  account's `current_password` (400 `CURRENT_PASSWORD_REQUIRED` without it, 400
+  `INVALID_CURRENT_PASSWORD` when it does not match, nothing written), for a Bearer token and an
+  API key alike, so a live access token or API key alone can no longer redirect the password
+  reset. Changing another account's email (`users.update`) needs no password, as before. Known
+  limits: a wrong `current_password` is not counted toward the login lockout, as on
+  `POST /auth/change-password` (the same authenticated rate tier, so no new guess surface); an
+  email change revokes no session and sends no confirmation mail.
 - **`PUT /users/{id}` accepts an admin's own deactivation or demotion while another active admin
   remains**, which `POST /users/{id}/deactivate` refuses with 400 for every caller's own account.
   The last active admin is protected on both routes since #348 (409 `LAST_ADMIN`).

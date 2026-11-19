@@ -27,6 +27,9 @@ export interface UpdateUserData {
   role?: 'admin' | 'sales' | 'support' | 'customer' | 'custom';
   role_id?: number;
   is_active?: boolean;
+  // The signed-in user's own password; sent only when it changes the email of
+  // its own account, which the API refuses without it.
+  current_password?: string;
 }
 
 // Helper function to transform backend user to frontend format

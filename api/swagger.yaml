@@ -7903,15 +7903,21 @@ definitions:
   internal_handler.UpdateMeRequest:
     description: Body of PUT /users/me. Every profile field is optional; an omitted
       or empty field leaves the stored value unchanged. Role and active status cannot
-      be changed here. A body that carries a password field is refused.
+      be changed here. Changing the email needs current_password. A body that carries
+      password or new_password is refused.
     properties:
       current_password:
         description: |-
-          Refused: this key, with any value (null included) and in any letter case, is
-          answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
+          The account's current password. Needed only when email differs from the
+          stored one (400 CURRENT_PASSWORD_REQUIRED when absent, null or empty, 400
+          INVALID_CURRENT_PASSWORD when it does not match); ignored and not verified
+          in every other case. It never changes a password.
+        example: Curr3nt!Passw0rd
+        type: string
       email:
-        description: New login email; must be valid and not used by another account
-          (409).
+        description: |-
+          New login email; must be valid and not used by another account (409).
+          An email that differs from the stored one needs current_password.
         example: jane.doe@example.com
         format: email
         type: string
@@ -8096,6 +8102,14 @@ definitions:
     description: Body of PUT /users/{id}. Every field is optional; an omitted or empty
       field leaves the stored value unchanged (names and email cannot be cleared).
     properties:
+      current_password:
+        description: |-
+          The caller's own current password. Needed only when the caller changes
+          the email of its own account (400 CURRENT_PASSWORD_REQUIRED without it,
+          400 INVALID_CURRENT_PASSWORD when it does not match); ignored and not
+          verified in every other case. It never changes a password.
+        example: Curr3nt!Passw0rd
+        type: string
       email:
         description: New login email; must be valid and not used by another account
           (409).
@@ -24351,7 +24365,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+        Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. A caller that changes the email of its own account (an email that differs from the stored one) must send its current password in current_password, for a Bearer token and an API key alike and also when the body carries role or is_active: without it the answer is 400 CURRENT_PASSWORD_REQUIRED, with a wrong one 400 INVALID_CURRENT_PASSWORD, and nothing is written; this is checked before the email is looked up, so the answer does not tell whether the address is in use. current_password is ignored and not verified when the email does not change or the account is another one, and a wrong value is not counted toward the login lockout. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
         Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lacks a permission the request needs), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. Changing the email of a customer login that has a linked customer record (a customer record whose user_id is that login) also needs customers.update; its other fields, and a customer login without a linked customer record, need users.update alone. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
       parameters:
       - description: User ID
@@ -24378,12 +24392,16 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
               type: object
         "400":
-          description: 'BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request
-            format). VALIDATION_ERROR: email is not an email address or role is not
-            one of admin, sales, support, customer, custom (details maps the Go field
-            name to a message). INVALID_ROLE_ASSIGNMENT (only for a caller holding
-            users.assign_role): role custom without role_id, role_id with any other
-            role or without role, or a role_id that names a system role'
+          description: 'BAD_REQUEST: Invalid user ID, or malformed JSON or a current_password
+            that is not a string (Invalid request format). VALIDATION_ERROR: email
+            is not an email address or role is not one of admin, sales, support, customer,
+            custom (details maps the Go field name to a message). CURRENT_PASSWORD_REQUIRED:
+            the caller changes the email of its own account and current_password is
+            absent, null or empty (no details). INVALID_CURRENT_PASSWORD: the caller
+            changes the email of its own account and current_password does not match
+            (no details). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role):
+            role custom without role_id, role_id with any other role or without role,
+            or a role_id that names a system role'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -24733,14 +24751,21 @@ paths:
     put:
       consumes:
       - application/json
-      description: Any authenticated role. Changes the caller's email and/or names;
+      description: 'Any authenticated role. Changes the caller''s email and/or names;
         only non-empty fields are written, and role and active status cannot be changed
-        here. This route does not change a password; a body that carries password,
-        current_password or new_password, with any value (null included) and in any
-        letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written,
-        and a correct current password does not open the route. Use POST /auth/change-password,
-        which verifies the current password and revokes refresh tokens. A body with
-        nothing to apply returns the account unchanged.
+        here. Changing the email (an email that differs from the stored one) needs
+        the account''s current password in current_password, for a Bearer token and
+        an API key alike: without it the answer is 400 CURRENT_PASSWORD_REQUIRED,
+        with a wrong one 400 INVALID_CURRENT_PASSWORD, and nothing is written; this
+        is checked before the email is looked up, so the answer does not tell whether
+        the address is in use. current_password is ignored and not verified when the
+        email does not change, and a wrong value is not counted toward the login lockout.
+        This route does not change a password; a body that carries password or new_password,
+        with any value (null included) and in any letter case, is refused with 400
+        PASSWORD_FIELD_NOT_ACCEPTED, nothing is written, and a correct current_password
+        next to it does not open the route. Use POST /auth/change-password, which
+        verifies the current password and revokes refresh tokens. A body with nothing
+        to apply returns the account unchanged.'
       parameters:
       - description: Fields to change
         in: body
@@ -24761,12 +24786,16 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.User'
               type: object
         "400":
-          description: 'PASSWORD_FIELD_NOT_ACCEPTED: the body carries password, current_password
-            or new_password, with any value (no details; use POST /auth/change-password).
-            VALIDATION_ERROR: email is not an email address (details maps the Go field
-            name to a message). BAD_REQUEST: malformed JSON (Invalid request format).
-            A body that fails binding keeps these answers even when it also carries
-            a password field'
+          description: 'PASSWORD_FIELD_NOT_ACCEPTED: the body carries password or
+            new_password, with any value (no details; use POST /auth/change-password);
+            answered first. CURRENT_PASSWORD_REQUIRED: email differs from the stored
+            one and current_password is absent, null or empty (no details). INVALID_CURRENT_PASSWORD:
+            email differs from the stored one and current_password does not match
+            (no details). VALIDATION_ERROR: email is not an email address (details
+            maps the Go field name to a message). BAD_REQUEST: malformed JSON or a
+            current_password that is not a string (Invalid request format). A body
+            that fails binding keeps these answers even when it also carries a password
+            field'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

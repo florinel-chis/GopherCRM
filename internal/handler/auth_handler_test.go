@@ -136,6 +136,11 @@ func (m *MockUserService) Update(id uint, updates map[string]interface{}) (*mode
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
+func (m *MockUserService) CheckOwnEmailChange(id uint, email, currentPassword string) error {
+	args := m.Called(id, email, currentPassword)
+	return args.Error(0)
+}
+
 func (m *MockUserService) Delete(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)

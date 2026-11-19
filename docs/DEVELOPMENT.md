@@ -458,14 +458,34 @@ and forces a logout against a rotation of the same user in both orderings, each 
 migrations workflow is an operator follow-up.
 
 **`PUT /users/me` refuses password fields** (#254) — `POST /auth/change-password` is the only
-authenticated way to change a password. `UpdateMeRequest` declares `password`, `current_password`
-and `new_password` as `json.RawMessage`, so a non-nil field means the key was present, whatever its
-value (`null` included) and letter case. After a successful bind, any of the three is answered 400
+authenticated way to change a password. `UpdateMeRequest` declares `password` and `new_password`
+as `json.RawMessage`, so a non-nil field means the key was present, whatever its value (`null`
+included) and letter case. After a successful bind, either of the two is answered 400
 `PASSWORD_FIELD_NOT_ACCEPTED` with one Warn line that omits the value, and the service is not
-called, so profile fields beside it are not written either; other unknown keys stay ignored. A body
-that fails binding keeps its `VALIDATION_ERROR` or `BAD_REQUEST`. `UserService.Update` has no
-password branch and ignores a `password` key in its map, and `UpdateUserRequest` has no password
-field, so `PUT /users/{id}` ignores the key too. Roots: `TestUpdateMeRefusesPasswordFields`,
+called, so profile fields beside it are not written either, also when the body carries a new email
+and the correct `current_password`; other unknown keys stay ignored. A body that fails binding
+keeps its `VALIDATION_ERROR` or `BAD_REQUEST`. `UserService.Update` has no password branch and
+ignores a `password` key in its map, and `UpdateUserRequest` has no field that sets a password, so
+`PUT /users/{id}` ignores the key too.
+
+**An own email change needs the current password** (#394) — the login email is where a password
+reset goes, so an account changes its own only with its password. `UpdateMeRequest` and
+`UpdateUserRequest` carry `current_password` as a plain string (`null` and `""` count as absent; a
+non-string is a binding `BAD_REQUEST`). `PUT /users/me` always, and `PUT /users/{id}` when the id
+is the caller's own (Bearer token and API key alike), call `UserService.CheckOwnEmailChange` after
+binding and before either write, `Update` or the governed `UpdateAs`, but only for a body that
+carries an `email`. The service reads the account and answers nil when the email is the stored one
+(the comparison `Update` makes); otherwise `apperrors.ErrCurrentPasswordRequired` (400
+`CURRENT_PASSWORD_REQUIRED`) or `apperrors.ErrCurrentPasswordIncorrect` (400
+`INVALID_CURRENT_PASSWORD`), each with one Warn line that carries neither the value nor an email,
+and nothing is written. The guard answers before the duplicate lookup, so it does not confirm an
+address to a credential without the password. When the email does not change, or the account is
+another one, `current_password` is ignored and never verified. A wrong value is not counted toward
+the login lockout, as on `POST /auth/change-password`; no session is revoked and no mail is sent.
+Roots: `TestUpdateMeEmailChangeNeedsCurrentPassword` (`internal/handler/user_me_password_test.go`)
+and, on the real stack, `TestOwnEmailChangeNeedsCurrentPassword`,
+`TestOwnProfileUpdateWithoutEmailChangeNeedsNoPassword`, `TestOtherUsersEmailChangeNeedsNoPassword`
+(`tests/users_me_password_test.go`). Roots of the refusal of #254: `TestUpdateMeRefusesPasswordFields`,
 `TestUpdateMeProfileFieldsStillApply`, `TestUpdateMeRefusalLogOmitsPassword`
 (`internal/handler/user_me_password_test.go`), `TestUserServiceUpdateIgnoresPasswordKey` and, on
 real middleware, repositories and SQLite, `tests/users_me_password_test.go`.
@@ -713,7 +733,9 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
 - **Which user writes are governed.** Every `PUT /users/{id}` on another account (profile fields
   included: changing a superior's email would redirect its password reset) and every one that
   writes `role`, `role_id` or `is_active`, the caller's own account included. A profile-only update
-  of the caller's own account and `PUT /users/me` stay the plain `UserService.Update`. `Register`,
+  of the caller's own account and `PUT /users/me` stay the plain `UserService.Update`; both own-account
+  paths run `UserService.CheckOwnEmailChange` first (#394: an own email change needs
+  `current_password`, 400 `CURRENT_PASSWORD_REQUIRED` or `INVALID_CURRENT_PASSWORD`). `Register`,
   `Update` and `Delete` keep their behaviour for the non-HTTP writers (`cmd/create-admin`, public
   registration); a user service built without `service.WithUserRoleGovernance` runs the actor-taking
   methods as those plain writes, which is what the older suites rely on.
