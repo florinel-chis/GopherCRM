@@ -17,9 +17,10 @@ package service
 // the plain lookup and the transaction, or after the issuance committed. On
 // MySQL the first party is parked inside its transaction, the second is seen
 // waiting for the row lock in information_schema.PROCESSLIST on two
-// consecutive polls, and no ordering may end in error 1213 except the
-// interleaved reset request against a reset confirmation, where it is
-// permitted and its outcome is asserted. Every assertion reads committed rows.
+// consecutive polls, and no ordering may end in error 1213: in the
+// interleaved reset request against a reset confirmation the engine picks a
+// victim, either party is replayed (the confirmation since #407), and both
+// outcomes are asserted. Every assertion reads committed rows.
 
 import (
 	"bytes"
@@ -916,7 +917,8 @@ func TestPasswordResetRequestVsConfirmMySQL(t *testing.T) {
 		defer claimed.release()
 		defer locked.release()
 		// The confirmation claims the earlier token and parks; the request then
-		// locks the owner and parks before it touches the tokens.
+		// locks the owner and parks before it touches the tokens. Each hold
+		// parks once: a replayed attempt passes the released hold.
 		f.otherHooks.install(func(h *ciHookSet) {
 			h.beforeLock = func(uint) error { claimed.wait(); return nil }
 		})
@@ -936,12 +938,18 @@ func TestPasswordResetRequestVsConfirmMySQL(t *testing.T) {
 		confErr := ciAwait(t, conf, "the confirmation")
 		require.NoError(t, reqErr, "the request returns nil in every case")
 
+		t.Logf("request locking reads: %d, confirmation locking reads: %d, confirmation refused: %v",
+			f.issueHooks.lockReads(), f.otherHooks.lockReads(), confErr != nil)
+		llNoDeadlock(t, confErr, "the confirmation")
 		if confErr != nil {
-			// The confirmation was the victim: it returns an error, writes
+			// The confirmation was the victim: replayed (#407), it finds the
+			// earlier token spent by the request and is refused. It wrote
 			// nothing, and the end state equals (b).
-			assert.Contains(t, confErr.Error(), "1213", "only a deadlock may end the confirmation here")
+			assert.NotContains(t, confErr.Error(), "1205", "the confirmation: no lock wait timeout")
+			require.ErrorIs(t, confErr, ErrInvalidResetToken, "a replayed confirmation is refused")
+			// The request's attempts are not counted here: a replayed claim
+			// can meet the request once more on MariaDB.
 			f.assertRequestFirst(t, s)
-			assert.Equal(t, 1, f.issueHooks.lockReads(), "the request ran once")
 			return
 		}
 		// The request was the victim: replayed by WithTransactionAndRetry, the

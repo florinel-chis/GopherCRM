@@ -239,8 +239,8 @@ Decide first whether the new table stores personal data or only refers to people
   inherit: ticket free text, which the erasure keeps and an operator redacts first through the
   documented procedure (#214), tasks rendered from `{{deal.title}}` before an erasure (they keep
   the text; deal and quote text itself is scrubbed since #245), and what the erasure lock order of
-  #385 leaves open under #183 (the governed user write and the password-reset confirm still lock
-  against it in the opposite order; see [CONCURRENCY.md](CONCURRENCY.md)). A new table that an
+  #385 leaves open under #183 (the governed user write still locks against it in the opposite
+  order; see [CONCURRENCY.md](CONCURRENCY.md)). A new table that an
   erasure must lock goes into that order, after the tables it depends on, by primary key only. A new table that copies a person's email without a link to
   the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
 

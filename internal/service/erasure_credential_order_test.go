@@ -8,9 +8,10 @@ package service
 // The erasure locks users before refresh_tokens, password_reset_tokens and
 // api_keys, and is replayed when it loses a deadlock. Two inversions remain
 // and are exercised here: the reset confirmation claims its token before it
-// locks the owner (it is not retried, so it may end in error 1213), and the
-// governed write holds the target's users row before the nested erasure locks
-// leads and customers (either root is replayed).
+// locks the owner (it is replayed up to resetConfirmMaxRetries times, #407,
+// so a deadlock it loses ends in a commit or in the generic refusal, never in
+// error 1213), and the governed write holds the target's users row before the
+// nested erasure locks leads and customers (either root is replayed).
 //
 // Interleavings are forced through the repository seams and the erasure
 // hooks, and a waiting party is observed in information_schema.PROCESSLIST
@@ -128,6 +129,16 @@ func assertOwnerErased(t *testing.T, f *ciFixture, s ciSeed, rotated *AuthTokens
 		tokens, err := f.confirmer.RefreshAccessToken(raw)
 		assert.Nil(t, tokens, "no session for an erased user")
 		assert.ErrorIs(t, err, ErrInvalidRefreshToken, "a refresh token of the erased user is rejected")
+	}
+}
+
+// ecoNoLockError asserts that err carries no deadlock and no lock wait
+// timeout of the engine.
+func ecoNoLockError(t *testing.T, err error, what string) {
+	t.Helper()
+	llNoDeadlock(t, err, what)
+	if err != nil {
+		assert.NotContains(t, err.Error(), "1205", "%s: no lock wait timeout", what)
 	}
 }
 
@@ -262,13 +273,10 @@ func TestErasureVsCredentialFlowsMySQL(t *testing.T) {
 	// NULL) is served through idx_password_reset_tokens_deleted_at: it locks
 	// that index entry and then waits for the row the erasure holds, and the
 	// erasure's hard delete of the row then needs the index entry. The engine
-	// rolls the confirmation back (1213); MySQL 8 claims by primary key and
-	// the confirmation is refused. The confirmation is not retried on either.
-	var version string
-	require.NoError(t, f.db.Raw("SELECT VERSION()").Scan(&version).Error)
-	isMariaDB := strings.Contains(strings.ToLower(version), "mariadb")
-
-	t.Run("confirm (b) the erasure holds the users row first and the confirmation never succeeds", func(t *testing.T) {
+	// rolls the confirmation back (1213) and the confirmation is replayed; its
+	// replay finds the token gone. MySQL 8 claims by primary key and the
+	// first attempt is refused. The caller sees the same refusal on both.
+	t.Run("confirm (b) the erasure holds the users row first and the confirmation is refused", func(t *testing.T) {
 		s := ecoSeed(t, f)
 		hold := newLLHold()
 		defer hold.release()
@@ -282,21 +290,17 @@ func TestErasureVsCredentialFlowsMySQL(t *testing.T) {
 		eraseErr := ciAwait(t, erase, "the erasure")
 		confErr := ciAwait(t, conf, "the confirmation")
 		require.NoError(t, eraseErr, "the erasure returns nil")
-		require.Error(t, confErr, "the confirmation never succeeds against an erasure that holds the rows")
-		if isMariaDB && !errors.Is(confErr, ErrInvalidResetToken) {
-			assert.Contains(t, confErr.Error(), "1213", "on MariaDB only a deadlock may replace the refusal")
-		} else {
-			llNoDeadlock(t, confErr, "the confirmation")
-			require.ErrorIs(t, confErr, ErrInvalidResetToken, "the claim is refused")
-		}
+		ecoNoLockError(t, confErr, "the confirmation")
+		require.ErrorIs(t, confErr, ErrInvalidResetToken, "the claim is refused")
 		assertOwnerErased(t, f, s, nil)
 	})
 
-	t.Run("confirm (c) each holds its first lock: the erasure returns nil either way", func(t *testing.T) {
+	t.Run("confirm (c) each holds its first lock: the erasure returns nil and the confirmation commits or is refused", func(t *testing.T) {
 		s := ecoSeed(t, f)
 		claimed := newLLHold()
 		defer claimed.release()
 		// The confirmation claims its token and parks before the owner lock.
+		// The hold parks once: a replayed attempt passes the released hold.
 		f.otherHooks.install(func(h *ciHookSet) { h.beforeLock = func(uint) error { claimed.wait(); return nil } })
 		conf := ciStart(confirm)
 		claimed.entered(t, "the confirmation")
@@ -314,17 +318,108 @@ func TestErasureVsCredentialFlowsMySQL(t *testing.T) {
 		confErr := ciAwait(t, conf, "the confirmation")
 		eraseErr := ciAwait(t, erase, "the erasure")
 		require.NoError(t, eraseErr, "the erasure returns nil in every case")
-		t.Logf("erasure transactions: %d, confirmation error: %v", transactions.Load(), confErr != nil)
+		t.Logf("erasure transactions: %d, confirmation locking reads: %d, confirmation refused: %v",
+			transactions.Load(), f.otherHooks.lockReads(), confErr != nil)
 
+		ecoNoLockError(t, confErr, "the confirmation")
 		if confErr != nil {
-			// The confirmation was the victim: it is not retried.
-			assert.Contains(t, confErr.Error(), "1213", "only a deadlock may end the confirmation here")
-			assert.EqualValues(t, 1, transactions.Load(), "the erasure ran once")
+			// The confirmation was a victim: replayed, it found the token
+			// gone or the owner erased. On MariaDB a replayed claim can meet
+			// the erasure once more on idx_password_reset_tokens_deleted_at,
+			// so neither side's transaction count is exact here.
+			require.ErrorIs(t, confErr, ErrInvalidResetToken, "a replayed confirmation is refused")
+			assert.GreaterOrEqual(t, transactions.Load(), int32(1))
 		} else {
-			// The erasure was the victim and was replayed.
-			assert.EqualValues(t, 2, transactions.Load(), "the erasure was replayed once")
+			// The confirmation committed, so the erasure, which held the
+			// users row the confirmation needed, lost and was replayed.
+			assert.GreaterOrEqual(t, transactions.Load(), int32(2), "the erasure was replayed")
 		}
 		assertOwnerErased(t, f, s, nil)
+	})
+}
+
+// TestPasswordResetConfirmRetrySQLite drives the retry of the confirming
+// transaction (#407) through the claim seam: beforeMarkUsed fires once per
+// attempt, before the conditional claim of that attempt.
+func TestPasswordResetConfirmRetrySQLite(t *testing.T) {
+	f := newCIFixture(t, openAutomationSQLite(t))
+
+	// failing installs a claim hook that fails with err on the first `times`
+	// attempts (every one when times is negative) and returns the counter of
+	// the attempts.
+	failing := func(err error, times int32) *atomic.Int32 {
+		var attempts atomic.Int32
+		f.otherHooks.install(func(h *ciHookSet) {
+			h.beforeMarkUsed = func(uint) error {
+				if n := attempts.Add(1); times < 0 || n <= times {
+					return err
+				}
+				return nil
+			}
+		})
+		return &attempts
+	}
+	liveSessions := func(t *testing.T, userID uint) int64 {
+		t.Helper()
+		var n int64
+		require.NoError(t, f.db.WithContext(resetContext(t)).Model(&models.RefreshToken{}).
+			Where("user_id = ? AND is_revoked = ?", userID, false).Count(&n).Error)
+		return n
+	}
+	tokenVersion := func(t *testing.T, userID uint) uint {
+		t.Helper()
+		var owner models.User
+		require.NoError(t, f.db.WithContext(resetContext(t)).First(&owner, userID).Error)
+		return owner.TokenVersion
+	}
+	// requireUntouched asserts that a confirmation that returned an error
+	// committed nothing: the link is still spendable.
+	requireUntouched := func(t *testing.T, s ciSeed, versionBefore uint) {
+		t.Helper()
+		assert.True(t, f.passwordIs(t, s.owner.ID, ciPassword), "the password is unchanged")
+		exists, unused := f.tokenUnused(t, ecoResetToken)
+		assert.True(t, exists && unused, "the token is still unused")
+		assert.EqualValues(t, 1, liveSessions(t, s.owner.ID), "the session is kept")
+		assert.Equal(t, versionBefore, tokenVersion(t, s.owner.ID), "the session generation is unchanged")
+	}
+
+	t.Run("(a) a deadlock on the first attempt only: the replay commits the whole reset", func(t *testing.T) {
+		s := ecoSeed(t, f)
+		versionBefore := tokenVersion(t, s.owner.ID)
+		attempts := failing(errECODeadlock, 1)
+		require.NoError(t, f.confirmer.ConfirmPasswordReset(ecoResetToken, ciNewPassword))
+		assert.EqualValues(t, 2, attempts.Load(), "the failed attempt and its replay")
+		assert.Equal(t, 1, f.otherHooks.lockReads(), "only the replay reached the owner lock")
+		assert.True(t, f.passwordIs(t, s.owner.ID, ciNewPassword), "the new password is committed")
+		exists, unused := f.tokenUnused(t, ecoResetToken)
+		assert.True(t, exists, "the token row is kept")
+		assert.False(t, unused, "the token is used")
+		assert.Zero(t, liveSessions(t, s.owner.ID), "every refresh token is revoked")
+		assert.Equal(t, versionBefore+1, tokenVersion(t, s.owner.ID), "the session generation moved once")
+	})
+
+	t.Run("(b) a deadlock on every attempt: the error reaches the caller after the bound", func(t *testing.T) {
+		s := ecoSeed(t, f)
+		versionBefore := tokenVersion(t, s.owner.ID)
+		attempts := failing(errECODeadlock, -1)
+		err := f.confirmer.ConfirmPasswordReset(ecoResetToken, ciNewPassword)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrInvalidResetToken, "an exhausted bound is not a refusal: the link is still valid")
+		assert.ErrorIs(t, err, errECODeadlock, "the last error is returned as it is")
+		assert.EqualValues(t, resetConfirmMaxRetries+1, attempts.Load(), "one attempt and the bounded replays")
+		requireUntouched(t, s, versionBefore)
+	})
+
+	t.Run("(c) an error that is not retryable: one attempt", func(t *testing.T) {
+		s := ecoSeed(t, f)
+		versionBefore := tokenVersion(t, s.owner.ID)
+		errClaim := errors.New("claim failed for another reason")
+		attempts := failing(errClaim, -1)
+		err := f.confirmer.ConfirmPasswordReset(ecoResetToken, ciNewPassword)
+		require.ErrorIs(t, err, errClaim)
+		assert.NotErrorIs(t, err, ErrInvalidResetToken)
+		assert.EqualValues(t, 1, attempts.Load(), "no replay")
+		requireUntouched(t, s, versionBefore)
 	})
 }
 

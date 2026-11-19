@@ -1269,6 +1269,11 @@ func (s *authService) RequestPasswordReset(email string) error {
 	return nil
 }
 
+// resetConfirmMaxRetries is how often the password-reset confirming
+// transaction is replayed after a deadlock, a lock wait timeout or SQLite
+// busy/locked (#183 retry rule, #407).
+const resetConfirmMaxRetries = 3
+
 // ConfirmPasswordReset spends a reset token and sets the new password. All
 // token rejections map to ErrInvalidResetToken; a password that fails the
 // complexity policy or cannot be hashed is reported as such.
@@ -1287,6 +1292,16 @@ func (s *authService) RequestPasswordReset(email string) error {
 // is rejected inside the transaction and leaves the token unspent as well; the
 // owner is read with a locking read so that decision rests on the current
 // committed account, not on the transaction's snapshot.
+//
+// The transaction claims the token before it locks the owner, the reverse of
+// the order an erasure and a reset request take, so it can lose a deadlock or
+// a lock wait against either. It is therefore replayed up to
+// resetConfirmMaxRetries times (#407). Every attempt is a fresh root
+// transaction that redoes the lookup, the claim, the owner lock and the
+// writes on current committed rows: a replay that finds the token gone or
+// spent, or its owner erased, ends in ErrInvalidResetToken like any other
+// refusal. When the bound is exhausted the last error is returned as it is
+// and nothing is written; the link is still valid then.
 func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	// Every dependency of the transactional flow is required. Running the old
 	// sequence of separate writes when one is missing would reintroduce the
@@ -1309,7 +1324,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	hash := hashOpaqueToken(token, s.sessionTokenSecret())
 
 	var userID uint
-	err = s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+	err = s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
 		if !ok {
 			return utils.ErrNoTransaction
@@ -1325,7 +1340,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})), s.refreshTokenRepo.WithTx(tx),
 			hash, string(hashed))
 		return err
-	})
+	}, resetConfirmMaxRetries)
 	if err != nil {
 		return err
 	}

@@ -76,6 +76,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"Lead conversion":        {"", "", ""},
 	"Login":                  {"loginMaxRetries", "internal/service/auth_service.go", ""},
 	"Password-reset request": {"resetRequestMaxRetries", "internal/service/auth_service.go", ""},
+	// #407: the confirm is one replayed root as well.
+	"Password-reset confirm": {"resetConfirmMaxRetries", "internal/service/auth_service.go", ""},
 	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go", ""},
 	// #348: every governed user write and role write is one replayed root.
 	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
@@ -389,7 +391,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 		"`ErrInvalidResetToken`",
 		"1213",
 		"a request victim is replayed",
-		"a confirm victim (plain `WithTransaction`, no retry) returns the error with nothing written",
+		"a confirm victim is replayed by the same rule (`resetConfirmMaxRetries`) and refused with `ErrInvalidResetToken`",
 	} {
 		assert.Contains(t, request, want, "Password-reset request")
 	}
@@ -459,14 +461,17 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	signAt := strings.Index(issuing, "s.accessTokenFor(")
 	assert.True(t, lockAt >= 0 && insertAt > lockAt && signAt > insertAt,
 		"loginInTransaction locks the owner, then inserts the refresh token, then signs")
-	for _, sig := range []string{
-		"func (s *authService) RefreshAccessToken(",
-		"func (s *authService) ConfirmPasswordReset(",
+	// The rotation is one plain root; the confirm is replayed (#407).
+	for sig, root := range map[string]string{
+		"func (s *authService) RefreshAccessToken(":   "s.txManager.WithTransaction(",
+		"func (s *authService) ConfirmPasswordReset(": "s.txManager.WithTransactionAndRetry(",
 	} {
 		body := concurrencyDocFuncBody(t, authService, sig)
-		assert.Contains(t, body, "s.txManager.WithTransaction(", sig)
+		assert.Contains(t, body, root, sig)
 		assert.Contains(t, body, "clause.Locking{Strength: \"UPDATE\"}", sig)
 	}
+	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) ConfirmPasswordReset("),
+		"}, resetConfirmMaxRetries)")
 	// Child inserts under the owner lock: the foreign-key check's shared lock
 	// falls on an owner row the issuing transaction already holds.
 	for _, fk := range []struct{ flow, constraint, migration string }{
@@ -633,7 +638,7 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 		"Two flows still lock against this order",
 		"The governed user write of `DELETE /users/{id}` (#348) holds the target's `users` row",
 		"whichever side is the victim is replayed",
-		"The password-reset confirm claims its `password_reset_tokens` row before the owner's `users` row and is not retried",
+		"The password-reset confirm claims its `password_reset_tokens` row before the owner's `users` row and is replayed when it is the victim (`resetConfirmMaxRetries`)",
 	} {
 		assert.Contains(t, cross, want, "Erasure order paragraph")
 	}
@@ -704,18 +709,28 @@ func TestConcurrencyDocRetryRule(t *testing.T) {
 		}
 	}
 	assert.True(t, issuance, "the same sentence names the password-reset request and API-key create (#342)")
+	var confirm bool
+	for _, s := range concurrencyDocSentences(section) {
+		if strings.Contains(s, "current") && strings.Contains(s, "the password-reset request") &&
+			strings.Contains(s, "the password-reset confirm") {
+			confirm = true
+		}
+	}
+	assert.True(t, confirm, "the sentence on current behaviour names the password-reset confirm (#407)")
 	assert.True(t, target, "a sentence says the rule is the #183 target")
 	// #385: the erasures are under the rule; the target sentence names the
-	// four flows that are not, and no erasure.
+	// three flows that are not, and neither an erasure nor, since #407, the
+	// password-reset confirm.
 	var erasures, remaining bool
 	for _, s := range concurrencyDocSentences(section) {
 		if strings.Contains(s, "current") && strings.Contains(s, "the three erasures") && strings.Contains(s, "`runErasureUnit`") {
 			erasures = true
 		}
 		if strings.Contains(s, "target") && strings.Contains(s, "#183") {
-			for _, flow := range []string{"company delete", "bulk status", "refresh rotation", "the password-reset confirm"} {
+			for _, flow := range []string{"company delete", "bulk status", "refresh rotation"} {
 				assert.Contains(t, s, flow, "the #183 target sentence")
 			}
+			assert.NotContains(t, s, "password-reset confirm", "the #183 target sentence")
 			assert.NotContains(t, s, "erasure", "the #183 target sentence")
 			remaining = true
 		}
@@ -750,7 +765,7 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 			}
 		} else {
 			assert.NotContains(t, retry, "WithTransactionAndRetry",
-				"only the erasure, Lead conversion, Login, Password-reset request, API-key create and RBAC Retry lines name it; %s does", name)
+				"only the erasure, Lead conversion, Login, Password-reset request and confirm, API-key create and RBAC Retry lines name it; %s does", name)
 		}
 	}
 	for _, name := range []string{"Lead conversion", "Lead update"} {
@@ -760,9 +775,17 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 		}
 	}
 	assert.Contains(t, fields["Lead update"]["Retry"], "no deadlock retry")
-	for _, name := range []string{"Company delete", "Bulk status", "Refresh rotation", "Password-reset confirm"} {
+	for _, name := range []string{"Company delete", "Bulk status", "Refresh rotation"} {
 		assert.Contains(t, fields[name]["Retry"], "none today", "%s Retry", name)
 	}
+	// #407: the confirm is retried, carries no target, and says what an
+	// exhausted bound is.
+	confirmRetry := fields["Password-reset confirm"]["Retry"]
+	for _, gone := range []string{"none today", "Target"} {
+		assert.NotContains(t, confirmRetry, gone, "Password-reset confirm Retry")
+	}
+	assert.Contains(t, concurrencyDocNormalize(confirmRetry), "An exhausted bound returns the last error with nothing written")
+	assert.Contains(t, fields["Password-reset confirm"]["Transaction"], "`WithTransactionAndRetry`")
 	// #385: the erasures are retried and restarted, and carry no target.
 	for _, name := range []string{"User-rooted erasure", "Customer-rooted erasure", "Lead-rooted erasure"} {
 		retry := fields[name]["Retry"]
@@ -1079,7 +1102,7 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 		"`shouldRestartErasure`",
 		"Two inversions remain",
 		"The governed user write holds the target's `users` row before its nested erasure locks leads and customers",
-		"The password-reset confirm takes `password_reset_tokens` before `users` and is not retried",
+		"The password-reset confirm takes `password_reset_tokens` before `users` and is replayed by `resetConfirmMaxRetries`",
 		"Inside a caller's transaction the reverse re-read answers from the caller's snapshot",
 		"No shipped code path writes `customers.user_id`",
 		"such a write takes no lock on the `users` row",
