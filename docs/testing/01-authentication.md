@@ -733,9 +733,11 @@ file, not by trusting the coverage matrix.
 - **Expected:** Confirm first: the password changes and the request then issues one new unused
   token and one mail. Request first: the confirmation is refused (`ErrInvalidResetToken`, the
   generic **400**), the password is unchanged and exactly one unused token remains. On MySQL, when
-  each holds its first lock, one of them ends in error 1213: a request is replayed (end state as
-  confirm first), a confirmation returns an error with nothing written (end state as request
-  first). The request always answers 200 and sends exactly one mail.
+  each holds its first lock, the database ends one of them with error 1213 and that one is
+  replayed: a request then issues its token after the confirmation (end state as confirm first),
+  a confirmation finds its token retired and is refused with the generic **400** and nothing
+  written (end state as request first). Neither caller receives error 1213. The request always
+  answers 200 and sends exactly one mail.
 - **Automation:** Go — `TestPasswordResetRequestVsConfirm{SQLite,MySQL}`
   (`internal/service/credential_issuance_owner_lock_test.go`)
 
