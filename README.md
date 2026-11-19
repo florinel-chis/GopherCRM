@@ -459,13 +459,23 @@ It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-a
 ## Integrations: webhooks
 
 Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint with
-`POST /api/v1/webhooks/endpoints` and picks any of three event types:
+`POST /api/v1/webhooks/endpoints` and picks any of six event types:
 
 | Event | Sent when |
 |---|---|
 | `lead.created` | a lead is created through the API, or a form creates a new lead (a repeat enquiry to an existing lead sends nothing) |
 | `customer.created` | a customer is created through the API or by converting a lead |
 | `ticket.created` | a ticket is created through the API, or a confirmed form submission opens one (a duplicate key sends nothing) |
+| `lead.updated` | `PUT /api/v1/leads/{id}` changed at least one stored value of the lead, or `POST /api/v1/leads/bulk/status` changed its status (one event per lead) |
+| `customer.updated` | `PUT /api/v1/customers/{id}` changed at least one stored value of the customer |
+| `ticket.updated` | `PUT /api/v1/tickets/{id}` changed at least one stored value of the ticket, or `POST /api/v1/tickets/bulk/status` changed its status (one event per ticket) |
+
+An update that sends only the values already stored answers 200 and sends nothing. The updated
+events come from those three `PUT` routes and the two bulk status endpoints only: deleting or
+erasing a record, converting a lead (still `customer.created` alone), assigning a lead or a
+customer, a ticket comment, a repeat form enquiry, an automation rule step and a company delete
+that unlinks its records send no updated event. The event says that the record changed, not what
+changed: fetch the record to see its current state.
 
 **Thin payloads.** The body is exactly
 `{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
@@ -473,8 +483,8 @@ no name, address or other personal data. Fetch the record through the API with y
 credentials; visibility and erasure apply at that moment, so nothing personal leaves after a
 person is erased.
 
-**Delivery.** The event row is written in the same transaction as the record, so a create that
-rolls back sends nothing. A background sender delivers committed events about every 5 seconds as a
+**Delivery.** The event row is written in the same transaction as the record, so a create or an
+update that rolls back sends nothing. A background sender delivers committed events about every 5 seconds as a
 `POST` with `Content-Type: application/json` and `User-Agent: GopherCRM-Webhooks/1`. Any 2xx answer
 is success. A non-2xx answer, a redirect (never followed), a timeout (10 seconds), a connection
 failure or a refused destination is retried after 1, 2, 4, … minutes (at most 6 hours apart) until

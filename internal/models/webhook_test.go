@@ -229,6 +229,6 @@ func TestWebhookJSON(t *testing.T) {
 		assert.Equal(t, "lead.created,ticket.created", value)
 		assert.True(t, IsWebhookEventType("customer.created"))
 		assert.False(t, IsWebhookEventType("Customer.Created"))
-		assert.False(t, IsWebhookEventType("lead.updated"))
+		assert.False(t, IsWebhookEventType("lead.deleted"))
 	})
 }

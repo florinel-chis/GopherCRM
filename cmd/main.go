@@ -108,7 +108,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of lead.created, customer.created and ticket.created events.
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created and updated events of leads, customers and tickets (lead.created, lead.updated, customer.created, customer.updated, ticket.created, ticket.updated).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -326,8 +326,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		service.WithLeadAutomationEvents(automationRepo),
 		service.WithLeadConversionRules(configService),
 		service.WithLeadWebhooks(webhookRepo))
-	// Customer create is one transaction with its customer.created outbox
-	// rows (#345).
+	// Customer create and update are each one transaction with their
+	// customer.created / customer.updated outbox rows (#345, #408).
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo,
 		service.WithCustomerWebhooks(webhookRepo, txManager))
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
@@ -380,7 +380,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	}
 	bulkService := service.NewBulkStatusService(
 		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
-		service.WithBulkAutomationEvents(automationRepo),
+		service.WithBulkAutomationEvents(automationRepo), service.WithBulkWebhooks(webhookRepo),
 	)
 
 	// AEO. Only engines with credentials are loaded, so a deployment that sets

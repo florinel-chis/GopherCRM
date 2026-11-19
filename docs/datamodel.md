@@ -1116,7 +1116,7 @@ pruned 30 days after their last change.
 | id | uint | Yes | auto | primary key | |
 | created_at, updated_at | datetime | No | | `datetime(3)` | GORM timestamps |
 | url | string | Yes | | `varchar(2048)` | https, no userinfo, query or fragment; never logged |
-| event_types | string | Yes | | `varchar(255)` | canonical comma-separated sorted subset of `customer.created`, `lead.created`, `ticket.created`; JSON array |
+| event_types | string | Yes | | `varchar(255)` | canonical comma-separated sorted subset of `customer.created`, `customer.updated`, `lead.created`, `lead.updated`, `ticket.created`, `ticket.updated` (all six are 89 bytes); JSON array |
 | secret_sealed | string | Yes | | `varchar(255)` | `utils.SecretBox` (context `webhook-endpoint-secret`) of `whsec_` + base64(32 bytes); `json:"-"` |
 | is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
 
@@ -1128,9 +1128,9 @@ pruned 30 days after their last change.
 | created_at, updated_at | datetime | No | | `datetime(3)`; `idx_webhook_deliveries_updated_at` | `updated_at` is the prune cutoff |
 | endpoint_id | uint | Yes | | `idx_webhook_deliveries_endpoint_event` (unique, with `event_id`) | |
 | event_id | string | Yes | | `varchar(64)` | `evt_` + 32 hex, shared by every endpoint's row of one event |
-| event_type | string | Yes | | `varchar(32)` | `lead.created`, `customer.created`, `ticket.created` |
-| record_id | uint | Yes | | | id of the created lead, customer or ticket |
-| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating transaction |
+| event_type | string | Yes | | `varchar(32)` | `lead.created`, `lead.updated`, `customer.created`, `customer.updated`, `ticket.created`, `ticket.updated` |
+| record_id | uint | Yes | | | id of the created or updated lead, customer or ticket |
+| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating or updating transaction |
 | status | string | Yes | `pending` | `varchar(20)`; `idx_webhook_deliveries_status_next (status, next_attempt_at)` | `pending`, `sending`, `succeeded`, `failed` |
 | attempts | int | Yes | 0 | | at most 10 |
 | next_attempt_at | datetime | No | NULL | `datetime(3)` | due time while pending (`occurred_at` at enqueue); NULL once finished |

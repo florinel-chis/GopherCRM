@@ -47,9 +47,9 @@ type leadService struct {
 	webhooks repository.WebhookRepository
 }
 
-// WithLeadWebhooks makes Create enqueue lead.created and ConvertToCustomer
-// enqueue customer.created (inside each attempt) in the transaction that
-// commits the record (#345).
+// WithLeadWebhooks makes Create enqueue lead.created, Update lead.updated (#408,
+// when a stored value changed) and ConvertToCustomer customer.created (inside
+// each attempt) in the transaction that commits the record (#345).
 func WithLeadWebhooks(repo repository.WebhookRepository) LeadServiceOption {
 	return func(s *leadService) { s.webhooks = repo }
 }
@@ -499,7 +499,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 
 	if s.txManager == nil {
 		companyCheck := func(companyID *uint) error { return checkLeadCompanyLink(s.companyRepo, companyID) }
-		return s.applyUpdate(logger, id, updates, s.leadRepo, s.leadRepo, companyCheck, nil, s.userRepo, nil)
+		return s.applyUpdate(context.Background(), logger, id, updates, s.leadRepo, s.leadRepo, companyCheck, nil, s.userRepo, nil, nil)
 	}
 
 	var sentCompanyID *uint
@@ -556,7 +556,7 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 				return checkLockedLeadCompany(logger, leadCompanyOpUpdate, id, attempt, storedCompanyID, lead.CompanyID)
 			}
 
-			updated, err = s.applyUpdate(logger, id, updates, s.lockedLeadRead(tx), s.leadRepo.WithTx(tx), companyCheck, afterRead, s.lockedUserRead(tx), automationTx(s.automation, tx))
+			updated, err = s.applyUpdate(ctx, logger, id, updates, s.lockedLeadRead(tx), s.leadRepo.WithTx(tx), companyCheck, afterRead, s.lockedUserRead(tx), automationTx(s.automation, tx), webhooksTx(s.webhooks, tx))
 			if err != nil {
 				return err
 			}
@@ -575,8 +575,11 @@ func (s *leadService) Update(id uint, updates map[string]interface{}) (*models.L
 
 // applyUpdate reads the lead through reader, applies the updates and writes it
 // through writer. companyCheck validates a sent company_id; afterRead, when
-// set, runs on the row reader returned before anything is applied.
-func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[string]interface{}, reader, writer repository.LeadRepository, companyCheck func(*uint) error, afterRead func(*models.Lead) error, users repository.UserRepository, events repository.AutomationRepository) (*models.Lead, error) {
+// set, runs on the row reader returned before anything is applied. hooks is
+// the webhook outbox bound to the same transaction (nil without one): after
+// the write it gets lead.updated when the written row differs from the row
+// reader returned (#408).
+func (s *leadService) applyUpdate(ctx context.Context, logger *logrus.Entry, id uint, updates map[string]interface{}, reader, writer repository.LeadRepository, companyCheck func(*uint) error, afterRead func(*models.Lead) error, users repository.UserRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) (*models.Lead, error) {
 	lead, err := reader.GetByID(id)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Lead not found")
@@ -588,6 +591,7 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 		}
 	}
 	previousStatus := lead.Status
+	before := *lead
 
 	// Apply updates
 	if firstName, ok := updates["first_name"].(string); ok {
@@ -652,7 +656,31 @@ func (s *leadService) applyUpdate(logger *logrus.Entry, id uint, updates map[str
 	if err := automationLeadUpdated(events, lead.ID, previousStatus, lead.Status, models.AutomationOriginUser, nil); err != nil {
 		return nil, err
 	}
+	if leadStoredValuesChanged(&before, lead) {
+		if err := enqueueWebhookEvent(ctx, hooks, models.WebhookEventLeadUpdated, lead.ID); err != nil {
+			return nil, err
+		}
+	}
 	return lead, nil
+}
+
+// leadStoredValuesChanged reports whether an update changed any column it can
+// write: the rule of the lead.updated webhook event (#408). updated_at is not
+// part of it.
+func leadStoredValuesChanged(before, after *models.Lead) bool {
+	return before.FirstName != after.FirstName ||
+		before.LastName != after.LastName ||
+		before.Email != after.Email ||
+		before.Phone != after.Phone ||
+		before.Company != after.Company ||
+		before.Position != after.Position ||
+		before.Source != after.Source ||
+		before.Status != after.Status ||
+		before.Classification != after.Classification ||
+		before.ExternalID != after.ExternalID ||
+		before.Notes != after.Notes ||
+		!equalUintPtr(before.CompanyID, after.CompanyID) ||
+		before.OwnerID != after.OwnerID
 }
 
 // Assign changes a lead's owner in one transaction: a locking read of the lead,

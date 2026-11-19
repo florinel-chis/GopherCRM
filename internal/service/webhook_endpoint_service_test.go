@@ -97,7 +97,7 @@ func TestWebhookEndpointService(t *testing.T) {
 			{URL: "https://10.0.0.5/x", EventTypes: []string{models.WebhookEventLeadCreated}},
 			{URL: "https://example.com/" + strings.Repeat("a", 2048), EventTypes: []string{models.WebhookEventLeadCreated}},
 			{URL: "https://example.com/x", EventTypes: nil},
-			{URL: "https://example.com/x", EventTypes: []string{"lead.updated"}},
+			{URL: "https://example.com/x", EventTypes: []string{"lead.deleted"}},
 		} {
 			_, err := env.endpoints.CreateEndpoint(ctx, input)
 			var validation *WebhookValidationError

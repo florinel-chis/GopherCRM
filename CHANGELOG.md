@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Webhooks for updated leads, customers and tickets (#408).** Three new event types,
+  `lead.updated`, `customer.updated` and `ticket.updated`, next to the three created events of
+  #345. `PUT /leads/{id}`, `PUT /customers/{id}`, `PUT /tickets/{id}` and the bulk status
+  endpoints `POST /leads/bulk/status` and `POST /tickets/bulk/status` write one event per record
+  whose stored values actually changed, in the same transaction as the write, with the same thin
+  signed body (`id`, `type`, `occurred_at`, `record_id`). An update that sends only the stored
+  values answers 200 and sends nothing; a refused or rolled-back update sends nothing either.
+  `POST` and `PUT /webhooks/endpoints` accept any non-empty subset of the six types (a raw
+  `event_types` array may now hold up to 20 entries, duplicates collapse) and
+  `GET /webhooks/deliveries?event_type=` filters on all six. With webhooks wired, the customer
+  update is now one transaction with a locking read of the customer, and the ticket update runs
+  its locking transaction also when no automation is wired. Deleting or erasing a record,
+  converting a lead (still `customer.created` only), assigning a lead or a customer, ticket
+  comments, automation rule steps, a repeat form enquiry, a company delete and the bulk task
+  status endpoint send no updated event. No schema change.
 - **The quote history shows a client's answer as the client's (#400).** An accept or decline
   through the response link of a quote email (#382) used to be recorded with the quote owner
   as its user. The history row of such an answer now has no user and says who answered:

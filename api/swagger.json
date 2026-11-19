@@ -9005,7 +9005,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. first_name, last_name and email apply only when non-empty, so they cannot be cleared. phone, company, position, address, city, state, country, postal_code and notes: omitted or null leaves the stored value unchanged, an empty string clears it, any other value is stored as sent. website: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing.",
+                "description": "Admin and sales (checked in the handler; support and customer get 403). Any live customer may be updated; there is no ownership check. first_name, last_name and email apply only when non-empty, so they cannot be cleared. phone, company, position, address, city, state, country, postal_code and notes: omitted or null leaves the stored value unchanged, an empty string clears it, any other value is stored as sent. website: omitted or null leaves it unchanged, an empty string clears it, otherwise it is trimmed and must be an absolute http or https URL with a host, at most 255 characters. company_id: omitted or null leaves the link unchanged, 0 clears it, any other value must name a live company. The account manager is changed through POST /customers/{id}/assign. A write that loses to an erasure answers 404 and writes nothing. When the update changed at least one stored value of the customer, a customer.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the customer; an update that sends only the stored values writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -16215,7 +16215,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Set the same status on up to 100 leads in one all-or-nothing transaction. Roles: admin and sales (route guard; support and customers get 403 before the body is read); sales users may only update leads they own. Repeated ids are collapsed. If any listed lead is missing (404, error.details.missing_ids) or, for sales, not owned by the caller (403, error.details.forbidden_ids), nothing is written; missing ids are reported before ownership. status converted is refused with 400 VALIDATION_ERROR and error.details {field: status}: a lead becomes converted only through POST /leads/{id}/convert. Side effects: every updated lead records a lead_updated automation event, plus lead_status_changed when its status actually changed (origin bulk), in the same transaction, from which the automation worker later starts runs of the enabled rules with a matching trigger; and, once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed.",
+                "description": "Set the same status on up to 100 leads in one all-or-nothing transaction. Roles: admin and sales (route guard; support and customers get 403 before the body is read); sales users may only update leads they own. Repeated ids are collapsed. If any listed lead is missing (404, error.details.missing_ids) or, for sales, not owned by the caller (403, error.details.forbidden_ids), nothing is written; missing ids are reported before ownership. status converted is refused with 400 VALIDATION_ERROR and error.details {field: status}: a lead becomes converted only through POST /leads/{id}/convert. Side effects: every updated lead records a lead_updated automation event, plus lead_status_changed when its status actually changed (origin bulk), in the same transaction, from which the automation worker later starts runs of the enabled rules with a matching trigger; and, once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed. Every lead whose status actually changed also gets one lead.updated webhook event (its own event id, one delivery per active endpoint subscribed to it) in the same transaction; a lead already at the requested status gets none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -16664,7 +16664,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional. first_name, last_name, email, status and classification apply only when non-empty: omitted or empty leaves them unchanged. phone, company, position, source, external_id and notes: omitted or null keeps the stored value, an empty string clears it, any other value is stored as sent. The email-or-phone rule of create is not re-checked, so clearing the phone of a lead without an email is accepted. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.\nSide effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
+                "description": "Partial update. Roles: admin (any lead) and sales (only the leads it owns). Every field is optional. first_name, last_name, email, status and classification apply only when non-empty: omitted or empty leaves them unchanged. phone, company, position, source, external_id and notes: omitted or null keeps the stored value, an empty string clears it, any other value is stored as sent. The email-or-phone rule of create is not re-checked, so clearing the phone of a lead without an email is accepted. Only an admin may send owner_id (any other role gets 403, even for its own id). A changed owner must be an active admin or sales user: an id that names nobody, a deactivated or erased user, or a support or customer user is 400 INVALID_REFERENCE, with one message for all of them; sending the current owner_id is accepted even when that user has since been deactivated or erased, so such a lead stays editable. company_id: absent keeps the link, 0 clears it, another value must name a live company (400 INVALID_REFERENCE). status converted is refused (400 VALIDATION_ERROR) unless the lead is already converted. The lead is re-read under a row lock in the writing transaction, so the update never overwrites a concurrent conversion with a stale copy.\nSide effect: lead_updated is recorded in the same transaction, plus lead_status_changed (with the previous and the new status) when the status changes. When the update changed at least one stored value of the lead, a lead.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends only the stored values writes none.\nThe response is the updated lead; owner is not loaded here (all its fields are zero) and company_record is omitted.",
                 "consumes": [
                     "application/json"
                 ],
@@ -24355,7 +24355,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Set the same status on up to 100 tickets in one all-or-nothing transaction. Roles: admin may update any ticket, support only tickets assigned to them; sales (read-only on tickets) and customers get 403 before the body is read. Repeated ids are collapsed. If any listed ticket is missing (404, error.details.missing_ids), not assigned to a support caller (403, error.details.forbidden_ids) or closed while the target status is not closed (400, error.details.closed_ids), nothing is written; the checks report in that order. No automation event is recorded; once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed.",
+                "description": "Set the same status on up to 100 tickets in one all-or-nothing transaction. Roles: admin may update any ticket, support only tickets assigned to them; sales (read-only on tickets) and customers get 403 before the body is read. Repeated ids are collapsed. If any listed ticket is missing (404, error.details.missing_ids), not assigned to a support caller (403, error.details.forbidden_ids) or closed while the target status is not closed (400, error.details.closed_ids), nothing is written; the checks report in that order. No automation event is recorded; once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed. Every ticket whose status actually changed gets one ticket.updated webhook event (its own event id, one delivery per active endpoint subscribed to it) in the same transaction; a ticket already at the requested status gets none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -24803,7 +24803,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partially update a ticket: absent or empty fields are left unchanged, and nothing but due_at can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. due_at follows its own rule: absent leaves it unchanged, null clears it, an RFC 3339 timestamp sets it (stored in UTC with millisecond precision). first_responded_at and overdue in the body are ignored; first_responded_at is never changed by this route. The response carries the customer, assignee and comments (including internal notes).",
+                "description": "Partially update a ticket: absent or empty fields are left unchanged, and nothing but due_at can be cleared. Roles: admin may update any ticket, support only tickets assigned to them; customers and sales get 403 before the id or body is read (sales is read-only on tickets). A closed ticket cannot be moved to another status (other fields of a closed ticket can still change). A new assignee must exist and hold the support or admin role. A different assigned_to_id replaces the stored assignee, or sets one on an unassigned ticket, and the response names the new assignee; a support caller who hands a ticket over can no longer read or update it. customer_id cannot be changed. due_at follows its own rule: absent leaves it unchanged, null clears it, an RFC 3339 timestamp sets it (stored in UTC with millisecond precision). first_responded_at and overdue in the body are ignored; first_responded_at is never changed by this route. The response carries the customer, assignee and comments (including internal notes). When the update changed at least one stored value of the ticket (title, description, status, priority, assigned_to_id, resolution or due_at), a ticket.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends only the stored values writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -26940,8 +26940,11 @@
                     {
                         "enum": [
                             "lead.created",
+                            "lead.updated",
                             "customer.created",
-                            "ticket.created"
+                            "customer.updated",
+                            "ticket.created",
+                            "ticket.updated"
                         ],
                         "type": "string",
                         "description": "Only rows of this event type (unknown value: 400)",
@@ -27251,7 +27254,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.\nFrom then on every lead, customer or ticket created (through the API, a lead conversion or a form) enqueues one delivery per active endpoint subscribed to its event type, in the creating transaction. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
+                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.\nFrom then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, PUT /customers/{id}, PUT /tickets/{id} or the lead and ticket bulk status endpoints (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -32454,8 +32457,11 @@
                     "type": "string",
                     "enum": [
                         "lead.created",
+                        "lead.updated",
                         "customer.created",
-                        "ticket.created"
+                        "customer.updated",
+                        "ticket.created",
+                        "ticket.updated"
                     ],
                     "readOnly": true,
                     "example": "lead.created"
@@ -32488,13 +32494,13 @@
                     "example": "2026-11-20T09:31:00Z"
                 },
                 "occurred_at": {
-                    "description": "When the record was created (RFC 3339, UTC).",
+                    "description": "When the record was created or updated (RFC 3339, UTC).",
                     "type": "string",
                     "readOnly": true,
                     "example": "2026-11-20T09:30:00.123Z"
                 },
                 "record_id": {
-                    "description": "Id of the created lead, customer or ticket: the only record datum sent.",
+                    "description": "Id of the created or updated lead, customer or ticket: the only record datum sent.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 42
@@ -32536,8 +32542,11 @@
                         "type": "string",
                         "enum": [
                             "customer.created",
+                            "customer.updated",
                             "lead.created",
-                            "ticket.created"
+                            "lead.updated",
+                            "ticket.created",
+                            "ticket.updated"
                         ]
                     },
                     "example": [
@@ -32587,8 +32596,11 @@
                         "type": "string",
                         "enum": [
                             "customer.created",
+                            "customer.updated",
                             "lead.created",
-                            "ticket.created"
+                            "lead.updated",
+                            "ticket.created",
+                            "ticket.updated"
                         ]
                     },
                     "example": [
@@ -36289,14 +36301,17 @@
             ],
             "properties": {
                 "event_types": {
-                    "description": "Event types to subscribe to: 1 to 3 of lead.created, customer.created and ticket.created; duplicates collapse.",
+                    "description": "Event types to subscribe to: 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated; duplicates collapse.",
                     "type": "array",
                     "items": {
                         "type": "string",
                         "enum": [
                             "lead.created",
+                            "lead.updated",
                             "customer.created",
-                            "ticket.created"
+                            "customer.updated",
+                            "ticket.created",
+                            "ticket.updated"
                         ]
                     },
                     "example": [
@@ -36321,14 +36336,17 @@
             "type": "object",
             "properties": {
                 "event_types": {
-                    "description": "New subscribed subset: 1 to 3 of lead.created, customer.created and ticket.created.",
+                    "description": "New subscribed subset: 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated.",
                     "type": "array",
                     "items": {
                         "type": "string",
                         "enum": [
                             "lead.created",
+                            "lead.updated",
                             "customer.created",
-                            "ticket.created"
+                            "customer.updated",
+                            "ticket.created",
+                            "ticket.updated"
                         ]
                     },
                     "example": [
@@ -36437,7 +36455,7 @@
             "name": "forms"
         },
         {
-            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of lead.created, customer.created and ticket.created events.",
+            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created and updated events of leads, customers and tickets (lead.created, lead.updated, customer.created, customer.updated, ticket.created, ticket.updated).",
             "name": "webhooks"
         },
         {

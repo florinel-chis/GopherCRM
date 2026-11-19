@@ -9,6 +9,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type customerService struct {
@@ -18,7 +21,9 @@ type customerService struct {
 
 	// webhooks and txManager, set together by WithCustomerWebhooks (#345),
 	// make Create one transaction that inserts the customer and its
-	// customer.created outbox rows. Without them Create is unchanged.
+	// customer.created outbox rows, and Update one transaction with a locking
+	// read that writes customer.updated when a stored value changed (#408).
+	// Without them Create and Update are unchanged.
 	webhooks  repository.WebhookRepository
 	txManager *utils.TransactionManager
 }
@@ -27,8 +32,10 @@ type customerService struct {
 type CustomerServiceOption func(*customerService)
 
 // WithCustomerWebhooks makes Create insert the customer and enqueue
-// customer.created in one transaction run by txManager (#345). Both must be
-// non-nil; otherwise Create behaves as without the option.
+// customer.created in one transaction run by txManager (#345), and Update
+// lock the customer, write it and enqueue customer.updated when a stored
+// value changed, in one transaction (#408). Both must be non-nil; otherwise
+// Create and Update behave as without the option.
 func WithCustomerWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) CustomerServiceOption {
 	return func(s *customerService) {
 		s.webhooks = repo
@@ -173,6 +180,10 @@ func (s *customerService) Update(customer *models.Customer) error {
 		return err
 	}
 
+	if s.webhooks != nil && s.txManager != nil {
+		return s.updateWithWebhooks(customer, logger)
+	}
+
 	if err := s.customerRepo.Update(customer); err != nil {
 		// The row was read live and is gone now: the write lost to an erasure
 		// and wrote nothing. That is the request's answer, not a failure.
@@ -186,6 +197,72 @@ func (s *customerService) Update(customer *models.Customer) error {
 
 	logger.Info("Customer updated successfully")
 	return nil
+}
+
+// updateWithWebhooks is the write of Update with webhooks wired (#408): one
+// transaction that reads the live customer with a row lock, writes the
+// fifteen columns customerRepository.Update owns and, when at least one of
+// them differs from the locked row, enqueues customer.updated. A customer
+// that is no longer live at the locking read is the same not-found answer as
+// a write that lost to an erasure. A failed write or outbox insert rolls
+// everything back.
+//
+// Lock order (docs/CONCURRENCY.md: companies -> leads -> customers -> deals):
+// the one customers row is the only row lock this transaction takes. The
+// duplicate-email and company checks ran before it, as plain reads; nothing
+// here may take a locking read on companies or leads, which would invert the
+// order against a company delete (UnlinkCustomers).
+func (s *customerService) updateWithWebhooks(customer *models.Customer, logger *logrus.Entry) error {
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		// The fresh Session keeps FOR UPDATE off every later statement on tx;
+		// the repository's preloads of this read are plain reads.
+		locked, err := s.customerRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})).GetByID(customer.ID)
+		if err != nil {
+			return err
+		}
+		if err := s.customerRepo.WithTx(tx).Update(customer); err != nil {
+			return err
+		}
+		if !customerStoredValuesChanged(locked, customer) {
+			return nil
+		}
+		return enqueueWebhookEvent(ctx, s.webhooks.WithTx(tx), models.WebhookEventCustomerUpdated, customer.ID)
+	})
+	if err != nil {
+		if isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Warn("Customer update lost: no live customer")
+			return fmt.Errorf("customer %d not found: %w", customer.ID, apperrors.ErrNotFound)
+		}
+		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
+		return err
+	}
+	logger.Info("Customer updated successfully")
+	return nil
+}
+
+// customerStoredValuesChanged reports whether an update changed any of the
+// columns customerRepository.Update writes: the rule of the customer.updated
+// webhook event (#408). updated_at is not part of it.
+func customerStoredValuesChanged(before, after *models.Customer) bool {
+	return before.FirstName != after.FirstName ||
+		before.LastName != after.LastName ||
+		before.Email != after.Email ||
+		before.Phone != after.Phone ||
+		before.Company != after.Company ||
+		before.Website != after.Website ||
+		before.Position != after.Position ||
+		before.Address != after.Address ||
+		before.City != after.City ||
+		before.State != after.State ||
+		before.Country != after.Country ||
+		before.PostalCode != after.PostalCode ||
+		before.Notes != after.Notes ||
+		!equalUintPtr(before.CompanyID, after.CompanyID) ||
+		!equalUintPtr(before.AssignedToID, after.AssignedToID)
 }
 
 // Delete erases the customer's personal data and then soft-deletes the row. It

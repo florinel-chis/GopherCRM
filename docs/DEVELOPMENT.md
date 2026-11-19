@@ -522,7 +522,10 @@ re-checked with a locking read, not a plain one: MySQL reports changed rows, so 
 affects zero rows and returns nil, while a plain read in a REPEATABLE READ transaction could still
 show a row whose erasure has committed and turn the lost write into a false success. No live row
 returns `gorm.ErrRecordNotFound`; `CustomerService.Update` and `Assign` log one Warn line with ids
-only and return `apperrors.ErrNotFound`, which `PUT /customers/{id}` and
+only and return `apperrors.ErrNotFound` (wired with webhooks, #408, `Update` is one transaction: a
+locking read of the live customer, which answers a missing row first with the same error, then the
+write and the `customer.updated` outbox rows; its email and company checks stay plain reads before
+the transaction), which `PUT /customers/{id}` and
 `POST /customers/{id}/assign` answer with 404 `NOT_FOUND`. An update that commits before an erasure
 is scrubbed by it, whichever of the customer, converted-lead or customer-role-login deletes it came
 through. Live customers stay last-write-wins on purpose: two edits, a stale `PUT` undoing an assign
@@ -1261,6 +1264,12 @@ preloaded deal only. Regression roots: `TestTaskDealLinkWriteRules`, `TestTaskDe
 `TestTaskDealLinkIntegration{SQLite,MySQL}` (`internal/integration`); `TestTaskDealHandlerErrorMapping`;
 `TestTaskJSONDealSummary`, `TestTaskDealLinkSQLiteUpgradeFromV120` (`internal/models`);
 `TestTaskDealLinkMigration`, `TestTaskDealLinkMigrationFiles` (`cmd/migrate`).
+
+**The ticket update transaction (#242, #408).** `ticketService.Update` takes the transactional
+path `updateWithEvents` (locking read, checks against the locked row, save, events) when automation
+events **or** webhooks are wired; with webhooks only it records no automation event
+(`automationTx` returns nil) and enqueues `ticket.updated` when a stored value changed. With neither
+it stays the plain read and write.
 
 **The ticket assignee (#269).** `ticketService.Update` detaches the preloaded `AssignedTo` before
 `ticketRepo.Update` whenever its id differs from `AssignedToID`, because `Save` writes a preloaded
@@ -3117,8 +3126,9 @@ Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up
 
 ### Outbound webhooks (#345)
 
-Signed, thin events for `lead.created`, `customer.created` and `ticket.created`, delivered after
-the creating transaction commits. Code: `internal/models/webhook.go`,
+Signed, thin events for `lead.created`, `customer.created` and `ticket.created` (#345) and for
+`lead.updated`, `customer.updated` and `ticket.updated` (#408), delivered after the writing
+transaction commits. Code: `internal/models/webhook.go`,
 `internal/repository/webhook_repository.go`, `internal/service/webhook_{outbox,signing,endpoint_service,runtime}.go`,
 `internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
 
@@ -3128,8 +3138,10 @@ the creating transaction commits. Code: `internal/models/webhook.go`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
   characters, and refuses a non-public IP literal (`aeo.CheckPublicURL`); a host name is judged at
-  every connection. `event_types` is stored canonical (deduplicated, sorted, comma-separated) and
-  answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
+  every connection. `event_types` takes any non-empty subset of the six types
+  (`models.WebhookEventTypeValues`); the raw array may hold at most 20 entries before deduplication
+  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all six
+  are 89 bytes in the `varchar(255)` column) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
   and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
   answer carries the secret or `secret_sealed` (`json:"-"`). `is_active` has **no GORM default**
   (GORM substitutes a column default for a zero-value bool, so an explicit false would be lost); the
@@ -3147,6 +3159,30 @@ the creating transaction commits. Code: `internal/models/webhook.go`,
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
   `duplicate`). A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
+- **Updated events (#408).** The same options and `WithBulkWebhooks(repo)` (passed to the one
+  `NewBulkStatusService` call in `cmd/main.go`) make five update paths write `*.updated` rows in
+  the transaction of the write: `LeadService.Update` (`applyUpdate`, `lead.updated`; without a
+  transaction manager the update stays non-transactional and writes none),
+  `CustomerService.Update` (`updateWithWebhooks`, `customer.updated`), `TicketService.Update`
+  (`updateWithEvents`, `ticket.updated`), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
+  with its own event id, per record whose locked status differed from the requested one;
+  `enqueueWebhookEvents` reads the endpoints once per batch and inserts every row in one statement).
+  **The rule:** an event is written iff the committed write changed at least one stored column of
+  the record, comparing the row read under lock inside the writing transaction with the row written,
+  `updated_at` excluded (`leadStoredValuesChanged`: first_name, last_name, email, phone, company,
+  position, source, status, classification, external_id, notes, company_id, owner_id;
+  `customerStoredValuesChanged`: the fifteen columns `customerRepository.Update` writes;
+  `ticketStoredValuesChanged`: title, description, status, priority, assigned_to_id, resolution,
+  due_at as an instant). An update that sends the stored values still answers 200 and still records
+  its automation events; it only writes no webhook row. The handlers do read-modify-write from a
+  plain read made before the transaction, so a write that reverts a column another request
+  committed in between counts as a change and emits an event: that is the rule, not a defect. A
+  refusal (closed-ticket reopen, bad assignee, unknown `company_id`, status `converted`, duplicate
+  email, a customer that is no longer live) returns before any outbox write. Deliberately silent:
+  delete and erasure, `ConvertToCustomer` (`customer.created` only), `LeadService.Assign`,
+  `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
+  ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
+  `company_id`, and bulk task status.
 - **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
   with `lease_expired` at the cap), a plain `SELECT id … WHERE status = 'pending' AND
@@ -3197,14 +3233,18 @@ Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models
 (`internal/repository`); `TestWebhookSignature`, `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`,
 `TestWebhookDeliveryAfterCommit`, `TestWebhookRetryBackoffAndCap`, `TestWebhookUndeliverableEndpoint`,
 `TestWebhookRuntimeLifecycle`, `TestWebhookEgressRefusal`, `TestWebhookRequestTimeout`,
-`TestWebhookEndpointService`, `TestWebhookDeliveryLogAndPrune`, `TestWebhookLogsOmitSecrets`
-(`internal/service`); `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation`
-(`internal/handler`); `TestWebhookAPISQLite` (`tests`); `TestWebhookProductionWiring` (`cmd`);
+`TestWebhookEndpointService`, `TestWebhookDeliveryLogAndPrune`, `TestWebhookLogsOmitSecrets`,
+`TestWebhookUpdated{FanOut,Atomicity}{SQLite,MySQL}` (#408) (`internal/service`);
+`TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation` (`internal/handler`);
+`TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite` (`tests`); `TestWebhookProductionWiring`,
+`TestWebhookUpdatedProductionWiring` (`cmd`);
 `TestWebhookMigrationFiles` (now holding the newest-migration assertion), `TestWebhookMigration`
 (`cmd/migrate`); `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
 (`test/integration`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, skip without it
-and fail when it is unreachable. Operator follow-ups: register the roots in
-`scripts/ci/check-go.py`, the new enums (`event_type`, delivery `status`, `error_code`) in
+and fail when it is unreachable. The four `TestWebhookUpdated…` service roots are registered in
+the transaction profile (`TRANSACTION_SOURCES` in `scripts/ci/check-go.py`, asserted by
+`scripts/ci/tests/test_go_checks.py`). Operator follow-ups: register the #345 roots in
+`scripts/ci/check-go.py` (they are still unregistered), the new enums (`event_type`, delivery `status`, `error_code`) in
 `scripts/ci/check-api-docs.py`, and the migration roots in `.github/workflows/migrations.yml`.
 
 ### Form retention purge
