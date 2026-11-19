@@ -17,6 +17,7 @@ export interface SSORoleMapping {
 
 export interface SSOSettingsSources {
   enabled: SSOSettingSource;
+  allow_password: SSOSettingSource;
   issuer_url: SSOSettingSource;
   client_id: SSOSettingSource;
   client_secret: SSOSettingSource;
@@ -24,8 +25,11 @@ export interface SSOSettingsSources {
   role_mapping: SSOSettingSource;
 }
 
+// allow_password: whether accounts linked to single sign-on may also use
+// password sign-in and password reset (default false).
 export interface SSOSettings {
   enabled: boolean;
+  allow_password: boolean;
   issuer_url: string;
   client_id: string;
   scopes: string[];
@@ -38,6 +42,7 @@ export interface SSOSettings {
 // stored secret, "" clears it, any other value replaces it.
 export interface SSOSettingsUpdate {
   enabled: boolean;
+  allow_password: boolean;
   issuer_url: string;
   client_id: string;
   scopes: string[];

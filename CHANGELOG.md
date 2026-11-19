@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single sign-on: password sign-in and reset for linked accounts are a setting, off by default
+  (#457).** The new setting `security.sso.allow_password` (environment fallback
+  `OIDC_ALLOW_PASSWORD`, default false; seeded empty, reserved like the other `security.sso.*`
+  rows, so 7 such rows now exist) decides whether an account with a `user_identities` row may also
+  use a password. Off: the #444 reset refusal applies, and `POST /auth/login` now refuses such an
+  account's correct password with the same generic 401 "Invalid email or password", writing
+  nothing (no `last_login_at`, no lockout change, no refresh token). On: a linked account uses
+  password sign-in and reset like a local one. Accounts without an identity row are never
+  affected, so local break-glass accounts keep working. `GET`/`PUT /settings/sso` carry
+  `allow_password` and `sources.allow_password` (null or absent clears the stored value, so
+  `OIDC_ALLOW_PASSWORD` applies); an unreadable stored value counts as off. Settings > Single
+  sign-on has the switch "Allow password sign-in and password reset for accounts linked to single
+  sign-on" with an always-shown warning: while it is on, a password keeps working after the person
+  is removed from the identity provider or loses the mapped role, so offboarding must also
+  deactivate the account in GopherCRM. The policy is read once per request, before the
+  transaction; the login gains a plain `user_identities` read after the owner lock while it is off
+  (lock order users → (read) user_identities → refresh_tokens). Switching the setting off does not
+  end sessions or refresh tokens issued before, and changes to it are not audited yet, like every
+  other single sign-on setting. `cmd/main.go` wires it through `service.WithAuthSSOPasswordPolicy`.
+  No schema change.
+
 - **Webhooks: deleted events for leads, customers and tickets (#437).** Endpoints can subscribe to
   `lead.deleted`, `customer.deleted` and `ticket.deleted` (nine event types in all, in the API,
   the OpenAPI enums and the Settings > Webhooks picker). `DELETE /tickets/{id}` writes
@@ -1021,19 +1042,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **An account provisioned by single sign-on can no longer get a password through reset (#444).**
-  `POST /auth/password-reset` issues no token and sends no mail for an account with a linked
-  OpenID Connect identity (a `user_identities` row, which only the first OIDC sign-in creates), and
-  `POST /auth/password-reset/confirm` refuses such an account's token with the generic 400 and
-  leaves it unspent. The public answers are unchanged (the same 200 message, the same 400), so the
-  rule discloses nothing. Without it, anyone controlling the provisioned address could set a
-  password and keep signing in after the identity provider offboarded the person, bypassing the
-  role mapping. The #435 account's "no usable password" now holds. The check runs inside the
+- **Password reset is refused for an account linked to single sign-on while
+  `security.sso.allow_password` is off, the default (#444, made a setting by #457).**
+  With the setting off, `POST /auth/password-reset` issues no token and sends no mail for an
+  account with a linked OpenID Connect identity (a `user_identities` row, which only the first
+  OIDC sign-in creates), and `POST /auth/password-reset/confirm` refuses such an account's token
+  with the generic 400 and leaves it unspent. The public answers are unchanged (the same 200
+  message, the same 400), so the rule discloses nothing. Without it, anyone controlling the
+  provisioned address could set a password and keep signing in after the identity provider
+  offboarded the person, bypassing the role mapping. With the setting off the #435 account's "no
+  usable password" holds; turning it on lets such an account reset like a local one. The check runs inside the
   existing transactions, a plain read after the owner lock; `cmd/main.go` wires it through
   `service.WithAuthIdentities`. Decision recorded with it: JIT provisioning still does not require
   `email_verified=true` and does not read the claim, because Entra ID usually leaves it out of its
-  ID tokens, the email never links or authorizes an account, and with reset closed an unverified
-  address can no longer be turned into a password.
+  ID tokens, the email never links or authorizes an account, and while reset is refused for linked
+  accounts (the default) an unverified address does not lead to a password.
 - **The Tasks list Status and Priority dropdowns filter again (#427).** `GET /tasks` now reads its
   optional `status` (one of `pending`, `in_progress`, `completed`, `cancelled`) and `priority` (one
   of `low`, `medium`, `high`) query parameters on the server, each matched exactly and

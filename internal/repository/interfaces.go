@@ -787,9 +787,10 @@ type UserIdentityRepository interface {
 	// Create inserts the row; a unique violation is ErrUserIdentityTaken.
 	Create(identity *models.UserIdentity) error
 	// ExistsForUser reports whether any identity is linked to the user
-	// (#444): a plain, non-locking read. The password-reset request and
-	// confirm call it inside their transactions after the users row is
-	// locked, so it keeps the users → user_identities order.
+	// (#444, #457): a plain, non-locking read. The password-reset request and
+	// confirm and the password login call it inside their transactions after
+	// the users row is locked, and only while security.sso.allow_password is
+	// off, so it keeps the users → user_identities order.
 	ExistsForUser(userID uint) (bool, error)
 	WithTx(tx *gorm.DB) UserIdentityRepository
 }

@@ -43,7 +43,7 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		// Quote PDF output: a developer shell may point at a local browser.
 		"QUOTE_PDF_CHROME_PATH",
 		// Single sign-on fallbacks.
-		"OIDC_ENABLED", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING",
+		"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING",
 	}
 
 	// Save originals.

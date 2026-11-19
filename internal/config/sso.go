@@ -20,6 +20,13 @@ type SSOConfig struct {
 	// the effective configuration can say whether the value came from the
 	// environment or is the default.
 	EnabledSet bool
+	// AllowPassword is OIDC_ALLOW_PASSWORD ("true"/"1" or "false"/"0",
+	// default false): whether an account linked to single sign-on may also
+	// use password sign-in and password reset.
+	AllowPassword bool
+	// AllowPasswordSet reports whether OIDC_ALLOW_PASSWORD held a recognised
+	// boolean.
+	AllowPasswordSet bool
 	// IssuerURL is OIDC_ISSUER_URL, raw.
 	IssuerURL string
 	// ClientID is OIDC_CLIENT_ID, raw.
@@ -34,16 +41,24 @@ type SSOConfig struct {
 }
 
 func loadSSOConfig() SSOConfig {
-	enabledRaw := strings.ToLower(strings.TrimSpace(os.Getenv("OIDC_ENABLED")))
 	return SSOConfig{
-		Enabled:      getEnvAsBool("OIDC_ENABLED", false),
-		EnabledSet:   enabledRaw == "true" || enabledRaw == "1" || enabledRaw == "false" || enabledRaw == "0",
-		IssuerURL:    os.Getenv("OIDC_ISSUER_URL"),
-		ClientID:     os.Getenv("OIDC_CLIENT_ID"),
-		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
-		Scopes:       os.Getenv("OIDC_SCOPES"),
-		RoleMapping:  os.Getenv("OIDC_ROLE_MAPPING"),
+		Enabled:          getEnvAsBool("OIDC_ENABLED", false),
+		EnabledSet:       envBoolRecognised("OIDC_ENABLED"),
+		AllowPassword:    getEnvAsBool("OIDC_ALLOW_PASSWORD", false),
+		AllowPasswordSet: envBoolRecognised("OIDC_ALLOW_PASSWORD"),
+		IssuerURL:        os.Getenv("OIDC_ISSUER_URL"),
+		ClientID:         os.Getenv("OIDC_CLIENT_ID"),
+		ClientSecret:     os.Getenv("OIDC_CLIENT_SECRET"),
+		Scopes:           os.Getenv("OIDC_SCOPES"),
+		RoleMapping:      os.Getenv("OIDC_ROLE_MAPPING"),
 	}
+}
+
+// envBoolRecognised reports whether the variable holds true, 1, false or 0
+// (case-insensitive, surrounding spaces ignored).
+func envBoolRecognised(name string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	return raw == "true" || raw == "1" || raw == "false" || raw == "0"
 }
 
 // OIDCIssuerMaxBytes caps an issuer URL.

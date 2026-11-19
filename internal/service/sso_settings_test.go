@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// fakeSSOConfigs is a ConfigurationService holding the six SSO rows in
+// fakeSSOConfigs is a ConfigurationService holding the seven SSO rows in
 // plaintext. It records the order of SetSSO writes, can fail a read per key,
 // and can fail the n-th write.
 type fakeSSOConfigs struct {
@@ -91,13 +91,15 @@ func boolPtr(v bool) *bool    { return &v }
 func ssoCtx() context.Context { return context.Background() }
 func envSSO() config.SSOConfig {
 	return config.SSOConfig{
-		Enabled:      true,
-		EnabledSet:   true,
-		IssuerURL:    "https://env-idp.example.test",
-		ClientID:     "env-client",
-		ClientSecret: "env-secret-value",
-		Scopes:       "openid email",
-		RoleMapping:  `[{"claim":"groups","value":"env-group","role_id":3}]`,
+		Enabled:          true,
+		EnabledSet:       true,
+		AllowPassword:    true,
+		AllowPasswordSet: true,
+		IssuerURL:        "https://env-idp.example.test",
+		ClientID:         "env-client",
+		ClientSecret:     "env-secret-value",
+		Scopes:           "openid email",
+		RoleMapping:      `[{"claim":"groups","value":"env-group","role_id":3}]`,
 	}
 }
 
@@ -107,13 +109,14 @@ func TestSSOConfig(t *testing.T) {
 		cfg, err := svc.SSOConfig(ssoCtx())
 		require.NoError(t, err)
 		assert.False(t, cfg.Enabled)
+		assert.False(t, cfg.AllowPassword)
 		assert.Equal(t, []string{"openid", "profile", "email"}, cfg.Scopes)
 		assert.Empty(t, cfg.IssuerURL)
 		assert.Empty(t, cfg.ClientID)
 		assert.Empty(t, cfg.ClientSecret)
 		assert.Empty(t, cfg.RoleMapping)
 		assert.Equal(t, SSOConfigSources{
-			Enabled: SSOSourceDefault, IssuerURL: SSOSourceDefault, ClientID: SSOSourceDefault,
+			Enabled: SSOSourceDefault, AllowPassword: SSOSourceDefault, IssuerURL: SSOSourceDefault, ClientID: SSOSourceDefault,
 			ClientSecret: SSOSourceDefault, Scopes: SSOSourceDefault, RoleMapping: SSOSourceDefault,
 		}, cfg.Sources)
 	})
@@ -121,6 +124,7 @@ func TestSSOConfig(t *testing.T) {
 	t.Run("settings win over env", func(t *testing.T) {
 		configs := newFakeSSOConfigs()
 		configs.values[models.ConfigKeySSOEnabled] = "false"
+		configs.values[models.ConfigKeySSOAllowPassword] = "false"
 		configs.values[models.ConfigKeySSOIssuerURL] = "https://stored-idp.example.test/v2.0"
 		configs.values[models.ConfigKeySSOClientID] = "stored-client"
 		configs.values[models.ConfigKeySSOClientSecret] = "stored-secret"
@@ -129,13 +133,14 @@ func TestSSOConfig(t *testing.T) {
 		cfg, err := NewSSOSettingsService(configs, knownRoles(), envSSO()).SSOConfig(ssoCtx())
 		require.NoError(t, err)
 		assert.False(t, cfg.Enabled)
+		assert.False(t, cfg.AllowPassword, "stored false wins over OIDC_ALLOW_PASSWORD=true")
 		assert.Equal(t, "https://stored-idp.example.test/v2.0", cfg.IssuerURL)
 		assert.Equal(t, "stored-client", cfg.ClientID)
 		assert.Equal(t, "stored-secret", cfg.ClientSecret)
 		assert.Equal(t, []string{"openid", "profile", "groups"}, cfg.Scopes)
 		assert.Equal(t, []SSORoleMapping{{Claim: "roles", Value: "crm.admin", RoleID: 1}}, cfg.RoleMapping)
 		assert.Equal(t, SSOConfigSources{
-			Enabled: SSOSourceSettings, IssuerURL: SSOSourceSettings, ClientID: SSOSourceSettings,
+			Enabled: SSOSourceSettings, AllowPassword: SSOSourceSettings, IssuerURL: SSOSourceSettings, ClientID: SSOSourceSettings,
 			ClientSecret: SSOSourceSettings, Scopes: SSOSourceSettings, RoleMapping: SSOSourceSettings,
 		}, cfg.Sources)
 	})
@@ -144,13 +149,14 @@ func TestSSOConfig(t *testing.T) {
 		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), envSSO()).SSOConfig(ssoCtx())
 		require.NoError(t, err)
 		assert.True(t, cfg.Enabled)
+		assert.True(t, cfg.AllowPassword)
 		assert.Equal(t, "https://env-idp.example.test", cfg.IssuerURL)
 		assert.Equal(t, "env-client", cfg.ClientID)
 		assert.Equal(t, "env-secret-value", cfg.ClientSecret)
 		assert.Equal(t, []string{"openid", "email"}, cfg.Scopes)
 		assert.Equal(t, []SSORoleMapping{{Claim: "groups", Value: "env-group", RoleID: 3}}, cfg.RoleMapping)
 		assert.Equal(t, SSOConfigSources{
-			Enabled: SSOSourceEnv, IssuerURL: SSOSourceEnv, ClientID: SSOSourceEnv,
+			Enabled: SSOSourceEnv, AllowPassword: SSOSourceEnv, IssuerURL: SSOSourceEnv, ClientID: SSOSourceEnv,
 			ClientSecret: SSOSourceEnv, Scopes: SSOSourceEnv, RoleMapping: SSOSourceEnv,
 		}, cfg.Sources)
 	})
@@ -166,6 +172,31 @@ func TestSSOConfig(t *testing.T) {
 			require.NoError(t, cfgErr, name)
 			assert.False(t, cfg.Enabled, name)
 			assert.Equal(t, SSOSourceDefault, cfg.Sources.Enabled, name)
+		}
+	})
+
+	t.Run("allow_password: stored true wins over env false", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		configs.values[models.ConfigKeySSOAllowPassword] = "true"
+		env := envSSO()
+		env.AllowPassword = false
+		cfg, err := NewSSOSettingsService(configs, knownRoles(), env).SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.True(t, cfg.AllowPassword)
+		assert.Equal(t, SSOSourceSettings, cfg.Sources.AllowPassword)
+	})
+
+	t.Run("allow_password fails closed on a read error even with env true", func(t *testing.T) {
+		for name, err := range map[string]error{
+			"database error": errors.New("connection refused"),
+			"missing row":    apperrors.ErrNotFound,
+		} {
+			configs := newFakeSSOConfigs()
+			configs.readErrs[models.ConfigKeySSOAllowPassword] = err
+			cfg, cfgErr := NewSSOSettingsService(configs, knownRoles(), envSSO()).SSOConfig(ssoCtx())
+			require.NoError(t, cfgErr, name)
+			assert.False(t, cfg.AllowPassword, name)
+			assert.Equal(t, SSOSourceDefault, cfg.Sources.AllowPassword, name)
 		}
 	})
 
@@ -267,7 +298,7 @@ func TestSSOSettingsUpdate(t *testing.T) {
 		require.NoError(t, NewSSOSettingsService(configs, knownRoles(2), config.SSOConfig{}).Update(ssoCtx(), validSSOUpdate()))
 		require.NotEmpty(t, configs.writes)
 		assert.Equal(t, models.ConfigKeySSOEnabled, configs.writes[len(configs.writes)-1])
-		assert.Equal(t, 5, len(configs.writes), "the secret is not written when absent")
+		assert.Equal(t, 6, len(configs.writes), "the secret is not written when absent")
 	})
 
 	t.Run("write order: enabling via env (null) writes enabled last", func(t *testing.T) {
@@ -434,4 +465,123 @@ func TestSSOSettingsSecretEncryptedAtRest(t *testing.T) {
 	assert.Equal(t, secret, cfg.ClientSecret)
 	assert.Equal(t, []SSORoleMapping{{Claim: "groups", Value: group, RoleID: 2}}, cfg.RoleMapping)
 	assert.True(t, cfg.Enabled)
+}
+
+// countingSSOConfigs records every key read, to prove the password policy
+// reads only its own key.
+type countingSSOConfigs struct {
+	*fakeSSOConfigs
+	reads []string
+}
+
+func (c *countingSSOConfigs) GetString(key string) (string, error) {
+	c.reads = append(c.reads, key)
+	return c.fakeSSOConfigs.GetString(key)
+}
+
+func (c *countingSSOConfigs) GetSecret(key string) (string, error) {
+	c.reads = append(c.reads, key)
+	return c.fakeSSOConfigs.GetSecret(key)
+}
+
+func TestAllowPasswordForSSOAccounts(t *testing.T) {
+	unset := config.SSOConfig{}
+	envTrue := config.SSOConfig{AllowPassword: true, AllowPasswordSet: true}
+	envFalse := config.SSOConfig{AllowPassword: false, AllowPasswordSet: true}
+	cases := []struct {
+		name    string
+		stored  string
+		readErr error
+		env     config.SSOConfig
+		want    bool
+	}{
+		{name: "stored_true", stored: "true", env: unset, want: true},
+		{name: "stored_true_over_env_false", stored: "true", env: envFalse, want: true},
+		{name: "stored_false", stored: "false", env: unset, want: false},
+		{name: "stored_false_over_env_true", stored: "false", env: envTrue, want: false},
+		{name: "empty_env_true", stored: "", env: envTrue, want: true},
+		{name: "empty_env_false", stored: "", env: envFalse, want: false},
+		{name: "empty_env_unset", stored: "", env: unset, want: false},
+		{name: "read_error_env_true_fails_closed", readErr: errors.New("connection refused"), env: envTrue, want: false},
+		{name: "missing_row_env_true_fails_closed", readErr: apperrors.ErrNotFound, env: envTrue, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			configs := &countingSSOConfigs{fakeSSOConfigs: newFakeSSOConfigs()}
+			configs.values[models.ConfigKeySSOAllowPassword] = tc.stored
+			if tc.readErr != nil {
+				configs.readErrs[models.ConfigKeySSOAllowPassword] = tc.readErr
+			}
+			svc := NewSSOSettingsService(configs, knownRoles(), tc.env)
+			assert.Equal(t, tc.want, svc.AllowPasswordForSSOAccounts(ssoCtx()))
+			assert.Equal(t, []string{models.ConfigKeySSOAllowPassword}, configs.reads,
+				"only the password setting is read; the secret and the mapping are not")
+		})
+	}
+
+	t.Run("cancelled_context_fails_closed", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		configs.values[models.ConfigKeySSOAllowPassword] = "true"
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		assert.False(t, NewSSOSettingsService(configs, knownRoles(), unset).AllowPasswordForSSOAccounts(ctx))
+	})
+}
+
+func TestSSOSettingsUpdateAllowPassword(t *testing.T) {
+	t.Run("true and false are stored, nil clears so the env applies", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		env := config.SSOConfig{AllowPassword: true, AllowPasswordSet: true}
+		svc := NewSSOSettingsService(configs, knownRoles(2), env)
+
+		update := validSSOUpdate()
+		update.AllowPassword = boolPtr(true)
+		require.NoError(t, svc.Update(ssoCtx(), update))
+		assert.Equal(t, "true", configs.values[models.ConfigKeySSOAllowPassword])
+
+		update.AllowPassword = boolPtr(false)
+		require.NoError(t, svc.Update(ssoCtx(), update))
+		assert.Equal(t, "false", configs.values[models.ConfigKeySSOAllowPassword])
+		cfg, err := svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.False(t, cfg.AllowPassword)
+		assert.Equal(t, SSOSourceSettings, cfg.Sources.AllowPassword)
+
+		update.AllowPassword = nil
+		require.NoError(t, svc.Update(ssoCtx(), update))
+		assert.Equal(t, "", configs.values[models.ConfigKeySSOAllowPassword])
+		cfg, err = svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.True(t, cfg.AllowPassword, "OIDC_ALLOW_PASSWORD applies again")
+		assert.Equal(t, SSOSourceEnv, cfg.Sources.AllowPassword)
+	})
+
+	t.Run("write position: before the other settings, after a leading disable switch", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		update := validSSOUpdate()
+		update.AllowPassword = boolPtr(false)
+		require.NoError(t, NewSSOSettingsService(configs, knownRoles(2), config.SSOConfig{}).Update(ssoCtx(), update))
+		assert.Equal(t, []string{
+			models.ConfigKeySSOAllowPassword, models.ConfigKeySSOIssuerURL, models.ConfigKeySSOClientID,
+			models.ConfigKeySSOScopes, models.ConfigKeySSORoleMapping, models.ConfigKeySSOEnabled,
+		}, configs.writes, "enabling: the switch stays last")
+
+		configs = newFakeSSOConfigs()
+		update.Enabled = boolPtr(false)
+		require.NoError(t, NewSSOSettingsService(configs, knownRoles(2), config.SSOConfig{}).Update(ssoCtx(), update))
+		assert.Equal(t, []string{
+			models.ConfigKeySSOEnabled, models.ConfigKeySSOAllowPassword, models.ConfigKeySSOIssuerURL,
+			models.ConfigKeySSOClientID, models.ConfigKeySSOScopes, models.ConfigKeySSORoleMapping,
+		}, configs.writes, "disabling: the switch stays first")
+	})
+
+	t.Run("a refused update stores nothing, allow_password included", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		update := validSSOUpdate()
+		update.AllowPassword = boolPtr(true)
+		update.IssuerURL = "http://not-https.example.test"
+		err := NewSSOSettingsService(configs, knownRoles(2), config.SSOConfig{}).Update(ssoCtx(), update)
+		require.ErrorIs(t, err, ErrSSOSettingsInvalid)
+		assert.Empty(t, configs.writes)
+	})
 }

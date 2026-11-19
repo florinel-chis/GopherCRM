@@ -299,7 +299,7 @@ schema). A root that skipped proves nothing.
 
 ## 5. Add a setting
 
-- Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:264`) with key, type,
+- Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:265`) with key, type,
   category, default and description. `configRepo.InitializeDefaults()` runs at every start
   (`cmd/main.go:150`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
   value (`BulkUpsert`, `internal/repository/configuration_repository.go:62`). Changing a default

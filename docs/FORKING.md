@@ -178,7 +178,7 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
    so the exception holds on ports 80 and 443 but not on `localhost:3000`. `curl` without an
    `Origin` header does not reproduce any of this; add
    `-H 'Origin: https://your-ui.example'` when you smoke-test.
-3. **Public registration ships off** (`internal/models/configuration.go:323-330`). Sign-up stays
+3. **Public registration ships off** (`internal/models/configuration.go:324-331`). Sign-up stays
    hidden until an admin enables it under Settings.
 
 ### 2.4 Calling the API with a key
@@ -353,14 +353,14 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:355`), refresh and password-reset tokens (`cmd/main.go:315`), form confirmation
+>   (`cmd/main.go:362`), refresh and password-reset tokens (`cmd/main.go:326`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
 >   encryption of sensitive settings (`cmd/main.go:309`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `internal/service/auth_service.go:617-622`) and the UI silently trades them for new access
+>   `internal/service/auth_service.go:672-677`) and the UI silently trades them for new access
 >   tokens signed with the new secret (`gocrm-ui/src/api/client.ts:232-256`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
 >   change and a password reset revoke that user's refresh tokens and end the access tokens issued
@@ -394,7 +394,7 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
   created without `assigned_to_id` is assigned to its creator
   (`internal/handler/ticket_handler.go:108-111`).
 - `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:299`, used at
-  `internal/service/auth_service.go:587`) and the refresh-token lifetime from
+  `internal/service/auth_service.go:642`) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:304`). `JWT_ACCESS_TOKEN_MINUTES` is read
   (`config.go:300`) but used by nothing.
 

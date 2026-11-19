@@ -17,45 +17,62 @@ func TestLoad_SSOEnvironment(t *testing.T) {
 	})
 
 	withCleanEnv(t, map[string]string{
-		"JWT_SECRET":         validSecret(),
-		"OIDC_ENABLED":       "true",
-		"OIDC_ISSUER_URL":    "https://idp.example.com",
-		"OIDC_CLIENT_ID":     "crm",
-		"OIDC_CLIENT_SECRET": "not-a-real-secret",
-		"OIDC_SCOPES":        "openid email",
-		"OIDC_ROLE_MAPPING":  `[{"claim":"groups","value":"g1","role_id":2}]`,
+		"JWT_SECRET":          validSecret(),
+		"OIDC_ENABLED":        "true",
+		"OIDC_ALLOW_PASSWORD": "1",
+		"OIDC_ISSUER_URL":     "https://idp.example.com",
+		"OIDC_CLIENT_ID":      "crm",
+		"OIDC_CLIENT_SECRET":  "not-a-real-secret",
+		"OIDC_SCOPES":         "openid email",
+		"OIDC_ROLE_MAPPING":   `[{"claim":"groups","value":"g1","role_id":2}]`,
 	}, func() {
 		cfg, err := Load()
 		require.NoError(t, err)
 		assert.Equal(t, SSOConfig{
-			Enabled:      true,
-			EnabledSet:   true,
-			IssuerURL:    "https://idp.example.com",
-			ClientID:     "crm",
-			ClientSecret: "not-a-real-secret",
-			Scopes:       "openid email",
-			RoleMapping:  `[{"claim":"groups","value":"g1","role_id":2}]`,
+			Enabled:          true,
+			EnabledSet:       true,
+			AllowPassword:    true,
+			AllowPasswordSet: true,
+			IssuerURL:        "https://idp.example.com",
+			ClientID:         "crm",
+			ClientSecret:     "not-a-real-secret",
+			Scopes:           "openid email",
+			RoleMapping:      `[{"claim":"groups","value":"g1","role_id":2}]`,
 		}, cfg.SSO)
+	})
+
+	// An explicit false is recognised, so the source can say env.
+	withCleanEnv(t, map[string]string{
+		"JWT_SECRET":          validSecret(),
+		"OIDC_ALLOW_PASSWORD": "false",
+	}, func() {
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.False(t, cfg.SSO.AllowPassword)
+		assert.True(t, cfg.SSO.AllowPasswordSet)
 	})
 
 	// Invalid values never stop the boot; the service judges them.
 	withCleanEnv(t, map[string]string{
-		"JWT_SECRET":        validSecret(),
-		"OIDC_ENABLED":      "maybe",
-		"OIDC_ISSUER_URL":   "http://not-https.example.com",
-		"OIDC_ROLE_MAPPING": "not json",
+		"JWT_SECRET":          validSecret(),
+		"OIDC_ENABLED":        "maybe",
+		"OIDC_ALLOW_PASSWORD": "yes",
+		"OIDC_ISSUER_URL":     "http://not-https.example.com",
+		"OIDC_ROLE_MAPPING":   "not json",
 	}, func() {
 		cfg, err := Load()
 		require.NoError(t, err)
 		assert.False(t, cfg.SSO.Enabled)
 		assert.False(t, cfg.SSO.EnabledSet)
+		assert.False(t, cfg.SSO.AllowPassword, "an unrecognised value counts as unset")
+		assert.False(t, cfg.SSO.AllowPasswordSet)
 		assert.Equal(t, "http://not-https.example.com", cfg.SSO.IssuerURL)
 	})
 }
 
 func TestEnvExample_OIDCVariablesDocumented(t *testing.T) {
 	text := readRepositoryFile(t, ".env.example")
-	for _, name := range []string{"OIDC_ENABLED", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING"} {
+	for _, name := range []string{"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING"} {
 		assert.Regexp(t, regexp.MustCompile(`(?m)^(# )?`+name+`=`), text, "%s is documented", name)
 		assert.NotRegexp(t, regexp.MustCompile(`(?m)^`+name+`=`), text, "%s stays commented", name)
 	}

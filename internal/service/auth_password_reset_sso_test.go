@@ -1,10 +1,13 @@
 package service
 
-// Regression roots for issue #444: an account provisioned by single sign-on
-// (one with a user_identities row) can neither obtain nor use a password
-// reset token, with the public answers unchanged. A password account without
-// an identity row is the control in each half. Every assertion reads
-// committed rows outside any transaction.
+// Regression roots for issue #444 and #457. TestPasswordResetSSOAccount* build
+// the service without a password policy (security.sso.allow_password off):
+// an account linked to single sign-on (one with a user_identities row) can
+// neither obtain nor use a password reset token, with the public answers
+// unchanged. TestSSOAccountPasswordPolicy* wire the real settings service and
+// cover password reset and password login with the setting off and on. A
+// password account without an identity row is the control throughout. Every
+// assertion reads committed rows outside any transaction.
 
 import (
 	"errors"
@@ -164,5 +167,194 @@ func runPasswordResetSSOAccount(t *testing.T, db *gorm.DB) {
 			"the token is spent")
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(after.Password), []byte(resetNewPassword)))
 		assert.Equal(t, before.TokenVersion+1, after.TokenVersion)
+	})
+}
+
+func TestSSOAccountPasswordPolicySQLite(t *testing.T) {
+	runSSOAccountPasswordPolicy(t, openResetTestSQLite(t))
+}
+
+func TestSSOAccountPasswordPolicyMySQL(t *testing.T) {
+	runSSOAccountPasswordPolicy(t, openResetTestMySQL(t, 4))
+}
+
+// ssoPolicyFixture is the #444 fixture with the real single sign-on settings
+// service wired as the password policy (#457), over the real configuration
+// service on the same database. On SQLite the pool holds one connection, so
+// a policy read inside the auth transaction would block: every passing
+// subtest also proves the read happens outside it.
+type ssoPolicyFixture struct {
+	*ssoResetFixture
+	configs ConfigurationService
+}
+
+func newSSOPolicyFixture(t *testing.T, db *gorm.DB) *ssoPolicyFixture {
+	t.Helper()
+	_ = utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "text"})
+	require.NoError(t, db.AutoMigrate(&models.UserIdentity{}, &models.Configuration{}))
+	configs := NewConfigurationService(repository.NewConfigurationRepository(db),
+		utils.NewSecretBox(resetTestSecret, "configuration-secret"))
+	require.NoError(t, configs.InitializeDefaults())
+	policy := NewSSOSettingsService(configs, repository.NewRoleRepository(db), config.SSOConfig{})
+	f := &ssoPolicyFixture{ssoResetFixture: &ssoResetFixture{db: db, mailer: &fakeFormMailer{}}, configs: configs}
+	f.svc = NewAuthServiceWithSessions(
+		repository.NewUserRepository(db),
+		repository.NewAPIKeyRepository(db),
+		repository.NewRefreshTokenRepository(db),
+		repository.NewPasswordResetTokenRepository(db),
+		utils.NewTransactionManager(db),
+		f.mailer,
+		config.JWTConfig{Secret: resetTestSecret, ExpiryHours: 1, RefreshTokenDays: 30},
+		resetTestBaseURL, "",
+		WithAuthIdentities(repository.NewUserIdentityRepository(db)),
+		WithAuthSSOPasswordPolicy(policy))
+	return f
+}
+
+// setAllowPassword stores security.sso.allow_password ("true", "false" or ""
+// for "follow OIDC_ALLOW_PASSWORD", which is unset here).
+func (f *ssoPolicyFixture) setAllowPassword(t *testing.T, value string) {
+	t.Helper()
+	require.NoError(t, f.configs.SetSSO(models.ConfigKeySSOAllowPassword, value))
+}
+
+// seedWithAttempts seeds as seed() does and gives both accounts two failed
+// login attempts, so a login that writes anything is visible.
+func (f *ssoPolicyFixture) seedWithAttempts(t *testing.T) (linked, local *models.User) {
+	t.Helper()
+	linked, local = f.seed(t)
+	require.NoError(t, f.db.WithContext(resetContext(t)).Model(&models.User{}).
+		Where("id IN ?", []uint{linked.ID, local.ID}).
+		UpdateColumn("failed_login_attempts", 2).Error)
+	return linked, local
+}
+
+func runSSOAccountPasswordPolicy(t *testing.T, db *gorm.DB) {
+	f := newSSOPolicyFixture(t, db)
+
+	settings := []struct {
+		name    string
+		stored  string
+		allowed bool
+	}{
+		{"off", "false", false},
+		{"unset_default_off", "", false},
+		{"on", "true", true},
+	}
+	for _, setting := range settings {
+		for _, linkedAccount := range []bool{true, false} {
+			account := "unlinked"
+			if linkedAccount {
+				account = "linked"
+			}
+			// A linked account is refused only while the setting is off.
+			allowed := setting.allowed || !linkedAccount
+			pick := func(linked, local *models.User) *models.User {
+				if linkedAccount {
+					return linked
+				}
+				return local
+			}
+
+			t.Run(setting.name+"/"+account+"/reset_request", func(t *testing.T) {
+				f.setAllowPassword(t, setting.stored)
+				user := pick(f.seed(t))
+				require.NoError(t, f.svc.RequestPasswordReset(user.Email))
+				if allowed {
+					assert.Equal(t, int64(1), f.count(t, &models.PasswordResetToken{}, "user_id = ? AND used_at IS NULL", user.ID))
+					messages := f.mailer.messages()
+					require.Len(t, messages, 1)
+					assert.Equal(t, user.Email, messages[0].To)
+				} else {
+					assert.Zero(t, f.count(t, &models.PasswordResetToken{}, "user_id = ?", user.ID))
+					assert.Empty(t, f.mailer.messages())
+				}
+			})
+
+			t.Run(setting.name+"/"+account+"/reset_confirm", func(t *testing.T) {
+				f.setAllowPassword(t, setting.stored)
+				user := pick(f.seed(t))
+				f.preseedToken(t, user.ID, "policy-raw-token")
+				// Every account gets a live refresh token, so revocation is visible.
+				require.NoError(t, f.db.WithContext(resetContext(t)).Create(&models.RefreshToken{
+					UserID: user.ID, TokenHash: hashOpaqueToken("policy-session-"+account, resetTestSecret),
+					ExpiresAt: time.Now().Add(24 * time.Hour),
+				}).Error)
+				before := f.user(t, user.ID)
+
+				err := f.svc.ConfirmPasswordReset("policy-raw-token", resetNewPassword)
+
+				after := f.user(t, user.ID)
+				if allowed {
+					require.NoError(t, err)
+					assert.Zero(t, f.count(t, &models.PasswordResetToken{}, "user_id = ? AND used_at IS NULL", user.ID),
+						"the token is spent")
+					assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(after.Password), []byte(resetNewPassword)))
+					assert.Equal(t, before.TokenVersion+1, after.TokenVersion)
+					assert.Zero(t, f.count(t, &models.RefreshToken{}, "user_id = ? AND is_revoked = ?", user.ID, false),
+						"every refresh token is revoked")
+				} else {
+					require.Error(t, err)
+					assert.True(t, errors.Is(err, ErrInvalidResetToken), "got %v", err)
+					assert.Equal(t, int64(1), f.count(t, &models.PasswordResetToken{}, "user_id = ? AND used_at IS NULL", user.ID),
+						"the token stays unspent")
+					assert.Equal(t, before.Password, after.Password)
+					assert.Equal(t, before.TokenVersion, after.TokenVersion)
+					assert.NotZero(t, f.count(t, &models.RefreshToken{}, "user_id = ? AND is_revoked = ?", user.ID, false),
+						"the refresh tokens stay unrevoked")
+				}
+			})
+
+			t.Run(setting.name+"/"+account+"/login", func(t *testing.T) {
+				f.setAllowPassword(t, setting.stored)
+				user := pick(f.seedWithAttempts(t))
+				before := f.user(t, user.ID)
+				refreshBefore := f.count(t, &models.RefreshToken{}, "user_id = ?", user.ID)
+
+				tokens, err := f.svc.LoginWithTokens(user.Email, resetOldPassword)
+
+				after := f.user(t, user.ID)
+				if allowed {
+					require.NoError(t, err)
+					require.NotNil(t, tokens)
+					assert.NotEmpty(t, tokens.AccessToken)
+					assert.NotEmpty(t, tokens.RefreshToken)
+					assert.Equal(t, refreshBefore+1, f.count(t, &models.RefreshToken{}, "user_id = ?", user.ID))
+					assert.NotNil(t, after.LastLoginAt)
+					assert.Zero(t, after.FailedLoginAttempts)
+				} else {
+					require.Error(t, err)
+					assert.True(t, errors.Is(err, errLoginInvalidCredentials), "got %v", err)
+					assert.Nil(t, tokens)
+					assert.Equal(t, refreshBefore, f.count(t, &models.RefreshToken{}, "user_id = ?", user.ID),
+						"no refresh token is issued")
+					assert.Equal(t, before.LastLoginAt, after.LastLoginAt, "last_login_at is unchanged")
+					assert.Equal(t, before.FailedLoginAttempts, after.FailedLoginAttempts, "failed_login_attempts is unchanged")
+					assert.Equal(t, before.LockedUntil, after.LockedUntil, "locked_until is unchanged")
+				}
+			})
+		}
+	}
+
+	t.Run("password_set_while_on_stops_when_off", func(t *testing.T) {
+		f.setAllowPassword(t, "true")
+		linked, _ := f.seed(t)
+		f.preseedToken(t, linked.ID, "while-on-raw-token")
+		require.NoError(t, f.svc.ConfirmPasswordReset("while-on-raw-token", resetNewPassword))
+		tokens, err := f.svc.LoginWithTokens(linked.Email, resetNewPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, tokens.RefreshToken)
+
+		f.setAllowPassword(t, "false")
+		before := f.user(t, linked.ID)
+		refreshBefore := f.count(t, &models.RefreshToken{}, "user_id = ?", linked.ID)
+		tokens, err = f.svc.LoginWithTokens(linked.Email, resetNewPassword)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, errLoginInvalidCredentials), "got %v", err)
+		assert.Nil(t, tokens)
+		after := f.user(t, linked.ID)
+		assert.Equal(t, refreshBefore, f.count(t, &models.RefreshToken{}, "user_id = ?", linked.ID))
+		assert.Equal(t, before.LastLoginAt, after.LastLoginAt)
+		assert.Equal(t, before.FailedLoginAttempts, after.FailedLoginAttempts)
 	})
 }

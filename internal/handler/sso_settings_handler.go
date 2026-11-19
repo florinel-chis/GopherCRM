@@ -13,8 +13,9 @@ import (
 )
 
 // SSOSettingsHandler serves the single sign-on settings (#434): the stored
-// security.sso.* entries over the OIDC_* environment fallbacks. No sign-in
-// flow reads them yet.
+// security.sso.* entries over the OIDC_* environment fallbacks. The OpenID
+// Connect sign-in reads them, and the password sign-in and reset flows read
+// allow_password.
 type SSOSettingsHandler struct {
 	sso service.SSOSettingsService
 }
@@ -42,6 +43,8 @@ type SSORoleMappingEntry struct {
 type SSOSettingsSources struct {
 	// Source of enabled.
 	Enabled string `json:"enabled" example:"settings" enums:"settings,env,default"`
+	// Source of allow_password.
+	AllowPassword string `json:"allow_password" example:"default" enums:"settings,env,default"`
 	// Source of issuer_url.
 	IssuerURL string `json:"issuer_url" example:"env" enums:"settings,env,default"`
 	// Source of client_id.
@@ -60,6 +63,8 @@ type SSOSettingsSources struct {
 type SSOSettingsResponse struct {
 	// Whether single sign-on is enabled. False when the stored setting cannot be read, whatever OIDC_ENABLED says.
 	Enabled bool `json:"enabled" example:"false"`
+	// Whether an account linked to single sign-on (one with a user_identities row) may also use password sign-in and password reset; accounts without a link always may. False by default and when the stored setting cannot be read. When true, a password keeps working after the identity provider removes the person or the mapped role, so offboarding must also deactivate the account in GopherCRM.
+	AllowPassword bool `json:"allow_password" example:"false"`
 	// The OpenID Connect issuer URL, or empty.
 	IssuerURL string `json:"issuer_url" example:"https://login.microsoftonline.com/tenant-id/v2.0"`
 	// The OpenID Connect client id, or empty.
@@ -81,6 +86,8 @@ type SSOSettingsResponse struct {
 type SSOSettingsRequest struct {
 	// true or false stores the switch; null or absent clears it, so OIDC_ENABLED applies.
 	Enabled *bool `json:"enabled" example:"true"`
+	// true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset; null or absent clears it, so OIDC_ALLOW_PASSWORD (default false) applies.
+	AllowPassword *bool `json:"allow_password" example:"false"`
 	// An absolute https URL without credentials, query, fragment or zone identifier, at most 2048 bytes; a path is allowed. Empty clears it.
 	IssuerURL string `json:"issuer_url" example:"https://login.microsoftonline.com/tenant-id/v2.0"`
 	// At most 255 bytes, trimmed. Empty clears it.
@@ -104,25 +111,27 @@ func newSSOSettingsResponse(cfg service.EffectiveSSOConfig) SSOSettingsResponse 
 	}
 	return SSOSettingsResponse{
 		Enabled:         cfg.Enabled,
+		AllowPassword:   cfg.AllowPassword,
 		IssuerURL:       cfg.IssuerURL,
 		ClientID:        cfg.ClientID,
 		Scopes:          scopes,
 		RoleMapping:     mapping,
 		ClientSecretSet: cfg.ClientSecret != "",
 		Sources: SSOSettingsSources{
-			Enabled:      cfg.Sources.Enabled,
-			IssuerURL:    cfg.Sources.IssuerURL,
-			ClientID:     cfg.Sources.ClientID,
-			ClientSecret: cfg.Sources.ClientSecret,
-			Scopes:       cfg.Sources.Scopes,
-			RoleMapping:  cfg.Sources.RoleMapping,
+			Enabled:       cfg.Sources.Enabled,
+			AllowPassword: cfg.Sources.AllowPassword,
+			IssuerURL:     cfg.Sources.IssuerURL,
+			ClientID:      cfg.Sources.ClientID,
+			ClientSecret:  cfg.Sources.ClientSecret,
+			Scopes:        cfg.Sources.Scopes,
+			RoleMapping:   cfg.Sources.RoleMapping,
 		},
 	}
 }
 
 // Get godoc
 // @Summary Get the single sign-on settings (admin)
-// @Description Requires settings.sso_manage (route guard, repeated in the handler); only the admin system role holds it, settings.view and settings.update do not. Returns the effective OpenID Connect settings: per field a non-empty stored setting, else the OIDC_* variable, else the default (disabled, scopes openid profile email, everything else empty); sources says which. The role mapping is returned decrypted; the client secret never is, client_secret_set says whether one is in force. Single sign-on is off when its stored switch cannot be read, and the mapping is empty when the stored one cannot be read or parsed. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
+// @Description Requires settings.sso_manage (route guard, repeated in the handler); only the admin system role holds it, settings.view and settings.update do not. Returns the effective OpenID Connect settings: per field a non-empty stored setting, else the OIDC_* variable, else the default (disabled, scopes openid profile email, everything else empty); sources says which. The role mapping is returned decrypted; the client secret never is, client_secret_set says whether one is in force. allow_password says whether accounts linked to single sign-on may also use password sign-in and password reset (default false). Single sign-on is off when its stored switch cannot be read, allow_password is false when its stored value cannot be read, and the mapping is empty when the stored one cannot be read or parsed. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -149,7 +158,7 @@ func (h *SSOSettingsHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Replace the single sign-on settings (admin)
-// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
+// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; allow_password true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset, and null or absent clears it so OIDC_ALLOW_PASSWORD applies; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration; allow_password is written before the other settings. Sessions and refresh tokens issued before allow_password is turned off are not ended by it. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
 // @Tags configurations
 // @Accept json
 // @Produce json
@@ -177,11 +186,12 @@ func (h *SSOSettingsHandler) Update(c *gin.Context) {
 	}
 
 	update := service.SSOSettingsUpdate{
-		Enabled:      req.Enabled,
-		IssuerURL:    req.IssuerURL,
-		ClientID:     req.ClientID,
-		ClientSecret: req.ClientSecret,
-		Scopes:       req.Scopes,
+		Enabled:       req.Enabled,
+		AllowPassword: req.AllowPassword,
+		IssuerURL:     req.IssuerURL,
+		ClientID:      req.ClientID,
+		ClientSecret:  req.ClientSecret,
+		Scopes:        req.Scopes,
 	}
 	for _, entry := range req.RoleMapping {
 		update.RoleMapping = append(update.RoleMapping, service.SSORoleMapping{Claim: entry.Claim, Value: entry.Value, RoleID: entry.RoleID})
