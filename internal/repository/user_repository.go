@@ -16,10 +16,13 @@ type userRepository struct {
 	// the test option in erasure_hooks.go and copied by WithTx; nil in
 	// production.
 	lockSeams *erasureSeams
+	// erasureListener is told what each erasure unit erased (#437); the
+	// production wiring sets the webhook listener. Copied by WithTx.
+	erasureListener ErasureListener
 }
 
 // UserRepositoryOption configures NewUserRepository beyond its handle.
-// Production wiring passes none.
+// Production wiring passes only WithUserErasureListener.
 type UserRepositoryOption func(*userRepository)
 
 func NewUserRepository(db *gorm.DB, opts ...UserRepositoryOption) UserRepository {
@@ -202,7 +205,7 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 //
 // See erasure.go for the shared machinery and the full GDPR rationale.
 func (r *userRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootUser, id: id}, r.lockSeams, nil)
+	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootUser, id: id}, r.lockSeams, nil, r.erasureListener)
 }
 
 // userErasurePlan lists what counts as personal data on a user, and what goes
@@ -332,7 +335,7 @@ func (r *userRepository) CountByFilter(filter UserListFilter) (int64, error) {
 }
 
 func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
-	return &userRepository{db: tx, lockSeams: r.lockSeams}
+	return &userRepository{db: tx, lockSeams: r.lockSeams, erasureListener: r.erasureListener}
 }
 
 var _ UserRoleMaintenance = (*userRepository)(nil)

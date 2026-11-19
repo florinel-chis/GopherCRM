@@ -108,7 +108,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created and updated events of leads, customers and tickets (lead.created, lead.updated, customer.created, customer.updated, ticket.created, ticket.updated).
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers and tickets (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -260,13 +260,23 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 // retention purge, the bulk operation sweep, the webhook sender and the AEO
 // runtime at shutdown, in that order, before main closes the database.
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
-	userRepo := repository.NewUserRepository(models.DB)
-	leadRepo := repository.NewLeadRepository(models.DB)
+	// Outbound webhooks (#345): one repository is the outbox of every create,
+	// update and delete path (lead, customer, ticket, form) and the store of
+	// the registry and the delivery log. It is built before the user, lead and
+	// customer repositories because their erasure units write the
+	// lead.deleted and customer.deleted events through it (#437).
+	webhookRepo := repository.NewWebhookRepository(models.DB)
+	erasureListener := service.NewWebhookErasureListener(webhookRepo)
+
 	// The user, customer and lead repositories erase a whole person on Delete
 	// (the lead it was converted from, the customer it became, the customer's
 	// own login): the cascade lives in the plain repositories, so there is no
-	// special constructor to remember. See repository/erasure_cascade.go.
-	customerRepo := repository.NewCustomerRepository(models.DB)
+	// special constructor to remember. See repository/erasure_cascade.go. Each
+	// carries the webhook erasure listener, which the erasure unit calls last,
+	// inside the unit, with the leads and customers it found live and erased.
+	userRepo := repository.NewUserRepository(models.DB, repository.WithUserErasureListener(erasureListener))
+	leadRepo := repository.NewLeadRepository(models.DB, repository.WithLeadErasureListener(erasureListener))
+	customerRepo := repository.NewCustomerRepository(models.DB, repository.WithCustomerErasureListener(erasureListener))
 	ticketRepo := repository.NewTicketRepository(models.DB)
 	taskRepo := repository.NewTaskRepository(models.DB)
 	labelRepo := repository.NewLabelRepository(models.DB)
@@ -288,11 +298,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	appMailer := mailer.NewFromConfig(cfg.SMTP)
 	txManager := utils.NewTransactionManager(models.DB)
 
-	// Outbound webhooks (#345): one repository is the outbox of every create
-	// path (lead, customer, ticket, form) and the store of the registry and the
-	// delivery log. Endpoint secrets are sealed under their own SecretBox
-	// context.
-	webhookRepo := repository.NewWebhookRepository(models.DB)
+	// Endpoint secrets of the outbound webhooks are sealed under their own
+	// SecretBox context.
 	webhookBox := utils.NewSecretBox(cfg.API.APIKeySecret, service.WebhookSecretContext)
 
 	// The configuration service is built first: the password reset, quote and

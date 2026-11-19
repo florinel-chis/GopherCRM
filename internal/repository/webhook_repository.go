@@ -142,6 +142,29 @@ func (r *webhookRepository) ListActiveEndpointsFor(ctx context.Context, eventTyp
 	return out, nil
 }
 
+func (r *webhookRepository) ListAnnouncedRecords(ctx context.Context, endpointIDs []uint, eventTypes []string, recordIDs []uint) (map[uint][]uint, error) {
+	announced := map[uint][]uint{}
+	if len(endpointIDs) == 0 || len(eventTypes) == 0 || len(recordIDs) == 0 {
+		return announced, nil
+	}
+	var pairs []struct {
+		EndpointID uint
+		RecordID   uint
+	}
+	err := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).
+		Distinct("endpoint_id", "record_id").
+		Where("endpoint_id IN ? AND record_id IN ? AND event_type IN ?", endpointIDs, recordIDs, eventTypes).
+		Order("record_id").Order("endpoint_id").
+		Scan(&pairs).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, pair := range pairs {
+		announced[pair.RecordID] = append(announced[pair.RecordID], pair.EndpointID)
+	}
+	return announced, nil
+}
+
 func (r *webhookRepository) EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error {
 	if len(deliveries) == 0 {
 		return nil

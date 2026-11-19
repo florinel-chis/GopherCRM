@@ -512,7 +512,7 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 
 		_, _, err = env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{Status: "done"}, 0, 10)
 		assert.ErrorAs(t, err, new(*WebhookValidationError))
-		_, _, err = env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{EventType: "lead.deleted"}, 0, 10)
+		_, _, err = env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{EventType: "lead.archived"}, 0, 10)
 		assert.ErrorAs(t, err, new(*WebhookValidationError))
 
 		raw, err := json.Marshal(rows)

@@ -26,8 +26,8 @@ import (
 type WebhookEndpointCreateRequest struct {
 	// Target URL: https, no credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name must resolve to public addresses only when a delivery connects.
 	URL string `json:"url" validate:"required" maxLength:"2048" example:"https://hooks.example.com/gophercrm"`
-	// Event types to subscribe to: 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated; duplicates collapse.
-	EventTypes []string `json:"event_types" validate:"required" enums:"lead.created,lead.updated,customer.created,customer.updated,ticket.created,ticket.updated" example:"lead.created,ticket.created"`
+	// Event types to subscribe to: 1 to 9 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated and ticket.deleted; duplicates collapse.
+	EventTypes []string `json:"event_types" validate:"required" enums:"lead.created,lead.updated,lead.deleted,customer.created,customer.updated,customer.deleted,ticket.created,ticket.updated,ticket.deleted" example:"lead.created,ticket.created"`
 	// Whether events are enqueued for the endpoint; absent means true.
 	IsActive *bool `json:"is_active" example:"true"`
 }
@@ -37,8 +37,8 @@ type WebhookEndpointCreateRequest struct {
 type WebhookEndpointUpdateRequest struct {
 	// New target URL, under the same rules as on create.
 	URL *string `json:"url" maxLength:"2048" example:"https://hooks.example.com/gophercrm"`
-	// New subscribed subset: 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated.
-	EventTypes []string `json:"event_types" enums:"lead.created,lead.updated,customer.created,customer.updated,ticket.created,ticket.updated" example:"lead.created"`
+	// New subscribed subset: 1 to 9 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated and ticket.deleted.
+	EventTypes []string `json:"event_types" enums:"lead.created,lead.updated,lead.deleted,customer.created,customer.updated,customer.deleted,ticket.created,ticket.updated,ticket.deleted" example:"lead.created"`
 	// Activate or deactivate the endpoint. Pending deliveries of an inactive endpoint fail with endpoint_inactive when they are claimed.
 	IsActive *bool `json:"is_active" example:"false"`
 }
@@ -58,7 +58,7 @@ const (
 	webhookBodyRule      = "must carry url, event_types or is_active"
 	webhookSortByRule    = "must be id, created_at or updated_at"
 	webhookStatusRule    = "must be pending, sending, succeeded or failed"
-	webhookEventTypeRule = "must be lead.created, lead.updated, customer.created, customer.updated, ticket.created or ticket.updated"
+	webhookEventTypeRule = "must be lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated or ticket.deleted"
 )
 
 // parseWebhookID reads a positive integer path or query value.
@@ -132,7 +132,7 @@ func (h *WebhookHandler) ListEndpoints(c *gin.Context) {
 // CreateEndpoint godoc
 // @Summary Register a webhook endpoint
 // @Description Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.
-// @Description From then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, PUT /customers/{id}, PUT /tickets/{id} or the lead and ticket bulk status endpoints (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
+// @Description From then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, PUT /customers/{id}, PUT /tickets/{id} or the lead and ticket bulk status endpoints (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event only for the active endpoints subscribed to it that already hold a created or updated delivery of that record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
 // @Description The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
 // @Description Roles: admin.
 // @Tags webhooks
@@ -331,7 +331,7 @@ func (h *WebhookHandler) DeleteEndpoint(c *gin.Context) {
 // @Param limit query int false "Page size, capped at 100" default(20) minimum(1) maximum(100)
 // @Param endpoint_id query int false "Only deliveries of this endpoint (positive integer; otherwise 400)" minimum(1)
 // @Param status query string false "Only rows with this status (unknown value: 400)" Enums(pending, sending, succeeded, failed)
-// @Param event_type query string false "Only rows of this event type (unknown value: 400)" Enums(lead.created, lead.updated, customer.created, customer.updated, ticket.created, ticket.updated)
+// @Param event_type query string false "Only rows of this event type (unknown value: 400)" Enums(lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted)
 // @Success 200 {object} utils.APIResponse{data=[]models.WebhookDelivery,meta=utils.APIMeta} "Deliveries retrieved successfully"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - endpoint_id is not a positive integer, or status or event_type is unknown (error.details keyed by the parameter; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"

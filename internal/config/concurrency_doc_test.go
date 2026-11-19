@@ -1042,8 +1042,8 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 		require.LessOrEqual(t, n, len(lines))
 		assert.Contains(t, lines[n-1], statement, "%s:%d", cascade, n)
 	}
-	cited("leads (locking read by id", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id")`)
-	cited("customers (locking read by id", `lockingRead(tx).Unscoped().Select("id", "user_id")`)
+	cited("leads (locking read by id", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at")`)
+	cited("customers (locking read by id", `lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at")`)
 	cited("users (locking read by id", `lockingRead(tx).Unscoped().Select("id", "role")`)
 
 	// Lead conversion queued behind an erasure: not found, 404.
@@ -1159,12 +1159,14 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 	// The graph locks: leads, customers, users, by primary key, the refusal
 	// decided on the locked lead.
 	lock := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockGraph(")
-	inOrder(lock, "c.lockStage(erasureStageLeads,", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id").First(&lead, id)`,
+	inOrder(lock, "c.lockStage(erasureStageLeads,", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id)`,
 		"return ErrConvertedLeadNeedsAdmin", "c.lockStage(erasureStageCustomers,",
-		`lockingRead(tx).Unscoped().Select("id", "user_id").First(&customer, id)`, "c.lockStage(erasureStageUsers,",
+		`lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id)`, "c.lockStage(erasureStageUsers,",
 		`lockingRead(tx).Unscoped().Select("id", "role").First(&user, id)`)
 	assert.Equal(t, 3, strings.Count(lock, "First(&"), "each graph row is read once, under its lock")
-	for _, filter := range []string{`"customer_id = ?"`, `"user_id = ?"`, "deleted_at"} {
+	// deleted_at is selected (the erasure listener's live-row rule, #437) but
+	// never filtered on.
+	for _, filter := range []string{`"customer_id = ?"`, `"user_id = ?"`, "deleted_at IS", "deleted_at =", "Where("} {
 		assert.NotContains(t, lock, filter, "lockGraph filters on the primary key only")
 	}
 

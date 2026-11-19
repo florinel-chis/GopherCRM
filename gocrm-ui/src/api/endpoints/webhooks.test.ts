@@ -65,6 +65,20 @@ describe('webhook lists against the API specification', () => {
     expect([...WEBHOOK_EVENT_TYPES].sort()).toEqual([...documented].sort());
   });
 
+  it('WEBHOOK_EVENT_TYPES lists the nine event types, sorted', () => {
+    expect([...WEBHOOK_EVENT_TYPES]).toEqual([
+      'customer.created',
+      'customer.deleted',
+      'customer.updated',
+      'lead.created',
+      'lead.deleted',
+      'lead.updated',
+      'ticket.created',
+      'ticket.deleted',
+      'ticket.updated',
+    ]);
+  });
+
   it('WEBHOOK_DELIVERY_STATUSES equals the status enum of a delivery', () => {
     const documented =
       swagger.definitions['github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery'].properties.status.enum ?? [];

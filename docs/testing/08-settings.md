@@ -719,8 +719,9 @@ can succeed.
   2. Enter `https://e2e-hooks.invalid/a`, tick `lead.created`, leave Active on and press Create.
   3. Read the dialog that opens, then press Done.
   4. Reload the page.
-- **Expected:** The form offers one checkbox per event type (`customer.created`,
-  `customer.updated`, `lead.created`, `lead.updated`, `ticket.created`, `ticket.updated`: the list
+- **Expected:** The form offers one checkbox per event type, nine in all (`customer.created`,
+  `customer.deleted`, `customer.updated`, `lead.created`, `lead.deleted`, `lead.updated`,
+  `ticket.created`, `ticket.deleted`, `ticket.updated`, #437: the list
   of `src/api/endpoints/webhooks.ts`, held equal to the `event_types` enum of `api/swagger.json`).
   Step 2: `POST /webhooks/endpoints` carries `url`, `event_types` and `is_active` → 201. Step 3:
   the "Signing secret" dialog shows a read-only `whsec_` value, a "Copy signing secret" button

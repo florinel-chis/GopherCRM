@@ -555,6 +555,11 @@ type erasureCascade struct {
 	// the unit; nil everywhere in production.
 	seams *erasureSeams
 	hooks *leadErasureSeams
+
+	// listener is the production erasure listener (#437) of the repository
+	// that started the unit, called at the end of the unit; nil when none is
+	// wired.
+	listener ErasureListener
 }
 
 // erasureSeams are the instance-local test seams of the erasure protocol
@@ -642,6 +647,9 @@ func newErasureCascade(allowCustomers bool) *erasureCascade {
 //  5. Decide the non-admin refusal on the locked lead, then scrub, purge and
 //     soft-delete every row, the staff-typed text of the linked deals and
 //     quotes (#245), then their unused response links (#395).
+//  6. Tell the erasure listener, when one is wired (#437), which leads and
+//     customers were live when locked and are now erased, with the unit's
+//     tx: it writes the deleted webhook events inside the unit.
 //
 // Two erasures of one person therefore queue on its first row, whichever
 // roots they came from, where they used to deadlock.
@@ -662,7 +670,7 @@ func newErasureCascade(allowCustomers bool) *erasureCascade {
 // rollback. When db is a caller's transaction (WithTx) the discovery answers
 // from the caller's snapshot, the unit is one checked SAVEPOINT that runs
 // once, and both kinds of error go to the caller.
-func eraseGraph(db *gorm.DB, allowCustomers bool, root erasureRoot, seams *erasureSeams, hooks *leadErasureSeams) error {
+func eraseGraph(db *gorm.DB, allowCustomers bool, root erasureRoot, seams *erasureSeams, hooks *leadErasureSeams, listener ErasureListener) error {
 	attempt := func() error {
 		discovery, err := discoverErasureGraph(db, root, allowCustomers)
 		if err != nil {
@@ -671,7 +679,7 @@ func eraseGraph(db *gorm.DB, allowCustomers bool, root erasureRoot, seams *erasu
 		seams.runAfterDiscovery()
 		return runErasureUnit(db, func(tx *gorm.DB) error {
 			cascade := newErasureCascade(allowCustomers)
-			cascade.seams, cascade.hooks = seams, hooks
+			cascade.seams, cascade.hooks, cascade.listener = seams, hooks, listener
 			return cascade.erase(tx, root, discovery)
 		})
 	}
@@ -794,7 +802,38 @@ func (c *erasureCascade) erase(tx *gorm.DB, root erasureRoot, discovery *erasure
 			return fmt.Errorf("erasing user %d: %w", userID, err)
 		}
 	}
-	return c.scrubBusinessText(tx)
+	if err := c.scrubBusinessText(tx); err != nil {
+		return err
+	}
+	// Step 6, the last statements of the unit (#437).
+	return c.notifyListener(tx, graph, locked)
+}
+
+// notifyListener calls the erasure listener with the leads and customers of
+// the graph whose locked row existed and was live. A listener error fails the
+// unit; a unit that erased neither does not call it.
+func (c *erasureCascade) notifyListener(tx *gorm.DB, graph *erasureGraph, locked *lockedErasureRows) error {
+	if c.listener == nil {
+		return nil
+	}
+	var erased ErasedRecords
+	for _, leadID := range graph.leads {
+		if lead, found := locked.leads[leadID]; found && !lead.DeletedAt.Valid {
+			erased.LeadIDs = append(erased.LeadIDs, leadID)
+		}
+	}
+	for _, customerID := range graph.customers {
+		if customer, found := locked.customers[customerID]; found && !customer.DeletedAt.Valid {
+			erased.CustomerIDs = append(erased.CustomerIDs, customerID)
+		}
+	}
+	if len(erased.LeadIDs) == 0 && len(erased.CustomerIDs) == 0 {
+		return nil
+	}
+	if err := c.listener(tx, erased); err != nil {
+		return fmt.Errorf("erasure listener: %w", err)
+	}
+	return nil
 }
 
 // lockStage brackets the locking reads of one stage with the test seams.
@@ -813,7 +852,9 @@ func (c *erasureCascade) lockStage(table string, lock func() error) error {
 // users, each by primary key and in ascending id. No read here filters on
 // leads.customer_id, customers.user_id or deleted_at: a locking read through
 // one of those indexes takes next-key and gap locks that block unrelated
-// conversions (#337). Rows are read Unscoped, a soft-deleted one included.
+// conversions (#337). Rows are read Unscoped, a soft-deleted one included; the
+// lead and customer reads also select deleted_at, so the erasure listener
+// (#437) learns which rows were live when locked without another statement.
 //
 // The non-admin refusal is decided here, on the locked lead and before
 // anything is written to it: a caller that may erase only unconverted leads
@@ -828,7 +869,7 @@ func (c *erasureCascade) lockGraph(tx *gorm.DB, graph *erasureGraph) (*lockedEra
 	err := c.lockStage(erasureStageLeads, func() error {
 		for _, id := range graph.leads {
 			var lead models.Lead
-			err := lockingRead(tx).Unscoped().Select("id", "status", "customer_id").First(&lead, id).Error
+			err := lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
@@ -850,7 +891,7 @@ func (c *erasureCascade) lockGraph(tx *gorm.DB, graph *erasureGraph) (*lockedEra
 	err = c.lockStage(erasureStageCustomers, func() error {
 		for _, id := range graph.customers {
 			var customer models.Customer
-			err := lockingRead(tx).Unscoped().Select("id", "user_id").First(&customer, id).Error
+			err := lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}

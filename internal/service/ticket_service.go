@@ -48,7 +48,9 @@ type ticketService struct {
 // WithTicketWebhooks makes Create insert the ticket and enqueue
 // ticket.created in one transaction run by txManager (#345), and Update run
 // as one transaction with a locking read that enqueues ticket.updated when a
-// stored value changed (#408), also without automation events.
+// stored value changed (#408), also without automation events. Delete then
+// soft-deletes the ticket and enqueues ticket.deleted for the endpoints that
+// announced it in one transaction (#437).
 func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) TicketServiceOption {
 	return func(s *ticketService) {
 		s.webhooks = repo
@@ -59,7 +61,7 @@ func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.Tran
 }
 
 // ticketWebhooksWired reports whether Create enqueues ticket.created and
-// Update ticket.updated.
+// Update ticket.updated, and Delete ticket.deleted.
 func (s *ticketService) ticketWebhooksWired() bool {
 	return s.webhooks != nil && s.txManager != nil
 }
@@ -421,8 +423,11 @@ func (s *ticketService) Delete(id uint) error {
 
 	// The repository locks the ticket, purges its mail deliveries, cancels its
 	// open automation runs (record_deleted) and purges its notifications in the
-	// transaction that soft-deletes it (#242).
-	if err := s.ticketRepo.Delete(id); err != nil {
+	// transaction that soft-deletes it (#242). With webhooks wired (#437) that
+	// transaction is a savepoint of one run by txManager, which then enqueues
+	// ticket.deleted for the endpoints that announced the ticket: the delete
+	// and its outbox rows commit together or not at all.
+	if err := s.deleteTicket(id); err != nil {
 		if isNotFound(err) {
 			logger.Warn("Ticket deleted meanwhile")
 			return fmt.Errorf("ticket %d not found: %w", id, apperrors.ErrNotFound)
@@ -433,6 +438,24 @@ func (s *ticketService) Delete(id uint) error {
 
 	logger.Info("Ticket deleted successfully")
 	return nil
+}
+
+// deleteTicket soft-deletes the ticket, and with webhooks wired enqueues
+// ticket.deleted in the same transaction, after the delete succeeded.
+func (s *ticketService) deleteTicket(id uint) error {
+	if !s.ticketWebhooksWired() {
+		return s.ticketRepo.Delete(id)
+	}
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		if err := s.ticketRepo.WithTx(tx).Delete(id); err != nil {
+			return err
+		}
+		return enqueueDeletedWebhookEvents(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketDeleted, []uint{id})
+	})
 }
 
 func (s *ticketService) List(offset, limit int) ([]models.Ticket, int64, error) {

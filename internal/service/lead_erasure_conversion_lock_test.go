@@ -31,7 +31,7 @@ import (
 
 var (
 	// erasureLeadLock is the erasure's locking read of the lead (lockGraph).
-	erasureLeadLock = regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id` FROM `leads` WHERE .*FOR UPDATE$")
+	erasureLeadLock = regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id`,`deleted_at` FROM `leads` WHERE .*FOR UPDATE$")
 	// conversionLeadLock is the conversion's lockedLeadRead.
 	conversionLeadLock = regexp.MustCompile("(?s)^SELECT \\* FROM `leads` WHERE .*FOR UPDATE$")
 	// conversionStatements are the statements of a conversion that could wait

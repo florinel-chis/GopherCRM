@@ -289,11 +289,12 @@ candidate follow-up, not an accident:
   via the API. Outbound webhooks for created leads, customers and tickets ship with #345 (a form
   that creates a lead or opens a ticket sends `lead.created` / `ticket.created`), and #408 adds
   `lead.updated`, `customer.updated` and `ticket.updated` for `PUT /leads/{id}`,
-  `PUT /customers/{id}`, `PUT /tickets/{id}` and the lead and ticket bulk status endpoints; still
-  open: a submission event of its own, delete events, events of other entities (deals, tasks,
+  `PUT /customers/{id}`, `PUT /tickets/{id}` and the lead and ticket bulk status endpoints, and
+  #437 adds `lead.deleted`, `customer.deleted` and `ticket.deleted` for deletes and erasures; still
+  open: a submission event of its own, events of other entities (deals, tasks,
   companies, quotes), updated events for assignment, lead conversion and changes made by
   automation steps, a repeat form enquiry or a company delete, secret rotation, manual redelivery,
-  an endpoint test ping, retry jitter and a web UI for the registry and the delivery log.
+  an endpoint test ping and retry jitter (the registry and the delivery log have a screen since #409).
 - **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing
   else.
 - **Per-form or per-status retention, and a settings screen** — the retention purge has one age,

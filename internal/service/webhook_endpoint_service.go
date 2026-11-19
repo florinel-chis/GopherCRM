@@ -58,7 +58,7 @@ func (e *WebhookValidationError) Details() map[string]string {
 // Messages of the refusals; none quotes the value.
 const (
 	WebhookURLRule        = "must be an https URL of at most 2048 characters, without credentials, query string or fragment, whose host is not a private, loopback, link-local or metadata address"
-	WebhookEventTypesRule = "must list 1 to 6 of lead.created, lead.updated, customer.created, customer.updated, ticket.created and ticket.updated"
+	WebhookEventTypesRule = "must list 1 to 9 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated and ticket.deleted"
 )
 
 // ValidateWebhookURL checks an endpoint URL before anything is stored: https,

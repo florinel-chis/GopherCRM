@@ -46,7 +46,7 @@ const externalIDRaceTimeout = 20 * time.Second
 var (
 	// The erasure's first lock on the customer row: since #385 its locking
 	// read by primary key, which precedes the scrub UPDATE.
-	externalIDErasureScrub = regexp.MustCompile("(?s)^(UPDATE `customers` SET |SELECT `id`,`user_id` FROM `customers` WHERE .*FOR UPDATE$)")
+	externalIDErasureScrub = regexp.MustCompile("(?s)^(UPDATE `customers` SET |SELECT `id`,`user_id`,`deleted_at` FROM `customers` WHERE .*FOR UPDATE$)")
 	externalIDCustomerLock = regexp.MustCompile("^SELECT `id` FROM `customers` .*FOR UPDATE$")
 )
 

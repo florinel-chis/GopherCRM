@@ -8,10 +8,13 @@ import type { ApiResponseWithMeta } from '../client';
 // screens read; webhooks.test.ts holds it equal to the API specification.
 export const WEBHOOK_EVENT_TYPES = [
   'customer.created',
+  'customer.deleted',
   'customer.updated',
   'lead.created',
+  'lead.deleted',
   'lead.updated',
   'ticket.created',
+  'ticket.deleted',
   'ticket.updated',
 ] as const;
 

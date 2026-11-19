@@ -48,10 +48,11 @@ wiring is in `setupDependencies` (`cmd/main.go:261`).
 
 Checked by searching the tracked tree on `4dfe404`:
 
-- Outbound webhooks cover the created and updated events of leads, customers and tickets
-  (`lead.created`, `lead.updated`, `customer.created`, `customer.updated`, `ticket.created`,
-  `ticket.updated`; #345 and #408, the first cuts of #232): no delete events, no events of other
-  entities, and no web UI for the registry yet.
+- Outbound webhooks cover the created, updated and deleted events of leads, customers and
+  tickets (`lead.created`, `lead.updated`, `lead.deleted`, `customer.created`, `customer.updated`,
+  `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`; #345, #408 and #437,
+  cuts of #232): no events of other entities. The registry and the delivery log have a screen in
+  Settings > Webhooks (#409).
 - No MCP server.
 - API keys have no scopes of their own (`internal/models/apikey.go` holds only name, hash,
   prefix, owner, expiry and an active flag): a key acts with its owner's current permissions. A
@@ -352,9 +353,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:348`), refresh and password-reset tokens (`cmd/main.go:302`), form confirmation
+>   (`cmd/main.go:355`), refresh and password-reset tokens (`cmd/main.go:309`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
->   encryption of sensitive settings (`cmd/main.go:305`, `internal/utils/secretbox.go`). Rotating
+>   encryption of sensitive settings (`cmd/main.go:312`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left

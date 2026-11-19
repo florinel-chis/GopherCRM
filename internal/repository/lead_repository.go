@@ -43,10 +43,13 @@ type leadRepository struct {
 	// the test option in erasure_hooks.go and copied by WithTx; nil in
 	// production.
 	lockSeams *erasureSeams
+	// erasureListener is told what each erasure unit erased (#437); the
+	// production wiring sets the webhook listener. Copied by WithTx.
+	erasureListener ErasureListener
 }
 
 // LeadRepositoryOption configures NewLeadRepository beyond its handle.
-// Production wiring passes none.
+// Production wiring passes only WithLeadErasureListener.
 type LeadRepositoryOption func(*leadRepository)
 
 func NewLeadRepository(db *gorm.DB, opts ...LeadRepositoryOption) LeadRepository {
@@ -161,7 +164,7 @@ func (r *leadRepository) Update(lead *models.Lead) error {
 // has its new customer erased too, and one that comes later waits for the unit
 // and then finds the lead gone (not found).
 func (r *leadRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams)
+	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams, r.erasureListener)
 }
 
 // DeleteUnconverted erases a lead that was never converted. A converted lead
@@ -171,7 +174,7 @@ func (r *leadRepository) Delete(id uint) error {
 // changes nothing. It is the erasure a non-admin caller gets: erasing a
 // converted lead erases a customer, which only an admin may do.
 func (r *leadRepository) DeleteUnconverted(id uint) error {
-	return eraseGraph(r.db, false, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams)
+	return eraseGraph(r.db, false, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams, r.erasureListener)
 }
 
 func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error) {
@@ -390,7 +393,7 @@ func (r *leadRepository) GetLatestByEmail(email string) (*models.Lead, error) {
 }
 
 func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
-	return &leadRepository{db: tx, erasureSeams: r.erasureSeams, lockSeams: r.lockSeams}
+	return &leadRepository{db: tx, erasureSeams: r.erasureSeams, lockSeams: r.lockSeams, erasureListener: r.erasureListener}
 }
 
 // LeadExportFilter narrows the leads ListAllForExport reads. Every field is

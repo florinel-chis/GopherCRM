@@ -229,6 +229,16 @@ func TestWebhookJSON(t *testing.T) {
 		assert.Equal(t, "lead.created,ticket.created", value)
 		assert.True(t, IsWebhookEventType("customer.created"))
 		assert.False(t, IsWebhookEventType("Customer.Created"))
-		assert.False(t, IsWebhookEventType("lead.deleted"))
+		assert.False(t, IsWebhookEventType("lead.archived"))
+		// The deleted types (#437): nine in all, and every one subscribed fits
+		// varchar(255) without a migration.
+		assert.Equal(t, []string{"customer.created", "customer.deleted", "customer.updated", "lead.created", "lead.deleted",
+			"lead.updated", "ticket.created", "ticket.deleted", "ticket.updated"}, WebhookEventTypeValues)
+		for _, deleted := range []string{"lead.deleted", "customer.deleted", "ticket.deleted"} {
+			assert.True(t, IsWebhookEventType(deleted), deleted)
+		}
+		all, err := WebhookEventTypes(WebhookEventTypeValues).Value()
+		require.NoError(t, err)
+		assert.Len(t, all, 134)
 	})
 }

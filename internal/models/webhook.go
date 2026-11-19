@@ -13,8 +13,11 @@ import (
 // own signing secret and a subset of the event types below. Every create path
 // of a lead, a customer or a ticket, and since #408 every update of one that
 // changed a stored value, writes one webhook_deliveries row per active
-// subscribed endpoint inside its writing transaction (an outbox), and a
-// background runtime delivers the committed rows. Both tables hold ids, event
+// subscribed endpoint inside its writing transaction (an outbox). Since #437 a
+// ticket delete and every erasure of a lead or a customer write a deleted
+// event, but only for the active subscribed endpoints that already hold a
+// created or updated delivery row of that record. A background runtime
+// delivers the committed rows. Both tables hold ids, event
 // types, statuses and timestamps only: a delivery carries the record id, and a
 // consumer fetches the record through the API, where erasure and visibility
 // apply at fetch time.
@@ -23,20 +26,23 @@ import (
 const (
 	WebhookEventLeadCreated     = "lead.created"
 	WebhookEventLeadUpdated     = "lead.updated"
+	WebhookEventLeadDeleted     = "lead.deleted"
 	WebhookEventCustomerCreated = "customer.created"
 	WebhookEventCustomerUpdated = "customer.updated"
+	WebhookEventCustomerDeleted = "customer.deleted"
 	WebhookEventTicketCreated   = "ticket.created"
 	WebhookEventTicketUpdated   = "ticket.updated"
+	WebhookEventTicketDeleted   = "ticket.deleted"
 )
 
 // WebhookEventTypeValues lists every event type in canonical (sorted) order.
 var WebhookEventTypeValues = []string{
-	WebhookEventCustomerCreated, WebhookEventCustomerUpdated,
-	WebhookEventLeadCreated, WebhookEventLeadUpdated,
-	WebhookEventTicketCreated, WebhookEventTicketUpdated,
+	WebhookEventCustomerCreated, WebhookEventCustomerDeleted, WebhookEventCustomerUpdated,
+	WebhookEventLeadCreated, WebhookEventLeadDeleted, WebhookEventLeadUpdated,
+	WebhookEventTicketCreated, WebhookEventTicketDeleted, WebhookEventTicketUpdated,
 }
 
-// IsWebhookEventType reports whether value is one of the six event types,
+// IsWebhookEventType reports whether value is one of the nine event types,
 // compared exactly.
 func IsWebhookEventType(value string) bool {
 	for _, known := range WebhookEventTypeValues {
@@ -174,7 +180,7 @@ type WebhookEndpoint struct {
 	// Target URL: https, no credentials, query string or fragment, at most 2048 characters; the host must resolve to public addresses only.
 	URL string `gorm:"type:varchar(2048);not null" json:"url" maxLength:"2048" example:"https://hooks.example.com/gophercrm"`
 	// Subscribed event types, deduplicated and sorted.
-	EventTypes WebhookEventTypes `gorm:"type:varchar(255);not null" json:"event_types" swaggertype:"array,string" enums:"customer.created,customer.updated,lead.created,lead.updated,ticket.created,ticket.updated" example:"lead.created,ticket.created"`
+	EventTypes WebhookEventTypes `gorm:"type:varchar(255);not null" json:"event_types" swaggertype:"array,string" enums:"customer.created,customer.deleted,customer.updated,lead.created,lead.deleted,lead.updated,ticket.created,ticket.deleted,ticket.updated" example:"lead.created,ticket.created"`
 	// Sealed signing secret; never serialised.
 	SecretSealed string `gorm:"type:varchar(255);not null" json:"-" swaggerignore:"true"`
 	// Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.
@@ -215,10 +221,10 @@ type WebhookDelivery struct {
 	// Event id (evt_ followed by 32 hex characters), shared by every endpoint's row of one event; sent as webhook-id and as the body's id.
 	EventID string `gorm:"type:varchar(64);not null;uniqueIndex:idx_webhook_deliveries_endpoint_event,priority:2" json:"event_id" example:"evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9" readonly:"true"`
 	// Event type.
-	EventType string `gorm:"type:varchar(32);not null" json:"event_type" enums:"lead.created,lead.updated,customer.created,customer.updated,ticket.created,ticket.updated" example:"lead.created" readonly:"true"`
-	// Id of the created or updated lead, customer or ticket: the only record datum sent.
+	EventType string `gorm:"type:varchar(32);not null" json:"event_type" enums:"lead.created,lead.updated,lead.deleted,customer.created,customer.updated,customer.deleted,ticket.created,ticket.updated,ticket.deleted" example:"lead.created" readonly:"true"`
+	// Id of the created, updated or deleted lead, customer or ticket: the only record datum sent.
 	RecordID uint `gorm:"not null" json:"record_id" example:"42" readonly:"true"`
-	// When the record was created or updated (RFC 3339, UTC).
+	// When the record was created, updated or deleted (RFC 3339, UTC).
 	OccurredAt time.Time `gorm:"not null" json:"occurred_at" example:"2026-11-20T09:30:00.123Z" readonly:"true"`
 	// Delivery state: pending (due at next_attempt_at), sending (claimed by the sender), succeeded (a 2xx answer) or failed (the attempt cap was reached, or the endpoint or its secret is unusable).
 	Status string `gorm:"type:varchar(20);not null;default:'pending';index:idx_webhook_deliveries_status_next,priority:1" json:"status" enums:"pending,sending,succeeded,failed" example:"succeeded" readonly:"true"`
