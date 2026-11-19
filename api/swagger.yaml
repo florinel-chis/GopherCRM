@@ -21185,6 +21185,10 @@ paths:
           description: The PDF, with Content-Type application/pdf and Content-Disposition
             attachment; filename='Quote-Q-000042.pdf' (double quotes on the wire)
             for quote 42
+          headers:
+            Cache-Control:
+              description: no-store
+              type: string
           schema:
             type: file
         "400":
@@ -21392,7 +21396,7 @@ paths:
       - application/json
       description: |-
         Unauthenticated. Called by the render page of the web app (APP_BASE_URL/quote-render) while the server prints a quote to PDF: it returns the quote a render credential was minted for, exactly as GET /quotes/{id} returns it, and the product name that heads the document. It is a POST so that the credential travels in the body and never in a URL a proxy logs; it writes nothing.
-        A render credential is 32 random bytes the server mints for one render and keeps, as a hash, in the memory of the process that renders. It opens exactly one quote, read-only, while that render runs: at most 15 seconds. It is not a session: sent as a Bearer token to any other route it is 401. The quote returned is always the credential's own; an id or any other field in the body is ignored. A missing or empty token, or a body that is not a JSON object, is 400 VALIDATION_ERROR; an unknown or expired credential, one whose render has finished, or one presented to another server process is the same 400 'Invalid or expired render link'. With PDF output off every credential is refused. Rate limit: the generous tier, its own bucket per client IP.
+        A render credential is 32 random bytes the server mints for one render and keeps, as a hash, in the memory of the process that renders. It opens exactly one quote, read-only, once, while that render runs: at most 15 seconds. It is single use: a second presentation is refused and fails that render. It is not a session: sent as a Bearer token to any other route it is 401. The quote returned is always the credential's own; an id or any other field in the body is ignored. A missing or empty token, or a body that is not a JSON object, is 400 VALIDATION_ERROR; an unknown or expired credential, one already redeemed, one whose render has finished, or one presented to another server process is the same 400 'Invalid or expired render link'. With PDF output off every credential is refused. Rate limit: the generous tier, its own bucket per client IP.
       parameters:
       - description: The render credential
         in: body
@@ -21405,6 +21409,10 @@ paths:
       responses:
         "200":
           description: The quote of the credential and the product name
+          headers:
+            Cache-Control:
+              description: no-store
+              type: string
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -21415,8 +21423,8 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: malformed JSON, or token missing or empty
             (details names the field). BAD_REQUEST ''Invalid or expired render link'':
-            the credential is unknown or expired, its render has finished, or its
-            quote no longer exists'
+            the credential is unknown, expired or already redeemed, its render has
+            finished, or its quote no longer exists'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -21452,18 +21460,22 @@ paths:
     get:
       description: |-
         Unauthenticated. Returns the quote the token of an emailed response link belongs to: its number, status, currency, validity date, lines and the five totals, and nothing else (no id, title, notes, owner, customer, deal or product reference). The request never writes, so opening the link does not spend the token.
-        A token is usable while it is unused, the quote is still sent and not deleted, and the day of the quote's valid_until (server's local date) has not ended; a quote without valid_until keeps its link while it is sent. A newer quote email, any staff status change away from sent and the erasure of the quote's customer invalidate the link. A missing, empty, unknown, used, expired or invalidated token is the same 400 'Invalid or expired quote link', so validity cannot be probed. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+        A token is usable while it is unused, the quote is still sent and not deleted, and the day of the quote's valid_until (server's local date) has not ended; a quote without valid_until keeps its link while it is sent. A newer quote email, any staff status change away from sent and the erasure of the quote's customer invalidate the link. The token is read from the X-Quote-Token request header only; a token in the query string is ignored. A missing, empty, unknown, used, expired or invalidated token is the same 400 'Invalid or expired quote link', so validity cannot be probed. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
       parameters:
       - description: The token from the link in the quote email; missing or empty
           is the generic 400
-        in: query
-        name: token
+        in: header
+        name: X-Quote-Token
         type: string
       produces:
       - application/json
       responses:
         "200":
           description: The quote as the client may see it; status is sent
+          headers:
+            Cache-Control:
+              description: no-store
+              type: string
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -21472,9 +21484,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.QuotePublicView'
               type: object
         "400":
-          description: 'BAD_REQUEST ''Invalid or expired quote link'': the token is
-            missing, unknown, used, expired or invalidated, or its quote is no longer
-            sent'
+          description: 'BAD_REQUEST ''Invalid or expired quote link'': the X-Quote-Token
+            header is missing or empty, or the token is unknown, used, expired or
+            invalidated, or its quote is no longer sent'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -21525,6 +21537,10 @@ paths:
       responses:
         "200":
           description: The quote with its new status, accepted or rejected
+          headers:
+            Cache-Control:
+              description: no-store
+              type: string
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

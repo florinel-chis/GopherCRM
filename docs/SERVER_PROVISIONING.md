@@ -363,6 +363,13 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # The quote email links here with the client's response token in the query string;
+    # keep that request out of the access log.
+    location = /quote-response {
+        access_log off;
+        try_files /index.html =404;
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }
@@ -379,6 +386,13 @@ Enable it and run `nginx -t && systemctl reload nginx` again.
 - `Host $host` keeps the UI and the API on one origin for the CORS check, and `X-Forwarded-For
   $remote_addr` is the single address the backend trusts through `TRUSTED_PROXIES=127.0.0.1`.
 - `try_files ... /index.html` serves the single-page UI for client-side routes.
+- The link of a quote email is `APP_BASE_URL/quote-response?token=...`. The backend's own access
+  log records paths without the query string, but nginx's default access log records the whole
+  request line, so do not log the query string of `/quote-response`: the
+  `location = /quote-response` block above turns its access log off (a custom `log_format` that
+  uses `$uri` instead of `$request` works too). The page drops the token from the address bar
+  after reading it and sends it to the API in a request header, so `/api/v1/` requests carry no
+  token in their URL.
 - The web root stays empty until the first deploy, so the site answers 404 until then.
 
 ## Bootstrap and first deploy

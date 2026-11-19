@@ -86,17 +86,29 @@ type quotePublicEnvelope struct {
 	} `json:"error"`
 }
 
-func doQuotePublic(t *testing.T, router *gin.Engine, method, target, body string) (*httptest.ResponseRecorder, quotePublicEnvelope) {
+// doQuotePublic sends one request with the given body and request headers
+// and decodes the envelope of the answer.
+func doQuotePublic(t *testing.T, router *gin.Engine, method, target, body string, headers ...map[string]string) (*httptest.ResponseRecorder, quotePublicEnvelope) {
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for _, set := range headers {
+		for name, value := range set {
+			req.Header.Set(name, value)
+		}
 	}
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	var envelope quotePublicEnvelope
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope), w.Body.String())
 	return w, envelope
+}
+
+// quoteTokenHeader is the request header the response page sends its token in.
+func quoteTokenHeader(token string) map[string]string {
+	return map[string]string{"X-Quote-Token": token}
 }
 
 func sortedKeys(m map[string]json.RawMessage) []string {
@@ -116,9 +128,10 @@ func TestQuotePublicView(t *testing.T) {
 		svc := new(mocks.QuoteService)
 		svc.On("GetPublicResponse", quotePublicTestToken).Return(quotePublicTestView(models.QuoteStatusSent), nil).Once()
 		w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet,
-			"/api/v1/quotes/public/response?token="+quotePublicTestToken, "")
+			"/api/v1/quotes/public/response", "", quoteTokenHeader(quotePublicTestToken))
 
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 		assert.True(t, envelope.Success)
 		assert.Equal(t, []string{"currency", "discount_cents", "gross_total_cents", "lines", "number", "status",
 			"subtotal_cents", "tax_cents", "total_cents", "valid_until"}, sortedKeys(envelope.Data),
@@ -141,27 +154,25 @@ func TestQuotePublicView(t *testing.T) {
 		view.ValidUntil, view.Lines = nil, []models.QuotePublicLine{}
 		svc.On("GetPublicResponse", quotePublicTestToken).Return(view, nil).Once()
 		w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet,
-			"/api/v1/quotes/public/response?token="+quotePublicTestToken, "")
+			"/api/v1/quotes/public/response", "", quoteTokenHeader(quotePublicTestToken))
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.NotContains(t, envelope.Data, "valid_until")
 		assert.JSONEq(t, `[]`, string(envelope.Data["lines"]), "an empty array, never null")
 	})
 
 	t.Run("every refusal is the same generic 400", func(t *testing.T) {
-		for name, target := range map[string]string{
-			"unknown, used or expired token": "/api/v1/quotes/public/response?token=" + quotePublicTestToken,
-			"empty token":                    "/api/v1/quotes/public/response?token=",
-			"missing token":                  "/api/v1/quotes/public/response",
+		for name, headers := range map[string]map[string]string{
+			"unknown, used or expired token": quoteTokenHeader(quotePublicTestToken),
+			"empty token":                    quoteTokenHeader(""),
+			"missing token":                  {},
 		} {
 			svc := new(mocks.QuoteService)
-			token := ""
-			if strings.HasSuffix(target, quotePublicTestToken) {
-				token = quotePublicTestToken
-			}
+			token := headers["X-Quote-Token"]
 			svc.On("GetPublicResponse", token).
 				Return(nil, fmt.Errorf("no usable token: %w", apperrors.ErrQuoteResponseRejected)).Once()
-			w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet, target, "")
+			w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet, "/api/v1/quotes/public/response", "", headers)
 			require.Equal(t, http.StatusBadRequest, w.Code, name)
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"), name)
 			require.NotNil(t, envelope.Error, name)
 			assert.Equal(t, "BAD_REQUEST", envelope.Error.Code, name)
 			assert.Equal(t, "Invalid or expired quote link", envelope.Error.Message, name)
@@ -170,11 +181,28 @@ func TestQuotePublicView(t *testing.T) {
 		}
 	})
 
+	t.Run("a token only in the query string is not read: the generic 400", func(t *testing.T) {
+		svc := new(mocks.QuoteService)
+		// The service would accept the token; the handler never hands it over.
+		svc.On("GetPublicResponse", quotePublicTestToken).Return(quotePublicTestView(models.QuoteStatusSent), nil).Maybe()
+		svc.On("GetPublicResponse", "").
+			Return(nil, fmt.Errorf("no credential: %w", apperrors.ErrQuoteResponseRejected)).Once()
+		w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet,
+			"/api/v1/quotes/public/response?token="+quotePublicTestToken, "")
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, "BAD_REQUEST", envelope.Error.Code)
+		assert.Equal(t, "Invalid or expired quote link", envelope.Error.Message)
+		svc.AssertCalled(t, "GetPublicResponse", "")
+		svc.AssertNotCalled(t, "GetPublicResponse", quotePublicTestToken)
+	})
+
 	t.Run("an unexpected failure is a 500 without its cause", func(t *testing.T) {
 		svc := new(mocks.QuoteService)
 		svc.On("GetPublicResponse", quotePublicTestToken).Return(nil, errors.New("database is gone")).Once()
 		w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodGet,
-			"/api/v1/quotes/public/response?token="+quotePublicTestToken, "")
+			"/api/v1/quotes/public/response", "", quoteTokenHeader(quotePublicTestToken))
 		require.Equal(t, http.StatusInternalServerError, w.Code)
 		require.NotNil(t, envelope.Error)
 		assert.Equal(t, "INTERNAL_ERROR", envelope.Error.Code)
@@ -182,7 +210,7 @@ func TestQuotePublicView(t *testing.T) {
 	})
 
 	require.NotEmpty(t, output.String(), "the requests were logged")
-	assert.NotContains(t, output.String(), quotePublicTestToken, "no log line carries the token of the query string")
+	assert.NotContains(t, output.String(), quotePublicTestToken, "no log line carries the token")
 }
 
 func TestQuotePublicRespond(t *testing.T) {
@@ -202,6 +230,7 @@ func TestQuotePublicRespond(t *testing.T) {
 			w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodPost,
 				"/api/v1/quotes/public/response", body(quotePublicTestToken, decision))
 			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 			assert.JSONEq(t, fmt.Sprintf("%q", status), string(envelope.Data["status"]))
 			assert.Len(t, envelope.Data, 10, "the same ten keys as the view")
 			svc.AssertExpectations(t)
@@ -223,6 +252,7 @@ func TestQuotePublicRespond(t *testing.T) {
 			svc := new(mocks.QuoteService)
 			w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodPost, "/api/v1/quotes/public/response", raw)
 			require.Equal(t, http.StatusBadRequest, w.Code, name)
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"), name)
 			require.NotNil(t, envelope.Error, name)
 			assert.Equal(t, "VALIDATION_ERROR", envelope.Error.Code, name)
 			svc.AssertNotCalled(t, "RespondPublic")
@@ -237,6 +267,7 @@ func TestQuotePublicRespond(t *testing.T) {
 		w, envelope := doQuotePublic(t, newQuotePublicRouter(svc), http.MethodPost,
 			"/api/v1/quotes/public/response", body(quotePublicTestToken, "accept"))
 		require.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 		require.NotNil(t, envelope.Error)
 		assert.Equal(t, "BAD_REQUEST", envelope.Error.Code)
 		assert.Equal(t, "Invalid or expired quote link", envelope.Error.Message)
@@ -279,6 +310,7 @@ func TestQuotePublicRender(t *testing.T) {
 
 		require.NotNil(t, during)
 		require.Equal(t, http.StatusOK, during.Code, during.Body.String())
+		assert.Equal(t, "no-store", during.Header().Get("Cache-Control"))
 		envelope := decodeQuoteRender(t, during)
 		assert.True(t, envelope.Success)
 		assert.Equal(t, chain.quoteA.ID, envelope.Data.Quote.ID)
@@ -323,12 +355,34 @@ func TestQuotePublicRender(t *testing.T) {
 		for name, token := range map[string]string{"finished": credential, "unknown": "no-such-credential"} {
 			w := chain.post(fmt.Sprintf(`{"token":%q}`, token))
 			assert.Equal(t, http.StatusBadRequest, w.Code, name)
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"), name)
 			envelope := decodeQuoteRender(t, w)
 			require.NotNil(t, envelope.Error, name)
 			assert.Equal(t, utils.ErrCodeBadRequest, envelope.Error.Code, name)
 			assert.Equal(t, "Invalid or expired render link", envelope.Error.Message, name)
 			assert.NotContains(t, w.Body.String(), token, name)
 		}
+	})
+
+	t.Run("a credential is redeemed once: the second post is the generic 400 and the render fails", func(t *testing.T) {
+		var first, second *httptest.ResponseRecorder
+		chain.renderer.during = func(token string) {
+			first = chain.post(fmt.Sprintf(`{"token":%q}`, token))
+			second = chain.post(fmt.Sprintf(`{"token":%q}`, token))
+		}
+		pdf, err := chain.svc.RenderPDF(chain.quoteA.ID)
+		require.ErrorIs(t, err, apperrors.ErrQuotePDFRenderFailed)
+		assert.Nil(t, pdf)
+		require.NotNil(t, first)
+		require.NotNil(t, second)
+		require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+		require.Equal(t, http.StatusBadRequest, second.Code, second.Body.String())
+		assert.Equal(t, "no-store", second.Header().Get("Cache-Control"))
+		envelope := decodeQuoteRender(t, second)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeBadRequest, envelope.Error.Code)
+		assert.Equal(t, "Invalid or expired render link", envelope.Error.Message)
+		assert.NotContains(t, second.Body.String(), numberA)
 	})
 
 	t.Run("an empty token or a malformed body is a validation error", func(t *testing.T) {

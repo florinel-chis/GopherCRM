@@ -90,6 +90,11 @@ Notes on the wiring:
   reachable over plain HTTP: remove the backend publication and bind the UI to
   loopback (or a private network) in an override, as shown under
   [Several installations on one host](#several-installations-on-one-host).
+- The link of a quote email is `APP_BASE_URL/quote-response?token=...`. A reverse proxy in
+  front of the UI port should not log the query string of `/quote-response` (turn its access log
+  off for that path, or log `$uri` rather than `$request`; nginx example in
+  `docs/SERVER_PROVISIONING.md` under "Reverse proxy and TLS"). The backend's own access log
+  records paths without the query string.
 - `TRUSTED_PROXIES=172.28.0.0/16` matches the fixed compose subnet so the
   rate limiter keys on the real client IP forwarded by the ui nginx, not on
   the proxy container's address. If you change the subnet in

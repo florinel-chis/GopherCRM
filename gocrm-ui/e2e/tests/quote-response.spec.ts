@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { test, expect } from '@playwright/test';
+import { test, expect, type Response } from '@playwright/test';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
 import { AdminAuthHelper } from '../helpers/admin-auth';
@@ -10,7 +10,9 @@ import { expectedAmountText } from '../pages/deals.page';
 /**
  * The client's side of a quote (issue #383): the link of the quote email
  * opens a public page, without a session, where the client accepts the quote
- * once. The staff page then shows the quote accepted and the link is dead.
+ * once. The page reads the token from the link once, drops it from the
+ * address bar and sends it in the X-Quote-Token header of its read. The staff
+ * page then shows the quote accepted and the link is dead.
  *
  * The link exists only in the mail body, which the log-only mailer of the e2e
  * backend never writes anywhere. `scripts/e2e/quote-response-link` emails the
@@ -105,9 +107,33 @@ test.describe('Quote response link', () => {
     const clientContext = await browser.newContext();
     try {
       const client = await clientContext.newPage();
+      // Every read the page makes of the link, to check how the token travels.
+      const reads: Response[] = [];
+      client.on('response', (response) => {
+        if (
+          new URL(response.url()).pathname.endsWith('/quotes/public/response') &&
+          response.request().method() === 'GET'
+        ) {
+          reads.push(response);
+        }
+      });
       await client.goto(`${UI_BASE_URL}${linkPath}`);
       await expect(client.getByRole('heading', { name: `Quote ${quoteNumber}` })).toBeVisible(PAGE_LOAD);
-      await expect(client).toHaveURL(/\/quote-response\?token=/);
+      // The page read the token once and dropped it from the address bar.
+      await expect
+        .poll(() => {
+          const url = new URL(client.url());
+          return `${url.pathname}${url.search}`;
+        }, PAGE_LOAD)
+        .toBe('/quote-response');
+      expect(new URL(client.url()).searchParams.has('token')).toBe(false);
+      // One read: the token in the X-Quote-Token header, no query string, not stored by caches.
+      expect(reads).toHaveLength(1);
+      const read = reads[0];
+      expect(read.status()).toBe(200);
+      expect(new URL(read.url()).search).toBe('');
+      expect(read.request().headers()['x-quote-token'] ?? '').not.toBe('');
+      expect(read.headers()['cache-control']).toBe('no-store');
       await expect(client.getByTestId('quote-response-line')).toHaveCount(1);
       await expect(client.getByTestId('quote-response-net')).toHaveText(expectedAmountText('25.00', 'EUR'));
       await expect(client.getByTestId('quote-response-tax')).toHaveText(expectedAmountText('4.75', 'EUR'));
@@ -127,6 +153,7 @@ test.describe('Quote response link', () => {
       await dialog.getByRole('button', { name: 'Confirm' }).click();
       const response = await responded;
       expect(response.status()).toBe(200);
+      expect(response.headers()['cache-control']).toBe('no-store');
       expect(response.request().headers()['authorization']).toBeUndefined();
       await expect(client.getByText(`You have accepted quote ${quoteNumber}.`)).toBeVisible(PAGE_LOAD);
       await expect(client.getByRole('button', { name: /accept|decline/i })).toHaveCount(0);

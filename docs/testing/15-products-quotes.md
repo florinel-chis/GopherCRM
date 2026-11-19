@@ -856,10 +856,11 @@ quote totals are always the server's; the browser computes none of them.
 Since #382 the email of a sent quote ends with a single-use link,
 `APP_BASE_URL/quote-response?token=<token>`. Only the HMAC-SHA256 hash of the token is stored
 (`quote_response_tokens`). Two unauthenticated routes on the strict rate tier answer it:
-`GET /quotes/public/response?token=` shows the quote and never writes; `POST
-/quotes/public/response` `{token, decision}` claims the token and moves the quote `sent → accepted
-| rejected` in one transaction. Every refusal is the same 400 `BAD_REQUEST` "Invalid or expired
-quote link". These cases are API and service level; the page that answers the link is section
+`GET /quotes/public/response` with the token in the `X-Quote-Token` request header shows the
+quote and never writes; `POST /quotes/public/response` `{token, decision}` claims the token and
+moves the quote `sent → accepted | rejected` in one transaction. Every refusal is the same 400
+`BAD_REQUEST` "Invalid or expired quote link". Every answer of the `/quotes/public` routes carries
+`Cache-Control: no-store`. These cases are API and service level; the page that answers the link is section
 15.13.
 
 Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/service/quote_response.go`,
@@ -908,16 +909,18 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
 - **Type:** functional, security
 - **Preconditions:** A sent quote with two lines, emailed; no credentials.
 - **Steps:**
-  1. `GET /quotes/public/response?token=<token>` twice.
-  2. The same with an unknown token, an empty token and no token.
+  1. `GET /quotes/public/response` with the header `X-Quote-Token: <token>`, twice.
+  2. The same with an unknown token, an empty token and no header; and the valid token sent only
+     as the query parameter `?token=<token>`, without the header.
   3. The same after the token was used, and with the clock past the end of the `valid_until` day.
 - **Expected:** Step 1: 200 with exactly `number`, `status` (`sent`), `currency`, `valid_until`
   (`YYYY-MM-DD`, omitted when unset), `lines` (each `description`, `quantity`, `unit_price_cents`,
   `discount_bp`, `line_total_cents`, `tax_rate_bp`, `tax_cents`) and `subtotal_cents`,
   `discount_cents`, `total_cents`, `tax_cents`, `gross_total_cents`; no id, title, notes, owner,
   customer, deal or product reference; the token row is unchanged (`used_at` NULL) after both
-  calls. Steps 2 and 3: 400, `error.code` `BAD_REQUEST`, message `Invalid or expired quote link`.
-  No log line contains the token.
+  calls. Steps 2 and 3: 400, `error.code` `BAD_REQUEST`, message `Invalid or expired quote link`
+  (the query parameter is not read). Every answer carries `Cache-Control: no-store`. No log line
+  contains the token.
 - **Automation:** automated — `internal/service/quote_response_test.go` `TestQuoteResponseView`;
   `internal/handler/quote_public_handler_test.go` `TestQuotePublicView`.
 
@@ -1024,7 +1027,9 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
 
 Since #383 the link of the quote email opens `/quote-response?token=<token>`, a page of the web
 application that needs no account. It is a top-level route outside `ProtectedRoute` and
-`MainLayout`, reads the link once per mount, and calls `GET` and `POST /quotes/public/response`
+`MainLayout`, takes the token from the link once, removes it from the address bar with a replace
+navigation (a reload then shows the invalid-link message), reads the quote once per mount with
+the token in the `X-Quote-Token` header, and calls `GET` and `POST /quotes/public/response`
 through `publicApi`, an axios instance without a request interceptor, so no bearer token is sent
 even when a staff session is stored in the browser. The token is never rendered or logged.
 
@@ -1042,7 +1047,9 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
   2. Click **Accept**.
   3. Click **Cancel**, then **Accept** and **Confirm**.
   4. With the answer still in flight, click **Confirm** again.
-- **Expected:** Step 1: one read with the token; the heading `Quote <number>`, `Valid until` as
+- **Expected:** Step 1: one read with the token; the location becomes `/quote-response` with no
+  search through a replace navigation (no new history entry), and nothing is put in web storage;
+  the heading `Quote <number>`, `Valid until` as
   `MMM dd, yyyy` through `formatDate` (the row is absent when the quote has no date), the line
   (description, quantity without trailing zeros, unit price, discount, tax rate, net line total)
   and the Subtotal, Discount, Net, Tax and Gross totals in the quote's currency; the buttons
@@ -1057,7 +1064,8 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
   "… omits the validity row when the quote has no validity date", "… sends nothing when Accept
   is clicked without Confirm, and Cancel closes the dialog", "… accepts after Confirm and then
   shows only the confirmation", "… sends one decision when Confirm is clicked twice while the
-  first is in flight".
+  first is in flight", "… reads the token once, then drops it from the address with a replace
+  navigation".
 
 ### TC-PQ-048 — The client declines after one confirmation
 - **Priority:** P0
@@ -1103,12 +1111,14 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
   2. With a stored session, send one request through `getPublicClient()` and one through `getClient()`.
   3. Through `getPublicClient()`, receive a success envelope, a 400 error envelope and a 401.
   4. Call `quoteResponseApi.getQuoteResponse('t')` and `quoteResponseApi.respond('t', 'accept')`.
-- **Expected:** Step 1: the page renders (heading and Accept button) and the location stays
-  `/quote-response?token=t`; no redirect to `/login`. Step 2: the public request has no
+- **Expected:** Step 1: the page renders (heading and Accept button) and the location after the
+  load is `/quote-response` with no search, reached by a replace navigation; no redirect to
+  `/login`. Step 2: the public request has no
   `Authorization` header; the session client's request carries `Bearer <token>`. Step 3: the
   payload is unwrapped with its `meta`; the error is unwrapped flat (`response.data.code`,
   `.message`); the 401 causes no refresh and no replay and leaves the stored session unchanged.
-  Step 4: `GET /quotes/public/response` with params `{token: 't'}` and `POST
+  Step 4: `GET /quotes/public/response` with the header `X-Quote-Token: t` and no query
+  parameters, and `POST
   /quotes/public/response` with body `{token: 't', decision: 'accept'}`, both on `publicApi`,
   none on `api`; an omitted `valid_until` becomes `null` and missing `lines` an empty array.
 - **Automation:** automated — `gocrm-ui/src/routes/index.test.tsx` "quote response route renders
@@ -1129,7 +1139,10 @@ Sources: `gocrm-ui/src/pages/quotes/QuoteResponse.tsx`,
   5. Reopen the link in the signed-out context.
 - **Expected:** Step 2: the command prints one line, `<APP_BASE_URL>/quote-response?token=<token>`;
   the page shows `Quote <number>`, net €25.00, tax €4.75 and gross €29.75, and the browser
-  storages stay empty. Step 3: the `POST` answers 200 and carried no `Authorization` header; the
+  storages stay empty; the address is then `/quote-response` without the token, and the one
+  `GET /quotes/public/response` had no query string, carried a non-empty `x-quote-token` header
+  and was answered with `Cache-Control: no-store`. Step 3: the `POST` answers 200 with
+  `Cache-Control: no-store` and carried no `Authorization` header; the
   page shows `You have accepted quote <number>.` with no Accept or Decline button. Step 4: the
   status chip reads Accepted. Step 5: the invalid-link message, no quote number, no buttons. The
   command itself prints a link the quote service answers once, prints nothing and exits non-zero
@@ -1171,10 +1184,12 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
   3. As admin `GET /quotes/999999/pdf` and `GET /quotes/abc/pdf`.
   4. Make the renderer fail, then `GET /quotes/{A}/pdf` as admin.
 - **Expected:** Step 1: 200, the renderer's bytes unchanged, `Content-Type: application/pdf`,
-  `Content-Disposition: attachment; filename="Quote-Q-<6 digits>.pdf"`, no JSON envelope. Step 2:
+  `Content-Disposition: attachment; filename="Quote-Q-<6 digits>.pdf"`, `Cache-Control: no-store`,
+  no JSON envelope. Step 2:
   both answers are the same 403 `FORBIDDEN` "You can only view your own quotes", byte for byte,
   and the renderer is not called. Step 3: 404 `NOT_FOUND` "Quote not found" and 400 "Invalid quote
-  ID", the renderer not called. Step 4: 503 `PDF_RENDER_FAILED` "The PDF could not be produced".
+  ID", the renderer not called. Step 4: 503 `PDF_RENDER_FAILED` "The PDF could not be produced",
+  with `Cache-Control: no-store`.
   `GET /configurations/ui` reports `quotes.pdf_available` `true`.
 - **Automation:** automated — `internal/handler/quote_pdf_handler_test.go` `TestQuotePDFHandler`;
   `internal/service/quote_pdf_test.go` `TestQuotePDFRender`;
@@ -1221,18 +1236,20 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
 - **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailPDFAttachment`;
   `internal/mailer/smtp_attachment_test.go` `TestSMTPAttachment`, `TestLogMailerAttachment`.
 
-### TC-PQ-055 — Render credential: one quote, read-only, only while its render runs
+### TC-PQ-055 — Render credential: one quote, read-only, once, only while its render runs
 - **Priority:** P0
 - **Type:** security
 - **Preconditions:** PDF output on; quotes A and B; a render of A in progress with credential `c`.
 - **Steps:**
-  1. `POST /quotes/public/render` `{token: c}` during the render.
-  2. The same with `id` and `quote_id` of quote B added to the body.
+  1. `POST /quotes/public/render` `{token: c}` during the render; then the same request again, and, in a fresh render, two requests at once.
+  2. In a fresh render, the same with `id` and `quote_id` of quote B added to the body.
   3. The same after the render returned; after the lifetime passed (injected clock); with an unknown token; with an empty token and with a malformed body.
   4. Send `Authorization: Bearer c` to `GET /quotes/{B}` and to `PUT /quotes/{A}`.
   5. Request any other path or verb under `/quotes/public`.
 - **Expected:** Step 1: 200 with quote A (number, lines) exactly as `GET /quotes/{A}` returns it,
-  and `product_name`. Step 2: still quote A. Step 3: 400 `BAD_REQUEST` "Invalid or expired render
+  and `product_name`, with `Cache-Control: no-store`; the second request is 400 `BAD_REQUEST`
+  "Invalid or expired render link" and that render fails with `ErrQuotePDFRenderFailed`; of the
+  two requests at once exactly one gets the quote and that render fails too. Step 2: still quote A. Step 3: 400 `BAD_REQUEST` "Invalid or expired render
   link" for every dead or unknown credential; 400 `VALIDATION_ERROR` for the empty token and the
   malformed body. Step 4: 401 on both. Step 5: no route (response on `GET`/`POST` and render on
   `POST` are the only three). A render whose page never redeemed the credential fails with

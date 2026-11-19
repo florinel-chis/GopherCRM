@@ -847,8 +847,8 @@ authentication and live on the moderate tier:
   `Content-Disposition: attachment; filename="Quote-Q-000042.pdf"`, printed by a headless
   browser (`chrome-headless-shell`, Chrome or Chromium) on the server in at most 15 seconds; 503 `PDF_UNAVAILABLE` when PDF output
   is off (`QUOTE_PDF_CHROME_PATH` empty or not an executable file), 503 `PDF_RENDER_FAILED`
-  when the render fails or runs out of time; `GET /configurations/ui` reports
-  `quotes.pdf_available`)*
+  when the render fails or runs out of time; the file and every error answer carry
+  `Cache-Control: no-store`; `GET /configurations/ui` reports `quotes.pdf_available`)*
 - `POST /api/v1/quotes/:id/email` - Email a sent or accepted quote as plaintext to the linked
   customer's current address, with the quote's PDF attached (`Quote-Q-000042.pdf`) when PDF
   output is on; when it is off or the render fails the mail goes out as text only and the call
@@ -863,21 +863,25 @@ authentication and live on the moderate tier:
   the `valid_until` day. An accepted quote and a sent quote past `valid_until` get no link. The
   link opens the web application's public page `/quote-response`, where the client sees the
   quote and accepts or declines it without an account)*
-- `GET /api/v1/quotes/public/response?token=` - **No authentication.** Show the quote behind a
-  client response link *(number, status, currency, `valid_until`, lines and totals only; never
-  spends the token; any unusable token is 400 "Invalid or expired quote link"; strict rate
-  tier)*
+- `GET /api/v1/quotes/public/response` - **No authentication.** Show the quote behind a
+  client response link; the token goes in the `X-Quote-Token` request header *(number, status,
+  currency, `valid_until`, lines and totals only; never spends the token; a token sent only in
+  the query string is not read; any unusable token is 400 "Invalid or expired quote link";
+  strict rate tier)*
 - `POST /api/v1/quotes/public/response` - **No authentication.** Answer the quote
   `{token, decision}` with `accept` or `decline` *(single use: claims the token and moves the
   quote sent→accepted or sent→rejected with one history row in one transaction; the history row
   has no user and `source` `client`; the deal is not changed; an invalid body is 400 `VALIDATION_ERROR`, any
   unusable token the same generic 400; strict rate tier. The web application's `/quote-response`
-  page calls both routes without a bearer token)*
+  page reads the token from the link once, removes it from the address bar with a replace
+  navigation and calls both routes without a bearer token. All three `/quotes/public` routes
+  answer with `Cache-Control: no-store`)*
 - `POST /api/v1/quotes/public/render` - **No authentication.** The read the PDF render page
   (`APP_BASE_URL/quote-render`) makes while the server prints a quote `{token}` *(the token is
   the credential of one running render: it returns that one quote as `GET /quotes/:id` does,
-  plus `product_name`, writes nothing, and is refused with the generic 400 "Invalid or expired
-  render link" once the render is over; generous rate tier)*
+  plus `product_name`, writes nothing, works once, and is refused with the generic 400 "Invalid
+  or expired render link" on a second redemption, which also fails that render, and once the
+  render is over; generous rate tier)*
 - `GET /api/v1/deals/:id/quotes` - The deal's quotes, paginated *(sales: its own deals and its own quotes only)*
 - `GET /api/v1/customers/:id/quotes` - The customer's quotes, paginated *(sales sees only its own)*
 

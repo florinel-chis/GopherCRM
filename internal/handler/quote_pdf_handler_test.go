@@ -65,6 +65,7 @@ func TestQuotePDFHandler(t *testing.T) {
 
 		w := doRaw(router, http.MethodGet, "/quotes/42/pdf")
 		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 		assert.Equal(t, "application/pdf", w.Header().Get("Content-Type"))
 		assert.Equal(t, `attachment; filename="Quote-Q-000042.pdf"`, w.Header().Get("Content-Disposition"))
 		assert.Regexp(t, `^attachment; filename="Quote-Q-\d{6}\.pdf"$`, w.Header().Get("Content-Disposition"))
@@ -174,6 +175,7 @@ func TestQuotePDFHandler(t *testing.T) {
 		router := newQuoteTestRouter(svc, 1, models.RoleAdmin)
 		w := doRaw(router, http.MethodGet, "/quotes/1/pdf")
 		assert.Equal(t, http.StatusServiceUnavailable, w.Code, "503, not 502: the body must survive a proxy")
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
 		assert.Contains(t, w.Header().Get("Content-Type"), "application/json")
 		assert.Empty(t, w.Header().Get("Content-Disposition"))
 		var envelope utils.APIResponse

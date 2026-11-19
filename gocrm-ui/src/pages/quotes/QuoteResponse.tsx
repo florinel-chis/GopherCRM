@@ -48,8 +48,13 @@ const DECISION_DONE: Record<QuoteResponseDecision, string> = { accept: 'accepted
  * outside the application shell and never shows or logs the token.
  */
 export const QuoteResponse: React.FC = () => {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get('token') ?? '';
+  const [searchParams, setSearchParams] = useSearchParams();
+  // The token is read from the link once, on the first render, and kept in
+  // component state only (never in web storage). The effect below then drops
+  // it from the address bar with a replace navigation, so the history entry no
+  // longer carries it; a reload therefore shows the invalid-link message and
+  // the client opens the mailed link again.
+  const [token] = useState(() => searchParams.get('token') ?? '');
 
   const [state, setState] = useState<ViewState>(token ? { kind: 'loading' } : { kind: 'invalid' });
   const [pending, setPending] = useState<QuoteResponseDecision | null>(null);
@@ -63,6 +68,12 @@ export const QuoteResponse: React.FC = () => {
   // before the disabled state has rendered: the second POST would be refused
   // as a used link and hide the answer that was recorded.
   const inFlight = useRef(false);
+
+  useEffect(() => {
+    if (searchParams.has('token')) {
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!token || requestedFor.current === token) {

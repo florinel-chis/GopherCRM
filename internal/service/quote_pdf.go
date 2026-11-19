@@ -43,11 +43,14 @@ type QuotePDFRenderer interface {
 }
 
 // quoteRenderCredential is one live render: the quote it may read, when it
-// stops working, and whether the page has loaded the quote with it.
+// stops working, how often it was presented while live, and whether the quote
+// was loaded with it. It is single use: only the first presentation gets the
+// quote, and a render whose credential was presented more than once fails.
 type quoteRenderCredential struct {
-	quoteID   uint
-	expiresAt time.Time
-	redeemed  bool
+	quoteID     uint
+	expiresAt   time.Time
+	redemptions int
+	loaded      bool
 }
 
 // quotePDF is the PDF state of one quote service: the renderer, the bound,
@@ -108,11 +111,12 @@ func (s *quoteService) RenderPDF(id uint) ([]byte, error) {
 
 // The reasons a render failed, for the log.
 const (
-	quotePDFReasonQueue       = "no_turn_within_bound"
-	quotePDFReasonTimeout     = "timeout"
-	quotePDFReasonRenderer    = "renderer_error"
-	quotePDFReasonNotRedeemed = "page_never_loaded_the_quote"
-	quotePDFReasonCredential  = "credential_error"
+	quotePDFReasonQueue         = "no_turn_within_bound"
+	quotePDFReasonTimeout       = "timeout"
+	quotePDFReasonRenderer      = "renderer_error"
+	quotePDFReasonNotRedeemed   = "page_never_loaded_the_quote"
+	quotePDFReasonRedeemedTwice = "credential_redeemed_more_than_once"
+	quotePDFReasonCredential    = "credential_error"
 )
 
 // renderQuotePDF runs one render of a quote that exists. Every failure is
@@ -179,11 +183,15 @@ func (s *quoteService) renderQuotePDF(quoteID uint) ([]byte, string, error) {
 	// A browser that exits cleanly has printed something, but not
 	// necessarily the quote: with APP_BASE_URL unreachable, or CORS refusing
 	// the page's call, it prints an error page. Only a render whose page
-	// loaded the quote counts.
+	// loaded the quote counts, and only when the credential was presented
+	// exactly once.
 	s.pdf.mu.Lock()
-	redeemed := credential.redeemed
+	redemptions, loaded := credential.redemptions, credential.loaded
 	s.pdf.mu.Unlock()
-	if !redeemed {
+	if redemptions > 1 {
+		return nil, quotePDFReasonRedeemedTwice, failed
+	}
+	if !loaded {
 		return nil, quotePDFReasonNotRedeemed, failed
 	}
 	return out.pdf, "", nil
@@ -197,7 +205,7 @@ func rejectQuoteRender(reason string) error {
 func (s *quoteService) GetRenderView(token string) (*models.QuoteRenderView, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithField("entity", "quote"), "QuoteService", "GetRenderView")
 
-	quoteID, err := s.renderCredentialQuote(token)
+	quoteID, hash, err := s.redeemRenderCredential(token)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Quote render credential refused")
 		return nil, err
@@ -215,39 +223,47 @@ func (s *quoteService) GetRenderView(token string) (*models.QuoteRenderView, err
 		utils.LogServiceResponse(logger, err)
 		return nil, err
 	}
-	s.markRenderCredentialRedeemed(token)
+	s.markRenderCredentialLoaded(hash)
 	return &models.QuoteRenderView{Quote: quote, ProductName: s.renderProductName()}, nil
 }
 
-// renderCredentialQuote resolves a live credential to its quote id. A service
-// without PDF output, an empty token, an unknown one and an expired one are
-// all the rejection.
-func (s *quoteService) renderCredentialQuote(token string) (uint, error) {
+// redeemRenderCredential resolves a live credential to its quote id and
+// returns the credential's hash. A service without PDF output, an empty token,
+// an unknown one and an expired one are all the rejection. The credential is
+// single use: the lookup, the expiry check and the count of presentations are
+// one critical section, so of two presentations, concurrent or not, only the
+// first gets the quote; the later one is the rejection and fails the render.
+func (s *quoteService) redeemRenderCredential(token string) (uint, string, error) {
 	if !s.PDFAvailable() {
-		return 0, rejectQuoteRender("PDF output is off")
+		return 0, "", rejectQuoteRender("PDF output is off")
 	}
 	if token == "" {
-		return 0, rejectQuoteRender("no credential")
+		return 0, "", rejectQuoteRender("no credential")
 	}
 	hash := hashOpaqueToken(token, s.tokenSecret)
 	s.pdf.mu.Lock()
 	defer s.pdf.mu.Unlock()
 	credential, ok := s.pdf.credentials[hash]
 	if !ok {
-		return 0, rejectQuoteRender("no live credential")
+		return 0, "", rejectQuoteRender("no live credential")
 	}
 	if !s.now().Before(credential.expiresAt) {
-		return 0, rejectQuoteRender(fmt.Sprintf("the credential of quote %d has expired", credential.quoteID))
+		return 0, "", rejectQuoteRender(fmt.Sprintf("the credential of quote %d has expired", credential.quoteID))
 	}
-	return credential.quoteID, nil
+	credential.redemptions++
+	if credential.redemptions > 1 {
+		return 0, "", rejectQuoteRender(fmt.Sprintf("the credential of quote %d was already redeemed", credential.quoteID))
+	}
+	return credential.quoteID, hash, nil
 }
 
-func (s *quoteService) markRenderCredentialRedeemed(token string) {
-	hash := hashOpaqueToken(token, s.tokenSecret)
+// markRenderCredentialLoaded records that the quote was read with the
+// credential of hash, if that render is still live.
+func (s *quoteService) markRenderCredentialLoaded(hash string) {
 	s.pdf.mu.Lock()
 	defer s.pdf.mu.Unlock()
 	if credential, ok := s.pdf.credentials[hash]; ok {
-		credential.redeemed = true
+		credential.loaded = true
 	}
 }
 

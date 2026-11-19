@@ -48,9 +48,14 @@ const normalize = (view: BackendQuotePublicView): QuotePublicView => ({
 const RESPONSE_PATH = '/quotes/public/response';
 
 export const quoteResponseApi = {
-  /** Shows the quote behind the link. Never spends the token. */
+  /**
+   * Shows the quote behind the link. Never spends the token. The token goes
+   * in the X-Quote-Token request header, never in the request URL.
+   */
   getQuoteResponse: async (token: string): Promise<QuotePublicView> => {
-    const response = await publicApi.get<BackendQuotePublicView>(RESPONSE_PATH, { params: { token } });
+    const response = await publicApi.get<BackendQuotePublicView>(RESPONSE_PATH, {
+      headers: { 'X-Quote-Token': token },
+    });
     return normalize(response.data);
   },
 

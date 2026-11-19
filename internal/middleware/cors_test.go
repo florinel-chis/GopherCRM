@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -55,6 +56,21 @@ func TestCORS_NoOriginHeaderPasses(t *testing.T) {
 	// Non-browser clients (curl, the Go tests, API keys) send no Origin.
 	w := doCORSRequest(corsTestRouter(), "")
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// The quote response page sends its token in the X-Quote-Token request
+// header, cross-origin in development, so the strict policy must allow it.
+func TestCORS_PreflightAllowsQuoteTokenHeader(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/ping", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	req.Header.Set("Access-Control-Request-Headers", "X-Quote-Token")
+	corsTestRouter().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, "http://localhost:5173", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Contains(t, strings.Split(w.Header().Get("Access-Control-Allow-Headers"), ","), "X-Quote-Token")
 }
 
 const publicPrefix = "/api/v1/forms/public"
