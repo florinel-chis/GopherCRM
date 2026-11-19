@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser tests of single sign-on against a local test issuer (#446).** `make e2e` now builds
+  and starts `scripts/e2e/oidc-issuer`, a disposable OpenID Connect issuer on
+  `https://127.0.0.1:<E2E_OIDC_PORT>` (default the first free port from 18291) that serves the
+  run's per-run test certificate and is stopped with the run. It has one client with a per-run
+  secret and the SPA's `/auth/callback` as its only redirect URI, and refuses a wrong
+  `redirect_uri` (at the authorization and the token endpoint), a missing or `plain` PKCE
+  challenge, a wrong verifier, a missing nonce, an unknown client, a wrong secret and a reused
+  code (`go test ./scripts/e2e/oidc-issuer`). The new `gocrm-ui/e2e/tests/sso.spec.ts` (12 tests)
+  saves the settings through Settings > Single sign-on, signs in through the browser round trip
+  and covers JIT provisioning, role mapping and its re-application, an unmatched claim, the
+  last-admin rule, an email held by a local account, a deactivated account, the single-use
+  callback and a tampered state, break-glass password login, `allow_password` governing the reset
+  mail, and the issuer's own checks; it switches single sign-on off again when it ends. The run
+  now pins the `OIDC_*` variables empty and `LOG_LEVEL=info`, so a developer's `.env` cannot turn
+  single sign-on on, and exports `E2E_OIDC_ISSUER_URL`, `E2E_OIDC_CLIENT_ID`,
+  `E2E_OIDC_CLIENT_SECRET` and `E2E_BACKEND_LOG` to Playwright. `E2E_PLAN_ONLY=1` prints the
+  issuer origin (never the secret) and refuses an invalid or colliding `E2E_OIDC_PORT`.
 - **Single sign-on: password sign-in and reset for linked accounts are a setting, off by default
   (#457).** The new setting `security.sso.allow_password` (environment fallback
   `OIDC_ALLOW_PASSWORD`, default false; seeded empty, reserved like the other `security.sso.*`
@@ -828,6 +845,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The e2e test certificate trust is refused in production mode (#446).** The
+  `-tags=gophercrm_e2e` backend no longer installs the per-run test CA from a package `init()`:
+  `cmd/main.go` calls `aeo.InstallE2ETestRoots` once, right after loading the configuration and
+  before the database or any listener is opened. It still does nothing without
+  `GOPHERCRM_E2E_AEO_TLS=1`, and now exits with "refusing the e2e test TLS roots in production
+  mode" when `SERVER_MODE` is `production` (in any letter case, also when set only in `.env`); a
+  missing or invalid `E2E_AEO_CERT` is a startup error instead of a panic. Normal builds have a
+  no-op twin and never trust the test CA.
 - **The generic configuration endpoints no longer serve the single sign-on settings (#434).**
   `GET /configurations` and `GET /configurations/category/security` leave out every
   `security.sso.*` entry, and `GET`, `PUT /configurations/{key}` and

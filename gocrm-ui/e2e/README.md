@@ -34,15 +34,22 @@ published; that local scope is separate from CI.
    `make verify-backend` verifies normal enforcement and the build-tag boundary. The existing
    `DISABLE_RATE_LIMIT=true` strict-tier setting is also retained.
    Its log goes to `test-results/e2e-backend.log`.
-3. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
+3. Starts the OpenID Connect test issuer (`scripts/e2e/oidc-issuer`, built to a binary) on
+   `https://127.0.0.1:<E2E_OIDC_PORT>` and waits for its discovery document; see "Single sign-on
+   against a local test issuer" below. Its log goes to `test-results/e2e-oidc-issuer.log`.
+4. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
    backend, and runs Playwright with **no retries**, traces kept for failures, and the `line` + `html`
    reporters.
-4. Always stops the backend and exits with Playwright's result.
+5. Always stops the issuer and the backend and exits with Playwright's result.
 
 The run pins the backend's environment: the chosen driver, the default API prefix, no SMTP (the
 log-only mailer), no reCAPTCHA, no answer-engine keys, provider model/endpoint overrides or AEO
 schedule, and quote PDF output off (`QUOTE_PDF_CHROME_PATH` empty, so the quote page shows no
-Download PDF button and quote emails are text only), whatever the root `.env` says. The real PDF
+Download PDF button and quote emails are text only), single sign-on off (`OIDC_ENABLED`,
+`OIDC_ALLOW_PASSWORD`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES` and
+`OIDC_ROLE_MAPPING` all empty, so `login.spec.ts` finds the single sign-on button hidden) and
+`LOG_LEVEL=info` (`sso.spec.ts` reads an Info line of the backend log), whatever the root `.env`
+says. The real PDF
 chain (Chrome, the `/quote-render` page, the API, the printed text) is checked by hand with
 `scripts/e2e/quote-pdf-smoke.sh` from the repo root; the recipe is in `docs/DEVELOPMENT.md`. On macOS it keeps the machine awake (`caffeinate -i`),
 since an idle sleep mid-run shows up as a cascade of page-load timeouts.
@@ -82,8 +89,10 @@ also exercises SDK retries, the generation message, and the stored error display
 details. Staff/customer checks cover the UI restrictions and server-side configuration permissions.
 
 Each `make e2e` invocation generates a short-lived certificate and private key in its temporary
-directory. The disposable `gophercrm_e2e` build accepts that certificate only with the explicit
-`GOPHERCRM_E2E_AEO_TLS=1` opt-in. The runner sets `GODEBUG=x509usefallbackroots=1` so Go uses this
+directory; the same certificate also serves the OpenID Connect test issuer. The disposable
+`gophercrm_e2e` build accepts that certificate only with the explicit `GOPHERCRM_E2E_AEO_TLS=1`
+opt-in, installed once at startup by `aeo.InstallE2ETestRoots`, which refuses it and stops the
+backend when `SERVER_MODE` is `production` (from the environment or from `.env`). The runner sets `GODEBUG=x509usefallbackroots=1` so Go uses this
 temporary trust pool on macOS as well as Linux; certificate and hostname verification remain
 enabled. Ordinary production builds ignore these fixture variables. No certificate is installed
 in the system trust store, and cleanup removes the generated TLS files. Regression tests exercise
@@ -104,6 +113,41 @@ The fixture also refuses an initially configured provider or stored sensitive ke
 changed configurations and any existing brand profile, deletes its prompts/users, and closes its
 stub after cleanup. A new profile and completed runs remain in the disposable test database as
 evidence because the API has no profile/run deletion endpoint. No live provider traffic is used.
+
+### Single sign-on against a local test issuer
+
+`sso.spec.ts` (12 tests, #446) signs in through the real browser round trip: the login page's
+"Sign in with single sign-on" button, the test issuer's "Test issuer sign-in" page, the SPA's
+`/auth/callback` and the app. Run it alone with
+`make e2e E2E_DB_DRIVER=sqlite SPECS="e2e/tests/sso.spec.ts"`. Outside `make e2e` (no
+`E2E_OIDC_ISSUER_URL`) it skips.
+
+The issuer (`scripts/e2e/oidc-issuer`, tested by `go test ./scripts/e2e/oidc-issuer`) listens on
+`127.0.0.1:<E2E_OIDC_PORT>` (by default the first free port from 18291; the plan refuses a port
+that is invalid or equal to the API, UI or AEO port) with the run's test certificate, and its
+issuer URL is exactly `https://127.0.0.1:<port>`. It knows one client, `gophercrm-e2e`, with a
+client secret made for each run and passed to it through the environment, never its command line,
+and `http://localhost:<ui port>/auth/callback` as the only redirect URI. Its authorization endpoint
+refuses (a 400 "Authorization request refused: <reason>" page, never a redirect) an unknown client,
+any other `redirect_uri`, a missing code challenge or one whose method is not `S256`, and a missing
+`state` or `nonce`; a valid request shows labelled inputs Subject, Email, Given name, Family name,
+Roles and Groups (comma-separated; empty leaves the claim out) and a Sign in button. Its token
+endpoint requires the client secret (basic or post), the authorization request's `redirect_uri` and
+a PKCE verifier matching the challenge, spends a code once (a refused exchange leaves it usable)
+and returns an RS256 ID token carrying the request's nonce. It logs no codes, secrets or tokens.
+
+The runner exports to Playwright `E2E_OIDC_ISSUER_URL`, `E2E_OIDC_CLIENT_ID`,
+`E2E_OIDC_CLIENT_SECRET` and `E2E_BACKEND_LOG` (the backend log, read to count the log mailer's
+password-reset lines). `E2E_PLAN_ONLY=1` prints `e2e plan: oidc_issuer_url=...`, never the secret.
+
+The spec saves the settings through Settings > Single sign-on (mapping claim `roles`: `crm-admin`
+to Admin, `crm-sales` to Sales, role ids read from `GET /roles`), uses a unique subject and email
+for every identity, and in `afterAll` switches single sign-on off, clears the issuer, client,
+secret and mapping, checks that `GET /auth/registration` reports `sso_enabled: false` and deletes
+the users it created. The issuer's certificate is a throw-away test CA: the browser contexts of
+the spec are told to accept it (`ignoreHTTPSErrors`), and the backend trusts it only in the
+`gophercrm_e2e` build with the opt-in, never in production mode (see above). A check against a
+live Entra ID tenant stays manual.
 
 ## Running by hand (debugging)
 
@@ -180,6 +224,7 @@ an admin through the app.
 | Spec | Tests | Area |
 |------|-------|------|
 | `aeo-providers.spec.ts` | 5 | AEO — five-provider connection persistence/clearing, real Anthropic/Gemini SDK generation and tracking, hot model/endpoint edits, Gemini 503 retries/errors, admin/staff/customer permissions |
+| `sso.spec.ts` | 12 | Single sign-on — settings screen (write-only secret, refused to sales), browser sign-in through the local test issuer with JIT provisioning, role mapping and its re-application, unmatched claim, last-admin rule, email held by a local account, deactivated account, single-use callback and tampered state, break-glass password login, `allow_password` and the reset mail, the issuer's redirect_uri/PKCE/nonce checks |
 | `login.spec.ts` | 11 | Auth — render, success, wrong password, unknown user, empty and invalid input, password visibility, register link, Enter key, protected routes, unauthenticated redirect |
 | `registration.spec.ts` | 18 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error, disabled switch (no sign-up link, notice instead of form, API 403) |
 | `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, search, status and priority filters, status and priority updates, long description; each case acts on a customer or ticket it seeds through the API |
@@ -212,7 +257,7 @@ Counts are per `test(...)` block and will drift; `npx playwright test --list` is
 e2e/
 ├── global-setup.ts     # Seeds the admin account via cmd/create-admin (same DB_DRIVER/DB_PATH or DB_NAME as the backend)
 ├── fixtures/           # admin-user.ts (credentials + faker generators), test-data.ts
-├── helpers/            # admin-auth.ts — login helper for the admin suites
+├── helpers/            # admin-auth.ts — login helper for the admin suites; sso.ts — admin API helpers for sso.spec.ts
 ├── pages/              # Page Object Models: one per screen, selectors live here
 ├── scripts/            # cleanup-admin-test-data.sh
 └── tests/              # Specs — behaviour assertions only

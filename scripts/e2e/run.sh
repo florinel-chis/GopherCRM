@@ -16,6 +16,9 @@
 #   E2E_API_PORT   backend port (default: first free port from 18091)
 #   E2E_UI_PORT    Vite port    (default: first free port from 15173)
 #   E2E_AEO_PORT   TLS provider fixture port (default: first free port from 18191)
+#   E2E_OIDC_PORT  OpenID Connect test issuer port (default: first free port
+#                  from 18291); the issuer (scripts/e2e/oidc-issuer) serves
+#                  https://127.0.0.1:<port> with the run's test certificate
 #   E2E_PLAN_ONLY  1: print the resolved plan and exit before any tool, database
 #                  or server is used (the self-test relies on it); any other
 #                  value runs the suite
@@ -89,6 +92,12 @@ if ! [[ $aeo_port =~ ^[1-9][0-9]{0,4}$ ]] || [ "$aeo_port" -gt 65535 ] ||
   echo "e2e: E2E_AEO_PORT must be a valid port distinct from the API and UI ports" >&2
   exit 2
 fi
+oidc_port=${E2E_OIDC_PORT:-$(free_port 18291)}
+if ! [[ $oidc_port =~ ^[1-9][0-9]{0,4}$ ]] || [ "$oidc_port" -gt 65535 ] ||
+  [ "$oidc_port" = "$api_port" ] || [ "$oidc_port" = "$ui_port" ] || [ "$oidc_port" = "$aeo_port" ]; then
+  echo "e2e: E2E_OIDC_PORT must be a valid port distinct from the API, UI and AEO ports" >&2
+  exit 2
+fi
 
 work_dir=$(mktemp -d)
 # Playwright empties test-results/ when it starts, so the backend logs into the
@@ -96,10 +105,16 @@ work_dir=$(mktemp -d)
 results_dir="$repo_root/gocrm-ui/test-results"
 backend_log="$work_dir/e2e-backend.log"
 backend_pid=""
+oidc_pid=""
+oidc_log="$work_dir/e2e-oidc-issuer.log"
 
 sqlite_path="$work_dir/e2e-sqlite.db"
 
 cleanup() {
+  if [ -n "$oidc_pid" ] && kill -0 "$oidc_pid" 2>/dev/null; then
+    kill "$oidc_pid" 2>/dev/null || true
+    wait "$oidc_pid" 2>/dev/null || true
+  fi
   if [ -n "$backend_pid" ] && kill -0 "$backend_pid" 2>/dev/null; then
     kill "$backend_pid" 2>/dev/null || true
     wait "$backend_pid" 2>/dev/null || true
@@ -107,6 +122,10 @@ cleanup() {
   if [ -f "$backend_log" ]; then
     mkdir -p "$results_dir"
     cp "$backend_log" "$results_dir/e2e-backend.log"
+  fi
+  if [ -f "$oidc_log" ]; then
+    mkdir -p "$results_dir"
+    cp "$oidc_log" "$results_dir/e2e-oidc-issuer.log"
   fi
   # The SQLite file (with any write-ahead log left behind) is kept as evidence
   # next to the log; the next run starts from a new file regardless.
@@ -146,6 +165,9 @@ export API_PREFIX=/api/v1 SERVER_MODE=development \
   AEO_ANTHROPIC_BASE_URL= AEO_OPENAI_BASE_URL= AEO_GEMINI_BASE_URL= AEO_KIMI_BASE_URL= AEO_PERPLEXITY_BASE_URL= \
   AEO_CUSTOM_BASE_URL= AEO_CUSTOM_API_KEY= \
   QUOTE_PDF_CHROME_PATH= \
+  OIDC_ENABLED= OIDC_ALLOW_PASSWORD= OIDC_ISSUER_URL= OIDC_CLIENT_ID= OIDC_CLIENT_SECRET= \
+  OIDC_SCOPES= OIDC_ROLE_MAPPING= \
+  LOG_LEVEL=info \
   APP_BASE_URL="http://localhost:$ui_port" PUBLIC_BASE_URL="http://localhost:$api_port"
 
 # The same fixed fixture port is reused by sequential tests. Replace inherited
@@ -157,6 +179,14 @@ for provider in anthropic openai gemini kimi perplexity; do
   aeo_local_origins="${aeo_local_origins:+${aeo_local_origins},}${provider}=https://127.0.0.1:$aeo_port"
 done
 export AEO_EGRESS_LOCAL_ORIGINS="$aeo_local_origins"
+
+# The OpenID Connect test issuer: one client, registered with the SPA's
+# callback page as its only redirect URI and a secret made for this run. The
+# OIDC_* settings above stay empty, so single sign-on is off unless a spec
+# (sso.spec.ts) switches it on through the settings API.
+E2E_OIDC_CLIENT_SECRET=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+export E2E_OIDC_CLIENT_SECRET E2E_OIDC_CLIENT_ID=gophercrm-e2e \
+  E2E_OIDC_ISSUER_URL="https://127.0.0.1:$oidc_port"
 
 if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   echo "e2e plan: driver=$DB_DRIVER"
@@ -171,6 +201,7 @@ if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   echo "e2e plan: api_port=$api_port ui_port=$ui_port"
   echo "e2e plan: aeo_allowed_origins=$AEO_EGRESS_ALLOWED_ORIGINS"
   echo "e2e plan: aeo_local_origins=$AEO_EGRESS_LOCAL_ORIGINS"
+  echo "e2e plan: oidc_issuer_url=$E2E_OIDC_ISSUER_URL"
   exit 0
 fi
 
@@ -199,6 +230,33 @@ echo "e2e: building backend"
 export E2E_AEO_CERT="$work_dir/aeo-tls/certificate.pem" \
   E2E_AEO_KEY="$work_dir/aeo-tls/private-key.pem" GOPHERCRM_E2E_AEO_TLS=1 \
   GODEBUG="${GODEBUG:+${GODEBUG},}x509usefallbackroots=1"
+
+# The OpenID Connect test issuer, a built binary for the same reason as the
+# backend. It serves the same per-run certificate, which the e2e backend
+# trusts (internal/aeo InstallE2ETestRoots); the secret reaches it through
+# the environment, never the command line.
+echo "e2e: starting the OpenID Connect test issuer on :$oidc_port"
+(cd "$repo_root" && go build -o "$work_dir/oidc-issuer" ./scripts/e2e/oidc-issuer)
+"$work_dir/oidc-issuer" --listen "127.0.0.1:$oidc_port" --cert "$E2E_AEO_CERT" --key "$E2E_AEO_KEY" \
+  --client-id "$E2E_OIDC_CLIENT_ID" --redirect-uri "http://localhost:$ui_port/auth/callback" \
+  >"$oidc_log" 2>&1 &
+oidc_pid=$!
+for _ in $(seq 1 30); do
+  if curl -fsS --cacert "$E2E_AEO_CERT" "$E2E_OIDC_ISSUER_URL/.well-known/openid-configuration" >/dev/null 2>&1; then
+    break
+  fi
+  if ! kill -0 "$oidc_pid" 2>/dev/null; then
+    echo "e2e: the test issuer exited during startup; last log lines:" >&2
+    tail -n 30 "$oidc_log" >&2
+    exit 1
+  fi
+  sleep 1
+done
+curl -fsS --cacert "$E2E_AEO_CERT" "$E2E_OIDC_ISSUER_URL/.well-known/openid-configuration" >/dev/null || {
+  echo "e2e: the test issuer did not answer within 30 s; last log lines:" >&2
+  tail -n 30 "$oidc_log" >&2
+  exit 1
+}
 
 echo "e2e: starting backend on :$api_port (log copied to gocrm-ui/test-results/e2e-backend.log on exit)"
 (
@@ -236,7 +294,9 @@ status=0
   # Global AEO settings may be changed only after this runner created a fresh
   # database and disabled live credentials and scheduling above.
   export E2E_UI_PORT=$ui_port E2E_AEO_STUBS=1 PLAYWRIGHT_HTML_OPEN=never \
-    VITE_API_BASE_URL="http://localhost:$api_port/api/v1"
+    VITE_API_BASE_URL="http://localhost:$api_port/api/v1" \
+    E2E_OIDC_ISSUER_URL E2E_OIDC_CLIENT_ID E2E_OIDC_CLIENT_SECRET \
+    E2E_BACKEND_LOG="$backend_log"
   # No retries: a test that only passes on a second attempt is reported as a
   # failure, not hidden. With no retries, "on-first-retry" traces would never
   # be recorded, so failures keep theirs instead.
