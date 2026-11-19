@@ -440,6 +440,22 @@ type WebhookRepository interface {
 	ListDeliveries(ctx context.Context, filter WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
 }
 
+// TaskListFilter narrows GET /tasks when a status or priority filter is given
+// (#427). Every field is optional and the fields combine with AND: a nil
+// AssigneeID means no assignee filter, while a non-nil one restricts to that
+// assignee; a LabelID of 0 means no label filter; an empty Search, Status or
+// Priority is no filter. Status and Priority are matched exactly (callers
+// validate them first); Search is a substring matched against title or
+// description. The predicate is part of the query, so it applies before offset
+// and limit, and the count uses the same predicate.
+type TaskListFilter struct {
+	AssigneeID *uint
+	LabelID    uint
+	Search     string
+	Status     string
+	Priority   string
+}
+
 type TaskRepository interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)
@@ -475,6 +491,10 @@ type TaskRepository interface {
 	// outside the tasks allowlist is refused.
 	ListByDeal(dealID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	CountByDeal(dealID uint, assignedToID *uint) (int64, error)
+	// Filtered collections of GET /tasks (#427). Both share one predicate;
+	// rows are ordered by the validated sort column then id, or id ascending.
+	ListByFilter(filter TaskListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
+	CountByFilter(filter TaskListFilter) (int64, error)
 	WithTx(tx *gorm.DB) TaskRepository
 }
 

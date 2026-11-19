@@ -267,6 +267,10 @@ type TaskService interface {
 	List(offset, limit int) ([]models.Task, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
+	// ListFiltered is GET /tasks with a status or priority filter (#427): one
+	// page of the tasks matching filter, with taskListPreloads, and the number
+	// of tasks the same filter matches before pagination.
+	ListFiltered(filter repository.TaskListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	GetPendingCount() (int64, error)
 	// Dashboard analytics. The ByAssignee variants exist so the handlers can
 	// narrow non-admin callers to their own assignments without the scoping

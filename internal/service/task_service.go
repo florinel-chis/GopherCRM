@@ -606,6 +606,43 @@ func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder 
 	return tasks, total, nil
 }
 
+// ListFiltered lists one page of the tasks matching filter, with their
+// assignee, labels, lead and deal, and the number of tasks the same filter
+// matches before pagination. The log lines carry offsets, ids and counts only:
+// never the search term or the sort, and the status, priority and search only
+// as presence flags.
+func (s *taskService) ListFiltered(filter repository.TaskListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	fields := map[string]interface{}{
+		"offset":          offset,
+		"limit":           limit,
+		"status_filter":   filter.Status != "",
+		"priority_filter": filter.Priority != "",
+		"search_filter":   filter.Search != "",
+	}
+	if filter.AssigneeID != nil {
+		fields["assignee_id"] = *filter.AssigneeID
+	}
+	if filter.LabelID != 0 {
+		fields["label_id"] = filter.LabelID
+	}
+	logger := utils.LogServiceCall(utils.Logger.WithFields(fields), "TaskService", "ListFiltered")
+
+	tasks, err := s.taskRepo.ListByFilter(filter, offset, limit, sortBy, sortOrder, taskListPreloads...)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to list filtered tasks")
+		return nil, 0, err
+	}
+
+	total, err := s.taskRepo.CountByFilter(filter)
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Error("Failed to count filtered tasks")
+		return nil, 0, err
+	}
+
+	logger.WithField("total", total).Info("Filtered tasks listed successfully")
+	return tasks, total, nil
+}
+
 func (s *taskService) GetPendingCount() (int64, error) {
 	return s.taskRepo.CountPending()
 }

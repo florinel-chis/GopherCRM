@@ -936,6 +936,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Tasks list Status and Priority dropdowns filter again (#427).** `GET /tasks` now reads its
+  optional `status` (one of `pending`, `in_progress`, `completed`, `cancelled`) and `priority` (one
+  of `low`, `medium`, `high`) query parameters on the server, each matched exactly and
+  case-sensitively. They apply in the query before offset and limit, so `data.total` and `meta`
+  count only the matching tasks. For an admin they combine with each other, with `label_id`, with
+  `search` (which `label_id` still overrides) and with `sort_by`/`sort_order`; for every other role
+  they narrow only the caller's own tasks, combine with `label_id`, ignore `search`, and honour the
+  sort only together with `label_id`, as before. An empty value is ignored, a repeated parameter
+  uses its first value, and any other value (`done`, `Completed`, `urgent`) is answered 400
+  `VALIDATION_ERROR` with `error.details` keyed by the offending parameter name(s), the value not
+  echoed, before anything is read. The filtered path fills `assigned_to` for every caller,
+  including the non-admin list. The `admin-tasks.spec.ts` cases "admin can filter tasks by status
+  (#427)" and "admin can filter tasks by priority (#427)" run instead of being `test.fixme`. No
+  schema change.
 - **The Leads list Status dropdown filters again (#426).** `GET /leads` now reads its optional
   `status` query parameter on the server: one of `new`, `contacted`, `qualified`, `unqualified`,
   `converted`, matched exactly and case-sensitively. It applies in the query before offset and

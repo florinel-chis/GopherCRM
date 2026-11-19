@@ -274,6 +274,61 @@ func (r *taskRepository) labelQuery(labelID uint, assignedToID *uint) *gorm.DB {
 	return query
 }
 
+// whereTaskListFilter is the one predicate of ListByFilter and CountByFilter.
+// It joins task_labels only for a label filter, ANDs the optional assignee,
+// status and priority, and keeps the search alternatives in one parenthesised
+// group, so the search OR can never let a row of another assignee, status,
+// priority or label through. Every column is qualified with its table and every
+// value is bound. GORM adds tasks.deleted_at IS NULL for the model, so
+// soft-deleted tasks stay out.
+func whereTaskListFilter(db *gorm.DB, filter TaskListFilter) *gorm.DB {
+	if filter.LabelID != 0 {
+		db = db.Joins("JOIN task_labels ON task_labels.task_id = tasks.id").
+			Where("task_labels.label_id = ?", filter.LabelID)
+	}
+	if filter.AssigneeID != nil {
+		db = db.Where("tasks.assigned_to_id = ?", *filter.AssigneeID)
+	}
+	if filter.Status != "" {
+		db = db.Where("tasks.status = ?", filter.Status)
+	}
+	if filter.Priority != "" {
+		db = db.Where("tasks.priority = ?", filter.Priority)
+	}
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		db = db.Where("(tasks.title LIKE ? OR tasks.description LIKE ?)", searchPattern, searchPattern)
+	}
+	return db
+}
+
+// ListByFilter returns one page of the live tasks matching filter. The filter
+// is applied before offset and limit, and the rows walk orderPage's total
+// order: the validated sort column, then id in the same direction, or id
+// ascending. The label join matches a task at most once per label id, so the
+// rows stay unique.
+func (r *taskRepository) ListByFilter(filter TaskListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
+	tasks := []models.Task{}
+	query := whereTaskListFilter(r.db.Model(&models.Task{}), filter)
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	query, err := orderPage(query, "tasks", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// CountByFilter counts every live task matching filter, with the predicate of
+// ListByFilter and before any pagination.
+func (r *taskRepository) CountByFilter(filter TaskListFilter) (int64, error) {
+	var count int64
+	err := whereTaskListFilter(r.db.Model(&models.Task{}), filter).Count(&count).Error
+	return count, err
+}
+
 // ListByDeal returns one page of the live tasks of a deal. A nil assignedToID
 // means every assignee; a non-nil one narrows inside the query, before the
 // limit. The order ends in tasks.id and the sort column comes only from the

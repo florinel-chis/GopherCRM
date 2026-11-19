@@ -27,6 +27,27 @@ const (
 	TaskPriorityHigh   TaskPriority = "high"
 )
 
+// IsValid reports whether s is exactly one of the four declared task statuses.
+// The match is case-sensitive: "", "done" and "Completed" are not valid.
+func (s TaskStatus) IsValid() bool {
+	switch s {
+	case TaskStatusPending, TaskStatusInProgress, TaskStatusCompleted, TaskStatusCancelled:
+		return true
+	}
+	return false
+}
+
+// IsValid reports whether p is exactly one of the three declared task
+// priorities. The match is case-sensitive, and "urgent" (a ticket priority) is
+// not a task priority.
+func (p TaskPriority) IsValid() bool {
+	switch p {
+	case TaskPriorityLow, TaskPriorityMedium, TaskPriorityHigh:
+		return true
+	}
+	return false
+}
+
 // @Description A to-do item assigned to one user, optionally linked to a lead or a customer (never both) and to a deal, and carrying labels.
 type Task struct {
 	BaseModel
@@ -42,7 +63,7 @@ type Task struct {
 	DueDate *time.Time `json:"due_date,omitempty" example:"2026-11-05T09:00:00Z"`
 	// ID of the user the task is assigned to. Non-admins may only create tasks for themselves and only admins may change it.
 	AssignedToID uint `json:"assigned_to_id" example:"7"`
-	// The assignee's user record. Always present in the JSON. GET /tasks/{id}, PUT /tasks/{id}, GET /tasks/upcoming and the admin and label-filtered GET /tasks listings fill it in with the User object (see the User schema). POST /tasks, GET /tasks/my and the non-admin GET /tasks without label_id return a zero-valued placeholder instead (id 0, every string empty, role "" included, timestamps 0001-01-01T00:00:00Z), which is not a valid User, so this property is documented as a plain object. Use assigned_to_id.
+	// The assignee's user record. Always present in the JSON. GET /tasks/{id}, PUT /tasks/{id}, GET /tasks/upcoming and the admin, label-filtered and status/priority-filtered GET /tasks listings fill it in with the User object (see the User schema). POST /tasks, GET /tasks/my and the non-admin GET /tasks without label_id, status or priority return a zero-valued placeholder instead (id 0, every string empty, role "" included, timestamps 0001-01-01T00:00:00Z), which is not a valid User, so this property is documented as a plain object. Use assigned_to_id.
 	AssignedTo User `gorm:"foreignKey:AssignedToID" json:"assigned_to,omitempty" swaggertype:"object"`
 	// ID of the linked lead. Omitted when the task has no lead link, and also when the caller may not see that lead (admins see every lead, sales users only the leads they own, every other role none); this is decided on every read. A task links a lead or a customer, never both.
 	LeadID *uint `json:"lead_id,omitempty" example:"12"`

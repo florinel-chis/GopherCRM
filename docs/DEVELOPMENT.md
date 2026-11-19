@@ -1387,6 +1387,34 @@ Regression roots: `TestLeadStatusIsValid` (`internal/models`); `TestLeadListStat
 `TestLeadListFilterRepository{SQLite,MySQL}` (`internal/repository`). The MySQL root uses a
 disposable `TEST_MYSQL_DSN` schema, skips without it and fails when it is unreachable.
 
+**Task list filters (#427).** `GET /tasks` takes optional `status` and `priority` query
+parameters, each one exact, case-sensitive value of `models.TaskStatus` (`pending`, `in_progress`,
+`completed`, `cancelled`) or `models.TaskPriority` (`low`, `medium`, `high`; `urgent` is a ticket
+priority only). The handler reads them with `c.Query` (first value of a repeated parameter; empty
+counts as absent, which is what the list page sends for "All") and validates them with
+`TaskStatus.IsValid` / `TaskPriority.IsValid` before any service call: an unknown value is 400
+`VALIDATION_ERROR` with `error.details` keyed by the offending parameter name(s), the value not
+echoed and the warning log carrying only the count. With either filter the handler calls
+`TaskService.ListFiltered(repository.TaskListFilter{AssigneeID, LabelID, Search, Status,
+Priority}, offset, limit, sortBy, sortOrder)`, keeping each caller's existing contract: a caller
+holding `tasks.view` at scope all (admin) gets `AssigneeID` nil, `search` only without `label_id`
+(label still wins) and the normalised sort; any other caller gets `AssigneeID` forced to its own
+`user_id`, no search, and the sort only together with `label_id` (id ascending otherwise, as
+`GetByAssignee`). Without either filter the existing `ListByLabelForAssignee`, `ListByLabel`,
+`GetByAssignee`, `Search`, `ListSorted` and `List` branches run with unchanged arguments.
+`TaskRepository.ListByFilter` (the `taskListPreloads`, so `assigned_to` is filled on every filtered
+path; `orderPage`, then OFFSET/LIMIT) and `CountByFilter` share one predicate builder,
+`whereTaskListFilter`, which joins `task_labels` only for a label filter and ANDs
+`tasks.assigned_to_id`, `tasks.status` and `tasks.priority` with the parenthesised
+`(tasks.title LIKE ? OR tasks.description LIKE ?)`, every column qualified and every value bound;
+soft-deleted tasks stay excluded. The service logs offset, limit, the assignee and label ids, the
+total and the presence flags `status_filter`, `priority_filter` and `search_filter` only. No
+schema change. Regression roots: `TestTaskEnumIsValid` (`internal/models`);
+`TestTaskListFilterHandler` (`internal/handler`); `TestTaskServiceListFiltered`
+(`internal/service`); `TestTaskListFilterRepository{SQLite,MySQL}` (`internal/repository`). The
+MySQL root uses a disposable `TEST_MYSQL_DSN` schema, skips without it and fails when it is
+unreachable.
+
 **User list role filter (#428).** `GET /users` takes an optional `role` query parameter, one exact,
 case-sensitive value of `models.UserRole` (`admin`, `sales`, `support`, `customer`, `custom`). The
 handler reads it with `c.Query` (first value of a repeated parameter; empty counts as absent, a

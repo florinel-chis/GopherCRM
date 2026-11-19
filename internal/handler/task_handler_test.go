@@ -18,6 +18,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -75,6 +76,14 @@ func (m *MockTaskService) ListSorted(offset, limit int, sortBy, sortOrder string
 
 func (m *MockTaskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
 	args := m.Called(query, offset, limit, sortBy, sortOrder)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockTaskService) ListFiltered(filter repository.TaskListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
+	args := m.Called(filter, offset, limit, sortBy, sortOrder)
 	if args.Get(0) == nil {
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
