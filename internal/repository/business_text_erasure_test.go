@@ -362,8 +362,9 @@ func TestLeadErasureScrubsDealAndQuoteTextMySQL(t *testing.T) {
 }
 
 func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
+	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
 	unconverted := func(t *testing.T, erase func(db *gorm.DB, leadID uint) error) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		f := newBusinessTextFixture(t, db)
 		lead := f.lead(t, "l", nil)
 		product := f.product(t, "p", false)
@@ -437,7 +438,7 @@ func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
 		return g
 	}
 	cascade := func(t *testing.T, erase func(db *gorm.DB, g *graph) error) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedGraph(t, db)
 		quoteIDs := idsOfQuotes(g.quotes...)
 		deals := businessTextRows(t, db, "deals", idsOfDeals(g.deals...)...)
@@ -461,7 +462,7 @@ func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
 		cascade(t, func(db *gorm.DB, g *graph) error { return NewUserRepository(db).Delete(g.login.ID) })
 	})
 	t.Run("refused_non_admin_erasure_of_a_converted_lead_changes_nothing", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedGraph(t, db)
 		before := snapshotIdentityDB(t, db)
 		err := NewLeadRepository(db).DeleteUnconverted(g.leadA.ID)

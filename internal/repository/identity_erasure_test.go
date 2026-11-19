@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -112,6 +113,242 @@ func openIdentityErasureDBWith(t *testing.T, useMySQL, prepareStmt bool) *gorm.D
 		require.NoError(t, db.Raw("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE()").Scan(&constraints).Error)
 		require.Positive(t, constraints, "the MySQL fixture must carry the schema's foreign keys")
 	}
+	return db
+}
+
+// erasureTestDBs hands the subtests of one erasure root their database.
+//
+// On SQLite every call is a fresh file, as before. On MySQL/MariaDB the root
+// migrates ONE schema (creating and migrating a schema per subtest was most of
+// these roots' run time, #404) and every call returns a new handle on it after
+// putting the schema back into its post-migration state: rows and id counters.
+// The subtests of such a root therefore run one after the other, never in
+// parallel.
+type erasureTestDBs struct {
+	useMySQL bool
+	fresh    func(t *testing.T, useMySQL bool) *gorm.DB
+	shared   *sharedErasureSchema
+}
+
+// newErasureTestDBs is called once, in the root's own t, before the first
+// subtest. A MySQL root skips here when TEST_MYSQL_DSN is not set. fresh is the
+// helper the root used per subtest before; it creates and migrates the shared
+// schema, so the schema is what that helper makes (collation included), and
+// drops it when the root ends.
+func newErasureTestDBs(t *testing.T, useMySQL bool, fresh func(t *testing.T, useMySQL bool) *gorm.DB) *erasureTestDBs {
+	t.Helper()
+	dbs := &erasureTestDBs{useMySQL: useMySQL, fresh: fresh}
+	if !useMySQL {
+		return dbs
+	}
+	if os.Getenv("TEST_MYSQL_DSN") == "" {
+		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
+	}
+	dbs.shared = newSharedErasureSchema(t, fresh(t, true))
+	return dbs
+}
+
+// open returns the database for one subtest (or one iteration of one): empty
+// but for what the migration seeds, with ids starting as on a fresh schema.
+func (d *erasureTestDBs) open(t *testing.T) *gorm.DB {
+	t.Helper()
+	if d.shared == nil {
+		return d.fresh(t, false)
+	}
+	return d.shared.handle(t, false)
+}
+
+// openPrepared is open with GORM's PrepareStmt on (see
+// openIdentityErasureDBWith).
+func (d *erasureTestDBs) openPrepared(t *testing.T) *gorm.DB {
+	t.Helper()
+	if d.shared == nil {
+		return openIdentityErasureDBWith(t, false, true)
+	}
+	return d.shared.handle(t, true)
+}
+
+// openFresh returns a database of the subtest's own, for the subtests that
+// change the schema (DROP TABLE, RENAME COLUMN) and so cannot share one.
+func (d *erasureTestDBs) openFresh(t *testing.T) *gorm.DB {
+	t.Helper()
+	return d.fresh(t, d.useMySQL)
+}
+
+// sharedErasureSchema is one migrated MySQL/MariaDB schema and what it looked
+// like right after the migration.
+type sharedErasureSchema struct {
+	// admin is the handle the schema was migrated through. It runs the reset
+	// and the snapshots and is never handed to a subtest.
+	admin *gorm.DB
+	dsn   string
+	// baseline is snapshotIdentityDB right after the migration; its keys are
+	// the schema's tables.
+	baseline map[string][]string
+	tables   []string
+	// seeded holds the ids of the rows the migration left, per table that has
+	// any. Everything else in the schema is removed by a reset.
+	seeded map[string][]uint64
+	// nextID is the post-migration AUTO_INCREMENT of every table that has one.
+	nextID map[string]uint64
+	// issued is the pool of the handle given out last.
+	issued *sql.DB
+}
+
+// sharedErasureResetTimeout bounds a reset, so a statement waiting on a lock a
+// subtest left behind fails the run instead of sitting out the read timeout.
+const sharedErasureResetTimeout = 10 * time.Second
+
+func newSharedErasureSchema(t *testing.T, admin *gorm.DB) *sharedErasureSchema {
+	t.Helper()
+	var name string
+	require.NoError(t, admin.Raw("SELECT DATABASE()").Scan(&name).Error)
+	require.NotEmpty(t, name)
+	dsnCfg, err := mysqldriver.ParseDSN(os.Getenv("TEST_MYSQL_DSN"))
+	require.NoError(t, err)
+	dsnCfg.DBName = name
+	dsnCfg.ParseTime = true
+	dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
+
+	s := &sharedErasureSchema{admin: admin, dsn: dsnCfg.FormatDSN(), seeded: map[string][]uint64{}}
+	s.baseline = snapshotIdentityDB(t, admin)
+	for table, rows := range s.baseline {
+		s.tables = append(s.tables, table)
+		if len(rows) == 0 {
+			continue
+		}
+		// The keep-set is whatever the migration seeded, wherever it put it. A
+		// seeded table without an id column would need its own handling here.
+		var ids []uint64
+		require.NoError(t, admin.Table(table).Order("id").Pluck("id", &ids).Error, "the seeded table %s must be addressable by id", table)
+		require.Len(t, ids, len(rows), "the seeded table %s must be addressable by id", table)
+		s.seeded[table] = ids
+	}
+	sort.Strings(s.tables)
+	ctx, cancel := context.WithTimeout(context.Background(), sharedErasureResetTimeout)
+	defer cancel()
+	require.NoError(t, admin.WithContext(ctx).Connection(func(conn *gorm.DB) error {
+		var err error
+		s.nextID, err = sharedErasureCounters(conn)
+		return err
+	}))
+	return s
+}
+
+// sharedErasureCounters reads the AUTO_INCREMENT of every table of the current
+// schema. conn must be one pinned connection: MySQL 8 answers this column from
+// a cache unless the session switches the cache off (MariaDB has no cache and
+// no such variable).
+func sharedErasureCounters(conn *gorm.DB) (map[string]uint64, error) {
+	var version string
+	if err := conn.Raw("SELECT VERSION()").Scan(&version).Error; err != nil {
+		return nil, err
+	}
+	if !strings.Contains(strings.ToLower(version), "mariadb") {
+		if err := conn.Exec("SET SESSION information_schema_stats_expiry = 0").Error; err != nil {
+			return nil, err
+		}
+	}
+	var rows []struct {
+		Name   string
+		NextID *uint64
+	}
+	if err := conn.Raw("SELECT TABLE_NAME AS name, AUTO_INCREMENT AS next_id FROM information_schema.TABLES " +
+		"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'").Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	counters := map[string]uint64{}
+	for _, row := range rows {
+		if row.NextID != nil {
+			counters[row.Name] = *row.NextID
+		}
+	}
+	return counters, nil
+}
+
+// reset puts the schema back into its post-migration state: every row the
+// migration did not seed is removed and every id counter that moved is put
+// back, also on a table whose rows a subtest inserted and then hard-deleted or
+// rolled back. Only the tables that differ are touched (a statement per table
+// of the schema would cost what sharing the schema saves). Foreign-key checks
+// are a session setting, so all of it runs on one pinned connection.
+func (s *sharedErasureSchema) reset(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), sharedErasureResetTimeout)
+	defer cancel()
+	err := s.admin.WithContext(ctx).Connection(func(conn *gorm.DB) (err error) {
+		counters, err := sharedErasureCounters(conn)
+		if err != nil {
+			return err
+		}
+		selects := make([]string, 0, len(s.tables))
+		for _, table := range s.tables {
+			selects = append(selects, fmt.Sprintf("SELECT '%s' AS name, COUNT(*) AS n FROM `%s`", table, table))
+		}
+		var counts []struct {
+			Name string
+			N    int
+		}
+		if err := conn.Raw(strings.Join(selects, " UNION ALL ")).Scan(&counts).Error; err != nil {
+			return err
+		}
+
+		if err := conn.Exec("SET FOREIGN_KEY_CHECKS = 0").Error; err != nil {
+			return err
+		}
+		defer func() {
+			if onErr := conn.Exec("SET FOREIGN_KEY_CHECKS = 1").Error; err == nil {
+				err = onErr
+			}
+		}()
+		for _, count := range counts {
+			table := count.Name
+			keep := s.seeded[table]
+			switch {
+			case len(keep) > 0:
+				if err := conn.Exec("DELETE FROM `"+table+"` WHERE id NOT IN ?", keep).Error; err != nil {
+					return fmt.Errorf("removing the rows of %s: %w", table, err)
+				}
+			case count.N > 0:
+				if err := conn.Exec("DELETE FROM `" + table + "`").Error; err != nil {
+					return fmt.Errorf("removing the rows of %s: %w", table, err)
+				}
+			}
+			if want, ok := s.nextID[table]; ok && counters[table] != want {
+				if err := conn.Exec(fmt.Sprintf("ALTER TABLE `%s` AUTO_INCREMENT = %d", table, want)).Error; err != nil {
+					return fmt.Errorf("restoring the id counter of %s: %w", table, err)
+				}
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err, "resetting the shared schema")
+	// The leak guard: a row that survived a reset, or a seeded row a subtest
+	// changed, fails the run here instead of bending a later subtest. It compares
+	// rows only; the id counters are held by the id assertion in
+	// each_node_is_scrubbed_exactly_once.
+	require.Equal(t, s.baseline, snapshotIdentityDB(t, s.admin), "the shared schema is back in its post-migration state")
+}
+
+// handle resets the schema and returns a NEW handle on it, with its own pool,
+// closed when t ends. A new handle per call means a callback a subtest
+// registers cannot reach the next one, and a transaction a subtest leaves open
+// ends with its pool. The handle issued before is closed first, so a second
+// call inside one subtest does not wait behind the first handle's connections.
+func (s *sharedErasureSchema) handle(t *testing.T, prepareStmt bool) *gorm.DB {
+	t.Helper()
+	if s.issued != nil {
+		_ = s.issued.Close()
+		s.issued = nil
+	}
+	s.reset(t)
+	db, err := gorm.Open(gormmysql.Open(s.dsn), &gorm.Config{Logger: logger.Discard, PrepareStmt: prepareStmt})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(4)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	s.issued = sqlDB
 	return db
 }
 
@@ -583,10 +820,11 @@ func failSoftDeletesOn(t *testing.T, db *gorm.DB, table string) (sentinel error,
 }
 
 func runIdentityErasure(t *testing.T, useMySQL bool) {
+	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
 	for _, root := range identityRoots() {
 		root := root
 		t.Run(root.name+"_root_erases_the_whole_graph", func(t *testing.T) {
-			db := openIdentityErasureDB(t, useMySQL)
+			db := dbs.open(t)
 			g := seedIdentityGraph(t, db)
 			other := seedIdentityGraph(t, db)
 			require.NoError(t, root.erase(db, g))
@@ -602,7 +840,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	}
 
 	t.Run("soft_deleted_comments_are_redacted_and_stay_deleted", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		require.NoError(t, NewUserRepository(db).Delete(g.login.ID))
 		assertCommentRedacted(t, db, g.commentLive.ID, false)
@@ -610,7 +848,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("staff_login_link_is_never_followed", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		for _, staff := range []*models.User{g.admin, g.sales, g.support} {
 			require.NoError(t, db.Create(&models.APIKey{Name: "staff", KeyHash: fmt.Sprintf("staff-%s-%d", g.tag, staff.ID), Prefix: "gcrm_st", UserID: staff.ID}).Error)
@@ -637,7 +875,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("repeated_erasure_is_harmless", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		other := seedIdentityGraph(t, db)
 		otherBefore := identityTablesHolding(t, db, other.needles)
@@ -649,7 +887,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("fault_rolls_back_the_whole_graph", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		for _, root := range identityRoots() {
 			for _, table := range []string{"users", "customers", "leads"} {
 				g := seedIdentityGraph(t, db)
@@ -665,7 +903,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("caller_transaction_commit_after_a_failed_erasure_keeps_only_the_callers_work", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db, "labels")
 		sentinel, calls := failSoftDeletesOn(t, db, "customers")
@@ -687,10 +925,15 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 
 	t.Run("each_node_is_scrubbed_exactly_once", func(t *testing.T) {
 		for _, root := range identityRoots()[:3] {
-			db := openIdentityErasureDB(t, useMySQL)
+			db := dbs.open(t)
 			g := seedIdentityGraph(t, db)
-			// The ids overlap across tables on a fresh schema (user 4, customer 1,
-			// lead 1 ...), so the count is kept per table and id.
+			// The ids overlap across tables, because they start as on a fresh
+			// schema (user 4, customer 1, lead 1 ...), so the count is kept per table
+			// and id. The overlap is what lets that count catch a node skipped or
+			// scrubbed twice through an id collision, so it is pinned: only when
+			// both counters start at 1 is the first customer's id the first lead's.
+			require.Equal(t, g.customerLive.ID, g.leadLive.ID,
+				"root %s: the first customer and the first lead must share an id, as they do when ids start as on a fresh schema", root.name)
 			var mu sync.Mutex
 			counts := map[string]int{}
 			observe := func(table string, id uint) {
@@ -715,7 +958,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("unconverted_only_refuses_a_converted_lead_and_changes_nothing", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db)
 		for _, id := range []uint{g.leadLive.ID, g.leadGone.ID, g.leadB.ID} {
@@ -729,7 +972,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("unconverted_only_erases_an_unconverted_lead", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		lead := &models.Lead{FirstName: "Unconverted" + g.tag, LastName: "Prospect" + g.tag, Email: "prospect." + g.tag + "@person.test",
 			Phone: "+1-555-" + g.tag, Notes: "met at the fair " + g.tag, OwnerID: g.sales.ID, Status: models.LeadStatusNew}
@@ -744,7 +987,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("failed_savepoint_rollback_aborts_the_caller_transaction", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db)
 		sentinel, _ := failSoftDeletesOn(t, db, "customers")
@@ -776,7 +1019,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("panic_inside_a_joined_erasure_is_rolled_back_before_the_caller_commits", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db, "labels")
 		const name = "identity_erasure_test:panic_customers"
@@ -809,7 +1052,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("prepared_statement_transactions_get_a_working_savepoint", func(t *testing.T) {
-		db := openIdentityErasureDBWith(t, useMySQL, true)
+		db := dbs.openPrepared(t)
 		g := seedIdentityGraph(t, db)
 		failing := seedIdentityGraph(t, db)
 
@@ -832,7 +1075,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("failed_release_rolls_the_unit_back", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db, "labels")
 		releaseFault := errors.New("injected RELEASE SAVEPOINT failure")

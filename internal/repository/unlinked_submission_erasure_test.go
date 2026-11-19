@@ -277,10 +277,11 @@ func assertUnlinkedSeeded(t *testing.T, db *gorm.DB, f *unlinkedFixture) {
 }
 
 func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
+	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
 	for _, root := range unlinkedRoots() {
 		root := root
 		t.Run(root.name+"_erasure_scrubs_matching_unlinked_submissions", func(t *testing.T) {
-			db := openIdentityErasureDB(t, useMySQL)
+			db := dbs.open(t)
 			f := seedUnlinkedFixture(t, db, mixedCaseAddress(nextIdentityTag()))
 			erase, model, id := root.seed(t, db, f, f.original)
 			assertUnlinkedSeeded(t, db, f)
@@ -292,7 +293,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	}
 
 	t.Run("a_lower_cased_address_on_the_row_matches_too", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		f := seedUnlinkedFixture(t, db, strings.ToLower(mixedCaseAddress(nextIdentityTag())))
 		erase, model, id := unlinkedRoots()[1].seed(t, db, f, f.original)
 		assertUnlinkedSeeded(t, db, f)
@@ -301,7 +302,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a_blank_original_address_matches_nothing", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		f := seedUnlinkedFixture(t, db, "")
 		erase, _, _ := unlinkedRoots()[0].seed(t, db, f, "")
 		before := unlinkedSnapshot(t, db)
@@ -312,7 +313,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("an_original_address_that_is_already_a_placeholder_matches_nothing", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		placeholder, err := newAnonymizedEmail()
 		require.NoError(t, err)
 		f := seedUnlinkedFixture(t, db, placeholder)
@@ -328,7 +329,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a_failure_after_the_scrub_leaves_every_row_as_it_was", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		f := seedUnlinkedFixture(t, db, mixedCaseAddress(nextIdentityTag()))
 		erase, _, _ := unlinkedRoots()[1].seed(t, db, f, f.original)
 		assertUnlinkedSeeded(t, db, f)
@@ -366,7 +367,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a_caller_rollback_leaves_every_row_as_it_was", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		db := dbs.open(t)
 		f := seedUnlinkedFixture(t, db, mixedCaseAddress(nextIdentityTag()))
 		customer := &models.Customer{FirstName: "Jane", LastName: "Doe" + f.tag, Email: f.original}
 		require.NoError(t, db.Create(customer).Error)
@@ -393,7 +394,8 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a_schema_without_form_submissions_still_erases", func(t *testing.T) {
-		db := openIdentityErasureDB(t, useMySQL)
+		// Drops tables, so it works on a database of its own.
+		db := dbs.openFresh(t)
 		for _, model := range []interface{}{&models.FormMailDelivery{}, &models.FormConfirmationToken{}, &models.FormSubmission{}} {
 			require.NoError(t, db.Migrator().DropTable(model))
 		}

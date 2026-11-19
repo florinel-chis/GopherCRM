@@ -745,6 +745,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The four erasure roots that dominated the MySQL run of `internal/repository` share one migrated
+  schema per root (#404).** `TestIdentityErasureMySQL`, `TestUnlinkedSubmissionErasureMySQL`,
+  `TestLeadErasureScrubsDealAndQuoteTextMySQL` and `TestFormTicketKeyErasureMySQL` created and
+  migrated a new schema for every subtest (36 in all). On MySQL and MariaDB each root now migrates
+  once and gives every subtest a new handle on that schema after putting it back into its
+  post-migration state: the rows the migration did not seed are removed and the id counters that
+  moved are restored, and a comparison with the post-migration snapshot fails the run when
+  anything leaks from one subtest into the next. The subtests that change the schema keep a
+  database of their own, the SQLite roots keep a fresh file per subtest, and no subtest or
+  assertion was removed; `each_node_is_scrubbed_exactly_once` additionally pins the id overlap its
+  per-table count relies on. Test code only.
 - **The eleven skipped ticket browser cases run, each against a ticket it seeds (#402).** The
   `test.fixme` cases in `admin-tickets.spec.ts` (create, edit, view, delete, search, status and
   priority filter, navigation, status and priority update, long description) seed their own
