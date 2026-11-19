@@ -66,7 +66,7 @@ func TestSSOSettingsWiredFromEnvironment(t *testing.T) {
 		}
 		return out
 	}
-	require.Len(t, ssoRows(), 6, "the six settings are seeded")
+	require.Len(t, ssoRows(), 7, "the seven settings are seeded")
 
 	status, raw, envelope := do(http.MethodGet, "/settings/sso", "")
 	require.Equal(t, http.StatusOK, status, raw)
@@ -74,7 +74,9 @@ func TestSSOSettingsWiredFromEnvironment(t *testing.T) {
 	assert.Equal(t, "https://env-idp.example.test", data["issuer_url"])
 	assert.Equal(t, true, data["client_secret_set"])
 	assert.Equal(t, false, data["enabled"])
+	assert.Equal(t, false, data["allow_password"])
 	sources := data["sources"].(map[string]interface{})
+	assert.Equal(t, "default", sources["allow_password"])
 	assert.Equal(t, "env", sources["issuer_url"])
 	assert.Equal(t, "env", sources["client_secret"])
 	assert.NotContains(t, raw, envSecret)
@@ -92,6 +94,8 @@ func TestSSOSettingsWiredFromEnvironment(t *testing.T) {
 	require.NotNil(t, envelope.Error)
 	assert.Equal(t, utils.ErrCodeNotFound, envelope.Error.Code)
 	status, raw, _ = do(http.MethodPut, "/configurations/"+models.ConfigKeySSORoleMapping, `{"value":"[]"}`)
+	assert.Equal(t, http.StatusNotFound, status, raw)
+	status, raw, _ = do(http.MethodPut, "/configurations/"+models.ConfigKeySSOAllowPassword, `{"value":"true"}`)
 	assert.Equal(t, http.StatusNotFound, status, raw)
 	assert.Equal(t, before, ssoRows(), "the generic route changed no SSO row")
 }

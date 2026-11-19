@@ -52,38 +52,43 @@ type SSORoleMapping struct {
 // SSOConfigSources says, per field, where the effective value came from:
 // settings, env or default.
 type SSOConfigSources struct {
-	Enabled      string `json:"enabled"`
-	IssuerURL    string `json:"issuer_url"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	Scopes       string `json:"scopes"`
-	RoleMapping  string `json:"role_mapping"`
+	Enabled       string `json:"enabled"`
+	AllowPassword string `json:"allow_password"`
+	IssuerURL     string `json:"issuer_url"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
+	Scopes        string `json:"scopes"`
+	RoleMapping   string `json:"role_mapping"`
 }
 
 // EffectiveSSOConfig is the single sign-on configuration in force: stored
 // settings over the OIDC_* environment over the defaults. Role ids are not
 // checked against the database here; the sign-in flow re-checks them.
 type EffectiveSSOConfig struct {
-	Enabled      bool
-	IssuerURL    string
-	ClientID     string
-	ClientSecret string
-	Scopes       []string
-	RoleMapping  []SSORoleMapping
-	Sources      SSOConfigSources
+	Enabled bool
+	// AllowPassword says whether accounts linked to single sign-on may also
+	// use password sign-in and password reset.
+	AllowPassword bool
+	IssuerURL     string
+	ClientID      string
+	ClientSecret  string
+	Scopes        []string
+	RoleMapping   []SSORoleMapping
+	Sources       SSOConfigSources
 }
 
 // SSOSettingsUpdate is a full replacement of the stored single sign-on
 // settings. An empty field clears the stored value, so the environment
-// applies again; Enabled nil clears it too. ClientSecret nil keeps the stored
-// secret and "" clears it.
+// applies again; Enabled nil and AllowPassword nil clear theirs too.
+// ClientSecret nil keeps the stored secret and "" clears it.
 type SSOSettingsUpdate struct {
-	Enabled      *bool
-	IssuerURL    string
-	ClientID     string
-	ClientSecret *string
-	Scopes       []string
-	RoleMapping  []SSORoleMapping
+	Enabled       *bool
+	AllowPassword *bool
+	IssuerURL     string
+	ClientID      string
+	ClientSecret  *string
+	Scopes        []string
+	RoleMapping   []SSORoleMapping
 }
 
 var (
@@ -117,6 +122,17 @@ type SSOSettingsService interface {
 	// then writes. When the result is enabled, security.sso.enabled is written
 	// last; otherwise first.
 	Update(ctx context.Context, update SSOSettingsUpdate) error
+	SSOPasswordPolicy
+}
+
+// SSOPasswordPolicy answers whether an account linked to single sign-on (one
+// with a user_identities row) may also use password sign-in and password
+// reset. The auth service reads it once per call, outside its transaction.
+type SSOPasswordPolicy interface {
+	// AllowPasswordForSSOAccounts reads only security.sso.allow_password,
+	// then OIDC_ALLOW_PASSWORD, else false. It fails closed: a stored value
+	// that cannot be read is false.
+	AllowPasswordForSSOAccounts(ctx context.Context) bool
 }
 
 type ssoSettingsService struct {
@@ -164,12 +180,46 @@ func (s *ssoSettingsService) SSOConfig(ctx context.Context) (EffectiveSSOConfig,
 		ssoLogger().WithError(utils.LogError(err)).Warn("Single sign-on enabled setting could not be read; single sign-on is off")
 	}
 
+	out.AllowPassword, out.Sources.AllowPassword = s.effectiveAllowPassword()
 	out.IssuerURL, out.Sources.IssuerURL = s.effectiveIssuer()
 	out.ClientID, out.Sources.ClientID = s.effectivePlain(models.ConfigKeySSOClientID, strings.TrimSpace(s.base.ClientID))
 	out.ClientSecret, out.Sources.ClientSecret = s.effectiveSecret()
 	out.Scopes, out.Sources.Scopes = s.effectiveScopes()
 	out.RoleMapping, out.Sources.RoleMapping = s.effectiveRoleMapping()
 	return out, nil
+}
+
+// effectiveAllowPassword resolves security.sso.allow_password like Enabled:
+// a stored "true" or "false", else OIDC_ALLOW_PASSWORD when it is set, else
+// false. It fails closed: a stored value that cannot be read (a missing row
+// included) is false, never the environment's value.
+func (s *ssoSettingsService) effectiveAllowPassword() (bool, string) {
+	stored, err := s.configs.GetString(models.ConfigKeySSOAllowPassword)
+	if err != nil {
+		ssoLogger().WithError(utils.LogError(err)).Warn("Single sign-on password setting could not be read; password sign-in and reset stay off for linked accounts")
+		return false, SSOSourceDefault
+	}
+	switch strings.TrimSpace(stored) {
+	case "true":
+		return true, SSOSourceSettings
+	case "false":
+		return false, SSOSourceSettings
+	case "":
+		if s.base.AllowPasswordSet {
+			return s.base.AllowPassword, SSOSourceEnv
+		}
+	}
+	return false, SSOSourceDefault
+}
+
+// AllowPasswordForSSOAccounts reads only the password setting; it does not
+// resolve the whole configuration (which decrypts the secret and the mapping).
+func (s *ssoSettingsService) AllowPasswordForSSOAccounts(ctx context.Context) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	allowed, _ := s.effectiveAllowPassword()
+	return allowed
 }
 
 // effectivePlain resolves a plain string setting: a non-empty stored value,
@@ -404,7 +454,18 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 		}
 	}
 
+	allowPasswordText := ""
+	if update.AllowPassword != nil {
+		allowPasswordText = "false"
+		if *update.AllowPassword {
+			allowPasswordText = "true"
+		}
+	}
+
+	// The password setting goes before the issuer, client, scopes and
+	// mapping, so that turning it off is stored as early as possible.
 	writes := []ssoWrite{
+		{models.ConfigKeySSOAllowPassword, allowPasswordText},
 		{models.ConfigKeySSOIssuerURL, issuer},
 		{models.ConfigKeySSOClientID, clientID},
 		{models.ConfigKeySSOScopes, strings.Join(update.Scopes, " ")},

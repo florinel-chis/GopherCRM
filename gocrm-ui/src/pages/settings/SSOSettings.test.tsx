@@ -28,8 +28,11 @@ const role = (id: number, name: string): Role => ({
 
 const ROLES: Role[] = [role(1, 'admin'), role(2, 'sales'), role(3, 'support')];
 
+const ALLOW_PASSWORD_LABEL = 'Allow password sign-in and password reset for accounts linked to single sign-on';
+
 const stored: SSOSettingsData = {
   enabled: true,
+  allow_password: true,
   issuer_url: 'https://issuer.example/tenant',
   client_id: 'gophercrm',
   scopes: ['openid', 'profile', 'email'],
@@ -40,6 +43,7 @@ const stored: SSOSettingsData = {
   client_secret_set: true,
   sources: {
     enabled: 'settings',
+    allow_password: 'settings',
     issuer_url: 'settings',
     client_id: 'env',
     client_secret: 'settings',
@@ -71,6 +75,7 @@ describe('SSOSettings', () => {
     vi.mocked(ssoSettingsApi.update).mockImplementation(async (body) => ({
       ...stored,
       enabled: body.enabled,
+      allow_password: body.allow_password,
       issuer_url: body.issuer_url,
       client_id: body.client_id,
       scopes: body.scopes,
@@ -95,6 +100,39 @@ describe('SSOSettings', () => {
     expect(container.innerHTML).not.toContain(SECRET);
   });
 
+  it('shows the password toggle and its offboarding warning, and sends allow_password', async () => {
+    await renderPage();
+
+    const toggle = screen.getByLabelText(ALLOW_PASSWORD_LABEL);
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(/keeps working after the person is removed from the identity provider or loses the mapped role/),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('sso-allow-password-warning')).toHaveTextContent(/deactivate their account in GopherCRM/);
+
+    fireEvent.click(toggle);
+    expect(toggle).not.toBeChecked();
+    await save();
+    expect(lastBody().allow_password).toBe(false);
+
+    await waitFor(() => expect(screen.getByLabelText(ALLOW_PASSWORD_LABEL)).not.toBeChecked());
+    fireEvent.click(screen.getByLabelText(ALLOW_PASSWORD_LABEL));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(ssoSettingsApi.update).toHaveBeenCalledTimes(2));
+    expect(lastBody().allow_password).toBe(true);
+  });
+
+  it('shows the toggle off when the stored value is false, the warning still shown', async () => {
+    vi.mocked(ssoSettingsApi.get).mockResolvedValue({
+      ...stored,
+      allow_password: false,
+      sources: { ...stored.sources, allow_password: 'settings' },
+    });
+    await renderPage();
+    expect(screen.getByLabelText(ALLOW_PASSWORD_LABEL)).not.toBeChecked();
+    expect(screen.getByTestId('sso-allow-password-warning')).toBeInTheDocument();
+  });
+
   it('reports that no client secret is set', async () => {
     vi.mocked(ssoSettingsApi.get).mockResolvedValue({ ...stored, client_secret_set: false });
     await renderPage();
@@ -111,6 +149,7 @@ describe('SSOSettings', () => {
     expect(body).not.toHaveProperty('client_secret');
     expect(body).toEqual({
       enabled: true,
+      allow_password: true,
       issuer_url: 'https://issuer.example/tenant',
       client_id: 'gophercrm',
       scopes: ['openid', 'profile', 'email'],

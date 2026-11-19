@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:220-243`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go:252-275`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:282-285`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go:314-317`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:245-279`), so a correct password
+  password result is examined (`internal/service/auth_service.go:277-311`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -1039,8 +1039,10 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   one `role_audit_log` row with `auth_method` `oidc`; the access token authenticates and the
   refresh token rotates. Step 2: the same user with the new role and one more `oidc` audit row; the
   unchanged sign-in adds none. `last_login_at` is not touched. Step 3: **200** with the same
-  message as for any address, but no `password_reset_tokens` row and no mail (#444); a token of
-  that account is refused by `/auth/password-reset/confirm` with the generic 400 and stays unspent.
+  message as for any address; while `security.sso.allow_password` is off (the default) there is
+  no `password_reset_tokens` row and no mail (#444), and a token of that account is refused by
+  `/auth/password-reset/confirm` with the generic 400 and stays unspent. With the setting on the
+  account is treated like a local one (TC-AUTH-057).
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
 
 ### TC-AUTH-051 — An IdP email that matches an existing account is never linked
@@ -1125,3 +1127,26 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   to `/login` and no stored token; step 3 sends no request. The code, the state and the tokens
   are never rendered.
 - **Automation:** automated — Vitest `src/pages/auth/AuthCallback.test.tsx`, `src/routes/index.test.tsx` "renders the page for a signed-out visitor and stays on /auth/callback"
+
+### TC-AUTH-057 — Password sign-in and reset for a linked account follow `allow_password`
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** An active account with a `user_identities` row and a known password (linked),
+  and an active account without one (local). An admin holding `settings.sso_manage`.
+- **Steps:**
+  1. With `allow_password` off (stored `false`, or empty with `OIDC_ALLOW_PASSWORD` unset):
+     `POST /api/v1/auth/login` with each account's correct password; `POST /api/v1/auth/password-reset`
+     for each; `POST /api/v1/auth/password-reset/confirm` with a valid token of each.
+  2. `PUT /api/v1/settings/sso` `{"allow_password": true}` and repeat step 1.
+  3. With the setting on, reset the linked account's password and log in with it; then store
+     `allow_password` false and log in with the same password.
+- **Expected:** Step 1: the local account logs in (200), gets one token and one mail, and its
+  confirm succeeds. The linked account's login is **401** "Invalid email or password" with no
+  refresh token and `last_login_at`, `failed_login_attempts` and `locked_until` unchanged; its
+  reset request answers the same 200 message with no token and no mail; its confirm is the generic
+  **400** and the token stays unspent. Step 2: `GET /settings/sso` reports `allow_password` true
+  with source `settings`; the linked account behaves exactly like the local one (login 200 with a
+  refresh token, one token and one mail, confirm spends the token, changes the password and
+  revokes every refresh token). Step 3: the login with the new password succeeds while on and is
+  **401** once off. Sessions already issued are not ended by switching the setting off.
+- **Automation:** automated — Go: `TestSSOAccountPasswordPolicy{SQLite,MySQL}` (subtests `off|unset_default_off|on/linked|unlinked/reset_request|reset_confirm|login`, `password_set_while_on_stops_when_off`), `cmd/auth_password_reset_sso_wiring_test.go` `TestSSOPasswordPolicyWired` (the production router), `TestSSOSettingsHandlerAllowPassword`; Vitest `src/pages/settings/SSOSettings.test.tsx` (the switch and its warning)

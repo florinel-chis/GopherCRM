@@ -72,7 +72,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
   `.env.example` does not start until the secret is replaced (`internal/config/config.go:267-277`).
 - **Set `CORS_ALLOWED_ORIGINS`** for any cross-origin UI other than localhost on 5173, 3000 or 8080
   (`internal/middleware/cors.go:14-20`). An unlisted origin looks like a failed login.
-- **Public registration ships off** (`internal/models/configuration.go:323-330`). Create the first
+- **Public registration ships off** (`internal/models/configuration.go:324-331`). Create the first
   admin with `make build-tools && make create-admin`.
 
 ## Features

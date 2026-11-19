@@ -307,18 +307,25 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// through it on every send (#292).
 	configService := service.NewConfigurationService(configRepo,
 		utils.NewSecretBox(cfg.API.APIKeySecret, "configuration-secret"))
-	// The password reset confirmation claims the token, writes the password
-	// and revokes the sessions in one transaction, so the auth service takes
-	// the same transaction manager as the other transactional services.
-	authService := service.NewAuthServiceWithSessions(
-		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
-		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret,
-		service.WithAuthProductName(configService), service.WithAuthIdentities(repository.NewUserIdentityRepository(models.DB)))
 	// Every role, role_id, activation and erasure write of the user routes is
 	// one transaction with the role repositories (#348): the last-admin
 	// invariant, the escalation rule and the audit row are decided under its
 	// locks. The role service shares the repositories.
 	roleRepo := repository.NewRoleRepository(models.DB)
+	// Single sign-on settings (#434): stored security.sso.* rows over the
+	// OIDC_* fallbacks. The auth service reads security.sso.allow_password
+	// from them (#457) and the OpenID Connect sign-in below reads the rest.
+	ssoSettings := service.NewSSOSettingsService(configService, roleRepo, cfg.SSO)
+	// The password reset confirmation claims the token, writes the password
+	// and revokes the sessions in one transaction, so the auth service takes
+	// the same transaction manager as the other transactional services. An
+	// account linked to single sign-on is refused password sign-in and reset
+	// unless security.sso.allow_password allows them (#444, #457).
+	authService := service.NewAuthServiceWithSessions(
+		userRepo, apiKeyRepo, refreshTokenRepo, passwordResetRepo, txManager, appMailer,
+		cfg.JWT, cfg.App.BaseURL, cfg.API.APIKeySecret,
+		service.WithAuthProductName(configService), service.WithAuthIdentities(repository.NewUserIdentityRepository(models.DB)),
+		service.WithAuthSSOPasswordPolicy(ssoSettings))
 	roleAuditRepo := repository.NewRoleAuditRepository(models.DB)
 	userService := service.NewUserService(userRepo,
 		service.WithUserRoleGovernance(roleRepo, roleAuditRepo, txManager))
@@ -461,9 +468,6 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	quotePublicHandler := handler.NewQuotePublicHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService).WithQuotePDFAvailable(quoteService.PDFAvailable)
-	// Single sign-on settings (#434): stored security.sso.* rows over the
-	// OIDC_* fallbacks. No sign-in flow reads them yet.
-	ssoSettings := service.NewSSOSettingsService(configService, roleRepo, cfg.SSO)
 	ssoSettingsHandler := handler.NewSSOSettingsHandler(ssoSettings)
 	// OpenID Connect sign-in (#435): the settings above, re-read on every call,
 	// and one governed transaction per callback over the role repositories,

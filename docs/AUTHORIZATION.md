@@ -407,12 +407,17 @@ rules, rotation, revocation and deactivation.
 
 ## Phase 2 design note
 
-This section is a design note for #261. Since #434 the single sign-on settings exist: six
-reserved configuration entries, the `OIDC_*` environment fallbacks behind them, the admin-only
+This section is a design note for #261. Since #434 the single sign-on settings exist: seven
+reserved configuration entries (the seventh, `allow_password`, since #457), the `OIDC_*` environment fallbacks behind them, the admin-only
 `GET/PUT /settings/sso` pair guarded by `settings.sso_manage`, and the `SSOConfig` accessor that
 returns the effective values:
 
 - `security.sso.enabled` (`OIDC_ENABLED`); a read error keeps SSO off.
+- `security.sso.allow_password` (`OIDC_ALLOW_PASSWORD`, #457), default false; a read error
+  keeps it off. It decides whether an account linked to single sign-on may also use password
+  sign-in and password reset (see "Passwords for linked accounts" under
+  [OIDC sign-in](#oidc-sign-in-435) below). While it is on, a password keeps working after the identity provider removes the person
+  or the mapped role, so offboarding must also deactivate the account in GopherCRM.
 - `security.sso.issuer_url` (`OIDC_ISSUER_URL`), an https issuer.
 - `security.sso.client_id` (`OIDC_CLIENT_ID`).
 - `security.sso.client_secret` (`OIDC_CLIENT_SECRET`), encrypted at rest and never returned.
@@ -470,24 +475,39 @@ sign-in is refused and nothing is linked to that account (`LOWER(email)` on ever
 SQLite refuses what the MySQL/MariaDB collation refuses). A concurrent first sign-in of the same
 address or identity loses on the unique index and rolls back whole.
 
-**No password through reset (#444).** An account with a `user_identities` row, which only the
-first OIDC sign-in creates (an email never links an existing account) and erasure keeps, is an
-account provisioned by single sign-on. `POST /auth/password-reset` issues nothing for it (no
-token, no mail, the same 200 message) and `POST /auth/password-reset/confirm` refuses its token
-with the generic 400, leaving the token unspent. So the identity provider's offboarding and the
-role mapping cannot be bypassed by turning the provisioned address into a password.
+**Passwords for linked accounts (#444, #457).** An account with a `user_identities` row, which
+only the first OIDC sign-in creates (an email never links an existing account) and erasure keeps,
+is an account linked to single sign-on. Whether it may also use a password is the setting
+`allow_password` in `/settings/sso` (`security.sso.allow_password`, environment fallback
+`OIDC_ALLOW_PASSWORD`, default off; an unreadable stored value is off).
+
+- **Off (the default).** `POST /auth/password-reset` issues nothing for a linked account (no
+  token, no mail, the same 200 message), `POST /auth/password-reset/confirm` refuses its token
+  with the generic 400 and leaves it unspent, and `POST /auth/login` answers the generic 401
+  "Invalid email or password" even for the right password, writing nothing (no `last_login_at`,
+  no lockout change, no refresh token). The identity provider's offboarding and the role mapping
+  then decide who signs in.
+- **On.** A linked account uses password sign-in and password reset exactly like a local one.
+  **Warning:** a password keeps working after the person is removed from the identity provider
+  or loses the mapped role, so offboarding must also deactivate the account in GopherCRM.
+
+Accounts with no identity row are never affected. The setting is read once per request, before
+the transaction; switching it off does not end sessions or refresh tokens issued before, and a
+password set while it was on stops working at the next password login. Changes to it are not
+audited yet (no SSO setting change writes an audit row).
 
 **`email_verified`.** JIT provisioning does not require `email_verified=true` and does not read
 the claim; the `email` claim is stored as given. Entra ID usually leaves the claim out of its ID
-tokens, the email never links or authorizes an account, and with reset refused an unverified
-address can no longer lead to a password.
+tokens, the email never links or authorizes an account, and while `allow_password` is off (the
+default) reset is refused for a linked account, so an unverified address does not lead to a
+password.
 
 **Erasure.** Erasing a user keeps its `user_identities` row, linked to the erased user, so that
 person's next sign-in is 401 rather than a fresh account. Deactivation also answers 401.
 
-**Break-glass.** Password login is unchanged and stays available while single sign-on is on, for
-password accounts only: an account provisioned by single sign-on has no usable password and cannot
-get one through reset.
+**Break-glass.** Password login stays available while single sign-on is on for local accounts
+(those with no identity row), whatever `allow_password` says. An account linked to single sign-on
+starts with no usable password; it can set and use one only while `allow_password` is on.
 
 **Example: Okta.** An OIDC web application with the authorization code grant and PKCE; sign-in
 redirect URI `https://crm.example.com/auth/callback` (APP_BASE_URL `https://crm.example.com`). On
@@ -526,7 +546,9 @@ ids are those of `GET /roles`.
 ### SPA sign-in and settings (#436)
 
 Settings > Single sign-on (`/settings/sso`, shown and opened only with `settings.sso_manage`)
-edits `GET`/`PUT /settings/sso`: the Enabled switch, the issuer URL, the client ID, the scopes
+edits `GET`/`PUT /settings/sso`: the Enabled switch, the "Allow password sign-in and password
+reset for accounts linked to single sign-on" switch (#457) with an always-shown offboarding
+warning, the issuer URL, the client ID, the scopes
 (one field, separated by spaces), the client secret and the role mapping. Each field says when
 its value comes from the environment or the default. The client secret is write-only: the page
 shows only "A client secret is set" or "No client secret is set", the input always starts empty,

@@ -56,13 +56,14 @@ const ConfigKeyAllowPublicRegistration = "security.allow_public_registration"
 // service writes refuse them. Every value ships empty, which means "not set
 // here": the OIDC_* environment variables then apply.
 const (
-	ConfigKeySSOPrefix       = "security.sso."
-	ConfigKeySSOEnabled      = "security.sso.enabled"
-	ConfigKeySSOIssuerURL    = "security.sso.issuer_url"
-	ConfigKeySSOClientID     = "security.sso.client_id"
-	ConfigKeySSOClientSecret = "security.sso.client_secret"
-	ConfigKeySSOScopes       = "security.sso.scopes"
-	ConfigKeySSORoleMapping  = "security.sso.role_mapping"
+	ConfigKeySSOPrefix        = "security.sso."
+	ConfigKeySSOEnabled       = "security.sso.enabled"
+	ConfigKeySSOAllowPassword = "security.sso.allow_password"
+	ConfigKeySSOIssuerURL     = "security.sso.issuer_url"
+	ConfigKeySSOClientID      = "security.sso.client_id"
+	ConfigKeySSOClientSecret  = "security.sso.client_secret"
+	ConfigKeySSOScopes        = "security.sso.scopes"
+	ConfigKeySSORoleMapping   = "security.sso.role_mapping"
 )
 
 // IsSSOConfigurationKey reports whether key names a reserved SSO setting. It
@@ -461,7 +462,7 @@ func DefaultConfigurations() []Configuration {
 	return append(defaults, defaultAEOProviderConfigurations()...)
 }
 
-// defaultSSOConfigurations seeds the six reserved single sign-on settings.
+// defaultSSOConfigurations seeds the seven reserved single sign-on settings.
 // They ship empty so the OIDC_* environment fallbacks apply until an
 // administrator stores a value; the client secret and the role mapping are
 // sensitive and therefore encrypted at rest.
@@ -478,8 +479,11 @@ func defaultSSOConfigurations() []Configuration {
 	}
 	enabled := entry(ConfigKeySSOEnabled, "Whether single sign-on (OpenID Connect) is enabled: true, false, or empty to follow OIDC_ENABLED", false)
 	enabled.ValidValues = `["", "true", "false"]`
+	allowPassword := entry(ConfigKeySSOAllowPassword, "Whether accounts linked to single sign-on may also use password sign-in and password reset: true, false, or empty to follow OIDC_ALLOW_PASSWORD (default false)", false)
+	allowPassword.ValidValues = `["", "true", "false"]`
 	return []Configuration{
 		enabled,
+		allowPassword,
 		entry(ConfigKeySSOIssuerURL, "OpenID Connect issuer URL (https); empty follows OIDC_ISSUER_URL", false),
 		entry(ConfigKeySSOClientID, "OpenID Connect client id; empty follows OIDC_CLIENT_ID", false),
 		entry(ConfigKeySSOClientSecret, "OpenID Connect client secret; empty follows OIDC_CLIENT_SECRET", true),

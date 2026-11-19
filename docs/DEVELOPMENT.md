@@ -237,8 +237,9 @@ repositories: the token is claimed by a conditional
 update (`used_at IS NULL AND expires_at > now`, exactly one affected row, else the generic
 rejection), the owner is re-read with a locking read (the transaction-bound `UserRepository`, `SELECT …
 FOR UPDATE` on MySQL, a plain read on SQLite where the dialector drops the clause) and refused if
-inactive or erased, or, on a service built with `WithAuthIdentities` (as `cmd/main.go` does), if
-it has a linked OpenID Connect identity (#444, a plain read of `user_identities`), the password is
+inactive or erased, or, on a service built with `WithAuthIdentities` (as `cmd/main.go` does) and
+while `security.sso.allow_password` is off (#457, read once before the transaction), if it has a
+linked OpenID Connect identity (#444, a plain read of `user_identities`), the password is
 written with the lockout cleared, and every refresh token of
 the account is revoked. The locking read matters on MySQL: a plain read inside the REPEATABLE READ
 transaction answers from the snapshot taken at the token lookup, so an account deactivated or
@@ -307,7 +308,8 @@ revocation and the successor) and the logout (owner, then the revocation, then t
 foreign key, so on MySQL/MariaDB every successor insert also takes a shared lock on the owner row;
 a rotation that claimed its token before locking the owner deadlocked against a password change
 (error 1213). The credential-issuing transactions follow the same owner-first rule (#342): the
-password-reset request locks the owner, reads `user_identities` without a lock (#444), then spends
+password-reset request locks the owner, reads `user_identities` without a lock (#444; only while
+`security.sso.allow_password` is off, #457), then spends
 and inserts `password_reset_tokens` (users → (read) user_identities → password_reset_tokens), and API-key create locks the owner, then inserts into `api_keys` (users →
 api_keys). The reset confirm (token first, then owner) inverts the request's order; see
 *Credential issuance under the owner lock* below. New session and credential flows must follow
@@ -354,8 +356,14 @@ issued only to a live, active owner.
   `WithAuthIdentities` (`cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
   repository skips the check) a plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read then
   refuses an account with a linked OpenID Connect identity the same way (#444, `error_code`
-  `sso_account`): an account provisioned by single sign-on never obtains a password, and the
-  confirm refuses such an account's token with `ErrInvalidResetToken` too. Otherwise
+  `sso_account`), and the confirm refuses such an account's token with `ErrInvalidResetToken`
+  too. Both run that read only while `security.sso.allow_password` is off (#457): the policy,
+  `WithAuthSSOPasswordPolicy` (`cmd/main.go` passes the SSO settings service; nil means off), is
+  read once before the transaction begins, never inside it, because the SQLite pool holds one
+  connection. With the setting on the read is skipped and a linked account is treated like a
+  local one. Password login applies the same rule: inside its issuing transaction, after the owner
+  checks and before any write, a linked account is refused with the generic 401 (`error_code`
+  `sso_account`, nothing written). Otherwise
   `InvalidateAllForUser` and `Create` run through `PasswordResetTokenRepository.WithTx`; a failure
   of either rolls both back. `SendPasswordReset` is called once, after the commit, with the address
   of the locked row. The method returns nil in every case (unknown, inactive, refused, rolled back,
@@ -410,7 +418,12 @@ verified password then starts one `WithTransactionAndRetry` transaction (`loginM
 locks the owner row by primary key (`FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and
 decides on that row only: a hash other than the one bcrypt verified, `is_active` false or an
 erased (soft-deleted) row is the generic `invalid credentials`, and a `locked_until` after the
-login clock is the lockout error; each refusal rolls back with nothing written. Otherwise one
+login clock is the lockout error. With `WithAuthIdentities` and while
+`security.sso.allow_password` is off (#457; the policy is read once before the transaction), a
+plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read follows those checks and refuses an
+account linked to single sign-on with the generic `invalid credentials` (`error_code`
+`sso_account`), in the order users → (read) user_identities → refresh_tokens. Each refusal rolls
+back with nothing written. Otherwise one
 `UpdateFields` writes `last_login_at` and clears `failed_login_attempts`/`locked_until`, the
 refresh token is inserted under a savepoint (`LoginWithTokens` only; `Login` never issues one) and
 the access JWT is signed from the locked `token_version`. A non-retryable failure of the insert

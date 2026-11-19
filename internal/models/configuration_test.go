@@ -153,16 +153,17 @@ func TestDefaultConfigurations_OnlyCredentialKeysAreSensitive(t *testing.T) {
 	assert.ElementsMatch(t, want, got)
 }
 
-// The six single sign-on settings ship empty ("not set here", so OIDC_*
+// The seven single sign-on settings ship empty ("not set here", so OIDC_*
 // applies) as system entries of the security category.
 func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 	sensitive := map[string]bool{
-		ConfigKeySSOEnabled:      false,
-		ConfigKeySSOIssuerURL:    false,
-		ConfigKeySSOClientID:     false,
-		ConfigKeySSOClientSecret: true,
-		ConfigKeySSOScopes:       false,
-		ConfigKeySSORoleMapping:  true,
+		ConfigKeySSOEnabled:       false,
+		ConfigKeySSOAllowPassword: false,
+		ConfigKeySSOIssuerURL:     false,
+		ConfigKeySSOClientID:      false,
+		ConfigKeySSOClientSecret:  true,
+		ConfigKeySSOScopes:        false,
+		ConfigKeySSORoleMapping:   true,
 	}
 	seen := map[string]Configuration{}
 	for _, config := range DefaultConfigurations() {
@@ -172,7 +173,7 @@ func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 			seen[config.Key] = config
 		}
 	}
-	require.Len(t, seen, 6)
+	require.Len(t, seen, 7)
 	for key, isSensitive := range sensitive {
 		config, ok := seen[key]
 		if !assert.True(t, ok, "%s is seeded", key) {
@@ -186,16 +187,18 @@ func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 		assert.Empty(t, config.Value, key)
 		assert.Empty(t, config.DefaultValue, key)
 		assert.NotEmpty(t, config.Description, key)
-		if key != ConfigKeySSOEnabled {
+		if key != ConfigKeySSOEnabled && key != ConfigKeySSOAllowPassword {
 			assert.Empty(t, config.ValidValues, key)
 		}
 	}
-	enabled := seen[ConfigKeySSOEnabled]
-	assert.JSONEq(t, `["", "true", "false"]`, enabled.ValidValues)
-	assert.True(t, enabled.IsValidValue(""), "empty means not set here")
-	assert.True(t, enabled.IsValidValue("true"))
-	assert.True(t, enabled.IsValidValue("false"))
-	assert.False(t, enabled.IsValidValue("yes"))
+	for _, key := range []string{ConfigKeySSOEnabled, ConfigKeySSOAllowPassword} {
+		boolean := seen[key]
+		assert.JSONEq(t, `["", "true", "false"]`, boolean.ValidValues, key)
+		assert.True(t, boolean.IsValidValue(""), "%s: empty means not set here", key)
+		assert.True(t, boolean.IsValidValue("true"), key)
+		assert.True(t, boolean.IsValidValue("false"), key)
+		assert.False(t, boolean.IsValidValue("yes"), key)
+	}
 }
 
 func TestIsSSOConfigurationKey(t *testing.T) {

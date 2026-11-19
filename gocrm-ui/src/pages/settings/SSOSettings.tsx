@@ -44,6 +44,7 @@ interface MappingRow extends Omit<SSORoleMapping, 'role_id'> {
 
 interface FormState {
   enabled: boolean;
+  allow_password: boolean;
   issuer_url: string;
   client_id: string;
   scopes: string;
@@ -52,6 +53,7 @@ interface FormState {
 
 const toForm = (settings: SSOSettingsData): FormState => ({
   enabled: settings.enabled,
+  allow_password: settings.allow_password,
   issuer_url: settings.issuer_url,
   client_id: settings.client_id,
   scopes: settings.scopes.join(' '),
@@ -145,6 +147,7 @@ export const SSOSettings: React.FC = () => {
     setSaveErrors(null);
     const body: SSOSettingsUpdate = {
       enabled: form.enabled,
+      allow_password: form.allow_password,
       issuer_url: form.issuer_url,
       client_id: form.client_id,
       scopes: form.scopes.split(/\s+/).filter(Boolean),
@@ -208,6 +211,28 @@ export const SSOSettings: React.FC = () => {
                 {sourceHelp(settings.sources.enabled)}
               </Typography>
             )}
+          </Box>
+          <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={form.allow_password}
+                  onChange={(event) => update({ allow_password: event.target.checked })}
+                />
+              }
+              label="Allow password sign-in and password reset for accounts linked to single sign-on"
+            />
+            {sourceHelp(settings.sources.allow_password) && (
+              <Typography variant="caption" color="text.secondary" display="block">
+                {sourceHelp(settings.sources.allow_password)}
+              </Typography>
+            )}
+            <Alert severity="warning" sx={{ mt: 1 }} data-testid="sso-allow-password-warning">
+              When this is on, a password set by an account linked to single sign-on keeps working after
+              the person is removed from the identity provider or loses the mapped role. When offboarding
+              someone, also deactivate their account in GopherCRM. Accounts not linked to single sign-on
+              can always use their password.
+            </Alert>
           </Box>
           <TextField
             label="Issuer URL"

@@ -90,9 +90,13 @@ type authService struct {
 	// password reset mail (#292), set by WithAuthProductName. Nil means
 	// "GopherCRM".
 	productName MailProductNameSource
-	// identities refuses password reset to an account with a linked OpenID
-	// Connect identity (#444), set by WithAuthIdentities. Nil skips the check.
+	// identities refuses password reset and password sign-in to an account
+	// with a linked OpenID Connect identity (#444, #457) while ssoPassword
+	// does not allow them, set by WithAuthIdentities. Nil skips the check.
 	identities repository.UserIdentityRepository
+	// ssoPassword is security.sso.allow_password (#457), set by
+	// WithAuthSSOPasswordPolicy. Nil means off: linked accounts are refused.
+	ssoPassword SSOPasswordPolicy
 }
 
 // AuthServiceOption configures NewAuthServiceWithSessions.
@@ -107,15 +111,39 @@ func WithAuthProductName(source MailProductNameSource) AuthServiceOption {
 	}
 }
 
-// WithAuthIdentities makes the password reset request and confirm refuse an
-// account that has a linked OpenID Connect identity (a user_identities row,
-// #444): such an account is provisioned by single sign-on and must not obtain
-// a password. A nil repository (stateless or test callers) skips the check;
-// cmd/main.go must pass it.
+// WithAuthIdentities makes the password reset request, the reset confirm and
+// the password login refuse an account that has a linked OpenID Connect
+// identity (a user_identities row, #444, #457) unless the policy given by
+// WithAuthSSOPasswordPolicy allows passwords for such accounts. A nil
+// repository (stateless or test callers) skips the check; cmd/main.go must
+// pass it.
 func WithAuthIdentities(repo repository.UserIdentityRepository) AuthServiceOption {
 	return func(s *authService) {
 		s.identities = repo
 	}
+}
+
+// WithAuthSSOPasswordPolicy makes the identity check of WithAuthIdentities
+// depend on security.sso.allow_password (#457): when the policy allows it, an
+// account linked to single sign-on uses password sign-in and password reset
+// like a local one. A nil policy means off, so the check always applies. The
+// policy is read once per call, before the transaction begins (the SQLite pool
+// holds one connection). Turning the setting off does not end sessions or
+// refresh tokens issued before.
+func WithAuthSSOPasswordPolicy(policy SSOPasswordPolicy) AuthServiceOption {
+	return func(s *authService) {
+		s.ssoPassword = policy
+	}
+}
+
+// checkSSOIdentity reports whether this call must refuse an account linked to
+// single sign-on: identities are wired and the policy does not allow
+// passwords for such accounts. Call it outside any transaction.
+func (s *authService) checkSSOIdentity() bool {
+	if s.identities == nil {
+		return false
+	}
+	return s.ssoPassword == nil || !s.ssoPassword.AllowPasswordForSSOAccounts(context.Background())
 }
 
 func NewAuthService(userRepo repository.UserRepository, apiKeyRepo repository.APIKeyRepository, jwtConfig config.JWTConfig, apiKeySecret ...string) AuthService {
@@ -210,7 +238,11 @@ func (s *authService) Login(email, password string) (string, error) {
 // be active, be live (not erased) and not be locked. The transaction writes
 // last_login_at and the lockout clear, inserts the refresh token (withRefresh
 // only, under a savepoint) and signs the access JWT from the locked
-// token_version, in the order users → refresh_tokens. A change committed
+// token_version, in the order users → (read) user_identities →
+// refresh_tokens. The user_identities read runs only with WithAuthIdentities
+// while security.sso.allow_password is off (#457, read once before the
+// transaction); it refuses an account linked to single sign-on with the
+// generic error and writes nothing. A change committed
 // between the lookup and the lock is therefore honoured, and a login that
 // commits first is ended by the change that follows it. Without a transaction
 // manager (NewAuthService) the legacy unlocked path runs unchanged.
@@ -293,17 +325,24 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 		// (the bookkeeping, the refresh token and the signature with it) and
 		// replays it, at most loginMaxRetries times.
 		verifiedHash := user.Password
+		// The single sign-on password policy is read once, here, outside the
+		// transaction (#457).
+		checkIdentity := s.checkSSOIdentity()
 		var tokens *AuthTokens
 		err := s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 			tx, ok := utils.GetTxFromContext(ctx)
 			if !ok {
 				return utils.ErrNoTransaction
 			}
+			var identities repository.UserIdentityRepository
+			if checkIdentity {
+				identities = s.identities.WithTx(tx)
+			}
 			// A fresh Session on the locking handle, as for the other session
 			// transactions: the clause must not leak into later statements.
 			issued, err := s.loginInTransaction(ctx,
 				s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
-				user.ID, verifiedHash, now, withRefresh)
+				identities, user.ID, verifiedHash, now, withRefresh)
 			if err != nil {
 				return err
 			}
@@ -382,9 +421,12 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 // nothing (the transaction rolls back). A non-retryable failure of the refresh
 // token insert rolls back to its savepoint and the login continues with an
 // access token only; a retryable one is returned so the root attempt replays.
+// identities is non-nil, bound to the transaction, when an account linked to
+// single sign-on must be refused (#457); nil skips that read.
 func (s *authService) loginInTransaction(
 	ctx context.Context,
 	userRepo repository.UserRepository,
+	identities repository.UserIdentityRepository,
 	userID uint, verifiedHash string, now time.Time, withRefresh bool,
 ) (*AuthTokens, error) {
 	log := utils.Logger.WithField("user_id", userID).WithField("operation", "Login")
@@ -412,6 +454,19 @@ func (s *authService) loginInTransaction(
 	}
 	if owner.LockedUntil != nil && owner.LockedUntil.After(now) {
 		return refuse("account_locked", errLoginAccountLocked)
+	}
+	// An account linked to single sign-on, while security.sso.allow_password
+	// is off (#457): a plain read of user_identities after the owner lock and
+	// before any write, refused with the generic error. Nothing is written:
+	// no last_login_at, no lockout change, no refresh token.
+	if identities != nil {
+		linked, err := identities.ExistsForUser(owner.ID)
+		if err != nil {
+			return nil, fmt.Errorf("login identity lookup failed: %w", err)
+		}
+		if linked {
+			return refuse("sso_account", errLoginInvalidCredentials)
+		}
 	}
 
 	lastLogin := now
@@ -1187,9 +1242,11 @@ func lockLiveCredentialOwner(userRepo repository.UserRepository, userID uint) (*
 // resetRequestMaxRetries) that locks the owner row by primary key (`SELECT ...
 // FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and refuses, writing
 // nothing, when that row is missing, erased or inactive. With
-// WithAuthIdentities it then refuses the same way an account that has a linked
-// OpenID Connect identity (#444, a plain read of user_identities): an account
-// provisioned by single sign-on never obtains a password. Otherwise the user's
+// WithAuthIdentities, and while security.sso.allow_password is off (#457, read
+// once before the transaction), it then refuses the same way an account that
+// has a linked OpenID Connect identity (#444, a plain read of
+// user_identities). With the setting on that read is skipped and a linked
+// account is treated like a local one. Otherwise the user's
 // outstanding tokens are spent and the new one inserted through the
 // transaction-bound PasswordResetTokenRepository, in the order users →
 // (read) user_identities → password_reset_tokens. The mail goes out once, after the commit, to the
@@ -1233,6 +1290,10 @@ func (s *authService) RequestPasswordReset(email string) error {
 		s.resetBeforeLock(user.ID)
 	}
 
+	// The single sign-on password policy is read once, outside the
+	// transaction (#457).
+	checkIdentity := s.checkSSOIdentity()
+
 	var recipient string
 	err = s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -1247,10 +1308,11 @@ func (s *authService) RequestPasswordReset(email string) error {
 		if err != nil {
 			return err
 		}
-		// An account provisioned by single sign-on never gets a password
-		// (#444): a plain read of user_identities after the owner lock,
-		// refused like an unavailable owner, nothing written, no mail.
-		if s.identities != nil {
+		// An account linked to single sign-on, while
+		// security.sso.allow_password is off (#444, #457): a plain read of
+		// user_identities after the owner lock, refused like an unavailable
+		// owner, nothing written, no mail.
+		if checkIdentity {
 			linked, err := s.identities.WithTx(tx).ExistsForUser(owner.ID)
 			if err != nil {
 				return fmt.Errorf("identity lookup failed: %w", err)
@@ -1321,9 +1383,11 @@ const resetConfirmMaxRetries = 3
 // is rejected inside the transaction and leaves the token unspent as well; the
 // owner is read with a locking read so that decision rests on the current
 // committed account, not on the transaction's snapshot. With
-// WithAuthIdentities an owner that has a linked OpenID Connect identity (#444)
-// is refused the same way, after the owner check and before any write: the
-// token stays unspent and the answer is ErrInvalidResetToken.
+// WithAuthIdentities, while security.sso.allow_password is off (#457, read
+// once before the transaction), an owner that has a linked OpenID Connect
+// identity (#444) is refused the same way, after the owner check and before
+// any write: the token stays unspent and the answer is ErrInvalidResetToken.
+// With the setting on the identity read is skipped.
 //
 // The transaction claims the token before it locks the owner, the reverse of
 // the order an erasure and a reset request take, so it can lose a deadlock or
@@ -1355,6 +1419,10 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 
 	hash := hashOpaqueToken(token, s.sessionTokenSecret())
 
+	// The single sign-on password policy is read once, outside the
+	// transaction (#457).
+	checkIdentity := s.checkSSOIdentity()
+
 	var userID uint
 	err = s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -1363,7 +1431,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 		}
 		var err error
 		var identities repository.UserIdentityRepository
-		if s.identities != nil {
+		if checkIdentity {
 			identities = s.identities.WithTx(tx)
 		}
 		// The owner repository is bound to a locking handle so its read is
@@ -1389,8 +1457,8 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 // confirmPasswordResetInTransaction performs the reset on transaction-bound
 // repositories and returns the owner's id. Any error discards every write,
 // the token claim included. identities is nil when the service was built
-// without WithAuthIdentities; otherwise an owner with a linked identity is
-// refused (#444).
+// without WithAuthIdentities or security.sso.allow_password is on; otherwise
+// an owner with a linked identity is refused (#444, #457).
 func (s *authService) confirmPasswordResetInTransaction(
 	resetRepo repository.PasswordResetTokenRepository,
 	userRepo repository.UserRepository,
@@ -1445,9 +1513,9 @@ func (s *authService) confirmPasswordResetInTransaction(
 	if !user.IsActive {
 		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
 	}
-	// An account provisioned by single sign-on never obtains a password
-	// (#444); a plain read after the owner lock. The rollback hands the claim
-	// back, as for the other owner refusals.
+	// An account linked to single sign-on, while security.sso.allow_password
+	// is off (#444, #457); a plain read after the owner lock. The rollback
+	// hands the claim back, as for the other owner refusals.
 	if identities != nil {
 		linked, err := identities.ExistsForUser(user.ID)
 		if err != nil {

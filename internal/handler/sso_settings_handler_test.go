@@ -20,7 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// ssoConfigStore is a ConfigurationService holding the six SSO rows in
+// ssoConfigStore is a ConfigurationService holding the seven SSO rows in
 // plaintext; only the reads and SetSSO the SSO service uses are implemented.
 type ssoConfigStore struct {
 	service.ConfigurationService
@@ -206,4 +206,67 @@ func TestSSOSettingsHandlerAdmin(t *testing.T) {
 			assert.Equal(t, before, store.snapshot(), "no row changed")
 		})
 	}
+}
+
+func TestSSOSettingsHandlerAllowPassword(t *testing.T) {
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+
+	getData := func(t *testing.T, router *gin.Engine) map[string]interface{} {
+		t.Helper()
+		w := ssoRequest(router, http.MethodGet, "")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var envelope struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		return envelope.Data
+	}
+
+	t.Run("GET reports allow_password and its source", func(t *testing.T) {
+		store := newSSOConfigStore()
+		router := newSSOSettingsTestRouter(store, asSystemRole("admin"))
+		data := getData(t, router)
+		assert.Equal(t, false, data["allow_password"])
+		assert.Equal(t, "default", data["sources"].(map[string]interface{})["allow_password"])
+
+		store.values[models.ConfigKeySSOAllowPassword] = "true"
+		data = getData(t, router)
+		assert.Equal(t, true, data["allow_password"])
+		assert.Equal(t, "settings", data["sources"].(map[string]interface{})["allow_password"])
+	})
+
+	t.Run("PUT true and false store the value; null and absent clear it", func(t *testing.T) {
+		store := newSSOConfigStore()
+		router := newSSOSettingsTestRouter(store, asSystemRole("admin"))
+
+		w := ssoRequest(router, http.MethodPut, `{"allow_password":true}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "true", store.values[models.ConfigKeySSOAllowPassword])
+		var envelope struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		assert.Equal(t, true, envelope.Data["allow_password"])
+
+		w = ssoRequest(router, http.MethodPut, `{"allow_password":false}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "false", store.values[models.ConfigKeySSOAllowPassword])
+
+		w = ssoRequest(router, http.MethodPut, `{"allow_password":null}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "", store.values[models.ConfigKeySSOAllowPassword])
+
+		store.values[models.ConfigKeySSOAllowPassword] = "true"
+		w = ssoRequest(router, http.MethodPut, `{}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "", store.values[models.ConfigKeySSOAllowPassword], "absent clears it too")
+		assert.Equal(t, false, getData(t, router)["allow_password"])
+	})
+
+	t.Run("PUT with a non-boolean allow_password is refused", func(t *testing.T) {
+		store := newSSOConfigStore()
+		w := ssoRequest(newSSOSettingsTestRouter(store, asSystemRole("admin")), http.MethodPut, `{"allow_password":"yes"}`)
+		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		assert.Zero(t, store.writes)
+	})
 }

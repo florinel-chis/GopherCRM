@@ -836,12 +836,14 @@ can succeed.
   4. Press "Clear client secret" and press Save.
   5. Press "Add mapping", enter a value, choose a role from the list and press Save.
   6. Open the screen with only `settings.view`.
-- **Expected:** Step 1: the Enabled switch, Issuer URL, Client ID, Scopes (separated by spaces),
+- **Expected:** Step 1: the Enabled switch, the "Allow password sign-in and password reset for
+  accounts linked to single sign-on" switch with its always-shown offboarding warning (#457),
+  Issuer URL, Client ID, Scopes (separated by spaces),
   an empty Client secret input with "A client secret is set", and the mapping rows in stored order
   with the note that the first matching row wins; a field from the environment or the default
   says so. A row whose role the list does not name, or every row when the role list fails (an
   error alert), shows "Role #id" and keeps its id. Step 2: `PUT /settings/sso` with the shown
-  values, the two rows in the same order and no `client_secret` key. Step 3: the body carries the
+  values (`allow_password` included), the two rows in the same order and no `client_secret` key. Step 3: the body carries the
   secret; afterwards the input is empty and the secret appears nowhere on the page. Step 4: the
   body carries `client_secret: ""` and the page shows "No client secret is set". Step 5: the new
   row is sent last with the chosen `role_id`. A 400 lists the refused fields of `details` (for

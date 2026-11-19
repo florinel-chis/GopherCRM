@@ -449,6 +449,10 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 		"`GetByEmail`",
 		"bcrypt",
 		"savepoint",
+		// #457: while security.sso.allow_password is off the login reads
+		// user_identities (plain, no lock) after the owner lock.
+		"users → (read) user_identities → refresh_tokens",
+		"`ExistsForUser`",
 	} {
 		assert.Contains(t, login, want, "Login")
 	}
@@ -492,8 +496,9 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	}
 
 	assert.Contains(t, flow("Refresh rotation"), "users → refresh_tokens")
-	// #444: both reset flows read user_identities (plain, no lock) after the
-	// owner lock and refuse an account provisioned by single sign-on.
+	// #444, #457: both reset flows read user_identities (plain, no lock)
+	// after the owner lock and, while security.sso.allow_password is off,
+	// refuse an account linked to single sign-on.
 	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → (read) user_identities → refresh_tokens")
 	assert.Contains(t, flow("Password-reset request"), "users → (read) user_identities → password_reset_tokens")
 	assert.Contains(t, flow("Password-reset request"), "`ExistsForUser`")
