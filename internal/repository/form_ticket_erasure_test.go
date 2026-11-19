@@ -89,8 +89,9 @@ func submissionKey(t *testing.T, db *gorm.DB, id uint) string {
 }
 
 func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
+	dbs := newErasureTestDBs(t, useMySQL, openFormTicketRepoDB)
 	t.Run("customer root", func(t *testing.T) {
-		db := openFormTicketRepoDB(t, useMySQL)
+		db := dbs.open(t)
 		f := newFormTicketErasureFixture(t, db)
 		erased := createFormTicketCustomer(t, db, "erased@form-ticket.test")
 		other := createFormTicketCustomer(t, db, "other@form-ticket.test")
@@ -120,7 +121,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("customer-role login root", func(t *testing.T) {
-		db := openFormTicketRepoDB(t, useMySQL)
+		db := dbs.open(t)
 		f := newFormTicketErasureFixture(t, db)
 		login := &models.User{Email: "login@form-ticket.test", Password: "x", FirstName: "Lo", LastName: "Gin", Role: models.RoleCustomer, IsActive: true}
 		require.NoError(t, db.Create(login).Error)
@@ -136,7 +137,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("lead root", func(t *testing.T) {
-		db := openFormTicketRepoDB(t, useMySQL)
+		db := dbs.open(t)
 		f := newFormTicketErasureFixture(t, db)
 		owner := &models.User{Email: "owner@form-ticket.test", Password: "x", FirstName: "Ow", LastName: "Ner", Role: models.RoleSales, IsActive: true}
 		require.NoError(t, db.Create(owner).Error)
@@ -162,7 +163,8 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a schema without form_ticket_keys skips the purge", func(t *testing.T) {
-		db := openFormTicketRepoDB(t, useMySQL)
+		// Drops a table, so it works on a database of its own.
+		db := dbs.openFresh(t)
 		f := newFormTicketErasureFixture(t, db)
 		customer := createFormTicketCustomer(t, db, "nokeys@form-ticket.test")
 		f.ticket(t, customer.ID, false)
@@ -174,7 +176,8 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 	})
 
 	t.Run("a failing purge rolls the whole erasure back", func(t *testing.T) {
-		db := openFormTicketRepoDB(t, useMySQL)
+		// Renames a column, so it works on a database of its own.
+		db := dbs.openFresh(t)
 		f := newFormTicketErasureFixture(t, db)
 		customer := createFormTicketCustomer(t, db, "rollback@form-ticket.test")
 		ticket := f.ticket(t, customer.ID, false)
