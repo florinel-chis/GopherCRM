@@ -21,7 +21,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA callback page and SCIM are later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; SCIM is later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -424,8 +424,9 @@ The generic `/configurations` endpoints neither list nor write those entries, wh
 case or padding of the key. Since #435 the backend signs in with those settings (see
 [OIDC sign-in](#oidc-sign-in-435) below): the authorization code flow with PKCE, identity
 linking by `(iss, sub)` in `user_identities`, JIT provisioning and the role mapping re-applied
-on every sign-in. SCIM is not implemented, the SPA has no `/auth/callback` page yet, and Okta's
-userinfo groups for thin tokens are not read; those are later work. The rest of the note records
+on every sign-in. Since #436 the SPA offers the sign-in (see
+[SPA sign-in and settings](#spa-sign-in-and-settings-436) below). SCIM is not implemented, and
+Okta's userinfo groups for thin tokens are not read; those are later work. The rest of the note records
 the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)
@@ -507,6 +508,34 @@ OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":1},{"claim":"r
 A mapping on `groups` uses group object ids. Above 200 groups Entra ID leaves the `groups` claim
 out and sends `_claim_names` instead; such a sign-in is refused (401), so prefer app roles. Role
 ids are those of `GET /roles`.
+
+### SPA sign-in and settings (#436)
+
+Settings > Single sign-on (`/settings/sso`, shown and opened only with `settings.sso_manage`)
+edits `GET`/`PUT /settings/sso`: the Enabled switch, the issuer URL, the client ID, the scopes
+(one field, separated by spaces), the client secret and the role mapping. Each field says when
+its value comes from the environment or the default. The client secret is write-only: the page
+shows only "A client secret is set" or "No client secret is set", the input always starts empty,
+a typed secret is sent once and cleared after the save, "Clear client secret" sends an empty
+secret, and a save without either keeps the stored one. The role mapping rows (claim `groups` or
+`roles`, a value, a role from the role list) are kept and sent in the order shown, and the first
+matching row wins; a row whose role the list does not name, or every row when the role list
+cannot be loaded, keeps its role id ("Role #id"). `PUT /settings/sso` is a full replacement, so
+the first save stores every value shown, environment-derived ones included: from then on a
+change to the matching `OIDC_*` variable has no effect on a saved field.
+
+The login page reads `sso_enabled` from the public `GET /auth/registration` probe it already
+makes, so no second request spends the strict `/auth` budget. Only when it is true does it show
+"Sign in with single sign-on" below the password form; the button calls `POST /auth/oidc/start`
+and sends the browser to the returned authorization URL, and a failed start shows "Single sign-on
+is unavailable. Sign in with your password." The issuer redirects to the public `/auth/callback`
+page, which reads `code` and `state` once, removes them from the address bar with a replace
+navigation, posts them once to `POST /auth/oidc/callback` and stores the session in
+sessionStorage, as a password login without "Remember me" does (no remember-me choice survives
+the redirect). Any failure, and an `error` parameter or a missing code or state, shows the one
+generic message "Single sign-on failed. Try again or sign in with your password." with a link
+back to the sign-in page; the page never shows or logs the code, the state or the tokens.
+Password login stays available as break-glass.
 
 ### Design conditions
 

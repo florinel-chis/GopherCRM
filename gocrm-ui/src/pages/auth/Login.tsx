@@ -49,6 +49,23 @@ export const Login: React.FC = () => {
     queryFn: authApi.getRegistrationStatus,
   });
   const registrationOpen = registrationStatus?.enabled === true;
+  // The same probe reports the single sign-on switch: the button shows only
+  // when it is on (no second request on the strict /auth tier).
+  const ssoEnabled = registrationStatus?.sso_enabled === true;
+  const [ssoStarting, setSSOStarting] = useState(false);
+  const [ssoError, setSSOError] = useState<string | null>(null);
+
+  const startSSO = async () => {
+    setSSOError(null);
+    setSSOStarting(true);
+    try {
+      const { authorization_url: authorizationURL } = await authApi.startOIDC();
+      window.location.assign(authorizationURL);
+    } catch {
+      setSSOError('Single sign-on is unavailable. Sign in with your password.');
+      setSSOStarting(false);
+    }
+  };
 
   const {
     register,
@@ -159,6 +176,25 @@ export const Login: React.FC = () => {
               )}
             </Box>
           </Box>
+
+          {ssoEnabled && (
+            <Box sx={{ mt: 3 }}>
+              {ssoError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {ssoError}
+                </Alert>
+              )}
+              <Button
+                type="button"
+                fullWidth
+                variant="outlined"
+                onClick={startSSO}
+                disabled={ssoStarting}
+              >
+                Sign in with single sign-on
+              </Button>
+            </Box>
+          )}
         </Paper>
       </Box>
     </Container>

@@ -620,6 +620,20 @@ export const router = createBrowserRouter([
           },
         ],
       },
+      {
+        // OpenID Connect sign-in settings (#436).
+        element: (
+          <ProtectedRoute requiredPermission="settings.sso_manage">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/sso',
+            lazy: () => import('@/pages/settings/SSOSettings'),
+          },
+        ],
+      },
       // The dashboard above, the profile and the caller's own API keys need no
       // key: every signed-in user reaches them.
       {
@@ -645,6 +659,13 @@ export const router = createBrowserRouter([
   {
     path: '/quote-render',
     lazy: () => import('@/pages/quotes/QuoteRender'),
+    errorElement: <RouteErrorBoundary />,
+  },
+  // The page the identity provider redirects back to after an OpenID Connect
+  // sign-in (#436): public, outside the guard and the application shell.
+  {
+    path: '/auth/callback',
+    lazy: () => import('@/pages/auth/AuthCallback'),
     errorElement: <RouteErrorBoundary />,
   },
   {

@@ -49,6 +49,7 @@ import {
   AutoMode,
   Rule,
   History,
+  VpnKey,
 } from '@mui/icons-material';
 import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
@@ -234,6 +235,13 @@ const navItems: NavItem[] = [
         path: '/settings/webhooks',
         icon: <LinkIcon />,
         permission: 'webhooks.manage',
+      },
+      {
+        // OpenID Connect issuer, client and role mapping.
+        title: 'Single sign-on',
+        path: '/settings/sso',
+        icon: <VpnKey />,
+        permission: 'settings.sso_manage',
       },
     ],
   },

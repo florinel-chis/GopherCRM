@@ -170,6 +170,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [queryClient, publishSignedIn]);
 
+  // OpenID Connect sign-in, finished by the callback page. Like a password
+  // login without "Remember me": no remember-me choice survives the redirect
+  // to the issuer, so the session lives in sessionStorage.
+  const loginWithSSO = useCallback(async (code: string, state: string) => {
+    const attempt = ++signInAttemptRef.current;
+    const response = await authApi.oidcCallback(code, state);
+    if (attempt !== signInAttemptRef.current) {
+      return;
+    }
+    apiClient.startSession(response.token, response.refresh_token, false);
+    queryClient?.clear();
+    await publishSignedIn(attempt);
+  }, [queryClient, publishSignedIn]);
+
   const register = useCallback(async (data: RegisterRequest) => {
     const attempt = ++signInAttemptRef.current;
     try {
@@ -215,6 +229,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading,
     isAuthenticated: !!session.user,
     login,
+    loginWithSSO,
     register,
     logout,
     refreshUser,

@@ -8,7 +8,7 @@ file, not by trusting the coverage matrix.
 
 **Sources**
 
-- `docs/FEATURES.md` section 1 (rows 1.1–1.11), section 10b "Auth sessions", section 11.1, Gap
+- `docs/FEATURES.md` section 1 (rows 1.1–1.13), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route,
   access-token revocation beyond the session-ending events, concurrent-refresh stampede)
@@ -976,9 +976,12 @@ file, not by trusting the coverage matrix.
 - **Preconditions:** None (public endpoint, strict rate tier).
 - **Steps:**
   1. `GET /api/v1/auth/registration` with no `Authorization` header, with the switch off, then on.
-- **Expected:** **200** `{success:true, data:{enabled:false}}` and `{enabled:true}` respectively.
-  A configuration read failure is reported as `enabled:false`, matching what the gate enforces.
-- **Automation:** automated — Go: `internal/handler/auth_registration_test.go`
+- **Expected:** **200** `{success:true, data:{enabled:false, sso_enabled:false}}` and
+  `{enabled:true, sso_enabled:false}` respectively (single sign-on off). A configuration read
+  failure is reported as `enabled:false`, matching what the gate enforces. `sso_enabled` is the
+  effective single sign-on switch, independent of `enabled`, and `false` when the single sign-on
+  configuration cannot be read; nothing else of that configuration is exposed (#436).
+- **Automation:** automated — Go: `internal/handler/auth_registration_test.go`; `cmd/auth_oidc_wiring_test.go` `TestOIDCRoutesWired` (the `sso_enabled` of the production router)
 
 ### TC-AUTH-047 — Login page hides the Sign Up link while registration is disabled
 - **Priority:** P1
@@ -1086,3 +1089,36 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   answer sets a cookie, and the logs of a successful and a failed callback carry none of the code,
   state, ID token, email or subject.
 - **Automation:** automated — Go: `cmd/auth_oidc_wiring_test.go` `TestOIDCRoutesWired`; `TestOIDCHandler`; `TestOIDCSignInSQLite/issuer_redirect`, `/log_privacy`; `TestOIDCHTTPClient`
+
+### TC-AUTH-055 — The login page offers single sign-on only while it is on
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** None; the e2e backend runs with single sign-on off (no `OIDC_*` set).
+- **Steps:**
+  1. Go to `/login` and wait for the `GET /auth/registration` probe to answer.
+  2. With `sso_enabled` true, press "Sign in with single sign-on".
+  3. Repeat step 2 with `POST /auth/oidc/start` failing.
+- **Expected:** Step 1: with `sso_enabled` false, missing or a failed probe, there is no "Sign in
+  with single sign-on" button; the email and password fields, "Sign In" and "Forgot password?"
+  render in every case. With `sso_enabled` true the outlined button renders below the password
+  form. Step 2: one `POST /auth/oidc/start`, then the browser goes to the returned
+  `authorization_url`. Step 3: the alert "Single sign-on is unavailable. Sign in with your
+  password." and the page stays; the button is enabled again.
+- **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "hides the single sign-on button when single sign-on is disabled"; Vitest `src/pages/auth/Login.test.tsx`
+
+### TC-AUTH-056 — The /auth/callback page finishes the sign-in without exposing the code
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Signed out.
+- **Steps:**
+  1. Open `/auth/callback?code=c&state=s` with a callback that succeeds.
+  2. Repeat with the callback answering 401 and 503.
+  3. Open `/auth/callback` without `code`, without `state`, and with `?error=access_denied`.
+- **Expected:** The page renders outside the application shell. The address bar loses its query
+  through a replace navigation before anything else. Step 1: exactly one
+  `POST /auth/oidc/callback` `{code:"c", state:"s"}` (also under React StrictMode), the token pair
+  is stored in sessionStorage only, and the browser lands on `/`. Steps 2 and 3: the one message
+  "Single sign-on failed. Try again or sign in with your password." with a "Back to sign in" link
+  to `/login` and no stored token; step 3 sends no request. The code, the state and the tokens
+  are never rendered.
+- **Automation:** automated — Vitest `src/pages/auth/AuthCallback.test.tsx`, `src/routes/index.test.tsx` "renders the page for a signed-out visitor and stays on /auth/callback"

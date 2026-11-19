@@ -551,7 +551,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			// The sign-up switch (security.allow_public_registration, off by
 			// default) is enforced here and probed by the SPA through the
 			// unauthenticated status endpoint.
-			authRoutes.GET("/registration", handler.RegistrationStatus(configService))
+			authRoutes.GET("/registration", handler.RegistrationStatus(configService, ssoSettings))
 			authRoutes.POST("/register", middleware.RequireRegistrationEnabled(configService), authHandler.Register)
 			authRoutes.POST("/login", authHandler.Login)
 			// Refresh is a credential exchange, so it stays on the strict tier.
