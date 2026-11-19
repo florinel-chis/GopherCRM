@@ -87,14 +87,11 @@ order. The governed user write of `DELETE /users/{id}` (#348) holds the target's
 with the admin set and the actor, before its nested erasure locks leads and customers; against a
 customer- or lead-rooted erasure of the same person that is a possible deadlock, and whichever
 side is the victim is replayed. The password-reset confirm claims its `password_reset_tokens` row
-before the owner's `users` row and is not retried; against an erasure it may be the victim and
-return error 1213 with nothing written, while an erasure that is the victim is replayed.
-A governed delete that is replayed after the other erasure committed finds the account
+before the owner's `users` row and is replayed when it is the victim (`resetConfirmMaxRetries`):
+against an erasure it commits first or is refused with the generic `ErrInvalidResetToken`, its
+replay finding the token gone or the owner erased, while an erasure that is the victim is
+replayed. A governed delete that is replayed after the other erasure committed finds the account
 already erased and answers not found (404), as a delete of an erased user does.
-On MariaDB 10.11 the confirm's claim is served through `idx_password_reset_tokens_deleted_at` and
-locks that index entry before the row, so it can also be the 1213 victim of an erasure that
-already holds the token row; MySQL 8 claims by primary key and the confirm is refused. The
-MariaDB case is tracked in #407.
 
 ## Retry rule
 
@@ -114,11 +111,12 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
 
 The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1064`),
 login (`internal/service/auth_service.go:283`), the password-reset request
-(`internal/service/auth_service.go:1220`), API-key create
+(`internal/service/auth_service.go:1220`), the password-reset confirm
+(`internal/service/auth_service.go:1327`), API-key create
 (`internal/service/apikey_service.go:86`), the RBAC user-role and role writes
 (`internal/service/role_governance.go:161`) and, since #385, the three erasures
 (`runErasureUnit`, `internal/repository/erasure.go:431`).
-For company delete, bulk status, refresh rotation and the password-reset confirm it is the #183
+For company delete, bulk status and refresh rotation it is the #183
 target, a bounded whole-root retry, not today's behaviour. The lead writes also restart the whole
 root on `errLeadCompanyMoved`, a separate bounded loop (`runLeadCompanyAttempts`) described in
 their entries; the erasures restart theirs on `ErrErasureGraphChanged` (`eraseGraph`), and the
@@ -183,15 +181,12 @@ they issued, or wait on the `users` row and are refused. Two inversions remain. 
 write holds the target's `users` row before its nested erasure locks leads and customers, so
 against a customer- or lead-rooted erasure of the same person it can deadlock; the victim is
 replayed, by `roleWriteMaxRetries` on the governed side and by `erasureMaxRetries` on the other.
-The password-reset confirm takes `password_reset_tokens` before `users` and is not retried: when
-each side holds its first lock the confirm may return error 1213 with nothing written, and an
-erasure that is the victim is replayed (an error and a rollback, never a partial commit).
+The password-reset confirm takes `password_reset_tokens` before `users` and is replayed by
+`resetConfirmMaxRetries`: when each side holds its first lock the victim is replayed, whichever
+it is, and a replayed confirm that finds the token gone or the owner erased is refused with
+`ErrInvalidResetToken` (a rollback and a fresh attempt, never a partial commit).
 A governed delete that is replayed after the other erasure committed finds the account
 already erased and answers not found (404), as a delete of an erased user does.
-On MariaDB 10.11 the confirm's claim is served through `idx_password_reset_tokens_deleted_at` and
-locks that index entry before the row, so it can also be the 1213 victim of an erasure that
-already holds the token row; MySQL 8 claims by primary key and the confirm is refused. The
-MariaDB case is tracked in #407.
 
 Known gaps of the re-check. Inside a caller's transaction the reverse re-read answers from the
 caller's snapshot, so a customer linked to the login while a governed user erasure is in flight
@@ -437,24 +432,31 @@ users) on the same user. When the confirm commits first, the request waits on th
 then issues a fresh token; when the request commits first, the confirm waits on the token row its
 `InvalidateAllForUser` spent and its claim is refused with the generic `ErrInvalidResetToken`. When
 each holds its first lock, InnoDB ends one of them with error 1213: a request victim is replayed by
-`WithTransactionAndRetry` (the end state is that of the confirm first), a confirm victim (plain
-`WithTransaction`, no retry) returns the error with nothing written (the end state is that of the
-request first). Neither ordering commits half a unit. Putting the confirm under the retry rule is a
-follow-up.
+`WithTransactionAndRetry` (the end state is that of the confirm first), a confirm victim is
+replayed by the same rule (`resetConfirmMaxRetries`) and refused with `ErrInvalidResetToken`, its
+replay finding the token spent by the request (the end state is that of the request first).
+Neither ordering commits half a unit, and neither party returns the 1213.
 
 ### Password-reset confirm
 
 - **Rows locked:** the `password_reset_tokens` row (the conditional claim `MarkUsed`,
-  `internal/service/auth_service.go:1367`), the owner's `users` row (`FOR UPDATE`,
-  `internal/service/auth_service.go:1325`, read at `internal/service/auth_service.go:1384`, written
-  at `internal/service/auth_service.go:1400`), and every `refresh_tokens` row of the user (revoked,
-  `internal/service/auth_service.go:1412`).
+  `internal/service/auth_service.go:1382`), the owner's `users` row (`FOR UPDATE`,
+  `internal/service/auth_service.go:1340`, read at `internal/service/auth_service.go:1399`, written
+  at `internal/service/auth_service.go:1415`), and every `refresh_tokens` row of the user (revoked,
+  `internal/service/auth_service.go:1427`).
 - **Order:** password_reset_tokens → users → refresh_tokens, after a plain lookup of the token by
-  hash (`internal/service/auth_service.go:1349`). This inverts the reset request's order; the
+  hash (`internal/service/auth_service.go:1364`). This inverts the reset request's order; the
   outcome is described under that flow.
-- **Transaction:** `WithTransaction` (`internal/service/auth_service.go:1312`).
-- **Retry:** none today; a 1213 against a concurrent reset request returns the error with nothing
-  written. Target: the #183 retry rule.
+- **Transaction:** one `WithTransactionAndRetry` root per confirmation
+  (`internal/service/auth_service.go:1327`) on `context.Background()`; every attempt redoes the
+  lookup, the claim, the owner lock and the writes.
+- **Retry:** `WithTransactionAndRetry` (the #183 rule) with `resetConfirmMaxRetries` 3
+  (`internal/service/auth_service.go:1275`) replays the whole root on a deadlock, lock wait timeout
+  or SQLite busy/locked. A replay that finds the token spent or gone, or its owner erased, is
+  refused with `ErrInvalidResetToken`. An exhausted bound returns the last error with nothing
+  written: `POST /auth/password-reset/confirm` answers the generic 500 and the link is still
+  valid. The worst case is four lock waits, one per attempt, with no timeout of its own, as for
+  login and the reset request.
 - **Status:** implemented
 
 ### API-key create

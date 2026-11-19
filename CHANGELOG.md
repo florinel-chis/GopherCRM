@@ -797,6 +797,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A password-reset confirmation that loses a deadlock is replayed instead of failing (#407).**
+  `POST /auth/password-reset/confirm` claims its token before it locks the owner's `users` row,
+  the reverse of the order an erasure of that user and a new reset request take. A confirmation
+  racing either could be ended by the database with error 1213 and answered 500 although nothing
+  was wrong with the link; on MariaDB 10.11 this happened every time the erasure already held the
+  token row, because the claim locks an index entry before the row there. The confirming
+  transaction now runs under the retry rule (`WithTransactionAndRetry`, at most
+  `resetConfirmMaxRetries` = 3 replays after a deadlock, a lock wait timeout or a busy SQLite
+  file). Every attempt redoes the lookup, the claim, the owner lock and the writes, so a replay
+  that finds the token spent or gone, or its owner erased, gets the usual 400 for an invalid or
+  expired link, and one that finds them intact commits the reset. When the bound is exhausted the
+  route still answers the generic 500 with nothing written and the link is still valid. The order
+  of the locks, the refresh rotation, the erasure, the routes and the schema are unchanged. Roots
+  (`internal/service`): `TestPasswordResetConfirmRetrySQLite` (new),
+  `TestErasureVsCredentialFlowsMySQL` and `TestPasswordResetRequestVsConfirmMySQL`, which no
+  longer accept error 1213 from the confirmation on either engine. `docs/CONCURRENCY.md` records
+  the confirm under the retry rule.
+
 - **Registration and `POST /users` no longer return the service error text, and an over-long
   password is refused the same way everywhere (#397).** `POST /auth/register` and `POST /users`
   used to answer 400 `BAD_REQUEST` with the raw error for any failure of the write, a database
@@ -852,8 +870,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   governed user write holds the target's `users` row before the nested erasure locks leads and
   customers (replayed by either side; a governed delete replayed after the other erasure
   committed answers 404, the account being erased already), and the password-reset confirm takes
-  its token before the `users` row and is not retried (it may fail with error 1213 against an
-  erasure; on MariaDB 10.11 also against one that already holds the token row, tracked in #407).
+  its token before the `users` row (it is replayed when it loses a deadlock, see the #407 entry
+  under Fixed).
   The new seams (`repository.ErasureHooks`) are test-only, and
   the regression roots (`internal/repository/erasure_lock_order_test.go`,
   `internal/service/erasure_credential_order_test.go`) are registered in the
@@ -920,8 +938,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `NewAPIKeyService` takes the user repository and the transaction manager
   (`NewAPIKeyService(apiKeyRepo, userRepo, txManager, apiKeySecret)`; without them `Generate`
   returns `service.ErrAPIKeyIssuanceUnavailable`). The new order inverts the reset confirm's
-  (password_reset_tokens → users): when both hold their first lock on MySQL one ends in error 1213,
-  a request is replayed and a confirm returns the error with nothing written. No schema change.
+  (password_reset_tokens → users): when both hold their first lock on MySQL one ends in error 1213
+  and is replayed, the request by this change and the confirm since #407 (see Fixed). No schema
+  change.
   `docs/CONCURRENCY.md` records both C3 flows as implemented. Roots (`internal/service`):
   `TestPasswordResetRequestOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
   `TestPasswordResetRequestOwnerLockConcurrentMySQL`, `TestPasswordResetRequestVsConfirm{SQLite,MySQL}`,

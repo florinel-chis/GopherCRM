@@ -231,7 +231,9 @@ for scope and migration of a stopped execution to the reviewed selector.
 A password reset link is spent only by a committed reset. `ConfirmPasswordReset` validates the
 complexity policy and hashes the new password before anything is written, so a weak password, or
 one bcrypt refuses (over 72 bytes), leaves the link usable. It then runs one transaction through
-the transaction manager and the `WithTx` repositories: the token is claimed by a conditional
+the transaction manager (`WithTransactionAndRetry`, replayed at most `resetConfirmMaxRetries`
+times after a deadlock, a lock wait timeout or a busy SQLite file) and the `WithTx`
+repositories: the token is claimed by a conditional
 update (`used_at IS NULL AND expires_at > now`, exactly one affected row, else the generic
 rejection), the owner is re-read with a locking read (the transaction-bound `UserRepository`, `SELECT …
 FOR UPDATE` on MySQL, a plain read on SQLite where the dialector drops the clause) and refused if
@@ -241,7 +243,11 @@ transaction answers from the snapshot taken at the token lookup, so an account d
 erased by another connection just after that lookup would still look active and be reset. A failure of the password
 update or of the revocation is returned and rolls the claim back, so the same link works on retry;
 competing confirmations commit exactly once, and a token that expires or is spent between the
-lookup and the claim is refused. The service refuses the confirmation rather than running the
+lookup and the claim is refused. A replayed attempt redoes the lookup, the claim, the owner lock
+and the writes, so a confirmation that lost a deadlock to an erasure or to a reset request of the
+same account ends in the generic rejection (or commits) instead of error 1213; when the bound is
+exhausted the last error is returned, the route answers the generic 500 and the link is still
+valid. The service refuses the confirmation rather than running the
 writes separately when the transaction manager or a repository is not wired, which is why
 `NewAuthServiceWithSessions` takes the manager explicitly; `NewAuthService` remains for stateless
 JWT callers. Regression roots: `TestPasswordReset{Validation,Atomicity,Concurrent}{SQLite,MySQL}`
@@ -251,7 +257,9 @@ committed rows), plus the conditional-claim tests in
 `internal/repository/password_reset_token_repository_test.go` and the two-connection
 `TestPasswordResetOwnerDeactivatedAfterTokenReadMySQL` in
 `internal/service/auth_reset_owner_race_test.go`, which commits the deactivation from a second
-connection after the token lookup. The MySQL roots skip without the
+connection after the token lookup. The retry itself is pinned by
+`TestPasswordResetConfirmRetrySQLite` in `internal/service/erasure_credential_order_test.go`
+(a deadlock on the first attempt, on every attempt, and an error that is not retryable). The MySQL roots skip without the
 variable and fail when it points at an unreachable server; because the auth checker discovers
 its roots from `auth*_test.go` and rejects skips, the bounded auth profile needs `TEST_MYSQL_DSN`
 as well.
@@ -332,8 +340,9 @@ issued only to a live, active owner.
   password_reset_tokens → users. Confirm first: the request waits on the users row and issues a
   fresh token. Request first: the confirm waits on the token row and its claim is refused
   (`ErrInvalidResetToken`). Both holding their first lock: MySQL ends one with error 1213; a
-  request victim is replayed by the retry helper, a confirm victim (plain `WithTransaction`)
-  returns the error with nothing written. Putting the confirm under the retry rule is a follow-up.
+  request victim is replayed by the retry helper, and so is a confirm victim, whose replay
+  finds the token spent by the request and is refused (`ErrInvalidResetToken`). Neither party
+  returns the 1213.
 - **Accepted residual.** A reset request for an account whose users row another transaction holds
   waits for that lock, which a timing observer could tell apart from an unknown address. Neither
   path moves onto the request context (the interfaces stay context-free).
@@ -2125,7 +2134,8 @@ What happens on `DELETE`:
   (`TestErasureCrossRootMySQL`, `TestErasureLockOrder{SQLite,MySQL}`,
   `TestErasureGraphChanged{SQLite,MySQL}`, `TestErasureRetryBoundSQLite`) and
   `internal/service/erasure_credential_order_test.go` (`TestErasureVsCredentialFlows{SQLite,MySQL}`,
-  `TestGovernedUserErasureVsCustomerErasureMySQL`, `TestGovernedWriteReplaysErasureGraphChange`),
+  `TestGovernedUserErasureVsCustomerErasureMySQL`, `TestGovernedWriteReplaysErasureGraphChange`,
+  `TestPasswordResetConfirmRetrySQLite`),
   through the test-only `repository.ErasureHooks`. CI limit: `erasure_lock_order_test.go` and
   `erasure_credential_order_test.go` are discovered by `scripts/ci/check-go.py transaction`. CI
   runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on
@@ -2430,10 +2440,7 @@ Known limits of the erasure, in one place:
   exhausted the caller gets the generic 500. What stays open: the governed user write of
   `DELETE /users/{id}` holds the target's user row before its nested erasure locks leads and
   customers (a deadlock with an erasure of the same person from another row is replayed by either
-  side, and a governed delete replayed after the other erasure committed answers 404); the
-  password-reset confirm takes its token before the user row and is not retried, so it may fail
-  with error 1213 against an erasure (on MariaDB 10.11 also against one that already holds the
-  token row: the confirm's claim locks the `deleted_at` index entry first, tracked in #407); inside a caller's transaction the re-check of the
+  side, and a governed delete replayed after the other erasure committed answers 404); inside a caller's transaction the re-check of the
   reverse links answers from the caller's snapshot; and a write of `customers.user_id` takes no
   lock on the user row (no shipped code path writes it), so a customer linked to the login after
   the erasure's re-check and before its commit escapes the cascade. Login (#336), refresh rotation, the
