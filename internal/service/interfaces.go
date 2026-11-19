@@ -63,6 +63,9 @@ type UserService interface {
 	List(offset, limit int) ([]models.User, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
+	// ListFiltered lists one page of the users matching filter and the number
+	// the same filter matches before pagination (GET /users?role=, #428).
+	ListFiltered(filter repository.UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
 
 	// The actor-taking writes of the user routes (#259 S4, #348). On a
 	// service built with WithUserRoleGovernance each is one transaction that

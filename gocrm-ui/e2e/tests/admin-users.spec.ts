@@ -109,8 +109,7 @@ test.describe('Admin - Users Management', () => {
     await expect(usersPage.tableRows).toHaveCount(1);
   });
 
-  // fixme: GET /users ignores the role parameter, so the Role dropdown narrows nothing (#428).
-  test.fixme('admin can filter users by role (#428)', async ({ page }) => {
+  test('admin can filter users by role (#428)', async ({ page }) => {
     const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
     const salesEmail = `sales_${stamp}@example.com`;
     const supportEmail = `support_${stamp}@example.com`;
@@ -130,12 +129,20 @@ test.describe('Admin - Users Management', () => {
 
     await usersPage.goto();
     await usersPage.searchUsers(stamp);
-    await expect(salesRow).toHaveCount(1);
-    await expect(supportRow).toHaveCount(1);
+    await expect(salesRow).toHaveCount(1, { timeout: 30000 });
+    await expect(supportRow).toHaveCount(1, { timeout: 30000 });
 
+    const filtered = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname.endsWith('/users') &&
+        new URL(response.url()).searchParams.get('role') === 'sales',
+      { timeout: 30000 },
+    );
     await usersPage.filterByRole('sales');
-    await expect(salesRow).toBeVisible();
-    await expect(supportRow).toHaveCount(0);
+    expect((await filtered).status(), 'role-filtered users list').toBe(200);
+    await expect(supportRow).toHaveCount(0, { timeout: 30000 });
+    await expect(salesRow).toBeVisible({ timeout: 30000 });
   });
 
   test('admin sees validation errors for invalid user data', async ({ page }) => {

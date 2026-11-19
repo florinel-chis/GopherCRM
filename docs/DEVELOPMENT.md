@@ -1362,6 +1362,24 @@ Regression roots: `TestTicketEnumIsValid` (`internal/models`); `TestTicketListFi
 `TestTicketListFilters{SQLite,MySQL}` (`internal/integration`). The MySQL roots use a disposable
 `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable.
 
+**User list role filter (#428).** `GET /users` takes an optional `role` query parameter, one exact,
+case-sensitive value of `models.UserRole` (`admin`, `sales`, `support`, `customer`, `custom`). The
+handler reads it with `c.Query` (first value of a repeated parameter; empty counts as absent, a
+blank is not trimmed) and validates it with `UserRole.IsValid` before pagination or any service
+call: an unknown value is 400 `VALIDATION_ERROR` with `error.details.role`, the value not echoed.
+With a role the handler calls `UserService.ListFiltered(repository.UserListFilter{Search, Role},
+offset, limit, sortBy, sortOrder)`; without one the existing `Search`, `ListSorted` and `List`
+branches run unchanged. `UserRepository.ListByFilter` (`orderPage`, then OFFSET/LIMIT; id
+ascending without a sort) and `CountByFilter` share one predicate builder,
+`whereUserListFilter`, which ANDs `users.role = ?` with the parenthesised search OR, so the rows
+and the total come from the same filter before offset and limit; soft-deleted users stay excluded.
+The service logs nothing about the filter. No schema change (`idx_users_role` already exists).
+Regression roots: `TestUserRoleIsValid` (`internal/models`); `TestUserListRoleFilterHandler`
+(`internal/handler`); `TestUserServiceListFiltered` (`internal/service`);
+`TestUserListRoleFilterRepository{SQLite,MySQL}` (`internal/repository`);
+`TestUserListRoleFilters{SQLite,MySQL}` (`internal/integration`). The MySQL roots use a disposable
+`TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable.
+
 **Ticket comment email (#219).** `POST /tickets/{id}/comments` takes an optional boolean
 `email_customer`. The handler's checks are unchanged (role, id, ticket lookup, assignment, bind,
 blank body); after them, `email_customer` together with `is_internal` is 400 `VALIDATION_ERROR`

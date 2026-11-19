@@ -936,6 +936,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Users list Role dropdown filters again (#428).** `GET /users` now reads its optional
+  `role` query parameter on the server: one of `admin`, `sales`, `support`, `customer`, `custom`,
+  matched exactly and case-sensitively. It applies in the query before offset and limit, so `meta`
+  counts only the matching users, and it combines with `search` and `sort_by`/`sort_order`. An
+  empty value is ignored, a repeated parameter uses its first value, and any other value (`Sales`,
+  `manager`, a blank) is answered 400 `VALIDATION_ERROR` with `error.details.role`, the value not
+  echoed. Visible consequence: the ticket form's "Assign to Support Agent" picker, which asks for
+  `role=support&is_active=true`, now lists only support users; admins, though valid assignees, are
+  no longer offered there. `is_active` is still ignored, so inactive support users stay listed.
+  No schema change.
 - **The Webhooks screen no longer shows an empty list after the last row of a later page is gone (#423).**
   On Settings > Webhooks, deleting the only endpoint of the last page left the endpoints table on
   that page: it showed "No webhook endpoints yet." and a pagination label such as "21-20 of 20"

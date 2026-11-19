@@ -278,6 +278,46 @@ func (r *userRepository) CountSearch(query string) (int64, error) {
 	return count, err
 }
 
+// whereUserListFilter is the one predicate of ListByFilter and CountByFilter.
+// It ANDs the optional role with the parenthesised search alternatives, so the
+// search OR can never let a row with another role through. Every value is
+// bound.
+func whereUserListFilter(db *gorm.DB, filter UserListFilter) *gorm.DB {
+	if filter.Role != "" {
+		db = db.Where("users.role = ?", filter.Role)
+	}
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		db = db.Where(
+			"(users.email LIKE ? OR users.first_name LIKE ? OR users.last_name LIKE ?)",
+			searchPattern, searchPattern, searchPattern,
+		)
+	}
+	return db
+}
+
+// ListByFilter returns one page of the live users matching filter. The filter
+// is applied before offset and limit, and the rows walk orderPage's total
+// order: the validated sort column, then id in the same direction, or id
+// ascending.
+func (r *userRepository) ListByFilter(filter UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	var users []models.User
+	query, err := orderPage(whereUserListFilter(r.db, filter), "users", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = query.Offset(offset).Limit(limit).Find(&users).Error
+	return users, err
+}
+
+// CountByFilter counts every live user matching filter, with the predicate of
+// ListByFilter and before any pagination.
+func (r *userRepository) CountByFilter(filter UserListFilter) (int64, error) {
+	var count int64
+	err := whereUserListFilter(r.db.Model(&models.User{}), filter).Count(&count).Error
+	return count, err
+}
+
 func (r *userRepository) WithTx(tx *gorm.DB) UserRepository {
 	return &userRepository{db: tx, lockSeams: r.lockSeams}
 }

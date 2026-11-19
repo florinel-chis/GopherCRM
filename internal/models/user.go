@@ -25,6 +25,16 @@ const (
 	RoleCustom UserRole = "custom"
 )
 
+// IsValid reports whether r is exactly one of the five declared roles. The
+// match is case-sensitive: "Sales" and "" are not valid.
+func (r UserRole) IsValid() bool {
+	switch r {
+	case RoleAdmin, RoleSales, RoleSupport, RoleCustomer, RoleCustom:
+		return true
+	}
+	return false
+}
+
 // User is a login account: staff (admin, sales, support) or a customer's own
 // login. The password hash and the failed-login counter are never serialised.
 //

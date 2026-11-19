@@ -260,6 +260,20 @@ func (_m *UserRepository) CountSearch(query string) (int64, error) {
 	return ret.Get(0).(int64), ret.Error(1)
 }
 
+func (_m *UserRepository) ListByFilter(filter repository.UserListFilter, offset, limit int, sortBy, sortOrder string) ([]models.User, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder)
+	var r0 []models.User
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.User)
+	}
+	return r0, ret.Error(1)
+}
+
+func (_m *UserRepository) CountByFilter(filter repository.UserListFilter) (int64, error) {
+	ret := _m.Called(filter)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func (_m *UserRepository) WithTx(tx *gorm.DB) repository.UserRepository {
 	_m.Called(tx)
 	return _m
