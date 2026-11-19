@@ -746,7 +746,9 @@ can succeed.
   shows `lead.created` and `lead.updated` and "Inactive". The Activate / Deactivate button of a row
   sends a `PUT` with `is_active` only. Step 3: the "Delete webhook endpoint" dialog names the URL
   and says "Its delivery log is removed with it"; Cancel sends nothing; Delete sends `DELETE
-  /webhooks/endpoints/<id>` → 204. Step 4: the endpoint is gone from the list.
+  /webhooks/endpoints/<id>` → 204. Step 4: the endpoint is gone from the list. When the deleted
+  row was the only one of a later page, the list shows the last existing page, not "No webhook
+  endpoints yet.", which appears only when no endpoint is left (#423).
 - **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin registers an
   endpoint, sees the secret once, edits and deletes it"; Vitest
   `src/pages/settings/Webhooks.test.tsx` and `src/pages/settings/WebhookEndpointDialog.test.tsx`
@@ -788,7 +790,9 @@ can succeed.
   `endpoint_id`, one row. Step 4: `status=succeeded` and the text "No deliveries match these
   filters." A filter set to All is left out of the request; a changed filter returns to the first
   page; pagination uses `meta.total`. The rows stay `pending` (briefly `sending`) because the host
-  never resolves. The log shows no URL, secret, event id or payload.
+  never resolves. The log shows no URL, secret, event id or payload. A later page that comes back
+  empty while `meta.total` is above 0 moves to the last existing page; "No deliveries match these
+  filters." appears only when the total is 0 (#423).
 - **Known issue:** The Endpoint filter offers one API page, the 100 newest endpoints; the log has
   no endpoint column, so rows of different endpoints are told apart only through the filter.
 - **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "the delivery log

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
@@ -101,6 +101,18 @@ const EndpointsTab: React.FC = () => {
   const closeSecret = () => setSecret(null);
 
   const rows = data?.rows ?? [];
+  const total = data?.total ?? 0;
+  const lastPage = Math.max(0, Math.ceil(total / rowsPerPage) - 1);
+  // An empty page of a list that still has rows (the last row of a later
+  // page was deleted): move to the last page that exists. Only ever
+  // backwards, so an answer that contradicts itself cannot loop.
+  const pastLastPage = rows.length === 0 && total > 0 && page > lastPage;
+
+  useEffect(() => {
+    if (pastLastPage) {
+      setPage(lastPage);
+    }
+  }, [pastLastPage, lastPage]);
 
   return (
     <Box>
@@ -139,7 +151,9 @@ const EndpointsTab: React.FC = () => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {rows.length === 0 ? (
+                  {/* The empty state is for an empty list only, not for the one
+                      render before the corrected page arrives. */}
+                  {rows.length === 0 && total === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                         <Typography variant="body2" color="text.secondary">
@@ -203,8 +217,8 @@ const EndpointsTab: React.FC = () => {
             <TablePagination
               component="div"
               rowsPerPageOptions={[10, 20, 50, 100]}
-              count={data?.total ?? 0}
-              page={page}
+              count={total}
+              page={Math.min(page, lastPage)}
               rowsPerPage={rowsPerPage}
               onPageChange={(_event, next) => setPage(next)}
               onRowsPerPageChange={(event) => {

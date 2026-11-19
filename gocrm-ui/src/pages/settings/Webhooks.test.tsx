@@ -167,6 +167,60 @@ describe('Webhooks', () => {
     expect(screen.getByText(inactive.url)).toBeInTheDocument();
   });
 
+  it('moves to the last existing page when the only row of a later page is deleted', async () => {
+    const firstPage: WebhookEndpoint[] = Array.from({ length: 20 }, (_unused, index) => ({
+      ...active,
+      id: 100 - index,
+      url: `https://page-one-${index}.example.com/hook`,
+    }));
+    const lonely: WebhookEndpoint = { ...active, id: 1, url: 'https://lonely.example.com/hook' };
+    const sorted = { sort_by: 'id', sort_order: 'desc' } as const;
+
+    // The server's answers by offset, before and after the delete resolves.
+    let deleted = false;
+    const offsetsAfterDelete: number[] = [];
+    vi.mocked(webhooksApi.deleteEndpoint).mockImplementation(async () => {
+      deleted = true;
+    });
+    vi.mocked(webhooksApi.listEndpoints).mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0;
+      if (deleted) offsetsAfterDelete.push(offset);
+      const total = deleted ? 20 : 21;
+      if (offset === 0) return { rows: firstPage, total };
+      return { rows: deleted ? [] : [lonely], total };
+    });
+    render(withClient(createProductionQueryClient(), <Webhooks />));
+    await rowOf(firstPage[0].url);
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    const row = await rowOf(lonely.url);
+    expect(screen.getByText(/^21.21 of 21$/)).toBeInTheDocument();
+
+    fireEvent.click(row.getByRole('button', { name: `Delete ${lonely.url}` }));
+    fireEvent.click(
+      within(await screen.findByRole('dialog', { name: 'Delete webhook endpoint' })).getByRole(
+        'button',
+        { name: 'Delete' },
+      ),
+    );
+    await waitFor(() => expect(webhooksApi.deleteEndpoint).toHaveBeenCalledWith(1));
+
+    // The emptied second page is fetched, then the first page, which is the
+    // last one left.
+    await waitFor(() => expect(offsetsAfterDelete).toContain(20));
+    await waitFor(() =>
+      expect(webhooksApi.listEndpoints).toHaveBeenLastCalledWith({
+        offset: 0,
+        limit: 20,
+        ...sorted,
+      }),
+    );
+    await waitFor(() => expect(screen.getByText(/^1.20 of 20$/)).toBeInTheDocument());
+    expect(screen.getByText(firstPage[0].url)).toBeInTheDocument();
+    expect(screen.queryByText(lonely.url)).not.toBeInTheDocument();
+    expect(screen.queryByText('No webhook endpoints yet.')).not.toBeInTheDocument();
+  });
+
   it('shows the secret of a new endpoint once and keeps it nowhere after the dialog closes', async () => {
     const created: WebhookEndpoint = {
       ...active,
