@@ -9,7 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -34,7 +37,8 @@ import (
 // URL. Callback spends that row with one conditional UPDATE committed on its
 // own, exchanges the code, verifies the ID token (signature, iss, aud, exp and
 // the nonce), maps its groups or roles claim to a role (the first matching
-// entry, in stored order) and then runs one governed transaction
+// entry, in stored order; an Entra ID group overage is read from Microsoft
+// Graph, #450) and then runs one governed transaction
 // (userService.ApplyOIDCSignIn):
 //
 //	admin set → users → roles → user_identities → refresh_tokens
@@ -82,6 +86,23 @@ const (
 	oidcNameMaxBytes       = 100
 	oidcCallbackPath       = "/auth/callback"
 	oidcRandomPasswordSize = 32
+)
+
+// Microsoft Graph group resolution of an Entra ID group overage (#450).
+const (
+	// oidcEntraIssuerHost is the host of the Entra ID global cloud. Sovereign
+	// clouds (login.microsoftonline.us, login.chinacloudapi.cn) are left out
+	// because their Graph host differs.
+	oidcEntraIssuerHost = "login.microsoftonline.com"
+	oidcGraphBaseURL    = "https://graph.microsoft.com"
+	// oidcGraphTimeout is ONE deadline over every Graph page of a sign-in.
+	oidcGraphTimeout = 5 * time.Second
+	// oidcGraphScope is the delegated permission Start adds for an Entra ID
+	// issuer whose role mapping uses groups.
+	oidcGraphScope           = "https://graph.microsoft.com/GroupMember.Read.All"
+	oidcGraphMemberObjects   = "/v1.0/me/getMemberObjects"
+	oidcGraphPageMaxBytes    = 1 << 20
+	oidcGraphMemberObjectsIn = `{"securityEnabledOnly":true}`
 )
 
 // oidcRefusalError is a refusal with the error_code it is logged under. It is
@@ -139,6 +160,12 @@ type oidcService struct {
 	// beforeJITInsert is a test seam of the first sign-in (see
 	// oidcSignIn.beforeInsert); nil in production.
 	beforeJITInsert func()
+	// entraIssuerHost, graphBaseURL and graphTimeout drive the Microsoft
+	// Graph resolution of an Entra ID group overage. NewOIDCService sets the
+	// production values; tests in this package replace them directly.
+	entraIssuerHost string
+	graphBaseURL    string
+	graphTimeout    time.Duration
 }
 
 // NewOIDCService builds the sign-in from the single sign-on settings, the
@@ -168,6 +195,10 @@ func NewOIDCService(
 		attempts:      attempts,
 		appBaseURL:    strings.TrimRight(appBaseURL, "/"),
 		now:           time.Now,
+
+		entraIssuerHost: oidcEntraIssuerHost,
+		graphBaseURL:    oidcGraphBaseURL,
+		graphTimeout:    oidcGraphTimeout,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -249,8 +280,50 @@ func (s *oidcService) oauthConfig(provider *oidc.Provider, cfg EffectiveSSOConfi
 		ClientSecret: cfg.ClientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  s.redirectURI(),
-		Scopes:       cfg.Scopes,
+		Scopes:       s.requestScopes(cfg),
 	}
+}
+
+// requestScopes are the configured scopes, plus the Microsoft Graph
+// GroupMember.Read.All scope (once) when the issuer is Entra ID and the role
+// mapping uses groups, so a group overage can be resolved. The added scope is
+// never stored.
+func (s *oidcService) requestScopes(cfg EffectiveSSOConfig) []string {
+	scopes := append([]string(nil), cfg.Scopes...)
+	if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) || !mappingUsesGroups(cfg.RoleMapping) {
+		return scopes
+	}
+	for _, scope := range scopes {
+		if scope == oidcGraphScope {
+			return scopes
+		}
+	}
+	return append(scopes, oidcGraphScope)
+}
+
+// oidcIsEntraIssuer reports whether the issuer URL's host (without port,
+// any letter case) is exactly entraHost. A host that merely starts with it
+// or a path that names it does not count.
+func oidcIsEntraIssuer(issuerURL, entraHost string) bool {
+	if entraHost == "" {
+		return false
+	}
+	parsed, err := url.Parse(issuerURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), entraHost)
+}
+
+// mappingUsesGroups reports whether any role mapping entry matches on the
+// groups claim.
+func mappingUsesGroups(mapping []SSORoleMapping) bool {
+	for _, entry := range mapping {
+		if entry.Claim == SSOClaimGroups {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *oidcService) Start(ctx context.Context) (string, error) {
@@ -368,15 +441,22 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, oidcRefuse("claims_invalid")
 	}
+	// Distributed claims: an issuer that moved groups out of the token (a
+	// group overage). Without a groups mapping the overage does not matter;
+	// on Entra ID the groups are read from Microsoft Graph below, after every
+	// other check; any other issuer fails closed. _claim_sources is never
+	// read.
+	resolveGroups := false
 	if len(claims.ClaimNames) > 0 {
-		// Distributed claims: an issuer that moved groups out of the token
-		// (Entra ID group overage) fails closed.
 		var names map[string]json.RawMessage
 		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
 			return nil, oidcRefuse("claims_invalid")
 		}
-		if _, overage := names[SSOClaimGroups]; overage {
-			return nil, oidcRefuse("group_overage")
+		if _, overage := names[SSOClaimGroups]; overage && mappingUsesGroups(cfg.RoleMapping) {
+			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
+				return nil, oidcRefuse("group_overage")
+			}
+			resolveGroups = true
 		}
 	}
 	groups, ok := oidcStringArray(claims.Groups)
@@ -393,6 +473,13 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	}
 	if len(idToken.Issuer) > oidcIssuerMaxBytes {
 		return nil, oidcRefuse("issuer_invalid")
+	}
+	if resolveGroups {
+		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
+		if err != nil {
+			return nil, oidcRefuse("groups_unavailable")
+		}
+		groups = resolved
 	}
 
 	roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, roles)
@@ -416,6 +503,143 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 		issue:        s.issue,
 		beforeInsert: s.beforeJITInsert,
 	})
+}
+
+// Failures of the Microsoft Graph group resolution. They never carry a URL,
+// a token, a status text or a response body.
+var (
+	errGraphNoAccessToken = errors.New("graph: no access token")
+	errGraphRequest       = errors.New("graph: request failed")
+	errGraphStatus        = errors.New("graph: unexpected status")
+	errGraphBody          = errors.New("graph: malformed response")
+	errGraphTooLarge      = errors.New("graph: response too large")
+	errGraphNextLink      = errors.New("graph: next link refused")
+	errGraphTooManyPages  = errors.New("graph: too many pages")
+)
+
+// graphMemberObjectsPage is one page of getMemberObjects.
+type graphMemberObjectsPage struct {
+	Value    json.RawMessage `json:"value"`
+	NextLink string          `json:"@odata.nextLink"`
+}
+
+// resolveEntraGroups reads the security-group object ids of the signed-in
+// person from Microsoft Graph (POST /v1.0/me/getMemberObjects with
+// securityEnabledOnly) with the access token of the code exchange. One
+// deadline (graphTimeout) covers every page; at most maxPages requests are
+// sent, each to an https URL on the host of graphBaseURL, through the issuer
+// client (no redirects, no proxy). The token is only put into the request
+// header; it is never logged, stored or put into an error.
+func (s *oidcService) resolveEntraGroups(ctx context.Context, accessToken string, maxPages int) ([]string, error) {
+	if accessToken == "" {
+		return nil, errGraphNoAccessToken
+	}
+	if maxPages < 1 {
+		maxPages = oidcGraphDefaultMaxPages
+	}
+	base, err := url.Parse(s.graphBaseURL)
+	if err != nil || base.Scheme != "https" || base.Host == "" {
+		return nil, errGraphNextLink
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.graphTimeout)
+	defer cancel()
+	client := newOIDCHTTPClient(s.rootCAs)
+
+	ids := []string{}
+	next := strings.TrimRight(s.graphBaseURL, "/") + oidcGraphMemberObjects
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, errGraphTooManyPages
+		}
+		if !graphSameOrigin(next, base) {
+			return nil, errGraphNextLink
+		}
+		values, nextLink, err := graphMemberObjectsRequest(ctx, client, next, accessToken)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, values...)
+		if nextLink == "" {
+			return ids, nil
+		}
+		next = nextLink
+	}
+}
+
+// graphSameOrigin accepts an absolute https URL whose host, port included,
+// is base's.
+func graphSameOrigin(raw string, base *url.URL) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
+		return false
+	}
+	return strings.EqualFold(graphHostPort(parsed), graphHostPort(base))
+}
+
+// graphHostPort is the URL's host with its port, the https default made
+// explicit, so https://h and https://h:443 compare equal.
+func graphHostPort(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(u.Hostname(), port)
+}
+
+func graphMemberObjectsRequest(ctx context.Context, client *http.Client, target, accessToken string) ([]string, string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(oidcGraphMemberObjectsIn))
+	if err != nil {
+		return nil, "", errGraphRequest
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", errGraphRequest
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, "", errGraphStatus
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, oidcGraphPageMaxBytes+1))
+	if err != nil {
+		return nil, "", errGraphRequest
+	}
+	if len(body) > oidcGraphPageMaxBytes {
+		return nil, "", errGraphTooLarge
+	}
+	var page graphMemberObjectsPage
+	if err := json.Unmarshal(body, &page); err != nil {
+		return nil, "", errGraphBody
+	}
+	values, ok := graphStringArray(page.Value)
+	if !ok {
+		return nil, "", errGraphBody
+	}
+	return values, page.NextLink, nil
+}
+
+// graphStringArray decodes a value that must be a JSON array whose every
+// element is a string; absent, null and any other element are refused.
+func graphStringArray(raw json.RawMessage) ([]string, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "[") {
+		return nil, false
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(raw, &elements); err != nil {
+		return nil, false
+	}
+	values := make([]string, 0, len(elements))
+	for _, element := range elements {
+		var value string
+		if !strings.HasPrefix(strings.TrimSpace(string(element)), `"`) || json.Unmarshal(element, &value) != nil {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
 }
 
 // issue issues the session on the transaction handle exactly as a wired login

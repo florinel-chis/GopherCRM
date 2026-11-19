@@ -460,7 +460,12 @@ the binary collation still pads trailing spaces; a stored row is also compared b
 **Mapping.** The role is the FIRST entry of the role mapping, in stored order, whose claim
 (`groups` or `roles`) holds its value exactly, case-sensitively. Each claim must be absent or a
 JSON array of strings. No match is 401 with nothing written. A token whose `_claim_names` has a
-`groups` key (the Entra ID group overage) is refused, never read as "no groups". The mapping is
+`groups` key (a group overage, #450) is handled three ways: when the mapping has no `groups`
+entry the overage is ignored and `roles` decides; when the mapping has a `groups` entry and the
+issuer is Entra ID (host `login.microsoftonline.com`), the group object ids are read from
+Microsoft Graph (see the Entra ID example) and go through the same first-match mapping, any Graph
+failure refusing with `groups_unavailable`; for any other issuer it is refused
+(`group_overage`), never read as "no groups". `_claim_sources` is never read. The mapping is
 re-applied on every sign-in through the governed role write (the mapping is the administrator's
 grant, so the actor-key and escalation checks do not apply): the last active admin cannot be
 demoted (401, nothing written, no session), a custom role is not given to a customer login, and
@@ -540,8 +545,34 @@ OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":1},{"claim":"r
 ```
 
 A mapping on `groups` uses group object ids. Above 200 groups Entra ID leaves the `groups` claim
-out and sends `_claim_names` instead; such a sign-in is refused (401), so prefer app roles. Role
-ids are those of `GET /roles`.
+out and sends `_claim_names` instead (the group overage). Since #450 the CRM then reads the
+person's groups from Microsoft Graph:
+
+- It happens only for an Entra ID issuer whose host is exactly `login.microsoftonline.com` and a
+  role mapping with at least one `groups` entry, after the ID token, nonce, subject and issuer
+  checks have passed. Without a `groups` entry the overage is ignored and no Graph call is made.
+- For such a configuration `POST /auth/oidc/start` adds the scope
+  `https://graph.microsoft.com/GroupMember.Read.All` (once, after the configured scopes; it is not
+  stored in the settings). That is the delegated Microsoft Graph permission
+  `GroupMember.Read.All`, which needs admin consent in the tenant: add it to the app registration
+  and grant consent, or users of an overflowing group set cannot sign in.
+- The callback sends `POST /v1.0/me/getMemberObjects` to `https://graph.microsoft.com` with
+  `{"securityEnabledOnly": true}`, so only security groups count, and follows `@odata.nextLink`
+  only to `https` URLs on that same host. Only the returned object ids are used, never group
+  names.
+- One 5-second budget covers every page of a sign-in, at most `OIDC_GRAPH_MAX_PAGES` pages are
+  read (environment only, 1..50, default 10; any other value means 10), no redirect is followed
+  and no proxy is used. A non-200 answer, a redirect, a malformed or oversized (over 1 MiB) page,
+  a foreign next link, too many pages or the timeout refuse the sign-in (401, logged as
+  `groups_unavailable`, nothing written). Graph groups that match no entry are
+  `no_mapping_match`.
+- The access token from the same code exchange is used for these requests only; it is never
+  stored or logged, and Graph results are not cached.
+- Sovereign clouds (`login.microsoftonline.us`, `login.chinacloudapi.cn`) are not supported: their
+  overage is refused as `group_overage` because their Graph host differs.
+
+App roles remain the recommended setup: they have no overage limit, need no extra permission and
+no Graph call. Role ids are those of `GET /roles`.
 
 ### SPA sign-in and settings (#436)
 

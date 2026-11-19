@@ -1063,7 +1063,8 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   1. Call back with a used state, an expired state (over ten minutes), and after the issuer
      setting changed since the start.
   2. Call back with an ID token carrying a wrong nonce, a wrong audience, a foreign signature, a
-     `groups` string, no mapped value, a `groups` entry in `_claim_names`, or a `sub` that differs
+     `groups` string, no mapped value, a `groups` entry in `_claim_names` on an issuer other than
+     Entra ID (TC-AUTH-058 covers Entra ID), or a `sub` that differs
      from a linked one only by a trailing space.
   3. Sign in as an identity whose user is deactivated, or erased (its identity row is kept).
 - **Expected:** **401** `UNAUTHORIZED` "Single sign-on failed" for each, with no user, identity,
@@ -1150,3 +1151,32 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   revokes every refresh token). Step 3: the login with the new password succeeds while on and is
   **401** once off. Sessions already issued are not ended by switching the setting off.
 - **Automation:** automated — Go: `TestSSOAccountPasswordPolicy{SQLite,MySQL}` (subtests `off|unset_default_off|on/linked|unlinked/reset_request|reset_confirm|login`, `password_set_while_on_stops_when_off`), `cmd/auth_password_reset_sso_wiring_test.go` `TestSSOPasswordPolicyWired` (the production router), `TestSSOSettingsHandlerAllowPassword`; Vitest `src/pages/settings/SSOSettings.test.tsx` (the switch and its warning)
+
+### TC-AUTH-058 — An Entra ID group overage is resolved through Microsoft Graph or refused
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Single sign-on on with an Entra ID issuer
+  (`https://login.microsoftonline.com/<tenant>/v2.0`) and a role mapping with a `groups` entry for
+  a security group's object id; the app registration has the delegated Microsoft Graph permission
+  `GroupMember.Read.All` with admin consent.
+- **Steps:**
+  1. `POST /api/v1/auth/oidc/start`; repeat with a mapping of only `roles` entries, and with a
+     `groups` mapping on another issuer.
+  2. Sign in as a person whose ID token carries `_claim_names.groups` instead of `groups` (an
+     overage) and who is a member of the mapped group; Graph answers over two pages.
+  3. Repeat as a member of no mapped group.
+  4. Repeat while Graph answers 500, answers slower than the 5 s budget, sends an
+     `@odata.nextLink` on every page beyond `OIDC_GRAPH_MAX_PAGES`, sends a nextLink to another
+     host, or redirects.
+  5. Sign in with an overage token while the mapping has only `roles` entries, and with a
+     `groups` claim and no overage.
+- **Expected:** Step 1: the `scope` carries `https://graph.microsoft.com/GroupMember.Read.All`
+  once, after the configured scopes, only for the Entra ID issuer with a `groups` mapping; the
+  other two scopes are the configured ones. Step 2: signed in with the mapped role; each Graph page
+  was a `POST` with `{"securityEnabledOnly":true}` and the access token of that code exchange,
+  the first to `/v1.0/me/getMemberObjects`. Step 3: **401** "Single sign-on failed"
+  (`no_mapping_match`), nothing written. Step 4: **401** each time, logged as
+  `groups_unavailable`, nothing written; no more requests than the page bound, and the other
+  host receives none. Step 5: signed in with no Graph request. The access token never appears in
+  the logs or in any table.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `graph_overage_match`, `graph_overage_no_match`, `graph_error`, `graph_timeout`, `graph_paging_bound`, `graph_foreign_host`, `graph_redirect`, `graph_no_overage`, `graph_roles_mapping`, `graph_scope_requested`, `graph_token_privacy`; `TestOIDCGraphDefaults`, `TestOIDCResolveEntraGroups`

@@ -38,6 +38,11 @@ type SSOConfig struct {
 	// RoleMapping is OIDC_ROLE_MAPPING, raw JSON: an array of
 	// {"claim","value","role_id"} objects.
 	RoleMapping string
+	// GraphMaxPages is OIDC_GRAPH_MAX_PAGES, raw (0 when unset or not a
+	// number): the most Microsoft Graph pages one Entra ID sign-in reads when
+	// its groups overflow the ID token. The service applies the range and
+	// the default.
+	GraphMaxPages int
 }
 
 func loadSSOConfig() SSOConfig {
@@ -51,6 +56,7 @@ func loadSSOConfig() SSOConfig {
 		ClientSecret:     os.Getenv("OIDC_CLIENT_SECRET"),
 		Scopes:           os.Getenv("OIDC_SCOPES"),
 		RoleMapping:      os.Getenv("OIDC_ROLE_MAPPING"),
+		GraphMaxPages:    getEnvAsInt("OIDC_GRAPH_MAX_PAGES", 0),
 	}
 }
 

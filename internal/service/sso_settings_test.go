@@ -115,6 +115,7 @@ func TestSSOConfig(t *testing.T) {
 		assert.Empty(t, cfg.ClientID)
 		assert.Empty(t, cfg.ClientSecret)
 		assert.Empty(t, cfg.RoleMapping)
+		assert.Equal(t, 10, cfg.GraphMaxPages, "the Graph page bound defaults to 10 and has no source")
 		assert.Equal(t, SSOConfigSources{
 			Enabled: SSOSourceDefault, AllowPassword: SSOSourceDefault, IssuerURL: SSOSourceDefault, ClientID: SSOSourceDefault,
 			ClientSecret: SSOSourceDefault, Scopes: SSOSourceDefault, RoleMapping: SSOSourceDefault,

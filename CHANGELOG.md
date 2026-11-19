@@ -845,6 +845,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on: an Entra ID group overage is resolved through Microsoft Graph instead of
+  refused (#450).** When an Entra ID ID token (issuer host `login.microsoftonline.com`) moves its
+  groups into `_claim_names` and the role mapping has a `groups` entry, the callback now reads the
+  person's security-group object ids with `POST /v1.0/me/getMemberObjects`
+  (`securityEnabledOnly: true`) on `https://graph.microsoft.com`, using the access token of the
+  same code exchange, and maps them with the usual first-match rule. Graph gets one 5-second
+  budget per sign-in, no redirects or proxy, same-host `@odata.nextLink` paging up to the new
+  environment variable `OIDC_GRAPH_MAX_PAGES` (1..50, default 10), and any failure refuses the
+  sign-in with the error code `groups_unavailable`. For such a configuration
+  `POST /auth/oidc/start` adds the delegated scope
+  `https://graph.microsoft.com/GroupMember.Read.All`, which needs admin consent in the tenant.
+  Without a `groups` entry an overage is now ignored and `roles` decides; on any other issuer
+  (sovereign Entra clouds included) it is still refused as `group_overage`. `_claim_sources` is
+  never read, and the access token and Graph results are neither stored nor logged. App roles
+  remain the recommended Entra ID setup. `GET`/`PUT /settings/sso` are unchanged.
 - **The e2e test certificate trust is refused in production mode (#446).** The
   `-tags=gophercrm_e2e` backend no longer installs the per-run test CA from a package `init()`:
   `cmd/main.go` calls `aeo.InstallE2ETestRoots` once, right after loading the configuration and
