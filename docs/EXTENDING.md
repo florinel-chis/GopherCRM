@@ -301,7 +301,7 @@ schema). A root that skipped proves nothing.
 
 - Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:265`) with key, type,
   category, default and description. `configRepo.InitializeDefaults()` runs at every start
-  (`cmd/main.go:150`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
+  (`cmd/main.go:157`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
   value (`BulkUpsert`, `internal/repository/configuration_repository.go:62`). Changing a default
   therefore does not touch existing installations.
 - A secret gets `IsSensitive: true` (the AEO keys, `configuration.go:367-404`): encrypted at rest by
@@ -537,8 +537,8 @@ it is the cleanest removal.
 | Module | Prefer | Coupling to watch |
 |---|---|---|
 | Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:358`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:558-562`, and `probeAutomationTables`, `erasure.go:581`, for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:285-286,363-386,459-461,581,596-597`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:239-240`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,107`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:199`) |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:292-293,370-393,466-468,588,603-604`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:246-247`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,107`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:199`) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.

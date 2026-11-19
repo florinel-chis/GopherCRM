@@ -134,6 +134,13 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// The per-run test CA of `make e2e` (gophercrm_e2e builds only, opt-in).
+	// It runs once, before any AEO or OpenID Connect client exists, and
+	// refuses production mode, including a SERVER_MODE that came from .env.
+	if err := aeo.InstallE2ETestRoots(cfg.Server.Mode); err != nil {
+		log.Fatalf("Failed to start: %v", err)
+	}
+
 	if err := utils.InitLogger(&cfg.Logging); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}

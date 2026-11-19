@@ -60,7 +60,7 @@ fi
 # so no port probing happens.
 plan() {
   env -u DB_PATH -u DB_NAME E2E_CAFFEINATED=1 E2E_PLAN_ONLY=1 JWT_SECRET=selftest-secret-selftest-secret-selftest \
-    E2E_API_PORT=1 E2E_UI_PORT=2 E2E_AEO_PORT=3 DB_HOST=192.0.2.1 "$@" "$tmp/scripts/e2e/run.sh" 2>&1
+    E2E_API_PORT=1 E2E_UI_PORT=2 E2E_AEO_PORT=3 E2E_OIDC_PORT=4 DB_HOST=192.0.2.1 "$@" "$tmp/scripts/e2e/run.sh" 2>&1
 }
 
 for driver in postgres MYSQL "sqlite;rm" " "; do
@@ -123,6 +123,28 @@ fi
 for invalid_port in 0 65536 bad 1 2; do
   if plan E2E_DB_DRIVER=sqlite E2E_AEO_PORT="$invalid_port" >/dev/null 2>&1; then
     fail "e2e run accepted invalid or conflicting provider port '$invalid_port'"
+  fi
+done
+
+# The OpenID Connect test issuer: the plan names its loopback origin (never
+# the per-run client secret), and a port that is invalid or collides with the
+# API, UI or AEO port is refused before anything starts.
+set +e
+output=$(plan E2E_DB_DRIVER=sqlite E2E_OIDC_CLIENT_SECRET=selftest-leak-check)
+code=$?
+set -e
+if [ "$code" -ne 0 ] ||
+  ! printf '%s\n' "$output" | grep -qx 'e2e plan: oidc_issuer_url=https://127.0.0.1:4' ||
+  [[ $output == *"selftest-leak-check"* ]] || [[ $output == *"CLIENT_SECRET"* ]]; then
+  fail "e2e plan does not name the test issuer origin, or shows its secret (exit $code): $output"
+fi
+for invalid_port in 0 70000 65536 bad 1 2 3; do
+  set +e
+  output=$(plan E2E_DB_DRIVER=sqlite E2E_OIDC_PORT="$invalid_port")
+  code=$?
+  set -e
+  if [ "$code" -ne 2 ] || [[ $output != *"E2E_OIDC_PORT must be a valid port"* ]]; then
+    fail "e2e run accepted invalid or conflicting test issuer port '$invalid_port' (exit $code): $output"
   fi
 done
 
@@ -218,4 +240,4 @@ printf '%s' 'JWT_SECRET=abc==' >>"$envfile" # last line without a newline
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "e2e runner self-test passed: guard refuses non-test databases and accepts _e2e; E2E_DB_DRIVER takes mysql (default, unchanged) or sqlite (new file, no reset, no mysql); only E2E_PLAN_ONLY=1 is plan-only; a sqlite run reaches the build without calling mysql and a mysql run resets gocrm_e2e first; .env reader handles export, '=', quotes, comments and CRLF."
+echo "e2e runner self-test passed: guard refuses non-test databases and accepts _e2e; E2E_DB_DRIVER takes mysql (default, unchanged) or sqlite (new file, no reset, no mysql); the test issuer port is validated and its origin planned; only E2E_PLAN_ONLY=1 is plan-only; a sqlite run reaches the build without calling mysql and a mysql run resets gocrm_e2e first; .env reader handles export, '=', quotes, comments and CRLF."

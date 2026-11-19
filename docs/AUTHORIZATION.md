@@ -573,6 +573,36 @@ generic message "Single sign-on failed. Try again or sign in with your password.
 back to the sign-in page; the page never shows or logs the code, the state or the tokens.
 Password login stays available as break-glass.
 
+### Browser tests against a local test issuer (#446)
+
+`gocrm-ui/e2e/tests/sso.spec.ts` drives the real browser round trip (login page, issuer page,
+`/auth/callback`, the app) against a disposable OpenID Connect issuer,
+`scripts/e2e/oidc-issuer`. `make e2e` builds it, starts it on `https://127.0.0.1:<E2E_OIDC_PORT>`
+(by default the first free port from 18291) and stops it when the run ends; the spec configures
+single sign-on through Settings > Single sign-on with that issuer, a per-run client secret and a
+`roles` mapping (`crm-admin` to Admin, `crm-sales` to Sales), and its `afterAll` switches single
+sign-on off again and deletes the users it created. Run it alone with
+`make e2e E2E_DB_DRIVER=sqlite SPECS="e2e/tests/sso.spec.ts"`; outside `make e2e` (no
+`E2E_OIDC_ISSUER_URL`) it skips. Like every browser spec it runs in CI only for a release, on
+MySQL, MariaDB and SQLite, so it reads and writes through the API only.
+
+The issuer registers one client (`gophercrm-e2e`) whose only redirect URI is the SPA's
+`/auth/callback`. Its authorization endpoint refuses, with a 400 page and never a redirect, an
+unknown client, any other `redirect_uri`, a missing code challenge or a method other than `S256`,
+and a missing `state` or `nonce`; a valid request shows a small form (subject, email, names, roles,
+groups). Its token endpoint requires the client secret (basic or post), the same `redirect_uri`
+and a verifier whose S256 hash is the challenge, spends a code once, and returns an RS256 ID token
+with the authorization request's nonce. Its own checks are covered by
+`go test ./scripts/e2e/oidc-issuer` and by the spec's last scenario, which acts as a client
+itself.
+
+The issuer serves the run's per-run test certificate (the one the AEO provider fixture uses). Only
+the `-tags=gophercrm_e2e` backend can trust it, and only with `GOPHERCRM_E2E_AEO_TLS=1`:
+`aeo.InstallE2ETestRoots`, called once at startup right after the configuration is loaded,
+installs it as Go's fallback roots and refuses (the process exits before opening the database or
+a listener) when `SERVER_MODE` is `production`, whether it comes from the environment or from
+`.env`. A normal build has no such switch. The check against a live Entra ID tenant stays manual.
+
 ### Design conditions
 
 **Sign-in.** OIDC authorization code flow with PKCE, against one or more configured issuers (an

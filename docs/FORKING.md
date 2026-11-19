@@ -21,7 +21,7 @@ moves faster than this page.
 
 Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:261`).
+wiring is in `setupDependencies` (`cmd/main.go:268`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -103,7 +103,7 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:1696`). Everything under `[Unreleased]`
+The latest release is 1.2.0 (`CHANGELOG.md:1721`). Everything under `[Unreleased]`
 (`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
@@ -333,7 +333,7 @@ Configuration comes from three places:
 | `DB_PATH` | `gophercrm.db` | `config.go:282` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:283-287` | MySQL only |
 | `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:291-292` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:293` | `production` switches Gin to release mode (`cmd/main.go:221-223`) |
+| `SERVER_MODE` | `development` | `config.go:293` | `production` switches Gin to release mode (`cmd/main.go:228-230`) |
 | `TRUSTED_PROXIES` | trust none | `config.go:294` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:295` | every browser origin of your UI |
 | `APP_BASE_URL` | `http://localhost:5173` | `config.go:322` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
@@ -353,9 +353,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:362`), refresh and password-reset tokens (`cmd/main.go:326`), form confirmation
+>   (`cmd/main.go:369`), refresh and password-reset tokens (`cmd/main.go:333`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
->   encryption of sensitive settings (`cmd/main.go:309`, `internal/utils/secretbox.go`). Rotating
+>   encryption of sensitive settings (`cmd/main.go:316`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
@@ -599,7 +599,7 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:261` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` in `cmd/main.go:268` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
 | the AutoMigrate list in `internal/models/database.go:114-156` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
