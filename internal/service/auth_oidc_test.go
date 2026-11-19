@@ -22,6 +22,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -56,6 +57,11 @@ const (
 	oidcGroupSales  = "crm-sales"
 	oidcGroupUsers  = "crm-users"
 	oidcAppRole     = "CRM.Support"
+
+	// Entra ID group object ids (#450).
+	oidcGraphGroupSales     = "6f1c2a3b-0d4e-4f5a-8b6c-7d8e9f0a1b2c"
+	oidcGraphGroupUnrelated = "11111111-2222-4333-8444-555555555555"
+	oidcGraphPath           = "/graph/v1.0/me/getMemberObjects"
 )
 
 // ------------------------------------------------------------ test issuer ---
@@ -86,6 +92,9 @@ type oidcTestIssuer struct {
 	server   *httptest.Server
 	key      *rsa.PrivateKey
 	otherKey *rsa.PrivateKey
+	// other is a second trusted TLS server standing for another host; it
+	// counts the requests it receives.
+	other *httptest.Server
 
 	mu                sync.Mutex
 	grants            map[string]oidcGrant
@@ -93,6 +102,33 @@ type oidcTestIssuer struct {
 	discoveryRedirect bool
 	issuedIDTokens    []string
 	codeSeq           int
+	// accessTokens maps each issued access token to its code.
+	accessTokens map[string]string
+	lastAccess   string
+	graph        oidcFakeGraph
+	otherHits    int
+}
+
+// Modes of the fake Microsoft Graph.
+const (
+	graphModePages       = "pages"
+	graphModeStatus500   = "status500"
+	graphModeSlow        = "slow"
+	graphModeForeignNext = "foreign_next"
+	graphModeRedirect    = "redirect"
+	graphModeEndless     = "endless"
+)
+
+// oidcFakeGraph is the fake getMemberObjects: its mode, the ids it returns
+// per page and what it received.
+type oidcFakeGraph struct {
+	mode     string
+	pages    [][]string
+	requests []oidcGraphRequest
+}
+
+type oidcGraphRequest struct {
+	method, path, query, body, authorization, contentType string
 }
 
 func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
@@ -101,14 +137,116 @@ func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 	require.NoError(t, err)
 	other, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, grants: map[string]oidcGrant{}}
+	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, grants: map[string]oidcGrant{}, accessTokens: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", issuer.discovery)
 	mux.HandleFunc("/jwks", issuer.jwks)
 	mux.HandleFunc("/token", issuer.token)
+	mux.HandleFunc(oidcGraphPath, issuer.graphMemberObjects)
 	issuer.server = httptest.NewTLSServer(mux)
 	t.Cleanup(issuer.server.Close)
+	issuer.other = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		issuer.mu.Lock()
+		issuer.otherHits++
+		issuer.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":["` + oidcGraphGroupSales + `"]}`))
+	}))
+	t.Cleanup(issuer.other.Close)
 	return issuer
+}
+
+// graphMemberObjects is the fake Microsoft Graph POST
+// /v1.0/me/getMemberObjects. It answers 401 unless the bearer is an access
+// token this issuer returned from a code exchange.
+func (i *oidcTestIssuer) graphMemberObjects(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	authorization := r.Header.Get("Authorization")
+	i.mu.Lock()
+	i.graph.requests = append(i.graph.requests, oidcGraphRequest{
+		method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: string(body),
+		authorization: authorization, contentType: r.Header.Get("Content-Type"),
+	})
+	_, known := i.accessTokens[strings.TrimPrefix(authorization, "Bearer ")]
+	mode, pages := i.graph.mode, i.graph.pages
+	i.mu.Unlock()
+	if !strings.HasPrefix(authorization, "Bearer ") || !known {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	page := 0
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		_, _ = fmt.Sscanf(raw, "%d", &page)
+	}
+	answer := map[string]interface{}{"value": []string{}}
+	switch mode {
+	case graphModeStatus500:
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":{"code":"generalException"}}`))
+		return
+	case graphModeSlow:
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"value":["` + oidcGraphGroupSales + `"]}`))
+		return
+	case graphModeRedirect:
+		http.Redirect(w, r, i.other.URL+"/v1.0/me/getMemberObjects", http.StatusFound)
+		return
+	case graphModeForeignNext:
+		answer["value"] = []string{oidcGraphGroupUnrelated}
+		answer["@odata.nextLink"] = i.other.URL + "/v1.0/me/getMemberObjects?page=1"
+	case graphModeEndless:
+		answer["value"] = []string{oidcGraphGroupUnrelated}
+		answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.server.URL, oidcGraphPath, page+1)
+	default:
+		if page < len(pages) {
+			answer["value"] = pages[page]
+		}
+		if page+1 < len(pages) {
+			answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.server.URL, oidcGraphPath, page+1)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(answer)
+}
+
+func (i *oidcTestIssuer) setGraph(mode string, pages ...[]string) {
+	i.mu.Lock()
+	i.graph.mode, i.graph.pages = mode, pages
+	i.mu.Unlock()
+}
+
+func (i *oidcTestIssuer) resetGraph() {
+	i.mu.Lock()
+	i.graph = oidcFakeGraph{mode: graphModePages}
+	i.otherHits = 0
+	i.mu.Unlock()
+}
+
+func (i *oidcTestIssuer) graphRequests() []oidcGraphRequest {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]oidcGraphRequest(nil), i.graph.requests...)
+}
+
+func (i *oidcTestIssuer) otherRequests() int {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.otherHits
+}
+
+// lastAccessToken is the access token of the latest code exchange.
+func (i *oidcTestIssuer) lastAccessToken() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.lastAccess
 }
 
 func (i *oidcTestIssuer) URL() string { return i.server.URL }
@@ -116,6 +254,7 @@ func (i *oidcTestIssuer) URL() string { return i.server.URL }
 func (i *oidcTestIssuer) rootCAs() *x509.CertPool {
 	pool := x509.NewCertPool()
 	pool.AddCert(i.server.Certificate())
+	pool.AddCert(i.other.Certificate())
 	return pool
 }
 
@@ -199,9 +338,14 @@ func (i *oidcTestIssuer) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idToken := i.sign(grant)
+	accessToken := "idp-access-token-" + r.PostForm.Get("code")
+	i.mu.Lock()
+	i.accessTokens[accessToken] = r.PostForm.Get("code")
+	i.lastAccess = accessToken
+	i.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"access_token": "idp-access-token",
+		"access_token": accessToken,
 		"token_type":   "Bearer",
 		"expires_in":   3600,
 		"id_token":     idToken,
@@ -303,6 +447,10 @@ type oidcFixture struct {
 	competitor *gorm.DB
 	issuer     *oidcTestIssuer
 	sso        SSOSettingsService
+	// defaultSSO is the settings service the fixture was built with;
+	// newSSO builds another one over the same stored settings.
+	defaultSSO SSOSettingsService
+	newSSO     func(base config.SSOConfig) SSOSettingsService
 	auth       *authService
 	svc        *oidcService
 
@@ -348,6 +496,8 @@ func newOIDCFixture(t *testing.T, db, competitor *gorm.DB) *oidcFixture {
 	f.auth = NewAuthServiceWithSessions(userRepo, repository.NewAPIKeyRepository(db), refreshRepo,
 		repository.NewPasswordResetTokenRepository(db), txManager, nil, oidcTestJWTConfig(),
 		oidcTestAppBaseURL, oidcTestAPIKeySecret).(*authService)
+	f.defaultSSO = f.sso
+	f.newSSO = func(base config.SSOConfig) SSOSettingsService { return NewSSOSettingsService(configs, roleRepo, base) }
 	f.svc = NewOIDCService(f.sso, f.auth, userRepo, roleRepo, repository.NewRoleAuditRepository(db), refreshRepo,
 		repository.NewUserIdentityRepository(db), repository.NewOIDCLoginAttemptRepository(db), txManager,
 		oidcTestAppBaseURL+"/", WithOIDCClock(f.now), WithOIDCRootCAs(f.issuer.rootCAs())).(*oidcService)
@@ -394,7 +544,45 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.issuer.setTokenStatus(0)
 	f.issuer.setDiscoveryRedirect(false)
 	f.svc.beforeJITInsert = nil
+	f.svc.entraIssuerHost = oidcEntraIssuerHost
+	f.svc.graphBaseURL = oidcGraphBaseURL
+	f.svc.graphTimeout = oidcGraphTimeout
+	f.issuer.resetGraph()
+	f.useSSO(f.defaultSSO)
 	f.configure(t, f.mapping())
+}
+
+// useSSO swaps the settings service of the fixture and of the sign-in.
+func (f *oidcFixture) useSSO(sso SSOSettingsService) {
+	f.sso = sso
+	f.svc.sso = sso
+}
+
+// entra makes the test issuer count as Entra ID and points Microsoft Graph at
+// the fake under /graph on the issuer, with a 300 ms budget.
+func (f *oidcFixture) entra(t *testing.T) {
+	t.Helper()
+	parsed, err := url.Parse(f.issuer.URL())
+	require.NoError(t, err)
+	f.svc.entraIssuerHost = parsed.Hostname()
+	f.svc.graphBaseURL = f.issuer.URL() + "/graph"
+	f.svc.graphTimeout = 300 * time.Millisecond
+}
+
+// graphMapping maps a group object id to sales and the app role to support.
+func (f *oidcFixture) graphMapping() []SSORoleMapping {
+	return []SSORoleMapping{
+		{Claim: SSOClaimGroups, Value: oidcGraphGroupSales, RoleID: f.roleIDs[models.RoleSales]},
+		{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]},
+	}
+}
+
+// oidcOverage is a token spec whose groups overflowed into _claim_names.
+func oidcOverage(sub, email string) oidcTokenSpec {
+	return oidcTokenSpec{sub: sub, email: email, extra: map[string]interface{}{
+		"_claim_names":   map[string]string{"groups": "src1"},
+		"_claim_sources": map[string]interface{}{"src1": map[string]string{"endpoint": "https://graph.example.test/getMemberObjects"}},
+	}}
 }
 
 func (f *oidcFixture) start(t *testing.T) string {
@@ -669,6 +857,7 @@ var oidcSignInCases = []struct {
 			}}
 		tokens, err := f.signIn(t, spec)
 		f.assertRefused(t, "group_overage", tokens, err, 0, 0)
+		assert.Empty(t, f.issuer.graphRequests(), "no Graph request")
 	}},
 	{"last_admin_demotion_refused", func(t *testing.T, f *oidcFixture) {
 		admin := f.seedUser(t, "sole-admin@crm.example.test", models.RoleAdmin, true, "")
@@ -786,6 +975,179 @@ var oidcSignInCases = []struct {
 			assert.NotContains(t, logs, secret)
 		}
 	}},
+	{"graph_overage_match", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModePages, []string{oidcGraphGroupUnrelated}, []string{oidcGraphGroupSales})
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-match", "graph-match@idp.example.test"))
+		require.NoError(t, err)
+		require.NotNil(t, tokens.User)
+		assert.Equal(t, models.RoleSales, f.user(t, tokens.User.ID).Role, "mapped from the group Graph returned")
+		requests := f.issuer.graphRequests()
+		require.Len(t, requests, 2, "two Graph pages")
+		accessToken := f.issuer.lastAccessToken()
+		require.NotEmpty(t, accessToken)
+		for _, request := range requests {
+			assert.Equal(t, http.MethodPost, request.method)
+			assert.Equal(t, oidcGraphPath, request.path)
+			assert.JSONEq(t, `{"securityEnabledOnly":true}`, request.body)
+			assert.Equal(t, "application/json", request.contentType)
+			assert.Equal(t, "Bearer "+accessToken, request.authorization, "the access token of this exchange")
+		}
+		assert.Empty(t, requests[0].query, "the first page is getMemberObjects itself")
+		assert.Equal(t, "page=1", requests[1].query, "the second page follows the nextLink")
+	}},
+	{"graph_overage_no_match", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModePages, []string{oidcGraphGroupUnrelated})
+
+		// A token refused by an earlier check never reaches Graph.
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-pad ", "graph-pad@idp.example.test"))
+		f.assertRefused(t, "subject_invalid", tokens, err, 0, 0)
+		assert.Empty(t, f.issuer.graphRequests(), "no Graph request before the subject check passes")
+
+		tokens, err = f.signIn(t, oidcOverage("subject-graph-nomatch", "graph-nomatch@idp.example.test"))
+		f.assertRefused(t, "no_mapping_match", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.graphRequests(), 1)
+		assert.Equal(t, int64(0), f.count(t, "role_audit_log", ""))
+	}},
+	{"graph_error", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModeStatus500)
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-500", "graph-500@idp.example.test"))
+		f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.graphRequests(), 1)
+	}},
+	{"graph_timeout", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModeSlow)
+		started := time.Now()
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-slow", "graph-slow@idp.example.test"))
+		f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+		assert.Less(t, time.Since(started), 2*time.Second, "the Graph budget ends the wait")
+	}},
+	{"graph_paging_bound", func(t *testing.T, f *oidcFixture) {
+		f.useSSO(f.newSSO(config.SSOConfig{GraphMaxPages: 2}))
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		cfg, err := f.svc.sso.SSOConfig(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, 2, cfg.GraphMaxPages, "the sign-in reads the bound of 2")
+		f.issuer.setGraph(graphModeEndless)
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-pages", "graph-pages@idp.example.test"))
+		f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.graphRequests(), 2, "never more requests than the bound")
+	}},
+	{"graph_foreign_host", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModeForeignNext)
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-foreign", "graph-foreign@idp.example.test"))
+		f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.graphRequests(), 1)
+		assert.Equal(t, 0, f.issuer.otherRequests(), "the other host is never contacted")
+	}},
+	{"graph_redirect", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModeRedirect)
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-redirect", "graph-redirect@idp.example.test"))
+		f.assertRefused(t, "groups_unavailable", tokens, err, 0, 0)
+		assert.Len(t, f.issuer.graphRequests(), 1)
+		assert.Equal(t, 0, f.issuer.otherRequests(), "the redirect is not followed")
+	}},
+	{"graph_no_overage", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModePages, []string{oidcGraphGroupUnrelated})
+		spec := oidcTokenSpec{sub: "subject-graph-inline", email: "graph-inline@idp.example.test", groups: []string{oidcGraphGroupSales}}
+		tokens, err := f.signIn(t, spec)
+		require.NoError(t, err)
+		assert.Equal(t, models.RoleSales, f.user(t, tokens.User.ID).Role)
+		assert.Empty(t, f.issuer.graphRequests(), "no Graph request without an overage")
+	}},
+	{"graph_roles_mapping", func(t *testing.T, f *oidcFixture) {
+		f.entra(t)
+		f.configure(t, []SSORoleMapping{{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]}})
+		f.issuer.setGraph(graphModeStatus500)
+		spec := oidcOverage("subject-graph-roles", "graph-roles@idp.example.test")
+		spec.roles = []string{oidcAppRole}
+		tokens, err := f.signIn(t, spec)
+		require.NoError(t, err)
+		assert.Equal(t, models.RoleSupport, f.user(t, tokens.User.ID).Role)
+		assert.Empty(t, f.issuer.graphRequests(), "the overage is ignored without a groups mapping")
+	}},
+	{"graph_scope_requested", func(t *testing.T, f *oidcFixture) {
+		scope := func() string {
+			parsed, err := url.Parse(f.start(t))
+			require.NoError(t, err)
+			return parsed.Query().Get("scope")
+		}
+		const configured = "openid profile email"
+
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		got := scope()
+		assert.Equal(t, configured+" https://graph.microsoft.com/GroupMember.Read.All", got)
+		assert.Equal(t, 1, strings.Count(got, "GroupMember.Read.All"), "added exactly once")
+		cfg, err := f.sso.SSOConfig(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, []string{"openid", "profile", "email"}, cfg.Scopes, "the added scope is not stored")
+
+		f.configure(t, []SSORoleMapping{{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]}})
+		assert.Equal(t, configured, scope(), "an Entra issuer without a groups mapping")
+
+		f.svc.entraIssuerHost = oidcEntraIssuerHost
+		f.configure(t, f.graphMapping())
+		assert.Equal(t, configured, scope(), "a groups mapping on another issuer")
+	}},
+	{"graph_token_privacy", func(t *testing.T, f *oidcFixture) {
+		previous := utils.Logger
+		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+		var output bytes.Buffer
+		utils.Logger.SetOutput(&output)
+		t.Cleanup(func() { utils.Logger = previous })
+
+		f.entra(t)
+		f.configure(t, f.graphMapping())
+		f.issuer.setGraph(graphModePages, []string{oidcGraphGroupSales})
+		_, err := f.signIn(t, oidcOverage("subject-graph-private", "graph-private@idp.example.test"))
+		require.NoError(t, err)
+		goodAccess := f.issuer.lastAccessToken()
+
+		f.issuer.setGraph(graphModeStatus500)
+		tokens, err := f.signIn(t, oidcOverage("subject-graph-private-bad", "graph-private-bad@idp.example.test"))
+		require.ErrorIs(t, err, ErrSSOSignInFailed)
+		require.Nil(t, tokens)
+		badAccess := f.issuer.lastAccessToken()
+		require.NotEqual(t, goodAccess, badAccess, "one access token per exchange")
+		require.Len(t, f.issuer.graphRequests(), 2)
+
+		logs := output.String()
+		require.Contains(t, logs, "groups_unavailable", "the refusal is logged with its error code")
+		tables, err := f.db.Migrator().GetTables()
+		require.NoError(t, err)
+		require.NotEmpty(t, tables)
+		for _, secret := range []string{goodAccess, badAccess} {
+			require.NotEmpty(t, secret)
+			assert.NotContains(t, logs, secret, "no access token in the logs")
+			for _, table := range tables {
+				var rows []map[string]interface{}
+				require.NoError(t, f.db.Table(table).Find(&rows).Error, table)
+				for _, row := range rows {
+					for column, value := range row {
+						if raw, ok := value.([]byte); ok {
+							value = string(raw)
+						}
+						assert.NotContains(t, fmt.Sprint(value), secret, "no access token in %s.%s", table, column)
+					}
+				}
+			}
+		}
+	}},
 }
 
 func runOIDCSignIn(t *testing.T, f *oidcFixture) {
@@ -867,4 +1229,122 @@ func TestOIDCSubjectAndClaimRules(t *testing.T) {
 	assert.Equal(t, uint(1), id, "the first entry in stored order decides")
 	_, ok = oidcMatchRole(mapping, []string{"G"}, nil)
 	assert.False(t, ok, "values compare case-sensitively")
+}
+
+func TestOIDCGraphDefaults(t *testing.T) {
+	svc := NewOIDCService(nil, nil, nil, nil, nil, nil, nil, nil, nil, "").(*oidcService)
+	assert.Equal(t, "login.microsoftonline.com", svc.entraIssuerHost)
+	assert.Equal(t, "https://graph.microsoft.com", svc.graphBaseURL)
+	assert.Equal(t, 5*time.Second, svc.graphTimeout)
+
+	for issuer, want := range map[string]bool{
+		"https://login.microsoftonline.com/tid/v2.0":     true,
+		"https://LOGIN.microsoftonline.com/tid/v2.0":     true,
+		"https://login.microsoftonline.com:443/tid/v2.0": true,
+		"https://login.microsoftonline.com.evil.test/x":  false,
+		"https://evil.test/login.microsoftonline.com":    false,
+		"https://login.microsoftonline.us/tid/v2.0":      false,
+		"https://login.chinacloudapi.cn/tid/v2.0":        false,
+		"not a url %": false,
+	} {
+		assert.Equal(t, want, oidcIsEntraIssuer(issuer, svc.entraIssuerHost), issuer)
+	}
+	assert.False(t, oidcIsEntraIssuer("https://login.microsoftonline.com/tid/v2.0", ""), "no Entra host configured")
+
+	for raw, want := range map[int]int{0: 10, -1: 10, 51: 10, 1: 1, 50: 50, 7: 7} {
+		assert.Equal(t, want, effectiveGraphMaxPages(raw), "OIDC_GRAPH_MAX_PAGES=%d", raw)
+		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), config.SSOConfig{GraphMaxPages: raw}).SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.Equal(t, want, cfg.GraphMaxPages, "effective GraphMaxPages for %d", raw)
+	}
+
+	groups := []SSORoleMapping{{Claim: SSOClaimGroups, Value: "g", RoleID: 1}}
+	roles := []SSORoleMapping{{Claim: SSOClaimRoles, Value: "r", RoleID: 1}}
+	assert.True(t, mappingUsesGroups(append(roles, groups...)))
+	assert.False(t, mappingUsesGroups(roles))
+	assert.False(t, mappingUsesGroups(nil))
+	entra := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", oidcGraphScope}, RoleMapping: groups}
+	assert.Equal(t, []string{"openid", oidcGraphScope}, svc.requestScopes(entra), "not added when already configured")
+
+	// The nextLink rule: https on the Graph host and port only.
+	base, err := url.Parse("https://graph.microsoft.com")
+	require.NoError(t, err)
+	for link, want := range map[string]bool{
+		"https://graph.microsoft.com/v1.0/me/getMemberObjects?$skiptoken=x": true,
+		"https://GRAPH.microsoft.com:443/v1.0/me/getMemberObjects":          true,
+		"http://graph.microsoft.com/v1.0/me/getMemberObjects":               false,
+		"https://graph.microsoft.com:8443/v1.0/me/getMemberObjects":         false,
+		"https://graph.microsoft.com.evil.test/v1.0/me/getMemberObjects":    false,
+		"https://user@graph.microsoft.com/v1.0/me/getMemberObjects":         false,
+		"/v1.0/me/getMemberObjects":                                         false,
+		"https://graph.windows.net/v1.0/me/getMemberObjects":                false,
+	} {
+		assert.Equal(t, want, graphSameOrigin(link, base), link)
+	}
+}
+
+// TestOIDCResolveEntraGroups covers the Graph failure modes the sign-in
+// subtests cannot tell apart: an http nextLink on the Graph host is refused
+// before any request, a value that is not an array of strings and a page
+// over 1 MiB fail, and an empty access token sends nothing.
+func TestOIDCResolveEntraGroups(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests int
+		answer   string
+	)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		requests++
+		body := answer
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	pool := x509.NewCertPool()
+	pool.AddCert(server.Certificate())
+	svc := &oidcService{rootCAs: pool, graphBaseURL: server.URL, graphTimeout: 2 * time.Second}
+	plainHost := "http://" + strings.TrimPrefix(server.URL, "https://")
+
+	cases := []struct {
+		name     string
+		token    string
+		answer   string
+		want     []string
+		requests int
+	}{
+		{"ids", "t", `{"value":["a","b"]}`, []string{"a", "b"}, 1},
+		{"empty_list", "t", `{"value":[]}`, []string{}, 1},
+		{"no_access_token", "", `{"value":["a"]}`, nil, 0},
+		{"http_next_link_same_host", "t", `{"value":["a"],"@odata.nextLink":"` + plainHost + `/v1.0/me/getMemberObjects?page=1"}`, nil, 1},
+		{"value_numbers", "t", `{"value":[1]}`, nil, 1},
+		{"value_null_element", "t", `{"value":[null]}`, nil, 1},
+		{"value_null", "t", `{"value":null}`, nil, 1},
+		{"value_missing", "t", `{}`, nil, 1},
+		{"value_object", "t", `{"value":{"a":"b"}}`, nil, 1},
+		{"not_json", "t", `<html>`, nil, 1},
+		{"over_one_mib", "t", `{"value":["` + strings.Repeat("a", 1<<20) + `"]}`, nil, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mu.Lock()
+			requests, answer = 0, tc.answer
+			mu.Unlock()
+			got, err := svc.resolveEntraGroups(context.Background(), tc.token, 10)
+			mu.Lock()
+			assert.Equal(t, tc.requests, requests, "requests sent")
+			mu.Unlock()
+			if tc.want == nil {
+				assert.Error(t, err)
+				assert.Nil(t, got)
+				if err != nil {
+					assert.NotContains(t, err.Error(), server.URL, "the error names no URL")
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
 }

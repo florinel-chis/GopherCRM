@@ -74,6 +74,10 @@ type EffectiveSSOConfig struct {
 	ClientSecret  string
 	Scopes        []string
 	RoleMapping   []SSORoleMapping
+	// GraphMaxPages bounds the Microsoft Graph pages one Entra ID sign-in
+	// reads on a group overage: OIDC_GRAPH_MAX_PAGES when it is 1..50, else
+	// oidcGraphDefaultMaxPages. Environment only, never a stored setting.
+	GraphMaxPages int
 	Sources       SSOConfigSources
 }
 
@@ -186,7 +190,23 @@ func (s *ssoSettingsService) SSOConfig(ctx context.Context) (EffectiveSSOConfig,
 	out.ClientSecret, out.Sources.ClientSecret = s.effectiveSecret()
 	out.Scopes, out.Sources.Scopes = s.effectiveScopes()
 	out.RoleMapping, out.Sources.RoleMapping = s.effectiveRoleMapping()
+	out.GraphMaxPages = effectiveGraphMaxPages(s.base.GraphMaxPages)
 	return out, nil
+}
+
+// Bounds of OIDC_GRAPH_MAX_PAGES.
+const (
+	oidcGraphDefaultMaxPages = 10
+	oidcGraphMaxPagesLimit   = 50
+)
+
+// effectiveGraphMaxPages keeps a value of 1..50 and replaces anything else
+// (unset, 0, negative, too large) with the default.
+func effectiveGraphMaxPages(raw int) int {
+	if raw < 1 || raw > oidcGraphMaxPagesLimit {
+		return oidcGraphDefaultMaxPages
+	}
+	return raw
 }
 
 // effectiveAllowPassword resolves security.sso.allow_password like Enabled:
