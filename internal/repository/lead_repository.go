@@ -245,6 +245,58 @@ func (r *leadRepository) CountByOwnerID(ownerID uint) (int64, error) {
 	return count, err
 }
 
+// whereLeadListFilter is the one predicate of ListByFilter and CountByFilter.
+// It ANDs the optional owner, classification and status with the
+// parenthesised search alternatives, so the search OR can never let a row with
+// another owner, classification or status through. Columns are qualified with
+// the table name and every value is bound.
+func whereLeadListFilter(db *gorm.DB, filter LeadListFilter) *gorm.DB {
+	if filter.OwnerID != nil {
+		db = db.Where("leads.owner_id = ?", *filter.OwnerID)
+	}
+	if filter.Classification != "" {
+		db = db.Where("leads.classification = ?", filter.Classification)
+	}
+	if filter.Status != "" {
+		db = db.Where("leads.status = ?", filter.Status)
+	}
+	if filter.Search != "" {
+		searchPattern := "%" + filter.Search + "%"
+		db = db.Where(
+			"(leads.first_name LIKE ? OR leads.last_name LIKE ? OR leads.email LIKE ? OR leads.company LIKE ? OR leads.phone LIKE ? OR leads.notes LIKE ?)",
+			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
+		)
+	}
+	return db
+}
+
+// ListByFilter returns one page of the live leads matching filter. The filter
+// is applied before offset and limit, and the rows walk orderPage's total
+// order: the validated sort column, then id in the same direction, or id
+// ascending.
+func (r *leadRepository) ListByFilter(filter LeadListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error) {
+	leads := []models.Lead{}
+	query := r.db
+	for _, preload := range preloads {
+		query = query.Preload(preload)
+	}
+	query = whereLeadListFilter(query, filter)
+	query, err := orderPage(query, "leads", sortBy, sortOrder)
+	if err != nil {
+		return nil, err
+	}
+	err = query.Offset(offset).Limit(limit).Find(&leads).Error
+	return leads, err
+}
+
+// CountByFilter counts every live lead matching filter, with the predicate of
+// ListByFilter and before any pagination.
+func (r *leadRepository) CountByFilter(filter LeadListFilter) (int64, error) {
+	var count int64
+	err := whereLeadListFilter(r.db.Model(&models.Lead{}), filter).Count(&count).Error
+	return count, err
+}
+
 func (r *leadRepository) ConvertToCustomer(leadID uint, customerID uint) error {
 	return r.db.Model(&models.Lead{}).Where("id = ?", leadID).
 		Updates(map[string]interface{}{

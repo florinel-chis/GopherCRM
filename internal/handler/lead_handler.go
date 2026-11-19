@@ -12,6 +12,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/permissions"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -313,8 +314,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // List godoc
 // @Summary List leads
 // @Description One page of leads. Roles: admin and sales.
-// @Description Without external_id, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
-// @Description Without external_id, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
+// @Description status (#426) takes exactly one of new, contacted, qualified, unqualified or converted, matched case-sensitively; an empty status is ignored, a repeated parameter uses its first value, and any other value (lost, Qualified, QUALIFIED, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed status and the value not echoed. With a status, the filter is applied in the query before offset and limit, so leads, total and meta reflect it, and the owner is loaded: for an admin it combines with search, classification and sort_by/sort_order (all ANDed, ascending id order without a sort); for a sales user it narrows only the leads it owns, in ascending id order, and search, classification, sort_by and sort_order stay ignored. external_id still overrides status, which is then not validated.
+// @Description Without external_id or status, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
+// @Description Without external_id or status, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
 // @Description external_id, when present and not empty, takes precedence over everything above for every role, including search, classification, sort_by, sort_order, page, offset and limit: the lookup is an SQL equality on the column, byte-exact on SQLite, while on MySQL/MariaDB the column collation decides (utf8mb4_unicode_ci in the migrations: case-insensitive, trailing spaces ignored); the value is not trimmed. external_id is not unique: the result holds every matching live lead the caller may view (admin any lead, sales only the leads it owns, every other role none), in ascending id order, and total is their number (meta.page 1, meta.per_page the parsed limit, which does not cut the list). A lead the caller may not see is left out, never 403 or 404, so a hidden lead reads like an unknown value. At most the first 100 matching leads by id are read before the visibility filter, so with more than 100 leads sharing one value later ones (including a sales user's own) are not returned. The owner is loaded on that path, company_record is not.
 // @Description data is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags leads
@@ -325,12 +327,13 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
 // @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
 // @Param search query string false "Admin only: substring searched in first_name, last_name, email, company, phone and notes"
-// @Param classification query string false "Admin only, ignored when search is present: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
-// @Param sort_by query string false "Admin only, ignored when classification wins: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
+// @Param classification query string false "Admin only, ignored when search is present unless status is given (then combined): exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
+// @Param sort_by query string false "Admin only, ignored when classification wins without a status: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
 // @Param sort_order query string false "Sort direction for sort_by; any other value becomes asc" Enums(asc, desc) default(asc)
+// @Param status query string false "Only leads in this status (exact, case-sensitive match); empty is ignored, any other value is 400. Admin: combined with search, classification and the sort. Sales: narrows only the caller's own leads. Overridden by external_id" Enums(new, contacted, qualified, unqualified, converted)
 // @Param external_id query string false "Exact external_id to look up (at most 255 characters); when present and not empty it overrides every other parameter and returns the matching leads the caller may view" maxlength(255)
 // @Success 200 {object} utils.APIResponse{data=LeadListData,meta=utils.APIMeta} "One page of leads and the total"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: external_id is longer than 255 characters ('external_id is too long (at most 255 characters)', error.details {'field': 'external_id'})"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: external_id is longer than 255 characters ('external_id is too long (at most 255 characters)', error.details {'field': 'external_id'}), or status is not one of new, contacted, qualified, unqualified, converted ('Validation failed', error.details keyed status; the value is not echoed)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN 'Insufficient permissions': the caller is not admin or sales"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: more than 120 requests per minute (burst 30) from this client IP, one bucket shared by every authenticated endpoint; error.details.retry_after is '60s' and no Retry-After or X-RateLimit header is sent"
@@ -350,6 +353,18 @@ func (h *LeadHandler) List(c *gin.Context) {
 		return
 	}
 	classification := c.Query("classification")
+
+	// Optional status filter (#426). c.Query takes the first value of a
+	// repeated parameter, and an empty value counts as absent. The match is
+	// exact and case-sensitive, checked here before any query because MySQL's
+	// default collation would compare case-insensitively. The value is never
+	// echoed or logged.
+	status := c.Query("status")
+	if status != "" && !models.LeadStatus(status).IsValid() {
+		logger.WithField("invalid_parameters", 1).Warn("Invalid lead list filter")
+		utils.RespondValidationError(c, gin.H{"status": "must be one of new, contacted, qualified, unqualified, converted"})
+		return
+	}
 
 	// Convert page to offset if page is provided
 	if page > 0 {
@@ -390,7 +405,26 @@ func (h *LeadHandler) List(c *gin.Context) {
 	// Scope filtering: only a caller holding leads.view on every lead (admin)
 	// gets the search, the classification filter and the sort; every other
 	// caller (sales, at scope own) sees the leads it owns.
-	if !hasPermissionOnAll(c, permissions.LeadsView) {
+	// A status filter (#426) goes through ListFiltered: for a caller seeing
+	// only its own leads the owner is forced and only the status narrows it
+	// (search, classification and sort stay ignored, as below); an admin gets
+	// the status combined with search, classification and the sort. Without a
+	// status the existing branches run unchanged.
+	if status != "" {
+		if !hasPermissionOnAll(c, permissions.LeadsView) {
+			ownerID := currentUserID
+			leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
+				OwnerID: &ownerID,
+				Status:  models.LeadStatus(status),
+			}, offset, limit, "", "")
+		} else {
+			leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
+				Search:         search,
+				Classification: models.LeadClassification(classification),
+				Status:         models.LeadStatus(status),
+			}, offset, limit, sortBy, sortOrder)
+		}
+	} else if !hasPermissionOnAll(c, permissions.LeadsView) {
 		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
 	} else if search != "" {
 		// Search across lead fields

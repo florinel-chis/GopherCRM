@@ -506,6 +506,23 @@ func (_m *LeadRepository) ListAllForExport(filter repository.LeadExportFilter) (
 	return r0, ret.Error(1)
 }
 
+// ListByFilter provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder, preloads
+func (_m *LeadRepository) ListByFilter(filter repository.LeadListFilter, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Lead, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder, preloads)
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Error(1)
+}
+
+// CountByFilter provides a mock function with given fields: filter
+func (_m *LeadRepository) CountByFilter(filter repository.LeadListFilter) (int64, error) {
+	ret := _m.Called(filter)
+	return ret.Get(0).(int64), ret.Error(1)
+}
+
 func NewLeadRepository(t interface {
 	mock.TestingT
 	Cleanup(func())

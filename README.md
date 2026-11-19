@@ -704,7 +704,9 @@ authentication and live on the moderate tier:
 - `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself; a customer-role user takes its customer records along; for a custom role, erasing a customer login with a linked customer record also needs `customers.delete`)*
 
 ### Leads *(entire group requires admin or sales)*
-- `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`;
+- `GET /api/v1/leads` - List leads (`page`, `limit`, `search`, `sort_by`, `sort_order`, `classification`,
+  `status` (one of `new`, `contacted`, `qualified`, `unqualified`, `converted`; a sales user's list is
+  narrowed to its own leads);
   `external_id` returns the leads with that exact external id the caller may see, overriding the
   others; hidden leads are left out rather than refused)
 - `POST /api/v1/leads` - Create new lead (the owner must be an active admin or sales user)

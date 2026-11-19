@@ -91,13 +91,7 @@ func missingIDs(requested []uint, found map[uint]struct{}) []uint {
 }
 
 func isValidLeadStatus(status models.LeadStatus) bool {
-	switch status {
-	case models.LeadStatusNew, models.LeadStatusContacted, models.LeadStatusQualified,
-		models.LeadStatusUnqualified, models.LeadStatusConverted:
-		return true
-	default:
-		return false
-	}
+	return status.IsValid()
 }
 
 func isValidTicketStatus(status models.TicketStatus) bool {

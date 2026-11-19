@@ -1362,6 +1362,31 @@ Regression roots: `TestTicketEnumIsValid` (`internal/models`); `TestTicketListFi
 `TestTicketListFilters{SQLite,MySQL}` (`internal/integration`). The MySQL roots use a disposable
 `TEST_MYSQL_DSN` schema, skip without it and fail when it is unreachable.
 
+**Lead list status filter (#426).** `GET /leads` takes an optional `status` query parameter, one
+exact, case-sensitive value of `models.LeadStatus` (`new`, `contacted`, `qualified`, `unqualified`,
+`converted`). The `external_id` branch still runs first and overrides it (an invalid status next to
+a non-empty `external_id` is not validated). The handler then reads `status` with `c.Query` (first
+value of a repeated parameter; empty counts as absent) and validates it with `LeadStatus.IsValid`
+before any service call: an unknown value is 400 `VALIDATION_ERROR` with `error.details.status`, the
+value not echoed or logged. `IsValid` is the one list: bulk status's `isValidLeadStatus` delegates
+to it. With a status the handler calls `LeadService.ListFiltered(repository.LeadListFilter{OwnerID,
+Search, Classification, Status}, offset, limit, sortBy, sortOrder)`: a caller without
+`leads.view` at scope all (sales) gets `OwnerID` forced to its own `user_id`, `Status` only and an
+empty sort, as its search, classification and sort were ignored before; an admin gets status,
+search, classification and the sort together. Without a status the existing `GetByOwner`, `Search`,
+`GetByClassification`, `ListSorted` and `List` branches run with unchanged arguments.
+`LeadRepository.ListByFilter` (Owner preload, `orderPage`, then OFFSET/LIMIT; id ascending without
+a sort) and `CountByFilter` share one predicate builder, `whereLeadListFilter`, which ANDs
+`leads.owner_id`, `leads.classification` and `leads.status` with the parenthesised search OR over
+the six searched columns, so the rows and the total come from the same filter before offset and
+limit; erased (soft-deleted) leads stay excluded. The service logs offset, limit, the owner id and
+the presence flags `status_filter`, `search_filter` and `classification_filter` only, never the
+search term or the raw sort. `GET /leads/export` keeps ignoring `status`. No schema change.
+Regression roots: `TestLeadStatusIsValid` (`internal/models`); `TestLeadListStatusFilterHandler`
+(`internal/handler`); `TestLeadServiceListFiltered` (`internal/service`);
+`TestLeadListFilterRepository{SQLite,MySQL}` (`internal/repository`). The MySQL root uses a
+disposable `TEST_MYSQL_DSN` schema, skips without it and fails when it is unreachable.
+
 **User list role filter (#428).** `GET /users` takes an optional `role` query parameter, one exact,
 case-sensitive value of `models.UserRole` (`admin`, `sales`, `support`, `customer`, `custom`). The
 handler reads it with `c.Query` (first value of a repeated parameter; empty counts as absent, a

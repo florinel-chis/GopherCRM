@@ -7,6 +7,7 @@ import (
 	"time"
 
 	models "github.com/florinel-chis/gophercrm/internal/models"
+	repository "github.com/florinel-chis/gophercrm/internal/repository"
 	service "github.com/florinel-chis/gophercrm/internal/service"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -444,6 +445,21 @@ func (_m *LeadService) List(offset int, limit int) ([]models.Lead, int64, error)
 	}
 
 	return r0, r1, r2
+}
+
+// ListFiltered provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder
+func (_m *LeadService) ListFiltered(filter repository.LeadListFilter, offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
+	ret := _m.Called(filter, offset, limit, sortBy, sortOrder)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListFiltered")
+	}
+
+	var r0 []models.Lead
+	if ret.Get(0) != nil {
+		r0 = ret.Get(0).([]models.Lead)
+	}
+	return r0, ret.Get(1).(int64), ret.Error(2)
 }
 
 // ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder

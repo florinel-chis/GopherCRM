@@ -185,7 +185,7 @@ an admin through the app.
 | `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, search, status and priority filters, status and priority updates, long description; each case acts on a customer or ticket it seeds through the API |
 | `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, search, minimal data; the status and priority filter cases are `fixme` until `GET /tasks` reads the parameters (#427) |
 | `admin-users.spec.ts` | 14 | Users — list, create, edit, view, delete, search; the role filter case is `fixme` until `GET /users` reads the parameter (#428) |
-| `admin-leads.spec.ts` | 12 | Leads — list, create, edit, view, delete, search, minimal data; the status filter case is `fixme` until `GET /leads` reads the parameter (#426) |
+| `admin-leads.spec.ts` | 12 | Leads — list, create, edit, view, delete, search, minimal data, status filter (`GET /leads` filters `status` server-side since #426) |
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
 | `admin-companies.spec.ts` | 8 | Companies — list, create with all fields, validation, duplicate domain 409 on the field, edit, search, link a customer through the customer form and see it on both detail pages, delete and the customer falls back to its text company |
 | `admin-deals.spec.ts` | 8 | Deals — list, create for a company with the formatted amount on both detail pages, validation, stage moves with the history growing, lost with a required reason (closed_at and reason shown, cleared on reopening), edit title and amount, stage filter, delete |
