@@ -99,7 +99,8 @@ var routeMatrixPublic = map[string]bool{
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was
-// frozen: the role API of #348 and the quote PDF download of #384. These routes are served and guarded, but the
+// frozen: the role API of #348, the quote PDF download of #384 and the single
+// sign-on settings of #434. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
@@ -113,6 +114,8 @@ var routeMatrixAfterFreeze = map[string]bool{
 	"DELETE /api/v1/roles/:id":          true,
 	"POST /api/v1/roles/:id/clone":      true,
 	"GET /api/v1/quotes/:id/pdf":        true,
+	"GET /api/v1/settings/sso":          true,
+	"PUT /api/v1/settings/sso":          true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -572,6 +575,11 @@ var matrixRequests = map[string]matrixRequest{
 	"GET /configurations/:key":               {kind: "config_key", note: noteConfigKey},
 	"PUT /configurations/:key":               {kind: "config_key", body: fixedBody(matrixBody{"value": "Matrix Ltd"}), note: noteConfigKey},
 	"POST /configurations/:key/reset":        {kind: "config_key", note: noteConfigKey},
+	// single sign-on settings (after the freeze, see routeMatrixAfterFreeze).
+	// The PUT body {} writes exactly the shipped empty state, so there is
+	// nothing for restoreMatrixState to undo.
+	"GET /settings/sso": {},
+	"PUT /settings/sso": {body: fixedBody(matrixBody{})},
 
 	// dashboard
 	"GET /dashboard/stats":               {},
@@ -1341,7 +1349,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 9)
+	assert.Len(t, routeMatrixAfterFreeze, 11)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {

@@ -134,11 +134,87 @@ func TestDefaultConfigurations_SeedsAnswerEngineKeys(t *testing.T) {
 
 // Nothing else becomes sensitive by accident: the flag changes how a value is
 // stored, so it must be a deliberate per-entry decision.
-func TestDefaultConfigurations_OnlyAnswerEngineKeysAreSensitive(t *testing.T) {
+func TestDefaultConfigurations_OnlyCredentialKeysAreSensitive(t *testing.T) {
+	want := []string{
+		"integration.aeo.anthropic_api_key",
+		"integration.aeo.openai_api_key",
+		"integration.aeo.gemini_api_key",
+		"integration.aeo.moonshot_api_key",
+		"integration.aeo.perplexity_api_key",
+		"security.sso.client_secret",
+		"security.sso.role_mapping",
+	}
+	var got []string
 	for _, config := range DefaultConfigurations() {
 		if config.IsSensitive {
-			assert.Contains(t, config.Key, "integration.aeo.", "unexpected sensitive default %q", config.Key)
+			got = append(got, config.Key)
 		}
+	}
+	assert.ElementsMatch(t, want, got)
+}
+
+// The six single sign-on settings ship empty ("not set here", so OIDC_*
+// applies) as system entries of the security category.
+func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
+	sensitive := map[string]bool{
+		ConfigKeySSOEnabled:      false,
+		ConfigKeySSOIssuerURL:    false,
+		ConfigKeySSOClientID:     false,
+		ConfigKeySSOClientSecret: true,
+		ConfigKeySSOScopes:       false,
+		ConfigKeySSORoleMapping:  true,
+	}
+	seen := map[string]Configuration{}
+	for _, config := range DefaultConfigurations() {
+		if IsSSOConfigurationKey(config.Key) {
+			_, dup := seen[config.Key]
+			require.False(t, dup, "duplicate %s", config.Key)
+			seen[config.Key] = config
+		}
+	}
+	require.Len(t, seen, 6)
+	for key, isSensitive := range sensitive {
+		config, ok := seen[key]
+		if !assert.True(t, ok, "%s is seeded", key) {
+			continue
+		}
+		assert.Equal(t, ConfigTypeString, config.Type, key)
+		assert.Equal(t, CategorySecurity, config.Category, key)
+		assert.True(t, config.IsSystem, key)
+		assert.False(t, config.IsReadOnly, key)
+		assert.Equal(t, isSensitive, config.IsSensitive, key)
+		assert.Empty(t, config.Value, key)
+		assert.Empty(t, config.DefaultValue, key)
+		assert.NotEmpty(t, config.Description, key)
+		if key != ConfigKeySSOEnabled {
+			assert.Empty(t, config.ValidValues, key)
+		}
+	}
+	enabled := seen[ConfigKeySSOEnabled]
+	assert.JSONEq(t, `["", "true", "false"]`, enabled.ValidValues)
+	assert.True(t, enabled.IsValidValue(""), "empty means not set here")
+	assert.True(t, enabled.IsValidValue("true"))
+	assert.True(t, enabled.IsValidValue("false"))
+	assert.False(t, enabled.IsValidValue("yes"))
+}
+
+func TestIsSSOConfigurationKey(t *testing.T) {
+	for _, key := range []string{
+		"security.sso.x",
+		"SECURITY.SSO.client_secret",
+		"Security.Sso.Role_Mapping",
+		"security.sso.role_mapping ",
+		ConfigKeySSOEnabled,
+	} {
+		assert.True(t, IsSSOConfigurationKey(key), "%q", key)
+	}
+	for _, key := range []string{
+		"security.allow_public_registration",
+		"integration.aeo.openai_api_key",
+		"security.ssox",
+		"",
+	} {
+		assert.False(t, IsSSOConfigurationKey(key), "%q", key)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -54,6 +55,10 @@ func (m *mockConfigurationService) GetAll() ([]models.Configuration, error) {
 }
 
 func (m *mockConfigurationService) Set(key string, value interface{}) error {
+	return m.Called(key, value).Error(0)
+}
+
+func (m *mockConfigurationService) SetSSO(key string, value interface{}) error {
 	return m.Called(key, value).Error(0)
 }
 
@@ -184,6 +189,11 @@ func (suite *ConfigurationHandlerTestSuite) reset(key string) *httptest.Response
 	return w
 }
 
+// writableConfig is a plain entry the generic routes may write.
+func writableConfig() *models.Configuration {
+	return &models.Configuration{Key: "general.company_name", Value: "GopherCRM", Type: models.ConfigTypeString, Category: models.CategoryGeneral}
+}
+
 func notFoundErr(key string) error {
 	return fmt.Errorf("configuration %q not found: %w", key, apperrors.ErrNotFound)
 }
@@ -191,7 +201,7 @@ func notFoundErr(key string) error {
 // --- Reset: the reported defect ---
 
 func (suite *ConfigurationHandlerTestSuite) TestReset_UnknownKeyReturns404() {
-	suite.mockService.On("Reset", "no.such.key").Return(notFoundErr("no.such.key"))
+	suite.mockService.On("GetByKey", "no.such.key").Return(nil, notFoundErr("no.such.key"))
 
 	w := suite.reset("no.such.key")
 
@@ -202,7 +212,7 @@ func (suite *ConfigurationHandlerTestSuite) TestReset_UnknownKeyReturns404() {
 // defect: the repository's own not-found error arriving unwrapped. It answered
 // 500 because the handler compared error strings.
 func (suite *ConfigurationHandlerTestSuite) TestReset_RawGormNotFoundReturns404() {
-	suite.mockService.On("Reset", "no.such.key").Return(gorm.ErrRecordNotFound)
+	suite.mockService.On("GetByKey", "no.such.key").Return(nil, gorm.ErrRecordNotFound)
 
 	w := suite.reset("no.such.key")
 
@@ -210,6 +220,7 @@ func (suite *ConfigurationHandlerTestSuite) TestReset_RawGormNotFoundReturns404(
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestReset_ReadOnlyReturns400() {
+	suite.mockService.On("GetByKey", "security.locked").Return(&models.Configuration{Key: "security.locked"}, nil)
 	suite.mockService.On("Reset", "security.locked").
 		Return(fmt.Errorf("configuration %q is read-only: %w", "security.locked", apperrors.ErrConfigurationReadOnly))
 
@@ -222,6 +233,7 @@ func (suite *ConfigurationHandlerTestSuite) TestReset_ReadOnlyReturns400() {
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestReset_DatabaseErrorReturns500() {
+	suite.mockService.On("GetByKey", "general.company_name").Return(writableConfig(), nil)
 	suite.mockService.On("Reset", "general.company_name").Return(errors.New("connection refused"))
 
 	w := suite.reset("general.company_name")
@@ -242,7 +254,7 @@ func (suite *ConfigurationHandlerTestSuite) TestReset_SuccessReturns200() {
 // --- Set: classification ---
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_UnknownKeyReturns404() {
-	suite.mockService.On("Set", "no.such.key", "x").Return(notFoundErr("no.such.key"))
+	suite.mockService.On("GetByKey", "no.such.key").Return(nil, notFoundErr("no.such.key"))
 
 	w := suite.put("no.such.key", `{"value":"x"}`)
 
@@ -250,6 +262,7 @@ func (suite *ConfigurationHandlerTestSuite) TestSet_UnknownKeyReturns404() {
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_ReadOnlyReturns400() {
+	suite.mockService.On("GetByKey", "security.locked").Return(&models.Configuration{Key: "security.locked"}, nil)
 	suite.mockService.On("Set", "security.locked", "x").
 		Return(fmt.Errorf("configuration %q is read-only: %w", "security.locked", apperrors.ErrConfigurationReadOnly))
 
@@ -259,6 +272,7 @@ func (suite *ConfigurationHandlerTestSuite) TestSet_ReadOnlyReturns400() {
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_InvalidValueReturns400() {
+	suite.mockService.On("GetByKey", "test.choice.integer").Return(&models.Configuration{Key: "test.choice.integer"}, nil)
 	suite.mockService.On("Set", "test.choice.integer", float64(999)).
 		Return(fmt.Errorf("invalid value for configuration %q: %w", "test.choice.integer", apperrors.ErrConfigurationInvalidValue))
 
@@ -271,6 +285,7 @@ func (suite *ConfigurationHandlerTestSuite) TestSet_InvalidValueReturns400() {
 }
 
 func (suite *ConfigurationHandlerTestSuite) TestSet_DatabaseErrorReturns500() {
+	suite.mockService.On("GetByKey", "general.company_name").Return(writableConfig(), nil)
 	suite.mockService.On("Set", "general.company_name", "x").Return(errors.New("connection refused"))
 
 	w := suite.put("general.company_name", `{"value":"x"}`)
@@ -670,4 +685,132 @@ func (suite *ConfigurationHandlerTestSuite) TestGetByKey_NonSensitiveEntryKeepsI
 
 func TestConfigurationHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(ConfigurationHandlerTestSuite))
+}
+
+// TestConfigurationHandlerHidesSSOKeys pins that the generic configuration
+// routes never serve or write the reserved single sign-on rows. The mock
+// resolves keys the way the MySQL/MariaDB collation does (case-insensitive,
+// trailing spaces ignored) and returns the canonical row, so a guard that
+// looked only at the path parameter would let the odd spellings through.
+func TestConfigurationHandlerHidesSSOKeys(t *testing.T) {
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	gin.SetMode(gin.TestMode)
+
+	canonical := map[string]models.Configuration{
+		models.ConfigKeySSOClientSecret: {Key: models.ConfigKeySSOClientSecret, Value: "enc:v1:c2VhbGVk", Type: models.ConfigTypeString, Category: models.CategorySecurity, IsSystem: true, IsSensitive: true},
+		models.ConfigKeySSORoleMapping:  {Key: models.ConfigKeySSORoleMapping, Value: "", Type: models.ConfigTypeString, Category: models.CategorySecurity, IsSystem: true, IsSensitive: true},
+	}
+	collationLookup := func(requested string) (models.Configuration, bool) {
+		folded := strings.ToLower(strings.TrimRight(requested, " "))
+		row, ok := canonical[folded]
+		return row, ok
+	}
+	newRouter := func(svc *mockConfigurationService) *gin.Engine {
+		h := NewConfigurationHandler(svc)
+		router := gin.New()
+		router.Use(middleware.ErrorHandler())
+		router.Use(func(c *gin.Context) {
+			c.Set("user_id", uint(1))
+			c.Set("user_role", "admin")
+			c.Next()
+		})
+		router.GET("/configurations", h.GetAll)
+		router.GET("/configurations/category/:category", h.GetByCategory)
+		router.GET("/configurations/:key", h.GetByKey)
+		router.PUT("/configurations/:key", h.Set)
+		router.POST("/configurations/:key/reset", h.Reset)
+		return router
+	}
+	errorCode := func(t *testing.T, w *httptest.ResponseRecorder) string {
+		t.Helper()
+		var response utils.APIResponse
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response), w.Body.String())
+		require.NotNil(t, response.Error, w.Body.String())
+		return response.Error.Code
+	}
+
+	for _, path := range []string{
+		"security.sso.client_secret",
+		"SECURITY.SSO.client_secret",
+		"Security.Sso.Role_Mapping",
+		"security.sso.role_mapping%20",
+	} {
+		for _, call := range []struct {
+			name, method, suffix, body string
+		}{
+			{"GET", http.MethodGet, "", ""},
+			{"PUT", http.MethodPut, "", `{"value":"[{\"claim\":\"groups\",\"value\":\"g\",\"role_id\":1}]"}`},
+			{"reset", http.MethodPost, "/reset", ""},
+		} {
+			t.Run(call.name+" "+path, func(t *testing.T) {
+				svc := new(mockConfigurationService)
+				// The key as the handler receives it (the path decoded),
+				// resolved the way the collation resolves it.
+				requested := strings.ReplaceAll(path, "%20", " ")
+				row, ok := collationLookup(requested)
+				require.True(t, ok)
+				svc.On("GetByKey", requested).Return(&row, nil)
+				var body *bytes.Buffer
+				if call.body != "" {
+					body = bytes.NewBufferString(call.body)
+				} else {
+					body = &bytes.Buffer{}
+				}
+				req := httptest.NewRequest(call.method, "/configurations/"+path+call.suffix, body)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				newRouter(svc).ServeHTTP(w, req)
+
+				assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+				assert.Equal(t, utils.ErrCodeNotFound, errorCode(t, w))
+				assert.NotContains(t, w.Body.String(), "enc:v1:")
+				svc.AssertCalled(t, "GetByKey", requested)
+				svc.AssertNotCalled(t, "Set", mock.Anything, mock.Anything)
+				svc.AssertNotCalled(t, "Reset", mock.Anything)
+				svc.AssertNotCalled(t, "SetSSO", mock.Anything, mock.Anything)
+			})
+		}
+	}
+
+	plain := models.Configuration{Key: models.ConfigKeyAllowPublicRegistration, Value: "false", Type: models.ConfigTypeBoolean, Category: models.CategorySecurity}
+	withSSO := []models.Configuration{
+		plain,
+		canonical[models.ConfigKeySSOClientSecret],
+		canonical[models.ConfigKeySSORoleMapping],
+		{Key: models.ConfigKeySSOIssuerURL, Value: "https://idp.example.com", Type: models.ConfigTypeString, Category: models.CategorySecurity},
+	}
+	listKeys := func(t *testing.T, w *httptest.ResponseRecorder) []string {
+		t.Helper()
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var envelope struct {
+			Data struct {
+				Configurations []map[string]interface{} `json:"configurations"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		var keys []string
+		for _, entry := range envelope.Data.Configurations {
+			keys = append(keys, entry["key"].(string))
+		}
+		return keys
+	}
+
+	t.Run("GetAll omits SSO rows", func(t *testing.T) {
+		svc := new(mockConfigurationService)
+		svc.On("GetAll").Return(withSSO, nil)
+		w := httptest.NewRecorder()
+		newRouter(svc).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/configurations", nil))
+		assert.Equal(t, []string{models.ConfigKeyAllowPublicRegistration}, listKeys(t, w))
+		assert.NotContains(t, w.Body.String(), "security.sso.")
+	})
+	for _, category := range []string{"security", "SECURITY"} {
+		t.Run("GetByCategory "+category+" omits SSO rows", func(t *testing.T) {
+			svc := new(mockConfigurationService)
+			svc.On("GetByCategory", models.ConfigurationCategory(category)).Return(withSSO, nil)
+			w := httptest.NewRecorder()
+			newRouter(svc).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/configurations/category/"+category, nil))
+			assert.Equal(t, []string{models.ConfigKeyAllowPublicRegistration}, listKeys(t, w))
+			assert.NotContains(t, w.Body.String(), "security.sso.")
+		})
+	}
 }

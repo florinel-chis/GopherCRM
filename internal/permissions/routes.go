@@ -157,6 +157,8 @@ var RouteKeys = map[string]RouteKey{
 	"GET /configurations/:key":               key(SettingsView),
 	"PUT /configurations/:key":               key(SettingsUpdate),
 	"POST /configurations/:key/reset":        key(SettingsUpdate),
+	"GET /settings/sso":                      key(SettingsSSOManage),
+	"PUT /settings/sso":                      key(SettingsSSOManage),
 
 	// dashboard
 	"GET /dashboard/stats":               key(DashboardView),

@@ -63,6 +63,7 @@ export const systemRolePermissions: Record<SystemRole, Permission[]> = {
     { key: 'roles.audit_view', scope: 'all' },
     { key: 'roles.manage', scope: 'all' },
     { key: 'roles.view', scope: 'all' },
+    { key: 'settings.sso_manage', scope: 'all' },
     { key: 'settings.update', scope: 'all' },
     { key: 'settings.view', scope: 'all' },
     { key: 'tasks.assign_others', scope: 'all' },

@@ -7548,7 +7548,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them.",
+                "description": "Admin only (route guard, repeated in the handler). Returns every configuration entry, ordered by category and then key, in data.configurations; there is no pagination. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. Entries are seeded by the server; the API cannot create or delete them. The reserved single sign-on entries (security.sso.*) are left out; GET /settings/sso serves them.",
                 "produces": [
                     "application/json"
                 ],
@@ -7660,7 +7660,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
+                "description": "Admin only (route guard, repeated in the handler). Returns the entries of one category ordered by key in data.configurations. The category is not validated: any other value returns an empty list, not an error. The reserved single sign-on entries (security.sso.*) are left out of the security category; GET /settings/sso serves them. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored.",
                 "produces": [
                     "application/json"
                 ],
@@ -7886,7 +7886,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it.",
+                "description": "Admin only (route guard, repeated in the handler). Returns one entry by its key. A sensitive entry (is_sensitive) is masked: its value is always empty and is_set reports whether one is stored. The key ui is not reachable here: GET /configurations/ui answers it. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 here; GET /settings/sso serves them.",
                 "produces": [
                     "application/json"
                 ],
@@ -8023,7 +8023,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin only (route guard, repeated in the handler). Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.\nA sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart.",
+                "description": "Admin only (route guard, repeated in the handler). Sets the value of an existing entry and returns it. Checks, in order: the entry exists (404), is not read-only (400), the value is in valid_values when the entry has that list (for an array entry every element must be listed), and the value matches the declared type: a string entry takes only a JSON string, a boolean entry only true or false, an integer entry only a whole number (a fraction is refused, not truncated); float, json and array entries accept any JSON value and store its JSON text. The AEO provider entries integration.aeo.{engine}_model and integration.aeo.{engine}_base_url are trimmed and checked further: a model name of at most 120 characters, a base URL that is an absolute https URL with a valid host and port and without credentials, query, fragment or zone identifier.\nA sensitive entry (is_sensitive) takes the plaintext secret, stores it encrypted (AES-256-GCM, key derived from API_KEY_SECRET or JWT_SECRET) and is returned masked; send an empty string to clear it. Changes take effect on the next read of the setting, without a restart. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not written; PUT /settings/sso writes them.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8192,7 +8192,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked.",
+                "description": "Admin only (route guard, repeated in the handler). Copies default_value into value and returns the entry; read-only entries are refused. The default is restored as stored, without the type and valid_values checks of PUT. A sensitive entry has no default, so resetting it clears the stored secret; it is returned masked. The reserved single sign-on entries (security.sso.*, in any case or with trailing spaces) answer 404 and are not reset.",
                 "produces": [
                     "application/json"
                 ],
@@ -22790,6 +22790,260 @@
                 }
             }
         },
+        "/settings/sso": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Requires settings.sso_manage (route guard, repeated in the handler); only the admin system role holds it, settings.view and settings.update do not. Returns the effective OpenID Connect settings: per field a non-empty stored setting, else the OIDC_* variable, else the default (disabled, scopes openid profile email, everything else empty); sources says which. The role mapping is returned decrypted; the client secret never is, client_secret_set says whether one is in force. Single sign-on is off when its stored switch cannot be read, and the mapping is empty when the stored one cannot be read or parsed. Sign-in through these settings is not implemented yet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "configurations"
+                ],
+                "summary": "Get the single sign-on settings (admin)",
+                "responses": {
+                    "200": {
+                        "description": "The effective settings",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_handler.SSOSettingsResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: the caller does not hold settings.sso_manage (Insufficient permissions)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: the settings could not be read",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration. Answers with the effective settings, as GET does. Sign-in through these settings is not implemented yet.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "configurations"
+                ],
+                "summary": "Replace the single sign-on settings (admin)",
+                "parameters": [
+                    {
+                        "description": "The new settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handler.SSOSettingsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The effective settings after the write",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/internal_handler.SSOSettingsResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR: the body is not valid JSON for the schema (details.body), or a field was refused (details maps a path such as issuer_url, scopes[0] or role_mapping[2].claim to a message). INVALID_REFERENCE: a well-formed role mapping names a role id no role has (details maps role_mapping[i].role_id)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: the caller does not hold settings.sso_manage (Insufficient permissions)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR: a role could not be looked up, a setting could not be stored or encrypted, or the settings could not be read back",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/tasks": {
             "get": {
                 "security": [
@@ -35669,6 +35923,195 @@
                     "description": "Number of live users on the role, deactivated ones included.",
                     "type": "integer",
                     "example": 3
+                }
+            }
+        },
+        "internal_handler.SSORoleMappingEntry": {
+            "description": "One role mapping entry: an ID-token claim value that grants a role.",
+            "type": "object",
+            "properties": {
+                "claim": {
+                    "description": "The claim the value is matched in: groups or roles.",
+                    "type": "string",
+                    "enum": [
+                        "groups",
+                        "roles"
+                    ],
+                    "example": "groups"
+                },
+                "role_id": {
+                    "description": "Id of the role the value grants (a system or a custom role).",
+                    "type": "integer",
+                    "example": 2
+                },
+                "value": {
+                    "description": "The provider's stable identifier (a group object id or an app role\nvalue), never a display name. Trimmed; 1 to 256 bytes.",
+                    "type": "string",
+                    "example": "3f2a6c1e-0000-4000-8000-000000000001"
+                }
+            }
+        },
+        "internal_handler.SSOSettingsRequest": {
+            "description": "Body of PUT /settings/sso. A full replacement of the stored settings except the client secret: an empty or absent field clears the stored value, so the OIDC_* variable (or the default) applies again.",
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "description": "At most 255 bytes, trimmed. Empty clears it.",
+                    "type": "string",
+                    "example": "gophercrm"
+                },
+                "client_secret": {
+                    "description": "The new client secret, at most 1024 bytes, stored encrypted. Absent or null keeps the stored secret; an empty string clears it.",
+                    "type": "string",
+                    "example": "not-a-real-secret"
+                },
+                "enabled": {
+                    "description": "true or false stores the switch; null or absent clears it, so OIDC_ENABLED applies.",
+                    "type": "boolean",
+                    "example": true
+                },
+                "issuer_url": {
+                    "description": "An absolute https URL without credentials, query, fragment or zone identifier, at most 2048 bytes; a path is allowed. Empty clears it.",
+                    "type": "string",
+                    "example": "https://login.microsoftonline.com/tenant-id/v2.0"
+                },
+                "role_mapping": {
+                    "description": "At most 200 entries; claim groups or roles, a trimmed value of 1 to 256 bytes, an existing role id, no repeated claim and value. Empty or absent clears it; stored encrypted.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.SSORoleMappingEntry"
+                    }
+                },
+                "scopes": {
+                    "description": "At most 20 tokens without whitespace; a non-empty list must contain openid. Empty or absent clears it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "openid",
+                        "profile",
+                        "email"
+                    ]
+                }
+            }
+        },
+        "internal_handler.SSOSettingsResponse": {
+            "description": "The effective single sign-on configuration: stored settings over the OIDC_* environment over the defaults. The client secret is never returned; client_secret_set says whether one is in force.",
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "description": "The OpenID Connect client id, or empty.",
+                    "type": "string",
+                    "example": "gophercrm"
+                },
+                "client_secret_set": {
+                    "description": "Whether a client secret is in force (stored or from OIDC_CLIENT_SECRET).",
+                    "type": "boolean",
+                    "example": true
+                },
+                "enabled": {
+                    "description": "Whether single sign-on is enabled. False when the stored setting cannot be read, whatever OIDC_ENABLED says.",
+                    "type": "boolean",
+                    "example": false
+                },
+                "issuer_url": {
+                    "description": "The OpenID Connect issuer URL, or empty.",
+                    "type": "string",
+                    "example": "https://login.microsoftonline.com/tenant-id/v2.0"
+                },
+                "role_mapping": {
+                    "description": "The role mapping, never null. Empty when the stored mapping cannot be read or parsed.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handler.SSORoleMappingEntry"
+                    }
+                },
+                "scopes": {
+                    "description": "The scopes requested at sign-in; openid profile email by default.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "openid",
+                        "profile",
+                        "email"
+                    ]
+                },
+                "sources": {
+                    "description": "Where each value came from.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_handler.SSOSettingsSources"
+                        }
+                    ]
+                }
+            }
+        },
+        "internal_handler.SSOSettingsSources": {
+            "description": "Where each effective value came from: settings (stored through PUT /settings/sso), env (an OIDC_* variable) or default (built in).",
+            "type": "object",
+            "properties": {
+                "client_id": {
+                    "description": "Source of client_id.",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "env"
+                },
+                "client_secret": {
+                    "description": "Source of the client secret (its value is never returned).",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "settings"
+                },
+                "enabled": {
+                    "description": "Source of enabled.",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "settings"
+                },
+                "issuer_url": {
+                    "description": "Source of issuer_url.",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "env"
+                },
+                "role_mapping": {
+                    "description": "Source of role_mapping.",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "settings"
+                },
+                "scopes": {
+                    "description": "Source of scopes.",
+                    "type": "string",
+                    "enum": [
+                        "settings",
+                        "env",
+                        "default"
+                    ],
+                    "example": "default"
                 }
             }
         },

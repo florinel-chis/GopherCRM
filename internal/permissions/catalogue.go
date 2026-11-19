@@ -26,6 +26,10 @@ const (
 
 	SettingsView   = "settings.view"
 	SettingsUpdate = "settings.update"
+	// SettingsSSOManage opens the single sign-on settings (/settings/sso).
+	// settings.view and settings.update do not: the SSO rows are reserved
+	// and hidden from the generic /configurations endpoints.
+	SettingsSSOManage = "settings.sso_manage"
 
 	LeadsView           = "leads.view"
 	LeadsCreate         = "leads.create"
@@ -150,6 +154,7 @@ var catalogue = []Node{
 	group("settings", "Settings",
 		leaf(SettingsView, "View settings"),
 		leaf(SettingsUpdate, "Change settings"),
+		leaf(SettingsSSOManage, "View and change single sign-on settings"),
 	),
 	group("leads", "Leads",
 		ownLeaf(LeadsView, "View leads"),

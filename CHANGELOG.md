@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single sign-on settings, no sign-in yet (#434).** The backend half of the OpenID Connect
+  configuration for RBAC phase 2. Six settings are seeded in the security category:
+  `security.sso.enabled`, `issuer_url`, `client_id`, `client_secret`, `scopes` and
+  `role_mapping`; the client secret and the role mapping are encrypted at rest. They are read
+  and written only through the new admin-only `GET` and `PUT /settings/sso`, guarded by the new
+  permission `settings.sso_manage` (held by the admin system role; `settings.view` and
+  `settings.update` do not open it). GET returns the effective values with a `sources` object
+  (`settings`, `env` or `default`) and `client_secret_set`; the secret itself is never
+  returned. PUT replaces everything but the secret (absent keeps it, `""` clears it), validates
+  the issuer (absolute https URL, no credentials, query, fragment or zone identifier), the
+  scopes (must contain `openid`) and the role mapping (claim `groups` or `roles`, a stable
+  value, an existing role id; an unknown one is 400 `INVALID_REFERENCE`) before writing
+  anything. The `OIDC_ENABLED`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`,
+  `OIDC_SCOPES` and `OIDC_ROLE_MAPPING` variables are fallbacks behind the stored settings
+  (documented, commented out, in `.env.example`). It fails closed: single sign-on is off when
+  its stored switch cannot be read, and a stored mapping that cannot be read or parsed is empty
+  rather than the environment one. Nothing signs anyone in with these settings yet. No schema
+  change: the rows are seeded at startup.
 - **Settings > Webhooks screen (#409).** Webhook endpoints and their delivery log no longer need
   the API: `/settings/webhooks` lists the endpoints (URL, subscribed events, active flag, created
   date) and creates, edits, activates, deactivates and deletes them, and its "Delivery log" tab
@@ -745,6 +763,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The generic configuration endpoints no longer serve the single sign-on settings (#434).**
+  `GET /configurations` and `GET /configurations/category/security` leave out every
+  `security.sso.*` entry, and `GET`, `PUT /configurations/{key}` and
+  `POST /configurations/{key}/reset` answer 404 for them, whatever the case or trailing spaces
+  of the key (MySQL and MariaDB match keys case-insensitively). The configuration service's
+  generic writes refuse them the same way; `/settings/sso` is their only API.
 - **Quote response token leaves the URL after the first read; public quote responses and the
   PDF are not cached; a render credential is single use (#431).**
   - **Response page and API.** The `/quote-response` page takes the token from the emailed link

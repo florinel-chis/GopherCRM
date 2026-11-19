@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 )
 
 // ConfigurationType is the declared type of a configuration entry. It decides
@@ -48,6 +49,30 @@ const (
 // endpoint. It ships disabled: open sign-up is opt-in per deployment, switched
 // on by an administrator in Settings > Configuration.
 const ConfigKeyAllowPublicRegistration = "security.allow_public_registration"
+
+// Single sign-on (OpenID Connect) settings. They are reserved: only the SSO
+// settings service writes them (ConfigurationService.SetSSO, behind
+// /settings/sso), and the generic /configurations endpoints and the generic
+// service writes refuse them. Every value ships empty, which means "not set
+// here": the OIDC_* environment variables then apply.
+const (
+	ConfigKeySSOPrefix       = "security.sso."
+	ConfigKeySSOEnabled      = "security.sso.enabled"
+	ConfigKeySSOIssuerURL    = "security.sso.issuer_url"
+	ConfigKeySSOClientID     = "security.sso.client_id"
+	ConfigKeySSOClientSecret = "security.sso.client_secret"
+	ConfigKeySSOScopes       = "security.sso.scopes"
+	ConfigKeySSORoleMapping  = "security.sso.role_mapping"
+)
+
+// IsSSOConfigurationKey reports whether key names a reserved SSO setting. It
+// ignores case and surrounding spaces on purpose: the configurations table is
+// case-insensitive on MySQL and MariaDB (utf8mb4_unicode_ci, which also
+// ignores trailing spaces), so "SECURITY.SSO.ROLE_MAPPING " resolves to the
+// real row there. Guards should still decide on the resolved row's Key.
+func IsSSOConfigurationKey(key string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), ConfigKeySSOPrefix)
+}
 
 // Configuration represents a system configuration setting
 type Configuration struct {
@@ -432,5 +457,33 @@ func DefaultConfigurations() []Configuration {
 			ValidValues:  `["anthropic", "openai", "gemini", "kimi", "perplexity"]`,
 		},
 	}
+	defaults = append(defaults, defaultSSOConfigurations()...)
 	return append(defaults, defaultAEOProviderConfigurations()...)
+}
+
+// defaultSSOConfigurations seeds the six reserved single sign-on settings.
+// They ship empty so the OIDC_* environment fallbacks apply until an
+// administrator stores a value; the client secret and the role mapping are
+// sensitive and therefore encrypted at rest.
+func defaultSSOConfigurations() []Configuration {
+	entry := func(key, description string, sensitive bool) Configuration {
+		return Configuration{
+			Key:         key,
+			Type:        ConfigTypeString,
+			Category:    CategorySecurity,
+			Description: description,
+			IsSystem:    true,
+			IsSensitive: sensitive,
+		}
+	}
+	enabled := entry(ConfigKeySSOEnabled, "Whether single sign-on (OpenID Connect) is enabled: true, false, or empty to follow OIDC_ENABLED", false)
+	enabled.ValidValues = `["", "true", "false"]`
+	return []Configuration{
+		enabled,
+		entry(ConfigKeySSOIssuerURL, "OpenID Connect issuer URL (https); empty follows OIDC_ISSUER_URL", false),
+		entry(ConfigKeySSOClientID, "OpenID Connect client id; empty follows OIDC_CLIENT_ID", false),
+		entry(ConfigKeySSOClientSecret, "OpenID Connect client secret; empty follows OIDC_CLIENT_SECRET", true),
+		entry(ConfigKeySSOScopes, "Space-separated OpenID Connect scopes; empty follows OIDC_SCOPES, then openid profile email", false),
+		entry(ConfigKeySSORoleMapping, "JSON array mapping an ID-token claim value to a role id; empty follows OIDC_ROLE_MAPPING", true),
+	}
 }

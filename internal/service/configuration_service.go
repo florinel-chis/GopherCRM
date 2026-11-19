@@ -25,7 +25,14 @@ type ConfigurationService interface {
 	GetByKey(key string) (*models.Configuration, error)
 	GetByCategory(category models.ConfigurationCategory) ([]models.Configuration, error)
 	GetAll() ([]models.Configuration, error)
+	// Set changes a configuration value. It refuses the reserved single
+	// sign-on rows (security.sso.*) as not found, deciding on the resolved
+	// row's key so a case-folded or space-padded spelling that the database
+	// collation matches cannot get past it.
 	Set(key string, value interface{}) error
+	// SetSSO is Set for the reserved single sign-on rows only: any other row
+	// is refused as not found. Only the SSO settings service calls it.
+	SetSSO(key string, value interface{}) error
 	Get(key string) (interface{}, error)
 	// GetSecret decrypts a sensitive configuration. It returns "" for an
 	// entry that was never set or has been cleared, and also for one whose
@@ -86,11 +93,41 @@ func (s *configurationService) GetAll() ([]models.Configuration, error) {
 }
 
 func (s *configurationService) Set(key string, value interface{}) error {
+	config, err := s.resolveGeneric(key)
+	if err != nil {
+		return err
+	}
+	return s.setValue(config, key, value)
+}
+
+func (s *configurationService) SetSSO(key string, value interface{}) error {
 	config, err := s.GetByKey(key)
 	if err != nil {
 		return err
 	}
+	if !models.IsSSOConfigurationKey(config.Key) {
+		return fmt.Errorf("configuration %q not found: %w", key, apperrors.ErrNotFound)
+	}
+	return s.setValue(config, key, value)
+}
 
+// resolveGeneric looks a row up for the generic write paths (Set, Reset,
+// Delete) and hides the reserved single sign-on rows from them. The check is
+// on the RESOLVED row's key, never on the argument: on MySQL and MariaDB the
+// lookup is case-insensitive and ignores trailing spaces, so
+// "SECURITY.SSO.ROLE_MAPPING" finds the real row.
+func (s *configurationService) resolveGeneric(key string) (*models.Configuration, error) {
+	config, err := s.GetByKey(key)
+	if err != nil {
+		return nil, err
+	}
+	if models.IsSSOConfigurationKey(config.Key) {
+		return nil, fmt.Errorf("configuration %q not found: %w", key, apperrors.ErrNotFound)
+	}
+	return config, nil
+}
+
+func (s *configurationService) setValue(config *models.Configuration, key string, value interface{}) error {
 	if config.IsReadOnly {
 		return fmt.Errorf("configuration %q is read-only: %w", key, apperrors.ErrConfigurationReadOnly)
 	}
@@ -235,7 +272,7 @@ func (s *configurationService) GetJSON(key string) (map[string]interface{}, erro
 }
 
 func (s *configurationService) Delete(key string) error {
-	config, err := s.GetByKey(key)
+	config, err := s.resolveGeneric(key)
 	if err != nil {
 		return err
 	}
@@ -248,7 +285,7 @@ func (s *configurationService) Delete(key string) error {
 }
 
 func (s *configurationService) Reset(key string) error {
-	config, err := s.GetByKey(key)
+	config, err := s.resolveGeneric(key)
 	if err != nil {
 		return err
 	}

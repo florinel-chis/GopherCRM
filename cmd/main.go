@@ -454,6 +454,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	quotePublicHandler := handler.NewQuotePublicHandler(quoteService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	configHandler := handler.NewConfigurationHandler(configService).WithQuotePDFAvailable(quoteService.PDFAvailable)
+	// Single sign-on settings (#434): stored security.sso.* rows over the
+	// OIDC_* fallbacks. No sign-in flow reads them yet.
+	ssoSettingsHandler := handler.NewSSOSettingsHandler(service.NewSSOSettingsService(configService, roleRepo, cfg.SSO))
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
 		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(models.DB)))
 	bulkHandler := handler.NewBulkHandler(bulkService)
@@ -578,6 +581,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupLabelRoutes(protected, labelHandler)
 		handler.SetupAPIKeyRoutes(protected, apiKeyHandler)
 		handler.SetupConfigurationRoutes(protected, configHandler)
+		handler.SetupSSOSettingsRoutes(protected, ssoSettingsHandler)
 		handler.SetupDashboardRoutes(protected, dashboardHandler)
 		handler.SetupBulkStatusRoutes(protected, bulkHandler)
 		handler.SetupAEORoutes(protected, aeoHandler)
