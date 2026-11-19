@@ -112,7 +112,7 @@ names the Go test that already pins its API behaviour.
   2. Switch on the "Open only" toggle with no stage picked.
 - **Expected:** Step 1: `GET /api/v1/deals?stage=negotiation…` returns the negotiation deal only.
   Step 2: `…open=true…` returns every deal whose stage is neither `won` nor `lost`; the toggle is
-  only sent when on. Unlike the lead status filter, these narrow the whole result set on the
+  only sent when on. Like the lead status filter (#426), these narrow the whole result set on the
   server (`DealListFilter`). `stage=closed` or `open=maybe` is a **400**.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can filter the list by stage"
   (picks "Proposal" on top of a search and expects the one proposal row with its stage chip,

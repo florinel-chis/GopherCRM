@@ -936,6 +936,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Leads list Status dropdown filters again (#426).** `GET /leads` now reads its optional
+  `status` query parameter on the server: one of `new`, `contacted`, `qualified`, `unqualified`,
+  `converted`, matched exactly and case-sensitively. It applies in the query before offset and
+  limit, so `meta` counts only the matching leads. For an admin it combines with `search`,
+  `classification` and `sort_by`/`sort_order`; for a sales user it narrows only the caller's own
+  leads (search, classification and the sort stay ignored there, as before). An empty value is
+  ignored, a repeated parameter uses its first value, and any other value (`lost`, `Qualified`) is
+  answered 400 `VALIDATION_ERROR` with `error.details.status`, the value not echoed. `external_id`
+  still overrides every other parameter, `status` included. The Status dropdown drops `Lost`,
+  which no lead can have, and gains `Unqualified`; the `admin-leads.spec.ts` case "admin can
+  filter leads by status (#426)" runs instead of being `test.fixme`. `GET /leads/export` still
+  ignores `status`. No schema change.
 - **The Users list Role dropdown filters again (#428).** `GET /users` now reads its optional
   `role` query parameter on the server: one of `admin`, `sales`, `support`, `customer`, `custom`,
   matched exactly and case-sensitively. It applies in the query before offset and limit, so `meta`

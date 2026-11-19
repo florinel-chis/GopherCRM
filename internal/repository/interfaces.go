@@ -130,6 +130,21 @@ type RoleAuditRepository interface {
 	WithTx(tx *gorm.DB) RoleAuditRepository
 }
 
+// LeadListFilter narrows GET /leads when a status filter is given (#426).
+// Every field is optional and they combine with AND: a nil OwnerID is every
+// owner, while a non-nil one restricts to that owner; an empty Search,
+// Classification or Status is no filter. Status and Classification are matched
+// exactly (callers validate Status first); Search is a substring matched
+// against first_name, last_name, email, company, phone and notes. The
+// predicate is part of the query, so it applies before offset and limit, and
+// the count uses the same predicate.
+type LeadListFilter struct {
+	OwnerID        *uint
+	Search         string
+	Classification models.LeadClassification
+	Status         models.LeadStatus
+}
+
 type LeadRepository interface {
 	Create(lead *models.Lead) error
 	GetByID(id uint) (*models.Lead, error)
@@ -155,6 +170,10 @@ type LeadRepository interface {
 	Count() (int64, error)
 	CountByClassification(classification models.LeadClassification) (int64, error)
 	CountByOwnerID(ownerID uint) (int64, error)
+	// Filtered collections of GET /leads (#426). Both share one predicate;
+	// rows are ordered by the validated sort column then id, or id ascending.
+	ListByFilter(filter LeadListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
+	CountByFilter(filter LeadListFilter) (int64, error)
 	ConvertToCustomer(leadID uint, customerID uint) error
 	// Dashboard analytics. CountByStatus groups on a plain column, which both
 	// MySQL and SQLite handle identically; every time-based aggregation is a

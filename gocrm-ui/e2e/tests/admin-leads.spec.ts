@@ -118,21 +118,20 @@ test.describe('Admin - Leads Management', () => {
     await expect(leadsPage.tableRows).toHaveCount(1);
   });
 
-  // fixme: GET /leads ignores the status parameter, so the Status dropdown narrows nothing (#426).
-  test.fixme('admin can filter leads by status (#426)', async ({ page }) => {
+  test('admin can filter leads by status (#426)', async ({ page }) => {
     const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
-    const contactedCompany = `${stamp} Contacted Co`;
-    const qualifiedCompany = `${stamp} Qualified Co`;
+    const companies = {
+      contacted: `${stamp} Contacted Co`,
+      qualified: `${stamp} Qualified Co`,
+      unqualified: `${stamp} Unqualified Co`,
+    } as const;
     const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
     const headers = { Authorization: `Bearer ${token}` };
-    // An admin has to name the owner of a lead it creates; it owns these two itself.
+    // An admin has to name the owner of a lead it creates; it owns these itself.
     const me = await page.request.get(`${API_BASE_URL}/users/me`, { headers });
     expect(me.status(), 'current user').toBe(200);
     const ownerId: number = (await me.json()).data.id;
-    for (const [company, status] of [
-      [contactedCompany, 'contacted'],
-      [qualifiedCompany, 'qualified'],
-    ]) {
+    for (const [status, company] of Object.entries(companies)) {
       const created = await page.request.post(`${API_BASE_URL}/leads`, {
         headers,
         data: {
@@ -146,17 +145,61 @@ test.describe('Admin - Leads Management', () => {
       });
       expect(created.status(), `seed ${status} lead`).toBe(201);
     }
-    const contactedRow = leadsPage.tableRows.filter({ hasText: contactedCompany });
-    const qualifiedRow = leadsPage.tableRows.filter({ hasText: qualifiedCompany });
+    const rowFor = (status: keyof typeof companies) =>
+      leadsPage.tableRows.filter({ hasText: companies[status] });
 
+    // The search narrows the list to this test's three leads; the status
+    // filter must then narrow them further on the server (rows AND total).
     await leadsPage.goto();
     await leadsPage.searchLeads(stamp);
-    await expect(contactedRow).toHaveCount(1);
-    await expect(qualifiedRow).toHaveCount(1);
+    await expect(rowFor('contacted')).toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor('qualified')).toHaveCount(1);
+    await expect(rowFor('unqualified')).toHaveCount(1);
 
-    await leadsPage.filterByStatus('qualified');
-    await expect(qualifiedRow).toBeVisible();
-    await expect(contactedRow).toHaveCount(0);
+    const listResponse = (status: string) =>
+      page.waitForResponse((res) => {
+        if (res.request().method() !== 'GET') return false;
+        const url = new URL(res.url());
+        return (
+          url.pathname.endsWith('/leads') &&
+          url.searchParams.get('status') === status &&
+          url.searchParams.get('search') === stamp
+        );
+      }, { timeout: 30_000 });
+
+    // The dropdown offers exactly the five lead statuses the API accepts.
+    const statusSelect = page.locator('[role="combobox"]').first();
+    await statusSelect.click();
+    const listbox = page.getByRole('listbox');
+    await expect(listbox.getByRole('option')).toHaveText([
+      'All Statuses',
+      'New',
+      'Contacted',
+      'Qualified',
+      'Unqualified',
+      'Converted',
+    ]);
+
+    const qualifiedResponse = listResponse('qualified');
+    await listbox.getByRole('option', { name: 'Qualified', exact: true }).click();
+    const qualified = await qualifiedResponse;
+    expect(qualified.status()).toBe(200);
+    expect((await qualified.json()).data.total, 'qualified total').toBe(1);
+    await expect(rowFor('qualified')).toBeVisible({ timeout: 30_000 });
+    await expect(rowFor('contacted')).toHaveCount(0);
+    await expect(rowFor('unqualified')).toHaveCount(0);
+    await expect(leadsPage.tableRows).toHaveCount(1);
+
+    const unqualifiedResponse = listResponse('unqualified');
+    await statusSelect.click();
+    await page.getByRole('listbox').getByRole('option', { name: 'Unqualified', exact: true }).click();
+    const unqualified = await unqualifiedResponse;
+    expect(unqualified.status()).toBe(200);
+    expect((await unqualified.json()).data.total, 'unqualified total').toBe(1);
+    await expect(rowFor('unqualified')).toBeVisible({ timeout: 30_000 });
+    await expect(rowFor('qualified')).toHaveCount(0);
+    await expect(rowFor('contacted')).toHaveCount(0);
+    await expect(leadsPage.tableRows).toHaveCount(1);
   });
 
   test('admin sees validation errors for invalid lead data', async ({ page }) => {

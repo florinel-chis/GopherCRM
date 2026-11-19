@@ -132,6 +132,11 @@ type LeadService interface {
 	List(offset, limit int) ([]models.Lead, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
+	// ListFiltered lists the leads matching filter for GET /leads with a
+	// status filter (#426): rows and total share one predicate, applied before
+	// offset and limit. The handler sets filter.OwnerID for callers that see
+	// only their own leads.
+	ListFiltered(filter repository.LeadListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error)
 	GetCount() (int64, error)
 	GetCountByClassification(classification models.LeadClassification) (int64, error)

@@ -640,39 +640,35 @@ into a sign-out test.
   sort by Created column descending" and "should toggle sort order on double click" cover leads
   only; G21 asks for the other columns.
 
-### TC-XCUT-038 — Lead and task status and priority dropdowns do not filter anything
+### TC-XCUT-038 — Task status and priority dropdowns do not filter anything
 - **Priority:** P1
 - **Type:** negative
-- **Preconditions:** Logged in as the seeded admin; leads in more than one status, tasks in more
-  than one status and priority.
+- **Preconditions:** Logged in as the seeded admin; tasks in more than one status and priority.
 - **Steps:**
-  1. On `/leads`, note the visible rows, then select **Status → New** and re-read the table.
-  2. Repeat on `/tasks` with **Status** and **Priority**.
-     `/tickets` and `/users` are the exceptions: since #218 the backend filters ticket status and
-     priority server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and TC-TICK-059
-     to 064 in [05-tickets.md](05-tickets.md), and since #428 (resolved) it filters the users
-     `role` server-side, covered by TC-USER-013 in [07-users.md](07-users.md); neither is covered
-     by this case.
+  1. On `/tasks`, note the visible rows, then select **Status** and re-read the table.
+  2. Repeat with **Priority**.
+     `/tickets`, `/users` and `/leads` are the exceptions: since #218 the backend filters ticket
+     status and priority server-side, so its dropdowns are covered by TC-TICK-033, TC-TICK-034 and
+     TC-TICK-059 to 064 in [05-tickets.md](05-tickets.md); since #428 (resolved) it filters the
+     users `role` server-side, covered by TC-USER-013 in [07-users.md](07-users.md); and since #426
+     (resolved) it filters the lead `status` server-side, covered by TC-LEAD-038 in
+     [03-leads.md](03-leads.md). None of them is covered by this case.
 - **Expected:** In every case the request is re-issued with the extra query parameter
-  (`?status=new`, `?priority=high`, …), the backend **ignores** it, and the rendered rows and the
-  total in the pagination footer are **unchanged**. Verified live: `GET /leads?limit=5&status=new`
-  returns the same `total=71` and the same first row (status `contacted`) as the unfiltered call.
-  The one dropdown that does work is the
-  lead **Classification** filter, which `lead_handler.go:179` reads — and only when `search` is empty
-  and the caller is an admin, because the search branch is evaluated first and sales users are routed
-  to `GetByOwner` before either is considered.
-- **Known issue:** FEATURES 3.8 and 6.5 and gap G34 describe these as *client-side filters
-  over the current page*. That is too generous: no list page filters the fetched rows at all — the
+  (`?status=pending`, `?priority=high`, …), the backend **ignores** it, and the rendered rows and the
+  total in the pagination footer are **unchanged**.
+- **Known issue:** FEATURES 6.5 and gap G34 describe these as *client-side filters over the current
+  page*. That is too generous: the task list page does not filter the fetched rows at all — the
   only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
-  defects are filed per endpoint (#426 leads, #427 tasks) and three browser cases wait for them,
-  each with a real assertion that the non-matching row is gone (#402): `admin-leads.spec.ts` "admin
-  can filter leads by status (#426)", `admin-tasks.spec.ts` "admin can filter tasks by status
-  (#427)" and "admin can filter tasks by priority (#427)" are `test.fixme`. This no longer covers
-  tickets: `GET /tickets` filters `status` and `priority` server-side since #218 (FEATURES 5.5),
-  and the `admin-tickets.spec.ts` "admin can filter tickets by status" / "by priority" tests run
-  against tickets they seed. Nor does it cover users: #428 (resolved) made `GET /users` filter
-  `role` server-side (FEATURES 7.8), and `admin-users.spec.ts` "admin can filter users by role
-  (#428)" now runs as a plain test.
+  defect is filed as #427 and two browser cases wait for it, each with a real assertion that the
+  non-matching row is gone (#402): `admin-tasks.spec.ts` "admin can filter tasks by status (#427)"
+  and "admin can filter tasks by priority (#427)" are `test.fixme`. This no longer covers tickets:
+  `GET /tickets` filters `status` and `priority` server-side since #218 (FEATURES 5.5), and the
+  `admin-tickets.spec.ts` "admin can filter tickets by status" / "by priority" tests run against
+  tickets they seed. Nor does it cover users: #428 (resolved) made `GET /users` filter `role`
+  server-side (FEATURES 7.8), and `admin-users.spec.ts` "admin can filter users by role (#428)" now
+  runs as a plain test. Nor leads: #426 (resolved) made `GET /leads` filter `status` server-side
+  (FEATURES 3.8, `lead_handler.go:363`), and `admin-leads.spec.ts` "admin can filter leads by status
+  (#426)" now runs as a plain test.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
 

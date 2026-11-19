@@ -17921,8 +17921,9 @@ paths:
     get:
       description: |-
         One page of leads. Roles: admin and sales.
-        Without external_id, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
-        Without external_id, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
+        status (#426) takes exactly one of new, contacted, qualified, unqualified or converted, matched case-sensitively; an empty status is ignored, a repeated parameter uses its first value, and any other value (lost, Qualified, QUALIFIED, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed status and the value not echoed. With a status, the filter is applied in the query before offset and limit, so leads, total and meta reflect it, and the owner is loaded: for an admin it combines with search, classification and sort_by/sort_order (all ANDed, ascending id order without a sort); for a sales user it narrows only the leads it owns, in ascending id order, and search, classification, sort_by and sort_order stay ignored. external_id still overrides status, which is then not validated.
+        Without external_id or status, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
+        Without external_id or status, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
         external_id, when present and not empty, takes precedence over everything above for every role, including search, classification, sort_by, sort_order, page, offset and limit: the lookup is an SQL equality on the column, byte-exact on SQLite, while on MySQL/MariaDB the column collation decides (utf8mb4_unicode_ci in the migrations: case-insensitive, trailing spaces ignored); the value is not trimmed. external_id is not unique: the result holds every matching live lead the caller may view (admin any lead, sales only the leads it owns, every other role none), in ascending id order, and total is their number (meta.page 1, meta.per_page the parsed limit, which does not cut the list). A lead the caller may not see is left out, never 403 or 404, so a hidden lead reads like an unknown value. At most the first 100 matching leads by id are read before the visibility filter, so with more than 100 leads sharing one value later ones (including a sales user's own) are not returned. The owner is loaded on that path, company_record is not.
         data is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
       parameters:
@@ -17948,8 +17949,8 @@ paths:
         in: query
         name: search
         type: string
-      - description: 'Admin only, ignored when search is present: exact classification
-          to match'
+      - description: 'Admin only, ignored when search is present unless status is
+          given (then combined): exact classification to match'
         enum:
         - unclassified
         - test
@@ -17959,8 +17960,8 @@ paths:
         in: query
         name: classification
         type: string
-      - description: 'Admin only, ignored when classification wins: sort column; any
-          other value is ignored (no error)'
+      - description: 'Admin only, ignored when classification wins without a status:
+          sort column; any other value is ignored (no error)'
         enum:
         - created_at
         - updated_at
@@ -17981,6 +17982,19 @@ paths:
         - desc
         in: query
         name: sort_order
+        type: string
+      - description: 'Only leads in this status (exact, case-sensitive match); empty
+          is ignored, any other value is 400. Admin: combined with search, classification
+          and the sort. Sales: narrows only the caller''s own leads. Overridden by
+          external_id'
+        enum:
+        - new
+        - contacted
+        - qualified
+        - unqualified
+        - converted
+        in: query
+        name: status
         type: string
       - description: Exact external_id to look up (at most 255 characters); when present
           and not empty it overrides every other parameter and returns the matching
@@ -18006,7 +18020,9 @@ paths:
         "400":
           description: 'VALIDATION_ERROR: external_id is longer than 255 characters
             (''external_id is too long (at most 255 characters)'', error.details {''field'':
-            ''external_id''})'
+            ''external_id''}), or status is not one of new, contacted, qualified,
+            unqualified, converted (''Validation failed'', error.details keyed status;
+            the value is not echoed)'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

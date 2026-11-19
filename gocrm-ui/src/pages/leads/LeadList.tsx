@@ -40,8 +40,8 @@ const statusOptions = [
   { value: 'new', label: 'New' },
   { value: 'contacted', label: 'Contacted' },
   { value: 'qualified', label: 'Qualified' },
+  { value: 'unqualified', label: 'Unqualified' },
   { value: 'converted', label: 'Converted' },
-  { value: 'lost', label: 'Lost' },
 ];
 
 const classificationOptions = [

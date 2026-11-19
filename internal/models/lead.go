@@ -10,6 +10,16 @@ const (
 	LeadStatusConverted   LeadStatus = "converted"
 )
 
+// IsValid reports whether s is exactly one of the five declared lead statuses.
+// The match is case-sensitive: "", "lost" and "Qualified" are not valid.
+func (s LeadStatus) IsValid() bool {
+	switch s {
+	case LeadStatusNew, LeadStatusContacted, LeadStatusQualified, LeadStatusUnqualified, LeadStatusConverted:
+		return true
+	}
+	return false
+}
+
 type LeadClassification string
 
 const (

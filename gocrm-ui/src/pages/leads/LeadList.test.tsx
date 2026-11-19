@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, requireElement } from '@/test/test-utils';
+import { render, screen, waitFor, fireEvent, within, requireElement } from '@/test/test-utils';
 import { Component as LeadList } from './LeadList';
 import { leadsApi } from '@/api/endpoints';
 import { createMockLead } from '@/test/factories';
@@ -116,6 +116,35 @@ describe('LeadList', () => {
       expect(leadsApi.getLeads).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'new',
+          page: 1,
+        })
+      );
+    });
+  });
+
+  it('offers exactly the statuses the API filters on (#426)', async () => {
+    render(<LeadList />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Company A')).toBeInTheDocument();
+    });
+
+    const statusSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.mouseDown(statusSelect);
+
+    const listbox = await screen.findByRole('listbox');
+    const labels = within(listbox)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(labels).toEqual(['All Statuses', 'New', 'Contacted', 'Qualified', 'Unqualified', 'Converted']);
+    expect(within(listbox).queryByRole('option', { name: 'Lost' })).not.toBeInTheDocument();
+
+    fireEvent.click(within(listbox).getByRole('option', { name: 'Unqualified' }));
+
+    await waitFor(() => {
+      expect(leadsApi.getLeads).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'unqualified',
           page: 1,
         })
       );

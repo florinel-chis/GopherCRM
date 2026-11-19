@@ -665,30 +665,33 @@ the frontend gating.
 
 ---
 
-## 3.8 Filter by status (page-local control, no server support)
+## 3.8 Filter by status
 
-### TC-LEAD-038 — The Status dropdown does not change the result set
+### TC-LEAD-038 — The Status dropdown narrows the rows and the total server-side
 - **Priority:** P1
-- **Type:** negative
-- **Preconditions:** Admin logged in; leads exist in at least two different statuses on the first
-  page.
+- **Type:** functional
+- **Preconditions:** Admin logged in; leads exist in at least two different statuses.
 - **Steps:**
   1. Navigate to `/leads` and record the visible rows and the pagination total.
-  2. Set the Status dropdown to "Converted".
-  3. Record the rows and total again.
-- **Expected:** A new request is issued with `status=converted` appended, it returns **200**, and
-  the rows and total are **identical** to step 1. `lead_handler.go` never reads a `status` query
-  parameter, and `LeadList.tsx` performs no client-side filtering either — the parameter is
-  transmitted and discarded. Verified live: `?limit=3` and `?limit=3&status=converted` returned the
-  same three rows and the same `total: 71`.
-- **Known issue:** `docs/FEATURES.md` row 3.8 and gap **G34** describe this as client-side
-  filtering; in the leads page it is not filtering at all. `LeadList.test.tsx` "filters leads by
-  status" only asserts that `getLeads` was called with `status: 'new'`, which is why the defect
-  survives the unit suite. Any test asserting server-side status filtering would be wrong.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can filter leads by
-  status (#426)" is `test.fixme` for the defect filed as #426: it seeds a contacted and a qualified
-  lead sharing a search token, filters by "Qualified" and expects the contacted row to be gone,
-  which fails while `GET /leads` ignores `status` (TC-XCUT-038).
+  2. Open the Status dropdown and note its options.
+  3. Set it to "Qualified".
+  4. Record the rows and total again.
+- **Expected:** The dropdown offers exactly All Statuses, New, Contacted, Qualified, Unqualified
+  and Converted (no Lost, which no lead can have). A new request is issued with `status=qualified`
+  and `page=1`; it returns **200** and lists only qualified leads, and `total` and the pagination
+  footer count only them (#426). The handler validates the value with `LeadStatus.IsValid`
+  (`lead_handler.go:363`) and, for an admin, passes it together with search, classification and
+  the sort to `LeadService.ListFiltered` (`lead_handler.go:421`), whose single predicate applies
+  before offset and limit. A sales user gets only its own leads in that status. An unknown or
+  differently cased value (`status=lost`, `status=Qualified`) is **400** `VALIDATION_ERROR` with
+  `error.details.status`, the value not echoed; `external_id` still overrides `status`.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-leads.spec.ts` "admin can filter leads by
+  status (#426)": it seeds a contacted and a qualified lead sharing a search token, filters by
+  "Qualified" and expects the contacted row to be gone. Backend: `TestLeadListStatusFilterHandler`
+  (`internal/handler`), `TestLeadServiceListFiltered` (`internal/service`),
+  `TestLeadListFilterRepository{SQLite,MySQL}` (`internal/repository`), `TestLeadStatusIsValid`
+  (`internal/models`); Vitest: `LeadList.test.tsx` "offers exactly the statuses the API filters on
+  (#426)" (TC-XCUT-038).
 
 ### TC-LEAD-039 — Changing the status filter resets to page 1
 - **Priority:** P2
@@ -698,8 +701,8 @@ the frontend gating.
   1. Page forward to page 2.
   2. Change the Status dropdown to any value.
 - **Expected:** The next request carries `page=1`; the pagination footer returns to the first page
-  (`handleStatusChange` sets `page: 1`, `LeadList.tsx:237`). The rows themselves are those of page
-  1 unfiltered, per TC-LEAD-038.
+  (`handleStatusChange` sets `page: 1`, `LeadList.tsx:327`). The rows are the first page of the
+  leads in that status, per TC-LEAD-038.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
 ---
