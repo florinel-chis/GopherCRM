@@ -974,19 +974,19 @@ new account. Holds the issuer URL and the opaque subject only.
 
 ### oidc_login_attempts
 
-One single-use row per started sign-in. No foreign key and no user data; rows that expired more
-than an hour ago are purged, at most 100 per start.
+One single-use row per started sign-in. No foreign key and no user data; rows created more than
+one day ago are pruned by the stale bulk operation sweep (at boot and every 15 minutes, #453).
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | Yes | NULL | |
 | state_hash | varchar(64) | No | - | hex(HMAC-SHA256(state)) keyed by `API_KEY_SECRET`, else `JWT_SECRET`; unique index `idx_oidc_login_attempts_state_hash`; `json:"-"` |
-| nonce | varchar(64) | No | - | The nonce the ID token must carry |
-| code_verifier | varchar(128) | No | - | The PKCE verifier |
+| nonce | varchar(64) | No | - | The nonce the ID token must carry; emptied (`''`) when the row is used or found expired |
+| code_verifier | varchar(128) | No | - | The PKCE verifier; emptied (`''`) when the row is used or found expired |
 | issuer | varchar(2048) | No | - | The issuer the attempt was started against |
 | expires_at | datetime(3) | No | - | Ten minutes after the start |
-| used_at | datetime(3) | Yes | NULL | Set by the one conditional `UPDATE` that spends the row |
+| used_at | datetime(3) | Yes | NULL | Set by the claim: a plain read by `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`) that spends the row |
 
 ## APIKey Model
 

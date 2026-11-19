@@ -31,16 +31,22 @@ type fakeOIDCService struct {
 	calls    int
 	code     string
 	state    string
+	// startRequestID and callbackRequestID are what
+	// utils.RequestIDFromContext returned on the service's context.
+	startRequestID    string
+	callbackRequestID string
 }
 
-func (f *fakeOIDCService) Start(context.Context) (string, error) {
+func (f *fakeOIDCService) Start(ctx context.Context) (string, error) {
 	f.calls++
+	f.startRequestID = utils.RequestIDFromContext(ctx)
 	return f.startURL, f.startErr
 }
 
-func (f *fakeOIDCService) Callback(_ context.Context, code, state string) (*service.AuthTokens, error) {
+func (f *fakeOIDCService) Callback(ctx context.Context, code, state string) (*service.AuthTokens, error) {
 	f.calls++
 	f.code, f.state = code, state
+	f.callbackRequestID = utils.RequestIDFromContext(ctx)
 	return f.tokens, f.err
 }
 
@@ -157,5 +163,31 @@ func TestOIDCHandler(t *testing.T) {
 		recorder, _ := do(t, fake, "/auth/oidc/callback", body)
 		assert.Equal(t, http.StatusOK, recorder.Code)
 		assert.Equal(t, 1, fake.calls)
+	})
+
+	t.Run("request_id_reaches_service", func(t *testing.T) {
+		fake := &fakeOIDCService{
+			startURL: "https://idp.example.test/authorize?state=s",
+			tokens:   &service.AuthTokens{AccessToken: "jwt", User: &models.User{BaseModel: models.BaseModel{ID: 1}}},
+		}
+		router := gin.New()
+		router.Use(middleware.RequestID(), middleware.ErrorHandler())
+		h := NewAuthOIDCHandler(fake)
+		router.POST("/auth/oidc/start", h.Start)
+		router.POST("/auth/oidc/callback", h.Callback)
+		for _, call := range []struct{ path, body string }{
+			{"/auth/oidc/start", ""},
+			{"/auth/oidc/callback", validBody},
+		} {
+			request := httptest.NewRequest(http.MethodPost, call.path, bytes.NewBufferString(call.body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("X-Request-ID", "req-handler-453")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			assert.Equal(t, http.StatusOK, recorder.Code, call.path)
+		}
+		assert.Equal(t, 2, fake.calls)
+		assert.Equal(t, "req-handler-453", fake.startRequestID, "Start sees the request id")
+		assert.Equal(t, "req-handler-453", fake.callbackRequestID, "Callback sees the request id")
 	})
 }

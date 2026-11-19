@@ -609,10 +609,12 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 ### OIDC sign-in
 
 - **Rows locked:** the callback of `POST /auth/oidc/callback` (`oidcService.Callback`,
-  `internal/service/auth_oidc.go`) first spends its `oidc_login_attempts` row with one conditional
-  `UPDATE` by `state_hash` (`OIDCLoginAttemptRepository.Claim`,
-  `internal/repository/oidc_repository.go`), its own committed statement before the transaction
-  and before the issuer is contacted. The governed transaction (`ApplyOIDCSignIn`,
+  `internal/service/auth_oidc.go`) first spends its `oidc_login_attempts` row
+  (`OIDCLoginAttemptRepository.Claim`, `internal/repository/oidc_repository.go`): a plain read by
+  `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`, which
+  also blanks the nonce and verifier), its own committed statement before the transaction and
+  before the issuer is contacted. No row is locked by the read; a competing claim between the read
+  and the `UPDATE` leaves zero affected rows and the generic refusal. The governed transaction (`ApplyOIDCSignIn`,
   `internal/service/user_governed_writes.go`) then locks the `users` rows of the active admins
   (`LockActiveAdmins`), reads the `user_identities` row of the exact `(issuer, subject)` pair with a
   plain read, locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's

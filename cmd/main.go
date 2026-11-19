@@ -630,7 +630,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	// The stale bulk operation sweep (#196) runs on every replica: at boot and
 	// every 15 minutes it fails pending bulk_operations rows older than an hour,
 	// whose batch never committed.
-	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo)
+	bulkRecovery := newBulkRecoveryBackground(bulkOperationRepo, repository.NewOIDCLoginAttemptRepository(models.DB))
 	bulkRecovery.start(backgroundCtx)
 
 	// The outbound webhook sender (#345) runs on every replica: every

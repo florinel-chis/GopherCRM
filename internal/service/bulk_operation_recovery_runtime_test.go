@@ -335,3 +335,100 @@ func TestBulkOperationRecoveryLogsOmitPersonalData(t *testing.T) {
 		assertNoPersonalData(t, out.String())
 	})
 }
+
+// recordingPruneRepo records the single sign-on attempt prunes a sweep asks
+// for (#453). Only PruneCreatedBefore is implemented. results are returned in
+// order, then 0; err is returned by every call.
+type recordingPruneRepo struct {
+	repository.OIDCLoginAttemptRepository
+	mu      sync.Mutex
+	befores []time.Time
+	limits  []int
+	results []int64
+	err     error
+}
+
+func (r *recordingPruneRepo) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.befores = append(r.befores, before)
+	r.limits = append(r.limits, limit)
+	var deleted int64
+	if len(r.results) > 0 {
+		deleted, r.results = r.results[0], r.results[1:]
+	}
+	return deleted, r.err
+}
+
+func (r *recordingPruneRepo) calls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.befores)
+}
+
+func TestBulkOperationRecoveryOIDCAttemptPruning(t *testing.T) {
+	now := time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+	t.Run("every sweep prunes attempts older than a day, chunk by chunk, and logs the count", func(t *testing.T) {
+		logger, out := capturingLogger()
+		logger.SetLevel(logrus.DebugLevel)
+		bulk := newRecordingSweepRepo()
+		bulk.result = 2
+		prune := &recordingPruneRepo{results: []int64{500, 3}}
+		rt := NewBulkOperationRecoveryRuntime(bulk, logger, WithBulkRecoveryClock(func() time.Time { return now }),
+			WithOIDCAttemptPruning(prune))
+		failed, err := rt.Sweep(context.Background())
+		require.NoError(t, err)
+		assert.EqualValues(t, 2, failed)
+		require.Equal(t, 2, prune.calls(), "a full chunk is followed by another")
+		for i := range prune.befores {
+			assert.Equal(t, now.Add(-24*time.Hour), prune.befores[i], "the cutoff is a day before the runtime clock")
+			assert.Equal(t, 500, prune.limits[i])
+		}
+		assert.Equal(t, 24*time.Hour, OIDCLoginAttemptRetention)
+
+		var pruned map[string]interface{}
+		for _, line := range logLines(t, out.String()) {
+			assert.NotEqual(t, "oidc_sign_in", line["component"], "the sweep does not log as the sign-in")
+			if line["msg"] == "pruned single sign-on attempts" {
+				pruned = line
+			}
+		}
+		require.NotNil(t, pruned, "a non-zero prune is logged")
+		assert.Equal(t, "info", pruned["level"])
+		assert.EqualValues(t, 503, pruned["pruned"])
+		assertOnlyFields(t, pruned, "pruned")
+	})
+
+	t.Run("a prune error leaves the sweep result unchanged", func(t *testing.T) {
+		logger, out := capturingLogger()
+		bulk := newRecordingSweepRepo()
+		bulk.result = 4
+		prune := &recordingPruneRepo{err: errors.New("prune refused")}
+		rt := NewBulkOperationRecoveryRuntime(bulk, logger, WithBulkRecoveryClock(func() time.Time { return now }),
+			WithOIDCAttemptPruning(prune))
+		failed, err := rt.Sweep(context.Background())
+		require.NoError(t, err, "the bulk sweep's error is not the prune's")
+		assert.EqualValues(t, 4, failed)
+		assert.Equal(t, 1, prune.calls())
+		assert.Contains(t, out.String(), "single sign-on attempt prune failed")
+
+		bulk.err = errors.New("bulk refused")
+		_, err = rt.Sweep(context.Background())
+		require.Error(t, err)
+		assert.Equal(t, "bulk refused", err.Error(), "a bulk failure stays the bulk failure")
+		assert.Equal(t, 2, prune.calls(), "the prune runs whatever the bulk result")
+	})
+
+	t.Run("without the option there is no prune call", func(t *testing.T) {
+		bulk := newRecordingSweepRepo()
+		bulk.result = 1
+		prune := &recordingPruneRepo{results: []int64{7}}
+		rt := NewBulkOperationRecoveryRuntime(bulk, quietLogger(), WithBulkRecoveryClock(func() time.Time { return now }))
+		failed, err := rt.Sweep(context.Background())
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, failed)
+		assert.Zero(t, prune.calls())
+		assert.Nil(t, rt.oidcAttempts)
+	})
+}

@@ -35,8 +35,9 @@ import (
 //
 // Start writes one single-use oidc_login_attempts row (the HMAC of the state,
 // the nonce, the PKCE verifier and the issuer) and returns the authorization
-// URL. Callback spends that row with one conditional UPDATE committed on its
-// own, exchanges the code, verifies the ID token (signature, iss, aud, exp and
+// URL. Callback spends that row (a plain read by the state's HMAC, then one
+// conditional UPDATE by id committed on its own that also blanks the nonce
+// and the verifier, #453), exchanges the code, verifies the ID token (signature, iss, aud, exp and
 // the nonce), maps its groups or roles claim to a role (the first matching
 // entry, in stored order; an Entra ID group overage is read from Microsoft
 // Graph, #450; when a groups mapping meets an ID token without a groups claim
@@ -53,6 +54,12 @@ import (
 // account. Every sign-in re-applies the mapped role through the governed role
 // write, so the last-admin rule and the role audit (auth_method oidc) apply.
 // Success returns the same token pair as a password login.
+//
+// Every log line carries component oidc_sign_in, the request_id of the HTTP
+// request and the attempt_id of the row (0 before the row exists or is
+// claimed), and never a code, state, nonce, verifier, token, email, subject,
+// name or claim. Attempts older than OIDCLoginAttemptRetention are pruned by
+// the stale bulk operation sweep (PruneOIDCLoginAttempts).
 
 // Errors of the OIDC sign-in, classified with errors.Is.
 var (
@@ -81,8 +88,6 @@ type OIDCService interface {
 // Limits and lifetimes of the OIDC sign-in.
 const (
 	oidcAttemptTTL         = 10 * time.Minute
-	oidcAttemptPurgeAfter  = time.Hour
-	oidcAttemptPurgeLimit  = 100
 	oidcHTTPTimeout        = 10 * time.Second
 	oidcIssuerMaxBytes     = models.UserIdentityIssuerMaxLength
 	oidcSubjectMaxBytes    = models.UserIdentitySubjectMaxLength
@@ -225,12 +230,47 @@ func NewOIDCService(
 // NewAuthServiceWithSessions builds.
 var errOIDCNotWired = errors.New("oidc sign-in needs the session-issuing auth service")
 
-func oidcLogger() *logrus.Entry {
+// OIDCLoginAttemptRetention is how long an oidc_login_attempts row is kept
+// after its creation; the stale bulk operation sweep prunes older rows.
+const OIDCLoginAttemptRetention = 24 * time.Hour
+
+// oidcAttemptPruneChunk is how many rows one prune statement deletes.
+const oidcAttemptPruneChunk = 500
+
+// PruneOIDCLoginAttempts deletes every attempt created before
+// now - OIDCLoginAttemptRetention, in chunks of oidcAttemptPruneChunk, until a
+// chunk deletes fewer rows or ctx ends, and returns how many it deleted.
+func PruneOIDCLoginAttempts(ctx context.Context, repo repository.OIDCLoginAttemptRepository, now time.Time) (int64, error) {
+	cutoff := now.Add(-OIDCLoginAttemptRetention)
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		deleted, err := repo.PruneCreatedBefore(cutoff, oidcAttemptPruneChunk)
+		total += deleted
+		if err != nil {
+			return total, err
+		}
+		if deleted < oidcAttemptPruneChunk {
+			return total, nil
+		}
+	}
+}
+
+// oidcLogger is the entry every sign-in log line starts from: the component,
+// the request id the handler put on ctx (a field only, it is client input)
+// and the attempt row id, 0 when there is none yet.
+func oidcLogger(ctx context.Context, attemptID uint) *logrus.Entry {
 	base := utils.Logger
 	if base == nil {
 		base = logrus.StandardLogger()
 	}
-	return base.WithField("component", "oidc_sign_in")
+	return base.WithFields(logrus.Fields{
+		"component":  "oidc_sign_in",
+		"request_id": utils.RequestIDFromContext(ctx),
+		"attempt_id": attemptID,
+	})
 }
 
 // newOIDCHTTPClient is the only client that talks to an issuer: discovery,
@@ -279,11 +319,11 @@ func ssoConfigured(cfg EffectiveSSOConfig) bool {
 // discover fetches the issuer's discovery document through the issuer
 // client. Any failure (unreachable, redirect, timeout, an issuer mismatch) is
 // ErrSSOUnavailable.
-func (s *oidcService) discover(ctx context.Context, issuer string) (context.Context, *oidc.Provider, error) {
+func (s *oidcService) discover(ctx context.Context, issuer string, attemptID uint) (context.Context, *oidc.Provider, error) {
 	ctx = oidc.ClientContext(ctx, newOIDCHTTPClient(s.rootCAs))
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
-		oidcLogger().WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
+		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
 		return nil, nil, ErrSSOUnavailable
 	}
 	return ctx, provider, nil
@@ -347,10 +387,10 @@ func (s *oidcService) Start(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if !ssoConfigured(cfg) {
-		oidcLogger().WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
+		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
 		return "", ErrSSOUnavailable
 	}
-	ctx, provider, err := s.discover(ctx, cfg.IssuerURL)
+	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, 0)
 	if err != nil {
 		return "", err
 	}
@@ -366,11 +406,6 @@ func (s *oidcService) Start(ctx context.Context) (string, error) {
 	verifier := oauth2.GenerateVerifier()
 
 	now := s.now().UTC()
-	if purged, err := s.attempts.PurgeExpired(now.Add(-oidcAttemptPurgeAfter), oidcAttemptPurgeLimit); err != nil {
-		oidcLogger().WithField("error_code", "attempt_purge_failed").Warn("Failed to purge expired single sign-on attempts")
-	} else if purged > 0 {
-		oidcLogger().WithField("purged", purged).Debug("Purged expired single sign-on attempts")
-	}
 	attempt := &models.OIDCLoginAttempt{
 		StateHash:    hashOpaqueToken(state, s.auth.sessionTokenSecret()),
 		Nonce:        nonce,
@@ -381,7 +416,7 @@ func (s *oidcService) Start(ctx context.Context) (string, error) {
 	if err := s.attempts.Create(attempt); err != nil {
 		return "", fmt.Errorf("store the single sign-on attempt: %w", err)
 	}
-	oidcLogger().WithField("attempt_id", attempt.ID).Info("Single sign-on started")
+	oidcLogger(ctx, attempt.ID).Info("Single sign-on started")
 	return s.oauthConfig(provider, cfg).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), nil
 }
 
@@ -394,67 +429,73 @@ type oidcClaims struct {
 	Email      json.RawMessage `json:"email"`
 	GivenName  json.RawMessage `json:"given_name"`
 	FamilyName json.RawMessage `json:"family_name"`
+	Name       json.RawMessage `json:"name"`
 }
 
 func (s *oidcService) Callback(ctx context.Context, code, state string) (*AuthTokens, error) {
-	tokens, err := s.callback(ctx, code, state)
+	tokens, attemptID, err := s.callback(ctx, code, state)
 	if err != nil {
 		if errorCode := oidcErrorCode(err); errorCode != "" {
-			oidcLogger().WithField("error_code", errorCode).Warn("Single sign-on refused")
+			oidcLogger(ctx, attemptID).WithField("error_code", errorCode).Warn("Single sign-on refused")
 		}
 		return nil, err
 	}
-	oidcLogger().WithField("user_id", tokens.User.ID).Info("Signed in through single sign-on")
+	oidcLogger(ctx, attemptID).WithField("user_id", tokens.User.ID).Info("Signed in through single sign-on")
 	return tokens, nil
 }
 
-func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTokens, error) {
+// callback finishes the sign-in and also returns the id of the attempt it
+// claimed, 0 when the claim did not succeed, for the log line of Callback.
+func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTokens, uint, error) {
 	cfg, err := s.usableConfig(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	// The claim is its own committed statement: a state is spent whatever
-	// happens next, so it can never be replayed.
+	// The claim is its own committed statement: a plain read by the state's
+	// HMAC, then one conditional UPDATE by id that stamps used_at and blanks
+	// the nonce and verifier (an expired row only has them blanked). A state
+	// is spent whatever happens next, so it can never be replayed; the
+	// returned attempt still holds the verifier and nonce in memory.
 	attempt, err := s.attempts.Claim(hashOpaqueToken(state, s.auth.sessionTokenSecret()), s.now().UTC())
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, oidcRefuse("state_invalid")
+			return nil, 0, oidcRefuse("state_invalid")
 		}
-		return nil, fmt.Errorf("claim the single sign-on attempt: %w", err)
+		return nil, 0, fmt.Errorf("claim the single sign-on attempt: %w", err)
 	}
 	if attempt.Issuer != cfg.IssuerURL {
-		return nil, oidcRefuse("issuer_changed")
+		return nil, attempt.ID, oidcRefuse("issuer_changed")
 	}
 	if !ssoConfigured(cfg) {
-		oidcLogger().WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, ErrSSOUnavailable
+		oidcLogger(ctx, attempt.ID).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
+		return nil, attempt.ID, ErrSSOUnavailable
 	}
-	ctx, provider, err := s.discover(ctx, cfg.IssuerURL)
+	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, attempt.ID)
 	if err != nil {
-		return nil, err
+		return nil, attempt.ID, err
 	}
 
 	token, err := s.oauthConfig(provider, cfg).Exchange(ctx, code, oauth2.VerifierOption(attempt.CodeVerifier))
 	if err != nil {
-		oidcLogger().WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
-		return nil, ErrSSOUnavailable
+		oidcLogger(ctx, attempt.ID).WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
+		return nil, attempt.ID, ErrSSOUnavailable
 	}
 	rawIDToken, _ := token.Extra("id_token").(string)
 	if rawIDToken == "" {
-		return nil, oidcRefuse("id_token_missing")
+		return nil, attempt.ID, oidcRefuse("id_token_missing")
 	}
 	idToken, err := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}).Verify(ctx, rawIDToken)
 	if err != nil {
-		return nil, oidcRefuse("id_token_invalid")
+		return nil, attempt.ID, oidcRefuse("id_token_invalid")
 	}
 	if idToken.Nonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(attempt.Nonce)) != 1 {
-		return nil, oidcRefuse("nonce_mismatch")
+		return nil, attempt.ID, oidcRefuse("nonce_mismatch")
 	}
 
 	var claims oidcClaims
 	if err := idToken.Claims(&claims); err != nil {
-		return nil, oidcRefuse("claims_invalid")
+		return nil, attempt.ID, oidcRefuse("claims_invalid")
 	}
 	// Distributed claims: an issuer that moved groups out of the token (a
 	// group overage). Without a groups mapping the overage does not matter;
@@ -466,68 +507,70 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 	if len(claims.ClaimNames) > 0 {
 		var names map[string]json.RawMessage
 		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
-			return nil, oidcRefuse("claims_invalid")
+			return nil, attempt.ID, oidcRefuse("claims_invalid")
 		}
 		if _, overage := names[SSOClaimGroups]; overage && mappingUsesGroups(cfg.RoleMapping) {
 			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-				return nil, oidcRefuse("group_overage")
+				return nil, attempt.ID, oidcRefuse("group_overage")
 			}
 			resolveGroups = true
 		}
 	}
 	groups, ok := oidcStringArray(claims.Groups)
 	if !ok {
-		return nil, oidcRefuse("groups_malformed")
+		return nil, attempt.ID, oidcRefuse("groups_malformed")
 	}
 	roles, ok := oidcStringArray(claims.Roles)
 	if !ok {
-		return nil, oidcRefuse("roles_malformed")
+		return nil, attempt.ID, oidcRefuse("roles_malformed")
 	}
 	subject := idToken.Subject
 	if !validOIDCSubject(subject) {
-		return nil, oidcRefuse("subject_invalid")
+		return nil, attempt.ID, oidcRefuse("subject_invalid")
 	}
 	if len(idToken.Issuer) > oidcIssuerMaxBytes {
-		return nil, oidcRefuse("issuer_invalid")
+		return nil, attempt.ID, oidcRefuse("issuer_invalid")
 	}
 	if resolveGroups {
 		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
 		if err != nil {
-			return nil, oidcRefuse("groups_unavailable")
+			return nil, attempt.ID, oidcRefuse("groups_unavailable")
 		}
 		groups = resolved
 	} else if mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
 		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
 		if err != nil {
 			if errors.Is(err, errUserInfoSubject) {
-				return nil, oidcRefuse("userinfo_subject_mismatch")
+				return nil, attempt.ID, oidcRefuse("userinfo_subject_mismatch")
 			}
-			return nil, oidcRefuse("groups_unavailable")
+			return nil, attempt.ID, oidcRefuse("groups_unavailable")
 		}
 		groups = resolved
 	}
 
 	roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, roles)
 	if !matched {
-		return nil, oidcRefuse("no_mapping_match")
+		return nil, attempt.ID, oidcRefuse("no_mapping_match")
 	}
 
 	passwordHash, err := oidcUnusablePasswordHash()
 	if err != nil {
-		return nil, err
+		return nil, attempt.ID, err
 	}
-	return s.users.ApplyOIDCSignIn(ctx, oidcSignIn{
+	firstName, lastName := oidcProfileNames(oidcString(claims.GivenName), oidcString(claims.FamilyName), oidcString(claims.Name))
+	tokens, err := s.users.ApplyOIDCSignIn(ctx, oidcSignIn{
 		issuer:       idToken.Issuer,
 		subject:      subject,
 		roleID:       roleID,
 		email:        oidcString(claims.Email),
-		firstName:    truncateUTF8(oidcString(claims.GivenName), oidcNameMaxBytes),
-		lastName:     truncateUTF8(oidcString(claims.FamilyName), oidcNameMaxBytes),
+		firstName:    firstName,
+		lastName:     lastName,
 		passwordHash: passwordHash,
 		identities:   s.identities,
 		issue:        s.issue,
 		beforeInsert: s.beforeJITInsert,
 	})
+	return tokens, attempt.ID, err
 }
 
 // Failures of the Microsoft Graph group resolution. They never carry a URL,
@@ -789,6 +832,20 @@ func oidcString(raw json.RawMessage) string {
 		return ""
 	}
 	return value
+}
+
+// oidcProfileNames are the first and last name a first sign-in provisions:
+// given_name and family_name as they are when either is a non-empty string;
+// otherwise name split at whitespace, its first field the first name and the
+// remaining fields, joined by single spaces, the last name; otherwise both
+// empty. Each is cut to oidcNameMaxBytes on a rune boundary.
+func oidcProfileNames(given, family, name string) (first, last string) {
+	if given != "" || family != "" {
+		first, last = given, family
+	} else if fields := strings.Fields(name); len(fields) > 0 {
+		first, last = fields[0], strings.Join(fields[1:], " ")
+	}
+	return truncateUTF8(first, oidcNameMaxBytes), truncateUTF8(last, oidcNameMaxBytes)
 }
 
 // validOIDCSubject accepts a sub of 1-255 printable ASCII bytes without

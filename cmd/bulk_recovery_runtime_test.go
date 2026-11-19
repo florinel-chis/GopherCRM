@@ -140,9 +140,44 @@ func TestBulkOperationRecoveryProductionWiring(t *testing.T) {
 		assert.EqualValues(t, 1, parked.Load(), "no further update starts after the drain")
 	})
 
+	t.Run("the boot sweep prunes single sign-on attempts older than a day", func(t *testing.T) {
+		boot := bootAutomation(t, false)
+		now := time.Now().UTC()
+		seedAttempt := func(createdAt time.Time, tag string) uint {
+			t.Helper()
+			row := &models.OIDCLoginAttempt{CreatedAt: createdAt, StateHash: "boot-prune-0453-" + tag,
+				Nonce: "n", CodeVerifier: "v", Issuer: "https://idp.example.test", ExpiresAt: createdAt.Add(10 * time.Minute)}
+			require.NoError(t, models.DB.Create(row).Error)
+			return row.ID
+		}
+		attemptExists := func(id uint) bool {
+			var n int64
+			require.NoError(t, models.DB.Model(&models.OIDCLoginAttempt{}).Where("id = ?", id).Count(&n).Error)
+			return n == 1
+		}
+		old := seedAttempt(now.Add(-25*time.Hour), "old")
+		recent := seedAttempt(now.Add(-time.Hour), "recent")
+
+		backgroundCtx, stopBackground := context.WithCancel(context.Background())
+		t.Cleanup(stopBackground)
+		_, stop := setupRouter(backgroundCtx, boot.cfg)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+			defer cancel()
+			_ = stop(ctx)
+		})
+
+		deadline := time.Now().Add(automationBootTimeout)
+		for attemptExists(old) {
+			require.True(t, time.Now().Before(deadline), "the day-old attempt is pruned at boot without any request")
+			time.Sleep(20 * time.Millisecond)
+		}
+		assert.True(t, attemptExists(recent), "an attempt younger than a day stays")
+	})
+
 	t.Run("the wiring helper sweeps every 15 minutes", func(t *testing.T) {
 		bootAutomation(t, false)
-		background := newBulkRecoveryBackground(repository.NewBulkOperationRepository(models.DB))
+		background := newBulkRecoveryBackground(repository.NewBulkOperationRepository(models.DB), repository.NewOIDCLoginAttemptRepository(models.DB))
 		assert.Equal(t, service.BulkOperationSweepInterval, background.runtime.Interval())
 		assert.Equal(t, 15*time.Minute, service.BulkOperationSweepInterval)
 		assert.Equal(t, time.Hour, service.BulkOperationStaleAfter)
