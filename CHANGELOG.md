@@ -1856,6 +1856,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Changing your own login email needs your current password (#394).** The login email is where
+  a password reset is sent, and until now `PUT /users/me` and `PUT /users/{id}` moved it for
+  whoever held a live access token or API key of the account. Both routes now refuse an email
+  change of the caller's own account unless the body carries `current_password`:
+  - no usable `current_password` (key absent, `null` or `""`) answers 400
+    `CURRENT_PASSWORD_REQUIRED`; a value that does not match answers 400
+    `INVALID_CURRENT_PASSWORD`. Nothing is written in either case (no name beside the email
+    either), and the check runs before the address is looked up, so the answer does not tell
+    whether the address is in use.
+  - The rule holds for a Bearer token and for an API key, on `PUT /users/me` and on
+    `PUT /users/{id}` with the caller's own id, also when that body carries `role` or `is_active`.
+  - **API clients and API-key integrations** that change their own account's email must add
+    `"current_password": "<the account's password>"` to the body. Nothing changes for an update
+    without `email`, for one that sends the stored email again, or for changing **another**
+    account's email with `users.update`: there `current_password` is ignored and not verified.
+  - `current_password` alone on `PUT /users/me` is therefore no longer answered
+    `PASSWORD_FIELD_NOT_ACCEPTED`; `password` and `new_password` still are, also next to a correct
+    `current_password`. A `current_password` that is not a JSON string is 400 `BAD_REQUEST`.
+  - In the web application the user edit form (`/users/<own id>/edit`) shows a required
+    **Current password** field as soon as the signed-in user changes its own email, and sends it.
+    `/settings/profile` still has no email field.
+  - Known limits: a wrong `current_password` is not counted toward the login lockout, as on
+    `POST /auth/change-password` (same authenticated rate tier); an email change revokes no
+    session and sends no confirmation mail.
+
 - **The example `JWT_SECRET` is refused at startup (#210).** `JWT_SECRET` values starting with
   `CHANGE_THIS`, which includes the `.env.example` placeholder, are refused at startup in every
   `SERVER_MODE`, by the server, `cmd/migrate` and `cmd/create-admin`. **A deployment still on the

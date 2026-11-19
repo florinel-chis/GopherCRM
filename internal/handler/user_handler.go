@@ -63,6 +63,11 @@ type UpdateUserRequest struct {
 	// API keys stop working); deactivating the last active admin is refused
 	// with 409 LAST_ADMIN.
 	IsActive *bool `json:"is_active,omitempty" example:"true"`
+	// The caller's own current password. Needed only when the caller changes
+	// the email of its own account (400 CURRENT_PASSWORD_REQUIRED without it,
+	// 400 INVALID_CURRENT_PASSWORD when it does not match); ignored and not
+	// verified in every other case. It never changes a password.
+	CurrentPassword string `json:"current_password,omitempty" example:"Curr3nt!Passw0rd"`
 }
 
 // MePermission is one effective permission of the calling account.
@@ -92,16 +97,19 @@ type MeResponse struct {
 
 // UpdateMeRequest carries the profile fields of PUT /users/me.
 //
-// The three password keys are captured raw only so the handler can refuse them:
-// a json.RawMessage receives the literal bytes of any JSON value, null included,
-// so a non-nil field means the key was present, and encoding/json matches the
-// key in any letter case. omitempty keeps a nil field out of a marshalled body.
-// The spec documents them as any JSON value (scripts/docs/swag-overrides maps
-// json.RawMessage to interface{}).
+// password and new_password are captured raw only so the handler can refuse
+// them: a json.RawMessage receives the literal bytes of any JSON value, null
+// included, so a non-nil field means the key was present, and encoding/json
+// matches the key in any letter case. omitempty keeps a nil field out of a
+// marshalled body. The spec documents them as any JSON value
+// (scripts/docs/swag-overrides maps json.RawMessage to interface{}).
+// current_password is a plain string: it is the proof an email change needs
+// (#394), and null or an empty string count as absent.
 //
-// @Description Body of PUT /users/me. Every profile field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here. A body that carries a password field is refused.
+// @Description Body of PUT /users/me. Every profile field is optional; an omitted or empty field leaves the stored value unchanged. Role and active status cannot be changed here. Changing the email needs current_password. A body that carries password or new_password is refused.
 type UpdateMeRequest struct {
 	// New login email; must be valid and not used by another account (409).
+	// An email that differs from the stored one needs current_password.
 	Email string `json:"email,omitempty" binding:"omitempty,email" format:"email" example:"jane.doe@example.com"`
 	// New given name; empty leaves it unchanged.
 	FirstName string `json:"first_name,omitempty" example:"Jane"`
@@ -110,9 +118,11 @@ type UpdateMeRequest struct {
 	// Refused: this key, with any value (null included) and in any letter case, is
 	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
 	Password json.RawMessage `json:"password,omitempty"`
-	// Refused: this key, with any value (null included) and in any letter case, is
-	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
-	CurrentPassword json.RawMessage `json:"current_password,omitempty"`
+	// The account's current password. Needed only when email differs from the
+	// stored one (400 CURRENT_PASSWORD_REQUIRED when absent, null or empty, 400
+	// INVALID_CURRENT_PASSWORD when it does not match); ignored and not verified
+	// in every other case. It never changes a password.
+	CurrentPassword string `json:"current_password,omitempty" example:"Curr3nt!Passw0rd"`
 	// Refused: this key, with any value (null included) and in any letter case, is
 	// answered with 400 PASSWORD_FIELD_NOT_ACCEPTED. Use POST /auth/change-password.
 	NewPassword json.RawMessage `json:"new_password,omitempty"`
@@ -329,7 +339,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Update a user
-// @Description Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
+// @Description Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. A caller that changes the email of its own account (an email that differs from the stored one) must send its current password in current_password, for a Bearer token and an API key alike and also when the body carries role or is_active: without it the answer is 400 CURRENT_PASSWORD_REQUIRED, with a wrong one 400 INVALID_CURRENT_PASSWORD, and nothing is written; this is checked before the email is looked up, so the answer does not tell whether the address is in use. current_password is ignored and not verified when the email does not change or the account is another one, and a wrong value is not counted toward the login lockout. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); no session is revoked.
 // @Description Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lacks a permission the request needs), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. Changing the email of a customer login that has a linked customer record (a customer record whose user_id is that login) also needs customers.update; its other fields, and a customer login without a linked customer record, need users.update alone. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
 // @Tags users
 // @Accept json
@@ -339,7 +349,7 @@ func (h *UserHandler) Get(c *gin.Context) {
 // @Param id path int true "User ID"
 // @Param request body UpdateUserRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.User} "The updated user"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role): role custom without role_id, role_id with any other role or without role, or a role_id that names a system role"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid user ID, or malformed JSON or a current_password that is not a string (Invalid request format). VALIDATION_ERROR: email is not an email address or role is not one of admin, sales, support, customer, custom (details maps the Go field name to a message). CURRENT_PASSWORD_REQUIRED: the caller changes the email of its own account and current_password is absent, null or empty (no details). INVALID_CURRENT_PASSWORD: the caller changes the email of its own account and current_password does not match (no details). INVALID_ROLE_ASSIGNMENT (only for a caller holding users.assign_role): role custom without role_id, role_id with any other role or without role, or a role_id that names a system role"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: a caller without users.update tried to update another account (You can only update your own profile), or the caller lost a permission the request needs while it waited, or it lacks customers.update for an email change of a customer login with a linked customer record (Insufficient permissions). ROLE_ESCALATION: the target's permissions, or those of the requested role, are above the caller's own"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no live user with this id. ROLE_NOT_FOUND: role_id names no role"
@@ -367,6 +377,12 @@ func (h *UserHandler) Update(c *gin.Context) {
 	var req UpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.Error(err).SetType(gin.ErrorTypeBind)
+		return
+	}
+
+	// The caller's own email changes only with its current password, whichever
+	// of the two writes below the body leads to.
+	if uint(id) == currentUserID && h.refusedOwnEmailChange(c, "UserHandler.Update", currentUserID, req.Email, req.CurrentPassword) {
 		return
 	}
 
@@ -541,7 +557,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 
 // UpdateMe godoc
 // @Summary Update the caller's account
-// @Description Any authenticated role. Changes the caller's email and/or names; only non-empty fields are written, and role and active status cannot be changed here. This route does not change a password; a body that carries password, current_password or new_password, with any value (null included) and in any letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written, and a correct current password does not open the route. Use POST /auth/change-password, which verifies the current password and revokes refresh tokens. A body with nothing to apply returns the account unchanged.
+// @Description Any authenticated role. Changes the caller's email and/or names; only non-empty fields are written, and role and active status cannot be changed here. Changing the email (an email that differs from the stored one) needs the account's current password in current_password, for a Bearer token and an API key alike: without it the answer is 400 CURRENT_PASSWORD_REQUIRED, with a wrong one 400 INVALID_CURRENT_PASSWORD, and nothing is written; this is checked before the email is looked up, so the answer does not tell whether the address is in use. current_password is ignored and not verified when the email does not change, and a wrong value is not counted toward the login lockout. This route does not change a password; a body that carries password or new_password, with any value (null included) and in any letter case, is refused with 400 PASSWORD_FIELD_NOT_ACCEPTED, nothing is written, and a correct current_password next to it does not open the route. Use POST /auth/change-password, which verifies the current password and revokes refresh tokens. A body with nothing to apply returns the account unchanged.
 // @Tags users
 // @Accept json
 // @Produce json
@@ -549,7 +565,7 @@ func (h *UserHandler) GetMe(c *gin.Context) {
 // @Security ApiKeyAuth
 // @Param request body UpdateMeRequest true "Fields to change"
 // @Success 200 {object} utils.APIResponse{data=models.User} "The updated account"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "PASSWORD_FIELD_NOT_ACCEPTED: the body carries password, current_password or new_password, with any value (no details; use POST /auth/change-password). VALIDATION_ERROR: email is not an email address (details maps the Go field name to a message). BAD_REQUEST: malformed JSON (Invalid request format). A body that fails binding keeps these answers even when it also carries a password field"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "PASSWORD_FIELD_NOT_ACCEPTED: the body carries password or new_password, with any value (no details; use POST /auth/change-password); answered first. CURRENT_PASSWORD_REQUIRED: email differs from the stored one and current_password is absent, null or empty (no details). INVALID_CURRENT_PASSWORD: email differs from the stored one and current_password does not match (no details). VALIDATION_ERROR: email is not an email address (details maps the Go field name to a message). BAD_REQUEST: malformed JSON or a current_password that is not a string (Invalid request format). A body that fails binding keeps these answers even when it also carries a password field"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: the account was erased while the credential was still in use"
 // @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: another account already uses this email"
@@ -570,10 +586,14 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 	// POST /auth/change-password is the only authenticated way to change a
 	// password: it verifies the current one and revokes the refresh tokens. Only
 	// the fact of the refusal is logged, never the supplied value.
-	if req.Password != nil || req.CurrentPassword != nil || req.NewPassword != nil {
+	if req.Password != nil || req.NewPassword != nil {
 		logger.Warn("Refused PUT /users/me: body carries a password field")
 		utils.RespondError(c, http.StatusBadRequest, "PASSWORD_FIELD_NOT_ACCEPTED",
 			"This route does not accept password fields; use POST /auth/change-password", nil)
+		return
+	}
+
+	if h.refusedOwnEmailChange(c, "UserHandler.UpdateMe", userID, req.Email, req.CurrentPassword) {
 		return
 	}
 
@@ -610,6 +630,39 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 
 	utils.LogHandlerResponse(logger, http.StatusOK, user)
 	utils.RespondSuccess(c, http.StatusOK, user)
+}
+
+// refusedOwnEmailChange runs the guard of #394 for an account that writes its
+// own profile and reports whether it answered the request. A body without an
+// email never reaches the service, so its current_password is not looked at.
+// The login email is where a password reset goes, so it moves only with the
+// account's current password. The log line names the refusal alone: neither
+// the supplied password nor an email.
+func (h *UserHandler) refusedOwnEmailChange(c *gin.Context, handlerName string, userID uint, email, currentPassword string) bool {
+	if email == "" {
+		return false
+	}
+	logger := utils.GetLogger(c).WithField("handler", handlerName)
+	err := h.userService.CheckOwnEmailChange(userID, email, currentPassword)
+	switch {
+	case err == nil:
+		return false
+	case errors.Is(err, apperrors.ErrCurrentPasswordRequired):
+		logger.Warn("Refused own email change: no current password supplied")
+		utils.RespondError(c, http.StatusBadRequest, "CURRENT_PASSWORD_REQUIRED",
+			"Changing your email requires your current password", nil)
+	case errors.Is(err, apperrors.ErrCurrentPasswordIncorrect):
+		logger.Warn("Refused own email change: the current password does not match")
+		utils.RespondError(c, http.StatusBadRequest, "INVALID_CURRENT_PASSWORD",
+			"The current password is incorrect", nil)
+	case errors.Is(err, apperrors.ErrNotFound):
+		logger.WithError(utils.LogError(err)).Warn("User not found")
+		utils.RespondNotFound(c, "User not found")
+	default:
+		logger.WithError(utils.LogError(err)).Error("Failed to check the email change")
+		utils.RespondInternalError(c)
+	}
+	return true
 }
 
 // Activate godoc

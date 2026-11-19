@@ -481,7 +481,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   3. Click "Update User".
 - **Expected:** The edit form is pre-filled from `GET /users/<id>` and shows **no** password fields.
   `PUT /users/<id>` returns 200, the snackbar reads "User updated successfully" and the app
-  navigates to `/users` where the row shows the new name.
+  navigates to `/users` where the row shows the new name. The one password field the edit form can
+  show is "Current password", and only while the signed-in user changes the email of its own
+  account (#394, TC-USER-047); editing another user never shows it.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can edit an existing
   user" (since 2026-09-23 it edits only its own user, found by email, and asserts the new name; it
   used to edit row 1, possibly a real account)
@@ -613,7 +615,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   currentUser?.id`), so an admin cannot deactivate themselves from the form. The Role select stays
   enabled — see TC-USER-026 for what that allows. Submitting without changes returns 200 and
   sends the stored role back unchanged. For a caller without `users.assign_role` the Role select
-  is not shown at all since #381 (before, it was shown greyed out).
+  is not shown at all since #381 (before, it was shown greyed out). Changing the Email field on
+  this form (your own account) makes a required "Current password" field appear, and the save
+  sends it as `current_password` (#394, TC-USER-045 to TC-USER-047).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-030 — Confirm there is no password reset in the edit form
@@ -628,6 +632,119 @@ Expected field still describes it and a **Known issue** line records the defect.
   own `POST /auth/change-password` and the self-service `/auth/password-reset` flow. `PUT /users/:id`
   ignores a `password` key, and `PUT /users/me` refuses one with 400 `PASSWORD_FIELD_NOT_ACCEPTED`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
+
+### TC-USER-045 — Change your own email without the current password
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A logged-in account (any role) with a Bearer token.
+- **Steps:**
+  1. Send `PUT /users/me` with `{"email":"<new address>","first_name":"Changed"}`.
+  2. Repeat with `"current_password": null` and with `"current_password": ""`.
+  3. Repeat steps 1 and 2 on `PUT /users/<own id>`; as an admin also with `"role"` or
+     `"is_active"` in the body.
+  4. Repeat step 1 with an address another account already uses.
+- **Expected:** Every request answers **400** with code `CURRENT_PASSWORD_REQUIRED`, message
+  "Changing your email requires your current password" and no `details`. Nothing is written: the
+  stored email, names, role and `updated_at` are unchanged and no role audit row appears. Step 4
+  answers the same 400, not 409: the guard runs before the address is looked up. One Warn line
+  per refusal, without an email.
+- **Automation:** automated (backend) — `tests/users_me_password_test.go`
+  `TestOwnEmailChangeNeedsCurrentPassword` (both routes, subtests `missing`, `null`, `empty`,
+  `missing with an address in use`, `users-id/governed/*`) and
+  `internal/handler/user_me_password_test.go` `TestUpdateMeEmailChangeNeedsCurrentPassword`
+
+### TC-USER-046 — Change your own email with a wrong current password
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A logged-in account (any role).
+- **Steps:**
+  1. Send `PUT /users/me` with a new `email` and a `current_password` that is not the account's.
+  2. Repeat on `PUT /users/<own id>`.
+  3. In the SPA, as an admin, open `/users/<own id>/edit`, change the email, type a wrong
+     password in "Current password" and click "Update User".
+- **Expected:** **400** `INVALID_CURRENT_PASSWORD`, message "The current password is incorrect",
+  no `details`; nothing is written and the supplied value appears in neither the answer nor the
+  log. The form stays open and shows the server's message in the snackbar. The wrong value is not
+  counted toward the login lockout (as on `POST /auth/change-password`): the account still logs in.
+- **Automation:** automated — `tests/users_me_password_test.go`
+  `TestOwnEmailChangeNeedsCurrentPassword` (subtests `wrong`), Vitest
+  `src/pages/users/UserForm.ownEmail.test.tsx` "a 400 INVALID_CURRENT_PASSWORD keeps the form open
+  and shows the server message", and the refused first save of
+  `gocrm-ui/e2e/tests/admin-users.spec.ts` "an admin changes its own email with its current
+  password"
+
+### TC-USER-047 — Change your own email with the current password
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Seeded admin logged in; a throwaway admin created in-test through
+  `POST /users`. Never the seeded admin: the serial suite shares that account.
+- **Steps:**
+  1. Sign in as the throwaway admin in a browser context of its own and open
+     `/users/<own id>/edit`.
+  2. Change the Email field.
+  3. Fill the "Current password" field that appears and click "Update User".
+  4. Read the account back (`GET /users/<id>`).
+- **Expected:** Before step 2 the form has no "Current password" field. After it the field is
+  shown, required, `type="password"`, `autocomplete="current-password"`. `PUT /users/<id>`
+  carries `current_password` and returns **200**; the stored email is the new one, the password
+  hash is unchanged and the old password logs in with the new email. No session is ended and no
+  mail is sent. The same body on `PUT /users/me` answers 200 for API clients.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-users.spec.ts` "an admin changes its own
+  email with its current password" (erases its throwaway admin at the end); Vitest
+  `UserForm.ownEmail.test.tsx` "own account with a changed email asks for the current password and
+  sends it"; Go `TestOwnEmailChangeNeedsCurrentPassword` (subtests `right`)
+
+### TC-USER-048 — Change your own email with an API key
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** An account with an active API key (`Authorization: ApiKey <key>`).
+- **Steps:**
+  1. With the API key, send `PUT /users/me` with a new `email` and no `current_password`.
+  2. Repeat with a wrong `current_password`, then with the account's password.
+  3. Repeat steps 1 and 2 on `PUT /users/<own id>`.
+- **Expected:** The API key is treated as a Bearer token is: **400** `CURRENT_PASSWORD_REQUIRED`,
+  **400** `INVALID_CURRENT_PASSWORD`, then **200** with the email stored. A leaked key alone
+  cannot move the address a password reset is sent to.
+- **Automation:** automated (backend) — `tests/users_me_password_test.go`
+  `TestOwnEmailChangeNeedsCurrentPassword` (subtests `users-me/api-key`, `users-id/api-key`,
+  `users-id/governed/api-key`)
+
+### TC-USER-049 — Update your own profile without changing the email
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** A logged-in account (any role).
+- **Steps:**
+  1. Send `PUT /users/me` with names only.
+  2. Send it with the stored email again and a new first name.
+  3. Send `{"first_name":"...","current_password":"<wrong>"}`.
+  4. Repeat on `PUT /users/<own id>`; in the SPA, edit your own names in `/users/<own id>/edit`,
+     and change the email and type the loaded address back.
+- **Expected:** Every request answers **200** without `current_password` and writes the name. In
+  step 3 the key is ignored and not verified, because the email does not change (`current_password`
+  alone is no longer a `PASSWORD_FIELD_NOT_ACCEPTED` refusal). The form shows no "Current
+  password" field while the email equals the loaded one, drops the field and what was typed in it
+  when the email is typed back, and sends no `current_password` key.
+- **Automation:** automated — `tests/users_me_password_test.go`
+  `TestOwnProfileUpdateWithoutEmailChangeNeedsNoPassword`; Vitest `UserForm.ownEmail.test.tsx`
+  "own account with the loaded email shows no field and sends no current_password" and "own
+  account whose email is typed back drops the field and the typed password"
+
+### TC-USER-050 — Change another user's email as an admin
+- **Priority:** P1
+- **Type:** rbac
+- **Preconditions:** Admin logged in; a `sales` user created in-test.
+- **Steps:**
+  1. Send `PUT /users/<id>` for the sales user with a new `email` and no `current_password`.
+  2. Repeat with a `current_password` that matches nobody's password.
+  3. In the SPA, open `/users/<id>/edit` for that user and change the Email field.
+- **Expected:** Both requests answer **200** and the email is stored: the guard applies to the
+  caller's own account only, and a `current_password` in the body is not verified for another
+  account. The form shows no "Current password" field and sends no `current_password` key. The
+  customer-login rule (`customers.update` for the email of a login with a linked customer record)
+  is unchanged.
+- **Automation:** automated — `tests/users_me_password_test.go`
+  `TestOtherUsersEmailChangeNeedsNoPassword`; Vitest `UserForm.ownEmail.test.tsx` "another account
+  with a changed email shows no field and sends no current_password"
 
 ---
 
@@ -808,8 +925,9 @@ Expected field still describes it and a **Known issue** line records the defect.
   it from `authApi.getCurrentUser` to populate the context). "Change password" asks for the current,
   new and confirmation passwords and submits to `POST /auth/change-password` (TC-AUTH-038). The page
   has no form for editing the email or the names. The backend's `PUT /users/me` — which accepts
-  email, first name and last name, and refuses any body carrying `password`, `current_password` or
-  `new_password` with 400 `PASSWORD_FIELD_NOT_ACCEPTED` (#254; backend-automated in
+  email, first name and last name, refuses any body carrying `password` or `new_password` with 400
+  `PASSWORD_FIELD_NOT_ACCEPTED` (#254) and changes the email only with the account's
+  `current_password` (#394, TC-USER-045 to TC-USER-049; both backend-automated in
   `tests/users_me_password_test.go`) — has no caller anywhere in the frontend. The route is
   deliberately outside the admin-guarded layout route, so every role can reach the page.
 - **Known issue:** There is no profile-edit UI, so `PUT /users/me` has no browser coverage;

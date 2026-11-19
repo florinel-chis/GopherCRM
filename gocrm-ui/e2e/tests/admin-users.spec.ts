@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { UsersPage } from '../pages/users.page';
 import { generateUserData } from '../fixtures/admin-user';
+import { LoginPage } from '../pages/login.page';
+import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
 
 test.describe('Admin - Users Management', () => {
   let adminAuth: AdminAuthHelper;
@@ -239,7 +241,9 @@ test.describe('Admin - Users Management', () => {
       ...customerUserData,
       confirmPassword: customerUserData.password
     });
-    await usersPage.saveUser();
+    // Wait for the answer: leaving the form earlier cancels the request.
+    const created = await usersPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
 
     // Change the role of the user this test created, never of an existing
     // account (row 1 used to be whoever sorted there, possibly an admin).
@@ -256,5 +260,142 @@ test.describe('Admin - Users Management', () => {
     await usersPage.goto();
     await usersPage.searchUsers(customerUserData.email);
     await expect(ownRow).toContainText(/sales/i);
+  });
+
+  // The seeded admin is shared by the whole serial suite, so the account whose
+  // email changes here is a throwaway admin, signed in in a context of its own
+  // and erased at the end. The seeded session is never logged out.
+  test('an admin changes its own email with its current password', async ({ page, browser }) => {
+    // Two sign-ins and two saves: more than the default budget on a loaded machine.
+    test.setTimeout(120 * 1000);
+    const seededToken = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    expect(seededToken).toBeTruthy();
+    const headers = { Authorization: `Bearer ${seededToken}` };
+
+    const stamp = `${Date.now()}`;
+    const password = 'OwnEmail!Pass394';
+    const oldEmail = `own_email_${stamp}@example.com`;
+    const newEmail = `own_email_${stamp}_changed@example.com`;
+
+    const created = await page.request.post(`${API_BASE_URL}/users`, {
+      headers,
+      data: { email: oldEmail, password, first_name: 'Olive', last_name: 'Ownmail', role: 'admin' },
+    });
+    expect(created.status()).toBe(201);
+    const ownId: number = (await created.json()).data.id;
+
+    const ownContext = await browser.newContext();
+    try {
+      const ownPage = await ownContext.newPage();
+      await ownPage.goto(`${UI_BASE_URL}/login`);
+      const login = new LoginPage(ownPage);
+      await login.emailInput.fill(oldEmail);
+      await login.passwordInput.fill(password);
+      await login.submit();
+      await ownPage.waitForURL(`${UI_BASE_URL}/`, { timeout: 30000 });
+
+      const ownForm = new UsersPage(ownPage);
+      await ownPage.goto(`${UI_BASE_URL}/users/${ownId}/edit`);
+      await expect(ownForm.emailInput).toHaveValue(oldEmail, { timeout: 30000 });
+      // An untouched email asks for nothing.
+      await expect(ownForm.currentPasswordInput).toHaveCount(0);
+
+      await ownForm.emailInput.fill(newEmail);
+      await expect(ownForm.currentPasswordInput).toBeVisible();
+      await expect(ownForm.currentPasswordInput).toHaveAttribute('required', '');
+
+      const putOwnAccount = () =>
+        ownPage.waitForResponse(
+          (response) =>
+            new URL(response.url()).pathname.endsWith(`/users/${ownId}`) &&
+            response.request().method() === 'PUT',
+        );
+
+      // A wrong password is refused and the form stays open with the server's message.
+      await ownForm.currentPasswordInput.fill('Wrong!Pass394');
+      let answered = putOwnAccount();
+      await ownForm.saveButton.click();
+      const refused = await answered;
+      expect(refused.status()).toBe(400);
+      expect((await refused.json()).error.code).toBe('INVALID_CURRENT_PASSWORD');
+      await expect(ownPage.getByText('The current password is incorrect')).toBeVisible({ timeout: 30000 });
+      await expect(ownPage).toHaveURL(new RegExp(`/users/${ownId}/edit$`));
+
+      // The right one saves.
+      await ownForm.currentPasswordInput.fill(password);
+      answered = putOwnAccount();
+      await ownForm.saveButton.click();
+      const saved = await answered;
+      expect(saved.status()).toBe(200);
+      expect(saved.request().postDataJSON()).toMatchObject({
+        email: newEmail,
+        current_password: password,
+      });
+      await ownPage.waitForURL(/\/users$/, { timeout: 30000 });
+
+      // The stored account, read by the seeded admin.
+      const stored = await page.request.get(`${API_BASE_URL}/users/${ownId}`, { headers });
+      expect(stored.status()).toBe(200);
+      expect((await stored.json()).data.email).toBe(newEmail);
+    } finally {
+      await ownContext.close();
+      const removed = await page.request.delete(`${API_BASE_URL}/users/${ownId}`, { headers });
+      expect(removed.status()).toBe(204);
+    }
+  });
+
+  // The counterpart: the same form asks for nothing when the account under
+  // edit is not the signed-in one. The account is created here and erased at the end.
+  test("an admin changes another user's email without a current password", async ({ page }) => {
+    test.setTimeout(90 * 1000);
+    const seededToken = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    expect(seededToken).toBeTruthy();
+    const headers = { Authorization: `Bearer ${seededToken}` };
+
+    const stamp = `${Date.now()}`;
+    const oldEmail = `other_email_${stamp}@example.com`;
+    const newEmail = `other_email_${stamp}_changed@example.com`;
+
+    const created = await page.request.post(`${API_BASE_URL}/users`, {
+      headers,
+      data: {
+        email: oldEmail,
+        password: 'OtherEmail!Pass394',
+        first_name: 'Otto',
+        last_name: 'Othermail',
+        role: 'sales',
+      },
+    });
+    expect(created.status()).toBe(201);
+    const otherId: number = (await created.json()).data.id;
+
+    try {
+      await page.goto(`/users/${otherId}/edit`);
+      await expect(usersPage.emailInput).toHaveValue(oldEmail, { timeout: 30000 });
+
+      await usersPage.emailInput.fill(newEmail);
+      await expect(usersPage.emailInput).toHaveValue(newEmail);
+      await expect(usersPage.currentPasswordInput).toHaveCount(0);
+
+      const answered = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname.endsWith(`/users/${otherId}`) &&
+          response.request().method() === 'PUT',
+      );
+      await usersPage.saveButton.click();
+      const saved = await answered;
+      expect(saved.status()).toBe(200);
+      const body = saved.request().postDataJSON();
+      expect(body).toMatchObject({ email: newEmail });
+      expect(body).not.toHaveProperty('current_password');
+      await page.waitForURL(/\/users$/, { timeout: 30000 });
+
+      const stored = await page.request.get(`${API_BASE_URL}/users/${otherId}`, { headers });
+      expect(stored.status()).toBe(200);
+      expect((await stored.json()).data.email).toBe(newEmail);
+    } finally {
+      const removed = await page.request.delete(`${API_BASE_URL}/users/${otherId}`, { headers });
+      expect(removed.status()).toBe(204);
+    }
   });
 });

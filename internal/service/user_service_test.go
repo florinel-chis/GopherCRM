@@ -226,6 +226,65 @@ func TestUserServiceUpdateIgnoresPasswordKey(t *testing.T) {
 	}
 }
 
+// An account changes its own login email only with its current password
+// (#394). The guard reads and compares; it never writes.
+func TestUserServiceCheckOwnEmailChange(t *testing.T) {
+	const password = "Curr3nt!Passw0rd"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	assert.NoError(t, err)
+	stored := func() *models.User {
+		return &models.User{BaseModel: models.BaseModel{ID: 1}, Email: "stored@example.com", Password: string(hash)}
+	}
+	readFailure := errors.New("connection refused")
+
+	cases := []struct {
+		name            string
+		email           string
+		currentPassword string
+		reads           bool
+		readErr         error
+		want            error
+	}{
+		{name: "no email is not looked at", email: "", currentPassword: "wrong"},
+		{name: "the stored email needs no password", email: "stored@example.com", reads: true},
+		{name: "the stored email does not verify a password", email: "stored@example.com", currentPassword: "wrong", reads: true},
+		{name: "a new email without a password", email: "new@example.com", reads: true, want: apperrors.ErrCurrentPasswordRequired},
+		{name: "a new email with a wrong password", email: "new@example.com", currentPassword: "wrong", reads: true, want: apperrors.ErrCurrentPasswordIncorrect},
+		{name: "another letter case is a new email", email: "Stored@example.com", reads: true, want: apperrors.ErrCurrentPasswordRequired},
+		{name: "a new email with the password", email: "new@example.com", currentPassword: password, reads: true},
+		{name: "a missing account", email: "new@example.com", currentPassword: password, reads: true, readErr: gorm.ErrRecordNotFound, want: apperrors.ErrNotFound},
+		{name: "a failed read", email: "new@example.com", currentPassword: password, reads: true, readErr: readFailure, want: readFailure},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := new(mocks.UserRepository)
+			if tc.reads {
+				if tc.readErr != nil {
+					repo.On("GetByID", uint(1)).Return(nil, tc.readErr).Once()
+				} else {
+					repo.On("GetByID", uint(1)).Return(stored(), nil).Once()
+				}
+			}
+
+			err := NewUserService(repo).CheckOwnEmailChange(1, tc.email, tc.currentPassword)
+
+			if tc.want == nil {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, tc.want)
+			}
+			if tc.name == "a failed read" {
+				assert.False(t, apperrors.IsNotFound(err))
+			}
+			// Only the read: nothing is written and no other lookup is made.
+			repo.AssertExpectations(t)
+			repo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
+			repo.AssertNotCalled(t, "GetByEmailUnscoped", mock.Anything)
+		})
+	}
+}
+
 // The repository hands gorm's own sentinel straight back, which matches
 // neither apperrors.ErrNotFound nor apperrors.ErrRecordNotFound by identity.
 // Unless Update translates it, the handler cannot tell "no such user" from a

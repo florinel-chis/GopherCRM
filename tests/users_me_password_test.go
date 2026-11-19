@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,6 +45,18 @@ type usersMeStack struct {
 
 func newUsersMeStack(t *testing.T) *usersMeStack {
 	t.Helper()
+	return buildUsersMeStack(t, false)
+}
+
+// newGovernedUsersMeStack is the same stack on the whole schema, with the user
+// service wired as the server wires it: role governance and its audit log.
+func newGovernedUsersMeStack(t *testing.T) *usersMeStack {
+	t.Helper()
+	return buildUsersMeStack(t, true)
+}
+
+func buildUsersMeStack(t *testing.T, governed bool) *usersMeStack {
+	t.Helper()
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
 
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -52,10 +65,14 @@ func newUsersMeStack(t *testing.T) *usersMeStack {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.APIKey{},
-		&models.RefreshToken{}, &models.PasswordResetToken{},
-	))
+	if governed {
+		require.NoError(t, models.MigrateDatabaseWith(db))
+	} else {
+		require.NoError(t, db.AutoMigrate(
+			&models.User{}, &models.APIKey{},
+			&models.RefreshToken{}, &models.PasswordResetToken{},
+		))
+	}
 
 	userRepo := repository.NewUserRepository(db)
 	apiKeyRepo := repository.NewAPIKeyRepository(db)
@@ -65,6 +82,10 @@ func newUsersMeStack(t *testing.T) *usersMeStack {
 		config.JWTConfig{Secret: "users-me-test-secret", ExpiryHours: 1, RefreshTokenDays: 30},
 		"http://localhost:5173", "")
 	userService := service.NewUserService(userRepo)
+	if governed {
+		userService = service.NewUserService(userRepo, service.WithUserRoleGovernance(
+			repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db), utils.NewTransactionManager(db)))
+	}
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -278,8 +299,10 @@ func TestUpdateMeRefusalWritesNoProfileField(t *testing.T) {
 	assert.True(t, before.UpdatedAt.Equal(after.UpdatedAt),
 		"updated_at moved from %s to %s", before.UpdatedAt, after.UpdatedAt)
 
-	// The control: the same body without the password does write.
-	rec = stack.putMe("Bearer "+access, `{"email":"changed@example.com","first_name":"Changed"}`)
+	// The control: the same body without the refused key does write. The email
+	// changes, so it carries the current password (#394).
+	rec = stack.putMe("Bearer "+access, fmt.Sprintf(
+		`{"email":"changed@example.com","first_name":"Changed","current_password":%q}`, usersMeOldPassword))
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NoError(t, stack.db.First(&after, user.ID).Error)
 	assert.Equal(t, "changed@example.com", after.Email)
@@ -368,6 +391,334 @@ func TestUpdateUserByIDDoesNotChangePassword(t *testing.T) {
 	})
 }
 
+const (
+	ownEmailRequiredCode     = "CURRENT_PASSWORD_REQUIRED"
+	ownEmailRequiredMessage  = "Changing your email requires your current password"
+	ownEmailIncorrectCode    = "INVALID_CURRENT_PASSWORD"
+	ownEmailIncorrectMessage = "The current password is incorrect"
+)
+
+// ownEmailCredentials are the two credential kinds of an account, by the name
+// of their subtest and the kind the authorization helper takes.
+var ownEmailCredentials = []struct{ name, kind string }{{"bearer", "jwt"}, {"api-key", "api_key"}}
+
+// ownEmailRoutes are the two routes an account updates its own profile through.
+var ownEmailRoutes = []struct {
+	name string
+	path func(user *models.User) string
+}{
+	{"users-me", func(*models.User) string { return "/api/v1/users/me" }},
+	{"users-id", func(user *models.User) string { return fmt.Sprintf("/api/v1/users/%d", user.ID) }},
+}
+
+// ageUser moves updated_at into the past, so that any write shows in it, and
+// answers the row as stored.
+func (s *usersMeStack) ageUser(t *testing.T, id uint) models.User {
+	t.Helper()
+	past := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	require.NoError(t, s.db.Model(&models.User{}).Where("id = ?", id).UpdateColumn("updated_at", past).Error)
+	return s.storedUser(t, id)
+}
+
+func (s *usersMeStack) storedUser(t *testing.T, id uint) models.User {
+	t.Helper()
+	var user models.User
+	require.NoError(t, s.db.First(&user, id).Error)
+	return user
+}
+
+// assertUserUnwritten checks that no column the routes write has moved.
+func (s *usersMeStack) assertUserUnwritten(t *testing.T, before models.User, hash string) {
+	t.Helper()
+	after := s.storedUser(t, before.ID)
+	assert.Equal(t, before.Email, after.Email)
+	assert.Equal(t, before.FirstName, after.FirstName)
+	assert.Equal(t, before.LastName, after.LastName)
+	assert.Equal(t, before.Role, after.Role)
+	assert.Equal(t, before.IsActive, after.IsActive)
+	assert.True(t, before.UpdatedAt.Equal(after.UpdatedAt),
+		"updated_at moved from %s to %s", before.UpdatedAt, after.UpdatedAt)
+	assert.Equal(t, hash, s.storedHash(t, before.ID), "the stored hash must be byte-identical")
+}
+
+func assertOwnEmailRefused(t *testing.T, rec *httptest.ResponseRecorder, code, message string) {
+	t.Helper()
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	var response utils.APIResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), rec.Body.String())
+	assert.False(t, response.Success)
+	require.NotNil(t, response.Error)
+	assert.Equal(t, code, response.Error.Code)
+	assert.Equal(t, message, response.Error.Message)
+	assert.Nil(t, response.Error.Details)
+	assert.NotContains(t, rec.Body.String(), usersMeWrongCurrent)
+	assert.NotContains(t, rec.Body.String(), usersMeOldPassword)
+}
+
+// captureUsersMeLog sends the shared logger to a buffer at debug level.
+func captureUsersMeLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+	var output bytes.Buffer
+	utils.Logger.SetOutput(&output)
+	t.Cleanup(func() { utils.Logger.SetOutput(os.Stdout) })
+	return &output
+}
+
+func (s *usersMeStack) auditRows(t *testing.T) int64 {
+	t.Helper()
+	var count int64
+	require.NoError(t, s.db.Model(&models.RoleAuditEntry{}).Count(&count).Error)
+	return count
+}
+
+// On main the first request of every subtest answers 200 and the email moves:
+// that is the defect of issue #394.
+func TestOwnEmailChangeNeedsCurrentPassword(t *testing.T) {
+	stack := newGovernedUsersMeStack(t)
+	logged := captureUsersMeLog(t)
+	taken := stack.register(t, "own-email-taken", models.RoleSales)
+
+	for _, route := range ownEmailRoutes {
+		for _, credential := range ownEmailCredentials {
+			t.Run(route.name+"/"+credential.name, func(t *testing.T) {
+				label := "own-email-" + route.name + "-" + credential.name
+				user := stack.register(t, label, models.RoleSales)
+				access, _ := stack.login(t, user.Email, usersMeOldPassword)
+				authorization := stack.authorization(t, credential.kind, user, access)
+				path := route.path(user)
+				newEmail := label + "-new@example.com"
+				before := stack.ageUser(t, user.ID)
+				hash := stack.storedHash(t, user.ID)
+
+				refusals := []struct {
+					name    string
+					body    string
+					code    string
+					message string
+				}{
+					{
+						"missing",
+						fmt.Sprintf(`{"email":%q,"first_name":"Changed"}`, newEmail),
+						ownEmailRequiredCode, ownEmailRequiredMessage,
+					},
+					{
+						"null",
+						fmt.Sprintf(`{"email":%q,"first_name":"Changed","current_password":null}`, newEmail),
+						ownEmailRequiredCode, ownEmailRequiredMessage,
+					},
+					{
+						"empty",
+						fmt.Sprintf(`{"email":%q,"first_name":"Changed","current_password":""}`, newEmail),
+						ownEmailRequiredCode, ownEmailRequiredMessage,
+					},
+					{
+						"wrong",
+						fmt.Sprintf(`{"email":%q,"first_name":"Changed","current_password":%q}`, newEmail, usersMeWrongCurrent),
+						ownEmailIncorrectCode, ownEmailIncorrectMessage,
+					},
+					{
+						// The guard answers before the address is looked up, so a
+						// credential without the password learns nothing about it.
+						"missing with an address in use",
+						fmt.Sprintf(`{"email":%q}`, taken.Email),
+						ownEmailRequiredCode, ownEmailRequiredMessage,
+					},
+					{
+						"wrong with an address in use",
+						fmt.Sprintf(`{"email":%q,"current_password":%q}`, taken.Email, usersMeWrongCurrent),
+						ownEmailIncorrectCode, ownEmailIncorrectMessage,
+					},
+				}
+				for _, refusal := range refusals {
+					t.Run(refusal.name, func(t *testing.T) {
+						rec := stack.do(http.MethodPut, path, authorization, refusal.body)
+						assertOwnEmailRefused(t, rec, refusal.code, refusal.message)
+						stack.assertUserUnwritten(t, before, hash)
+					})
+				}
+
+				t.Run("right", func(t *testing.T) {
+					rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(
+						`{"email":%q,"first_name":"Changed","current_password":%q}`, newEmail, usersMeOldPassword))
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					assert.Equal(t, newEmail, usersMeData(t, rec)["email"])
+					assert.NotContains(t, rec.Body.String(), usersMeOldPassword)
+
+					after := stack.storedUser(t, user.ID)
+					assert.Equal(t, newEmail, after.Email)
+					assert.Equal(t, "Changed", after.FirstName)
+					assert.False(t, before.UpdatedAt.Equal(after.UpdatedAt))
+					// The password is proof only: it is not rewritten and still logs in.
+					assert.Equal(t, hash, stack.storedHash(t, user.ID))
+					assert.Equal(t, http.StatusOK, stack.loginStatus(newEmail, usersMeOldPassword))
+				})
+
+				t.Run("right with an address in use", func(t *testing.T) {
+					rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(
+						`{"email":%q,"current_password":%q}`, taken.Email, usersMeOldPassword))
+					require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+					assert.Equal(t, newEmail, stack.storedUser(t, user.ID).Email)
+				})
+			})
+		}
+	}
+
+	// PUT /users/me refuses password and new_password first, also next to a new
+	// email and the correct current password.
+	t.Run("users-me/password fields stay refused", func(t *testing.T) {
+		user := stack.register(t, "own-email-refused-keys", models.RoleSupport)
+		access, _ := stack.login(t, user.Email, usersMeOldPassword)
+		before := stack.ageUser(t, user.ID)
+		hash := stack.storedHash(t, user.ID)
+
+		for _, key := range []string{"password", "new_password"} {
+			rec := stack.putMe("Bearer "+access, fmt.Sprintf(
+				`{"email":"own-email-refused-keys-new@example.com","current_password":%q,%q:%q}`,
+				usersMeOldPassword, key, usersMeSuppliedPassword))
+			assertUsersMeRefused(t, rec, usersMeSuppliedPassword, usersMeOldPassword)
+			stack.assertUserUnwritten(t, before, hash)
+		}
+	})
+
+	// An admin's own-account body that also carries role or is_active goes to
+	// the governed transaction, and is guarded before it.
+	for _, credential := range ownEmailCredentials {
+		t.Run("users-id/governed/"+credential.name, func(t *testing.T) {
+			label := "own-email-governed-" + credential.name
+			admin := stack.register(t, label, models.RoleAdmin)
+			access, _ := stack.login(t, admin.Email, usersMeOldPassword)
+			authorization := stack.authorization(t, credential.kind, admin, access)
+			path := fmt.Sprintf("/api/v1/users/%d", admin.ID)
+			newEmail := label + "-new@example.com"
+			before := stack.ageUser(t, admin.ID)
+			hash := stack.storedHash(t, admin.ID)
+			audited := stack.auditRows(t)
+
+			for name, fields := range map[string]string{
+				"role":      `"role":"sales"`,
+				"is_active": `"is_active":true`,
+				"both":      `"role":"admin","is_active":false`,
+			} {
+				t.Run(name+"/missing", func(t *testing.T) {
+					rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(`{"email":%q,%s}`, newEmail, fields))
+					assertOwnEmailRefused(t, rec, ownEmailRequiredCode, ownEmailRequiredMessage)
+					stack.assertUserUnwritten(t, before, hash)
+					assert.Equal(t, audited, stack.auditRows(t), "a refusal writes no audit row")
+				})
+				t.Run(name+"/wrong", func(t *testing.T) {
+					rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(
+						`{"email":%q,%s,"current_password":%q}`, newEmail, fields, usersMeWrongCurrent))
+					assertOwnEmailRefused(t, rec, ownEmailIncorrectCode, ownEmailIncorrectMessage)
+					stack.assertUserUnwritten(t, before, hash)
+					assert.Equal(t, audited, stack.auditRows(t), "a refusal writes no audit row")
+				})
+			}
+
+			t.Run("right", func(t *testing.T) {
+				rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(
+					`{"email":%q,"role":"admin","is_active":true,"current_password":%q}`, newEmail, usersMeOldPassword))
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				after := stack.storedUser(t, admin.ID)
+				assert.Equal(t, newEmail, after.Email)
+				assert.Equal(t, models.RoleAdmin, after.Role)
+				assert.Equal(t, hash, stack.storedHash(t, admin.ID))
+			})
+		})
+	}
+
+	// Neither password of the requests above reached the log, and the refusals
+	// name no email.
+	output := logged.String()
+	assert.NotContains(t, output, usersMeWrongCurrent)
+	assert.NotContains(t, output, usersMeOldPassword)
+	assert.NotContains(t, output, usersMeSuppliedPassword)
+	refusals := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Refused own email change") {
+			refusals++
+			assert.NotContains(t, line, "@example.com")
+			assert.Contains(t, line, `"level":"warning"`)
+		}
+	}
+	assert.Positive(t, refusals, "every refusal is logged")
+}
+
+func TestOwnProfileUpdateWithoutEmailChangeNeedsNoPassword(t *testing.T) {
+	stack := newGovernedUsersMeStack(t)
+
+	for _, route := range ownEmailRoutes {
+		for _, credential := range ownEmailCredentials {
+			t.Run(route.name+"/"+credential.name, func(t *testing.T) {
+				user := stack.register(t, "no-change-"+route.name+"-"+credential.name, models.RoleSales)
+				access, _ := stack.login(t, user.Email, usersMeOldPassword)
+				authorization := stack.authorization(t, credential.kind, user, access)
+				path := route.path(user)
+				hash := stack.storedHash(t, user.ID)
+
+				steps := []struct {
+					name      string
+					body      string
+					firstName string
+				}{
+					{"names only", `{"first_name":"Named","last_name":"Only"}`, "Named"},
+					{"the stored email again", fmt.Sprintf(`{"email":%q,"first_name":"Same"}`, user.Email), "Same"},
+					{
+						// The key is ignored, not verified, when the email does not change.
+						"a wrong current_password without an email",
+						fmt.Sprintf(`{"first_name":"Ignored","current_password":%q}`, usersMeWrongCurrent),
+						"Ignored",
+					},
+					{
+						"a wrong current_password with the stored email",
+						fmt.Sprintf(`{"email":%q,"first_name":"Stored","current_password":%q}`, user.Email, usersMeWrongCurrent),
+						"Stored",
+					},
+				}
+				for _, step := range steps {
+					t.Run(step.name, func(t *testing.T) {
+						rec := stack.do(http.MethodPut, path, authorization, step.body)
+						require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+						assert.NotContains(t, rec.Body.String(), usersMeWrongCurrent)
+						after := stack.storedUser(t, user.ID)
+						assert.Equal(t, step.firstName, after.FirstName)
+						assert.Equal(t, user.Email, after.Email)
+						assert.Equal(t, hash, stack.storedHash(t, user.ID))
+					})
+				}
+			})
+		}
+	}
+}
+
+func TestOtherUsersEmailChangeNeedsNoPassword(t *testing.T) {
+	stack := newGovernedUsersMeStack(t)
+
+	for _, credential := range ownEmailCredentials {
+		t.Run(credential.name, func(t *testing.T) {
+			admin := stack.register(t, "other-admin-"+credential.name, models.RoleAdmin)
+			target := stack.register(t, "other-target-"+credential.name, models.RoleSales)
+			access, _ := stack.login(t, admin.Email, usersMeOldPassword)
+			authorization := stack.authorization(t, credential.kind, admin, access)
+			path := fmt.Sprintf("/api/v1/users/%d", target.ID)
+			hash := stack.storedHash(t, target.ID)
+
+			first := "other-target-" + credential.name + "-first@example.com"
+			rec := stack.do(http.MethodPut, path, authorization, fmt.Sprintf(`{"email":%q}`, first))
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Equal(t, first, stack.storedUser(t, target.ID).Email)
+
+			// A current_password in the body is not verified for another account.
+			second := "other-target-" + credential.name + "-second@example.com"
+			rec = stack.do(http.MethodPut, path, authorization, fmt.Sprintf(
+				`{"email":%q,"current_password":%q}`, second, usersMeWrongCurrent))
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.Equal(t, second, stack.storedUser(t, target.ID).Email)
+			assert.Equal(t, hash, stack.storedHash(t, target.ID))
+		})
+	}
+}
+
 // specObject walks nested objects of the parsed spec by key.
 func specObject(t *testing.T, node map[string]interface{}, keys ...string) map[string]interface{} {
 	t.Helper()
@@ -408,14 +759,35 @@ func TestAPIReferenceDocumentsUpdateMeRefusal(t *testing.T) {
 	assert.NotContains(t, failed, "72")
 	assert.NotContains(t, failed, "bcrypt")
 
-	byID := specDescription(t, specObject(t, spec, "paths", "/users/{id}", "put"))
+	byIDOperation := specObject(t, spec, "paths", "/users/{id}", "put")
+	byID := specDescription(t, byIDOperation)
 	assert.NotContains(t, byID, "PUT /users/me")
 	assert.Contains(t, byID, "POST /auth/change-password")
 
-	for _, name := range []string{"password", "current_password", "new_password"} {
+	for _, name := range []string{"password", "new_password"} {
 		property := specObject(t, spec, "definitions", "internal_handler.UpdateMeRequest", "properties", name)
 		assert.Contains(t, specDescription(t, property), usersMeRefusalCode, name)
 		assert.NotContains(t, property, "minLength", name)
+	}
+
+	// An own email change needs current_password (#394): both routes name the
+	// two codes, in the description and in the 400 answer, and both bodies
+	// document the field as a string that is no longer refused.
+	for route, operation := range map[string]map[string]interface{}{"/users/me": updateMe, "/users/{id}": byIDOperation} {
+		badRequest := specDescription(t, specObject(t, operation, "responses", "400"))
+		for _, code := range []string{ownEmailRequiredCode, ownEmailIncorrectCode} {
+			assert.Contains(t, specDescription(t, operation), code, route)
+			assert.Contains(t, badRequest, code, route)
+		}
+	}
+	for _, definition := range []string{"internal_handler.UpdateMeRequest", "internal_handler.UpdateUserRequest"} {
+		property := specObject(t, spec, "definitions", definition, "properties", "current_password")
+		description := specDescription(t, property)
+		assert.Contains(t, description, ownEmailRequiredCode, definition)
+		assert.Contains(t, description, ownEmailIncorrectCode, definition)
+		assert.NotContains(t, description, usersMeRefusalCode, definition)
+		assert.Equal(t, "string", property["type"], definition)
+		assert.NotContains(t, property, "minLength", definition)
 	}
 
 	// The other two artifacts render the same refusal.

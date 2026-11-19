@@ -375,7 +375,9 @@ request, and so does a key taken away.
 
 **What stays open.** The ten self-service routes of [Deny by default](#deny-by-default) need
 authentication only, so the integration user can read and edit its own profile and create, list,
-update and revoke its own API keys. It cannot change its own role that way: `PUT /users/me` has
+update and revoke its own API keys. Changing its own email needs the account's current password
+in `current_password` (#394), so a leaked key alone cannot move the address a password reset is
+sent to. It cannot change its own role that way: `PUT /users/me` has
 no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and `is_active`
 from a caller without `users.assign_role` and `users.activate`. It can create further keys,
 though, and those never expire unless `expires_at` is sent: whoever holds a leaked key can mint

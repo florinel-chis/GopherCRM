@@ -620,7 +620,7 @@ into a sign-out test.
   `lead_handler.go:202`) and the query falls back to the repository default ordering — there is no
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
-  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:241` and
+  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:251` and
   `customer_handler.go:274`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -773,7 +773,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:481`) — not a 403.
+  account" (`user_handler.go:497`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4

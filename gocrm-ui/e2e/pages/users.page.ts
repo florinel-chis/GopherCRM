@@ -49,6 +49,11 @@ export class UsersPage {
     return this.page.locator('input[name="confirmPassword"]');
   }
 
+  // Shown on the edit form only while the signed-in user changes its own email.
+  get currentPasswordInput() {
+    return this.page.locator('input[name="current_password"]');
+  }
+
   get isActiveSwitch() {
     return this.page.locator('input[name="is_active"]');
   }

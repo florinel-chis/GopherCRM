@@ -41,6 +41,8 @@ const updateUserSchema = z.object({
   last_name: z.string().min(1, 'Last name is required'),
   role: z.string().min(1, 'Role is required'),
   is_active: z.boolean(),
+  // Asked for, and sent, only when the signed-in user changes its own email.
+  current_password: z.string().optional(),
 });
 
 type CreateUserFormData = z.infer<typeof createUserSchema>;
@@ -141,6 +143,7 @@ export const Component: React.FC = () => {
       last_name: '',
       role: '',
       is_active: true,
+      current_password: '',
     },
   });
 
@@ -204,9 +207,26 @@ export const Component: React.FC = () => {
       last_name: user.last_name,
       role: storedRoleOf(user).value,
       is_active: user.is_active,
+      current_password: '',
     });
     setFormReady(true);
   }, [user, rolesLoaded, formReady, updateMethods, isEditMode]);
+
+  // The API changes the signed-in user's own email only with its current
+  // password; an edit of another account, or one that leaves the email as it
+  // was loaded, does not ask for it.
+  const editedEmail = updateMethods.watch('email');
+  const needsCurrentPassword =
+    isEditMode && formReady && !!user && user.id === currentUser?.id && editedEmail !== user.email;
+
+  // A password typed for an email change does not outlive it: when the email
+  // is back at the loaded value the field goes and so does what it held.
+  useEffect(() => {
+    if (!needsCurrentPassword) {
+      updateMethods.setValue('current_password', '');
+      updateMethods.clearErrors('current_password');
+    }
+  }, [needsCurrentPassword, updateMethods]);
 
   const onCreateSubmit = (data: CreateUserFormData) => {
     setRoleRuleError('');
@@ -223,6 +243,13 @@ export const Component: React.FC = () => {
 
   const onUpdateSubmit = (data: UpdateUserFormData) => {
     setRoleRuleError('');
+    if (needsCurrentPassword && !data.current_password) {
+      updateMethods.setError('current_password', {
+        type: 'required',
+        message: 'Enter your current password to change your email',
+      });
+      return;
+    }
     const updateData: UpdateUserData = {
       email: data.email,
       first_name: data.first_name,
@@ -230,6 +257,7 @@ export const Component: React.FC = () => {
       // An untouched picker sends the stored role back as it is.
       ...(canEditRole ? roleFieldsOf(data.role) : {}),
       is_active: data.is_active,
+      ...(needsCurrentPassword ? { current_password: data.current_password } : {}),
     };
     updateMutation.mutate({ id: Number(id), data: updateData });
   };
@@ -266,6 +294,18 @@ export const Component: React.FC = () => {
       <Typography variant="h6">Account Information</Typography>
 
       <FormTextField name="email" label="Email" type="email" required disabled={!canWrite} />
+
+      {needsCurrentPassword && (
+        <FormTextField
+          name="current_password"
+          label="Current password"
+          type="password"
+          autoComplete="current-password"
+          required
+          disabled={!canWrite}
+          helperText="Changing your own email needs your current password"
+        />
+      )}
 
       {!isEditMode && (
         <>

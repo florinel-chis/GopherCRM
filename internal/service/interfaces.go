@@ -51,6 +51,14 @@ type UserService interface {
 	GetByID(id uint) (*models.User, error)
 	GetByEmail(email string) (*models.User, error)
 	Update(id uint, updates map[string]interface{}) (*models.User, error)
+	// CheckOwnEmailChange is the guard the user routes run before an account
+	// writes its own profile (#394). It answers nil when email is empty or is
+	// the stored one, and then never looks at currentPassword; otherwise
+	// ErrCurrentPasswordRequired for an empty currentPassword and
+	// ErrCurrentPasswordIncorrect for one that does not match the stored
+	// hash. A missing account is ErrNotFound. It writes nothing and counts
+	// nothing toward the login lockout.
+	CheckOwnEmailChange(id uint, email, currentPassword string) error
 	Delete(id uint) error
 	List(offset, limit int) ([]models.User, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)

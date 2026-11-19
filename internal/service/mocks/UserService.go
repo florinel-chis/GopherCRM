@@ -274,6 +274,24 @@ func (_m *UserService) Update(id uint, updates map[string]interface{}) (*models.
 	return r0, r1
 }
 
+// CheckOwnEmailChange provides a mock function with given fields: id, email, currentPassword
+func (_m *UserService) CheckOwnEmailChange(id uint, email string, currentPassword string) error {
+	ret := _m.Called(id, email, currentPassword)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CheckOwnEmailChange")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(uint, string, string) error); ok {
+		r0 = rf(id, email, currentPassword)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder
 func (_m *UserService) ListSorted(offset int, limit int, sortBy string, sortOrder string) ([]models.User, int64, error) {
 	ret := _m.Called(offset, limit, sortBy, sortOrder)
