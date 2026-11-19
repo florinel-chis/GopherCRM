@@ -680,8 +680,8 @@ the frontend gating.
   and Converted (no Lost, which no lead can have). A new request is issued with `status=qualified`
   and `page=1`; it returns **200** and lists only qualified leads, and `total` and the pagination
   footer count only them (#426). The handler validates the value with `LeadStatus.IsValid`
-  (`lead_handler.go:362`) and, for an admin, passes it together with search, classification and
-  the sort to `LeadService.ListFiltered` (`lead_handler.go:413`), whose single predicate applies
+  (`lead_handler.go:363`) and, for an admin, passes it together with search, classification and
+  the sort to `LeadService.ListFiltered` (`lead_handler.go:421`), whose single predicate applies
   before offset and limit. A sales user gets only its own leads in that status. An unknown or
   differently cased value (`status=lost`, `status=Qualified`) is **400** `VALIDATION_ERROR` with
   `error.details.status`, the value not echoed; `external_id` still overrides `status`.

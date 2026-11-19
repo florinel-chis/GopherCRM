@@ -667,7 +667,7 @@ into a sign-out test.
   tickets they seed. Nor does it cover users: #428 (resolved) made `GET /users` filter `role`
   server-side (FEATURES 7.8), and `admin-users.spec.ts` "admin can filter users by role (#428)" now
   runs as a plain test. Nor leads: #426 (resolved) made `GET /leads` filter `status` server-side
-  (FEATURES 3.8, `lead_handler.go:362`), and `admin-leads.spec.ts` "admin can filter leads by status
+  (FEATURES 3.8, `lead_handler.go:363`), and `admin-leads.spec.ts` "admin can filter leads by status
   (#426)" now runs as a plain test.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
