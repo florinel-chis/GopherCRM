@@ -1130,7 +1130,7 @@ pruned 30 days after their last change.
 | event_id | string | Yes | | `varchar(64)` | `evt_` + 32 hex, shared by every endpoint's row of one event |
 | event_type | string | Yes | | `varchar(32)` | `lead.created`, `lead.updated`, `customer.created`, `customer.updated`, `ticket.created`, `ticket.updated` |
 | record_id | uint | Yes | | | id of the created or updated lead, customer or ticket |
-| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating transaction |
+| occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating or updating transaction |
 | status | string | Yes | `pending` | `varchar(20)`; `idx_webhook_deliveries_status_next (status, next_attempt_at)` | `pending`, `sending`, `succeeded`, `failed` |
 | attempts | int | Yes | 0 | | at most 10 |
 | next_attempt_at | datetime | No | NULL | `datetime(3)` | due time while pending (`occurred_at` at enqueue); NULL once finished |

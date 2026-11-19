@@ -346,7 +346,7 @@ confirm and the gaps of the re-check.
   `utils.ErrTransactionRootRequired`); `runLeadCompanyAttempts`
   (`internal/service/lead_service.go:1091`) around one root transaction per attempt.
 - **Retry:** `WithTransactionAndRetry` with `maxRetries` 3 (`internal/service/lead_service.go:1092`,
-  `:1053` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
+  `:1099` in the same file) replays the attempt's root on a deadlock, lock wait timeout or SQLite
   busy/locked; around it `runLeadCompanyAttempts` (`internal/service/lead_service.go:334`) restarts
   the whole root at most `leadCompanyMaxRestarts` (3) times, on `errLeadCompanyMoved` only and only
   after a clean rollback (`shouldRestartLeadCompanyAttempt`, `internal/service/lead_service.go:227`),
