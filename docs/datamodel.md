@@ -498,7 +498,9 @@ row of the quote with `to_status = 'draft'` and an id above the one read before 
 quote email. Only the HMAC-SHA256 hash of a token is stored (keyed by `API_KEY_SECRET`, else
 `JWT_SECRET`); the plain value exists in the mailed link alone. There is no foreign key and no
 `deleted_at`, and a row holds a hash, the quote id, timestamps and the decision, so no personal
-data: erasure leaves the table in place. A row is usable while `used_at` is NULL, `expires_at`
+data: erasure keeps the rows. It stamps `used_at` on the unused rows of the quotes whose
+`customer_id` is an erased customer (#395), so a link mailed before the erasure is refused; rows
+the client spent and the rows of other customers' quotes are unchanged. A row is usable while `used_at` is NULL, `expires_at`
 is NULL or in the future, and its quote is live and `sent`; the read and the claim carry the
 same predicates in one statement. A quote has at most one usable row, the one of its latest
 email.
@@ -510,7 +512,7 @@ email.
 | quote_id | uint | Yes | | `idx_quote_response_tokens_quote_id`, no FK | The quote the link answers |
 | token_hash | string | Yes | | `varchar(255)`; `idx_quote_response_tokens_token_hash` (unique) | hex(HMAC-SHA256(token)); `json:"-"` |
 | expires_at | datetime | No | NULL | `datetime(3)`, UTC | Start of the day after the quote's `valid_until` in the server's local zone; NULL when the quote has no `valid_until` |
-| used_at | datetime | No | NULL | `datetime(3)`, UTC | Set when the client answers, and when a newer email or a staff status change away from sent invalidates the row |
+| used_at | datetime | No | NULL | `datetime(3)`, UTC | Set when the client answers, and when a newer email, a staff status change away from sent or the erasure of the quote's customer (#395) invalidates the row |
 | decision | string | No | NULL | `varchar(20)` | `accept` or `decline` on a row the client spent; NULL on an unused or invalidated row |
 
 A client answer claims the row, moves the quote `sent → accepted | rejected` and writes one

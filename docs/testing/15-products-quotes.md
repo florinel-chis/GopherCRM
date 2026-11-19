@@ -1288,3 +1288,38 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
   backend runs with `QUOTE_PDF_CHROME_PATH` pinned empty. `TestChromeQuotePDFRendererRealBinary`
   (`internal/service/quote_pdf_chrome_test.go`) drives a real binary against a static page when
   `QUOTE_PDF_CHROME_PATH` is set and skips otherwise.
+
+## 15.15 Response links and the erasure of the customer (#395)
+
+### TC-PQ-059 — A link mailed before the customer's erasure is refused
+- **Priority:** P0
+- **Type:** security, privacy, concurrency
+- **Preconditions:** A sent quote addressed to a customer, emailed (one unused token); a second customer with a sent, emailed quote; a quote of the first customer's deal addressed to the second customer, emailed. SQLite, MySQL 8 and MariaDB 10.11.
+- **Steps:**
+  1. `GET /quotes/public/response` with the first quote's token.
+  2. Erase the first customer: `DELETE /customers/{id}`, then on fresh data the admin erasure of a lead converted into it and the erasure of its customer-role login.
+  3. `GET /quotes/public/response`, then `POST` with `accept` and with `decline`, with the first quote's token.
+  4. Read the token rows the client already spent, the second customer's token and the token of the deal-linked quote addressed to the second customer.
+  5. Erase a customer with no quote, and one whose only quote is a draft that was never emailed.
+  6. Erase inside a caller's transaction and roll it back.
+  7. While an erasure that stamped a token is still open, insert a token row for a quote whose id lies between, and one above, the erased customer's quote ids from another session (MySQL and MariaDB).
+  8. Run the erasure and a client `accept` on one token at the same time, several rounds.
+- **Expected:** Step 1: the quote is returned. Step 2: every root succeeds and stamps `used_at`
+  on the unused token (`decision` NULL; `token_hash`, `quote_id`, `expires_at` unchanged). Step 3:
+  each call is the generic 400 "Invalid or expired quote link"; the quote is still `sent` and the
+  quote, history, token and deal rows are the same before and after the three calls. Step 4: all
+  three are unchanged and the two unused links still work. Step 5: the erasure succeeds and
+  `quote_response_tokens` is identical before and after. Step 6: the token is unused and usable
+  again and the customer is live. Step 7: both inserts return at once, without a lock wait. Step
+  8: each round ends with the answer committed (quote `accepted`, token `decision` `accept` with
+  the answer's `used_at`) or refused with the generic rejection (quote `sent`, token stamped,
+  `decision` NULL); the erasure always succeeds and neither side sees a deadlock or a lock wait
+  timeout.
+- **Known issue:** a quote email in flight while the erasure runs can still mint and mail a
+  link the erasure does not stamp (`docs/ROADMAP.md`, #395).
+- **Automation:** automated — `internal/service/quote_response_erasure_test.go`
+  `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`;
+  `internal/repository/erasure_quote_tokens_test.go`
+  `TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}`,
+  `TestErasureQuoteTokenWritesLeaveGapsFreeMySQL`. The HTTP mapping of the rejection is
+  TC-PQ-044's (`TestQuotePublicView`, `TestQuotePublicRespond`).

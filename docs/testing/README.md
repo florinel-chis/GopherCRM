@@ -12,7 +12,7 @@ are folded in. "Automated" means the cited spec file contains an exactly-matchin
 that the test was executed as part of writing this catalog.
 
 The table counts each document's `### TC-` cases (letter-suffixed ids such as TC-AUTH-026a included) by their **Priority** and the first word of their
-**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050). *Automated (partial)*, *automated (backend)*, an
+**Automation** line (re-summed 2026-11-08; the 15-products-quotes row and the total again on 2026-11-18; the 03-leads row and the total on 2026-11-19, #398: the row had stayed at 73 cases and 38 automated while the file held 77 and 42; the 07-users row and the total on 2026-11-19, #397, and again on 2026-11-19 for the six cases of #394, TC-USER-045 to TC-USER-050; the 15-products-quotes row and the total on 2026-11-19 for TC-PQ-059, #395). *Automated (partial)*, *automated (backend)*, an
 Automation line that names its Go or Vitest tests directly, and a case whose API half is automated
 while its browser half is still planned all count as automated; *blocked in the browser* counts as
 blocked.
@@ -34,9 +34,9 @@ blocked.
 | [11-aeo.md](11-aeo.md) | AEO: brand profile, prompts, runs, visibility dashboard, citations | 49 | 9 | 27 | 13 | 10 | 36 | 3 |
 | [13-companies.md](13-companies.md) | Companies: list, create/edit, delete with unlink, link from leads and customers | 24 | 15 | 8 | 1 | 9 | 9 | 6 |
 | [14-deals.md](14-deals.md) | Deals: list and filters, create/edit, stage changes with history, sub-lists, delete, pipeline board | 35 | 19 | 13 | 3 | 17 | 9 | 9 |
-| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output | 58 | 34 | 22 | 2 | 57 | 1 | 0 |
+| [15-products-quotes.md](15-products-quotes.md) | Products and quotes: catalogue, quote creation, lines and totals, status lifecycle, visibility, email, erasure, migration, the products/quotes screens, external-id mappings, line tax, fractional quantities, the client response link and its public page, quote PDF output, response links and erasure | 59 | 35 | 22 | 2 | 58 | 1 | 0 |
 | [16-follow-up-automation.md](16-follow-up-automation.md) | Follow-up automation: rules, events, dispatch, step execution, waits, schedules, dry run, run history, notifications, reconcile, erasure, migration, and the automation and notification screens | 36 | 20 | 15 | 1 | 36 | 0 | 0 |
-| **Total** | | **722** | **255** | **317** | **150** | **324** | **315** | **83** |
+| **Total** | | **723** | **256** | **317** | **150** | **325** | **315** | **83** |
 
 [10-labels.md](10-labels.md) was added 2026-08-08 with the task-labels feature. Three of its cases
 are marked *automated (partial)*: the cited test asserts the case's core outcome but not every
@@ -107,6 +107,10 @@ P0, four P1). Six are automated in Go and Vitest with fake renderers and a brows
 TC-PQ-058, the real chain through Chrome and the web application, is a manual release check
 (`scripts/e2e/quote-pdf-smoke.sh`) and counts as planned. The row and the total were recounted
 with them (58 and 710).
+Section 15.15 (2026-11-19, #395) adds one case, TC-PQ-059 (P0): a response link mailed before the
+erasure of the quote's customer is refused. It is automated at the Go level (service and
+repository roots on SQLite, MySQL 8 and MariaDB 10.11); the row and the total were recounted with
+it (59 and 723).
 
 [16-follow-up-automation.md](16-follow-up-automation.md) was added 2026-10-28 with the follow-up
 automation and notifications API (issue #164). Twenty-seven cases are automated at the Go level

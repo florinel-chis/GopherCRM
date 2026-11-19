@@ -532,7 +532,8 @@ statuses, totals and history, but the text staff typed into them can name the cl
 transaction overwrites it: deal titles become `[redacted]` and their notes and lost reasons are
 emptied, quote titles become `[redacted]` and their notes are emptied whatever the quote status,
 quote line descriptions are reset to the product names, and notifications about those deals are
-deleted (#245). Ticket and task text is kept; see `docs/DEVELOPMENT.md` for the ticket redaction
+deleted (#245). A client response link mailed for a quote of an erased customer stops working
+(#395). Ticket and task text is kept; see `docs/DEVELOPMENT.md` for the ticket redaction
 procedure.
 
 Two consequences:

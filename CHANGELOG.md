@@ -106,8 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     row of a client answer names the quote owner; the token row (`used_at`, `decision`) is the
     record that the client answered. No existing table is altered.
   - **Not included.** A "client" label in the staff history is the follow-up (the page that
-    answers the link is #383). The public view holds no personal data, and erasing the customer
-    of a sent quote leaves a mailed link usable until the quote leaves sent.
+    answers the link is #383). The public view holds no personal data. Erasing the customer of
+    a sent quote invalidates its mailed links since #395 (see Fixed).
   - **Schema:** migration `20261121120000_add_quote_response_tokens` on MySQL/MariaDB (one
     `CREATE TABLE IF NOT EXISTS`, no foreign key), `MigrateDatabase` on SQLite; rollback drops
     the table.
@@ -797,6 +797,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A mailed quote response link stops working when the quote's customer is erased (#395).**
+  Erasing a customer left the response link of a quote email (#382) usable: the client could
+  still open and answer a sent quote after the erasure. The erasure now stamps `used_at` (with
+  `decision` NULL, as a newer email or a staff status change does) on every unused
+  `quote_response_tokens` row of the quotes addressed to an erased customer, whichever root
+  reaches the customer (`DELETE /customers/{id}`, the admin erasure of a converted lead, the
+  erasure of a customer-role login). `GET` and `POST /quotes/public/response` then answer the
+  same 400 "Invalid or expired quote link" as for a used or expired token, and the quote keeps
+  its status, dates, totals and history.
+  - **Same transaction.** The stamp is part of the erasure unit, after its update of those
+    quotes: a failed or rolled-back erasure leaves the link usable.
+  - **Primary-key writes.** The token ids are read with a plain `SELECT` and stamped by primary
+    key, the statements of the existing invalidation, so the erasure holds no gap of the
+    `quote_id` index and does not block the mint of another quote's link; the order is
+    `quotes → quote_response_tokens` (`docs/CONCURRENCY.md`).
+  - **Untouched.** Rows the client already spent, the tokens of other customers' quotes, and
+    the tokens of a quote that shares the erased customer's deal but is addressed to another
+    customer. No schema change, no change to the public errors or the web application.
+  - **Not covered.** A quote email that is in flight while the erasure runs can still mint and
+    mail a link the erasure does not see (`docs/ROADMAP.md`).
+  - Roots, on SQLite, MySQL 8 and MariaDB 10.11, registered in the transaction profile of
+    `scripts/ci/check-go.py`: `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`
+    (`internal/service/quote_response_erasure_test.go`),
+    `TestErasureInvalidatesQuoteResponseTokens{SQLite,MySQL}` and
+    `TestErasureQuoteTokenWritesLeaveGapsFreeMySQL`
+    (`internal/repository/erasure_quote_tokens_test.go`).
 - **A password-reset confirmation that loses a deadlock is replayed instead of failing (#407).**
   `POST /auth/password-reset/confirm` claims its token before it locks the owner's `users` row,
   the reverse of the order an erasure of that user and a new reset request take. A confirmation
