@@ -25,6 +25,9 @@ const (
 	AuthMethodContextKey = "auth_method"
 	AuthMethodBearer     = "bearer"
 	AuthMethodAPIKey     = "api_key"
+	// AuthMethodOIDC is recorded on the role audit row of an OpenID Connect
+	// sign-in (#435), whose mapped role is applied by the sign-in itself.
+	AuthMethodOIDC = "oidc"
 )
 
 type AuthService interface {

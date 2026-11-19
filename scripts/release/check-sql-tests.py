@@ -28,6 +28,7 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestMigrationRolesDownDemotesCustomUsers'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteResponseTokensMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestQuoteHistorySourceMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestUserIdentitiesMigration'),
     }
     migration_roots = len(required)
     if migrations_only:

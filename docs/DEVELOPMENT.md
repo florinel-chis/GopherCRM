@@ -311,6 +311,35 @@ api_keys). The reset confirm (token first, then owner) inverts the request's ord
 *Credential issuance under the owner lock* below. New session and credential flows must follow
 the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
 
+**OpenID Connect sign-in (#435)** — `POST /auth/oidc/start` and `POST /auth/oidc/callback`
+(`internal/service/auth_oidc.go`, `internal/handler/auth_oidc_handler.go`) sign in with the
+single sign-on settings of #434, re-read on every call. The single-use token pattern above covers
+the sign-in attempts too: Start stores only the HMAC of the state (`oidc_login_attempts`, keyed
+like the other opaque tokens, ten minutes), and the callback spends the row with one conditional
+`UPDATE` (`state_hash = ? AND used_at IS NULL AND expires_at > now`, one affected row or the
+generic refusal) as its own committed statement before it talks to the issuer, so a state works
+once even when the sign-in is then refused. The issuer client (`newOIDCHTTPClient`) has a 10 s
+timeout, follows no redirect and ignores `HTTP(S)_PROXY`; tests trust their TLS issuer through
+`WithOIDCRootCAs`, and there is no option that replaces the client. After the code exchange
+(PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
+`aud`, `exp`, nonce compared in constant time), one governed transaction
+(`userService.ApplyOIDCSignIn`, `internal/service/user_governed_writes.go`) takes
+`admin set → users → roles → user_identities → refresh_tokens`: it reads the `(iss, sub)`
+identity, re-applies the mapped role with the governed rules minus the actor-key and escalation
+checks (`ErrLastAdmin` and `ErrCustomerLoginRole` refuse; a change writes a `user_role_changed`
+row with `auth_method` `oidc`), or provisions the user, its identity and its audit row, and then
+inserts the refresh token and signs the access token from the row it wrote. `last_login_at` and
+the lockout counters are untouched. Refusals are `ErrSSOSignInFailed` (401) and are logged with an
+`error_code` only; the code, state, nonce, verifier, tokens, email, subject and claims are never
+logged. Regression roots: `TestOIDCSignInSQLite` and `TestOIDCSignInMySQL`
+(`internal/service/auth_oidc_test.go`, one shared subtest table against an in-process TLS issuer
+that checks the PKCE verifier and the redirect URI; the MySQL root skips without
+`TEST_MYSQL_DSN` and is discovered by the auth checker), `TestOIDCHTTPClient`,
+`TestOIDCHandler` (`internal/handler`), `TestOIDCRoutesWired` (`cmd`) and
+`TestUserIdentitiesMigration{Files,}` (`cmd/migrate`). The user-facing rules (first-match
+mapping, overage, subject whitespace, JIT, erasure) are in
+[AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435).
+
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
 
@@ -754,7 +783,9 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
 - **Audit.** `role_audit_log` gets one row per role create, clone (`role_created`), update and
   delete, and per change of a user's `role` or `role_id` (`user_role_changed`, also for the role a
   new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value
-  (`bearer` or `api_key`). The log lines of these paths carry ids and action names only.
+  (`bearer` or `api_key`), or `oidc` (`service.AuthMethodOIDC`) for the role an OpenID Connect
+  sign-in applied to its own account (#435). The log lines of these paths carry ids and action
+  names only.
 
 Regression roots (`internal/integration`, on the real Auth, routes, handlers and repositories):
 `TestRoleAPI{SQLite,MySQL}`, `TestRoleAPIRejectsInvalidPermissionsSQLite`,
@@ -1169,7 +1200,8 @@ quote concurrency roots); `TestQuoteResponseTokenRepository` (`internal/reposito
 `TestQuotePublic{View,Respond}`, `TestQuotePublicRoutesWinOverTheIDParameter` (`internal/handler`);
 `TestQuoteResponseTokensMigrationFiles` and `TestQuoteResponseTokensMigration` (`cmd/migrate`).
 The history source (#400): `TestQuoteHistoryClientAnswer` (`internal/handler`, real routes and
-service), `TestQuoteHistorySourceMigrationFiles` (it holds the newest-migration assertion) and
+service), `TestQuoteHistorySourceMigrationFiles` (the newest-migration assertion moved to
+`TestUserIdentitiesMigrationFiles` with #435) and
 `TestQuoteHistorySourceMigration` (`cmd/migrate`, migration `20261122120000_quote_history_source`),
 `TestQuoteHistorySourceSQLiteUpgrade` (`internal/models`). The erasure of the customer (#395):
 `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`
@@ -2379,6 +2411,8 @@ What the erasure touches, and what it keeps on purpose:
 | `form_confirmation_tokens` and `form_mail_deliveries` of those submissions | hard-deleted | — |
 | `form_submissions` with no `lead_id` whose `email` matches the erased lead, customer or user (#214; live and soft-deleted, rows of soft-deleted forms, every status) | `email` → the erased row's placeholder; `data` → `{}`; `ip_address`, `user_agent`, `referrer` and the six attribution columns → `''`; their `form_confirmation_tokens` and `form_mail_deliveries` hard-deleted. Matched on the `email` column only, `email IN (original, lower(original))`: exact or lower-cased on SQLite; on MySQL/MariaDB the `utf8mb4_unicode_ci` collation decides (case- and accent-insensitive, trailing spaces ignored), the rule form intake's lead linking uses. The `data` JSON is not searched. Every submission from that address is affected, a shared inbox's included; a blank or placeholder original matches nothing | `form_id`, `status`, `lead_id` (NULL), the row's own deletion state |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
+| `user_identities` of an erased user (#435) | not touched | The row (issuer URL, opaque subject, `user_id`) stays linked to the erased user, so the erased person's next OIDC sign-in is refused (401) instead of provisioning a new account. It holds no name or address |
+| `oidc_login_attempts` | not touched | No user link: a state hash, a nonce, a PKCE verifier, the issuer and timestamps; expired rows are purged by later starts |
 | `notifications` addressed to an erased user, whose entity is an erased lead, or whose entity is a deal reached below (#245) | hard-deleted | notifications about unreached deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |
 | `automation_runs` of an erased lead | pending/waiting/running → `cancelled` / `record_deleted` | finished runs (ids and statuses only); runs of a reached deal keep running and render the redacted title |

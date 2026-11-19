@@ -122,7 +122,7 @@ func newSSOSettingsResponse(cfg service.EffectiveSSOConfig) SSOSettingsResponse 
 
 // Get godoc
 // @Summary Get the single sign-on settings (admin)
-// @Description Requires settings.sso_manage (route guard, repeated in the handler); only the admin system role holds it, settings.view and settings.update do not. Returns the effective OpenID Connect settings: per field a non-empty stored setting, else the OIDC_* variable, else the default (disabled, scopes openid profile email, everything else empty); sources says which. The role mapping is returned decrypted; the client secret never is, client_secret_set says whether one is in force. Single sign-on is off when its stored switch cannot be read, and the mapping is empty when the stored one cannot be read or parsed. Sign-in through these settings is not implemented yet.
+// @Description Requires settings.sso_manage (route guard, repeated in the handler); only the admin system role holds it, settings.view and settings.update do not. Returns the effective OpenID Connect settings: per field a non-empty stored setting, else the OIDC_* variable, else the default (disabled, scopes openid profile email, everything else empty); sources says which. The role mapping is returned decrypted; the client secret never is, client_secret_set says whether one is in force. Single sign-on is off when its stored switch cannot be read, and the mapping is empty when the stored one cannot be read or parsed. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
 // @Tags configurations
 // @Produce json
 // @Security BearerAuth
@@ -149,7 +149,7 @@ func (h *SSOSettingsHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Replace the single sign-on settings (admin)
-// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration. Answers with the effective settings, as GET does. Sign-in through these settings is not implemented yet.
+// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
 // @Tags configurations
 // @Accept json
 // @Produce json

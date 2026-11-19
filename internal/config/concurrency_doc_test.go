@@ -45,6 +45,7 @@ var concurrencyDocFlowsInOrder = []string{
 	"Password-reset confirm",
 	"API-key create",
 	"RBAC user-role and role writes",
+	"OIDC sign-in",
 }
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
@@ -66,6 +67,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"Password-reset confirm":         "implemented",
 	"API-key create":                 "implemented",
 	"RBAC user-role and role writes": "implemented",
+	"OIDC sign-in":                   "implemented",
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
@@ -81,6 +83,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"API-key create":         {"apiKeyCreateMaxRetries", "internal/service/apikey_service.go", ""},
 	// #348: every governed user write and role write is one replayed root.
 	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #435: the OIDC sign-in is a governed write.
+	"OIDC sign-in": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #385: every erasure root is one replayed transaction (a const block).
 	"User-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
 	"Customer-rooted erasure": {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
@@ -108,6 +112,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"Password-reset confirm":         "C3",
 	"API-key create":                 "C3",
 	"RBAC user-role and role writes": "#348",
+	"OIDC sign-in":                   "#435",
 }
 
 type concurrencyDocSection struct {
@@ -1234,4 +1239,32 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 		}
 	}
 	assert.True(t, erasure, "an [Unreleased] entry names #385, docs/CONCURRENCY.md, the sentinel and the transaction gate")
+}
+
+// TestConcurrencyDocOIDCSignIn pins the OIDC sign-in flow (#435) to the code:
+// the attempt claim is its own statement before the governed transaction,
+// which takes admin set → users → roles before it writes the identity and the
+// refresh token.
+func TestConcurrencyDocOIDCSignIn(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, concurrencyDocNormalize(fields["OIDC sign-in"]["Order"]),
+		"admin set → users → roles → user_identities → refresh_tokens")
+	assert.Contains(t, concurrencyDocNormalize(fields["OIDC sign-in"]["Rows locked"]), "its own committed statement")
+
+	inOrder := func(body string, statements ...string) {
+		t.Helper()
+		last := -1
+		for _, statement := range statements {
+			at := strings.Index(body, statement)
+			if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+				assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+				last = at
+			}
+		}
+	}
+	callback := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) callback(")
+	inOrder(callback, "s.attempts.Claim(", ".Exchange(", "s.users.ApplyOIDCSignIn(")
+	apply := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) ApplyOIDCSignIn(")
+	inOrder(apply, "s.governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "identities.GetByIssuerSubject(",
+		"tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(", "in.issue(tx.handle")
 }

@@ -124,7 +124,7 @@ blocks a role or user delete.
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
 | actor_user_id | bigint unsigned | Yes | NULL | |
-| auth_method | varchar(20) | No | '' | |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, or `oidc` for the role an OpenID Connect sign-in applied (#435) |
 | action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
@@ -951,6 +951,42 @@ before it stay NULL.
 - `low` - Low priority
 - `medium` - Normal priority
 - `high` - High priority
+
+## OpenID Connect Sign-in
+
+Two tables back the OIDC sign-in (#435). Both are in AutoMigrate and in
+`migrations/20261123120000_add_oidc_sign_in` (each created only when missing; the down drops the
+two tables and nothing else).
+
+### user_identities
+
+Links the exact `(iss, sub)` pair of an ID token to a user. No `deleted_at`, and erasure keeps the
+row linked to the erased user, so that person's next sign-in is refused instead of provisioning a
+new account. Holds the issuer URL and the opaque subject only.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | NULL | |
+| user_id | bigint unsigned | No | - | Index `idx_user_identities_user_id`; FK `fk_user_identities_user` to `users.id` (ON DELETE RESTRICT) |
+| issuer | varchar(512) | No | - | `utf8mb4_bin` on MySQL/MariaDB (guarded by `ensureUserIdentityCollation`); unique index `idx_user_identities_issuer_subject (issuer, subject)` |
+| subject | varchar(255) | No | - | `utf8mb4_bin`; compared exactly. A sub with leading or trailing whitespace is refused before any lookup, because the binary collation still pads trailing spaces |
+
+### oidc_login_attempts
+
+One single-use row per started sign-in. No foreign key and no user data; rows that expired more
+than an hour ago are purged, at most 100 per start.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | Yes | NULL | |
+| state_hash | varchar(64) | No | - | hex(HMAC-SHA256(state)) keyed by `API_KEY_SECRET`, else `JWT_SECRET`; unique index `idx_oidc_login_attempts_state_hash`; `json:"-"` |
+| nonce | varchar(64) | No | - | The nonce the ID token must carry |
+| code_verifier | varchar(128) | No | - | The PKCE verifier |
+| issuer | varchar(2048) | No | - | The issuer the attempt was started against |
+| expires_at | datetime(3) | No | - | Ten minutes after the start |
+| used_at | datetime(3) | Yes | NULL | Set by the one conditional `UPDATE` that spends the row |
 
 ## APIKey Model
 

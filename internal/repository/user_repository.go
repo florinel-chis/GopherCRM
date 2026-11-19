@@ -89,6 +89,19 @@ func (r *userRepository) GetByEmailUnscoped(email string) (*models.User, error) 
 	return &user, nil
 }
 
+// EmailExistsFoldedUnscoped reports whether any row, soft-deleted included,
+// holds the address in any letter case. LOWER on both sides makes SQLite
+// (BINARY) answer what the case-insensitive collation of users.email answers
+// on MySQL/MariaDB, as the label LOWER(name) pre-check does.
+func (r *userRepository) EmailExistsFoldedUnscoped(email string) (bool, error) {
+	var count int64
+	err := r.db.Unscoped().Model(&models.User{}).Where("LOWER(email) = LOWER(?)", email).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // userUpdatableColumns is the closed set of columns UpdateFields may write.
 // Anything else (ids, timestamps, deleted_at) is refused outright.
 var userUpdatableColumns = map[string]struct{}{

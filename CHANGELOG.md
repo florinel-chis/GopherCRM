@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenID Connect sign-in, backend (#435).** `POST /auth/oidc/start` returns the issuer's
+  authorization URL (authorization code flow with PKCE, S256, a state and a nonce, redirect URI
+  `APP_BASE_URL/auth/callback`) and `POST /auth/oidc/callback` `{code, state}` finishes the
+  sign-in, both on the strict public `/auth` tier. They use the issuer, client and role mapping of
+  the single sign-on settings (#434). Success returns the same `token`, `refresh_token` and `user`
+  as `POST /auth/login`; no cookie is set. Single sign-on off is 404, on but unconfigured,
+  undiscoverable or with a failing token endpoint is 503 `SSO_UNAVAILABLE`, and every refusal is
+  401 "Single sign-on failed". Identities are linked only by the exact `(iss, sub)` pair in the new
+  `user_identities` table; a subject with leading or trailing whitespace is refused on every
+  engine, and `email` never links an account. An unknown identity is provisioned on its first
+  sign-in with the mapped role and no usable password, unless the token has no email or any user,
+  erased ones included, already holds the address in any letter case. The role is the first
+  mapping entry, in stored order, whose `groups` or `roles` claim holds its value; no match and an
+  Entra ID group overage are refused. Every sign-in re-applies the mapped role through the
+  governed role write, so the last active admin cannot be demoted and a change is audited with
+  `auth_method` `oidc`. A started sign-in is a single-use `oidc_login_attempts` row holding the
+  HMAC of the state, valid ten minutes. Erasure keeps a user's identity row, so an erased person's
+  next sign-in is refused. Password login stays as break-glass. Migration
+  `20261123120000_add_oidc_sign_in` creates the two tables; `docs/AUTHORIZATION.md` gains Okta and
+  Entra ID examples. New dependencies: `github.com/coreos/go-oidc/v3` and `golang.org/x/oauth2`.
+  The SPA callback page is later work.
 - **Single sign-on settings, no sign-in yet (#434).** The backend half of the OpenID Connect
   configuration for RBAC phase 2. Six settings are seeded in the security category:
   `security.sso.enabled`, `issuer_url`, `client_id`, `client_secret`, `scopes` and
@@ -25,8 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OIDC_SCOPES` and `OIDC_ROLE_MAPPING` variables are fallbacks behind the stored settings
   (documented, commented out, in `.env.example`). It fails closed: single sign-on is off when
   its stored switch cannot be read, and a stored mapping that cannot be read or parsed is empty
-  rather than the environment one. Nothing signs anyone in with these settings yet. No schema
-  change: the rows are seeded at startup.
+  rather than the environment one. Since #435 these settings sign users in (see the OpenID
+  Connect sign-in entry above). No schema change: the rows are seeded at startup.
 - **Settings > Webhooks screen (#409).** Webhook endpoints and their delivery log no longer need
   the API: `/settings/webhooks` lists the endpoints (URL, subscribed events, active flag, created
   date) and creates, edits, activates, deactivates and deletes them, and its "Delivery log" tab

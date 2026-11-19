@@ -71,6 +71,11 @@ func (m *MockUserRepository) Count() (int64, error) {
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockUserRepository) EmailExistsFoldedUnscoped(email string) (bool, error) {
+	args := m.Called(email)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockUserRepository) UpdateLastLogin(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)

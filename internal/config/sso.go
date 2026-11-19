@@ -11,7 +11,8 @@ import (
 // security.sso.* in Settings wins, and the service re-reads the stored
 // settings on every call. Load never fails because of them; the service
 // validates the issuer and the role mapping and treats an invalid value as
-// unset. Sign-in itself is not implemented yet.
+// unset. The OpenID Connect sign-in (POST /auth/oidc/start and
+// /auth/oidc/callback) uses them with the redirect URI APP_BASE_URL/auth/callback.
 type SSOConfig struct {
 	// Enabled is OIDC_ENABLED ("true"/"1" or "false"/"0", default false).
 	Enabled bool

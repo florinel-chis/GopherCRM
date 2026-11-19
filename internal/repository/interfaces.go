@@ -21,6 +21,11 @@ type UserRepository interface {
 	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
 	// pre-checks, since the unique index on users.email is not scoped to deleted_at.
 	GetByEmailUnscoped(email string) (*models.User, error)
+	// EmailExistsFoldedUnscoped reports whether any user, live or erased,
+	// holds the address in any letter case: LOWER(email) = LOWER(?). It makes
+	// SQLite refuse exactly what the case-insensitive MySQL/MariaDB collation
+	// of users.email refuses (the OIDC first sign-in, #435).
+	EmailExistsFoldedUnscoped(email string) (bool, error)
 	// UpdateFields writes only the named columns of a live (not soft-deleted)
 	// user with a conditional UPDATE. It never inserts and reports
 	// gorm.ErrRecordNotFound when no live row matched. There is deliberately
@@ -761,6 +766,36 @@ type QuoteResponseTokenRepository interface {
 	// first read of its transaction.
 	InvalidateForQuote(quoteID uint, now time.Time) error
 	WithTx(tx *gorm.DB) QuoteResponseTokenRepository
+}
+
+// UserIdentityRepository is the persistence of user_identities (#435): the
+// exact (issuer, subject) pair of an OpenID Connect identity linked to a user.
+// Lock order: a transaction that writes here has locked the users row first
+// (admin set → users → roles → user_identities → refresh_tokens).
+type UserIdentityRepository interface {
+	// GetByIssuerSubject returns the row the unique index finds for the pair;
+	// a miss is gorm.ErrRecordNotFound. The comparison is the engine's
+	// (BINARY on SQLite, utf8mb4_bin with PAD SPACE on MySQL/MariaDB), so the
+	// caller compares the returned values byte for byte.
+	GetByIssuerSubject(issuer, subject string) (*models.UserIdentity, error)
+	// Create inserts the row; a unique violation is ErrUserIdentityTaken.
+	Create(identity *models.UserIdentity) error
+	WithTx(tx *gorm.DB) UserIdentityRepository
+}
+
+// OIDCLoginAttemptRepository is the persistence of oidc_login_attempts
+// (#435): one single-use row per started sign-in, found by the HMAC of its
+// state.
+type OIDCLoginAttemptRepository interface {
+	Create(attempt *models.OIDCLoginAttempt) error
+	// Claim stamps used_at with one conditional update
+	// (state_hash = ? AND used_at IS NULL AND expires_at > now) and then
+	// reads the row; zero affected rows is gorm.ErrRecordNotFound.
+	Claim(stateHash string, now time.Time) (*models.OIDCLoginAttempt, error)
+	// PurgeExpired deletes at most limit rows that expired before before and
+	// returns how many it deleted.
+	PurgeExpired(before time.Time, limit int) (int64, error)
+	WithTx(tx *gorm.DB) OIDCLoginAttemptRepository
 }
 
 type APIKeyRepository interface {
