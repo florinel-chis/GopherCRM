@@ -2331,7 +2331,8 @@ What happens on `DELETE`:
   `TestPasswordResetConfirmRetrySQLite`),
   through the test-only `repository.ErasureHooks`. CI limit: `erasure_lock_order_test.go`,
   `erasure_credential_order_test.go` and, for the response links (#395),
-  `erasure_quote_tokens_test.go` and `quote_response_erasure_test.go` are discovered by
+  `erasure_quote_tokens_test.go` and `quote_response_erasure_test.go`, and for the deleted webhook
+  events written at the end of the unit (#437) `webhook_deleted_events_test.go`, are discovered by
   `scripts/ci/check-go.py transaction`. CI
   runs that checker only on a `full` run (a release, or a manual dispatch with `full: true`), on
   MySQL 8 and MariaDB 10.11. On a pull request the database gates job runs them on MariaDB 10.11
@@ -3271,9 +3272,10 @@ Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up
 
 ### Outbound webhooks (#345)
 
-Signed, thin events for `lead.created`, `customer.created` and `ticket.created` (#345) and for
-`lead.updated`, `customer.updated` and `ticket.updated` (#408), delivered after the writing
-transaction commits. Code: `internal/models/webhook.go`,
+Signed, thin events for `lead.created`, `customer.created` and `ticket.created` (#345), for
+`lead.updated`, `customer.updated` and `ticket.updated` (#408) and for `lead.deleted`,
+`customer.deleted` and `ticket.deleted` (#437), delivered after the writing transaction
+commits. Code: `internal/models/webhook.go`,
 `internal/repository/webhook_repository.go`, `internal/service/webhook_{outbox,signing,endpoint_service,runtime}.go`,
 `internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
 
@@ -3283,10 +3285,10 @@ transaction commits. Code: `internal/models/webhook.go`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
   characters, and refuses a non-public IP literal (`aeo.CheckPublicURL`); a host name is judged at
-  every connection. `event_types` takes any non-empty subset of the six types
+  every connection. `event_types` takes any non-empty subset of the nine types
   (`models.WebhookEventTypeValues`); the raw array may hold at most 20 entries before deduplication
-  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all six
-  are 89 bytes in the `varchar(255)` column) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
+  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all nine
+  are 134 bytes in the `varchar(255)` column) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
   and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
   answer carries the secret or `secret_sealed` (`json:"-"`). `is_active` has **no GORM default**
   (GORM substitutes a column default for a zero-value bool, so an explicit false would be lost); the
@@ -3323,11 +3325,39 @@ transaction commits. Code: `internal/models/webhook.go`,
   plain read made before the transaction, so a write that reverts a column another request
   committed in between counts as a change and emits an event: that is the rule, not a defect. A
   refusal (closed-ticket reopen, bad assignee, unknown `company_id`, status `converted`, duplicate
-  email, a customer that is no longer live) returns before any outbox write. Deliberately silent:
-  delete and erasure, `ConvertToCustomer` (`customer.created` only), `LeadService.Assign`,
+  email, a customer that is no longer live) returns before any outbox write. Deliberately silent
+  (no updated event): delete and erasure (they write the deleted events below instead),
+  `ConvertToCustomer` (`customer.created` only), `LeadService.Assign`,
   `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
   ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
   `company_id`, and bulk task status.
+- **Deleted events (#437).** `enqueueDeletedWebhookEvents` (`webhook_outbox.go`) reads the active
+  endpoints subscribed to the deleted type (`ListActiveEndpointsFor`, a plain read), then the
+  announced pairs (`WebhookRepository.ListAnnouncedRecords`: one plain
+  `SELECT DISTINCT endpoint_id, record_id FROM webhook_deliveries WHERE endpoint_id IN ? AND
+  record_id IN ? AND event_type IN ?` over the created and updated types of the same entity, any
+  status), and inserts one `pending` row per (endpoint, record) pair found, one event id per
+  record, in the shape of the created rows; nothing found means no insert. So an endpoint gets a
+  deleted event only for a record it was told about, and only while that announcement is still in
+  the log (finished rows are pruned after 30 days; a re-created endpoint starts empty): a
+  documented limit, not a defect. `TicketService.Delete` with `WithTicketWebhooks` runs
+  `ticketRepo.WithTx(tx).Delete` (its own transaction becomes a savepoint) and then the
+  `ticket.deleted` enqueue in one `txManager` transaction; the 404 pre-read stays outside it.
+  Erasure writes `lead.deleted` and `customer.deleted` through a production listener option on
+  the three repositories (`repository.WithLeadErasureListener`, `WithCustomerErasureListener`,
+  `WithUserErasureListener`, `ErasureListener`/`ErasedRecords` in
+  `internal/repository/erasure_listener.go`), which `cmd/main.go` sets to
+  `service.NewWebhookErasureListener(webhookRepo)` and every `WithTx` copies (the governed user
+  erasure included). `erasureCascade.erase` calls it last, after `scrubBusinessText`, inside the
+  unit and with its tx, for the leads and customers whose locked row existed and was live
+  (`deleted_at` read by the existing locking reads of `lockGraph`, no extra statement): a legacy
+  soft-deleted row is re-scrubbed but announced no more, and a non-admin refusal or a changed
+  graph returns before it. A listener error fails the unit; every replayed or restarted attempt
+  calls it again inside that attempt, so the commit keeps one row set. The erasure services are
+  not wrapped in a transaction (that would turn `eraseGraph` into its one-shot savepoint mode).
+  Users, deals, tasks and other entities get no deleted event. Tests:
+  `internal/service/webhook_deleted_events_test.go` (`TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`),
+  `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
 - **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
   with `lease_expired` at the cap), a plain `SELECT id … WHERE status = 'pending' AND

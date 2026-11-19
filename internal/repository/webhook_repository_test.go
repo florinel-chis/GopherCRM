@@ -436,4 +436,59 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 		require.Len(t, page, 1)
 		assert.Equal(t, ids[4], page[0].ID)
 	})
+
+	t.Run("announced records (#437)", func(t *testing.T) {
+		first := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadDeleted)
+		second := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadDeleted)
+		other := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadDeleted)
+		const lead, otherLead, customer = 9001, 9002, 9003
+		seed := func(endpointID uint, eventType string, recordID uint, status string) {
+			t.Helper()
+			row := seedWebhookDelivery(t, db, endpointID, webhookRowSpec{status: status})
+			require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("id = ?", row.ID).
+				Updates(map[string]interface{}{"event_type": eventType, "record_id": recordID}).Error)
+		}
+		// first announced the lead twice (created, then updated, finished);
+		// second announced it once, failed; other only announced another lead;
+		// a lead.created row for the customer's id is not the customer's.
+		seed(first.ID, models.WebhookEventLeadCreated, lead, models.WebhookDeliverySucceeded)
+		seed(first.ID, models.WebhookEventLeadUpdated, lead, models.WebhookDeliveryPending)
+		seed(second.ID, models.WebhookEventLeadUpdated, lead, models.WebhookDeliveryFailed)
+		seed(other.ID, models.WebhookEventLeadCreated, otherLead, models.WebhookDeliveryPending)
+		seed(first.ID, models.WebhookEventLeadCreated, customer, models.WebhookDeliveryPending)
+		seed(second.ID, models.WebhookEventTicketCreated, lead, models.WebhookDeliveryPending)
+
+		leadTypes := []string{models.WebhookEventLeadCreated, models.WebhookEventLeadUpdated}
+		customerTypes := []string{models.WebhookEventCustomerCreated, models.WebhookEventCustomerUpdated}
+		endpoints := []uint{first.ID, second.ID}
+
+		statements, stop := captureWebhookStatements(t, db, "webhook_repo_announced")
+		got, err := repo.ListAnnouncedRecords(ctx, endpoints, leadTypes, []uint{lead, otherLead, customer})
+		require.NoError(t, err)
+		stop()
+		assert.Equal(t, map[uint][]uint{lead: {first.ID, second.ID}, customer: {first.ID}}, got,
+			"one entry per record, endpoints ascending, another endpoint's row ignored")
+		captured := statements()
+		require.Len(t, captured, 1, "one statement")
+		assertNoLockingClause(t, captured[0])
+
+		got, err = repo.ListAnnouncedRecords(ctx, endpoints, customerTypes, []uint{lead, customer})
+		require.NoError(t, err)
+		assert.Empty(t, got, "a lead type does not announce a customer")
+
+		got, err = repo.ListAnnouncedRecords(ctx, []uint{other.ID}, leadTypes, []uint{lead})
+		require.NoError(t, err)
+		assert.Empty(t, got, "another record does not match")
+
+		statements, stop = captureWebhookStatements(t, db, "webhook_repo_announced_empty")
+		for _, call := range [][3]int{{0, 1, 1}, {1, 0, 1}, {1, 1, 0}} {
+			ids := func(n int) []uint { return []uint{lead}[:n] }
+			types := leadTypes[:call[1]]
+			got, err = repo.ListAnnouncedRecords(ctx, []uint{first.ID}[:call[0]], types, ids(call[2]))
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		}
+		stop()
+		assert.Empty(t, statements(), "empty input reads nothing")
+	})
 }

@@ -4,7 +4,7 @@ package tests
 // PUT /customers/{id}, PUT /tickets/{id} and the lead and ticket bulk status
 // routes behind the real middleware, with the real repositories and services
 // wired with the webhook outbox as main wires them, and the registry routes
-// accepting the six event types.
+// accepting the six created and updated event types.
 
 import (
 	"bytes"
@@ -169,7 +169,7 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 		assert.Equal(t, []interface{}{"lead.created"}, envelope.Data.(map[string]interface{})["event_types"])
 
 		status, envelope, raw = do(http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
-			"url": "https://example.com/unknown", "event_types": []string{"lead.deleted"}})
+			"url": "https://example.com/unknown", "event_types": []string{"lead.archived"}})
 		require.Equal(t, http.StatusBadRequest, status, raw)
 		require.NotNil(t, envelope.Error)
 		assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code)
@@ -177,14 +177,14 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 		require.True(t, ok, raw)
 		assert.Contains(t, details, "event_types")
 		status, envelope, raw = do(http.MethodPut, fmt.Sprintf("/webhooks/endpoints/%d", otherID), map[string]interface{}{
-			"event_types": []string{"lead.deleted"}})
+			"event_types": []string{"lead.archived"}})
 		require.Equal(t, http.StatusBadRequest, status, raw)
 		require.NotNil(t, envelope.Error)
 		assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code)
 
 		status, _, raw = do(http.MethodGet, "/webhooks/deliveries?event_type=lead.updated", nil)
 		assert.Equal(t, http.StatusOK, status, raw)
-		status, _, _ = do(http.MethodGet, "/webhooks/deliveries?event_type=lead.deleted", nil)
+		status, _, _ = do(http.MethodGet, "/webhooks/deliveries?event_type=lead.archived", nil)
 		assert.Equal(t, http.StatusBadRequest, status)
 	})
 	require.NotZero(t, endpointID)

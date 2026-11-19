@@ -105,7 +105,7 @@ var (
 	erasureCredentialDelete = regexp.MustCompile("^DELETE FROM `(refresh_tokens|password_reset_tokens|api_keys)`")
 	// erasureLeadLockWait is what a second erasure of the same person waits
 	// on: the cancel of a run the first one cancelled, or the lead it locked.
-	erasureLeadLockWait = regexp.MustCompile("(?s)^(UPDATE `automation_runs` SET |SELECT `id`,`status`,`customer_id` FROM `leads` WHERE .*FOR UPDATE$)")
+	erasureLeadLockWait = regexp.MustCompile("(?s)^(UPDATE `automation_runs` SET |SELECT `id`,`status`,`customer_id`,`deleted_at` FROM `leads` WHERE .*FOR UPDATE$)")
 )
 
 // erasureIDs returns the bind values of a statement as ids.

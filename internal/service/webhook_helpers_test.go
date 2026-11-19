@@ -264,6 +264,14 @@ type webhookEnv struct {
 	tickets   TicketService
 	forms     FormService
 	bulk      BulkStatusService
+	// users erases users ungoverned (Delete); governedUsers through the role
+	// governance (DeleteAs).
+	users         UserService
+	governedUsers UserService
+
+	// erasureListener, when set, replaces the webhook erasure listener the
+	// next wire installs on the lead, customer and user repositories (#437).
+	erasureListener repository.ErasureListener
 }
 
 // newWebhookEnv wires every create path with hooks (nil: unwired).
@@ -289,9 +297,15 @@ func newWebhookEnv(t *testing.T, db *gorm.DB, hooks repository.WebhookRepository
 func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	db := e.db
 	automation := repository.NewAutomationRepository(db)
-	leadRepo := repository.NewLeadRepository(db)
-	customerRepo := repository.NewCustomerRepository(db)
-	userRepo := repository.NewUserRepository(db)
+	// The erasure units of the three repositories write the deleted events
+	// through the listener (#437), as cmd/main.go wires them.
+	listener := e.erasureListener
+	if listener == nil {
+		listener = NewWebhookErasureListener(hooks)
+	}
+	leadRepo := repository.NewLeadRepository(db, repository.WithLeadErasureListener(listener))
+	customerRepo := repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(listener))
+	userRepo := repository.NewUserRepository(db, repository.WithUserErasureListener(listener))
 	companyRepo := repository.NewCompanyRepository(db)
 
 	leadOpts := []LeadServiceOption{WithLeadAutomationEvents(automation)}
@@ -308,6 +322,9 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	e.leads = NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, e.txManager, leadOpts...)
 	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, customerOpts...)
 	e.tickets = NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo, ticketOpts...)
+	e.users = NewUserService(userRepo)
+	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),
+		repository.NewRoleAuditRepository(db), e.txManager))
 	bulkOpts := []BulkStatusServiceOption{WithBulkAutomationEvents(automation)}
 	if hooks != nil {
 		bulkOpts = append(bulkOpts, WithBulkWebhooks(hooks))

@@ -16,10 +16,13 @@ type customerRepository struct {
 	// the test option in erasure_hooks.go and copied by WithTx; nil in
 	// production.
 	lockSeams *erasureSeams
+	// erasureListener is told what each erasure unit erased (#437); the
+	// production wiring sets the webhook listener. Copied by WithTx.
+	erasureListener ErasureListener
 }
 
 // CustomerRepositoryOption configures NewCustomerRepository beyond its handle.
-// Production wiring passes none.
+// Production wiring passes only WithCustomerErasureListener.
 type CustomerRepositoryOption func(*customerRepository)
 
 func NewCustomerRepository(db *gorm.DB, opts ...CustomerRepositoryOption) CustomerRepository {
@@ -168,7 +171,7 @@ func (r *customerRepository) Update(customer *models.Customer) error {
 // repository was obtained through WithTx and a fresh transaction otherwise.
 // See erasure.go for the shared machinery and the full GDPR rationale.
 func (r *customerRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootCustomer, id: id}, r.lockSeams, nil)
+	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootCustomer, id: id}, r.lockSeams, nil, r.erasureListener)
 }
 
 // customerErasurePlan lists what counts as personal data on a customer. It is
@@ -323,5 +326,5 @@ func (r *customerRepository) Count() (int64, error) {
 }
 
 func (r *customerRepository) WithTx(tx *gorm.DB) CustomerRepository {
-	return &customerRepository{db: tx, lockSeams: r.lockSeams}
+	return &customerRepository{db: tx, lockSeams: r.lockSeams, erasureListener: r.erasureListener}
 }

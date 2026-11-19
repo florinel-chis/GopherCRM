@@ -41,6 +41,19 @@ import (
 // write that reverts a column another request committed in between is a
 // change and emits an event. Assign, conversion, delete, ticket comments,
 // automation steps and bulk task status emit no updated event.
+//
+// The deleted paths (#437): TicketService.Delete (ticket.deleted, in one
+// transaction with the soft delete when the service is wired), and every
+// erasure unit of the lead, customer and user repositories (lead.deleted and
+// customer.deleted for each lead and customer the unit found live and erased,
+// cascades included), through the erasure listener of
+// NewWebhookErasureListener at the end of the unit. A deleted event goes only
+// to the active endpoints subscribed to the deleted type that already hold a
+// created or updated delivery row of that record (any status): one plain read
+// of the endpoints, one plain read of the announced (endpoint, record) pairs,
+// then one insert. An endpoint whose announcement was pruned, or that was
+// re-created, gets none. An erasure writes exactly the row a delete writes: no
+// reason and no personal data.
 
 // newWebhookEventID returns evt_ followed by 32 lowercase hex characters from
 // crypto/rand.
@@ -119,6 +132,116 @@ func enqueueWebhookEvents(ctx context.Context, hooks repository.WebhookRepositor
 		}).Debug("Webhook deliveries enqueued")
 	}
 	return nil
+}
+
+// deletedWebhookAnnouncements maps a deleted event type to the created and
+// updated types of the same entity.
+var deletedWebhookAnnouncements = map[string][]string{
+	models.WebhookEventLeadDeleted:     {models.WebhookEventLeadCreated, models.WebhookEventLeadUpdated},
+	models.WebhookEventCustomerDeleted: {models.WebhookEventCustomerCreated, models.WebhookEventCustomerUpdated},
+	models.WebhookEventTicketDeleted:   {models.WebhookEventTicketCreated, models.WebhookEventTicketUpdated},
+}
+
+// enqueueDeletedWebhookEvents writes the outbox rows of deleted records of
+// one deleted event type: one row per (endpoint, record) pair where the
+// endpoint is active, subscribed to deletedType and holds a created or
+// updated delivery row of that record. Each record with at least one such
+// endpoint gets its own event id; the rows have the shape
+// enqueueWebhookEvents writes and go in one insert. nil hooks or no record
+// ids mean nothing is read or written; no qualifying pair means no insert.
+func enqueueDeletedWebhookEvents(ctx context.Context, hooks repository.WebhookRepository, deletedType string, recordIDs []uint) error {
+	if hooks == nil || len(recordIDs) == 0 {
+		return nil
+	}
+	announceTypes, ok := deletedWebhookAnnouncements[deletedType]
+	if !ok {
+		return fmt.Errorf("webhook event type %s is not a deleted event", deletedType)
+	}
+	endpoints, err := hooks.ListActiveEndpointsFor(ctx, deletedType)
+	if err != nil {
+		return fmt.Errorf("webhook endpoints for %s: %w", deletedType, err)
+	}
+	if len(endpoints) == 0 {
+		return nil
+	}
+	endpointIDs := make([]uint, 0, len(endpoints))
+	for _, endpoint := range endpoints {
+		endpointIDs = append(endpointIDs, endpoint.ID)
+	}
+	announced, err := hooks.ListAnnouncedRecords(ctx, endpointIDs, announceTypes, recordIDs)
+	if err != nil {
+		return fmt.Errorf("webhook announcements for %s: %w", deletedType, err)
+	}
+	if len(announced) == 0 {
+		return nil
+	}
+	occurredAt := time.Now().UTC().Truncate(time.Millisecond)
+	rows := make([]models.WebhookDelivery, 0, len(endpoints))
+	var written []uint
+	seen := make(map[uint]struct{}, len(recordIDs))
+	for _, recordID := range recordIDs {
+		if _, dup := seen[recordID]; dup {
+			continue
+		}
+		seen[recordID] = struct{}{}
+		targets := announced[recordID]
+		if len(targets) == 0 {
+			continue
+		}
+		eventID, err := newWebhookEventID()
+		if err != nil {
+			return err
+		}
+		for _, endpointID := range targets {
+			due := occurredAt
+			rows = append(rows, models.WebhookDelivery{
+				EndpointID:    endpointID,
+				EventID:       eventID,
+				EventType:     deletedType,
+				RecordID:      recordID,
+				OccurredAt:    occurredAt,
+				Status:        models.WebhookDeliveryPending,
+				Attempts:      0,
+				NextAttemptAt: &due,
+			})
+		}
+		written = append(written, recordID)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	if err := hooks.EnqueueDeliveries(ctx, rows); err != nil {
+		if len(written) == 1 {
+			return fmt.Errorf("webhook outbox for %s %d: %w", deletedType, written[0], err)
+		}
+		return fmt.Errorf("webhook outbox for %d %s events: %w", len(written), deletedType, err)
+	}
+	for _, recordID := range written {
+		utils.Logger.WithFields(logrus.Fields{
+			"operation":  "webhook_enqueue",
+			"event_type": deletedType,
+			"record_id":  recordID,
+		}).Debug("Webhook deliveries enqueued")
+	}
+	return nil
+}
+
+// NewWebhookErasureListener returns the erasure listener that writes the
+// lead.deleted and customer.deleted events of an erasure unit, with the
+// outbox bound to the unit's transaction (#437). A nil repository returns nil
+// (no listener).
+func NewWebhookErasureListener(repo repository.WebhookRepository) repository.ErasureListener {
+	if repo == nil {
+		return nil
+	}
+	return func(tx *gorm.DB, erased repository.ErasedRecords) error {
+		hooks := repo.WithTx(tx)
+		ctx := context.Background()
+		if err := enqueueDeletedWebhookEvents(ctx, hooks, models.WebhookEventLeadDeleted, erased.LeadIDs); err != nil {
+			return err
+		}
+		return enqueueDeletedWebhookEvents(ctx, hooks, models.WebhookEventCustomerDeleted, erased.CustomerIDs)
+	}
 }
 
 // equalUintPtr reports whether two nullable ids hold the same value.

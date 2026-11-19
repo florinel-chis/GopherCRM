@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Webhooks: deleted events for leads, customers and tickets (#437).** Endpoints can subscribe to
+  `lead.deleted`, `customer.deleted` and `ticket.deleted` (nine event types in all, in the API,
+  the OpenAPI enums and the Settings > Webhooks picker). `DELETE /tickets/{id}` writes
+  `ticket.deleted` in the transaction of the soft delete; every erasure unit, whether entered from
+  a lead, a customer or a user and including its cascades, writes `lead.deleted` and
+  `customer.deleted` for each lead and customer it found live and erased, at the end of the unit
+  through an erasure listener on the lead, customer and user repositories, so the erasure
+  protocol (discovery, lock order, re-check, restart) is unchanged and a rolled-back delete sends
+  nothing. A deleted event goes only to active endpoints subscribed to it that still hold a
+  created or updated delivery of that record (a delivery pruned after 30 days, or an endpoint
+  registered again, means no deleted event). An erasure sends exactly what a delete sends: the
+  thin body, no reason and no personal data. No migration: all nine types stored together take
+  134 of the 255 bytes of `webhook_endpoints.event_types`.
 - **OpenID Connect sign-in, SPA (#436).** `GET /auth/registration` also returns `sso_enabled`,
   the effective single sign-on switch (false when it cannot be read; nothing else of the
   configuration is exposed), so the login page needs no second request on the strict `/auth`

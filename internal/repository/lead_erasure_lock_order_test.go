@@ -89,10 +89,10 @@ func isErasureSchemaProbe(sql string) bool {
 // (backtick quoting, placeholders kept).
 var (
 	erasureRunCancel     = regexp.MustCompile("^UPDATE `automation_runs` SET ")
-	erasureLeadLockRead  = regexp.MustCompile("^SELECT `id`,`status`,`customer_id` FROM `leads` WHERE `leads`.`id` = \\?")
+	erasureLeadLockRead  = regexp.MustCompile("^SELECT `id`,`status`,`customer_id`,`deleted_at` FROM `leads` WHERE `leads`.`id` = \\?")
 	erasureLeadsSelect   = regexp.MustCompile("^SELECT .*FROM `leads`")
 	erasureLeadsUpdate   = regexp.MustCompile("^UPDATE `leads` SET ")
-	erasureCustomerRead  = regexp.MustCompile("^SELECT `id`,`user_id` FROM `customers` WHERE `customers`.`id` = \\?")
+	erasureCustomerRead  = regexp.MustCompile("^SELECT `id`,`user_id`,`deleted_at` FROM `customers` WHERE `customers`.`id` = \\?")
 	erasureCustomersUpd  = regexp.MustCompile("^UPDATE `customers` SET ")
 	erasureUsersUpdate   = regexp.MustCompile("^UPDATE `users` SET ")
 	erasureConvertedPick = regexp.MustCompile("^SELECT `id` FROM `leads` WHERE customer_id = \\?")
@@ -364,7 +364,7 @@ func TestLeadErasureSurvivesAutomationStepMySQL(t *testing.T) {
 
 	erased := make(chan error, 1)
 	go func() { erased <- NewLeadRepository(db).Delete(seed.lead.ID) }()
-	awaitLockOrderWait(t, db, regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id` FROM `leads` WHERE .*FOR UPDATE$"))
+	awaitLockOrderWait(t, db, regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id`,`deleted_at` FROM `leads` WHERE .*FOR UPDATE$"))
 
 	// By then the erasure has cancelled the run (uncommitted, read dirty).
 	var dirty string
