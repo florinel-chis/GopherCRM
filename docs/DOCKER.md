@@ -182,32 +182,54 @@ credential. The full `chromium` package is no longer installed (#393); a deploym
 prefers one can still point `QUOTE_PDF_CHROME_PATH` at a full Chrome or Chromium, or at a
 launcher for it: the server starts both kinds of binary with the same arguments.
 
-- **Where the binary comes from.** The runtime stage is `debian:bookworm-slim` and installs
-  the Debian package `chromium-headless-shell`. Alpine, the base before #393, has no headless
-  shell package (3.20 and 3.22 offer only the full `chromium` and its add-ons), and the
-  prebuilt binaries are linked against glibc, so the base had to change. The other candidate,
-  copying the binary from the `chromedp/headless-shell` image, was dropped: its builds
-  (157 to 159, linux/arm64) wrote no file for `--print-to-pdf` and ran until the time bound.
-- **Pinned version.** `ARG HEADLESS_SHELL_VERSION=156.0.8078.79` in the Dockerfile is the one
-  place the browser version is written; the package is installed as
-  `chromium-headless-shell=<version>-1~deb12u1`. Debian's security repository keeps only the
-  newest version, so after the next Chromium update of bookworm the build stops at
-  `Version '...' for 'chromium-headless-shell' was not found`. Raise the argument then to the
-  candidate that
-  `docker run --rm debian:bookworm-slim sh -c 'apt-get update -qq && apt-cache policy chromium-headless-shell'`
-  prints (or pass `--build-arg HEADLESS_SHELL_VERSION=<version>`), and run
-  `scripts/e2e/quote-pdf-chain.sh image` before you ship the image.
-- **Image size.** The browser and the libraries its package depends on are most of the image:
-  700,980,224 bytes (about 669 MiB) with `chrome-headless-shell` 156 on `debian:bookworm-slim`,
-  against 686,689,600 bytes (about 655 MiB) before with the full Chromium 131 on alpine 3.20
-  (`docker image inspect --format '{{.Size}}'`, linux/arm64). The image did not get smaller:
-  the headless shell itself is 211 MB and its package pulls in the Mesa and LLVM libraries.
+- **Where the binary comes from.** The image downloads `chrome-headless-shell` from
+  [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/), Google's archive
+  of browser builds for automation, in a stage of its own (`headless-shell`) that runs on the
+  build platform: the `linux64` zip for linux/amd64, the `linux-arm64` zip for linux/arm64, each
+  checked against its SHA-256 before it is unpacked into `/opt/chrome-headless-shell` of the
+  `debian:bookworm-slim` runtime stage (#420). Google keeps every published version there, so the
+  pin does not expire. Three other sources were dropped. The Debian package
+  `chromium-headless-shell` at a pinned version (#393): Debian's security repository keeps only
+  the newest version, so the build broke at the next Chromium update of bookworm until someone
+  edited the pin. snapshot.debian.org, which keeps the old Debian versions: a slow,
+  rate-limited mirror is not something every image build should depend on. Copying the binary
+  from the `chromedp/headless-shell` image: its builds (157 to 159, linux/arm64) wrote no file
+  for `--print-to-pdf` and ran until the time bound. Alpine, the base before #393, has no
+  headless shell package, and the prebuilt binaries are linked against glibc.
+- **Pinned version and checksums.** `ARG HEADLESS_SHELL_VERSION=156.0.8078.80` at the top of the
+  Dockerfile is the one place the browser version is written, next to
+  `HEADLESS_SHELL_SHA256_AMD64` and `HEADLESS_SHELL_SHA256_ARM64`, the SHA-256 of the two zips.
+  A mismatch stops the build at `sha256sum -c` (`FAILED`), and so does a target architecture
+  other than amd64 and arm64. To change the version, pick one that
+  [`known-good-versions-with-downloads.json`](https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json)
+  lists with `chrome-headless-shell` downloads for both `linux64` and `linux-arm64`, download
+  both zips from
+  `https://storage.googleapis.com/chrome-for-testing-public/<version>/<platform>/chrome-headless-shell-<platform>.zip`,
+  compute their checksums with `sha256sum` (Google publishes none; the MD5 in the download's
+  `x-goog-hash` header is a cross-check), set the three arguments and run
+  `scripts/e2e/quote-pdf-chain.sh image` before you ship the image. The runtime stage installs
+  the shared libraries the binary loads, taken from the zip's `deb.deps`, and fails its build
+  when `ldd` reports one of them as `not found`. It also installs `fontconfig`, whose
+  `/etc/fonts` aliases map Arial, `sans-serif` and `serif` to the Liberation fonts: without it
+  every text falls back to Liberation Mono and the columns of the quote table wrap.
+- **Image size.** The browser is most of the image: 471,216,504 bytes (about 449 MiB) with
+  `chrome-headless-shell` 156 from Chrome for Testing (#420), against 700,980,224 bytes (about
+  669 MiB) with the Debian package of the same version (#393) and 686,689,600 bytes (about
+  655 MiB) with the full Chromium 131 on alpine 3.20 (`docker image inspect --format '{{.Size}}'`,
+  linux/arm64). The Debian package pulled in the Mesa drivers and LLVM; the Chrome for Testing
+  zip brings its own SwiftShader, and the runtime stage installs only the libraries of its
+  `deb.deps` that the headless shell loads.
+- **Checked by a workflow.** [Docker image](../.github/workflows/docker-image.yml) runs weekly,
+  on demand and on pull requests that change the `Dockerfile` or the workflow. It builds the
+  download stage for linux/amd64 and linux/arm64 and the whole image for linux/amd64, prints a
+  page to PDF with `quote-pdf-browser` as the image's user, checks the `%PDF` header and that
+  the browser reports the version of `HEADLESS_SHELL_VERSION`. It is not a required check.
 - **Other consequences of the new base.** The image installs `wget` only because both compose
   files health-check the backend with it and `debian:bookworm-slim` has none; it has no `curl`
   and no `ps`. The init is at `/usr/bin/tini`, not where the Alpine image had it (see the
   upgrade notes of #393 in `CHANGELOG.md`).
 - **Flags and init, in the image only.** `/usr/local/bin/quote-pdf-browser` is a two-line
-  script that execs `/usr/lib/chromium/chromium-headless-shell` with `--no-sandbox` (as uid
+  script that execs `/opt/chrome-headless-shell/chrome-headless-shell` with `--no-sandbox` (as uid
   10001 in a container the browser cannot set up its own sandbox and refuses to start; the
   container is the boundary) and `--disable-dev-shm-usage` (a container's `/dev/shm` is 64 MB;
   shared memory goes to `/tmp`). It uses `exec` so that the process the server started, whose

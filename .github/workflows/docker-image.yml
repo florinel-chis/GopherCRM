@@ -1,0 +1,73 @@
+name: Docker image
+
+# Builds the backend image and prints one PDF with its browser, so a broken
+# chrome-headless-shell pin (version, checksum, missing library) is noticed
+# before a release needs the image. Not a required check: it runs weekly, on
+# demand, and on pull requests that change the Dockerfile or this file.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Dockerfile
+      - .github/workflows/docker-image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-image-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    name: Build the image and print a PDF
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The download stage runs on the build platform, so the arm64 zip is
+      # fetched and checked against its checksum without emulation.
+      - name: Download stage, linux/amd64
+        run: docker buildx build --platform linux/amd64 --target headless-shell .
+
+      - name: Download stage, linux/arm64
+        run: docker buildx build --platform linux/arm64 --target headless-shell .
+
+      - name: Full image, linux/amd64
+        run: docker buildx build --platform linux/amd64 --load -t gophercrm-backend:check .
+
+      # Runs as the image's own user (uid 10001), through the launcher the
+      # server uses.
+      - name: Print a PDF in the image
+        shell: bash
+        run: |
+          set -o pipefail
+          docker run --rm --entrypoint sh gophercrm-backend:check -c '
+            set -eu
+            quote-pdf-browser --version
+            quote-pdf-browser --print-to-pdf=/tmp/check.pdf "data:text/html,<h1>GopherCRM image check</h1>"
+            header=$(head -c 4 /tmp/check.pdf)
+            test "$header" = "%PDF" || { echo "not a PDF: $header" >&2; exit 1; }
+            echo "PDF written: $(wc -c < /tmp/check.pdf) bytes"
+          ' | tee "$RUNNER_TEMP/browser.txt"
+
+      - name: Compare the browser version with the Dockerfile
+        run: |
+          pinned=$(sed -n 's/^ARG HEADLESS_SHELL_VERSION=//p' Dockerfile)
+          test -n "$pinned" || { echo "no ARG HEADLESS_SHELL_VERSION=<version> in the Dockerfile" >&2; exit 1; }
+          reported=$(head -n 1 "$RUNNER_TEMP/browser.txt")
+          echo "pinned: $pinned"
+          echo "image:  $reported"
+          case "$reported" in
+            *" $pinned"*) ;;
+            *) echo "the image's browser is not version $pinned" >&2; exit 1 ;;
+          esac
+
+      - name: Remove the image
+        if: always()
+        run: docker image rm -f gophercrm-backend:check || true

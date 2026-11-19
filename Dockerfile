@@ -2,6 +2,19 @@
 # The sqlite driver (DB_DRIVER=sqlite) is pure Go, so CGO stays off and the
 # binaries are fully static regardless of the configured database.
 
+# The browser of quote PDF output: chrome-headless-shell (the old headless
+# mode as its own small binary, without the full browser's UI) from Chrome for
+# Testing, Google's archive of browser builds for automation. Google keeps
+# every published version there, so this pin does not expire the way a pinned
+# Debian package version does (the security repository drops it at the next
+# update). This is the only place the version is written. To change it, set
+# the version and both checksums below (sha256sum of the linux64 and of the
+# linux-arm64 zip of that version), then run
+# `scripts/e2e/quote-pdf-chain.sh image` (see docs/DOCKER.md).
+ARG HEADLESS_SHELL_VERSION=156.0.8078.80
+ARG HEADLESS_SHELL_SHA256_AMD64=547dcd374e02961bf998f6046a267644f8502225c36bb78ca307dab32a0b3eb4
+ARG HEADLESS_SHELL_SHA256_ARM64=5bb6a00a4285c13303d3f72c5afdb70f144ea7a93eed462365a52b69631c9607
+
 # The builder must be at least the go directive in go.mod (1.25 since the AEO
 # provider SDKs landed), otherwise the toolchain refuses to build.
 FROM golang:1.25-alpine AS build
@@ -16,29 +29,64 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gophercrm ./cmd \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/create-admin ./cmd/create-admin
 
+# Downloads and checks the browser. It runs on the build platform, so the
+# zip of the other architecture needs no emulation; curl and unzip stay in
+# this stage. TARGETARCH is set by BuildKit; the legacy builder leaves it
+# empty and is refused here.
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS headless-shell
+
+ARG HEADLESS_SHELL_VERSION
+ARG HEADLESS_SHELL_SHA256_AMD64
+ARG HEADLESS_SHELL_SHA256_ARM64
+ARG TARGETARCH
+
+RUN case "${TARGETARCH}" in \
+        amd64) platform=linux64; sum="${HEADLESS_SHELL_SHA256_AMD64}" ;; \
+        arm64) platform=linux-arm64; sum="${HEADLESS_SHELL_SHA256_ARM64}" ;; \
+        *) echo "chrome-headless-shell: unsupported target architecture '${TARGETARCH}' (supported: amd64, arm64; build with BuildKit)" >&2; exit 1 ;; \
+    esac \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        -o /tmp/chrome-headless-shell.zip \
+        "https://storage.googleapis.com/chrome-for-testing-public/${HEADLESS_SHELL_VERSION}/${platform}/chrome-headless-shell-${platform}.zip" \
+    && echo "${sum}  /tmp/chrome-headless-shell.zip" | sha256sum -c - \
+    && unzip -q /tmp/chrome-headless-shell.zip -d /tmp/unpacked \
+    && mv "/tmp/unpacked/chrome-headless-shell-${platform}" /opt/chrome-headless-shell \
+    && test -x /opt/chrome-headless-shell/chrome-headless-shell \
+    && rm -rf /tmp/chrome-headless-shell.zip /tmp/unpacked /var/lib/apt/lists/*
+
 FROM debian:bookworm-slim
 
-# The browser of quote PDF output, one literal: the upstream version of the
-# Debian package chromium-headless-shell (chrome-headless-shell, the old
-# headless mode as its own small binary, without the full browser's UI). The
-# Debian revision is appended in the install line below. Debian's security
-# repository drops a version once a newer one is published, so a build that
-# stops on "Version ... was not found" means: raise this to the candidate of
-# `apt-cache policy chromium-headless-shell` (see docs/DOCKER.md).
-ARG HEADLESS_SHELL_VERSION=156.0.8078.79
-
-# chromium-headless-shell and fonts-liberation are what quote PDF output
-# needs: the server prints APP_BASE_URL/quote-render with the headless shell,
-# and without a font the PDF has no readable text although it is a valid
-# file. The full chromium package is not installed. tini is the init of the
-# container (see ENTRYPOINT). wget is here for the health checks of the
-# compose files, which call it inside this container; the base image has none.
+# fonts-liberation, fontconfig and the shared libraries below are what quote
+# PDF output needs: the server prints APP_BASE_URL/quote-render with the
+# headless shell, and without a font the PDF has no readable text although it
+# is a valid file. fontconfig brings /etc/fonts, whose aliases map Arial,
+# sans-serif and serif to Liberation Sans and Serif; without it every text
+# falls back to Liberation Mono and the quote's table columns wrap. The
+# libraries are the ones of the zip's deb.deps that the headless shell loads,
+# at start or later through dlopen (libnss3 also brings the NSS soft token);
+# its GTK, ATK bridge, Cairo, Pango, CUPS, curl and xdg-utils entries serve
+# the full browser, which shares that list. No Chromium package is installed.
+# tini is the init of the container (see ENTRYPOINT). wget is here for the
+# health checks of the compose files, which call it inside this container;
+# the base image has none.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates tzdata fonts-liberation tini wget \
-        "chromium-headless-shell=${HEADLESS_SHELL_VERSION}-1~deb12u1" \
+        ca-certificates tzdata fonts-liberation fontconfig tini wget \
+        libasound2 libatk1.0-0 libatspi2.0-0 libdbus-1-3 libexpat1 libgbm1 libnspr4 libnss3 \
+        libudev1 libvulkan1 libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 \
+        libxfixes3 libxkbcommon0 libxrandr2 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --user-group --no-create-home --home-dir /data --shell /usr/sbin/nologin gophercrm
+
+COPY --from=headless-shell /opt/chrome-headless-shell /opt/chrome-headless-shell
+
+# A library the binary links against but the image lacks stops the build
+# here instead of the first render.
+RUN if ldd /opt/chrome-headless-shell/chrome-headless-shell | grep 'not found'; then \
+        echo "chrome-headless-shell: shared libraries missing (above)" >&2; exit 1; \
+    fi
 
 # Launcher of the browser, for this image only; the server itself never
 # passes these flags. As uid 10001 in a container the headless shell cannot
@@ -47,9 +95,7 @@ RUN apt-get update \
 # boundary; and a container's /dev/shm is 64 MB, so shared memory goes to
 # /tmp. exec is required: the server kills the process group of the process it
 # started, and that process has to be the browser, not a shell waiting on it.
-# For the same reason the launcher names the binary itself: the package's
-# /usr/bin/chromium-headless-shell is a shell script that does not exec.
-RUN printf '%s\n' '#!/bin/sh' 'exec /usr/lib/chromium/chromium-headless-shell --no-sandbox --disable-dev-shm-usage "$@"' > /usr/local/bin/quote-pdf-browser \
+RUN printf '%s\n' '#!/bin/sh' 'exec /opt/chrome-headless-shell/chrome-headless-shell --no-sandbox --disable-dev-shm-usage "$@"' > /usr/local/bin/quote-pdf-browser \
     && chmod 0755 /usr/local/bin/quote-pdf-browser
 
 # PDF output is on by default in the image, through the launcher above. Set

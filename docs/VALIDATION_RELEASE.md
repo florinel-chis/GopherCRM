@@ -56,6 +56,10 @@ in CI only on `full`; the per-profile paragraphs below describe the runner's loc
 A manual dispatch has no base commit, so its plan records no changed paths: with `full: false` it
 tests every package without `-race`.
 
+Outside CI, the [Docker image](../.github/workflows/docker-image.yml) workflow (#420) builds the
+backend image and prints one PDF with its browser weekly, on demand and on pull requests that
+change the `Dockerfile` or the workflow; it is not a required check, and no profile selects it.
+
 [Documentation maintenance](DOCUMENTATION_WORKFLOW.md) adds a commit-bound impact plan and
 explicit documentation decisions to the existing independent review call. The runner verifies
 the reviewed document blobs after merge. CI retains the impact report for PRs and main pushes;

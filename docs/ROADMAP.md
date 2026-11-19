@@ -262,12 +262,12 @@ included. Found by reading the code path unless noted.
   user with a read-only root file system. No automatic test drives a real browser through the
   web application either: `scripts/e2e/quote-pdf-chain.sh` (`local` with a full Chrome or
   Chromium, `image` with the image's `chrome-headless-shell`) is a manual release check.
-- **Quote PDF: the image's browser pin has to be raised by hand, and only linux/arm64 was
-  rendered (#393).** The image installs the Debian package `chromium-headless-shell` at the
-  version of `HEADLESS_SHELL_VERSION`; Debian's security repository drops a version when it
-  publishes the next, so the image build then fails until the argument is raised
-  (`docs/DOCKER.md`). The render in the image was run on linux/arm64; for linux/amd64 only the
-  availability of the same package version was checked, and no CI job builds the image.
+- **Quote PDF: the full quote chain in the image is rendered by hand, on linux/arm64 only
+  (#393, #420).** `scripts/e2e/quote-pdf-chain.sh image` (ten quotes through the web
+  application, text and fonts of the PDF checked) is a manual release check and was run on
+  linux/arm64. For linux/amd64 the only render is the single-page PDF of the
+  [Docker image](../.github/workflows/docker-image.yml) workflow, which also builds the browser
+  download for both architectures; it is not a required check.
 - **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
   replaced; errors that must reach the client use 503 elsewhere.
 - **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON

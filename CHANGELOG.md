@@ -745,6 +745,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The backend image downloads `chrome-headless-shell` from Chrome for Testing instead of
+  installing the Debian package (#420).** The image build no longer breaks when Debian's
+  security repository drops the pinned `chromium-headless-shell` version. The browser stays on
+  milestone 156 (156.0.8078.80, the Chrome for Testing patch release of the same Chromium
+  revision; Chrome for Testing does not list the Debian package's patch number) and quote PDFs
+  look the same.
+  - **Source.** A download stage fetches the `linux64` or `linux-arm64` zip of
+    `ARG HEADLESS_SHELL_VERSION` from Chrome for Testing, where Google keeps every published
+    version, checks it against `HEADLESS_SHELL_SHA256_AMD64` or `HEADLESS_SHELL_SHA256_ARM64`
+    and unpacks it into `/opt/chrome-headless-shell`. Any other target architecture stops the
+    build. The runtime stage installs the shared libraries the binary loads, from the zip's
+    `deb.deps`, and fails the build when `ldd` reports one as not found, plus `fontconfig`,
+    whose font aliases the Debian package used to bring (without them every text is set in
+    Liberation Mono). To change the version, set it and both checksums (`docs/DOCKER.md`).
+  - **Size.** 471,216,504 bytes against 700,980,224 bytes before (linux/arm64): the Mesa
+    drivers and LLVM that the Debian package pulled in are gone.
+  - **Workflow.** A new `Docker image` workflow (weekly, on demand, and on pull requests that
+    change the `Dockerfile` or the workflow) builds the download stage for linux/amd64 and
+    linux/arm64 and the whole image for linux/amd64, prints a page to PDF with the image's
+    launcher and checks the header and the browser version. It is not a required check.
+  - **Upgrade note.** The Debian package's binary `chromium-headless-shell` (in the package's
+    library directory) and its wrapper `/usr/bin/chromium-headless-shell` no longer exist in the
+    image. A deployment whose `QUOTE_PDF_CHROME_PATH` names either of them has PDF output
+    switched off; use the image's default, `/usr/local/bin/quote-pdf-browser`.
 - **Quote PDF: the render URL no longer appears on the browser's command line (#396).** The URL
   of a render, with the render credential in its fragment, was the last argument of the browser
   process and so readable in the host's process list for the life of the render. The browser is
@@ -795,11 +819,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by `QUOTE_PDF_CHROME_PATH` keeps working: the server starts both kinds of binary with the
   same arguments.
   - **Base and binary.** The runtime stage moves from `alpine:3.20` to `debian:bookworm-slim`
-    and installs the Debian package `chromium-headless-shell`, pinned by
-    `ARG HEADLESS_SHELL_VERSION=156.0.8078.79` in the Dockerfile, in place of the full
+    and installs the Debian package `chromium-headless-shell` 156, pinned by
+    `ARG HEADLESS_SHELL_VERSION` in the Dockerfile, in place of the full
     `chromium` package. Alpine has no headless shell package and the prebuilt binaries need
-    glibc. Debian's security repository keeps only the newest version, so the argument has to
-    be raised when the image build reports that the version was not found (`docs/DOCKER.md`).
+    glibc. That pin expired at Debian's next Chromium update; #420 replaced the package with the
+    Chrome for Testing download.
   - **Size.** 700,980,224 bytes against 686,689,600 bytes before (linux/arm64): the image is
     not smaller, the package's library dependencies make up for the missing browser UI.
   - **Health check.** The image installs `wget`, which both compose files call for the backend
