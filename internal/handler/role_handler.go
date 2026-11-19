@@ -157,8 +157,9 @@ type RoleAuditEntryResponse struct {
 	CreatedAt time.Time `json:"created_at" example:"2026-11-18T09:00:00Z"`
 	// Id of the acting user.
 	ActorUserID *uint `json:"actor_user_id" example:"1"`
-	// How the acting request authenticated: bearer or api_key.
-	AuthMethod string `json:"auth_method" enums:"bearer,api_key" example:"bearer"`
+	// How the acting request authenticated: bearer or api_key, or oidc for
+	// the role an OpenID Connect sign-in applied to its own account.
+	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc" example:"bearer"`
 	// Kind of change.
 	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed" example:"role_updated"`
 	// The affected role, or the custom role a user received; null when a user

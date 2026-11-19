@@ -54,8 +54,8 @@ func withoutQuoteHistorySourceColumns(tables map[string]tableSchema) map[string]
 // TestQuoteHistorySourceMigrationFiles needs no database: the pair exists
 // with its headers, the ADD, both MODIFYs and the DROP are each guarded by an
 // INFORMATION_SCHEMA probe, the up half writes no row and the down half
-// exactly one UPDATE, the model declares the same columns, the migration is
-// the newest of the directory and latestMigrationVersion names it.
+// exactly one UPDATE, the model declares the same columns, and a newer
+// migration follows it (#435).
 func TestQuoteHistorySourceMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, quoteHistorySourceMigrationName+".up.sql"))
@@ -107,21 +107,12 @@ func TestQuoteHistorySourceMigrationFiles(t *testing.T) {
 	assert.Equal(t, "staff", models.QuoteChangeSourceStaff)
 	assert.Equal(t, "client", models.QuoteChangeSourceClient)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestQuoteResponseTokensMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, quoteHistorySourceMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestUserIdentitiesMigrationFiles (#435). This one stays in sequence.
+	version, err := strconv.Atoi(strings.SplitN(quoteHistorySourceMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, quoteHistorySourceVersion, version)
-	assert.Equal(t, quoteHistorySourceVersion, latestMigrationVersion)
+	assert.Less(t, quoteHistorySourceVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, quoteHistorySourceVersion, quoteHistorySourcePreviousVersion)
 }
 

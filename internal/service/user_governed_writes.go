@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -10,6 +11,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // The governed user writes (#259 S4, #348): every role, role_id, activation
@@ -372,4 +374,201 @@ func (tx *governedTx) keysFor(target *models.User, change governedChange) ([]str
 		return append(keys, permissions.CustomersDelete), nil
 	}
 	return append(keys, permissions.CustomersUpdate), nil
+}
+
+// oidcSignIn is what one OpenID Connect sign-in (#435) asks the governed
+// write for: the verified (issuer, subject) pair, the role the first matching
+// mapping entry names, the profile of a first sign-in, and the two halves the
+// user service does not own (the identity table and the session issuing).
+type oidcSignIn struct {
+	issuer, subject string
+	roleID          uint
+	// email, firstName and lastName are used by a first sign-in only.
+	email, firstName, lastName string
+	// passwordHash is the bcrypt hash of discarded random bytes, so the
+	// provisioned account has no usable password.
+	passwordHash string
+	identities   repository.UserIdentityRepository
+	// issue issues the session on the transaction handle from the row as the
+	// transaction wrote it.
+	issue func(handle *gorm.DB, user *models.User) (*AuthTokens, error)
+	// beforeInsert is a test seam that runs on a first sign-in after the
+	// identity lookup and the email check and before the users insert; nil
+	// in production.
+	beforeInsert func()
+}
+
+// ApplyOIDCSignIn is the one transaction of an OIDC sign-in. It takes the
+// governed lock order and continues it:
+//
+//	admin set → users → roles → user_identities → refresh_tokens
+//
+// The identity is read first with a plain read (it names the users row to
+// lock). A known identity re-applies the mapped role with the rules of
+// governedWrite minus the actor-key and escalation checks (the mapping is the
+// administrator's grant): ErrCustomerLoginRole and ErrLastAdmin refuse, and a
+// changed role commits its user_role_changed audit row with auth_method oidc.
+// An unknown identity provisions an active user with the mapped role, its
+// identity row and its audit row, refused when any user, erased ones
+// included, holds the address in any letter case. The session is issued last,
+// inside the same transaction. Every refusal is ErrSSOSignInFailed (through
+// oidcRefuse) and writes nothing.
+func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*AuthTokens, error) {
+	if s.governance == nil {
+		return nil, errRoleGovernanceUnavailable
+	}
+	var tokens *AuthTokens
+	err := s.governance.run(ctx, func(tx *governedTx) error {
+		admins, err := tx.userRoles.LockActiveAdmins()
+		if err != nil {
+			return err
+		}
+		identities := in.identities.WithTx(tx.handle)
+		identity, err := identities.GetByIssuerSubject(in.issuer, in.subject)
+		if err != nil && !apperrors.IsNotFound(err) {
+			return err
+		}
+		if identity != nil && (identity.Issuer != in.issuer || identity.Subject != in.subject) {
+			// The PAD SPACE collation of MySQL/MariaDB matched a value that
+			// differs in trailing spaces: never the same identity.
+			return oidcRefuse("identity_mismatch")
+		}
+
+		var user *models.User
+		if identity != nil {
+			users, err := tx.lockUsers(identity.UserID)
+			if err != nil {
+				return err
+			}
+			target := users[identity.UserID]
+			if target == nil {
+				return oidcRefuse("account_erased")
+			}
+			if !target.IsActive {
+				return oidcRefuse("account_inactive")
+			}
+			mapped := in.roleID
+			roles, err := tx.lockRoles(target.RoleID, &mapped)
+			if err != nil {
+				return err
+			}
+			role, roleID, custom, err := oidcMappedRole(roles[mapped])
+			if err != nil {
+				return err
+			}
+			if role == models.RoleCustom && target.Role == models.RoleCustomer {
+				return oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole)
+			}
+			if role != models.RoleAdmin && isLastActiveAdmin(admins, target.ID) {
+				return oidcRefuseWith("last_admin", apperrors.ErrLastAdmin)
+			}
+			if role != target.Role || !sameRoleID(roleID, target.RoleID) {
+				fields := map[string]interface{}{"role": role, "role_id": nil}
+				if roleID != nil {
+					fields["role_id"] = *roleID
+				}
+				if err := tx.users.UpdateFields(target.ID, fields); err != nil {
+					if isNotFound(err) {
+						return oidcRefuse("account_erased")
+					}
+					return err
+				}
+				if err := tx.record(Actor{UserID: target.ID, AuthMethod: AuthMethodOIDC}, models.RoleAuditUserRoleChanged,
+					roleID, assignedRoleName(role, custom), &target.ID,
+					userRoleAuditState{Role: target.Role, RoleID: target.RoleID},
+					userRoleAuditState{Role: role, RoleID: roleID}); err != nil {
+					return err
+				}
+			}
+			if user, err = tx.users.GetByID(target.ID); err != nil {
+				if isNotFound(err) {
+					return oidcRefuse("account_erased")
+				}
+				return err
+			}
+		} else {
+			if in.email == "" || len(in.email) > oidcEmailMaxBytes {
+				return oidcRefuse("email_missing")
+			}
+			mapped := in.roleID
+			roles, err := tx.lockRoles(&mapped)
+			if err != nil {
+				return err
+			}
+			role, roleID, custom, err := oidcMappedRole(roles[mapped])
+			if err != nil {
+				return err
+			}
+			taken, err := tx.users.EmailExistsFoldedUnscoped(in.email)
+			if err != nil {
+				return err
+			}
+			if taken {
+				// Never linked to the existing account, live or erased.
+				return oidcRefuse("email_taken")
+			}
+			if in.beforeInsert != nil {
+				in.beforeInsert()
+			}
+			// A replayed attempt inserts a fresh row.
+			created := &models.User{
+				Email:     in.email,
+				Password:  in.passwordHash,
+				FirstName: in.firstName,
+				LastName:  in.lastName,
+				Role:      role,
+				RoleID:    roleID,
+				IsActive:  true,
+			}
+			if err := tx.users.Create(created); err != nil {
+				if errors.Is(err, apperrors.ErrDuplicateEmail) {
+					return oidcRefuseWith("email_taken", err)
+				}
+				return err
+			}
+			if err := identities.Create(&models.UserIdentity{UserID: created.ID, Issuer: in.issuer, Subject: in.subject}); err != nil {
+				if errors.Is(err, repository.ErrUserIdentityTaken) {
+					return oidcRefuseWith("identity_taken", err)
+				}
+				return err
+			}
+			if err := tx.record(Actor{UserID: created.ID, AuthMethod: AuthMethodOIDC}, models.RoleAuditUserRoleChanged,
+				roleID, assignedRoleName(role, custom), &created.ID,
+				nil, userRoleAuditState{Role: role, RoleID: roleID}); err != nil {
+				return err
+			}
+			if user, err = tx.users.GetByID(created.ID); err != nil {
+				return err
+			}
+		}
+
+		issued, err := in.issue(tx.handle, user)
+		if err != nil {
+			return err
+		}
+		tokens = issued
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tokens, nil
+}
+
+// oidcMappedRole resolves the locked role row a mapping entry names: a system
+// role is assigned by its key with role_id NULL, a custom role as custom with
+// its id. A missing row refuses the sign-in.
+func oidcMappedRole(row *models.Role) (models.UserRole, *uint, *models.Role, error) {
+	if row == nil {
+		return "", nil, nil, oidcRefuse("role_missing")
+	}
+	if row.SystemKey != nil {
+		role := models.UserRole(*row.SystemKey)
+		if !role.IsValid() || role == models.RoleCustom {
+			return "", nil, nil, oidcRefuse("role_missing")
+		}
+		return role, nil, nil, nil
+	}
+	id := row.ID
+	return models.RoleCustom, &id, row, nil
 }

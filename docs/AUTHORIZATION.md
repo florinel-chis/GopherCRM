@@ -21,7 +21,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; sign-in not implemented |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA callback page and SCIM are later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -303,7 +303,8 @@ roles are answered as before. Covered by `TestLinkedCustomerLoginWrites{SQLite,M
 Every role create, clone, update and delete, and every change of a user's `role` or `role_id`,
 writes one `role_audit_log` row in the transaction of the change; a failed insert rolls the
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
-(`auth_method`: `bearer` or `api_key`), the action and the state before and after, as ids, role
+(`auth_method`: `bearer` or `api_key`, or `oidc` for the role an OpenID Connect sign-in applied
+to its own account, #435), the action and the state before and after, as ids, role
 names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -420,9 +421,94 @@ returns the effective values:
   mapping is empty, never the environment one.
 
 The generic `/configurations` endpoints neither list nor write those entries, whatever the
-case or padding of the key. Everything else is not implemented: there is no OIDC sign-in, discovery or token code, no `user_identities` table
-and no SCIM code in the tree, and sign-in is the local email and password login only. The note records what phase 1 leaves ready and the conditions a
-phase 2 implementation has to meet.
+case or padding of the key. Since #435 the backend signs in with those settings (see
+[OIDC sign-in](#oidc-sign-in-435) below): the authorization code flow with PKCE, identity
+linking by `(iss, sub)` in `user_identities`, JIT provisioning and the role mapping re-applied
+on every sign-in. SCIM is not implemented, the SPA has no `/auth/callback` page yet, and Okta's
+userinfo groups for thin tokens are not read; those are later work. The rest of the note records
+the conditions phase 2 has to meet, which the sign-in below follows.
+
+### OIDC sign-in (#435)
+
+**Flow.** `POST /auth/oidc/start` (no body, strict `/auth` tier, no authentication) re-reads the
+settings, discovers the issuer, stores one single-use `oidc_login_attempts` row (the HMAC of a
+fresh state keyed like the other opaque tokens, the nonce, the PKCE verifier and the issuer,
+valid ten minutes) and answers `{authorization_url}`. The SPA sends the browser there; the issuer
+redirects back to the redirect URI `APP_BASE_URL/auth/callback`, which must be registered at the
+provider exactly. The SPA then posts the `code` and `state` to `POST /auth/oidc/callback`, which
+spends the attempt (its own committed statement: a state works once, even when the sign-in is
+then refused), refuses an attempt started against another issuer than the one configured now,
+exchanges the code with the verifier, and checks the ID token's signature, `iss`, `aud`, `exp`
+and nonce. Success answers the same `token`, `refresh_token` and `user` as `POST /auth/login`;
+no cookie is set. Single sign-on off is 404; on but unconfigured, undiscoverable (including a
+redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S)_PROXY`) or with
+a failing token endpoint is 503 `SSO_UNAVAILABLE`; every refusal is the same 401 "Single sign-on
+failed", with the reason logged as an `error_code` only.
+
+**Identity.** The identity is the exact `(iss, sub)` pair in `user_identities` (unique,
+`utf8mb4_bin` on MySQL/MariaDB, BINARY on SQLite). A `sub` that is empty, longer than 255 bytes,
+not printable ASCII, or has leading or trailing whitespace is refused on every engine, because
+the binary collation still pads trailing spaces; a stored row is also compared byte for byte.
+`email`, `preferred_username` and `name` never link or authorize.
+
+**Mapping.** The role is the FIRST entry of the role mapping, in stored order, whose claim
+(`groups` or `roles`) holds its value exactly, case-sensitively. Each claim must be absent or a
+JSON array of strings. No match is 401 with nothing written. A token whose `_claim_names` has a
+`groups` key (the Entra ID group overage) is refused, never read as "no groups". The mapping is
+re-applied on every sign-in through the governed role write (the mapping is the administrator's
+grant, so the actor-key and escalation checks do not apply): the last active admin cannot be
+demoted (401, nothing written, no session), a custom role is not given to a customer login, and
+a changed role commits one `role_audit_log` row with `auth_method` `oidc` and the signed-in user
+as actor. An unchanged role writes no row.
+
+**JIT provisioning.** An unknown identity creates an active user with the mapped role, the
+`email` claim as given and `given_name`/`family_name` (cut to 100 bytes), and a password that is
+the hash of discarded random bytes, so password login cannot succeed for it. It needs an `email`
+claim; when any account, live or erased, already holds that address in any letter case, the
+sign-in is refused and nothing is linked to that account (`LOWER(email)` on every engine, so
+SQLite refuses what the MySQL/MariaDB collation refuses). A concurrent first sign-in of the same
+address or identity loses on the unique index and rolls back whole.
+
+**Erasure.** Erasing a user keeps its `user_identities` row, linked to the erased user, so that
+person's next sign-in is 401 rather than a fresh account. Deactivation also answers 401.
+
+**Break-glass.** Password login is unchanged and stays available while single sign-on is on.
+
+**Example: Okta.** An OIDC web application with the authorization code grant and PKCE; sign-in
+redirect URI `https://crm.example.com/auth/callback` (APP_BASE_URL `https://crm.example.com`). On
+the custom authorization server add a `groups` claim to the ID token, filtered to the CRM groups
+(for example "Starts with `crm-`"). Configure, through `/settings/sso` or the environment:
+
+```
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://<org>.okta.com/oauth2/default
+OIDC_CLIENT_ID=<client id>
+OIDC_CLIENT_SECRET=<client secret>
+OIDC_SCOPES=openid profile email groups
+OIDC_ROLE_MAPPING=[{"claim":"groups","value":"crm-admins","role_id":1},{"claim":"groups","value":"crm-sales","role_id":2}]
+```
+
+Okta group names are the values the filtered claim carries; keep them stable. A flow that returns
+a thin ID token without groups is not supported yet (the userinfo endpoint is not read).
+
+**Example: Entra ID.** An app registration with a Web redirect URI
+`https://crm.example.com/auth/callback`, a client secret, and app roles (for example `CRM.Admin`,
+`CRM.Sales`) assigned to users or groups in the enterprise application. Map the `roles` claim:
+app roles have no overage limit. Configure:
+
+```
+OIDC_ENABLED=true
+OIDC_ISSUER_URL=https://login.microsoftonline.com/<tenant id>/v2.0
+OIDC_CLIENT_ID=<application (client) id>
+OIDC_CLIENT_SECRET=<client secret value>
+OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":1},{"claim":"roles","value":"CRM.Sales","role_id":2}]
+```
+
+A mapping on `groups` uses group object ids. Above 200 groups Entra ID leaves the `groups` claim
+out and sends `_claim_names` instead; such a sign-in is refused (401), so prefer app roles. Role
+ids are those of `GET /roles`.
+
+### Design conditions
 
 **Sign-in.** OIDC authorization code flow with PKCE, against one or more configured issuers (an
 Okta org or custom authorization server, an Entra ID tenant). The ID token is validated against
@@ -468,9 +554,9 @@ session-bound CSRF protection in the same change.
 **Seams already in place.**
 
 - `role_audit_log.auth_method` records how the acting request authenticated. Its values today
-  are `bearer` and `api_key` (`AuthMethodBearer`, `AuthMethodAPIKey` in
-  `internal/service/interfaces.go`); a single sign-on session or a SCIM call adds a value (#261
-  proposes `oidc` and `scim`), not a column.
+  are `bearer`, `api_key` and, since #435, `oidc` (`AuthMethodBearer`, `AuthMethodAPIKey`,
+  `AuthMethodOIDC` in `internal/service/interfaces.go`); a SCIM call would add `scim`, not a
+  column.
 - `role_audit_log.actor_user_id` is nullable, so a change made by a provisioning client that is
   not a user can be recorded without inventing an account.
 - Permissions are resolved per request from the user's role, so a role mapped at sign-in needs

@@ -82,6 +82,34 @@ func (_m *UserRepository) Delete(id uint) error {
 	return r0
 }
 
+// EmailExistsFoldedUnscoped provides a mock function with given fields: email
+func (_m *UserRepository) EmailExistsFoldedUnscoped(email string) (bool, error) {
+	ret := _m.Called(email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for EmailExistsFoldedUnscoped")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (bool, error)); ok {
+		return rf(email)
+	}
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(email)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(email)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetByEmailUnscoped provides a mock function with given fields: email
 func (_m *UserRepository) GetByEmailUnscoped(email string) (*models.User, error) {
 	ret := _m.Called(email)

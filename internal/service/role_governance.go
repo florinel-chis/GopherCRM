@@ -12,6 +12,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"gorm.io/gorm"
 )
 
 // Role governance (#259 S4, #348): what the role service and the governed
@@ -169,6 +170,7 @@ func (g *roleGovernance) runOnce(ctx context.Context, fn func(tx *governedTx) er
 			return errRoleGovernanceUnavailable
 		}
 		return fn(&governedTx{
+			handle:    handle,
 			users:     users,
 			userRoles: userRoles,
 			roles:     g.roles.WithTx(handle),
@@ -179,6 +181,10 @@ func (g *roleGovernance) runOnce(ctx context.Context, fn func(tx *governedTx) er
 
 // governedTx is the repositories of one governed transaction.
 type governedTx struct {
+	// handle is the transaction itself, for the writes of a flow that
+	// continues past the role tables (the OIDC sign-in's user_identities and
+	// refresh_tokens, #435).
+	handle    *gorm.DB
 	users     repository.UserRepository
 	userRoles repository.UserRoleMaintenance
 	roles     repository.RoleRepository

@@ -124,6 +124,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"roles", "role_permissions", "role_audit_log",
 		"webhook_endpoints", "webhook_deliveries",
 		"quote_response_tokens",
+		"user_identities", "oidc_login_attempts",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())
@@ -351,6 +352,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 	assertCustomerExternalIDsBinary(t, appDB, testDBName)
 	assertProductExternalIDsBinary(t, appDB, testDBName)
 	assertFormTicketKeysBinary(t, appDB, testDBName)
+	assertUserIdentitiesBinary(t, appDB, testDBName)
 
 	// 6. Verify down migration also runs cleanly in reverse
 	err = m.Down()
@@ -405,6 +407,7 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	assertCustomerExternalIDsBinary(t, appDB, testDBName)
 	assertProductExternalIDsBinary(t, appDB, testDBName)
 	assertFormTicketKeysBinary(t, appDB, testDBName)
+	assertUserIdentitiesBinary(t, appDB, testDBName)
 
 	// The retirement steps back to the two rows the 2025 seed wrote. It is
 	// addressed by the version before it: newer migrations sort after it.

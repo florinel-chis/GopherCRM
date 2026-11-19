@@ -39,6 +39,7 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
   inversion of the reset request's order (see both flows).
 - `admin set → users (id ascending) → roles (id ascending)` (#259, implemented by #348) for every governed user write and, without the admin set, every role write.
+  The OIDC sign-in (#435) continues the chain: `admin set → users → roles → user_identities → refresh_tokens`.
   The admin set is the `users` rows of the active admins, locked by primary key in id order; a
   role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
@@ -152,7 +153,7 @@ login (`internal/service/auth_service.go:283`), the password-reset request
 (`internal/service/auth_service.go:1220`), the password-reset confirm
 (`internal/service/auth_service.go:1327`), API-key create
 (`internal/service/apikey_service.go:86`), the RBAC user-role and role writes
-(`internal/service/role_governance.go:161`) and, since #385, the three erasures
+(`internal/service/role_governance.go:162`) and, since #385, the three erasures
 (`runErasureUnit`, `internal/repository/erasure.go:431`).
 For company delete, bulk status and refresh rotation it is the #183
 target, a bounded whole-root retry, not today's behaviour. The lead writes also restart the whole
@@ -534,8 +535,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
-  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:221`, and
-  `CreateAs`, `internal/service/user_governed_writes.go:91`) locks the `users` rows of the active
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:223`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:93`) locks the `users` rows of the active
   admins (`LockActiveAdmins`, `internal/repository/user_repository.go:294`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
@@ -562,19 +563,44 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   not taken in ascending id: its holder reads lock by `role_id`, after the actor's row and, the
   second time, after the roles; a deadlock that this causes is replayed.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
-  `internal/service/role_governance.go:128`) through the `WithTx` repositories; the audit row
+  `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:293`), once and without a retry of its own. By then
+  (`internal/service/user_governed_writes.go:295`), once and without a retry of its own. By then
   the write holds the target's `users` row, so the nested erasure takes leads and customers after
   users, the one inversion of the erasure order (#385); `governedWrite` is not reordered.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
-  (`internal/service/role_governance.go:28`, called at `:161` in the same file) replays the whole
+  (`internal/service/role_governance.go:29`, called at `:162` in the same file) replays the whole
   root on a deadlock, lock wait timeout or SQLite busy/locked, one raised inside the nested
   erasure included. Around it `roleGovernance.run` restarts the whole root when the nested
   erasure returns `ErrErasureGraphChanged`, only after a clean rollback
-  (`shouldRestartGovernedWrite`, `internal/service/role_governance.go:146`) and at most
-  `roleWriteGraphMaxRestarts` (3) times (`internal/service/role_governance.go:33`).
+  (`shouldRestartGovernedWrite`, `internal/service/role_governance.go:147`) and at most
+  `roleWriteGraphMaxRestarts` (3) times (`internal/service/role_governance.go:34`).
+- **Status:** implemented
+
+### OIDC sign-in
+
+- **Rows locked:** the callback of `POST /auth/oidc/callback` (`oidcService.Callback`,
+  `internal/service/auth_oidc.go`) first spends its `oidc_login_attempts` row with one conditional
+  `UPDATE` by `state_hash` (`OIDCLoginAttemptRepository.Claim`,
+  `internal/repository/oidc_repository.go`), its own committed statement before the transaction
+  and before the issuer is contacted. The governed transaction (`ApplyOIDCSignIn`,
+  `internal/service/user_governed_writes.go`) then locks the `users` rows of the active admins
+  (`LockActiveAdmins`), reads the `user_identities` row of the exact `(issuer, subject)` pair with a
+  plain read, locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's
+  current custom role and of the mapped role (`RoleRepository.LockByIDs`), and then writes: the
+  role change and its `role_audit_log` row, or on a first sign-in the `users` insert, the
+  `user_identities` insert and the audit row, and last the `refresh_tokens` insert.
+- **Order:** admin set → users → roles → user_identities → refresh_tokens. The plain identity
+  read takes no lock; it only names the `users` row to lock. A first sign-in locks no existing
+  `users` row: its new row and its identity row are inserts, and a competing first sign-in of the
+  same address or identity loses on the unique index and rolls back whole.
+- **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx` repositories;
+  the role change, the audit row, the provisioned user, its identity and the refresh token commit
+  together or not at all, and the access token is signed from the row the transaction wrote. The
+  attempt claim is not part of it: a state is spent even when the sign-in is then refused.
+- **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write; a
+  replayed attempt inserts fresh rows.
 - **Status:** implemented
 
 ## How the #175 failure modes are avoided
@@ -624,6 +650,7 @@ same on MySQL 8 and MariaDB 10.11.
 | Password-reset confirm | C3 | implemented |
 | API-key create | C3 | implemented |
 | RBAC user-role and role writes | #348 | implemented |
+| OIDC sign-in | #435 | implemented |
 
 C2 and C3 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
 #183 comment of 14 Nov 2026 (C2 session credentials, C3 reset and API-key issuance, C4 erasure

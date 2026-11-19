@@ -68,6 +68,9 @@ func MigrateDatabaseWith(db *gorm.DB) error {
 		if err := ensureFormTicketKeyCollation(tx); err != nil {
 			return err
 		}
+		if err := ensureUserIdentityCollation(tx); err != nil {
+			return err
+		}
 		if err := normalizeCompanyDomains(tx); err != nil {
 			return err
 		}
@@ -229,6 +232,10 @@ func autoMigrateModels(tx *gorm.DB) error {
 		// The single-use tokens of the client response link (#382): a hash and
 		// ids only, no foreign key.
 		&QuoteResponseToken{},
+		// OpenID Connect sign-in (#435): identities reference users; the
+		// login attempts hold a hash and no foreign key.
+		&UserIdentity{},
+		&OIDCLoginAttempt{},
 		&Ticket{},
 		&TicketComment{},
 		// Ticket comment mail deliveries (#219): ids only, no foreign key.

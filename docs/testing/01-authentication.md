@@ -1001,3 +1001,88 @@ file, not by trusting the coverage matrix.
   link; no form fields render, so nothing can be submitted. With the switch on, the form renders
   as in TC-AUTH-001.
 - **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "the register page shows the disabled notice instead of the form"; Vitest: `src/pages/auth/Register.gating.test.tsx`
+
+## OpenID Connect sign-in (FEATURES 1.12)
+
+Backend only (#435): the SPA has no `/auth/callback` page yet, so every case is driven through the
+API by the Go suites, against an in-process TLS issuer that checks the PKCE verifier and the
+redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
+
+### TC-AUTH-049 — Starting a sign-in returns the issuer's authorization URL
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Single sign-on enabled with an issuer, a client id and a role mapping in
+  `/settings/sso`.
+- **Steps:**
+  1. `POST /api/v1/auth/oidc/start` with no body and no authentication.
+- **Expected:** **200** `{authorization_url}` pointing at the discovered authorization endpoint
+  with `response_type=code`, the stored `client_id`, `code_challenge_method=S256` and a
+  `code_challenge`, a `state` and a `nonce`, `redirect_uri=<APP_BASE_URL>/auth/callback` and the
+  effective `scope`. One `oidc_login_attempts` row holds the HMAC of the state (never the state),
+  expiring ten minutes later. No `Set-Cookie`.
+- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler`
+
+### TC-AUTH-050 — A first sign-in provisions the user, a later one re-applies the mapping
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** As TC-AUTH-049; the identity `(iss, sub)` is unknown and its email is held by
+  no account.
+- **Steps:**
+  1. Start, sign in at the issuer, `POST /api/v1/auth/oidc/callback` `{code, state}`.
+  2. Change the mapped role in `/settings/sso` and sign in again; then once more unchanged.
+- **Expected:** Step 1: **200** with `token`, `refresh_token` and `user`, as `POST /auth/login`
+  answers; one active user with the mapped role and no usable password, one `user_identities` row,
+  one `role_audit_log` row with `auth_method` `oidc`; the access token authenticates and the
+  refresh token rotates. Step 2: the same user with the new role and one more `oidc` audit row; the
+  unchanged sign-in adds none. `last_login_at` is not touched.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/second_sign_in_reapplies_mapping`
+
+### TC-AUTH-051 — An IdP email that matches an existing account is never linked
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A local account holds `local@example.com`; the IdP identity is unknown.
+- **Steps:**
+  1. Sign in with an ID token whose `email` is `local@example.com`, then `Local@Example.COM`.
+- **Expected:** **401** "Single sign-on failed" each time; no user and no identity are created and
+  the local account is unchanged. An erased account's address refuses the same way.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/email_of_local_user_not_linked`, `/email_case_variant_not_linked`, `/concurrent_first_sign_in_order`
+
+### TC-AUTH-052 — Every refused callback is the same 401 and writes nothing
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** As TC-AUTH-049.
+- **Steps:**
+  1. Call back with a used state, an expired state (over ten minutes), and after the issuer
+     setting changed since the start.
+  2. Call back with an ID token carrying a wrong nonce, a wrong audience, a foreign signature, a
+     `groups` string, no mapped value, a `groups` entry in `_claim_names`, or a `sub` that differs
+     from a linked one only by a trailing space.
+  3. Sign in as an identity whose user is deactivated, or erased (its identity row is kept).
+- **Expected:** **401** `UNAUTHORIZED` "Single sign-on failed" for each, with no user, identity,
+  refresh token or audit row written. A token endpoint that fails is **503** `SSO_UNAVAILABLE`.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `reused_state`, `expired_state`, `issuer_changed_after_start`, `wrong_nonce`, `wrong_audience`, `bad_signature`, `malformed_groups_claim`, `no_mapping_match`, `group_overage`, `subject_trailing_space`, `deactivated_user`, `erased_user`, `token_endpoint_error`
+
+### TC-AUTH-053 — The mapping cannot demote the last active admin; password login stays
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** The only active admin is linked to an identity whose groups now map to sales.
+- **Steps:**
+  1. Sign in as that identity.
+  2. Log in as an admin with a password while single sign-on is enabled.
+- **Expected:** Step 1: **401**; the role stays admin, no audit row and no refresh token. Step 2:
+  **200** with a token pair (break-glass).
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/last_admin_demotion_refused`, `/local_admin_password_login`
+
+### TC-AUTH-054 — Disabled, unavailable and private answers
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** None.
+- **Steps:**
+  1. `POST /api/v1/auth/oidc/start` with single sign-on off; then on with an unreachable issuer,
+     and with an issuer whose discovery redirects.
+  2. Post a callback body without `code`, or with `code` over 4096 bytes or `state` over 256.
+- **Expected:** Step 1: **404** `NOT_FOUND`, then **503** `SSO_UNAVAILABLE` "Single sign-on is
+  unavailable" (the issuer client follows no redirect). Step 2: **400** `VALIDATION_ERROR`. No
+  answer sets a cookie, and the logs of a successful and a failed callback carry none of the code,
+  state, ID token, email or subject.
+- **Automation:** automated — Go: `cmd/auth_oidc_wiring_test.go` `TestOIDCRoutesWired`; `TestOIDCHandler`; `TestOIDCSignInSQLite/issuer_redirect`, `/log_privacy`; `TestOIDCHTTPClient`

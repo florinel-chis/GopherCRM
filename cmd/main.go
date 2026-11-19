@@ -27,7 +27,7 @@ import (
 // @description
 // @description ## Authentication
 // @description Protected operations accept one credential in the Authorization header, either `Authorization: Bearer <jwt>` (an access token from POST /auth/login or POST /auth/refresh) or `Authorization: ApiKey <key>` (a personal key from POST /api-keys; the plaintext key is shown once, at creation, and the gcrm_ prefix may be sent or left off). No other header, query parameter or cookie is read. A missing header, or one that is neither form, is 401 UNAUTHORIZED "Missing or invalid authorization header"; an invalid or expired credential, or one whose account is deactivated or erased, is 401 UNAUTHORIZED "Invalid credentials".
-// @description Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED "Invalid credentials", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token.
+// @description Login returns an access token (valid for JWT_EXPIRY_HOURS, 24 hours by default), a single-use refresh token (valid for REFRESH_TOKEN_EXPIRY_DAYS, 30 days by default) and the user. POST /auth/refresh rotates strictly: the presented refresh token is spent and replaced, a spent token is refused with 401, and of several concurrent refreshes of one token exactly one succeeds, so a client must keep the replacement from every response. Logout, POST /auth/change-password and password reset revoke refresh tokens and also end every access token issued to the account before them: an access token carries the account token_version, which these three operations increment, and a token whose version is no longer current is 401 UNAUTHORIZED "Invalid credentials", the answer an expired token gets. Refresh rotation and login leave the version alone, so an access token replaced by a rotation stays valid until it expires. Registration is open only while the security.allow_public_registration setting is on (it ships off), always creates a customer and returns an access token without a refresh token. OpenID Connect sign-in (POST /auth/oidc/start, then POST /auth/oidc/callback) returns the same token pair and user as login.
 // @description Roles are admin, sales, support and customer. Each operation names the roles it admits; another role gets 403 FORBIDDEN "Insufficient permissions". Where a role sees only some records (for example sales and its own leads), the operation describes the narrowing and the status a record outside it is answered with.
 // @description
 // @description ## Response envelope
@@ -456,7 +456,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 	configHandler := handler.NewConfigurationHandler(configService).WithQuotePDFAvailable(quoteService.PDFAvailable)
 	// Single sign-on settings (#434): stored security.sso.* rows over the
 	// OIDC_* fallbacks. No sign-in flow reads them yet.
-	ssoSettingsHandler := handler.NewSSOSettingsHandler(service.NewSSOSettingsService(configService, roleRepo, cfg.SSO))
+	ssoSettings := service.NewSSOSettingsService(configService, roleRepo, cfg.SSO)
+	ssoSettingsHandler := handler.NewSSOSettingsHandler(ssoSettings)
+	// OpenID Connect sign-in (#435): the settings above, re-read on every call,
+	// and one governed transaction per callback over the role repositories,
+	// the identity table and the refresh tokens.
+	authOIDCHandler := handler.NewAuthOIDCHandler(service.NewOIDCService(ssoSettings, authService,
+		userRepo, roleRepo, roleAuditRepo, refreshTokenRepo,
+		repository.NewUserIdentityRepository(models.DB), repository.NewOIDCLoginAttemptRepository(models.DB),
+		txManager, cfg.App.BaseURL))
 	dashboardHandler := handler.NewDashboardHandler(leadService, customerService, ticketService, taskService, dealService).
 		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(models.DB)))
 	bulkHandler := handler.NewBulkHandler(bulkService)
@@ -550,6 +558,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 			authRoutes.POST("/refresh", authHandler.Refresh)
 			authRoutes.POST("/password-reset", authHandler.RequestPasswordReset)
 			authRoutes.POST("/password-reset/confirm", authHandler.ConfirmPasswordReset)
+			// OpenID Connect sign-in (#435): both are credential exchanges on
+			// the strict tier, without Auth.
+			authRoutes.POST("/oidc/start", authOIDCHandler.Start)
+			authRoutes.POST("/oidc/callback", authOIDCHandler.Callback)
 		}
 
 		// Embedded forms: definition, submission intake and the email-confirm
