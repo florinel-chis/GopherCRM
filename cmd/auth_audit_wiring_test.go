@@ -128,3 +128,122 @@ func TestAuthAuditWired(t *testing.T) {
 		assert.Equal(t, "invalid_credentials", row.Reason)
 	}
 }
+
+// TestSignInAuditRouteWired is #455 through the production router: setupRouter
+// mounts GET /audit/sign-ins behind audit.sign_ins_view. An admin Bearer token
+// and an admin's API key read the rows the test's own logins wrote, newest
+// first; a sales user's API key is refused.
+func TestSignInAuditRouteWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "true")
+	boot := bootAutomation(t, false)
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	t.Cleanup(stopBackground)
+	router, stop := setupRouter(backgroundCtx, boot.cfg)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+		defer cancel()
+		_ = stop(ctx)
+	})
+
+	const password = "Wired-Passw0rd!-0455"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	admin := &models.User{Email: "admin-0455@crm.example.test", Password: string(hash), FirstName: "Audit", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	sales := &models.User{Email: "sales-0455@crm.example.test", Password: string(hash), FirstName: "Audit", LastName: "Sales", Role: models.RoleSales, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	require.NoError(t, models.DB.Create(sales).Error)
+
+	send := func(method, path, body, authorization string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, boot.cfg.API.Prefix+path, bytes.NewBufferString(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		if authorization != "" {
+			request.Header.Set("Authorization", authorization)
+		}
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+	login := func(email, pw string, want int) string {
+		t.Helper()
+		recorder := send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"`+pw+`"}`, "")
+		require.Equal(t, want, recorder.Code, recorder.Body.String())
+		var body struct {
+			Data struct {
+				Token string `json:"token"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		return body.Data.Token
+	}
+	apiKey := func(token string) string {
+		t.Helper()
+		recorder := send(http.MethodPost, "/api-keys", `{"name":"audit wiring key"}`, "Bearer "+token)
+		require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+		var body struct {
+			Data struct {
+				Key string `json:"key"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		require.NotEmpty(t, body.Data.Key)
+		return body.Data.Key
+	}
+
+	salesToken := login(sales.Email, password, http.StatusOK)
+	require.NotEmpty(t, salesToken)
+	login(admin.Email, "Wrong-Passw0rd!-0455", http.StatusUnauthorized)
+	adminToken := login(admin.Email, password, http.StatusOK)
+	require.NotEmpty(t, adminToken)
+
+	type row struct {
+		Method  string `json:"method"`
+		Outcome string `json:"outcome"`
+		Reason  string `json:"reason"`
+		UserID  *uint  `json:"user_id"`
+	}
+	read := func(authorization string) []row {
+		t.Helper()
+		recorder := send(http.MethodGet, "/audit/sign-ins?method=password", "", authorization)
+		require.Equal(t, http.StatusOK, recorder.Code, "an unmounted route answers 404: %s", recorder.Body.String())
+		var body struct {
+			Data []row `json:"data"`
+			Meta struct {
+				Total int64 `json:"total"`
+			} `json:"meta"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &body))
+		require.Len(t, body.Data, 3, recorder.Body.String())
+		assert.EqualValues(t, 3, body.Meta.Total)
+		return body.Data
+	}
+	uid := func(r row) uint {
+		if r.UserID == nil {
+			return 0
+		}
+		return *r.UserID
+	}
+
+	rows := read("Bearer " + adminToken)
+	assert.Equal(t, "success", rows[0].Outcome)
+	assert.Equal(t, admin.ID, uid(rows[0]))
+	assert.Equal(t, "refused", rows[1].Outcome)
+	assert.Equal(t, "invalid_credentials", rows[1].Reason)
+	assert.Equal(t, admin.ID, uid(rows[1]))
+	assert.Equal(t, "success", rows[2].Outcome)
+	assert.Equal(t, sales.ID, uid(rows[2]))
+
+	assert.Equal(t, rows, read("ApiKey "+apiKey(adminToken)), "an admin's API key reads the same rows")
+
+	recorder := send(http.MethodGet, "/audit/sign-ins", "", "ApiKey "+apiKey(salesToken))
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	assert.Equal(t, "FORBIDDEN", envelope.Error.Code)
+}

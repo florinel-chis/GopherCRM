@@ -44,3 +44,19 @@ export const formatDistance = (
   const date = toDate(value);
   return date ? formatDistanceToNow(date, { addSuffix: true }) : fallback;
 };
+
+/**
+ * A datetime-local value ("2026-11-20T09:30") is a time in the browser's
+ * zone; the API takes RFC 3339. Answers the UTC instant, or undefined for an
+ * empty or unparseable value.
+ */
+export const localDateTimeToUTC = (value: string): string | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+};

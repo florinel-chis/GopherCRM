@@ -42,3 +42,52 @@ func (r *authAuditRepository) PruneCreatedBefore(before time.Time, limit int) (i
 	result := r.db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.AuthAuditLog{})
 	return result.RowsAffected, result.Error
 }
+
+// AuthAuditFilter narrows List (#455). An empty string or a nil pointer is no
+// filter. From is inclusive and To exclusive; both are compared in UTC.
+type AuthAuditFilter struct {
+	Method  string
+	Outcome string
+	Reason  string
+	UserID  *uint
+	From    *time.Time
+	To      *time.Time
+}
+
+// List returns one page of the rows matching filter, ordered created_at
+// descending then id descending (a total order), and the number of matching
+// rows. The count and the page share one WHERE; every predicate is bound.
+func (r *authAuditRepository) List(filter AuthAuditFilter, offset, limit int) ([]models.AuthAuditLog, int64, error) {
+	query := r.db.Model(&models.AuthAuditLog{})
+	if filter.Method != "" {
+		query = query.Where("method = ?", filter.Method)
+	}
+	if filter.Outcome != "" {
+		query = query.Where("outcome = ?", filter.Outcome)
+	}
+	if filter.Reason != "" {
+		query = query.Where("reason = ?", filter.Reason)
+	}
+	if filter.UserID != nil {
+		query = query.Where("user_id = ?", *filter.UserID)
+	}
+	if filter.From != nil {
+		query = query.Where("created_at >= ?", filter.From.UTC())
+	}
+	if filter.To != nil {
+		query = query.Where("created_at < ?", filter.To.UTC())
+	}
+
+	var total int64
+	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	rows := []models.AuthAuditLog{}
+	if err := query.Session(&gorm.Session{}).
+		Order("created_at DESC").Order("id DESC").
+		Offset(offset).Limit(limit).
+		Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}

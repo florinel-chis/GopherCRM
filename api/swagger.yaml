@@ -5010,6 +5010,75 @@ definitions:
     required:
     - user_id
     type: object
+  internal_handler.AuthAuditEntryResponse:
+    properties:
+      attempt_id:
+        description: The single sign-on login attempt of a callback; null otherwise.
+        example: 3
+        type: integer
+      claim_groups:
+        description: The groups claim values used for the role mapping; null when
+          not reached.
+        items:
+          type: string
+        type: array
+      claim_roles:
+        description: The roles claim values used for the role mapping; null when not
+          reached.
+        items:
+          type: string
+        type: array
+      client_network:
+        description: The client's /24 (IPv4) or /48 (IPv6) network; empty when unknown.
+        example: 203.0.113.0/24
+        type: string
+      created_at:
+        description: UTC time of the outcome (RFC 3339).
+        example: "2026-11-18T09:00:00Z"
+        type: string
+      id:
+        description: Row id.
+        example: 42
+        type: integer
+      method:
+        description: How the caller tried to sign in.
+        enum:
+        - password
+        - oidc
+        - refresh
+        - api_key
+        example: password
+        type: string
+      outcome:
+        description: Whether the sign-in succeeded.
+        enum:
+        - success
+        - refused
+        example: refused
+        type: string
+      reason:
+        description: The stable reason code of a refusal; empty on success.
+        example: invalid_credentials
+        type: string
+      request_id:
+        description: The request id of the sign-in request; empty when none was usable.
+        example: 3f2a9c1e-5b7d-4e2a-9c1e-5b7d4e2a9c1e
+        type: string
+      subject_ref:
+        description: hex(HMAC-SHA256) of a refused single sign-on issuer and subject;
+          null otherwise.
+        example: 9b74c9897bac770ffc029102a200c5de
+        type: string
+      user_agent_family:
+        description: Browser and operating system family from a fixed vocabulary;
+          empty without a user agent.
+        example: Firefox on Linux
+        type: string
+      user_id:
+        description: The account the outcome concerns; null when it is not known.
+        example: 7
+        type: integer
+    type: object
   internal_handler.AuthResponse:
     description: Session credentials returned by login, refresh and registration.
     properties:
@@ -10410,6 +10479,176 @@ paths:
       summary: Rename, revoke or reactivate an API key
       tags:
       - api-keys
+  /audit/sign-ins:
+    get:
+      description: |-
+        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh or failed API-key authentication: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network and the user-agent family. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+        Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
+        Permission: audit.sign_ins_view (among the system roles, admin only).
+      parameters:
+      - default: 0
+        description: Pagination offset
+        in: query
+        minimum: 0
+        name: offset
+        type: integer
+      - default: 20
+        description: Page size, capped at 100
+        in: query
+        maximum: 100
+        minimum: 1
+        name: limit
+        type: integer
+      - description: 'Only rows of this method (unknown value: 400)'
+        enum:
+        - api_key
+        - oidc
+        - password
+        - refresh
+        in: query
+        name: method
+        type: string
+      - description: 'Only rows with this outcome (unknown value: 400)'
+        enum:
+        - refused
+        - success
+        in: query
+        name: outcome
+        type: string
+      - description: 'Only rows with this reason code (unknown value, case included:
+          400)'
+        enum:
+        - account_erased
+        - account_inactive
+        - account_locked
+        - claims_invalid
+        - customer_login_role
+        - discovery_failed
+        - email_missing
+        - email_taken
+        - group_overage
+        - groups_malformed
+        - groups_unavailable
+        - id_token_invalid
+        - id_token_missing
+        - identity_mismatch
+        - identity_taken
+        - internal_error
+        - invalid_credentials
+        - issuer_changed
+        - issuer_invalid
+        - key_expired
+        - key_invalid
+        - key_revoked
+        - last_admin
+        - no_mapping_match
+        - nonce_mismatch
+        - not_configured
+        - password_changed
+        - role_missing
+        - roles_malformed
+        - sso_account
+        - sso_disabled
+        - state_invalid
+        - subject_invalid
+        - token_exchange_failed
+        - token_invalid
+        - unavailable
+        - userinfo_subject_mismatch
+        in: query
+        name: reason
+        type: string
+      - description: Only rows of this user (positive integer; otherwise 400)
+        in: query
+        minimum: 1
+        name: user_id
+        type: integer
+      - description: Only rows created at or after this RFC 3339 date-time (otherwise
+          400)
+        format: date-time
+        in: query
+        name: from
+        type: string
+      - description: Only rows created before this RFC 3339 date-time; must be after
+          from (otherwise 400)
+        format: date-time
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Sign-in audit rows retrieved successfully
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.AuthAuditEntryResponse'
+                  type: array
+                meta:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - method, outcome or reason is unknown, user_id
+            is not a positive integer, from or to is not RFC 3339, or from is not
+            before to (error.details keyed by the parameter, to for the range; the
+            value is not echoed)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold audit.sign_ins_view (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the sign-in audit log
+      tags:
+      - users
   /auth/change-password:
     post:
       consumes:

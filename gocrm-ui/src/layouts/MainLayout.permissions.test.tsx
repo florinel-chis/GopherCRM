@@ -119,6 +119,22 @@ describe('MainLayout permission gating', () => {
     expect(navigation().queryByText('Single sign-on')).not.toBeInTheDocument();
   });
 
+  it('shows Sign-in audit under Settings only to a caller holding audit.sign_ins_view', async () => {
+    signedInWith('customer', customPermissions('audit.sign_ins_view'));
+    const held = render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Sign-in audit')).toBeInTheDocument();
+    expect(navigation().queryByText('Single sign-on')).not.toBeInTheDocument();
+    held.unmount();
+
+    // The single sign-on settings key alone does not show the entry.
+    signedInWith('admin', customPermissions('settings.sso_manage'));
+    render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Single sign-on')).toBeInTheDocument();
+    expect(navigation().queryByText('Sign-in audit')).not.toBeInTheDocument();
+  });
+
   it('shows the Automation group with only the child whose key is held', async () => {
     signedInWith('customer', customPermissions('automation.rules_manage'));
     render(<MainLayout />);

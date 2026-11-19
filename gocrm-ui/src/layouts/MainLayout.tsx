@@ -243,6 +243,13 @@ const navItems: NavItem[] = [
         icon: <VpnKey />,
         permission: 'settings.sso_manage',
       },
+      {
+        // Password, single sign-on, refresh and API-key sign-in outcomes.
+        title: 'Sign-in audit',
+        path: '/settings/sign-in-audit',
+        icon: <History />,
+        permission: 'audit.sign_ins_view',
+      },
     ],
   },
 ];

@@ -101,8 +101,8 @@ var routeMatrixPublic = map[string]bool{
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was
-// frozen: the role API of #348, the quote PDF download of #384 and the single
-// sign-on settings of #434. These routes are served and guarded, but the
+// frozen: the role API of #348, the quote PDF download of #384, the single
+// sign-on settings of #434 and the sign-in audit of #455. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
@@ -118,6 +118,7 @@ var routeMatrixAfterFreeze = map[string]bool{
 	"GET /api/v1/quotes/:id/pdf":        true,
 	"GET /api/v1/settings/sso":          true,
 	"PUT /api/v1/settings/sso":          true,
+	"GET /api/v1/audit/sign-ins":        true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -659,6 +660,7 @@ var matrixRequests = map[string]matrixRequest{
 	"PUT /webhooks/endpoints/:id":    {kind: "webhook_endpoint", body: fixedBody(matrixBody{"event_types": []string{"ticket.created"}})},
 	"DELETE /webhooks/endpoints/:id": {kind: "webhook_endpoint"},
 	"GET /webhooks/deliveries":       {},
+	"GET /audit/sign-ins":            {},
 }
 
 // routeMatrixCases is the case set a route's shape requires.
@@ -1351,7 +1353,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 11)
+	assert.Len(t, routeMatrixAfterFreeze, 12)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {

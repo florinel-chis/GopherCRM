@@ -33,8 +33,8 @@ picker lists the roles of `GET /roles`; the role API stays available for the sam
 
 A permission is a leaf of the catalogue tree, keyed `<group>.<action>`. The tree is the
 `catalogue` variable in `internal/permissions/catalogue.go`; `permissions.Leaves()` returns the
-leaves in display order and `GET /permissions/catalogue` serves the tree. There are 75 leaves in
-19 groups. Sixteen can be held at scope `own` as well as `all` (`AllowsOwn`). One,
+leaves in display order and `GET /permissions/catalogue` serves the tree. There are 76 leaves in
+20 groups. Sixteen can be held at scope `own` as well as `all` (`AllowsOwn`). One,
 `tickets.view_own_customer`, is system-only (`SystemOnly`): only the customer system role holds
 it, and no custom role can.
 
@@ -52,6 +52,7 @@ it, and no custom role can.
 | `settings.view` | View settings | all |
 | `settings.update` | Change settings | all |
 | `settings.sso_manage` | View and change single sign-on settings | all |
+| `audit.sign_ins_view` | View the sign-in audit log | all |
 | `leads.view` | View leads | all, own |
 | `leads.create` | Create leads | all |
 | `leads.update` | Edit leads | all, own |
@@ -122,7 +123,7 @@ The four system roles are fixed matrices in code (`systemRoles` in
 `internal/permissions/system_roles.go`, read through `permissions.ForSystemRole`), pinned by
 `internal/permissions/testdata/system_roles.golden.json`. They are not stored in
 `role_permissions`, and they can be neither edited nor deleted (409 `SYSTEM_ROLE_IMMUTABLE`).
-admin holds every leaf that is not system-only at `all` (74 grants); sales holds 37, support 17
+admin holds every leaf that is not system-only at `all` (75 grants); sales holds 37, support 17
 and customer 4. A cell is the scope the role holds the key at, or `-` when it does not hold it.
 
 | Permission | admin | sales | support | customer |
@@ -139,6 +140,7 @@ and customer 4. A cell is the scope the role holds the key at, or `-` when it do
 | `settings.view` | all | - | - | - |
 | `settings.update` | all | - | - | - |
 | `settings.sso_manage` | all | - | - | - |
+| `audit.sign_ins_view` | all | - | - | - |
 | `leads.view` | all | own | - | - |
 | `leads.create` | all | all | - | - |
 | `leads.update` | all | own | - | - |
@@ -380,9 +382,26 @@ string, and they age out. API-key failures are recorded by the authentication mi
 runs before the per-client moderate rate limiter, so every request with a bogus `ApiKey` header
 costs one `INSERT`: the retention bounds the age of the rows, not their number.
 
+**Reading the log.** Since #455 `GET /audit/sign-ins` returns the rows, guarded by
+`audit.sign_ins_view`; among the system roles only admin holds it, and a custom role may. The
+order is `created_at` descending, then `id` descending; pagination is `offset`/`limit`
+(`utils.ParseOffsetLimit`: default 20, at most 100) with `meta.total` the filtered count. The
+filters are `method`, `outcome`, `reason` (each matched exactly and case-sensitively against the
+values above, so `PASSWORD` is refused on every database), `user_id` (a positive integer), `from`
+(inclusive) and `to` (exclusive), both RFC 3339 date-times compared in UTC. An absent or empty
+value is no filter; an unknown value, a `user_id` that is not a positive integer, a `from` or `to`
+that does not parse, or a `from` that is not before `to` is a 400 `VALIDATION_ERROR` with
+`error.details` keyed by the parameter (`to` for the range) and the value not echoed. Each row
+carries exactly the stored columns: `id`, `created_at`, `method`, `outcome`, `reason`, `user_id`,
+`attempt_id`, `request_id`, `subject_ref`, `claim_roles`, `claim_groups` (decoded to arrays),
+`client_network` and `user_agent_family`; the nullable ones are `null`, and nothing is joined (no
+email, no name). The SPA shows the same rows, with the same filters, under Settings > Sign-in
+audit (`/settings/sign-in-audit`, shown and opened only with `audit.sign_ins_view`).
+
 **Debugging a refused sign-in.** A person reports "Single sign-on failed" (401). The response does
 not say why, on purpose. Ask for the time and, when the SPA or a proxy sets one, the
-`X-Request-ID`; then:
+`X-Request-ID`; then (Settings > Sign-in audit and `GET /audit/sign-ins` filter by method,
+outcome, reason, user and time range, so the SQL below is optional):
 
 1. Find the row: `SELECT * FROM auth_audit_log WHERE request_id = 'req-7f3a' ORDER BY id DESC;`
    or, without a request id, the `oidc` rows around the reported time from the person's

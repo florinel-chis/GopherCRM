@@ -346,3 +346,10 @@ func SetupRoleRoutes(router *gin.RouterGroup, handler *RoleHandler) {
 		roles.POST("/:id/clone", middleware.RequirePermission(permissions.RolesManage), handler.Clone)
 	}
 }
+
+// SetupAuthAuditRoutes mounts the read API of the sign-in audit log (#455).
+// The guard audit.sign_ins_view is held by the admin system role only; a
+// custom role may hold it.
+func SetupAuthAuditRoutes(router *gin.RouterGroup, handler *AuthAuditLogHandler) {
+	router.GET("/audit/sign-ins", middleware.RequirePermission(permissions.AuditSignInsView), handler.ListSignIns)
+}
