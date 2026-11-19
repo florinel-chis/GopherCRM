@@ -263,11 +263,11 @@ Expected field still describes it and a **Known issue** line records the defect.
   still showing every role. A test asserting server-side filtering would be wrong; a test asserting
   page-local filtering would also be wrong.
 - **Known issue:** FEATURES.md row 7.8 and gap G34. The row describes the filter as client-side over
-  the current page; in the code it is applied nowhere at all. The existing E2E test only asserts
-  `count >= 1`, which passes whether or not the filter works.
+  the current page; in the code it is applied nowhere at all. The defect is filed as #428.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` "admin can filter users by
-  role" is `test.fixme` (2026-09-23): it asserted `count >= 1`, which passes whatever the filter
-  does. A real assertion fails until the filter works (TC-XCUT-038).
+  role (#428)" is `test.fixme` for #428: it seeds a sales and a support user sharing a search
+  token, filters by "Sales" and expects the support row to be gone, which fails while `GET /users`
+  ignores `role` (TC-XCUT-038).
 
 ### TC-USER-014 — Record that the Active/Inactive toggle does not filter
 - **Priority:** P1

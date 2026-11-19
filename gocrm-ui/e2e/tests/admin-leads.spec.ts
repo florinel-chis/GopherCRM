@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { LeadsPage } from '../pages/leads.page';
 import { generateLeadData } from '../fixtures/admin-user';
+import { API_BASE_URL } from '../helpers/env';
+import { faker } from '@faker-js/faker';
 
 test.describe('Admin - Leads Management', () => {
   let adminAuth: AdminAuthHelper;
@@ -116,18 +118,45 @@ test.describe('Admin - Leads Management', () => {
     await expect(leadsPage.tableRows).toHaveCount(1);
   });
 
-  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
-  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a lead with a
-  // known status and check the filter keeps it and drops it for another status.
-  test.fixme('admin can filter leads by status', async ({ page }) => {
+  // fixme: GET /leads ignores the status parameter, so the Status dropdown narrows nothing (#426).
+  test.fixme('admin can filter leads by status (#426)', async ({ page }) => {
+    const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
+    const contactedCompany = `${stamp} Contacted Co`;
+    const qualifiedCompany = `${stamp} Qualified Co`;
+    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    const headers = { Authorization: `Bearer ${token}` };
+    // An admin has to name the owner of a lead it creates; it owns these two itself.
+    const me = await page.request.get(`${API_BASE_URL}/users/me`, { headers });
+    expect(me.status(), 'current user').toBe(200);
+    const ownerId: number = (await me.json()).data.id;
+    for (const [company, status] of [
+      [contactedCompany, 'contacted'],
+      [qualifiedCompany, 'qualified'],
+    ]) {
+      const created = await page.request.post(`${API_BASE_URL}/leads`, {
+        headers,
+        data: {
+          first_name: 'Filter',
+          last_name: 'Lead',
+          email: `lead_${stamp}_${status}@example.com`,
+          company,
+          status,
+          owner_id: ownerId,
+        },
+      });
+      expect(created.status(), `seed ${status} lead`).toBe(201);
+    }
+    const contactedRow = leadsPage.tableRows.filter({ hasText: contactedCompany });
+    const qualifiedRow = leadsPage.tableRows.filter({ hasText: qualifiedCompany });
+
     await leadsPage.goto();
+    await leadsPage.searchLeads(stamp);
+    await expect(contactedRow).toHaveCount(1);
+    await expect(qualifiedRow).toHaveCount(1);
 
-    // Apply status filter (should complete without errors)
-    await leadsPage.filterByStatus('new');
-    await page.waitForTimeout(1000);
-
-    const filteredCount = await leadsPage.getLeadCount();
-    expect(filteredCount).toBeGreaterThanOrEqual(0);
+    await leadsPage.filterByStatus('qualified');
+    await expect(qualifiedRow).toBeVisible();
+    await expect(contactedRow).toHaveCount(0);
   });
 
   test('admin sees validation errors for invalid lead data', async ({ page }) => {

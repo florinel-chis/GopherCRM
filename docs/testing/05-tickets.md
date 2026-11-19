@@ -195,9 +195,9 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Known issue:** The 201 body has `customer: {"id":0,...}` — the handler responds with the
   in-memory struct and never re-reads with the `Customer` preload, and `json:"customer,omitempty"`
   on a non-pointer struct never omits. Harmless here only because the list is refetched.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can create a new
-  ticket successfully" is `test.fixme` (2026-09-23): it never selected a customer and its URL check
-  was always true. Needs the e2e API seeding helper for a customer.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can create a new
+  ticket successfully" (#402): seeds its own customer through the API, picks it in the Customer
+  field, and asserts the 201, the return to `/tickets` and the row with the new subject.
 
 ### TC-TICK-008 — Reject a create with missing required fields
 - **Priority:** P1
@@ -224,9 +224,9 @@ gating); where the two disagree, that disagreement gets its own case.
   (`internal/models/ticket.go:21`) and no length validation exists on either side, so the whole
   body round-trips. The detail page renders it with `white-space: pre-wrap`, preserving the
   paragraph breaks.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can handle ticket
-  with long description" is `test.fixme` (2026-09-23): it ended in `expect(true)` and never verified
-  the save. Needs a seeded customer.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can handle ticket
+  with long description" (#402): seeds its own customer, asserts the 201 and that
+  `GET /tickets/<id>` returns the description as typed. The detail-page rendering is not checked.
 
 ### TC-TICK-010 — The Status select on the create form is ignored
 - **Priority:** P0
@@ -364,10 +364,11 @@ gating); where the two disagree, that disagreement gets its own case.
   `{title, description, status, priority, assigned_to_id}` and returns **200**. A "Ticket updated
   successfully" snackbar appears and the app navigates to `/tickets` with the new subject and a
   "High" priority chip on the row.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can edit an existing
-  ticket" and "admin can update ticket priority" are `test.fixme` (2026-09-23): they edited row 0 (a
-  ticket they did not create), skipped silently on an empty list, and asserted nothing after saving.
-  Needs a seeded customer and the test's own ticket.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can edit an existing
+  ticket" and "admin can update ticket priority" (#402): each edits a ticket it seeded through the
+  API and asserts the 200 of the `PUT`; the first then finds the row under the new subject, the
+  second reads `priority: urgent` back with `GET /tickets/<id>`. The priority chip on the row and
+  the request body are not checked.
 
 ### TC-TICK-019 — Walk a ticket through open → in_progress → resolved
 - **Priority:** P1
@@ -382,9 +383,10 @@ gating); where the two disagree, that disagreement gets its own case.
   (`UpdateTicketRequest.Status`, `oneof=open in_progress resolved closed`) and only the
   reopen-from-closed rule in `ticket_service.go` Update constrains it. The detail header chip reads
   "Resolved" with the success colour.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can update ticket
-  status" is `test.fixme` (2026-09-23): it changed row 0's status without asserting anything.
-  Needs the test's own ticket.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can update ticket
+  status" (#402): edits a ticket it seeded from `open` straight to "Resolved" and asserts the 200 of
+  the `PUT` and `status: resolved` from `GET /tickets/<id>`. The intermediate "In Progress" step and
+  the detail header chip are not checked.
 
 ### TC-TICK-020 — A closed ticket cannot be reopened
 - **Priority:** P0
@@ -589,9 +591,9 @@ gating); where the two disagree, that disagreement gets its own case.
   GDPR erasure applied to users, customers and leads; in the same transaction the ticket's comment
   mail delivery records (#219) are hard-deleted (see TC-TICK-071). A subsequent `GET /tickets/<id>`
   returns 404.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can delete a ticket"
-  is `test.fixme` (2026-09-23): it deleted row 0 (not a ticket it created), was skipped on an empty
-  list, and asserted `true`. Rewrite on the test's own ticket and assert it disappears.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can delete a ticket"
+  (#402): deletes a ticket it seeded through the API from its list row, and asserts that the row is
+  gone and that `GET /tickets/<id>` returns 404.
 
 ### TC-TICK-031 — Cancelling the delete dialog leaves the ticket intact
 - **Priority:** P2
@@ -654,9 +656,10 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   `meta.total` count the resolved tickets only, and the footer shows that count. The empty
   `priority=` and `search=` are ignored. Choosing "All Statuses" again sends `status=` and restores
   the unfiltered list and total.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
-  status" is `test.fixme` (2026-09-23; it asserted `count >= 0`) until a frontend test ticket
-  rewrites it. The API behaviour is pinned by TC-TICK-059 and TC-TICK-063.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
+  status" (#402): seeds an open and a resolved ticket sharing a search token, searches the token,
+  chooses "Resolved" and asserts the resolved row stays and the open row is gone. Totals, the
+  footer and the reset to "All Statuses" are pinned at the API by TC-TICK-059 and TC-TICK-063.
 
 ### TC-TICK-034 — The Priority filter returns only matching tickets with the filtered total
 - **Priority:** P1
@@ -670,9 +673,10 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   the footer counting them; combined with a status choice both filters apply. Resetting to "All
   Priorities" sends `priority=`, which is ignored, and the unfiltered list and total return. Both
   selects reset `page` to 1, which is observable in the request.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
-  priority" is `test.fixme` (2026-09-23; it asserted `count >= 0`) until a frontend test ticket
-  rewrites it. The API behaviour is pinned by TC-TICK-059 and TC-TICK-063.
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can filter tickets by
+  priority" (#402): seeds a low and an urgent ticket sharing a search token, searches the token,
+  chooses "Urgent" and asserts the urgent row stays and the low row is gone. Totals, the footer and
+  the reset to "All Priorities" are pinned at the API by TC-TICK-059 and TC-TICK-063.
 
 ### TC-TICK-059 — Each filter alone and both together, per role, with filtered totals
 - **Priority:** P0
@@ -775,9 +779,9 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   `title LIKE ? OR description LIKE ? OR resolution LIKE ?` and `CountSearch` recounts, so the
   pagination footer agrees with the row count. Search also takes precedence over the plain sorted
   listing in the handler.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended; "admin can search
-  tickets" searched the literal string "ticket" and asserted `count >= 0`; it is `test.fixme` since
-  2026-09-23)
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can search tickets"
+  (#402): seeds a ticket whose subject carries a unique token and asserts that searching the token
+  leaves exactly one row.
 
 ### TC-TICK-036 — Search matches the description as well as the title
 - **Priority:** P2

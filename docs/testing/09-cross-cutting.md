@@ -662,13 +662,14 @@ into a sign-out test.
 - **Known issue:** FEATURES 3.8, 6.5 and 7.8 and gap G34 describe these as *client-side filters
   over the current page*. That is too generous: no list page filters the fetched rows at all — the
   only `.filter()` in `TaskList.tsx` (line 252) buckets tasks by day for the calendar view. The
-  E2E tests used to pass because they asserted `expect(count).toBeGreaterThanOrEqual(0)`, which
-  cannot fail (`admin-leads.spec.ts` "admin can filter leads by status", `admin-tasks.spec.ts` "admin
-  can filter tasks by status" / "by priority"). Since 2026-09-23 they are `test.fixme` until the
-  filters work. This no longer covers tickets: `GET /tickets` filters `status` and `priority`
-  server-side since #218 (FEATURES 5.5), and the `admin-tickets.spec.ts` "admin can filter tickets
-  by status" / "by priority" tests stay `test.fixme` only until a frontend test ticket rewrites
-  them with real assertions.
+  defects are filed per endpoint (#426 leads, #427 tasks, #428 users) and four browser cases wait
+  for them, each with a real assertion that the non-matching row is gone (#402):
+  `admin-leads.spec.ts` "admin can filter leads by status (#426)", `admin-tasks.spec.ts` "admin can
+  filter tasks by status (#427)" and "admin can filter tasks by priority (#427)",
+  `admin-users.spec.ts` "admin can filter users by role (#428)" are `test.fixme`. This
+  no longer covers tickets: `GET /tickets` filters `status` and `priority` server-side since #218
+  (FEATURES 5.5), and the `admin-tickets.spec.ts` "admin can filter tickets by status" / "by
+  priority" tests run against tickets they seed.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new). The existing filter
   tests should be tightened to assert the no-op explicitly, or the parameters implemented backend-side.
 
