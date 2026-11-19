@@ -64,6 +64,11 @@ command -v python3 > /dev/null || fail "python3 is required"
 command -v curl > /dev/null || fail "curl is required"
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/gophercrm-quote-pdf-chain.XXXXXX") || fail "cannot create a temporary directory"
+# One spelling of the directory for everything below. macOS's TMPDIR ends in a
+# slash, so mktemp answers ".../T//gophercrm-..."; the backend builds the
+# browser's paths with filepath.Join, which collapses the double slash, and
+# pgrep in pids_of_work would then never match the browser's command line.
+WORK=$(cd "$WORK" && pwd -P) || fail "cannot resolve the temporary directory"
 PROJECT="gophercrm-quote-pdf-chain-$$"
 BACKEND_IMAGE="$PROJECT-backend:chain"
 UI_IMAGE="$PROJECT-ui:chain"
