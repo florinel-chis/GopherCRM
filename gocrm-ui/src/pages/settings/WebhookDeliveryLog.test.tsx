@@ -185,6 +185,38 @@ describe('WebhookDeliveryLog', () => {
     await waitFor(() => expect(lastParams()).toMatchObject({ status: 'pending', offset: 0, limit: 20 }));
   });
 
+  it('moves to the last existing page when a later page comes back empty', async () => {
+    // Rows are pruned between the fetches: the third page is gone, and the
+    // total says the second page is now the last.
+    let pruned = false;
+    vi.mocked(webhooksApi.listDeliveries).mockImplementation(async (params) => {
+      if (params?.offset === 40) {
+        pruned = true;
+        return { rows: [], total: 25 };
+      }
+      return { rows, total: pruned ? 25 : 45 };
+    });
+    render(<WebhookDeliveryLog />);
+    await screen.findByText(/^1.20 of 45$/);
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await screen.findByText(/^21.40 of 45$/);
+    expect(dataRows()).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() =>
+      expect(webhooksApi.listDeliveries).toHaveBeenCalledWith(
+        expect.objectContaining({ offset: 40, limit: 20 }),
+      ),
+    );
+
+    // Not the first page: the last one that exists.
+    await waitFor(() => expect(lastParams()).toMatchObject({ offset: 20, limit: 20 }));
+    await waitFor(() => expect(screen.getByText(/^21.25 of 25$/)).toBeInTheDocument());
+    expect(dataRows()).toHaveLength(3);
+    expect(screen.queryByText('No deliveries match these filters.')).not.toBeInTheDocument();
+  });
+
   it('shows the empty state when no delivery matches', async () => {
     vi.mocked(webhooksApi.listDeliveries).mockResolvedValue({ rows: [], total: 0 });
     render(<WebhookDeliveryLog />);

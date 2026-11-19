@@ -867,6 +867,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Webhooks screen no longer shows an empty list after the last row of a later page is gone (#423).**
+  On Settings > Webhooks, deleting the only endpoint of the last page left the endpoints table on
+  that page: it showed "No webhook endpoints yet." and a pagination label such as "21-20 of 20"
+  while endpoints still existed. The delivery log did the same with "No deliveries match these
+  filters." when a later page came back empty (deliveries pruned, or their endpoint deleted, since
+  the page was opened). Both tables now move to the last page that exists when a fetched page is
+  empty while `meta.total` is above 0, show their empty-state text only when the total is 0, and
+  never hand the pagination control a page beyond the last. Frontend only: no API change.
+
 - **A mailed quote response link stops working when the quote's customer is erased (#395).**
   Erasing a customer left the response link of a quote email (#382) usable: the client could
   still open and answer a sent quote after the erasure. The erasure now stamps `used_at` (with
