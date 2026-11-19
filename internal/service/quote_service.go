@@ -221,7 +221,8 @@ func (s *quoteService) CreateWithPolicy(quote *models.Quote, actorID uint, polic
 			QuoteID:     quote.ID,
 			FromStatus:  nil,
 			ToStatus:    models.QuoteStatusDraft,
-			ChangedByID: actorID,
+			ChangedByID: &actorID,
+			Source:      models.QuoteChangeSourceStaff,
 			ChangedAt:   s.stamp(),
 		})
 	})
@@ -631,7 +632,8 @@ func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint
 			QuoteID:     id,
 			FromStatus:  &from,
 			ToStatus:    to,
-			ChangedByID: actorID,
+			ChangedByID: &actorID,
+			Source:      models.QuoteChangeSourceStaff,
 			ChangedAt:   now,
 		})
 	})

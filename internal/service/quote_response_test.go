@@ -291,7 +291,13 @@ func TestQuoteResponseDecision(t *testing.T) {
 			require.NotNil(t, last.FromStatus)
 			assert.Equal(t, models.QuoteStatusSent, *last.FromStatus)
 			assert.Equal(t, want, last.ToStatus)
-			assert.Equal(t, quote.OwnerID, last.ChangedByID, "the history row names the quote owner")
+			assert.Nil(t, last.ChangedByID, "the history row of a client answer has no user")
+			assert.Equal(t, models.QuoteChangeSourceClient, last.Source)
+			assert.Nil(t, last.ChangedBy, "no user is preloaded for a client answer")
+			for _, earlier := range history[:len(history)-1] {
+				assert.Equal(t, models.QuoteChangeSourceStaff, earlier.Source, "the staff rows read as before")
+				assert.NotNil(t, earlier.ChangedByID)
+			}
 			assert.WithinDuration(t, clock, last.ChangedAt, time.Millisecond)
 
 			rows := env.tokenRows(quote.ID)

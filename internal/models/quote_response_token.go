@@ -19,10 +19,9 @@ func IsQuoteResponseDecision(value string) bool {
 // QuoteResponseToken is the single-use credential behind the client response
 // link of a quote email (#382). Only the HMAC-SHA256 hash of the token is
 // stored; the plain value exists in the mailed link alone. A row is spent by
-// one conditional update that also requires its quote to be sent, and it is
-// the record that the client answered: the history row of the transition
-// names the quote owner, because quote_status_changes.changed_by_id must be a
-// user. Like quote_status_changes the table carries no foreign key and no
+// one conditional update that also requires its quote to be sent, and it
+// records which link the client answered with; the history row of the
+// transition has no user and source client (#400). Like quote_status_changes the table carries no foreign key and no
 // soft delete, and it holds a hash, ids and timestamps only, so erasure
 // keeps the rows; it stamps used_at on the unused ones of the quotes
 // addressed to an erased customer, which kills a link mailed earlier (#395).

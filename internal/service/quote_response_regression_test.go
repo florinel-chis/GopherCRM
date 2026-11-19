@@ -89,7 +89,9 @@ func runQuoteResponseConcurrencyScenario(t *testing.T, db *gorm.DB) {
 			require.NotNil(t, last.FromStatus)
 			assert.Equal(t, models.QuoteStatusSent, *last.FromStatus)
 			assert.Equal(t, wantStatus, last.ToStatus)
-			assert.Equal(t, quote.OwnerID, last.ChangedByID)
+			assert.Nil(t, last.ChangedByID, "the committed row of a client answer has no user")
+			assert.Equal(t, models.QuoteChangeSourceClient, last.Source)
+			assert.Nil(t, last.ChangedBy)
 
 			rows = env.tokenRows(quote.ID)
 			require.Len(t, rows, 1)

@@ -200,6 +200,7 @@ func TestQuoteCreateLinksAndDefaults(t *testing.T) {
 	assert.Nil(t, first["from_status"])
 	assert.Equal(t, "draft", first["to_status"])
 	assert.Equal(t, float64(env.admin.ID), first["changed_by_id"])
+	assert.Equal(t, "staff", first["source"])
 	changedBy, _ := first["changed_by"].(map[string]interface{})
 	require.NotNil(t, changedBy)
 	assert.Equal(t, float64(env.admin.ID), changedBy["id"])

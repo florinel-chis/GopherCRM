@@ -91,8 +91,8 @@ func TestWebhookMigrationFiles(t *testing.T) {
 		assert.Contains(t, tag, fragment, field)
 	}
 
-	// The newest-migration and latestMigrationVersion assertions moved to
-	// TestQuoteResponseTokensMigrationFiles (#382).
+	// The newest-migration and latestMigrationVersion assertions moved on:
+	// TestQuoteHistorySourceMigrationFiles holds them (#400).
 	version, err := strconv.Atoi(strings.SplitN(webhooksMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, webhooksVersion, version)

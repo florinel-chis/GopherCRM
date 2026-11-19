@@ -351,11 +351,20 @@ type QuoteLinePatch struct {
 	TaxRateBP      *int64
 }
 
+// Who wrote a row of a quote's status history: a signed-in user, or the client
+// answering through the response link of the quote email (#400).
+const (
+	QuoteChangeSourceStaff  = "staff"
+	QuoteChangeSourceClient = "client"
+)
+
 // QuoteStatusChange is one row of a quote's status history: written in the
 // same transaction as the create (from_status NULL) or the transition, never
 // updated, never deleted with the quote. Like deal_stage_changes it carries no
 // foreign key to its quote; its id is also the monotonic marker the email
 // stamp compares against to detect a revision that committed during the send.
+// A row written by the client's answer through the response link has no
+// acting user: changed_by_id is NULL and source is client (#400).
 type QuoteStatusChange struct {
 	// History row id, increasing in write order.
 	ID uint `gorm:"primarykey" json:"id" example:"77"`
@@ -366,14 +375,20 @@ type QuoteStatusChange struct {
 	FromStatus *QuoteStatus `gorm:"type:varchar(20)" json:"from_status" extensions:"x-nullable" example:"draft"`
 	// Status after the change.
 	ToStatus QuoteStatus `gorm:"not null;type:varchar(20)" json:"to_status" example:"sent"`
-	// User who made the change.
-	ChangedByID uint  `gorm:"not null" json:"changed_by_id" example:"7"`
+	// User who made the change; null when the client answered through the
+	// response link (source client).
+	ChangedByID *uint `json:"changed_by_id" extensions:"x-nullable" example:"7"`
 	ChangedBy   *User `gorm:"foreignKey:ChangedByID" json:"-"`
+	// Who made the change: staff (a signed-in user, named by changed_by_id)
+	// or client (the client's answer through the response link of the quote
+	// email, which has no user).
+	Source string `gorm:"type:varchar(20);not null;default:staff" json:"source" enums:"staff,client" example:"staff"`
 	// When the change was written (UTC, RFC 3339).
 	ChangedAt time.Time `gorm:"not null" json:"changed_at" example:"2026-10-02T10:00:00Z"`
 }
 
-// MarshalJSON replaces the preloaded user by a summary without the email.
+// MarshalJSON replaces the preloaded user by a summary without the email. A
+// client answer has no user, so its changed_by is omitted.
 func (c QuoteStatusChange) MarshalJSON() ([]byte, error) {
 	type plain QuoteStatusChange
 	out := struct {
@@ -392,8 +407,9 @@ func (c QuoteStatusChange) MarshalJSON() ([]byte, error) {
 // only and is never instantiated.
 type QuoteStatusChangeJSON struct {
 	QuoteStatusChange
-	// Summary of the acting user (no email). Omitted when that account no
-	// longer exists.
+	// Summary of the acting user (no email). Omitted when the client
+	// answered through the response link (source client) and when that
+	// account no longer exists.
 	ChangedBy *QuoteOwnerSummary `json:"changed_by,omitempty"`
 }
 

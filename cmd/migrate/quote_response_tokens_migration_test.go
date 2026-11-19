@@ -32,8 +32,8 @@ const (
 
 // TestQuoteResponseTokensMigrationFiles needs no database: the pair exists
 // with its headers, creates the table only when missing with the model's
-// columns and index names, drops only it, is the newest migration of the
-// directory, and latestMigrationVersion names it.
+// columns and index names, and drops only it. It is no longer the newest
+// migration (#400).
 func TestQuoteResponseTokensMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, quoteResponseTokensMigrationName+".up.sql"))
@@ -73,21 +73,12 @@ func TestQuoteResponseTokensMigrationFiles(t *testing.T) {
 	}
 	assert.Equal(t, quoteResponseTokensTable, models.QuoteResponseToken{}.TableName())
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestWebhookMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, quoteResponseTokensMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestQuoteHistorySourceMigrationFiles (#400).
+	version, err := strconv.Atoi(strings.SplitN(quoteResponseTokensMigrationName, "_", 2)[0])
 	require.NoError(t, err)
 	assert.Equal(t, quoteResponseTokensVersion, version)
-	assert.Equal(t, quoteResponseTokensVersion, latestMigrationVersion)
+	assert.Less(t, quoteResponseTokensVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, quoteResponseTokensVersion, quoteResponseTokensPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")

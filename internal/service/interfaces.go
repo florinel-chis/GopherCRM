@@ -506,7 +506,8 @@ type QuoteService interface {
 	// RespondPublic spends the token and moves the quote from sent to
 	// accepted (decision accept) or rejected (decline) with closed_at and one
 	// history row, in one transaction; a failure after the claim rolls it
-	// back and the link stays usable. The history row names the quote owner.
+	// back and the link stays usable. The history row has no user and source
+	// client.
 	// A decision outside the two is apperrors.ErrValidation; every other
 	// refusal is apperrors.ErrQuoteResponseRejected.
 	RespondPublic(token, decision string) (*models.QuotePublicView, error)

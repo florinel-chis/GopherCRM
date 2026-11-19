@@ -240,12 +240,6 @@ included. Found by reading the code path unless noted.
   - the assignee and customer lookups of `POST /tasks` and `PUT /tasks/{id}` answer 404;
   - the customer lookup of `POST /tickets` answers 404, and the assignee lookups of
     `POST /tickets` and `PUT /tickets/{id}` answer 400.
-- **A client's answer to a quote is attributed to the quote owner in the history (#382).**
-  `quote_status_changes.changed_by_id` is NOT NULL with a foreign key to `users`, so the row a
-  client writes through the response link names the quote owner; that the client answered is
-  recorded on the `quote_response_tokens` row (`used_at`, `decision`), which no endpoint exposes.
-  `GET /quotes/{id}/history` therefore shows a client acceptance as the owner's. The follow-up
-  ticket decides how the history labels it (a nullable actor column or a join on the token row).
 - **A quote email in flight during the erasure of its customer keeps its response link (#395).**
   The erasure stamps the unused response tokens of the erased customer's quotes, reading their ids
   from the snapshot of its transaction. A token minted after that snapshot, or by a

@@ -244,7 +244,7 @@ func (e *quoteTestEnv) newQuote(status models.QuoteStatus, lines int, opts ...fu
 		}
 		require.NoError(e.t, e.db.Model(&models.Quote{}).Where("id = ?", quote.ID).Updates(updates).Error)
 		require.NoError(e.t, e.repo.CreateStatusChange(&models.QuoteStatusChange{
-			QuoteID: quote.ID, FromStatus: &from, ToStatus: status, ChangedByID: e.owner.ID, ChangedAt: now,
+			QuoteID: quote.ID, FromStatus: &from, ToStatus: status, ChangedByID: &e.owner.ID, ChangedAt: now,
 		}))
 	}
 	return e.quote(quote.ID)
@@ -526,7 +526,10 @@ func TestQuoteStatusTransitionMatrix(t *testing.T) {
 				require.NotNil(t, last.FromStatus)
 				assert.Equal(t, from, *last.FromStatus)
 				assert.Equal(t, to, last.ToStatus)
-				assert.Equal(t, env.owner.ID, last.ChangedByID)
+				if assert.NotNil(t, last.ChangedByID, "a staff transition names the acting user") {
+					assert.Equal(t, env.owner.ID, *last.ChangedByID)
+				}
+				assert.Equal(t, models.QuoteChangeSourceStaff, last.Source)
 				switch {
 				case to == models.QuoteStatusSent:
 					assert.NotNil(t, committed.SentAt, "sent sets sent_at")
@@ -635,6 +638,7 @@ func TestQuoteStatusTransitionMatrix(t *testing.T) {
 			if assert.NotNil(t, row.ChangedBy, "the acting user is preloaded") {
 				assert.Equal(t, env.owner.ID, row.ChangedBy.ID)
 			}
+			assert.Equal(t, models.QuoteChangeSourceStaff, row.Source)
 		}
 		assert.Equal(t, []models.QuoteStatus{"draft", "sent", "draft", "sent", "accepted"}, tos)
 		assert.Equal(t, []string{"<nil>", "draft", "sent", "draft", "sent"}, froms)
@@ -659,7 +663,9 @@ func TestQuoteCreateWritesQuoteAndHistoryTogether(t *testing.T) {
 	require.Len(t, history, 1)
 	assert.Nil(t, history[0].FromStatus)
 	assert.Equal(t, models.QuoteStatusDraft, history[0].ToStatus)
-	assert.Equal(t, env.owner.ID, history[0].ChangedByID)
+	require.NotNil(t, history[0].ChangedByID)
+	assert.Equal(t, env.owner.ID, *history[0].ChangedByID)
+	assert.Equal(t, models.QuoteChangeSourceStaff, history[0].Source)
 	assert.Equal(t, models.QuoteStatusDraft, quote.Status)
 	assert.Zero(t, quote.TotalCents)
 

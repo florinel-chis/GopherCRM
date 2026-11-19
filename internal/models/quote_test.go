@@ -184,11 +184,23 @@ func TestQuoteJSONAddsTheNumberAndSummaries(t *testing.T) {
 	assert.NotContains(t, string(encoded), "valid_until", "a nil date is omitted")
 	assert.NotContains(t, string(encoded), `"customer"`)
 
-	changedBy := QuoteStatusChange{ID: 1, QuoteID: 42, ToStatus: QuoteStatusDraft, ChangedByID: 9, ChangedAt: time.Now(),
+	actorID := uint(9)
+	changedBy := QuoteStatusChange{ID: 1, QuoteID: 42, ToStatus: QuoteStatusDraft, ChangedByID: &actorID, Source: QuoteChangeSourceStaff, ChangedAt: time.Now(),
 		ChangedBy: &User{BaseModel: BaseModel{ID: 9}, FirstName: "Sales", LastName: "Rep", Email: "rep@example.com"}}
 	encoded, err = json.Marshal(changedBy)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), `"changed_by":{"id":9,"first_name":"Sales","last_name":"Rep"}`)
 	assert.Contains(t, string(encoded), `"from_status":null`)
+	assert.Contains(t, string(encoded), `"changed_by_id":9`)
+	assert.Contains(t, string(encoded), `"source":"staff"`)
 	assert.NotContains(t, string(encoded), "rep@example.com")
+
+	// A client answer through the response link has no user (#400).
+	sent := QuoteStatusSent
+	encoded, err = json.Marshal(QuoteStatusChange{ID: 2, QuoteID: 42, FromStatus: &sent, ToStatus: QuoteStatusAccepted,
+		Source: QuoteChangeSourceClient, ChangedAt: time.Now()})
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"changed_by_id":null`)
+	assert.Contains(t, string(encoded), `"source":"client"`)
+	assert.NotContains(t, string(encoded), `"changed_by":`, "a client answer carries no user summary")
 }
