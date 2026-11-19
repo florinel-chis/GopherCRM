@@ -1,7 +1,9 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { faker } from '@faker-js/faker';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { TasksPage } from '../pages/tasks.page';
 import { generateTaskData } from '../fixtures/admin-user';
+import { API_BASE_URL } from '../helpers/env';
 
 test.describe('Admin - Tasks Management', () => {
   let adminAuth: AdminAuthHelper;
@@ -111,28 +113,61 @@ test.describe('Admin - Tasks Management', () => {
     await expect(tasksPage.tableRows).toHaveCount(1);
   });
 
-  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
-  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a task with a
-  // known value and check the filter keeps it and drops it for another value.
-  test.fixme('admin can filter tasks by status', async ({ page }) => {
-    await tasksPage.goto();
-    await tasksPage.filterByStatus('pending');
-    await page.waitForTimeout(1000);
+  // Seeds a task owned by the signed-in admin through the API. Create always
+  // yields status `pending`; another status is reached by an update.
+  const seedTask = async (page: Page, title: string, options: { priority?: string; status?: string } = {}) => {
+    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    const headers = { Authorization: `Bearer ${token}` };
+    const me = await page.request.get(`${API_BASE_URL}/users/me`, { headers });
+    expect(me.status(), 'current user').toBe(200);
+    const created = await page.request.post(`${API_BASE_URL}/tasks`, {
+      headers,
+      data: { title, priority: options.priority ?? 'medium', assigned_to_id: (await me.json()).data.id },
+    });
+    expect(created.status(), 'seed task').toBe(201);
+    if (options.status) {
+      const moved = await page.request.put(`${API_BASE_URL}/tasks/${(await created.json()).data.id}`, {
+        headers,
+        data: { status: options.status },
+      });
+      expect(moved.status(), 'seed task status').toBe(200);
+    }
+  };
 
-    const filteredCount = await tasksPage.getTaskCount();
-    expect(filteredCount).toBeGreaterThanOrEqual(0);
+  // fixme: GET /tasks ignores the status parameter, so the Status dropdown narrows nothing (#427).
+  test.fixme('admin can filter tasks by status (#427)', async ({ page }) => {
+    const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
+    const pendingTitle = `${stamp} still pending`;
+    const completedTitle = `${stamp} already completed`;
+    await seedTask(page, pendingTitle);
+    await seedTask(page, completedTitle, { status: 'completed' });
+
+    await tasksPage.goto();
+    await tasksPage.searchTasks(stamp);
+    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(1);
+    await expect(tasksPage.taskRow(completedTitle)).toHaveCount(1);
+
+    await tasksPage.filterByStatus('completed');
+    await expect(tasksPage.taskRow(completedTitle)).toBeVisible();
+    await expect(tasksPage.taskRow(pendingTitle)).toHaveCount(0);
   });
 
-  // fixme: asserted `count >= 0`, which cannot fail. The filter itself is broken: the
-  // backend ignores the parameter (catalog TC-XCUT-038). Once it works, create a task with a
-  // known value and check the filter keeps it and drops it for another value.
-  test.fixme('admin can filter tasks by priority', async ({ page }) => {
-    await tasksPage.goto();
-    await tasksPage.filterByPriority('high');
-    await page.waitForTimeout(1000);
+  // fixme: GET /tasks ignores the priority parameter, so the Priority dropdown narrows nothing (#427).
+  test.fixme('admin can filter tasks by priority (#427)', async ({ page }) => {
+    const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
+    const lowTitle = `${stamp} can wait`;
+    const highTitle = `${stamp} cannot wait`;
+    await seedTask(page, lowTitle, { priority: 'low' });
+    await seedTask(page, highTitle, { priority: 'high' });
 
-    const filteredCount = await tasksPage.getTaskCount();
-    expect(filteredCount).toBeGreaterThanOrEqual(0);
+    await tasksPage.goto();
+    await tasksPage.searchTasks(stamp);
+    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(1);
+    await expect(tasksPage.taskRow(highTitle)).toHaveCount(1);
+
+    await tasksPage.filterByPriority('high');
+    await expect(tasksPage.taskRow(highTitle)).toBeVisible();
+    await expect(tasksPage.taskRow(lowTitle)).toHaveCount(0);
   });
 
   test('admin sees validation errors for invalid task data', async ({ page }) => {

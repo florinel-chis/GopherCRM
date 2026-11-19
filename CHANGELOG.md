@@ -745,6 +745,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The eleven skipped ticket browser cases run, each against a ticket it seeds (#402).** The
+  `test.fixme` cases in `admin-tickets.spec.ts` (create, edit, view, delete, search, status and
+  priority filter, navigation, status and priority update, long description) seed their own
+  customer or ticket through the API, address it by a unique subject and assert the outcome: the
+  status of the save, the row in the list, or the stored value read back from the API. The four
+  filter cases for leads, tasks and users stay `test.fixme` with a real assertion and the number
+  of the defect they wait for in the title: `GET /leads` ignores `status` (#426), `GET /tasks`
+  ignores `status` and `priority` (#427), `GET /users` ignores `role` (#428). Test code only.
+
 - **The leads, tasks, tickets and users E2E page objects act on the row that matches a value
   unique to the test (#401).** Edit, view and delete take that value (lead company, task title,
   ticket subject, user email), search the list for it and click the action icon through a

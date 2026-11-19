@@ -182,10 +182,10 @@ an admin through the app.
 | `aeo-providers.spec.ts` | 5 | AEO — five-provider connection persistence/clearing, real Anthropic/Gemini SDK generation and tracking, hot model/endpoint edits, Gemini 503 retries/errors, admin/staff/customer permissions |
 | `login.spec.ts` | 11 | Auth — render, success, wrong password, unknown user, empty and invalid input, password visibility, register link, Enter key, protected routes, unauthenticated redirect |
 | `registration.spec.ts` | 18 | Auth — success and redirect, validation (empty, email format, password complexity, mismatch), duplicate email, visibility toggle, Enter key, loading state, field preservation, navigation, network error, disabled switch (no sign-up link, notice instead of form, API 403) |
-| `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, status and priority filters |
-| `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, status and priority filters, minimal data |
-| `admin-users.spec.ts` | 12 | Users — list, create, edit, view, delete, search, role filter |
-| `admin-leads.spec.ts` | 11 | Leads — list, create, edit, view, delete, status filter, search, minimal data |
+| `admin-tickets.spec.ts` | 14 | Tickets — list, create, view, edit, delete, search, status and priority filters, status and priority updates, long description; each case acts on a customer or ticket it seeds through the API |
+| `admin-tasks.spec.ts` | 13 | Tasks — list, create, edit, view, delete, search, minimal data; the status and priority filter cases are `fixme` until `GET /tasks` reads the parameters (#427) |
+| `admin-users.spec.ts` | 14 | Users — list, create, edit, view, delete, search; the role filter case is `fixme` until `GET /users` reads the parameter (#428) |
+| `admin-leads.spec.ts` | 12 | Leads — list, create, edit, view, delete, search, minimal data; the status filter case is `fixme` until `GET /leads` reads the parameter (#426) |
 | `admin-customers.spec.ts` | 10 | Customers — list, create, edit, view, delete, search, validation, cancel, minimal data, duplicate email |
 | `admin-companies.spec.ts` | 8 | Companies — list, create with all fields, validation, duplicate domain 409 on the field, edit, search, link a customer through the customer form and see it on both detail pages, delete and the customer falls back to its text company |
 | `admin-deals.spec.ts` | 8 | Deals — list, create for a company with the formatted amount on both detail pages, validation, stage moves with the history growing, lost with a required reason (closed_at and reason shown, cleared on reopening), edit title and amount, stage filter, delete |

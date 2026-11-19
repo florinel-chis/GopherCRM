@@ -110,6 +110,17 @@ export class TicketsPage {
     return await responsePromise;
   }
 
+  /** Saves the edit form and returns the answer to the PUT for that ticket. */
+  async saveAndWaitForUpdate(ticketId: number) {
+    const responsePromise = this.page.waitForResponse(
+      response =>
+        new URL(response.url()).pathname.endsWith(`/tickets/${ticketId}`) &&
+        response.request().method() === 'PUT'
+    );
+    await this.saveButton.click();
+    return await responsePromise;
+  }
+
   /**
    * Narrows the list to one record and returns its row.
    *

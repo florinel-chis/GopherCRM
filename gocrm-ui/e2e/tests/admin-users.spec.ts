@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { faker } from '@faker-js/faker';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { UsersPage } from '../pages/users.page';
 import { generateUserData } from '../fixtures/admin-user';
@@ -108,26 +109,33 @@ test.describe('Admin - Users Management', () => {
     await expect(usersPage.tableRows).toHaveCount(1);
   });
 
-  // fixme: asserted `count >= 1`, which passes whatever the filter does. The backend
-  // ignores the role parameter (catalog TC-XCUT-038). Once it works, check that the
-  // filter keeps a user of that role and drops a user of another role.
-  test.fixme('admin can filter users by role', async ({ page }) => {
-    const salesUserData = { ...generateUserData(), role: 'sales' };
+  // fixme: GET /users ignores the role parameter, so the Role dropdown narrows nothing (#428).
+  test.fixme('admin can filter users by role (#428)', async ({ page }) => {
+    const stamp = `${Date.now()}${faker.string.alphanumeric(6)}`;
+    const salesEmail = `sales_${stamp}@example.com`;
+    const supportEmail = `support_${stamp}@example.com`;
+    const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
+    for (const [email, role] of [
+      [salesEmail, 'sales'],
+      [supportEmail, 'support'],
+    ]) {
+      const created = await page.request.post(`${API_BASE_URL}/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+        data: { email, password: 'TempPass123!', first_name: 'Filter', last_name: 'User', role },
+      });
+      expect(created.status(), `seed ${role} user`).toBe(201);
+    }
+    const salesRow = usersPage.tableRows.filter({ hasText: salesEmail });
+    const supportRow = usersPage.tableRows.filter({ hasText: supportEmail });
 
     await usersPage.goto();
-    await usersPage.clickNewUser();
-    await usersPage.fillUserForm({
-      ...salesUserData,
-      confirmPassword: salesUserData.password
-    });
-    await usersPage.saveAndWaitForResponse();
+    await usersPage.searchUsers(stamp);
+    await expect(salesRow).toHaveCount(1);
+    await expect(supportRow).toHaveCount(1);
 
-    await usersPage.goto();
     await usersPage.filterByRole('sales');
-    await page.waitForTimeout(1000);
-
-    const filteredCount = await usersPage.getUserCount();
-    expect(filteredCount).toBeGreaterThanOrEqual(1);
+    await expect(salesRow).toBeVisible();
+    await expect(supportRow).toHaveCount(0);
   });
 
   test('admin sees validation errors for invalid user data', async ({ page }) => {
