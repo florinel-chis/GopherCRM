@@ -31,6 +31,9 @@ const (
 	// and hidden from the generic /configurations endpoints.
 	SettingsSSOManage = "settings.sso_manage"
 
+	// AuditSignInsView opens the sign-in audit log (GET /audit/sign-ins).
+	AuditSignInsView = "audit.sign_ins_view"
+
 	LeadsView           = "leads.view"
 	LeadsCreate         = "leads.create"
 	LeadsUpdate         = "leads.update"
@@ -155,6 +158,9 @@ var catalogue = []Node{
 		leaf(SettingsView, "View settings"),
 		leaf(SettingsUpdate, "Change settings"),
 		leaf(SettingsSSOManage, "View and change single sign-on settings"),
+	),
+	group("audit", "Audit",
+		leaf(AuditSignInsView, "View the sign-in audit log"),
 	),
 	group("leads", "Leads",
 		ownLeaf(LeadsView, "View leads"),

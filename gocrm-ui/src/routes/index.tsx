@@ -634,6 +634,20 @@ export const router = createBrowserRouter([
           },
         ],
       },
+      {
+        // The sign-in audit log (#455).
+        element: (
+          <ProtectedRoute requiredPermission="audit.sign_ins_view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/sign-in-audit',
+            lazy: () => import('@/pages/settings/SignInAudit'),
+          },
+        ],
+      },
       // The dashboard above, the profile and the caller's own API keys need no
       // key: every signed-in user reaches them.
       {

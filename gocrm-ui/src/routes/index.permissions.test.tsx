@@ -66,6 +66,7 @@ vi.mock('@/pages/settings/RoleList', () => ({ Component: () => <div>Role List Pa
 vi.mock('@/pages/settings/RoleEditor', () => ({ Component: () => <div>Role Editor Page</div> }));
 vi.mock('@/pages/settings/Webhooks', () => ({ Component: () => <div>Webhooks Page</div> }));
 vi.mock('@/pages/settings/SSOSettings', () => ({ Component: () => <div>SSO Settings Page</div> }));
+vi.mock('@/pages/settings/SignInAudit', () => ({ Component: () => <div>Sign-in Audit Page</div> }));
 
 import { router } from './index';
 
@@ -185,5 +186,16 @@ describe('routes', () => {
     // The settings read key does not stand in for it.
     signedInWith(customPermissions('settings.view'));
     expect(await landOn('/settings/sso', 'Access Denied')).toBe('/unauthorized');
+  }, 120000);
+
+  it('open the sign-in audit only with audit.sign_ins_view', async () => {
+    signedInWith(customPermissions('audit.sign_ins_view'));
+    expect(await landOn('/settings/sign-in-audit', 'Sign-in Audit Page')).toBe(
+      '/settings/sign-in-audit',
+    );
+
+    // The single sign-on settings key does not stand in for it.
+    signedInWith(customPermissions('settings.sso_manage'));
+    expect(await landOn('/settings/sign-in-audit', 'Access Denied')).toBe('/unauthorized');
   }, 120000);
 });

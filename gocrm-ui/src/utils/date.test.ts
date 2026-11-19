@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DATE_FALLBACK, formatDate, formatDistance, toDate } from './date';
+import { DATE_FALLBACK, formatDate, formatDistance, localDateTimeToUTC, toDate } from './date';
 
 describe('toDate', () => {
   it('returns null for missing values', () => {
@@ -59,5 +59,19 @@ describe('formatDistance', () => {
     expect(formatDistance(null)).toBe(DATE_FALLBACK);
     expect(formatDistance('not-a-date')).toBe(DATE_FALLBACK);
     expect(formatDistance(undefined, '')).toBe('');
+  });
+});
+
+describe('localDateTimeToUTC', () => {
+  it('converts a datetime-local value to the same instant in UTC, whole seconds', () => {
+    const local = '2026-11-20T09:30';
+    expect(localDateTimeToUTC(local)).toBe(
+      new Date(2026, 10, 20, 9, 30).toISOString().replace('.000Z', 'Z'),
+    );
+  });
+
+  it('answers undefined for an empty or unparseable value', () => {
+    expect(localDateTimeToUTC('')).toBeUndefined();
+    expect(localDateTimeToUTC('not a date')).toBeUndefined();
   });
 });

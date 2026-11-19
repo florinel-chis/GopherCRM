@@ -824,6 +824,9 @@ type AuthAuditRepository interface {
 	// oldest id first (a plain read of the ids, then a delete by primary key),
 	// and returns how many it deleted.
 	PruneCreatedBefore(before time.Time, limit int) (int64, error)
+	// List returns one page of the rows matching filter, created_at
+	// descending then id descending, and the number of matching rows.
+	List(filter AuthAuditFilter, offset, limit int) ([]models.AuthAuditLog, int64, error)
 }
 
 type APIKeyRepository interface {

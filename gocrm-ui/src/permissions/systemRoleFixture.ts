@@ -15,6 +15,7 @@ export const systemRolePermissions: Record<SystemRole, Permission[]> = {
     { key: 'assignment.customer_assignee', scope: 'all' },
     { key: 'assignment.form_owner', scope: 'all' },
     { key: 'assignment.ticket_assignee', scope: 'all' },
+    { key: 'audit.sign_ins_view', scope: 'all' },
     { key: 'automation.rules_manage', scope: 'all' },
     { key: 'automation.runs_cancel', scope: 'all' },
     { key: 'automation.runs_view', scope: 'all' },

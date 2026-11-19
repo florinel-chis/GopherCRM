@@ -624,6 +624,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupAutomationRoutes(protected, automationHandler)
 		handler.SetupNotificationRoutes(protected, notificationHandler)
 		handler.SetupWebhookRoutes(protected, webhookHandler)
+		handler.SetupAuthAuditRoutes(protected, handler.NewAuthAuditLogHandler(service.NewAuthAuditLogService(authAuditRepo)))
 
 		protectedAuth := protected.Group("/auth")
 		{

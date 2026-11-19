@@ -160,6 +160,9 @@ var RouteKeys = map[string]RouteKey{
 	"GET /settings/sso":                      key(SettingsSSOManage),
 	"PUT /settings/sso":                      key(SettingsSSOManage),
 
+	// sign-in audit
+	"GET /audit/sign-ins": key(AuditSignInsView),
+
 	// dashboard
 	"GET /dashboard/stats":               key(DashboardView),
 	"GET /dashboard/leads-by-status":     key(DashboardView),

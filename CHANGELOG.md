@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sign-in audit API and screen (#455).** `GET /api/v1/audit/sign-ins` reads the sign-in audit
+  log, newest first, paginated, filtered by method, outcome, reason, user id and a from/to range;
+  an unknown filter value is a 400. It is guarded by the new permission `audit.sign_ins_view`,
+  which among the system roles only admin holds (custom roles may hold it). Settings > Sign-in
+  audit (`/settings/sign-in-audit`) shows the rows with the same filters, and is listed and
+  opened only with that permission.
 - **Sign-in audit log (#454).** A new `auth_audit_log` table (migration
   `20261124120000_add_auth_audit_log`, and AutoMigrate) records one pseudonymous row per password
   sign-in, single sign-on callback and refresh, and per refused `ApiKey` credential: the method,

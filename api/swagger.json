@@ -3262,6 +3262,249 @@
                 }
             }
         },
+        "/audit/sign-ins": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh or failed API-key authentication: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network and the user-agent family. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.\nFilters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nPermission: audit.sign_ins_view (among the system roles, admin only).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "List the sign-in audit log",
+                "parameters": [
+                    {
+                        "minimum": 0,
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size, capped at 100",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "api_key",
+                            "oidc",
+                            "password",
+                            "refresh"
+                        ],
+                        "type": "string",
+                        "description": "Only rows of this method (unknown value: 400)",
+                        "name": "method",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "refused",
+                            "success"
+                        ],
+                        "type": "string",
+                        "description": "Only rows with this outcome (unknown value: 400)",
+                        "name": "outcome",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "account_erased",
+                            "account_inactive",
+                            "account_locked",
+                            "claims_invalid",
+                            "customer_login_role",
+                            "discovery_failed",
+                            "email_missing",
+                            "email_taken",
+                            "group_overage",
+                            "groups_malformed",
+                            "groups_unavailable",
+                            "id_token_invalid",
+                            "id_token_missing",
+                            "identity_mismatch",
+                            "identity_taken",
+                            "internal_error",
+                            "invalid_credentials",
+                            "issuer_changed",
+                            "issuer_invalid",
+                            "key_expired",
+                            "key_invalid",
+                            "key_revoked",
+                            "last_admin",
+                            "no_mapping_match",
+                            "nonce_mismatch",
+                            "not_configured",
+                            "password_changed",
+                            "role_missing",
+                            "roles_malformed",
+                            "sso_account",
+                            "sso_disabled",
+                            "state_invalid",
+                            "subject_invalid",
+                            "token_exchange_failed",
+                            "token_invalid",
+                            "unavailable",
+                            "userinfo_subject_mismatch"
+                        ],
+                        "type": "string",
+                        "description": "Only rows with this reason code (unknown value, case included: 400)",
+                        "name": "reason",
+                        "in": "query"
+                    },
+                    {
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Only rows of this user (positive integer; otherwise 400)",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only rows created at or after this RFC 3339 date-time (otherwise 400)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Only rows created before this RFC 3339 date-time; must be after from (otherwise 400)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Sign-in audit rows retrieved successfully",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/internal_handler.AuthAuditEntryResponse"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIMeta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "VALIDATION_ERROR - method, outcome or reason is unknown, user_id is not a positive integer, from or to is not RFC 3339, or from is not before to (error.details keyed by the parameter, to for the range; the value is not echoed)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "403": {
+                        "description": "FORBIDDEN: the caller does not hold audit.sign_ins_view (Insufficient permissions)",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "429": {
+                        "description": "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "INTERNAL_ERROR - unexpected failure; the cause is never echoed",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/auth/change-password": {
             "post": {
                 "security": [
@@ -33638,6 +33881,90 @@
                     "description": "The user who becomes the owner. Required and not 0 (400\nVALIDATION_ERROR); must name an active admin or sales user (400\nINVALID_REFERENCE otherwise), even when it is the current owner.",
                     "type": "integer",
                     "example": 9
+                }
+            }
+        },
+        "internal_handler.AuthAuditEntryResponse": {
+            "type": "object",
+            "properties": {
+                "attempt_id": {
+                    "description": "The single sign-on login attempt of a callback; null otherwise.",
+                    "type": "integer",
+                    "example": 3
+                },
+                "claim_groups": {
+                    "description": "The groups claim values used for the role mapping; null when not reached.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "claim_roles": {
+                    "description": "The roles claim values used for the role mapping; null when not reached.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "client_network": {
+                    "description": "The client's /24 (IPv4) or /48 (IPv6) network; empty when unknown.",
+                    "type": "string",
+                    "example": "203.0.113.0/24"
+                },
+                "created_at": {
+                    "description": "UTC time of the outcome (RFC 3339).",
+                    "type": "string",
+                    "example": "2026-11-18T09:00:00Z"
+                },
+                "id": {
+                    "description": "Row id.",
+                    "type": "integer",
+                    "example": 42
+                },
+                "method": {
+                    "description": "How the caller tried to sign in.",
+                    "type": "string",
+                    "enum": [
+                        "password",
+                        "oidc",
+                        "refresh",
+                        "api_key"
+                    ],
+                    "example": "password"
+                },
+                "outcome": {
+                    "description": "Whether the sign-in succeeded.",
+                    "type": "string",
+                    "enum": [
+                        "success",
+                        "refused"
+                    ],
+                    "example": "refused"
+                },
+                "reason": {
+                    "description": "The stable reason code of a refusal; empty on success.",
+                    "type": "string",
+                    "example": "invalid_credentials"
+                },
+                "request_id": {
+                    "description": "The request id of the sign-in request; empty when none was usable.",
+                    "type": "string",
+                    "example": "3f2a9c1e-5b7d-4e2a-9c1e-5b7d4e2a9c1e"
+                },
+                "subject_ref": {
+                    "description": "hex(HMAC-SHA256) of a refused single sign-on issuer and subject; null otherwise.",
+                    "type": "string",
+                    "example": "9b74c9897bac770ffc029102a200c5de"
+                },
+                "user_agent_family": {
+                    "description": "Browser and operating system family from a fixed vocabulary; empty without a user agent.",
+                    "type": "string",
+                    "example": "Firefox on Linux"
+                },
+                "user_id": {
+                    "description": "The account the outcome concerns; null when it is not known.",
+                    "type": "integer",
+                    "example": 7
                 }
             }
         },
