@@ -206,7 +206,7 @@ func TestAdminOnlyPermissionsMigration(t *testing.T) {
 	require.NoError(t, tdb.m.Migrate(adminOnlyPermissionsPreviousVersion))
 	adminOnlyFixture(t, tdb.sql)
 	before := readAdminOnlyPermissionRows(t, tdb.sql)
-	require.NoError(t, tdb.m.Up())
+	require.NoError(t, tdb.m.Migrate(adminOnlyPermissionsVersion))
 	version, dirty, err := tdb.m.Version()
 	require.NoError(t, err)
 	assert.False(t, dirty)
@@ -259,7 +259,7 @@ func TestAdminOnlyPermissionsMigration(t *testing.T) {
 	assert.Equal(t, audit, readAdminOnlyAuditRows(t, tdb.sql), "rollback keeps the audit rows")
 
 	// Reapplying finds nothing to change.
-	require.NoError(t, tdb.m.Up())
+	require.NoError(t, tdb.m.Migrate(adminOnlyPermissionsVersion))
 	assert.Equal(t, 2, countAuditRows(t, tdb.sql))
 	assert.Equal(t, after, readAdminOnlyPermissionRows(t, tdb.sql))
 }
