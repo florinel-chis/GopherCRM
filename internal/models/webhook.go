@@ -35,6 +35,12 @@ const (
 	WebhookEventTicketDeleted   = "ticket.deleted"
 )
 
+// WebhookEventPing is the type of the test ping an admin sends to one
+// endpoint (POST /webhooks/endpoints/:id/test). It is not an event type: an
+// endpoint cannot subscribe to it, the delivery log never holds it, and it is
+// deliberately absent from WebhookEventTypeValues.
+const WebhookEventPing = "webhook.ping"
+
 // WebhookEventTypeValues lists every event type in canonical (sorted) order.
 var WebhookEventTypeValues = []string{
 	WebhookEventCustomerCreated, WebhookEventCustomerDeleted, WebhookEventCustomerUpdated,
@@ -244,3 +250,24 @@ type WebhookDelivery struct {
 
 // TableName pins the table name.
 func (WebhookDelivery) TableName() string { return "webhook_deliveries" }
+
+// The outcomes of a test ping.
+const (
+	WebhookPingSucceeded = "succeeded"
+	WebhookPingFailed    = "failed"
+)
+
+// WebhookPingResult is the answer of a test ping: one signed WebhookEventPing
+// request sent synchronously to an endpoint. Nothing of it is stored.
+//
+// @Description Outcome of one test ping of a webhook endpoint. Nothing is written to the delivery log.
+type WebhookPingResult struct {
+	// Event id of the ping (evt_ followed by 32 hex characters), sent as webhook-id and as the body's id.
+	EventID string `json:"event_id" example:"evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9"`
+	// succeeded when the endpoint answered 2xx, failed otherwise.
+	Outcome string `json:"outcome" enums:"succeeded,failed" example:"succeeded"`
+	// HTTP status code of the answer; null when none was received.
+	HTTPStatus *int `json:"http_status" extensions:"x-nullable" example:"200"`
+	// Why the ping failed: http_status (a non-2xx answer), redirect (a 3xx answer, not followed), timeout, connection_failed, destination_refused (the host resolved to a non-public address) or secret_unavailable; null after a success.
+	ErrorCode *string `json:"error_code" extensions:"x-nullable" enums:"http_status,redirect,timeout,connection_failed,destination_refused,secret_unavailable" example:"http_status"`
+}

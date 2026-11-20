@@ -114,27 +114,28 @@ var routeMatrixPublic = map[string]bool{
 
 // routeMatrixAfterFreeze is every protected route added after the golden was
 // frozen: the role API of #348, the quote PDF download of #384, the single
-// sign-on settings of #434, the sign-in audit of #455 and the SCIM provider
-// tokens of #468. These routes are served and guarded, but the
+// sign-on settings of #434, the sign-in audit of #455, the SCIM provider
+// tokens of #468 and the webhook endpoint test ping of #501. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
 var routeMatrixAfterFreeze = map[string]bool{
-	"GET /api/v1/permissions/catalogue":       true,
-	"GET /api/v1/roles":                       true,
-	"POST /api/v1/roles":                      true,
-	"GET /api/v1/roles/audit":                 true,
-	"GET /api/v1/roles/:id":                   true,
-	"PUT /api/v1/roles/:id":                   true,
-	"DELETE /api/v1/roles/:id":                true,
-	"POST /api/v1/roles/:id/clone":            true,
-	"GET /api/v1/quotes/:id/pdf":              true,
-	"GET /api/v1/settings/sso":                true,
-	"PUT /api/v1/settings/sso":                true,
-	"GET /api/v1/audit/sign-ins":              true,
-	"GET /api/v1/settings/scim/tokens":        true,
-	"POST /api/v1/settings/scim/tokens":       true,
-	"DELETE /api/v1/settings/scim/tokens/:id": true,
+	"GET /api/v1/permissions/catalogue":        true,
+	"GET /api/v1/roles":                        true,
+	"POST /api/v1/roles":                       true,
+	"GET /api/v1/roles/audit":                  true,
+	"GET /api/v1/roles/:id":                    true,
+	"PUT /api/v1/roles/:id":                    true,
+	"DELETE /api/v1/roles/:id":                 true,
+	"POST /api/v1/roles/:id/clone":             true,
+	"GET /api/v1/quotes/:id/pdf":               true,
+	"GET /api/v1/settings/sso":                 true,
+	"PUT /api/v1/settings/sso":                 true,
+	"GET /api/v1/audit/sign-ins":               true,
+	"GET /api/v1/settings/scim/tokens":         true,
+	"POST /api/v1/settings/scim/tokens":        true,
+	"DELETE /api/v1/settings/scim/tokens/:id":  true,
+	"POST /api/v1/webhooks/endpoints/:id/test": true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -679,8 +680,12 @@ var matrixRequests = map[string]matrixRequest{
 	"GET /webhooks/endpoints/:id":    {kind: "webhook_endpoint"},
 	"PUT /webhooks/endpoints/:id":    {kind: "webhook_endpoint", body: fixedBody(matrixBody{"event_types": []string{"ticket.created"}})},
 	"DELETE /webhooks/endpoints/:id": {kind: "webhook_endpoint"},
-	"GET /webhooks/deliveries":       {},
-	"GET /audit/sign-ins":            {},
+	// The test ping (after the freeze, see routeMatrixAfterFreeze): the
+	// fixture endpoints' secrets cannot be opened, so it never reaches the
+	// network (secret_unavailable).
+	"POST /webhooks/endpoints/:id/test": {kind: "webhook_endpoint"},
+	"GET /webhooks/deliveries":          {},
+	"GET /audit/sign-ins":               {},
 }
 
 // routeMatrixCases is the case set a route's shape requires.
@@ -1380,7 +1385,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 15)
+	assert.Len(t, routeMatrixAfterFreeze, 16)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {

@@ -230,6 +230,10 @@ func TestWebhookJSON(t *testing.T) {
 		assert.True(t, IsWebhookEventType("customer.created"))
 		assert.False(t, IsWebhookEventType("Customer.Created"))
 		assert.False(t, IsWebhookEventType("lead.archived"))
+		// The test ping's type is not subscribable.
+		assert.Equal(t, "webhook.ping", WebhookEventPing)
+		assert.False(t, IsWebhookEventType(WebhookEventPing))
+		assert.NotContains(t, WebhookEventTypeValues, WebhookEventPing)
 		// The deleted types (#437): nine in all, and every one subscribed fits
 		// varchar(255) without a migration.
 		assert.Equal(t, []string{"customer.created", "customer.deleted", "customer.updated", "lead.created", "lead.deleted",

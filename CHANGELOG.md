@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Webhook endpoint test ping (#501).** `POST /api/v1/webhooks/endpoints/{id}/test`
+  (`webhooks.manage`) sends one signed `webhook.ping` request (`{id, type, occurred_at}`, no
+  `record_id`) to the endpoint, synchronously, through the same egress guard, signing, 10-second
+  timeout and no-redirect rule as deliveries, and answers 200 with
+  `{event_id, outcome, http_status, error_code}`; a failed ping, an unopenable secret
+  (`secret_unavailable`) included, is a 200 with `outcome` `failed`. It works on an inactive
+  endpoint, is not retried, writes no `webhook_deliveries` row and leaves the endpoint unchanged.
+  `webhook.ping` is not an event type an endpoint can subscribe to. No UI change.
 - **SCIM provider tokens in Settings (#490).** The SPA screen Settings > SCIM tokens
   (`/settings/scim-tokens`) lists the SCIM provider tokens with their created, last-used and
   revoked dates (a revoked token stays listed, its revoke action disabled), creates a token and
