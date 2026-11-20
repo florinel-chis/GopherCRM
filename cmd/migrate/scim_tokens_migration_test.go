@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -29,9 +28,9 @@ const (
 
 // TestSCIMTokensMigrationFiles needs no database: the pair exists with its
 // headers, creates the table only when missing with the model's columns and
-// index name, has no foreign key and alters nothing, drops only that table,
-// and is the newest migration of the directory, which latestMigrationVersion
-// names.
+// index name, has no foreign key and alters nothing, and drops only that
+// table. The newest-migration check moved to
+// TestWebhookSecretRotationMigrationFiles (#503).
 func TestSCIMTokensMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, scimTokensMigrationName+".up.sql"))
@@ -90,22 +89,9 @@ func TestSCIMTokensMigrationFiles(t *testing.T) {
 	}
 	assert.Equal(t, scimTokensTable, models.SCIMToken{}.TableName())
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from
-	// TestAuthAuditLogAttemptsMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, scimTokensMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, scimTokensVersion, version)
-	assert.Equal(t, scimTokensVersion, latestMigrationVersion)
+	// The newest-migration assertion moved to
+	// TestWebhookSecretRotationMigrationFiles (#503).
+	assert.Less(t, scimTokensVersion, latestMigrationVersion, "#503 added a later migration")
 	assert.Greater(t, scimTokensVersion, scimTokensPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")

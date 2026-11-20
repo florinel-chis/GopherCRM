@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Webhook signing-secret rotation (#503).** `POST /api/v1/webhooks/endpoints/{id}/rotate-secret`
+  (`webhooks.manage`) generates a new `whsec_` secret and answers 200 with the endpoint, the new
+  `secret` (shown this once) and `previous_secret_expires_at` (now + 24 h). The replaced secret is
+  kept, sealed, until then, and every delivery, retry, redelivery and test ping in that window
+  carries two space-separated signatures in `webhook-signature` (`v1,<new> v1,<previous>`, the new
+  one first); after it only the new one is sent, and the runtime clears the expired secret on its
+  next send of that endpoint (the test ping writes nothing and never clears). A second rotation
+  inside the window replaces the previous secret, so at most two secrets sign. Rotation is one
+  primary-key UPDATE that never opens a stored secret: it works on an inactive endpoint and repairs
+  one whose secret became unreadable after an `API_KEY_SECRET` change. A previous secret that
+  cannot be opened is dropped with a `previous_secret_unavailable` warning and the request goes
+  out with the current signature. Schema: `webhook_endpoints.previous_secret_sealed` and
+  `previous_secret_expires_at` (both nullable), through AutoMigrate and the MySQL/MariaDB
+  migration `20261127120000_webhook_secret_rotation`. API-only: the Settings screen has no rotate
+  control yet.
 - **Webhook delivery redelivery (#502).** `POST /api/v1/webhooks/deliveries/{id}/redeliver`
   (`webhooks.manage`) puts a `succeeded` or `failed` delivery back into the queue with one
   conditional UPDATE of the same row: `pending`, `attempts` 0, due at once, `last_http_status` and

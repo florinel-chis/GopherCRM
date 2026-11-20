@@ -115,29 +115,31 @@ var routeMatrixPublic = map[string]bool{
 // routeMatrixAfterFreeze is every protected route added after the golden was
 // frozen: the role API of #348, the quote PDF download of #384, the single
 // sign-on settings of #434, the sign-in audit of #455, the SCIM provider
-// tokens of #468, the webhook endpoint test ping of #501 and the webhook
-// delivery redelivery of #502. These routes are served and guarded, but the
+// tokens of #468, the webhook endpoint test ping of #501, the webhook
+// delivery redelivery of #502 and the webhook signing-secret rotation of
+// #503. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
 var routeMatrixAfterFreeze = map[string]bool{
-	"GET /api/v1/permissions/catalogue":              true,
-	"GET /api/v1/roles":                              true,
-	"POST /api/v1/roles":                             true,
-	"GET /api/v1/roles/audit":                        true,
-	"GET /api/v1/roles/:id":                          true,
-	"PUT /api/v1/roles/:id":                          true,
-	"DELETE /api/v1/roles/:id":                       true,
-	"POST /api/v1/roles/:id/clone":                   true,
-	"GET /api/v1/quotes/:id/pdf":                     true,
-	"GET /api/v1/settings/sso":                       true,
-	"PUT /api/v1/settings/sso":                       true,
-	"GET /api/v1/audit/sign-ins":                     true,
-	"GET /api/v1/settings/scim/tokens":               true,
-	"POST /api/v1/settings/scim/tokens":              true,
-	"DELETE /api/v1/settings/scim/tokens/:id":        true,
-	"POST /api/v1/webhooks/endpoints/:id/test":       true,
-	"POST /api/v1/webhooks/deliveries/:id/redeliver": true,
+	"GET /api/v1/permissions/catalogue":                 true,
+	"GET /api/v1/roles":                                 true,
+	"POST /api/v1/roles":                                true,
+	"GET /api/v1/roles/audit":                           true,
+	"GET /api/v1/roles/:id":                             true,
+	"PUT /api/v1/roles/:id":                             true,
+	"DELETE /api/v1/roles/:id":                          true,
+	"POST /api/v1/roles/:id/clone":                      true,
+	"GET /api/v1/quotes/:id/pdf":                        true,
+	"GET /api/v1/settings/sso":                          true,
+	"PUT /api/v1/settings/sso":                          true,
+	"GET /api/v1/audit/sign-ins":                        true,
+	"GET /api/v1/settings/scim/tokens":                  true,
+	"POST /api/v1/settings/scim/tokens":                 true,
+	"DELETE /api/v1/settings/scim/tokens/:id":           true,
+	"POST /api/v1/webhooks/endpoints/:id/test":          true,
+	"POST /api/v1/webhooks/endpoints/:id/rotate-secret": true,
+	"POST /api/v1/webhooks/deliveries/:id/redeliver":    true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -686,7 +688,10 @@ var matrixRequests = map[string]matrixRequest{
 	// fixture endpoints' secrets cannot be opened, so it never reaches the
 	// network (secret_unavailable).
 	"POST /webhooks/endpoints/:id/test": {kind: "webhook_endpoint"},
-	"GET /webhooks/deliveries":          {},
+	// The secret rotation (after the freeze): it never opens the fixture's
+	// stored secret, so an admin cell answers 200.
+	"POST /webhooks/endpoints/:id/rotate-secret": {kind: "webhook_endpoint"},
+	"GET /webhooks/deliveries":                   {},
 	// The redelivery (after the freeze): the fixture deliveries belong to the
 	// inactive fixture endpoints, so an admin cell answers 409 and never
 	// reaches the network.
@@ -1402,7 +1407,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 17)
+	assert.Len(t, routeMatrixAfterFreeze, 18)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {

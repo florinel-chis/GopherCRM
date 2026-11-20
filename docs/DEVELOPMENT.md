@@ -369,8 +369,9 @@ Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` (`cmd`), `Tes
 (`internal/middleware`), `TestSCIMTokenHandler`, `TestSCIMDiscoveryDocuments`
 (`internal/handler`), `TestSCIMTokenStore{SQLite,MySQL}` (`internal/service`, discovered by the
 auth checker), `TestSCIMTokenSchemaSQLite` (`internal/models`), and the migration roots
-`TestSCIMTokensMigrationFiles` (it holds the newest-migration assertion since #468, moved from
-`TestAuthAuditLogAttemptsMigrationFiles`) and `TestSCIMTokensMigration` (`cmd/migrate`), both
+`TestSCIMTokensMigrationFiles` (it held the newest-migration assertion from #468, moved from
+`TestAuthAuditLogAttemptsMigrationFiles`, until #503 moved it on to
+`TestWebhookSecretRotationMigrationFiles`) and `TestSCIMTokensMigration` (`cmd/migrate`), both
 required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
@@ -3453,7 +3454,7 @@ commits. Code: `internal/models/webhook.go`,
 `internal/repository/webhook_repository.go`, `internal/service/webhook_{outbox,signing,endpoint_service,runtime}.go`,
 `internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
 
-- **Registry.** `/webhooks/endpoints` (list, create, read, update, delete) and
+- **Registry.** `/webhooks/endpoints` (list, create, read, update, delete, test, rotate-secret) and
   `/webhooks/deliveries` sit behind `RequirePermission(webhooks.manage)` (admin). The handler validates every input before
   calling `WebhookService` (400 `VALIDATION_ERROR`, `error.details` keyed by `url`, `event_types`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
@@ -3497,6 +3498,19 @@ commits. Code: `internal/models/webhook.go`,
   (the requeue subtests), `internal/service/webhook_redeliver_test.go`
   (`TestWebhookRedeliver{SQLite,MySQL}`, registered in the transaction profile of
   `scripts/ci/check-go.py`), `TestWebhookRedeliverHandler`.
+  `POST /webhooks/endpoints/:id/rotate-secret` (#503, `WebhookService.RotateEndpointSecret`)
+  generates a new secret, seals it under the same context and calls
+  `WebhookRepository.RotateEndpointSecret`: one `UPDATE webhook_endpoints SET
+  previous_secret_sealed = secret_sealed, previous_secret_expires_at = ?, secret_sealed = ?,
+  updated_at = ? WHERE id = ?` through `db.Exec`, so the assignment order is explicit (MySQL
+  evaluates SET left to right, SQLite reads the old row), with `previous_secret_expires_at` = now +
+  `WebhookSecretOverlap` (24 h). No read before it and no locking read: concurrent rotations
+  serialise on the row lock and each keeps the other's secret as the previous one. Zero affected
+  rows is re-checked with a count by id (missing is 404). It works on an inactive endpoint and
+  never opens a stored secret, so it replaces one sealed under an older `API_KEY_SECRET`; it
+  answers 200 with `models.WebhookEndpointSecretRotated` (the endpoint plus `secret`, shown once)
+  and logs `operation=webhook_endpoint_rotate_secret` and `endpoint_id` only. `UpdateEndpoint`
+  still writes only `url`, `event_types` and `is_active`.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
   txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
   passes one `WebhookRepository` and the shared `txManager`. After the record insert,
@@ -3581,7 +3595,21 @@ commits. Code: `internal/models/webhook.go`,
   settings.
 - **Signing.** `service.SignWebhook(secret, eventID, unixSeconds, body)` returns `v1,` +
   base64(HMAC-SHA256(base64decode(secret minus whsec_), id + "." + timestamp + "." + body)). Each
-  attempt is re-signed with its own `webhook-timestamp`. Headers: `webhook-id`,
+  attempt is re-signed with its own `webhook-timestamp`. `NewWebhookRequest` takes the secrets as
+  a list and joins one signature per secret with a space; `webhookSigningSecrets` picks them (#503):
+  the opened current secret first, then the previous secret while `now` is strictly before
+  `previous_secret_expires_at` (at the expiry instant the window is over). An unopenable current
+  secret is `secret_unavailable` (terminal) as before; an unopenable previous secret is dropped
+  with one Warn (`operation`, `endpoint_id`, `error_code=previous_secret_unavailable`) and the
+  request carries the current signature. `WebhookRuntime.attempt` takes ONE `r.now()` reading for
+  the window decision and the request timestamp, and when the previous secret has expired calls
+  `ClearExpiredPreviousSecret` with that reading before sending: one conditional `UPDATE … SET
+  previous_secret_sealed = NULL, previous_secret_expires_at = NULL WHERE id = ? AND
+  previous_secret_expires_at IS NOT NULL AND previous_secret_expires_at <= ?`, fenced in the
+  statement so a rotation committed after the read survives; it does not touch `updated_at`, and
+  a failure is a Warn that never blocks the send. Retries and redeliveries go through `attempt`,
+  so they carry both signatures inside the window too. The test ping uses the same selection with
+  one `time.Now()` reading, and never clears. Headers: `webhook-id`,
   `webhook-timestamp`, `webhook-signature`, `Content-Type: application/json`, `User-Agent:
   GopherCRM-Webhooks/1`. Body: exactly `{"id","type","occurred_at","record_id"}`.
 - **Egress.** Requests go through `(*aeo.EgressGuard).PublicHTTPClient(url)` (see
@@ -3604,6 +3632,8 @@ commits. Code: `internal/models/webhook.go`,
 - **Schema.** `webhook_endpoints` and `webhook_deliveries` (see
   [datamodel.md](datamodel.md#outbound-webhooks)) from `MigrateDatabase` on SQLite and
   `migrations/20261120120000_add_outbound_webhooks.up.sql` (created only when missing) on MySQL/MariaDB.
+  The two rotation columns (#503) come from AutoMigrate and
+  `migrations/20261127120000_webhook_secret_rotation.up.sql` (each added only when missing).
 
 Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`);
 `TestEgressPublicClient` (`internal/aeo`); `TestWebhookRepository{SQLite,MySQL}`
@@ -3615,7 +3645,7 @@ Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models
 `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation` (`internal/handler`);
 `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite` (`tests`); `TestWebhookProductionWiring`,
 `TestWebhookUpdatedProductionWiring` (`cmd`);
-`TestWebhookMigrationFiles` (now holding the newest-migration assertion), `TestWebhookMigration`
+`TestWebhookMigrationFiles`, `TestWebhookMigration`
 (`cmd/migrate`); `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
 (`test/integration`). The MySQL roots use a disposable `TEST_MYSQL_DSN` schema, skip without it
 and fail when it is unreachable. The four `TestWebhookUpdated…` service roots are registered in
@@ -3623,6 +3653,15 @@ the transaction profile (`TRANSACTION_SOURCES` in `scripts/ci/check-go.py`, asse
 `scripts/ci/tests/test_go_checks.py`). Operator follow-ups: register the #345 roots in
 `scripts/ci/check-go.py` (they are still unregistered), the new enums (`event_type`, delivery `status`, `error_code`) in
 `scripts/ci/check-api-docs.py`, and the migration roots in `.github/workflows/migrations.yml`.
+Signing-secret rotation (#503): `TestWebhookSecretRotation{SQLite,MySQL}`
+(`internal/service/webhook_secret_rotation_test.go`, not in the transaction profile: there is no
+transaction; the backend job runs it with `TEST_MYSQL_DSN`), `TestWebhookSignature` (the
+two-secret subtest), `TestWebhookRotateSecretHandler` (`internal/handler`),
+`TestWebhookSecretRotationSQLiteUpgrade` (`internal/models`), and
+`TestWebhookSecretRotationMigrationFiles` (it holds the newest-migration assertion since #503) and
+`TestWebhookSecretRotationMigration` (`cmd/migrate`); the migration and SQLite-upgrade roots are
+required by the migrations workflow, `scripts/ci/check-go.py migration` and
+`scripts/release/check-sql-tests.py`.
 
 ### Form retention purge
 

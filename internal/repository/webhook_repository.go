@@ -24,7 +24,10 @@ import (
 // called a miss. A manual redelivery (RequeueDelivery, #502) is one such
 // conditional UPDATE by primary key, fenced on status IN ('succeeded',
 // 'failed'), with no locking read: it cannot overlap a claim, which needs
-// status = 'pending'.
+// status = 'pending'. A signing-secret rotation (RotateEndpointSecret, #503)
+// is one UPDATE of the endpoint by primary key with no read before it, and
+// the runtime's ClearExpiredPreviousSecret is a conditional UPDATE by primary
+// key fenced on the expiry in the statement; neither adds a lock edge.
 
 // WebhookPruneChunk bounds how many rows one prune DELETE removes.
 const WebhookPruneChunk = 500
@@ -114,6 +117,44 @@ func (r *webhookRepository) UpdateEndpoint(ctx context.Context, id uint, columns
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// RotateEndpointSecret is one UPDATE by primary key with no read before it:
+// previous_secret_sealed takes the stored secret_sealed, then secret_sealed
+// takes sealed. The assignment order is explicit (db.Exec) because MySQL
+// evaluates SET left to right and reads the value an earlier assignment
+// wrote; SQLite reads the old row for every assignment. Concurrent rotations
+// serialise on the row lock, and each keeps the other's secret as the
+// previous one.
+func (r *webhookRepository) RotateEndpointSecret(ctx context.Context, id uint, sealed string, expiresAt, now time.Time) error {
+	db := r.db.WithContext(ctx)
+	result := db.Exec(
+		"UPDATE webhook_endpoints SET previous_secret_sealed = secret_sealed, previous_secret_expires_at = ?, secret_sealed = ?, updated_at = ? WHERE id = ?",
+		expiresAt.UTC(), sealed, now.UTC(), id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+	var count int64
+	if err := db.Model(&models.WebhookEndpoint{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// ClearExpiredPreviousSecret is one conditional UPDATE fenced on the expiry in
+// the statement, so a rotation committed after the caller's read is never
+// cleared. updated_at is deliberately left alone: clearing is housekeeping of
+// a send, not a change an admin made.
+func (r *webhookRepository) ClearExpiredPreviousSecret(ctx context.Context, id uint, now time.Time) error {
+	return r.db.WithContext(ctx).Exec(
+		"UPDATE webhook_endpoints SET previous_secret_sealed = NULL, previous_secret_expires_at = NULL WHERE id = ? AND previous_secret_expires_at IS NOT NULL AND previous_secret_expires_at <= ?",
+		id, now.UTC()).Error
 }
 
 func (r *webhookRepository) DeleteEndpoint(ctx context.Context, id uint) error {

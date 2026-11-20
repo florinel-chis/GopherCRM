@@ -523,9 +523,22 @@ delivery. It follows the same egress rules, 10-second timeout and no-redirect ru
 retried, and is not written to the delivery log. `webhook.ping` is not an event type an endpoint
 can subscribe to.
 
+**Rotating the signing secret.** `POST /api/v1/webhooks/endpoints/:id/rotate-secret` generates a
+new secret and answers 200 with the endpoint, the new `secret` (shown this once) and
+`previous_secret_expires_at`, 24 hours from now. Until then the replaced secret keeps signing next
+to the new one: every delivery, retry, redelivery and test ping carries two signatures,
+`webhook-signature: v1,<new> v1,<previous>`, so a consumer can switch to the new secret at any
+moment in that window without refusing a request. From `previous_secret_expires_at` on only the
+new signature is sent, and the next delivery clears the replaced secret. A second rotation inside
+the window replaces the previous secret: at most two secrets ever sign. Rotation works on an
+inactive endpoint and never reads the stored secrets, so it also repairs an endpoint whose secret
+became unreadable. It is API-only for now: the Settings screen has no rotate control.
+
 **Verifying the signature** (Standard Webhooks). Each request carries `webhook-id` (the event id),
-`webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`
-(`v1,<base64>`). Recompute it with the secret returned when the endpoint was created:
+`webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`:
+one `v1,<base64>` value, or two space-separated ones (`v1,<new> v1,<previous>`) during a rotation
+window. Recompute it with your secret and accept the request when any value matches; the example
+below does:
 
 ```python
 import base64, hashlib, hmac, time
@@ -546,7 +559,7 @@ string or fragment. Every connection resolves the host again and refuses private
 unique-local, link-local, metadata, multicast and unspecified addresses; proxy variables are
 ignored. The AEO egress allowlists do not apply to webhooks. The secret is stored encrypted with
 `API_KEY_SECRET` (or `JWT_SECRET`); changing that secret makes existing endpoints fail with
-`secret_unavailable` until they are re-created.
+`secret_unavailable` until they are re-created or their secret rotated.
 
 **Delivery log.** The "Delivery log" tab of Settings > Webhooks lists each event per endpoint,
 newest first, with its event type, record id, status, attempts, last attempt time and last
@@ -1070,14 +1083,17 @@ expired, or if its owner has been deactivated or erased.
 - `GET /api/v1/webhooks/endpoints` - Registered endpoints, paginated (`sort_by` `id`, `created_at`
   or `updated_at`); never the secret
 - `POST /api/v1/webhooks/endpoints` - Register `{url, event_types, is_active?}`; the 201 carries the
-  signing `secret`, shown only here
+  signing `secret`, shown only here (`rotate-secret` returns a new one, once)
 - `GET /api/v1/webhooks/endpoints/:id` - One endpoint
-- `PUT /api/v1/webhooks/endpoints/:id` - Change `url`, `event_types` or `is_active` (the secret
-  never changes)
+- `PUT /api/v1/webhooks/endpoints/:id` - Change `url`, `event_types` or `is_active` (never the
+  secret; `rotate-secret` replaces it)
 - `DELETE /api/v1/webhooks/endpoints/:id` - Delete the endpoint and its delivery log
 - `POST /api/v1/webhooks/endpoints/:id/test` - Send one signed `webhook.ping` to the endpoint (active
   or not) and answer `{event_id, outcome, http_status, error_code}`; not written to the delivery
   log and not retried
+- `POST /api/v1/webhooks/endpoints/:id/rotate-secret` - Replace the signing secret; the 200 carries
+  the new `secret`, shown only here, and `previous_secret_expires_at` (now + 24 h), until which
+  every request is signed under both secrets (`v1,<new> v1,<previous>`)
 - `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
   `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
 - `POST /api/v1/webhooks/deliveries/:id/redeliver` - Queue a `succeeded` or `failed` delivery

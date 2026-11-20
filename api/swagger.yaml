@@ -4528,7 +4528,8 @@ definitions:
     type: object
   github_com_florinel-chis_gophercrm_internal_models.WebhookEndpoint:
     description: A registered outbound webhook endpoint (admin only). Never carries
-      the signing secret; it is returned once, by POST /webhooks/endpoints.
+      the signing secret; it is returned once, by POST /webhooks/endpoints and by
+      POST /webhooks/endpoints/{id}/rotate-secret.
     properties:
       created_at:
         description: When the endpoint was registered (RFC 3339). Read-only.
@@ -4563,6 +4564,15 @@ definitions:
           endpoint's pending deliveries fail with endpoint_inactive.
         example: true
         type: boolean
+      previous_secret_expires_at:
+        description: 'When the previous signing secret stops verifying (RFC 3339):
+          until then every request carries a second signature under it. Null when
+          there is none; a past value means the window is over and the value is cleared
+          by the next send or rotation.'
+        example: "2026-11-21T09:30:00Z"
+        readOnly: true
+        type: string
+        x-nullable: true
       updated_at:
         description: When the endpoint last changed (RFC 3339). Read-only.
         example: "2026-11-20T09:30:00Z"
@@ -4576,8 +4586,9 @@ definitions:
         type: string
     type: object
   github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointCreated:
-    description: A newly registered webhook endpoint with its signing secret. This
-      is the only response that ever carries the secret.
+    description: A newly registered webhook endpoint with its signing secret. The
+      secret is shown once, here; only a rotation (POST /webhooks/endpoints/{id}/rotate-secret)
+      returns a new one.
     properties:
       created_at:
         description: When the endpoint was registered (RFC 3339). Read-only.
@@ -4612,9 +4623,82 @@ definitions:
           endpoint's pending deliveries fail with endpoint_inactive.
         example: true
         type: boolean
+      previous_secret_expires_at:
+        description: 'When the previous signing secret stops verifying (RFC 3339):
+          until then every request carries a second signature under it. Null when
+          there is none; a past value means the window is over and the value is cleared
+          by the next send or rotation.'
+        example: "2026-11-21T09:30:00Z"
+        readOnly: true
+        type: string
+        x-nullable: true
       secret:
         description: 'Signing secret: whsec_ followed by the base64 of 32 random bytes.
-          Shown only in this response; store it now.'
+          Shown once, in this response; store it now.'
+        example: whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw
+        type: string
+      updated_at:
+        description: When the endpoint last changed (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      url:
+        description: 'Target URL: https, no credentials, query string or fragment,
+          at most 2048 characters; the host must resolve to public addresses only.'
+        example: https://hooks.example.com/gophercrm
+        maxLength: 2048
+        type: string
+    type: object
+  github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointSecretRotated:
+    description: A webhook endpoint after a signing-secret rotation, with its new
+      signing secret, shown once. Until previous_secret_expires_at every request also
+      carries a signature under the replaced secret.
+    properties:
+      created_at:
+        description: When the endpoint was registered (RFC 3339). Read-only.
+        example: "2026-11-20T09:30:00Z"
+        readOnly: true
+        type: string
+      event_types:
+        description: Subscribed event types, deduplicated and sorted.
+        example:
+        - lead.created
+        - ticket.created
+        items:
+          enum:
+          - customer.created
+          - customer.deleted
+          - customer.updated
+          - lead.created
+          - lead.deleted
+          - lead.updated
+          - ticket.created
+          - ticket.deleted
+          - ticket.updated
+          type: string
+        type: array
+      id:
+        description: Unique identifier, assigned by the server. Read-only.
+        example: 4
+        readOnly: true
+        type: integer
+      is_active:
+        description: Whether new events are enqueued for this endpoint. An inactive
+          endpoint's pending deliveries fail with endpoint_inactive.
+        example: true
+        type: boolean
+      previous_secret_expires_at:
+        description: 'When the previous signing secret stops verifying (RFC 3339):
+          until then every request carries a second signature under it. Null when
+          there is none; a past value means the window is over and the value is cleared
+          by the next send or rotation.'
+        example: "2026-11-21T09:30:00Z"
+        readOnly: true
+        type: string
+        x-nullable: true
+      secret:
+        description: 'New signing secret: whsec_ followed by the base64 of 32 random
+          bytes. Shown once, in this response; store it now.'
         example: whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw
         type: string
       updated_at:
@@ -26457,7 +26541,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.
+        Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
         From then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, PUT /customers/{id}, PUT /tickets/{id} or the lead and ticket bulk status endpoints (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event only for the active endpoints subscribed to it that already hold a created or updated delivery of that record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
         The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
         Roles: admin.
@@ -26702,7 +26786,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret never changes and is not returned.
+        Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret is not changed (POST /webhooks/endpoints/{id}/rotate-secret replaces it) and is not returned.
         Deliveries already enqueued keep their endpoint: those of an endpoint set inactive fail with endpoint_inactive when they are claimed, and those of an endpoint whose URL changed are sent to the new URL.
         Roles: admin.
       parameters:
@@ -26793,6 +26877,94 @@ paths:
       - BearerAuth: []
       - ApiKeyAuth: []
       summary: Update a webhook endpoint
+      tags:
+      - webhooks
+  /webhooks/endpoints/{id}/rotate-secret:
+    post:
+      description: |-
+        Generates a new signing secret (whsec_ followed by the base64 of 32 random bytes) for the endpoint and returns it in this response only: it is stored encrypted and no other route shows it. The replaced secret is kept, encrypted, as the previous secret until previous_secret_expires_at, 24 hours from now.
+        While that window is open every delivery, retry, redelivery and test ping carries two space-separated signatures in webhook-signature (v1,<new> v1,<previous>, the new one first), so a consumer can switch to the new secret without missing a request. From previous_secret_expires_at on only the new signature is sent, and the next delivery clears the previous secret. A second rotation inside the window replaces the previous secret: at most two secrets ever sign.
+        It works on an inactive endpoint and never reads the stored secrets, so an endpoint whose secret cannot be opened any more (API_KEY_SECRET rotated) can be given a new one. No request body is read.
+        Roles: admin.
+      parameters:
+      - description: Endpoint ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Secret rotated; the new secret is shown once
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookEndpointSecretRotated'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - the id is not a positive integer (error.details.id)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - no endpoint with that id
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Rotate the signing secret of a webhook endpoint
       tags:
       - webhooks
   /webhooks/endpoints/{id}/test:

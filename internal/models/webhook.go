@@ -173,9 +173,13 @@ func (t WebhookEventTypes) MarshalJSON() ([]byte, error) {
 
 // WebhookEndpoint is one registered consumer. The signing secret is stored
 // sealed (utils.SecretBox, context webhook-endpoint-secret) and never
-// serialised; it is returned once, in the create response.
+// serialised; it is returned once, by POST /webhooks/endpoints and by POST
+// /webhooks/endpoints/{id}/rotate-secret. After a rotation (#503) the
+// replaced secret stays sealed in PreviousSecretSealed until
+// PreviousSecretExpiresAt, and every request signed in that window carries a
+// signature under each secret.
 //
-// @Description A registered outbound webhook endpoint (admin only). Never carries the signing secret; it is returned once, by POST /webhooks/endpoints.
+// @Description A registered outbound webhook endpoint (admin only). Never carries the signing secret; it is returned once, by POST /webhooks/endpoints and by POST /webhooks/endpoints/{id}/rotate-secret.
 type WebhookEndpoint struct {
 	// Unique identifier, assigned by the server. Read-only.
 	ID uint `gorm:"primarykey" json:"id" example:"4" readonly:"true"`
@@ -189,6 +193,10 @@ type WebhookEndpoint struct {
 	EventTypes WebhookEventTypes `gorm:"type:varchar(255);not null" json:"event_types" swaggertype:"array,string" enums:"customer.created,customer.deleted,customer.updated,lead.created,lead.deleted,lead.updated,ticket.created,ticket.deleted,ticket.updated" example:"lead.created,ticket.created"`
 	// Sealed signing secret; never serialised.
 	SecretSealed string `gorm:"type:varchar(255);not null" json:"-" swaggerignore:"true"`
+	// Sealed signing secret replaced by the last rotation; never serialised.
+	PreviousSecretSealed *string `gorm:"type:varchar(255)" json:"-" swaggerignore:"true"`
+	// When the previous signing secret stops verifying (RFC 3339): until then every request carries a second signature under it. Null when there is none; a past value means the window is over and the value is cleared by the next send or rotation.
+	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at" extensions:"x-nullable" example:"2026-11-21T09:30:00Z" readonly:"true"`
 	// Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.
 	IsActive bool `gorm:"not null" json:"is_active" example:"true"`
 }
@@ -199,10 +207,20 @@ func (WebhookEndpoint) TableName() string { return "webhook_endpoints" }
 // WebhookEndpointCreated is the create response: the endpoint plus its signing
 // secret, shown this once.
 //
-// @Description A newly registered webhook endpoint with its signing secret. This is the only response that ever carries the secret.
+// @Description A newly registered webhook endpoint with its signing secret. The secret is shown once, here; only a rotation (POST /webhooks/endpoints/{id}/rotate-secret) returns a new one.
 type WebhookEndpointCreated struct {
 	WebhookEndpoint
-	// Signing secret: whsec_ followed by the base64 of 32 random bytes. Shown only in this response; store it now.
+	// Signing secret: whsec_ followed by the base64 of 32 random bytes. Shown once, in this response; store it now.
+	Secret string `json:"secret" example:"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"`
+}
+
+// WebhookEndpointSecretRotated is the rotate-secret response: the endpoint
+// plus its new signing secret, shown this once.
+//
+// @Description A webhook endpoint after a signing-secret rotation, with its new signing secret, shown once. Until previous_secret_expires_at every request also carries a signature under the replaced secret.
+type WebhookEndpointSecretRotated struct {
+	WebhookEndpoint
+	// New signing secret: whsec_ followed by the base64 of 32 random bytes. Shown once, in this response; store it now.
 	Secret string `json:"secret" example:"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"`
 }
 

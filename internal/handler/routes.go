@@ -321,6 +321,7 @@ func SetupWebhookRoutes(router *gin.RouterGroup, handler *WebhookHandler) {
 		webhooks.PUT("/endpoints/:id", middleware.RequirePermission(permissions.WebhooksManage), handler.UpdateEndpoint)
 		webhooks.DELETE("/endpoints/:id", middleware.RequirePermission(permissions.WebhooksManage), handler.DeleteEndpoint)
 		webhooks.POST("/endpoints/:id/test", middleware.RequirePermission(permissions.WebhooksManage), handler.TestEndpoint)
+		webhooks.POST("/endpoints/:id/rotate-secret", middleware.RequirePermission(permissions.WebhooksManage), handler.RotateSecret)
 		webhooks.GET("/deliveries", middleware.RequirePermission(permissions.WebhooksManage), handler.ListDeliveries)
 		webhooks.POST("/deliveries/:id/redeliver", middleware.RequirePermission(permissions.WebhooksManage), handler.RedeliverDelivery)
 	}

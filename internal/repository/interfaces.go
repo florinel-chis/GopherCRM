@@ -409,6 +409,16 @@ type WebhookRepository interface {
 	// UpdateEndpoint writes the named columns (url, event_types, is_active)
 	// and updated_at, or returns gorm.ErrRecordNotFound.
 	UpdateEndpoint(ctx context.Context, id uint, columns map[string]interface{}) error
+	// RotateEndpointSecret moves secret_sealed to previous_secret_sealed,
+	// stores sealed as secret_sealed and sets previous_secret_expires_at to
+	// expiresAt and updated_at to now, in one UPDATE by primary key with no
+	// read before it (#503). A missing endpoint is gorm.ErrRecordNotFound.
+	RotateEndpointSecret(ctx context.Context, id uint, sealed string, expiresAt, now time.Time) error
+	// ClearExpiredPreviousSecret sets previous_secret_sealed and
+	// previous_secret_expires_at to NULL when previous_secret_expires_at <=
+	// now, fenced in the statement; it does not touch updated_at. Matching
+	// nothing is not an error.
+	ClearExpiredPreviousSecret(ctx context.Context, id uint, now time.Time) error
 	// DeleteEndpoint locks the endpoint row (FOR UPDATE on MySQL), deletes its
 	// delivery rows and then the endpoint, in one transaction (a savepoint
 	// under WithTx). A missing endpoint is gorm.ErrRecordNotFound.

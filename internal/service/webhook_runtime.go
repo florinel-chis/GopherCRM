@@ -37,7 +37,7 @@ import (
 //
 // Log lines carry operation, endpoint_id, delivery_id, event_type, record_id,
 // attempts, status, http_status and error_code only: never the URL, its host,
-// the secret, the signature or a body. Transport errors, which quote the URL,
+// a secret (current or previous), the signature or a body. Transport errors, which quote the URL,
 // are classified and never logged.
 
 const (
@@ -317,19 +317,60 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 	if err != nil || endpoint == nil || !endpoint.IsActive {
 		return attemptOutcome{errorCode: models.WebhookErrorEndpointInactive, terminal: true}
 	}
-	secret, err := r.box.Open(endpoint.SecretSealed)
-	if err != nil || secret == "" {
+	// One clock reading decides the rotation window and stamps the request,
+	// so a request is never signed with a secret whose window has closed.
+	now := r.now()
+	secrets, ok := webhookSigningSecrets(r.box, endpoint, now, r.log(), "webhook_deliver")
+	if !ok {
 		return attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable, terminal: true}
 	}
-	if _, err := webhookKey(secret); err != nil {
-		return attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable, terminal: true}
+	if endpoint.PreviousSecretExpiresAt != nil && !now.Before(*endpoint.PreviousSecretExpiresAt) {
+		// The window is over: clear the previous secret, fenced on the expiry
+		// in the statement so a rotation committed since the read survives.
+		// A failure is housekeeping only and never blocks the send.
+		if err := r.repo.ClearExpiredPreviousSecret(ctx, endpoint.ID, now); err != nil {
+			r.log().WithFields(logrus.Fields{"operation": "webhook_clear_previous_secret", "endpoint_id": endpoint.ID}).
+				WithError(utils.LogError(err)).Warn("Expired previous webhook secret not cleared")
+		}
 	}
 	if r.clients == nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
 	}
 	return sendWebhook(ctx, r.clients, endpoint.URL, r.timeout, func(reqCtx context.Context) (*http.Request, error) {
-		return NewWebhookRequest(reqCtx, endpoint.URL, secret, delivery, r.now())
+		return NewWebhookRequest(reqCtx, endpoint.URL, secrets, delivery, now)
 	})
+}
+
+// webhookSigningSecrets returns the secrets a request to endpoint signed at
+// now carries (#503): the opened current secret first, then the previous
+// secret while its rotation window is open (now strictly before
+// previous_secret_expires_at; at the expiry instant the window is over). ok is
+// false when the current secret does not open or is not a whsec_ key, which
+// fails the attempt with secret_unavailable. A previous secret that does not
+// open is dropped with one Warn (operation, endpoint_id and
+// error_code=previous_secret_unavailable only) and the request goes out with
+// the current signature.
+func webhookSigningSecrets(box *utils.SecretBox, endpoint *models.WebhookEndpoint, now time.Time, logger *logrus.Logger, operation string) ([]string, bool) {
+	current, err := box.Open(endpoint.SecretSealed)
+	if err != nil || current == "" {
+		return nil, false
+	}
+	if _, err := webhookKey(current); err != nil {
+		return nil, false
+	}
+	secrets := []string{current}
+	if endpoint.PreviousSecretSealed == nil || endpoint.PreviousSecretExpiresAt == nil || !now.Before(*endpoint.PreviousSecretExpiresAt) {
+		return secrets, true
+	}
+	previous, err := box.Open(*endpoint.PreviousSecretSealed)
+	if err == nil && previous != "" {
+		if _, err = webhookKey(previous); err == nil {
+			return append(secrets, previous), true
+		}
+	}
+	logger.WithFields(logrus.Fields{"operation": operation, "endpoint_id": endpoint.ID, "error_code": "previous_secret_unavailable"}).
+		Warn("Previous webhook secret cannot be used; signing with the current secret only")
+	return secrets, true
 }
 
 // sendWebhook is the send path shared by deliveries and the test ping: it

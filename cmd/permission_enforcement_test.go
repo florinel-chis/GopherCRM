@@ -216,7 +216,7 @@ func TestZeroPermissionRoleIsDeniedEverywhere(t *testing.T) {
 			t.Errorf("%s: a role without permissions must get 403 FORBIDDEN, got %d %q", key, cell.Status, cell.Code)
 		}
 	}
-	assert.Len(t, routes, 174, "every protected route: the 157 of the matrix and the 17 added after its freeze")
+	assert.Len(t, routes, 175, "every protected route: the 157 of the matrix and the 18 added after its freeze")
 	assert.Equal(t, len(permissions.SelfServiceRoutes), allowed, "the self-service routes")
 	assert.Equal(t, len(routes)-len(permissions.SelfServiceRoutes), denied, "every other route is denied")
 

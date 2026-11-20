@@ -223,7 +223,10 @@ func TestWebhookAPISQLite(t *testing.T) {
 	status, _, raw = do("admin", http.MethodGet, fmt.Sprintf("/webhooks/endpoints/%d", endpointID), nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.NotContains(t, raw, secret)
-	assert.NotContains(t, raw, "secret")
+	// No secret key and no sealed column; previous_secret_expires_at (#503)
+	// is the one field whose name says secret.
+	assert.NotContains(t, raw, `"secret"`)
+	assert.NotContains(t, raw, "secret_sealed")
 	status, _, raw = do("admin", http.MethodGet, "/webhooks/endpoints", nil)
 	require.Equal(t, http.StatusOK, status)
 	assert.NotContains(t, raw, secret)
