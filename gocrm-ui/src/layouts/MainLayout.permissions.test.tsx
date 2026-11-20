@@ -135,6 +135,22 @@ describe('MainLayout permission gating', () => {
     expect(navigation().queryByText('Sign-in audit')).not.toBeInTheDocument();
   });
 
+  it('shows SCIM tokens under Settings only to a caller holding settings.scim_manage', async () => {
+    signedInWith('customer', customPermissions('settings.scim_manage'));
+    const held = render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('SCIM tokens')).toBeInTheDocument();
+    expect(navigation().queryByText('Single sign-on')).not.toBeInTheDocument();
+    held.unmount();
+
+    // The single sign-on settings key alone does not show the entry.
+    signedInWith('admin', customPermissions('settings.sso_manage'));
+    render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Single sign-on')).toBeInTheDocument();
+    expect(navigation().queryByText('SCIM tokens')).not.toBeInTheDocument();
+  });
+
   it('shows the Automation group with only the child whose key is held', async () => {
     signedInWith('customer', customPermissions('automation.rules_manage'));
     render(<MainLayout />);

@@ -50,6 +50,7 @@ import {
   Rule,
   History,
   VpnKey,
+  Sync,
 } from '@mui/icons-material';
 import { NotificationBell } from '@/components/layout/NotificationBell';
 import { useAuth } from '@/hooks/useAuth';
@@ -249,6 +250,13 @@ const navItems: NavItem[] = [
         path: '/settings/sign-in-audit',
         icon: <History />,
         permission: 'audit.sign_ins_view',
+      },
+      {
+        // Bearer tokens for an identity provider's SCIM client (#490).
+        title: 'SCIM tokens',
+        path: '/settings/scim-tokens',
+        icon: <Sync />,
+        permission: 'settings.scim_manage',
       },
     ],
   },

@@ -19,6 +19,9 @@ blocked until the page is built.
   webhook screen, TC-SET-036 to TC-SET-040)
 - `gocrm-ui/src/pages/settings/SSOSettings.tsx`, `gocrm-ui/src/api/endpoints/ssoSettings.ts`,
   `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041)
+- `gocrm-ui/src/pages/settings/SCIMTokens.tsx`, `SCIMTokenSecretDialog.tsx`,
+  `gocrm-ui/src/api/endpoints/scimTokens.ts`, `internal/handler/scim_token_handler.go`,
+  `gocrm-ui/e2e/tests/settings-scim-tokens.spec.ts` (the SCIM provider token screen, TC-SET-042)
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
   `gocrm-ui/src/api/endpoints/apikeys.test.ts`, `gocrm-ui/src/api/client.ts`
 - `gocrm-ui/src/contexts/ConfigurationContext.tsx`
@@ -863,3 +866,30 @@ can succeed.
 - **Known issue:** `PUT /settings/sso` is a full replacement, so the first save stores the
   environment-derived values shown as settings; a later `OIDC_*` change no longer applies to them.
 - **Automation:** automated — Vitest `src/pages/settings/SSOSettings.test.tsx`, `src/routes/index.permissions.test.tsx` "open the single sign-on screen only with settings.sso_manage", `src/layouts/MainLayout.permissions.test.tsx` "shows Single sign-on under Settings only to a caller holding settings.sso_manage"
+
+### TC-SET-042 — Create, show once and revoke a SCIM provider token
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** Signed in with `settings.scim_manage` (the admin system role).
+- **Steps:**
+  1. Open Settings > SCIM tokens from the navigation.
+  2. Press "Create token", enter a name and press Create.
+  3. Copy the token, then press Done.
+  4. Call `GET /scim/v2/ServiceProviderConfig` on the backend origin with
+     `Authorization: Bearer <token>`.
+  5. Press "Revoke <name>" on the new row, then Revoke in the confirmation.
+  6. Repeat step 4.
+  7. Open `/settings/scim-tokens` with only `settings.sso_manage`, and with no keys.
+- **Expected:** Step 1: `/settings/scim-tokens` with the columns Name, Created, Last used, Revoked
+  and Actions, every date through `formatDate` (the dash for a null date), revoked tokens listed
+  with their revoke action disabled. Step 2: `POST /settings/scim/tokens` with the trimmed name; a
+  blank name is refused in the form and a server 400 is shown in the dialog. A dialog shows the
+  token (`scim_` + 64 hex characters, equal to the POST answer) once, read-only, with a "Copy SCIM
+  token" button and the warning that it is shown only once and cannot be retrieved again. Step 3:
+  the token is gone from the page and is kept in no query or mutation cache, storage or snackbar;
+  the list is read again and the new row shows the dash under Last used. Step 4: 200. Step 5: the
+  confirmation says the identity provider using it will be refused at once; Cancel sends nothing;
+  Revoke sends `DELETE /settings/scim/tokens/{id}` (200), and the row stays listed with a Revoked
+  date and a disabled action. Step 6: 401. Step 7: `/unauthorized`, and the "SCIM tokens"
+  navigation entry is shown only with `settings.scim_manage`.
+- **Automation:** automated — Playwright `gocrm-ui/e2e/tests/settings-scim-tokens.spec.ts` "creates a token shown once, revokes it, and the revoked token is refused on /scim/v2"; Vitest `src/pages/settings/SCIMTokens.test.tsx`, `src/routes/index.permissions.test.tsx` "open the SCIM tokens screen only with settings.scim_manage", `src/layouts/MainLayout.permissions.test.tsx` "shows SCIM tokens under Settings only to a caller holding settings.scim_manage"

@@ -22,3 +22,4 @@ export * from './notifications';
 export * from './webhooks';
 export * from './ssoSettings';
 export * from './signInAudit';
+export * from './scimTokens';
