@@ -1200,14 +1200,17 @@ gophercrm/
 
 ## Known Limitations
 
-- **Access tokens end early only on logout, password change, password reset and deactivation.**
+- **Access tokens end early only on logout, password change, password reset, deactivation and a
+  SCIM group change that lowers the role.**
   These increment the account's `users.token_version`, which every JWT carries, so every access
   token issued before them is refused at once (erasure rejects it too). Password change, password
   reset and deactivation (by an administrator or through SCIM) also revoke every API key of the
   account for good, and reactivating an account brings none of its earlier credentials back;
-  logout leaves API keys alone. Refresh rotation
+  logout leaves API keys alone. A SCIM group change that leaves an account in no mapped group
+  deactivates it the same way; one that gives it a role lacking a permission the old one had ends
+  its access and refresh tokens, not its API keys. Refresh rotation
   does not: the access token it replaces stays valid until `JWT_EXPIRY_HOURS` elapses, and so does
-  every token of an account whose role changes. There is no per-token denylist.
+  every token of an account whose role changes any other way. There is no per-token denylist.
 - **Session handling has known gaps.** Browser tabs sharing a remembered session coordinate their
   refreshes through the Web Locks API (#184), which browsers offer only in secure contexts: served
   over plain HTTP (the bundled nginx without TLS) each tab locks on its own, and two tabs

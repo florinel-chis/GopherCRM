@@ -11,7 +11,11 @@ package service
 // auth_audit_log are unchanged. Issue #529: the seeded accounts are linked
 // under the test issuer, so SCIM manages them; a local account (no identity
 // link) is never listed, refused as a member an add or a replace names, and
-// only loses a leftover membership row on a remove, keeping its role.
+// only loses a leftover membership row on a remove, keeping its role. Issue
+// #530: an active managed account a patch leaves in no mapped group is
+// deactivated and every credential it holds ends; a role that lacks a
+// permission the old one had ends its sessions. Every refusal also asserts
+// that is_active, token_version, refresh tokens and API keys are unchanged.
 
 import (
 	"context"
@@ -61,6 +65,7 @@ func newSCIMGroupsFixture(t *testing.T, db *gorm.DB) *scimGroupsFixture {
 	}
 	f.svc = NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(db), f.source,
 		WithSCIMGroupWrites(repository.NewUserRepository(db), repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db),
+			repository.NewRefreshTokenRepository(db), repository.NewAPIKeyRepository(db),
 			utils.NewTransactionManager(db), NewAuthAuditService(repository.NewAuthAuditRepository(db))))
 	return f
 }
@@ -84,7 +89,7 @@ func (f *scimGroupsFixture) setMapping(mapping []SSORoleMapping) {
 
 func (f *scimGroupsFixture) reset(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"scim_group_members", "role_audit_log", "auth_audit_log", "refresh_tokens", "user_identities", "users"} {
+	for _, table := range []string{"scim_group_members", "role_audit_log", "auth_audit_log", "refresh_tokens", "api_keys", "user_identities", "users"} {
 		require.NoError(t, f.db.Exec("DELETE FROM "+table).Error, table)
 	}
 	f.setMapping(f.mapping())
@@ -113,6 +118,44 @@ func (f *scimGroupsFixture) seedLocal(t *testing.T, email string, role models.Us
 		require.NoError(t, f.db.Create(&models.SCIMGroupMember{GroupValue: group, UserID: user.ID}).Error)
 	}
 	return user
+}
+
+// seedCredentials gives user one live refresh token and one live API key.
+func (f *scimGroupsFixture) seedCredentials(t *testing.T, user *models.User) {
+	t.Helper()
+	tag := uintString(user.ID)
+	require.NoError(t, f.db.Create(&models.RefreshToken{UserID: user.ID, TokenHash: "scim-groups-rt-" + tag,
+		ExpiresAt: time.Now().Add(time.Hour)}).Error)
+	require.NoError(t, f.db.Create(&models.APIKey{Name: "scim groups", KeyHash: "scim-groups-kh-" + tag, Prefix: "gcrm_sg",
+		UserID: user.ID, IsActive: true}).Error)
+}
+
+// assertSessionsEnded checks that every refresh token of user is revoked.
+func (f *scimGroupsFixture) assertSessionsEnded(t *testing.T, userID uint) {
+	t.Helper()
+	var tokens []models.RefreshToken
+	require.NoError(t, f.db.Where("user_id = ?", userID).Find(&tokens).Error)
+	require.NotEmpty(t, tokens)
+	for _, token := range tokens {
+		assert.True(t, token.Revoked, "refresh token %d is revoked", token.ID)
+	}
+}
+
+// assertKeys checks that every API key of user is live (revoked false) or
+// revoked with revoked_at set.
+func (f *scimGroupsFixture) assertKeys(t *testing.T, userID uint, revoked bool) {
+	t.Helper()
+	var keys []models.APIKey
+	require.NoError(t, f.db.Where("user_id = ?", userID).Find(&keys).Error)
+	require.NotEmpty(t, keys)
+	for _, key := range keys {
+		assert.Equal(t, !revoked, key.IsActive, "API key %d is_active", key.ID)
+		if revoked {
+			assert.NotNil(t, key.RevokedAt, "API key %d carries revoked_at", key.ID)
+		} else {
+			assert.Nil(t, key.RevokedAt, "API key %d has no revoked_at", key.ID)
+		}
+	}
 }
 
 func (f *scimGroupsFixture) user(t *testing.T, id uint) models.User {
@@ -167,8 +210,13 @@ func (f *scimGroupsFixture) activeAdmins(t *testing.T) int64 {
 type scimGroupsState struct {
 	members    []string
 	roles      map[uint]string
+	accounts   map[uint]string
 	roleAudits int64
 	authAudits int64
+	// revokedRefresh and revokedKeys count the revoked refresh tokens and
+	// API keys.
+	revokedRefresh int64
+	revokedKeys    int64
 }
 
 func (f *scimGroupsFixture) state(t *testing.T) scimGroupsState {
@@ -176,15 +224,23 @@ func (f *scimGroupsFixture) state(t *testing.T) scimGroupsState {
 	var users []models.User
 	require.NoError(t, f.db.Unscoped().Find(&users).Error)
 	roles := map[uint]string{}
+	accounts := map[uint]string{}
 	for _, u := range users {
 		roleID := "nil"
 		if u.RoleID != nil {
 			roleID = uintString(*u.RoleID)
 		}
 		roles[u.ID] = string(u.Role) + "/" + roleID
+		active := "inactive"
+		if u.IsActive {
+			active = "active"
+		}
+		accounts[u.ID] = active + "/" + uintString(u.TokenVersion)
 	}
-	return scimGroupsState{members: f.members(t), roles: roles,
-		roleAudits: f.count(t, "role_audit_log", ""), authAudits: f.count(t, "auth_audit_log", "")}
+	return scimGroupsState{members: f.members(t), roles: roles, accounts: accounts,
+		roleAudits: f.count(t, "role_audit_log", ""), authAudits: f.count(t, "auth_audit_log", ""),
+		revokedRefresh: f.count(t, "refresh_tokens", "is_revoked = ?", true),
+		revokedKeys:    f.count(t, "api_keys", "is_active = ? OR revoked_at IS NOT NULL", false)}
 }
 
 // assertRefused checks the refusal kind and that nothing was written.
@@ -335,9 +391,13 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 		{"add makes admin", func(t *testing.T) {
 			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
 			u := f.seed(t, "u@x.test", models.RoleSales, true)
+			f.seedCredentials(t, u)
 			record, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, groupAdd(u.ID)))
 			require.NoError(t, err)
 			assert.Equal(t, scimGroupAdmins, record.Value)
+			assert.Equal(t, u.TokenVersion, f.user(t, u.ID).TokenVersion, "a raised role ends no session")
+			assert.Zero(t, f.count(t, "refresh_tokens", "user_id = ? AND is_revoked = ?", u.ID, true), "the refresh token stays live")
+			f.assertKeys(t, u.ID, false)
 			assert.Equal(t, []uint{u.ID}, record.MemberIDs)
 			stored := f.user(t, u.ID)
 			assert.Equal(t, models.RoleAdmin, stored.Role)
@@ -374,18 +434,67 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			assert.Len(t, f.roleAudits(t, u.ID), 2, "one more audit row")
 			assert.Equal(t, int64(2), f.scimAudits(t, u.ID))
 		}},
-		{"removing the only group keeps the role", func(t *testing.T) {
+		{"removing the only group deactivates", func(t *testing.T) {
+			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
 			u := f.seed(t, "u@x.test", models.RoleSupport, true)
+			f.seedCredentials(t, u)
 			_, err := f.svc.Patch(ctx, salesID, parseGroupPatch(t, groupAdd(u.ID)))
 			require.NoError(t, err)
-			assert.Equal(t, models.RoleSales, f.user(t, u.ID).Role)
+			added := f.user(t, u.ID)
+			assert.Equal(t, models.RoleSales, added.Role)
 			require.Len(t, f.roleAudits(t, u.ID), 1)
-			_, err = f.svc.Patch(ctx, salesID, parseGroupPatch(t, groupRemove(u.ID)))
+			roleAuditsBefore := f.count(t, "role_audit_log", "")
+			scimAuditsBefore := f.scimAudits(t, u.ID)
+
+			record, err := f.svc.Patch(ctx, salesID, parseGroupPatch(t, groupRemove(u.ID)))
 			require.NoError(t, err)
-			assert.Equal(t, models.RoleSales, f.user(t, u.ID).Role, "no match keeps the role")
-			assert.Len(t, f.roleAudits(t, u.ID), 1, "no role audit row")
+			assert.Empty(t, record.MemberIDs)
+			stored := f.user(t, u.ID)
+			assert.False(t, stored.IsActive, "the account is deactivated")
+			assert.Equal(t, added.Role, stored.Role, "the role is kept")
+			assert.Equal(t, added.RoleID, stored.RoleID, "the role_id is kept")
+			assert.Equal(t, added.TokenVersion+1, stored.TokenVersion, "every access token ends")
+			f.assertSessionsEnded(t, u.ID)
+			f.assertKeys(t, u.ID, true)
+			assert.Equal(t, roleAuditsBefore, f.count(t, "role_audit_log", ""), "no role audit row")
+			assert.Equal(t, scimAuditsBefore+1, f.scimAudits(t, u.ID), "one sign-in audit row for the remove")
 			assert.Equal(t, int64(2), f.scimAudits(t, u.ID), "the membership changed twice")
 			assert.Empty(t, f.members(t))
+		}},
+		{"removing an inactive account's only group writes no users change", func(t *testing.T) {
+			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
+			w := f.seed(t, "w@x.test", models.RoleSales, false, scimGroupSales)
+			f.seedCredentials(t, w)
+			before := f.user(t, w.ID)
+			record, err := f.svc.Patch(ctx, salesID, parseGroupPatch(t, groupRemove(w.ID)))
+			require.NoError(t, err)
+			assert.Empty(t, record.MemberIDs)
+			stored := f.user(t, w.ID)
+			assert.False(t, stored.IsActive)
+			assert.Equal(t, before.Role, stored.Role)
+			assert.Equal(t, before.RoleID, stored.RoleID)
+			assert.Equal(t, before.TokenVersion, stored.TokenVersion, "token_version unchanged")
+			assert.Zero(t, f.count(t, "refresh_tokens", "is_revoked = ?", true), "refresh tokens unchanged")
+			f.assertKeys(t, w.ID, false)
+			assert.Empty(t, f.roleAudits(t, w.ID))
+			assert.Equal(t, int64(1), f.scimAudits(t, w.ID), "the membership changed")
+			assert.Empty(t, f.members(t))
+		}},
+		{"lowered role ends sessions", func(t *testing.T) {
+			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
+			u := f.seed(t, "u@x.test", models.RoleAdmin, true, scimGroupAdmins, scimGroupSales)
+			f.seedCredentials(t, u)
+			before := f.user(t, u.ID)
+			_, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, groupRemove(u.ID)))
+			require.NoError(t, err)
+			stored := f.user(t, u.ID)
+			assert.Equal(t, models.RoleSales, stored.Role)
+			assert.True(t, stored.IsActive, "a lowered role does not deactivate")
+			assert.Equal(t, before.TokenVersion+1, stored.TokenVersion, "every access token ends")
+			f.assertSessionsEnded(t, u.ID)
+			f.assertKeys(t, u.ID, false)
+			assert.Len(t, f.roleAudits(t, u.ID), 1)
+			assert.Equal(t, int64(1), f.scimAudits(t, u.ID))
 		}},
 		{"last_admin", func(t *testing.T) {
 			u := f.seed(t, "u@x.test", models.RoleAdmin, true, scimGroupAdmins, scimGroupSales)
@@ -415,6 +524,66 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			assert.Equal(t, int64(1), f.scimAudits(t, x.ID))
 			assert.Equal(t, int64(1), f.scimAudits(t, y.ID))
 			assert.Equal(t, int64(1), f.activeAdmins(t))
+		}},
+		{"last_admin_deactivation", func(t *testing.T) {
+			u := f.seed(t, "u@x.test", models.RoleAdmin, true, scimGroupAdmins)
+			f.seedCredentials(t, u)
+			before := f.state(t)
+			record, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, groupRemove(u.ID)))
+			f.assertRefused(t, ErrSCIMGroupLastAdmin, record, err, before)
+			stored := f.user(t, u.ID)
+			assert.True(t, stored.IsActive)
+			assert.Equal(t, models.RoleAdmin, stored.Role)
+			f.assertKeys(t, u.ID, false)
+		}},
+		{"handover_deactivates_old_admin", func(t *testing.T) {
+			x := f.seed(t, "x@x.test", models.RoleAdmin, true, scimGroupAdmins)
+			y := f.seed(t, "y@x.test", models.RoleSales, true)
+			f.seedCredentials(t, x)
+			before := f.user(t, x.ID)
+			record, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, groupReplace(y.ID)))
+			require.NoError(t, err)
+			assert.Equal(t, []uint{y.ID}, record.MemberIDs)
+			assert.Equal(t, models.RoleAdmin, f.user(t, y.ID).Role)
+			stored := f.user(t, x.ID)
+			assert.False(t, stored.IsActive, "the old admin is deactivated")
+			assert.Equal(t, models.RoleAdmin, stored.Role, "its role is kept")
+			assert.Equal(t, before.TokenVersion+1, stored.TokenVersion)
+			f.assertSessionsEnded(t, x.ID)
+			f.assertKeys(t, x.ID, true)
+			assert.Empty(t, f.roleAudits(t, x.ID))
+			assert.Len(t, f.roleAudits(t, y.ID), 1)
+			assert.Equal(t, int64(1), f.scimAudits(t, x.ID))
+			assert.Equal(t, int64(1), f.activeAdmins(t))
+		}},
+		{"remove all deactivates every member left in no mapped group", func(t *testing.T) {
+			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
+			a := f.seed(t, "a@x.test", models.RoleSales, true, scimGroupSales)
+			b := f.seed(t, "b@x.test", models.RoleSales, true, scimGroupSales)
+			c := f.seed(t, "c@x.test", models.RoleAdmin, true, scimGroupSales, scimGroupAdmins)
+			for _, u := range []*models.User{a, b, c} {
+				f.seedCredentials(t, u)
+			}
+			record, err := f.svc.Patch(ctx, salesID, parseGroupPatch(t, `{"Operations":[{"op":"remove","path":"members"}]}`))
+			require.NoError(t, err)
+			assert.Empty(t, record.MemberIDs)
+			for _, u := range []*models.User{a, b} {
+				stored := f.user(t, u.ID)
+				assert.False(t, stored.IsActive, "user %d is deactivated", u.ID)
+				assert.Equal(t, models.RoleSales, stored.Role)
+				assert.Equal(t, u.TokenVersion+1, stored.TokenVersion)
+				f.assertSessionsEnded(t, u.ID)
+				f.assertKeys(t, u.ID, true)
+				assert.Equal(t, int64(1), f.scimAudits(t, u.ID))
+			}
+			stored := f.user(t, c.ID)
+			assert.True(t, stored.IsActive, "a member still in a mapped group stays active")
+			assert.Equal(t, models.RoleAdmin, stored.Role)
+			assert.Equal(t, c.TokenVersion, stored.TokenVersion)
+			assert.Zero(t, f.count(t, "refresh_tokens", "user_id = ? AND is_revoked = ?", c.ID, true))
+			f.assertKeys(t, c.ID, false)
+			assert.Zero(t, f.count(t, "role_audit_log", ""))
+			assert.Equal(t, []string{"Admins/" + uintString(c.ID)}, f.members(t))
 		}},
 		{"handover_add_remove", func(t *testing.T) {
 			x := f.seed(t, "x@x.test", models.RoleAdmin, true, scimGroupAdmins, scimGroupSales)
@@ -599,9 +768,29 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			}
 		}},
 		{"unwired writes", func(t *testing.T) {
+			f.seed(t, "keeper@x.test", models.RoleAdmin, true)
+			u := f.seed(t, "u@x.test", models.RoleSales, true, scimGroupSales)
+			f.seedCredentials(t, u)
 			unwired := NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(f.db), f.source)
 			_, err := unwired.Patch(ctx, adminsID, parseGroupPatch(t, groupAdd(1)))
 			assert.ErrorIs(t, err, errSCIMGroupWritesNotWired)
+
+			// The credential stores are part of the wiring.
+			writes := func(refreshTokens repository.RefreshTokenRepository, apiKeys repository.APIKeyRepository) SCIMGroupService {
+				return NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(f.db), f.source,
+					WithSCIMGroupWrites(repository.NewUserRepository(f.db), repository.NewRoleRepository(f.db), repository.NewRoleAuditRepository(f.db),
+						refreshTokens, apiKeys, utils.NewTransactionManager(f.db), NewAuthAuditService(repository.NewAuthAuditRepository(f.db))))
+			}
+			for name, svc := range map[string]SCIMGroupService{
+				"no refresh tokens": writes(nil, repository.NewAPIKeyRepository(f.db)),
+				"no API keys":       writes(repository.NewRefreshTokenRepository(f.db), nil),
+			} {
+				before := f.state(t)
+				record, err := svc.Patch(ctx, salesID, parseGroupPatch(t, groupRemove(u.ID)))
+				assert.Nil(t, record, name)
+				assert.ErrorIs(t, err, errSCIMGroupWritesNotWired, name)
+				assert.Equal(t, before, f.state(t), "%s: nothing is written", name)
+			}
 		}},
 	}
 	if f.db.Dialector.Name() == "mysql" {

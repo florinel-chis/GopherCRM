@@ -582,9 +582,12 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	inOrder(governed, "tx.users.UpdateFields(id, fields)", "revokeAllCredentials(", "tx.record(")
 	assert.Contains(t, rbac, "refresh_tokens → api_keys", "RBAC flow: the deactivation's credential tables")
 	// The helper writes in the documented order users → refresh_tokens →
-	// api_keys.
+	// api_keys: endSessions writes users then refresh_tokens (#530), and
+	// revokeAllCredentials runs it before the API keys.
+	sessions := concurrencyDocFuncBody(t, "internal/service/credential_revocation.go", "func endSessions(")
+	inOrder(sessions, "UpdateFields(", "refreshTokens.RevokeAllForUser(")
 	helper := concurrencyDocFuncBody(t, "internal/service/credential_revocation.go", "func revokeAllCredentials(")
-	inOrder(helper, "UpdateFields(", "refreshTokens.RevokeAllForUser(", "apiKeys.RevokeAllForUser(")
+	inOrder(helper, "endSessions(", "apiKeys.RevokeAllForUser(")
 	// The plain update stays plain: it is the non-HTTP writer.
 	update := concurrencyDocFuncBody(t, "internal/service/user_service.go", "func (s *userService) Update(")
 	assert.NotContains(t, update, "WithTransaction")
@@ -1380,12 +1383,14 @@ func TestConcurrencyDocSCIMGroupPatch(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM group patch"]["Order"]),
 		"admin set → users → roles → scim_group_members")
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM group patch"]["Order"]),
+		"scim_group_members → refresh_tokens → api_keys")
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM group patch"]["Rows locked"]), "scimGroupService.Patch")
 
 	body := concurrencyDocFuncBody(t, "internal/service/scim_group_writes.go", "func (s *scimGroupService) Patch(")
 	last := -1
 	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
-		"members.Remove(", "members.Add(", "tx.record(", "s.writes.audit.Record("} {
+		"members.Remove(", "members.Add(", "revokeAllCredentials(", "endSessions(", "tx.record(", "s.writes.audit.Record("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
 			assert.Greater(t, at, last, "%q comes after the statement before it", statement)

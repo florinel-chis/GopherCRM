@@ -464,17 +464,25 @@ is the `scim_group_members` table (`models.SCIMGroupMember`, `ensureSCIMGroupMem
 `internal/repository/scim_group_member_repository.go`; migration
 `20261129120000_add_scim_group_members`). `scimGroupService.Patch`
 (`internal/service/scim_group_writes.go`) runs `admin set → users → roles → scim_group_members →
-role_audit_log` in `roleGovernance.run`; it reads the group's rows and the members' other groups
+refresh_tokens → api_keys → role_audit_log` in `roleGovernance.run`; it reads the group's rows and the members' other groups
 with a `FOR UPDATE` handle so MySQL's REPEATABLE READ snapshot, taken before the admin-set wait,
 is not used. It recomputes each added or removed visible member's role with `oidcMatchRole(mapping,
-groups, nil)` and `scimMappedRole`, and refuses with `ErrSCIMGroupLastAdmin` (standalone, not an
-`ErrSCIMInvalidValue`) only when admins existed and none is left. Regression roots:
+groups, nil)` and `scimMappedRole`. Since #530 an active member that gets no match is deactivated
+instead (`is_active` false, role kept, `revokeAllCredentials` on the locked row; an inactive one
+gets no `users` write), and a role write whose old permission set exceeds the new one
+(`permissionsExceed(escalationSet(old), escalationSet(new))`) calls `endSessions` after its
+`UpdateFields`; the role audit rows follow every `users` write and revocation.
+`WithSCIMGroupWrites` takes the refresh token and API key repositories, and `Patch` returns
+`errSCIMGroupWritesNotWired` (500) before reading anything when either is nil. The patch refuses
+with `ErrSCIMGroupLastAdmin` (standalone, not an `ErrSCIMInvalidValue`) only when admins existed
+and none is left, a deactivated account counting as none. Regression roots:
 `TestSCIMGroupsSQLite` and `TestSCIMGroupsMySQL` (`internal/service/auth_scim_groups_test.go`,
 discovered by the auth checker; run the MySQL root on MariaDB too; the `last_admin_race`
 subtests), `TestSCIMGroupHandler` and `TestSCIMDiscoveryDocuments` (`internal/handler`),
 `TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
 `TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
-(`internal/models`), `TestSCIMGroupsWired` (`cmd`), `TestConcurrencyDocSCIMGroupPatch`
+(`internal/models`), `TestSCIMGroupsWired` and the `scim_group_*` subtests of
+`TestCredentialRevocationProductionWiring` (`cmd`), `TestConcurrencyDocSCIMGroupPatch`
 (`internal/config`), and `TestSCIMGroupMembersMigrationFiles` (it held the newest-migration
 assertion until #524 moved it to `TestAdminOnlyPermissionsMigrationFiles`) and
 `TestSCIMGroupMembersMigration` (`cmd/migrate`), required by the migrations workflow,
@@ -667,7 +675,12 @@ caller back; the helper logs nothing. Its callers, after their own `users` write
 change (`changePasswordInTransaction`, which writes only `password` itself and issues the renewed
 successor after the helper), the reset confirmation (`confirmPasswordResetInTransaction`), the
 governed deactivation (`governedWrite` with `is_active` false, wired by
-`WithUserCredentialRevocation`) and the SCIM deactivations. `ChangePassword` and
+`WithUserCredentialRevocation`), the SCIM deactivations and the SCIM group patch that leaves an
+active account in no mapped group (#530). The first two steps are their own helper,
+`endSessions` (`token_version` + 1, then `RefreshTokenRepository.RevokeAllForUser`), which
+`revokeAllCredentials` calls before the API keys and which the SCIM group patch also calls alone
+for a role that lacks a permission the old one had (API keys keep working: each request re-reads
+the owner). `ChangePassword` and
 `ConfirmPasswordReset` refuse, writing nothing, on a service without the API key repository.
 `Logout` keeps its own revocation and never touches API keys; the refresh-rotation containment,
 the erasure credential purge and the plain `UserService.Update` are unchanged. Which event ends

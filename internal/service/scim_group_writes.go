@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -18,7 +19,7 @@ import (
 // SCIM 2.0 group patch (#506). One governed transaction, in the lock order
 // of the other SCIM writes:
 //
-//	admin set → users → roles → scim_group_members → role_audit_log
+//	admin set → users → roles → scim_group_members → refresh_tokens → api_keys → role_audit_log
 //
 // The admin set is locked first by every group patch, so two group patches
 // never interleave while an active admin exists. The group's membership rows
@@ -37,15 +38,25 @@ import (
 // audit row, and the last-admin rule does not count it as losing its role.
 // Each affected managed account (added or removed) gets the role of the
 // sign-in's first-match rule on its groups after the change (the groups claim
-// only, never roles); no match keeps its role. A mapping to a missing role
-// row or to customer refuses the patch with ErrSCIMInvalidValue. The
-// last-admin rule judges the result: the patch is refused with
-// ErrSCIMGroupLastAdmin only when an active admin exists before it and none
-// after it, so a handover to another active user passes. A role change
-// writes its user_role_changed row (auth_method scim, NULL actor); after the
-// commit one successful auth_audit_log row with method scim names each
-// managed account whose membership changed. A refusal writes nothing; a patch
-// that changes nothing writes nothing.
+// only, never roles). An affected managed account left in no mapped group is
+// deactivated when it is active: is_active false, its role and role_id kept,
+// no user_role_changed row, and every credential ended through
+// revokeAllCredentials (token_version, refresh tokens, API keys); an account
+// already inactive gets no users write. A mapping to a missing role row or to
+// customer refuses the patch with ErrSCIMInvalidValue. A role write whose new
+// role lacks a permission the old one had (permissionsExceed of the old set
+// over the new one, a lateral move included) ends the account's sessions
+// through endSessions (token_version, refresh tokens), active or not; its API
+// keys keep working with the new role, because every API-key request re-reads
+// the owner. A raised or unchanged role ends nothing. The last-admin rule
+// judges the result, where a deactivated account is no longer an active
+// admin: the patch is refused with ErrSCIMGroupLastAdmin only when an active
+// admin exists before it and none after it, so a handover to another active
+// user passes. A role change writes its user_role_changed row (auth_method
+// scim, NULL actor); after the commit one successful auth_audit_log row with
+// method scim names each managed account whose membership changed. A refusal
+// writes nothing; a patch that changes nothing writes nothing. Every error
+// rolls the whole patch back, membership rows included.
 
 // ErrSCIMGroupLastAdmin refuses a group patch whose result leaves no active
 // admin (400 mutability). It deliberately does not wrap ErrSCIMInvalidValue,
@@ -53,7 +64,7 @@ import (
 var ErrSCIMGroupLastAdmin = errors.New("scim: the last active admin must stay an active admin")
 
 // errSCIMGroupWritesNotWired is a wiring fault (500): NewSCIMGroupService was
-// built without WithSCIMGroupWrites.
+// built without WithSCIMGroupWrites, or without its credential stores.
 var errSCIMGroupWritesNotWired = errors.New("scim group writes need WithSCIMGroupWrites")
 
 // SCIMGroupPatch is a parsed SCIM PatchOp on a Group (#506).
@@ -61,19 +72,35 @@ type SCIMGroupPatch = scim.GroupPatch
 
 // scimGroupWrites is what the patch needs besides the read half.
 type scimGroupWrites struct {
-	governance *roleGovernance
-	audit      AuthAuditService
+	governance    *roleGovernance
+	refreshTokens repository.RefreshTokenRepository
+	apiKeys       repository.APIKeyRepository
+	audit         AuthAuditService
 }
 
-// WithSCIMGroupWrites enables Patch over the governed user writes and the
-// sign-in audit log.
+// WithSCIMGroupWrites enables Patch over the governed user writes, the
+// credential stores a deactivation or a lowered role ends, and the sign-in
+// audit log.
 func WithSCIMGroupWrites(userRepo repository.UserRepository, roleRepo repository.RoleRepository, roleAuditRepo repository.RoleAuditRepository,
+	refreshTokens repository.RefreshTokenRepository, apiKeys repository.APIKeyRepository,
 	txManager *utils.TransactionManager, audit AuthAuditService) SCIMGroupServiceOption {
 	return func(s *scimGroupService) {
 		s.writes = &scimGroupWrites{
-			governance: &roleGovernance{users: userRepo, roles: roleRepo, audit: roleAuditRepo, txManager: txManager},
-			audit:      audit,
+			governance:    &roleGovernance{users: userRepo, roles: roleRepo, audit: roleAuditRepo, txManager: txManager},
+			refreshTokens: refreshTokens,
+			apiKeys:       apiKeys,
+			audit:         audit,
 		}
+	}
+}
+
+// credentialStores binds the stores of endSessions and revokeAllCredentials
+// to the governed transaction.
+func (w *scimGroupWrites) credentialStores(tx *governedTx) credentialStores {
+	return credentialStores{
+		users:         tx.users,
+		refreshTokens: w.refreshTokens.WithTx(tx.handle),
+		apiKeys:       w.apiKeys.WithTx(tx.handle),
 	}
 }
 
@@ -104,17 +131,23 @@ func sortedIDs(set map[uint]bool) []uint {
 	return ids
 }
 
-// scimGroupRoleChange is the role an affected user gets.
+// scimGroupRoleChange is the result for an affected managed user: the role
+// it gets, or its deactivation.
 type scimGroupRoleChange struct {
 	user   *models.User
 	role   models.UserRole
 	roleID *uint
 	custom *models.Role
+	// deactivate: the account is active and left in no mapped group; its
+	// role is kept.
+	deactivate bool
+	// lowered: the old role holds a grant the new one does not cover.
+	lowered bool
 }
 
 // Patch applies a Group PatchOp to the group rawID names.
 func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupPatch) (*SCIMGroupRecord, error) {
-	if s.writes == nil {
+	if s.writes == nil || s.writes.refreshTokens == nil || s.writes.apiKeys == nil {
 		return nil, errSCIMGroupWritesNotWired
 	}
 	cfg, err := s.sso.SSOConfig(ctx)
@@ -281,6 +314,15 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				if result.role, result.roleID, result.custom, err = scimMappedRole(roles[mapped]); err != nil {
 					return err
 				}
+				var oldCustom *models.Role
+				if u.RoleID != nil {
+					oldCustom = roles[*u.RoleID]
+				}
+				result.lowered = permissionsExceed(escalationSet(u.Role, oldCustom), escalationSet(result.role, result.custom))
+			} else if u.IsActive {
+				// Left in no mapped group: deactivated, the role kept. An
+				// inactive account gets no users write.
+				result.deactivate = true
 			}
 			results[id] = result
 		}
@@ -301,17 +343,18 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				before[id] = true
 			}
 		}
-		// An admin the patch gives no role result keeps its role: it is
-		// unaffected, or only a leftover membership row of an account that
-		// is not managed is removed.
+		// An admin without a result is unaffected, or only a leftover
+		// membership row of an account that is not managed is removed: it
+		// stays an active admin. An admin with a result stays one only when
+		// the result keeps the admin role and does not deactivate it.
 		after := map[uint]bool{}
 		for _, admin := range admins {
-			if r, ok := results[admin.ID]; !ok || r.role == models.RoleAdmin {
+			if r, ok := results[admin.ID]; !ok || (r.role == models.RoleAdmin && !r.deactivate) {
 				after[admin.ID] = true
 			}
 		}
 		for id, r := range results {
-			if r.user.IsActive && r.role == models.RoleAdmin {
+			if r.user.IsActive && !r.deactivate && r.role == models.RoleAdmin {
 				after[id] = true
 			}
 		}
@@ -325,8 +368,21 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		if err := members.Add(group, sortedIDs(added)); err != nil {
 			return fmt.Errorf("add scim group members: %w", err)
 		}
+		// The users writes and the credentials they end, account by account,
+		// before any role_audit_log row (the lock order).
+		stores := s.writes.credentialStores(tx)
+		var roleChanged []uint
 		for _, id := range affectedManaged {
 			r := results[id]
+			if r.deactivate {
+				if err := tx.users.UpdateFields(id, map[string]interface{}{"is_active": false}); err != nil {
+					return fmt.Errorf("deactivate scim user %d: %w", id, err)
+				}
+				if err := revokeAllCredentials(stores, r.user, time.Now()); err != nil {
+					return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
+				}
+				continue
+			}
 			if r.role == r.user.Role && sameRoleID(r.roleID, r.user.RoleID) {
 				continue
 			}
@@ -335,14 +391,23 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				fields["role_id"] = *r.roleID
 			}
 			if err := tx.users.UpdateFields(id, fields); err != nil {
-				return err
+				return fmt.Errorf("set the role of scim user %d: %w", id, err)
 			}
+			if r.lowered {
+				if err := endSessions(stores, r.user); err != nil {
+					return fmt.Errorf("end the sessions of scim user %d: %w", id, err)
+				}
+			}
+			roleChanged = append(roleChanged, id)
+		}
+		for _, id := range roleChanged {
+			r := results[id]
 			targetID := id
 			if err := tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserRoleChanged,
 				r.roleID, assignedRoleName(r.role, r.custom), &targetID,
 				userRoleAuditState{Role: r.user.Role, RoleID: r.user.RoleID},
 				userRoleAuditState{Role: r.role, RoleID: r.roleID}); err != nil {
-				return err
+				return fmt.Errorf("record the role change of scim user %d: %w", id, err)
 			}
 		}
 		changed = affectedManaged

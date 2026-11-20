@@ -7,7 +7,13 @@ package main
 // change and a SCIM delete each revoke the account's API keys in their
 // transaction: the key's next request answers 401 and its row carries
 // revoked_at. Reactivating the account brings neither the key nor the old
-// refresh token back. Over a SQLite file opened by the real connector.
+// refresh token back. Issue #530 adds the SCIM group patch, wired with the
+// refresh token and API key repositories (WithSCIMGroupWrites): removing a
+// managed account from its only mapped group deactivates it and ends its
+// access token, refresh token and API key; removing an admin from Admins
+// while it stays in Sales ends its access and refresh tokens, and its key
+// keeps working with the sales role. Over a SQLite file opened by the real
+// connector.
 
 import (
 	"encoding/json"
@@ -25,10 +31,13 @@ import (
 func TestCredentialRevocationProductionWiring(t *testing.T) {
 	const issuer = "https://idp.credential-revocation.test"
 	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
-		var role models.Role
+		var role, adminRole models.Role
 		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&role).Error)
+		require.NoError(t, models.DB.Where("system_key = ?", "admin").First(&adminRole).Error)
 		boot.cfg.SSO.IssuerURL = issuer
-		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d}]`, role.ID)
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d},`+
+			`{"claim":"groups","value":"Admins","role_id":%d},{"claim":"groups","value":"Sales","role_id":%d}]`,
+			role.ID, adminRole.ID, role.ID)
 		// The managed account below signs in with a password to hold a
 		// session and issue its key.
 		boot.cfg.SSO.AllowPassword, boot.cfg.SSO.AllowPasswordSet = true, true
@@ -97,6 +106,42 @@ func TestCredentialRevocationProductionWiring(t *testing.T) {
 
 	admin := newUser("admin@credential-revocation.test", models.RoleAdmin)
 	adminSession := signIn(admin.Email)
+	// newSCIMToken issues a SCIM bearer token as the administrator.
+	newSCIMToken := func(name string) string {
+		t.Helper()
+		recorder := scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"`+name+`"}`, nextRemote(), "Bearer "+adminSession.token)
+		require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+		var created struct {
+			Data struct {
+				Token string `json:"token"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+		require.NotEmpty(t, created.Data.Token)
+		return "Bearer " + created.Data.Token
+	}
+	// managedUser creates a password account linked under the issuer and
+	// puts it in groups.
+	managedUser := func(email string, role models.UserRole, subject string, groups ...string) *models.User {
+		t.Helper()
+		user := newUser(email, role)
+		require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: user.ID, Issuer: issuer, Subject: subject,
+			Source: models.UserIdentitySourceSCIM}).Error)
+		for _, group := range groups {
+			require.NoError(t, models.DB.Create(&models.SCIMGroupMember{GroupValue: group, UserID: user.ID}).Error)
+		}
+		return user
+	}
+	groupRemoveBody := func(id uint) string {
+		return fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"remove","path":"members[value eq \"%d\"]"}]}`, id)
+	}
+	assertSessionEnded := func(s session, what string) {
+		t.Helper()
+		recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/refresh", `{"refresh_token":"`+s.refresh+`"}`, nextRemote(), "")
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code, "%s: the old refresh token is refused: %s", what, recorder.Body.String())
+		recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+s.token)
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code, "%s: the old access token is refused", what)
+	}
 
 	t.Run("administrator_deactivation_then_activation", func(t *testing.T) {
 		user := newUser("deactivated@credential-revocation.test", models.RoleSales)
@@ -145,5 +190,42 @@ func TestCredentialRevocationProductionWiring(t *testing.T) {
 		recorder = scimWiredSend(router, http.MethodDelete, fmt.Sprintf("/scim/v2/Users/%d", user.ID), "", nextRemote(), "Bearer "+created.Data.Token)
 		require.Equal(t, http.StatusNoContent, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
 		assertKeyRevoked(key, user.ID, "after the SCIM delete")
+	})
+
+	t.Run("scim_group_removal", func(t *testing.T) {
+		scimToken := newSCIMToken("Entra groups")
+		user := managedUser("group-member@credential-revocation.test", models.RoleSales, "sub-0530-member", "Sales")
+		s := signIn(user.Email)
+		key := issueKey(s)
+
+		recorder := scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/U2FsZXM", groupRemoveBody(user.ID), nextRemote(), scimToken)
+		require.Equal(t, http.StatusOK, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
+		assertKeyRevoked(key, user.ID, "after the group removal")
+		assertSessionEnded(s, "after the group removal")
+		var stored models.User
+		require.NoError(t, models.DB.First(&stored, user.ID).Error)
+		assert.False(t, stored.IsActive, "the account is deactivated")
+	})
+
+	t.Run("scim_group_lowered_role", func(t *testing.T) {
+		// admin above stays an active admin, so the patch is not refused by
+		// the last-admin rule.
+		scimToken := newSCIMToken("Entra lowered")
+		user := managedUser("group-admin@credential-revocation.test", models.RoleAdmin, "sub-0530-admin", "Admins", "Sales")
+		s := signIn(user.Email)
+		key := issueKey(s)
+
+		recorder := scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/QWRtaW5z", groupRemoveBody(user.ID), nextRemote(), scimToken)
+		require.Equal(t, http.StatusOK, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
+		assertSessionEnded(s, "after the lowered role")
+		recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), key)
+		require.Equal(t, http.StatusOK, recorder.Code, "the key keeps working: %s", recorder.Body.String())
+		var me struct {
+			Data struct {
+				Role string `json:"role"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &me))
+		assert.Equal(t, string(models.RoleSales), me.Data.Role, "the key acts with the new role")
 	})
 }

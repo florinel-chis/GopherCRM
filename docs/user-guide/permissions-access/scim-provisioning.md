@@ -111,13 +111,18 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   are.
 - **Group membership and roles.** After a PATCH changes a group's members, each person added or
   removed gets the role of the first mapping row with claim `groups` whose value is one of the
-  person's groups after the change, as single sign-on does with the `groups` claim. A person left
-  in no mapped group keeps their role. Editing the role mapping recomputes no role by itself: a
+  person's groups after the change, as single sign-on does with the `groups` claim. An active
+  person left in no mapped group is deactivated, as `active` false does: they are signed out
+  everywhere at once, their API keys are revoked, and their role stays as it was. A person who is
+  already deactivated stays as they are. When the new role lacks a permission the old one had, the
+  person is signed out at once and signs in again with the new role; their API keys keep working
+  with the new role. Editing the role mapping recomputes no role by itself: a
   person's role follows a mapping change only at the next group patch that adds or removes that
   person. A group patch may hand the administrator role over to another active account, for
   example by replacing the members of an administrator group, or by adding the new administrator
   and removing the old one in one PATCH. Only a result that leaves no active administrator is
-  refused, with 400 `mutability`, and then nothing changes.
+  refused, with 400 `mutability`, and then nothing changes; a deactivated administrator does not
+  count as an active one.
 - **Delete.** A DELETE answers 204 with no body and deactivates the account as `active` false
   does: every session ends, and the email address, name, role and single sign-on link stay. A
   DELETE of an account that is already deactivated answers 204 and changes nothing. An account the
