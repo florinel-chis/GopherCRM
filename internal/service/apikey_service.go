@@ -21,6 +21,10 @@ import (
 // inserted without the owner lock (#342). Nothing is written.
 var ErrAPIKeyIssuanceUnavailable = errors.New("api key issuance is not available")
 
+// ErrAPIKeyRevoked is returned by Update when is_active=true is asked of a
+// revoked key: revocation is final. Nothing is written.
+var ErrAPIKeyRevoked = errors.New("api key is revoked")
+
 // apiKeyCreateMaxRetries is how often the API-key issuing transaction is
 // replayed after a deadlock, a lock wait timeout or SQLite busy/locked (#183
 // retry rule).
@@ -37,6 +41,10 @@ type apiKeyService struct {
 	// transaction begins. Tests commit a competing change there; nil in
 	// production.
 	beforeLock func(userID uint)
+	// beforeWrite is an instance-local seam that runs in Update between the
+	// ownership read and the first write. Tests commit a competing revocation
+	// there; nil in production.
+	beforeWrite func(id uint)
 }
 
 // NewAPIKeyService builds the API key service. userRepo and txManager must be
@@ -163,40 +171,75 @@ func (s *apiKeyService) GetByID(id uint, userID uint) (*models.APIKey, error) {
 	return apiKey, nil
 }
 
-// Update applies only the fields the caller actually sent. Setting isActive to
-// true on a revoked key reactivates it — revocation here is a flag the owner
-// controls, not a tombstone. An expired key is unaffected by this: expiry is
-// checked independently at authentication time and cannot be cleared through
-// this path.
+// apiKeyRevoked reports whether a key is revoked: inactive, or stamped with
+// revoked_at. An inactive row without revoked_at (revoked before the column
+// existed) counts as revoked too.
+func apiKeyRevoked(apiKey *models.APIKey) bool {
+	return !apiKey.IsActive || apiKey.RevokedAt != nil
+}
+
+// Update applies only the fields the caller actually sent, each with a
+// statement that writes only that column, so a concurrent revocation is never
+// overwritten. isActive=false revokes the key like Revoke. isActive=true does
+// not re-enable anything: on a live key it changes nothing, and on a revoked
+// key it is refused with ErrAPIKeyRevoked and nothing is written, the name
+// included. When isActive is true the rename applies only to a live key, so a
+// revocation that commits between the ownership read and the rename also
+// ends in ErrAPIKeyRevoked with the row unchanged. Expiry is unaffected: it
+// is checked independently at authentication time and cannot be cleared
+// through this path.
 func (s *apiKeyService) Update(id uint, userID uint, name *string, isActive *bool) (*models.APIKey, error) {
 	apiKey, err := s.ownedKey(id, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	if name != nil {
-		apiKey.Name = *name
-	}
-	if isActive != nil {
-		apiKey.IsActive = *isActive
+	switchOn := isActive != nil && *isActive
+	if switchOn && apiKeyRevoked(apiKey) {
+		return nil, ErrAPIKeyRevoked
 	}
 
-	if err := s.apiKeyRepo.Update(apiKey); err != nil {
+	if s.beforeWrite != nil {
+		s.beforeWrite(id)
+	}
+
+	if name != nil {
+		renamed, err := s.apiKeyRepo.Rename(id, userID, *name, switchOn)
+		if err != nil {
+			return nil, err
+		}
+		if switchOn && renamed == 0 {
+			// Owned when read, so a zero count means the key was revoked
+			// (or removed) since: answer as for a revoked key, unchanged.
+			return nil, ErrAPIKeyRevoked
+		}
+	}
+	if isActive != nil && !*isActive {
+		if _, err := s.apiKeyRepo.Revoke(id, userID, time.Now().UTC()); err != nil {
+			return nil, err
+		}
+	}
+
+	updated, err := s.ownedKey(id, userID)
+	if err != nil {
 		return nil, err
 	}
-
-	apiKey.User = models.User{}
-	return apiKey, nil
+	if switchOn && apiKeyRevoked(updated) {
+		return nil, ErrAPIKeyRevoked
+	}
+	updated.User = models.User{}
+	return updated, nil
 }
 
+// Revoke switches the key off and stamps revoked_at with one conditional
+// UPDATE. It is idempotent: on a key already revoked nothing changes and the
+// first revoked_at is kept; an inactive key without revoked_at gets stamped.
 func (s *apiKeyService) Revoke(id uint, userID uint) error {
-	apiKey, err := s.ownedKey(id, userID)
-	if err != nil {
+	if _, err := s.ownedKey(id, userID); err != nil {
 		return err
 	}
-
-	apiKey.IsActive = false
-	return s.apiKeyRepo.Update(apiKey)
+	_, err := s.apiKeyRepo.Revoke(id, userID, time.Now().UTC())
+	return err
 }
 
 func (s *apiKeyService) List(userID uint) ([]models.APIKey, error) {

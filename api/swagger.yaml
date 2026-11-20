@@ -992,8 +992,8 @@ definitions:
       is_active:
         description: |-
           False once the key is revoked (DELETE /api-keys/{id} or PUT with
-          is_active=false); the owner can set it back to true. An inactive key is
-          rejected at authentication.
+          is_active=false). A revoked key cannot be switched on again. An inactive
+          key is rejected at authentication.
         example: true
         type: boolean
       last_used_at:
@@ -1012,6 +1012,13 @@ definitions:
           First 8 hexadecimal characters of the key's random part (the characters
           after "gcrm_"), so a key can be recognised without exposing it. Read-only.
         example: 3f9a1c2b
+        readOnly: true
+        type: string
+      revoked_at:
+        description: |-
+          Time the key was revoked (RFC 3339). Absent while the key is live, and
+          on keys revoked before this field existed. Read-only.
+        example: "2026-11-29T10:00:00Z"
         readOnly: true
         type: string
       updated_at:
@@ -8050,8 +8057,9 @@ definitions:
     properties:
       is_active:
         description: |-
-          true reactivates a revoked key, false revokes it; omitted or null keeps
-          the current state.
+          false revokes the key; true is accepted only on a live key and changes
+          nothing (a revoked key cannot be switched on again, 409). Omitted or null
+          keeps the current state.
         example: false
         type: boolean
       name:
@@ -10319,7 +10327,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Any authenticated role, through a bearer token or an existing API key; the key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
+        Any authenticated role, from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
         expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future; omitted or empty, the key never expires. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
       parameters:
       - description: Key name and optional expiry
@@ -10363,6 +10371,16 @@ paths:
                 error:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
+        "403":
+          description: 'FORBIDDEN: API keys can be created only from a signed-in session
+            (the request was authenticated with an API key); nothing is written'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
         "429":
           description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
             burst 30, per client IP); details.retry_after is 60s and no Retry-After
@@ -10392,10 +10410,10 @@ paths:
   /api-keys/{id}:
     delete:
       description: 'Owner only (a key of another user is 403, with no admin override).
-        Marks the key inactive; the row is kept, not deleted, and the owner can reactivate
-        it with PUT /api-keys/{id}. Idempotent: revoking a revoked key succeeds again.
-        Requests already authenticated with the key are not affected; later ones are
-        rejected.'
+        Marks the key inactive and stamps revoked_at; the row is kept, not deleted,
+        and revocation is final: the key cannot be switched on again. Idempotent:
+        revoking a revoked key succeeds again and keeps the first revoked_at. Requests
+        already authenticated with the key are not affected; later ones are rejected.'
       parameters:
       - description: API key ID
         in: path
@@ -10568,11 +10586,13 @@ paths:
       consumes:
       - application/json
       description: 'Owner only (a key of another user is 403, with no admin override).
-        Applies only the fields present: name and/or is_active. A body with neither
-        is a 400 rather than a no-op. Setting is_active to true on a revoked key reactivates
-        it: revocation is a flag the owner controls, not a tombstone, and the unchanged
-        plaintext key works again. Expiry is not affected: an expired key stays unusable
-        whatever is_active says.'
+        Applies only the fields present: name and/or is_active, each written on its
+        own so a rename never changes is_active. A body with neither is a 400 rather
+        than a no-op. is_active false revokes the key as DELETE does and stamps revoked_at.
+        Revocation is final: is_active true on a revoked key is 409 CONFLICT and changes
+        nothing, the name included; on a live key it changes nothing. is_active true
+        from a request authenticated with an API key is 403. Expiry is not affected:
+        an expired key stays unusable whatever is_active says.'
       parameters:
       - description: API key ID
         in: path
@@ -10620,7 +10640,9 @@ paths:
                   $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
               type: object
         "403":
-          description: 'FORBIDDEN: the key belongs to another user'
+          description: 'FORBIDDEN: the key belongs to another user, or is_active true
+            from a request authenticated with an API key (keys can be switched on
+            only from a signed-in session)'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10630,6 +10652,16 @@ paths:
               type: object
         "404":
           description: 'NOT_FOUND: no key with this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: 'CONFLICT: is_active true on a revoked key; a revoked API key
+            cannot be switched on again, and nothing is changed'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -10660,7 +10692,7 @@ paths:
       security:
       - BearerAuth: []
       - ApiKeyAuth: []
-      summary: Rename, revoke or reactivate an API key
+      summary: Rename or revoke an API key
       tags:
       - api-keys
   /audit/sign-ins:

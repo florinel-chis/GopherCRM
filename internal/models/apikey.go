@@ -27,7 +27,10 @@ type APIKey struct {
 	// instant on. Absent when the key never expires. Set only at creation.
 	ExpiresAt *time.Time `json:"expires_at,omitempty" example:"2026-12-31T23:59:59Z"`
 	// False once the key is revoked (DELETE /api-keys/{id} or PUT with
-	// is_active=false); the owner can set it back to true. An inactive key is
-	// rejected at authentication.
+	// is_active=false). A revoked key cannot be switched on again. An inactive
+	// key is rejected at authentication.
 	IsActive bool `gorm:"default:true" json:"is_active" example:"true"`
+	// Time the key was revoked (RFC 3339). Absent while the key is live, and
+	// on keys revoked before this field existed. Read-only.
+	RevokedAt *time.Time `json:"revoked_at,omitempty" example:"2026-11-29T10:00:00Z" readonly:"true"`
 }

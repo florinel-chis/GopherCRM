@@ -5,7 +5,7 @@ package main
 // POST /api-keys issues the key inside the transaction that locks the owner
 // row, over a SQLite file opened by the real connector with foreign keys on.
 // An unwired service would answer 500 (ErrAPIKeyIssuanceUnavailable) here
-// instead.
+// instead. The key it issues is refused with 403 on POST /api-keys (#525).
 
 import (
 	"bytes"
@@ -64,4 +64,19 @@ func TestAPIKeyOwnerLockProductionWiring(t *testing.T) {
 	var keys int64
 	require.NoError(t, models.DB.Model(&models.APIKey{}).Where("user_id = ?", owner.ID).Count(&keys).Error)
 	assert.EqualValues(t, 1, keys, "the key row is committed")
+
+	// The key just issued cannot create another key (#525): only a
+	// signed-in session can.
+	request = httptest.NewRequest(http.MethodPost, boot.cfg.API.Prefix+"/api-keys", bytes.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "ApiKey "+key)
+	recorder = httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+	envelope = utils.APIResponse{}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.NotNil(t, envelope.Error)
+	assert.Equal(t, "FORBIDDEN", envelope.Error.Code)
+	require.NoError(t, models.DB.Model(&models.APIKey{}).Where("user_id = ?", owner.ID).Count(&keys).Error)
+	assert.EqualValues(t, 1, keys, "nothing is written")
 }

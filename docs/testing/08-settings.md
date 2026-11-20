@@ -237,7 +237,8 @@ blocked until the page is built.
   3. Repeat the call from step 1.
 - **Expected:** `DELETE /api-keys/{id}` returns **200** with
   `{"message":"API key revoked successfully"}`. The row is **not** deleted — `Revoke` marks it
-  inactive — so it stays in the list with `is_active=false`. The subsequent API-key call is rejected
+  inactive and stamps `revoked_at` — so it stays in the list with `is_active=false` and a
+  `revoked_at` time; revoking it again answers 200 and keeps the first `revoked_at`. The subsequent API-key call is rejected
   at authentication (`ValidateAPIKey` returns "API key has been revoked"), surfacing as **401**.
   Revoking someone else's key is **403**; an unknown id is **404**.
 - **Automation:** blocked — no revoke control in the page; covered by
@@ -261,21 +262,26 @@ blocked until the page is built.
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_Rename` and
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_EmptyBody`
 
-### TC-SET-012 — Reactivate a revoked key
+### TC-SET-012 — A revoked key cannot be switched on again
 - **Priority:** P2
 - **Type:** regression
 - **Preconditions:** Seeded admin logged in; a key created and then revoked by the test, plaintext
   retained.
 - **Steps:**
-  1. Send `PUT /api-keys/{id}` with `{"is_active": true}`.
-  2. Retry the plaintext key against an authenticated endpoint.
-- **Expected:** **200**, and the *same plaintext key starts working again* — revocation is an
-  owner-controlled flag, not a tombstone. Expiry is unaffected by this endpoint: an expired key stays
-  unusable however `is_active` is set, because expiry is checked separately in `ValidateAPIKey`.
-  Anyone wanting an irreversible kill must create a new key and abandon the old one.
+  1. Send `PUT /api-keys/{id}` with `{"is_active": true}` (and once with a `name` as well), signed in.
+  2. Send the same request authenticated with another live key of the same user.
+  3. Retry the plaintext key against an authenticated endpoint.
+- **Expected:** Step 1 answers **409** `CONFLICT` ("A revoked API key cannot be switched on
+  again") and changes nothing: name, `is_active`, `revoked_at` and `updated_at` stay as they were.
+  Step 2 answers **403** `FORBIDDEN`: only a signed-in session may send `is_active: true`. The key
+  stays refused (**401**). A key that was inactive before `revoked_at` existed is refused the same
+  way. `is_active: true` on a live key answers 200 and changes nothing. Expiry is checked
+  separately in `ValidateAPIKey` and is not affected by this endpoint.
 - **Automation:** blocked — no edit control; covered by
-  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_Reactivate` and
-  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestUpdateAPIKey`
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_SwitchOnRevokedIsConflict`,
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_SwitchOnFromAPIKeyIsForbidden`,
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestUpdateAPIKey` and
+  `internal/service/auth_apikey_revocation_test.go` `TestAPIKeyRevocationFinalSQLite`
 
 ---
 

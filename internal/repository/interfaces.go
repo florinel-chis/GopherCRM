@@ -873,7 +873,15 @@ type APIKeyRepository interface {
 	// keys, so a revoked key is recorded as key_revoked with its owner.
 	GetByKeyHash(keyHash string) (*models.APIKey, error)
 	GetByUserID(userID uint) ([]models.APIKey, error)
-	Update(apiKey *models.APIKey) error
+	// Revoke sets is_active false and revoked_at to at on the key id of
+	// userID when revoked_at is NULL (one conditional UPDATE) and returns the
+	// count of changed rows: 0 when the key is already revoked, missing or
+	// another user's.
+	Revoke(id, userID uint, at time.Time) (int64, error)
+	// Rename writes only name (and updated_at) on the key id of userID and
+	// returns the count of changed rows. liveOnly adds is_active true and
+	// revoked_at NULL to the statement.
+	Rename(id, userID uint, name string, liveOnly bool) (int64, error)
 	UpdateLastUsed(id uint) error
 	WithTx(tx *gorm.DB) APIKeyRepository
 }

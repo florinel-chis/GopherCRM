@@ -14,6 +14,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,9 @@ type APIKeyHandlerTestSuite struct {
 	mockService *mocks.APIKeyService
 	handler     *APIKeyHandler
 	router      *gin.Engine
+	// authMethod is what the test middleware stores under
+	// service.AuthMethodContextKey; empty stores nothing.
+	authMethod string
 }
 
 func (suite *APIKeyHandlerTestSuite) SetupTest() {
@@ -39,6 +43,7 @@ func (suite *APIKeyHandlerTestSuite) SetupTest() {
 	}
 	utils.InitLogger(logConfig)
 
+	suite.authMethod = service.AuthMethodBearer
 	suite.mockService = new(mocks.APIKeyService)
 	suite.handler = NewAPIKeyHandler(suite.mockService)
 
@@ -51,6 +56,9 @@ func (suite *APIKeyHandlerTestSuite) SetupTest() {
 		c.Set("request_id", "test-request-id")
 		c.Set("user_id", uint(1))
 		c.Set("user_role", "admin")
+		if suite.authMethod != "" {
+			c.Set(service.AuthMethodContextKey, suite.authMethod)
+		}
 		c.Next()
 	})
 }
@@ -514,18 +522,12 @@ func (suite *APIKeyHandlerTestSuite) TestUpdate_Deactivate() {
 	assert.Equal(suite.T(), false, data["is_active"])
 }
 
-func (suite *APIKeyHandlerTestSuite) TestUpdate_Reactivate() {
+func (suite *APIKeyHandlerTestSuite) TestUpdate_SwitchOnRevokedIsConflict() {
 	suite.router.PUT("/api-keys/:id", suite.handler.Update)
 
-	updated := &models.APIKey{
-		BaseModel: models.BaseModel{ID: 5},
-		UserID:    1,
-		Name:      "Production Key",
-		IsActive:  true,
-	}
 	suite.mockService.On("Update", uint(5), uint(1), (*string)(nil), mock.MatchedBy(func(a *bool) bool {
 		return a != nil && *a
-	})).Return(updated, nil)
+	})).Return(nil, service.ErrAPIKeyRevoked)
 
 	body := []byte(`{"is_active":true}`)
 	req := httptest.NewRequest(http.MethodPut, "/api-keys/5", bytes.NewBuffer(body))
@@ -534,13 +536,88 @@ func (suite *APIKeyHandlerTestSuite) TestUpdate_Reactivate() {
 
 	suite.router.ServeHTTP(rec, req)
 
-	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+	assert.Equal(suite.T(), http.StatusConflict, rec.Code)
 
 	var response utils.APIResponse
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
-	data := response.Data.(map[string]interface{})
-	assert.Equal(suite.T(), true, data["is_active"])
+	assert.Equal(suite.T(), "CONFLICT", response.Error.Code)
+	assert.Equal(suite.T(), "A revoked API key cannot be switched on again", response.Error.Message)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestUpdate_SwitchOnFromAPIKeyIsForbidden() {
+	suite.router.PUT("/api-keys/:id", suite.handler.Update)
+	suite.authMethod = service.AuthMethodAPIKey
+
+	body := []byte(`{"name":"Renamed key","is_active":true}`)
+	req := httptest.NewRequest(http.MethodPut, "/api-keys/5", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
+	assert.Equal(suite.T(), "API keys can be switched on only from a signed-in session", response.Error.Message)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestUpdate_RenameAndRevokeFromAPIKeyAllowed() {
+	suite.router.PUT("/api-keys/:id", suite.handler.Update)
+	suite.authMethod = service.AuthMethodAPIKey
+
+	suite.mockService.On("Update", uint(5), uint(1), mock.MatchedBy(func(n *string) bool {
+		return n != nil && *n == "Renamed key"
+	}), mock.MatchedBy(func(a *bool) bool {
+		return a != nil && !*a
+	})).Return(&models.APIKey{BaseModel: models.BaseModel{ID: 5}, UserID: 1, Name: "Renamed key"}, nil)
+
+	body := []byte(`{"name":"Renamed key","is_active":false}`)
+	req := httptest.NewRequest(http.MethodPut, "/api-keys/5", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_FromAPIKeyIsForbidden() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.authMethod = service.AuthMethodAPIKey
+
+	req := httptest.NewRequest(http.MethodPost, "/api-keys", bytes.NewBufferString(`{"name":"second key"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
+	assert.Equal(suite.T(), "API keys can be created only from a signed-in session", response.Error.Message)
+	suite.mockService.AssertNotCalled(suite.T(), "Generate", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_WithoutAuthMethodIsForbidden() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.authMethod = ""
+
+	// Refused before the body is read: even a malformed body is a 403.
+	req := httptest.NewRequest(http.MethodPost, "/api-keys", bytes.NewBufferString(`{"name":`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "Generate", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (suite *APIKeyHandlerTestSuite) TestUpdate_Forbidden() {

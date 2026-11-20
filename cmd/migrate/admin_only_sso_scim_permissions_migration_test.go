@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -32,8 +31,8 @@ const (
 
 // TestAdminOnlyPermissionsMigrationFiles needs no database: the pair exists
 // with its headers, the up half writes role_audit_log and deletes the two
-// admin-only keys only, the down half writes nothing, and it is the newest
-// migration of the directory, which latestMigrationVersion names.
+// admin-only keys only, the down half writes nothing, and it is older than
+// the newest migration.
 func TestAdminOnlyPermissionsMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, adminOnlyPermissionsMigrationName+".up.sql"))
@@ -77,21 +76,9 @@ func TestAdminOnlyPermissionsMigrationFiles(t *testing.T) {
 	}
 	assert.Contains(t, downStatements, "do 0;", "the down half is a non-empty no-op")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestSCIMGroupMembersMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, adminOnlyPermissionsMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, adminOnlyPermissionsVersion, version)
-	assert.Equal(t, adminOnlyPermissionsVersion, latestMigrationVersion)
+	// Older than the newest migration (the newest-migration assertions moved
+	// to TestAPIKeyRevokedAtMigrationFiles, #525).
+	assert.Less(t, adminOnlyPermissionsVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, adminOnlyPermissionsPreviousVersion+1, adminOnlyPermissionsVersion)
 }
 

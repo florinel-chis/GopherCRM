@@ -40,6 +40,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMGroupMembersMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAdminOnlyPermissionsMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAdminOnlyPermissionsMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyRevokedAtMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyRevokedAtMigration'),
     }
     migration_roots = len(required)
     if migrations_only:

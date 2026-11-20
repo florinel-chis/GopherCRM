@@ -357,8 +357,12 @@ func runLeastPrivilegeIntegrationUser(t *testing.T, useMySQL bool) {
 
 	var successor string
 	t.Run("rotation", func(t *testing.T) {
-		// The current key creates its successor.
-		second := decodeIssuedKey(t, env.send(key, http.MethodPost, "/api-keys", map[string]interface{}{"name": "intake rotated"}))
+		// A key cannot create another key: the successor is created signed in
+		// as the integration user.
+		keys := env.rowCount(&models.APIKey{})
+		requireAnswer(t, env.send(key, http.MethodPost, "/api-keys", map[string]interface{}{"name": "intake rotated"}), http.StatusForbidden, "FORBIDDEN")
+		assert.Equal(t, keys, env.rowCount(&models.APIKey{}), "the key created nothing")
+		second := decodeIssuedKey(t, env.do(integration, http.MethodPost, "/api-keys", map[string]interface{}{"name": "intake rotated"}))
 		require.Equal(t, integration.ID, second.APIKey.UserID)
 		successor = "ApiKey " + second.Key
 		requireMe(t, successor)
@@ -374,17 +378,18 @@ func runLeastPrivilegeIntegrationUser(t *testing.T, useMySQL bool) {
 	})
 	require.NotEmpty(t, successor)
 
-	// PUT is_active is the same switch as DELETE, in both directions: a
-	// revoked key is a flag its owner can set back.
-	t.Run("is_active_stops_and_restores_a_key", func(t *testing.T) {
-		third := decodeIssuedKey(t, env.send(successor, http.MethodPost, "/api-keys", map[string]interface{}{"name": "intake spare"}))
+	// PUT is_active=false is the same switch as DELETE, and it is final: a
+	// revoked key cannot be switched on again, from a key or a session.
+	t.Run("is_active_false_revokes_a_key_for_good", func(t *testing.T) {
+		third := decodeIssuedKey(t, env.do(integration, http.MethodPost, "/api-keys", map[string]interface{}{"name": "intake spare"}))
 		spare, path := "ApiKey "+third.Key, "/api-keys/"+uintPath(third.APIKey.ID)
 		requireMe(t, spare)
 
 		requireAnswer(t, env.send(successor, http.MethodPut, path, map[string]interface{}{"is_active": false}), http.StatusOK, "")
 		requireAnswer(t, env.send(spare, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
-		requireAnswer(t, env.send(successor, http.MethodPut, path, map[string]interface{}{"is_active": true}), http.StatusOK, "")
-		requireMe(t, spare)
+		requireAnswer(t, env.send(successor, http.MethodPut, path, map[string]interface{}{"is_active": true}), http.StatusForbidden, "FORBIDDEN")
+		requireAnswer(t, env.do(integration, http.MethodPut, path, map[string]interface{}{"is_active": true}), http.StatusConflict, "CONFLICT")
+		requireAnswer(t, env.send(spare, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
 		requireAnswer(t, env.send(successor, http.MethodDelete, path, nil), http.StatusOK, "")
 		requireAnswer(t, env.send(spare, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
 	})

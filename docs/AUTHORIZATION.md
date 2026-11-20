@@ -948,19 +948,20 @@ update and revoke its own API keys. Changing its own email needs the account's c
 in `current_password` (#394), so a leaked key alone cannot move the address a password reset is
 sent to. It cannot change its own role that way: `PUT /users/me` has
 no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and `is_active`
-from a caller without `users.assign_role` and `users.activate`. It can create further keys,
-though, and those never expire unless `expires_at` is sent: whoever holds a leaked key can mint
-more keys for the same user.
+from a caller without `users.assign_role` and `users.activate`. A request authenticated with an
+API key cannot create keys or switch one on: `POST /api-keys`, and `PUT /api-keys/{id}` with
+`is_active: true`, answer 403 `FORBIDDEN` to it (#525). Only a signed-in session (password or
+single sign-on) creates keys, and a key never expires unless `expires_at` is sent.
 
-**Rotate.** Create the successor with `POST /api-keys`, authenticated with the current key or
-signed in as the integration user; deploy it; then revoke the old key with
-`DELETE /api-keys/{id}` (or `PUT /api-keys/{id}` with `is_active: false`). Both keys work until
-the old one is revoked. `expires_at` at creation forces a rotation date; it cannot be changed
-afterwards.
+**Rotate.** Create the successor with `POST /api-keys`, signed in as the integration user; deploy
+it; then revoke the old key with `DELETE /api-keys/{id}` (or `PUT /api-keys/{id}` with
+`is_active: false`), from either key or the session. Both keys work until the old one is
+revoked. `expires_at` at creation forces a rotation date; it cannot be changed afterwards.
 
 **Revoke.** `DELETE /api-keys/{id}` by the owner answers 200 and the key's next request is 401
-`UNAUTHORIZED`. Revocation is a flag, not a deletion: the owner, or any other key of the same
-user, can set the key active again with `PUT /api-keys/{id}`. An administrator cannot list, read
+`UNAUTHORIZED`. The row is kept with `is_active: false` and `revoked_at` stamped, and revocation
+is final: `PUT /api-keys/{id}` with `is_active: true` answers 409 `CONFLICT` and changes nothing
+(403 `FORBIDDEN` from a request authenticated with an API key). An administrator cannot list, read
 or revoke another user's keys (403 `FORBIDDEN`); the administrator's switch is
 `POST /users/{id}/deactivate`, which stops every key of that user at its next request (401).
 After a suspected leak, deactivate the user, or revoke every key of the user and not only the

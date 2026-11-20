@@ -54,6 +54,7 @@ func TestAPIKeyCreateOwnerUnavailableMapping(t *testing.T) {
 			router.Use(func(c *gin.Context) {
 				c.Set("request_id", "test-request-id")
 				c.Set("user_id", uint(7))
+				c.Set(service.AuthMethodContextKey, service.AuthMethodBearer)
 				c.Next()
 			})
 			router.POST("/api-keys", NewAPIKeyHandler(svc).Create)
