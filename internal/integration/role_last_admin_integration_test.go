@@ -56,7 +56,8 @@ func TestLastAdminInvariantMySQL(t *testing.T) {
 func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 	env := newPermissionEnv(t, useMySQL)
 	users := service.NewUserService(env.userRepo, service.WithUserRoleGovernance(
-		env.roles, repository.NewRoleAuditRepository(env.db), utils.NewTransactionManager(env.db)))
+		env.roles, repository.NewRoleAuditRepository(env.db), utils.NewTransactionManager(env.db)),
+		service.WithUserCredentialRevocation(repository.NewAPIKeyRepository(env.db), repository.NewRefreshTokenRepository(env.db)))
 	ctx := context.Background()
 
 	// A custom role holding every key a custom role can hold is still below

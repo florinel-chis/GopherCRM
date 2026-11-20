@@ -394,12 +394,24 @@ func runLeastPrivilegeIntegrationUser(t *testing.T, useMySQL bool) {
 		requireAnswer(t, env.send(spare, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
 	})
 
-	// The administrator's switch: deactivating the user stops every key.
+	// The administrator's switch: deactivating the user revokes every key
+	// for good (#526); activating it again brings none back.
 	t.Run("deactivating_the_user_stops_its_keys", func(t *testing.T) {
 		requireMe(t, successor)
 		requireAnswer(t, env.do(admin, http.MethodPost, userRoutePath(integration.ID)+"/deactivate", nil), http.StatusOK, "")
 		requireAnswer(t, env.send(successor, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
 		requireAnswer(t, env.send(successor, http.MethodPost, "/customers", customerBody()), http.StatusUnauthorized, "UNAUTHORIZED")
 		requireAnswer(t, env.send(key, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
+
+		var keys []models.APIKey
+		require.NoError(t, env.db.Where("user_id = ?", integration.ID).Find(&keys).Error)
+		require.NotEmpty(t, keys)
+		for _, k := range keys {
+			assert.False(t, k.IsActive, "key %d is switched off", k.ID)
+			assert.NotNil(t, k.RevokedAt, "key %d carries revoked_at", k.ID)
+		}
+
+		requireAnswer(t, env.do(admin, http.MethodPost, userRoutePath(integration.ID)+"/activate", nil), http.StatusOK, "")
+		requireAnswer(t, env.send(successor, http.MethodGet, "/users/me", nil), http.StatusUnauthorized, "UNAUTHORIZED")
 	})
 }

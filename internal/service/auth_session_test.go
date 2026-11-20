@@ -90,6 +90,9 @@ func (d *sessionTestDeps) expectTransactionBoundRepos() {
 	d.resetRepo.On("WithTx", mock.Anything).Return(d.resetRepo)
 	d.userRepo.On("WithTx", mock.Anything).Return(d.userRepo)
 	d.refreshRepo.On("WithTx", mock.Anything).Return(d.refreshRepo)
+	d.apiKeyRepo.On("WithTx", mock.Anything).Return(d.apiKeyRepo)
+	// A password change or reset revokes every API key of the account (#526).
+	d.apiKeyRepo.On("RevokeAllForUser", mock.Anything, mock.Anything).Return(int64(0), nil).Maybe()
 }
 
 func sessionActiveUser(id uint, password string) *models.User {
@@ -478,10 +481,15 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 		var written string
 		d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
-			written, _ = f["password"].(string)
-			// The same write increments token_version (#236).
-			return len(f) == 2 && f["token_version"] == uint(1)
-		})).Return(nil)
+			password, ok := f["password"].(string)
+			if !ok || len(f) != 1 {
+				return false
+			}
+			written = password
+			return true
+		})).Return(nil).Once()
+		// The credential revocation then increments token_version (#236, #526).
+		d.userRepo.On("UpdateFields", uint(1), map[string]interface{}{"token_version": uint(1)}).Return(nil).Once()
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
 
 		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "")
@@ -490,7 +498,9 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		assert.Nil(t, tokens)
 		assert.NotEqual(t, oldHash, written)
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(written), []byte("NewSecret123!")))
+		d.userRepo.AssertNumberOfCalls(t, "UpdateFields", 2)
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
+		d.apiKeyRepo.AssertCalled(t, "RevokeAllForUser", uint(1), mock.Anything)
 		d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
 	})
 
@@ -716,9 +726,14 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 
 		var updated map[string]interface{}
 		d.userRepo.On("UpdateFields", uint(1), mock.MatchedBy(func(f map[string]interface{}) bool {
+			if _, ok := f["password"]; !ok {
+				return false
+			}
 			updated = f
 			return true
-		})).Return(nil)
+		})).Return(nil).Once()
+		// The credential revocation then increments token_version (#236, #526).
+		d.userRepo.On("UpdateFields", uint(1), map[string]interface{}{"token_version": uint(1)}).Return(nil).Once()
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
 
 		err := d.svc.ConfirmPasswordReset(raw, "BrandNewPass1!")
@@ -726,12 +741,13 @@ func TestAuthService_ConfirmPasswordReset(t *testing.T) {
 		assert.NoError(t, err)
 		d.resetRepo.AssertCalled(t, "MarkUsed", uint(9))
 		require.NotNil(t, updated)
-		require.Len(t, updated, 4, "only the password, the lockout columns and token_version are written")
+		require.Len(t, updated, 3, "only the password and the lockout columns are written")
 		assert.NoError(t, bcrypt.CompareHashAndPassword([]byte(updated["password"].(string)), []byte("BrandNewPass1!")))
 		assert.Equal(t, 0, updated["failed_login_attempts"])
 		assert.Nil(t, updated["locked_until"])
-		assert.Equal(t, uint(1), updated["token_version"], "the reset increments token_version (#236)")
+		d.userRepo.AssertNumberOfCalls(t, "UpdateFields", 2)
 		d.refreshRepo.AssertCalled(t, "RevokeAllForUser", uint(1))
+		d.apiKeyRepo.AssertCalled(t, "RevokeAllForUser", uint(1), mock.Anything)
 		// Every write went through the transaction-bound repositories.
 		d.resetRepo.AssertCalled(t, "WithTx", mock.Anything)
 		d.userRepo.AssertCalled(t, "WithTx", mock.Anything)

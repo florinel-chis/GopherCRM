@@ -82,21 +82,19 @@ describe('Profile', () => {
     });
 
     const message = await screen.findByText(/You stay signed in here/i);
-    expect(message).toHaveTextContent(/other sessions can no longer renew themselves/i);
-    // No blocklist: the copy must not promise an immediate sign-out elsewhere.
-    expect(message).toHaveTextContent(/access they already hold ends when it expires/i);
-    expect(message).not.toHaveTextContent(/signed out immediately/i);
+    expect(message).toHaveTextContent(/Your other sessions are signed out/i);
+    expect(message).toHaveTextContent(/your API keys are revoked/i);
     expect(showSuccess).toHaveBeenCalledWith('Password changed successfully');
   });
 
-  it('explains that every session must sign in again when no session was renewed', async () => {
+  it('explains that every session is signed out and the API keys are revoked when no session was renewed', async () => {
     vi.mocked(authApi.changePassword).mockResolvedValue({ renewed: false });
 
     render(<Profile />);
     await fillPasswordForm('OldStrongPass1!');
 
     expect(
-      await screen.findByText(/Every session, including this one, will need to sign in again/i)
+      await screen.findByText(/Every session, including this one, is signed out and your API keys are revoked/i)
     ).toBeInTheDocument();
   });
 

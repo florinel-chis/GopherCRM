@@ -15,9 +15,9 @@ describes what GopherCRM does today. Single sign-on itself is described in
 - **Update.** The provider changes the user name (the email address), the given and family name,
   the role and the active state.
 - **Deactivate.** Setting `active` to false (through PATCH or PUT), or a DELETE of the user,
-  deactivates the account and ends its sessions at once: every access token is refused from that moment and every refresh token is
-  revoked. Setting `active` to true again reactivates the account, but the old sessions do not come
-  back; the person signs in again.
+  deactivates the account and ends its sessions at once: every access token is refused from that moment, and every refresh token and
+  every API key is revoked. Setting `active` to true again reactivates the account, but the old
+  sessions and keys do not come back; the person signs in again and issues new keys.
 - **Never delete.** SCIM never erases or deletes an account. A DELETE from the provider deactivates
   the account and keeps its data. Erasure stays the delete in GopherCRM, done by an administrator.
 - **Groups.** The groups are the `groups` values of the single sign-on role mapping. The provider

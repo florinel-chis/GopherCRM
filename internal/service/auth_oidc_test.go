@@ -2072,7 +2072,7 @@ func oidcSCIMLinkSpec(email string) oidcTokenSpec {
 func (f *oidcFixture) scimService() SCIMUserService {
 	return NewSCIMUserService(repository.NewSCIMUserRepository(f.db), f.sso,
 		WithSCIMUserWrites(repository.NewUserRepository(f.db), repository.NewRoleRepository(f.db), repository.NewRoleAuditRepository(f.db),
-			repository.NewUserIdentityRepository(f.db), repository.NewRefreshTokenRepository(f.db), utils.NewTransactionManager(f.db), f.audit))
+			repository.NewUserIdentityRepository(f.db), repository.NewRefreshTokenRepository(f.db), repository.NewAPIKeyRepository(f.db), utils.NewTransactionManager(f.db), f.audit))
 }
 
 // identityRows are the user_identities rows of userID, id ascending.

@@ -878,6 +878,12 @@ type APIKeyRepository interface {
 	// count of changed rows: 0 when the key is already revoked, missing or
 	// another user's.
 	Revoke(id, userID uint, at time.Time) (int64, error)
+	// RevokeAllForUser sets is_active false and revoked_at to at on every
+	// live (not soft-deleted) key of userID whose revoked_at is NULL, an
+	// inactive key without revoked_at included, in one UPDATE, and returns
+	// the count of changed rows. A key revoked before keeps its first
+	// revoked_at; other users' keys are untouched.
+	RevokeAllForUser(userID uint, at time.Time) (int64, error)
 	// Rename writes only name (and updated_at) on the key id of userID and
 	// returns the count of changed rows. liveOnly adds is_active true and
 	// revoked_at NULL to the statement.

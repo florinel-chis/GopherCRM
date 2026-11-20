@@ -101,7 +101,7 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 	build := func(refreshTokens repository.RefreshTokenRepository) SCIMUserService {
 		return NewSCIMUserService(repository.NewSCIMUserRepository(db), f.source,
 			WithSCIMUserWrites(repository.NewUserRepository(db), repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db),
-				repository.NewUserIdentityRepository(db), refreshTokens, utils.NewTransactionManager(db), f.audit))
+				repository.NewUserIdentityRepository(db), refreshTokens, repository.NewAPIKeyRepository(db), utils.NewTransactionManager(db), f.audit))
 	}
 	f.newServiceWith = build
 	f.svc = build(repository.NewRefreshTokenRepository(db))

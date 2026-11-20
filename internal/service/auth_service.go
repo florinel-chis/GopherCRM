@@ -1030,32 +1030,34 @@ func (s *authService) logoutInTransaction(
 var errLogoutOwnerGone = errors.New("logout owner no longer exists")
 
 // ChangePassword re-authenticates with the current password, applies the
-// complexity policy to the new one and replaces it, ending every refresh
-// session of the user except the one being renewed.
+// complexity policy to the new one and replaces it, ending every credential
+// of the user (revokeAllCredentials) except the session being renewed.
 //
 // refreshToken names the caller's current browser session. When it is given,
 // that session is renewed: the token is claimed and a replacement refresh
 // token and access token are returned. It must be a live token of this user;
 // anything else (unknown, revoked, expired, foreign) is ErrSessionStale and
 // nothing is written. When it is empty — API-key callers, scripts — the
-// password is changed, every refresh token is revoked and no credentials are
-// returned (nil tokens, nil error).
+// password is changed, every refresh token and every API key (the caller's
+// own key included) is revoked and no credentials are returned (nil tokens,
+// nil error).
 //
 // The slow bcrypt work runs first, outside any transaction. The writes are one
 // transaction that locks the owner row before touching refresh tokens (the
 // order every session transaction follows): the locked row must still carry
 // the hash the current password was verified against, so of two concurrent
 // changes only one can succeed; then the presented token is claimed, the
-// password written, every other token revoked and the successor issued and
-// signed. Any failure before the commit rolls all of it back: the password is unchanged and
-// every session is as it was. (A failed COMMIT is the exception every
-// transaction has: its outcome is ambiguous, utils.ErrCommitFailed, and the
-// caller reports it as an error.) The password write also increments
-// users.token_version, so every access token issued before the change, the
-// caller's own included, is refused once it commits; the renewed access token
-// is signed with the new value and keeps working (#236).
+// password written, every credential ended by revokeAllCredentials
+// (token_version incremented, every refresh token and every API key revoked)
+// and the successor issued and signed. Any failure before the commit rolls
+// all of it back: the password is unchanged and every session and key is as
+// it was. (A failed COMMIT is the exception every transaction has: its
+// outcome is ambiguous, utils.ErrCommitFailed, and the caller reports it as
+// an error.) Every access token issued before the change, the caller's own
+// included, is refused once it commits; the renewed access token is signed
+// with the new value and keeps working (#236).
 func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, refreshToken string) (*AuthTokens, error) {
-	if s.refreshTokenRepo == nil || s.txManager == nil {
+	if s.refreshTokenRepo == nil || s.txManager == nil || s.apiKeyRepo == nil {
 		return nil, errors.New("password change requires the session store")
 	}
 
@@ -1093,7 +1095,7 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, 
 		var err error
 		tokens, err = s.changePasswordInTransaction(
 			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
-			s.refreshTokenRepo.WithTx(tx),
+			s.refreshTokenRepo.WithTx(tx), s.apiKeyRepo.WithTx(tx),
 			userID, verifiedHash, string(hashed), presentedHash)
 		return err
 	})
@@ -1106,9 +1108,9 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, 
 
 	logger := utils.Logger.WithField("user_id", userID).WithField("operation", "ChangePassword")
 	if tokens != nil {
-		logger.Info("Password changed; current session renewed, other sessions and earlier access tokens ended")
+		logger.Info("Password changed; current session renewed, other sessions, earlier access tokens and API keys ended")
 	} else {
-		logger.Info("Password changed; all sessions and earlier access tokens ended")
+		logger.Info("Password changed; all sessions, earlier access tokens and API keys ended")
 	}
 	return tokens, nil
 }
@@ -1119,6 +1121,7 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, 
 func (s *authService) changePasswordInTransaction(
 	userRepo repository.UserRepository,
 	refreshRepo repository.RefreshTokenRepository,
+	apiKeyRepo repository.APIKeyRepository,
 	userID uint, verifiedHash, newHash, presentedHash string,
 ) (*AuthTokens, error) {
 	// Owner first: SELECT ... FOR UPDATE on MySQL/MariaDB (SQLite drops the
@@ -1160,25 +1163,26 @@ func (s *authService) changePasswordInTransaction(
 		}
 	}
 
-	// The same write increments the session generation, so every access JWT
-	// issued before the change — the caller's own included — is refused from
-	// the commit on (#236). The owner row is locked, so the value read above
-	// is current.
-	newVersion := owner.TokenVersion + 1
 	if err := userRepo.UpdateFields(userID, map[string]interface{}{
-		"password": newHash, "token_version": newVersion,
+		"password": newHash,
 	}); err != nil {
 		if apperrors.IsNotFound(err) {
 			return nil, ErrAccountUnavailable
 		}
 		return nil, fmt.Errorf("failed to update password: %w", err)
 	}
-	owner.TokenVersion = newVersion
 
-	// Stolen sessions must die with the old password. A revocation that fails
-	// is a failure of the change itself and rolls the password back with it.
-	if err := refreshRepo.RevokeAllForUser(userID); err != nil {
-		return nil, fmt.Errorf("failed to revoke sessions after password change: %w", err)
+	// Every credential ends with the old password: the session generation is
+	// incremented, so every access JWT issued before the change — the
+	// caller's own included — is refused from the commit on (#236), and every
+	// refresh token and API key is revoked. The owner row is locked, so its
+	// token_version is current. A revocation that fails is a failure of the
+	// change itself and rolls the password back with it. The successor below
+	// is issued afterwards and signed from the new generation.
+	if err := revokeAllCredentials(credentialStores{
+		users: userRepo, refreshTokens: refreshRepo, apiKeys: apiKeyRepo,
+	}, owner, time.Now()); err != nil {
+		return nil, fmt.Errorf("failed to end credentials after password change: %w", err)
 	}
 
 	if presentedHash == "" {
@@ -1378,12 +1382,13 @@ const resetConfirmMaxRetries = 3
 // The new password is validated and hashed before anything is written, so a
 // weak or unhashable password never spends the token: the user retries with
 // the same link. The token lookup, its conditional claim, the owner check, the
-// password and lockout update and the revocation of every refresh token are
-// then one transaction. The claim stamps the token only while it is still
+// password and lockout update and the end of every credential
+// (revokeAllCredentials: token_version incremented, every refresh token and
+// every API key revoked) are then one transaction. The claim stamps the token only while it is still
 // unused and strictly unexpired and must affect exactly one row, so two
 // requests that both read the token as spendable cannot both succeed: the
 // second claim finds nothing to stamp and is rejected. A failure after the
-// claim — the password update, the session revocation — rolls the whole unit
+// claim — the password update, the credential revocation — rolls the whole unit
 // back, token included, so the link stays usable for a retry instead of being
 // spent on a reset that never happened. An inactive, erased or missing owner
 // is rejected inside the transaction and leaves the token unspent as well; the
@@ -1408,7 +1413,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	// Every dependency of the transactional flow is required. Running the old
 	// sequence of separate writes when one is missing would reintroduce the
 	// burnt-link and double-spend failures this flow exists to prevent.
-	if s.resetTokenRepo == nil || s.refreshTokenRepo == nil || s.txManager == nil || token == "" {
+	if s.resetTokenRepo == nil || s.refreshTokenRepo == nil || s.apiKeyRepo == nil || s.txManager == nil || token == "" {
 		return fmt.Errorf("reset not available: %w", ErrInvalidResetToken)
 	}
 
@@ -1448,7 +1453,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 		// invalid query (SQLite reports an ambiguous `users.id`).
 		userID, err = s.confirmPasswordResetInTransaction(
 			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})), s.refreshTokenRepo.WithTx(tx),
-			identities, hash, string(hashed))
+			s.apiKeyRepo.WithTx(tx), identities, hash, string(hashed))
 		return err
 	}, resetConfirmMaxRetries)
 	if err != nil {
@@ -1456,7 +1461,7 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 	}
 
 	utils.Logger.WithField("user_id", userID).WithField("operation", "ConfirmPasswordReset").
-		Info("Password reset completed; all sessions and earlier access tokens ended")
+		Info("Password reset completed; all sessions, earlier access tokens and API keys ended")
 	return nil
 }
 
@@ -1469,6 +1474,7 @@ func (s *authService) confirmPasswordResetInTransaction(
 	resetRepo repository.PasswordResetTokenRepository,
 	userRepo repository.UserRepository,
 	refreshRepo repository.RefreshTokenRepository,
+	apiKeyRepo repository.APIKeyRepository,
 	identities repository.UserIdentityRepository,
 	hash, passwordHash string,
 ) (uint, error) {
@@ -1534,23 +1540,25 @@ func (s *authService) confirmPasswordResetInTransaction(
 
 	// Ownership of the mailbox has just been proven; clear any lockout so the
 	// user can sign in with the new password immediately. Only these columns
-	// are written, and only while the row is live. The same write increments
-	// the session generation, which ends every access JWT issued before the
-	// reset (#236); the row is locked, so the value read above is current.
+	// are written, and only while the row is live.
 	if err := userRepo.UpdateFields(user.ID, map[string]interface{}{
 		"password":              passwordHash,
 		"failed_login_attempts": 0,
 		"locked_until":          nil,
-		"token_version":         user.TokenVersion + 1,
 	}); err != nil {
 		return 0, fmt.Errorf("failed to update password: %w", err)
 	}
 
-	// Stolen sessions must die with the old password. A revocation that fails
-	// is a failure of the reset itself: the password and the claim are rolled
-	// back with it rather than committed next to sessions that still work.
-	if err := refreshRepo.RevokeAllForUser(user.ID); err != nil {
-		return 0, fmt.Errorf("failed to revoke sessions after password reset: %w", err)
+	// Every credential ends with the old password: the session generation is
+	// incremented, which ends every access JWT issued before the reset
+	// (#236), and every refresh token and API key is revoked; the row is
+	// locked, so the value read above is current. A revocation that fails is
+	// a failure of the reset itself: the password and the claim are rolled
+	// back with it.
+	if err := revokeAllCredentials(credentialStores{
+		users: userRepo, refreshTokens: refreshRepo, apiKeys: apiKeyRepo,
+	}, user, time.Now()); err != nil {
+		return 0, fmt.Errorf("failed to end credentials after password reset: %w", err)
 	}
 	return user.ID, nil
 }

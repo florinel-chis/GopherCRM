@@ -38,13 +38,20 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   and API-key create `users → api_keys` (#342). The password-reset confirm is the exception: it
   claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
   inversion of the reset request's order (see both flows).
+  Every flow that ends all of an account's credentials (#526: the password change, the
+  password-reset confirm, the governed deactivation and the SCIM deactivations) does it through
+  `revokeAllCredentials` (`internal/service/credential_revocation.go`) after its own `users`
+  write, in the order `users → refresh_tokens → api_keys`: `token_version` on the locked `users`
+  row, then every `refresh_tokens` row, then every `api_keys` row of the account.
 - `admin set → users (id ascending) → roles (id ascending)` (#259, implemented by #348) for every governed user write and, without the admin set, every role write.
   The OIDC sign-in (#435) continues the chain: `admin set → users → roles → user_identities → refresh_tokens`.
   The SCIM user create and replace (#470) follow `admin set → users → roles → user_identities`; the
   SCIM user patch (#471) and a deactivating replace take the RBAC order and then revoke the
-  account's refresh tokens last, which keeps `users → refresh_tokens`. The SCIM user delete
-  (#504) takes the admin set and the target's `users` row, no `roles`, then revokes the refresh
-  tokens: `admin set → users → refresh_tokens`, a prefix-compatible subsequence. The SCIM group
+  account's refresh tokens and API keys last, which keeps `users → refresh_tokens → api_keys`.
+  The governed deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active`
+  false, #526) does the same after the RBAC order. The SCIM user delete (#504) takes the admin set
+  and the target's `users` row, no `roles`, then revokes the refresh tokens and the API keys:
+  `admin set → users → refresh_tokens → api_keys`, a prefix-compatible subsequence. The SCIM group
   patch (#506) follows `admin set → users → roles → scim_group_members`, then writes its
   `role_audit_log` rows; it reads the group's membership rows with a locking read right after the
   admin set (see the flow below).
@@ -170,8 +177,8 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
 
 The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1092`),
 login (`internal/service/auth_service.go:335`), the password-reset request
-(`internal/service/auth_service.go:1303`), the password-reset confirm
-(`internal/service/auth_service.go:1432`), API-key create
+(`internal/service/auth_service.go:1307`), the password-reset confirm
+(`internal/service/auth_service.go:1437`), API-key create
 (`internal/service/apikey_service.go:94`), the RBAC user-role and role writes
 (`internal/service/role_governance.go:162`) and, since #385, the three erasures
 (`runErasureUnit`, `internal/repository/erasure.go:431`).
@@ -487,28 +494,31 @@ confirm and the gaps of the re-check.
 - **Status:** implemented
 
 Logout (`internal/service/auth_service.go:949`) and password change
-(`internal/service/auth_service.go:1087`) follow the same users → refresh_tokens order in one
+(`internal/service/auth_service.go:1089`) follow the same users → refresh_tokens order in one
 `WithTransaction` each, and decide on the locked owner row (the password change re-checks the
-verified hash and the active flag under the lock).
+verified hash and the active flag under the lock). The password change continues with the
+account's `api_keys` rows (`revokeAllCredentials`, `internal/service/auth_service.go:1182`, #526):
+users → refresh_tokens → api_keys, and the successor `refresh_tokens` row is inserted after that.
+Logout never touches `api_keys`.
 
 ### Password-reset request
 
 - **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
-  `internal/service/auth_service.go:1311`, read by `lockLiveCredentialOwner` at
-  `internal/service/auth_service.go:1226`); then a plain (non-locking) read of the user's
-  `user_identities` rows (`ExistsForUser`, `internal/service/auth_service.go:1321`, #444; only
+  `internal/service/auth_service.go:1315`, read by `lockLiveCredentialOwner` at
+  `internal/service/auth_service.go:1230`); then a plain (non-locking) read of the user's
+  `user_identities` rows (`ExistsForUser`, `internal/service/auth_service.go:1325`, #444; only
   when the service is built with `WithAuthIdentities`, as `cmd/main.go` does, and only while
   `security.sso.allow_password` is off, #457, a policy read once before the transaction at
-  `internal/service/auth_service.go:1300`); then the user's
+  `internal/service/auth_service.go:1304`); then the user's
   outstanding `password_reset_tokens` rows, spent by `InvalidateAllForUser`
-  (`internal/service/auth_service.go:1332`), and the inserted token
-  (`internal/service/auth_service.go:1340`), both through the transaction-bound repository.
+  (`internal/service/auth_service.go:1336`), and the inserted token
+  (`internal/service/auth_service.go:1344`), both through the transaction-bound repository.
   The insert's foreign-key check (`fk_password_reset_tokens_user`,
   `migrations/20261001120000_v1_2_0_schema_parity.up.sql:152`) takes its shared lock on an owner
   row this transaction already holds.
-- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:1270`;
+- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:1274`;
   an unknown or inactive address stops here) → `FOR UPDATE` owner read by id → plain
-  `user_identities` read → `InvalidateAllForUser` → insert → commit → mail (`internal/service/auth_service.go:1361`), sent once, after the commit,
+  `user_identities` read → `InvalidateAllForUser` → insert → commit → mail (`internal/service/auth_service.go:1365`), sent once, after the commit,
   to the address of the locked row. Lock order users → (read) user_identities →
   password_reset_tokens (users → password_reset_tokens with the setting on). A missing, erased
   (soft-deleted) or inactive locked row, or, while the setting is off, an owner with a linked
@@ -517,11 +527,11 @@ verified hash and the active flag under the lock).
   that commits before the lock therefore issues nothing, and one that commits after the request ends the token it issued (the erasure
   hard-deletes it, the confirm refuses an inactive owner).
 - **Transaction:** one `WithTransactionAndRetry` root per request
-  (`internal/service/auth_service.go:1303`) on `context.Background()`; a failure of the
+  (`internal/service/auth_service.go:1307`) on `context.Background()`; a failure of the
   invalidation or of the insert rolls both back and sends no mail. A service without a
   transaction manager writes nothing and sends nothing.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `resetRequestMaxRetries` 3
-  (`internal/service/auth_service.go:1202`) replays the whole root on a deadlock, lock wait timeout
+  (`internal/service/auth_service.go:1206`) replays the whole root on a deadlock, lock wait timeout
   or SQLite busy/locked.
 - **Status:** implemented
 
@@ -538,24 +548,25 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 ### Password-reset confirm
 
 - **Rows locked:** the `password_reset_tokens` row (the conditional claim `MarkUsed`,
-  `internal/service/auth_service.go:1494`), the owner's `users` row (`FOR UPDATE`,
-  `internal/service/auth_service.go:1449`, read at `internal/service/auth_service.go:1511`, written
-  at `internal/service/auth_service.go:1539`), and every `refresh_tokens` row of the user (revoked,
-  `internal/service/auth_service.go:1551`). Between the owner read and the password write, a plain
+  `internal/service/auth_service.go:1500`), the owner's `users` row (`FOR UPDATE`,
+  `internal/service/auth_service.go:1454`, read at `internal/service/auth_service.go:1517`, written
+  at `internal/service/auth_service.go:1544` and, for `token_version`, by `revokeAllCredentials` at
+  `internal/service/auth_service.go:1558`), then every `refresh_tokens` row and every `api_keys`
+  row of the user (revoked by the same `revokeAllCredentials`, #526). Between the owner read and the password write, a plain
   (non-locking) read of the owner's `user_identities` rows (`ExistsForUser`,
-  `internal/service/auth_service.go:1525`, #444) refuses an account linked to single sign-on
+  `internal/service/auth_service.go:1531`, #444) refuses an account linked to single sign-on
   with `ErrInvalidResetToken`; the rollback leaves the token unspent. That read happens only
   while `security.sso.allow_password` is off (#457; the policy is read once before the
-  transaction, `internal/service/auth_service.go:1429`); with it on it is skipped.
-- **Order:** password_reset_tokens → users → (read) user_identities → refresh_tokens (the read
+  transaction, `internal/service/auth_service.go:1434`); with it on it is skipped.
+- **Order:** password_reset_tokens → users → (read) user_identities → refresh_tokens → api_keys (the read
   only while `security.sso.allow_password` is off), after a
-  plain lookup of the token by hash (`internal/service/auth_service.go:1476`). This inverts the reset request's order; the
+  plain lookup of the token by hash (`internal/service/auth_service.go:1482`). This inverts the reset request's order; the
   outcome is described under that flow.
 - **Transaction:** one `WithTransactionAndRetry` root per confirmation
-  (`internal/service/auth_service.go:1432`) on `context.Background()`; every attempt redoes the
+  (`internal/service/auth_service.go:1437`) on `context.Background()`; every attempt redoes the
   lookup, the claim, the owner lock and the writes.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `resetConfirmMaxRetries` 3
-  (`internal/service/auth_service.go:1371`) replays the whole root on a deadlock, lock wait timeout
+  (`internal/service/auth_service.go:1375`) replays the whole root on a deadlock, lock wait timeout
   or SQLite busy/locked. A replay that finds the token spent or gone, or its owner erased, is
   refused with `ErrInvalidResetToken`. An exhausted bound returns the last error with nothing
   written: `POST /auth/password-reset/confirm` answers the generic 500 and the link is still
@@ -589,8 +600,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
-  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:242`, and
-  `CreateAs`, `internal/service/user_governed_writes.go:112`) locks the `users` rows of the active
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:275`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:141`) locks the `users` rows of the active
   admins (`LockActiveAdmins`, `internal/repository/user_repository.go:297`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
@@ -625,12 +636,17 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   that removes the admin-only keys from custom roles (#524, `stripAdminOnlyRolePermissions` in
   `internal/models`) takes one transaction per role and locks only that `roles` row before it
   deletes the role's `role_permissions` rows, so it holds no `users` lock and cannot invert the
-  users-then-roles order.
+  users-then-roles order. A governed write that deactivates (`is_active` false, also on an
+  account already inactive, #526) then ends every credential of the target with
+  `revokeAllCredentials` after its `users` write and before the audit row: `token_version` on the
+  locked row, every `refresh_tokens` row, every `api_keys` row, so the write continues with
+  refresh_tokens → api_keys. A service built without `WithUserCredentialRevocation` refuses such a
+  write before any write.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:314`), once and without a retry of its own. By then
+  (`internal/service/user_governed_writes.go:348`), once and without a retry of its own. By then
   the write holds the target's `users` row, so the nested erasure takes leads and customers after
   users, the one inversion of the erasure order (#385); `governedWrite` is not reordered.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
@@ -698,17 +714,17 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   with a plain read (`SCIMUserRepository.IdentitiesForUsers`) and refuses, as a not-found and before
   any check or write, an account with no identity under the effective issuer (#529); the
   application never deletes a `user_identities` row, so this read needs no lock and the order does
-  not change. It writes no `user_identities` row. A replace with `active` false (#471)
-  also writes `token_version` in the same `users` write and then revokes every `refresh_tokens`
-  row of the account (`RefreshTokenRepository.RevokeAllForUser`), after the `users` write.
+  not change. It writes no `user_identities` row. A replace with `active` false (#471, #526)
+  then ends every credential of the account after the `users` write (`revokeAllCredentials`):
+  `token_version` plus one, every `refresh_tokens` row and every `api_keys` row revoked.
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
   that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
   a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
   while this write waited is missing from that set, and only the locking read of `LockLiveByIDs`
   sees it (#513). This can only refuse more often during such a race, never less.
 - **Order:** admin set → users → roles → user_identities, the OIDC sign-in's order without its
-  `refresh_tokens` step; a deactivating replace takes `refresh_tokens` last instead of
-  `user_identities` (see the SCIM user patch). A create locks no existing `users` row: its new row
+  `refresh_tokens` step; a deactivating replace takes `refresh_tokens` and then `api_keys` last
+  instead of `user_identities` (see the SCIM user patch). A create locks no existing `users` row: its new row
   and its identity row are inserts, and a competing create of the same address or identity, or a
   first OIDC sign-in, loses on the unique index and rolls back whole (409).
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
@@ -727,31 +743,32 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   target's current custom role and, when the patch sets `roles`, of the mapped role
   (`RoleRepository.LockByIDs`). The patch is applied to the locked row. A changed address is
   checked with a plain read (`SCIMUserRepository.EmailTakenByOther`); then the touched `users`
-  columns are written in one `UPDATE`, which on `active` false also sets `token_version` to the
-  locked value plus one, then every `refresh_tokens` row of the account is revoked
-  (`RefreshTokenRepository.RevokeAllForUser`, only on `active` false), then, on a role change,
-  the `role_audit_log` row is inserted. Like the replace, it plain-reads the target's
+  columns are written in one `UPDATE`; on `active` false `revokeAllCredentials` then sets
+  `token_version` to the locked value plus one, revokes every `refresh_tokens` row and then every
+  `api_keys` row of the account (#526); then, on a role change, the `role_audit_log` row is
+  inserted. Like the replace, it plain-reads the target's
   `user_identities` rows right after the `users` lock and refuses an account not linked under the
   effective issuer as a not-found before anything is written (#529); it writes no
   `user_identities` row.
   `DELETE /scim/v2/Users/{id}` (`scimUserService.Delete`, #504) locks the admin set
   (`LockActiveAdmins`) and the target's `users` row (`LockLiveByIDs`) and no `roles` row, since it
-  writes no role; it plain-reads the target's identities as the patch does (#529); on an active target it writes `is_active` false and `token_version` plus one in
-  one `UPDATE`, then revokes every `refresh_tokens` row of the account. On an already inactive
+  writes no role; it plain-reads the target's identities as the patch does (#529); on an active
+  target it writes `is_active` false, then `revokeAllCredentials` writes `token_version` plus one
+  and revokes every `refresh_tokens` and every `api_keys` row of the account. On an already inactive
   target it writes nothing and commits an empty transaction.
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
   that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
   a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
   while this write waited is missing from that set, and only the locking read of `LockLiveByIDs`
   sees it (#513). This can only refuse more often during such a race, never less.
-- **Order:** admin set → users → roles → refresh_tokens (the delete: admin set → users →
-  refresh_tokens). The `users` row comes before its
-  `refresh_tokens` rows, as in refresh rotation, logout and password change, so a competing
-  refresh waits on the `users` row and then finds its token revoked.
+- **Order:** admin set → users → roles → refresh_tokens → api_keys (the delete: admin set → users →
+  refresh_tokens → api_keys). The `users` row comes before its
+  `refresh_tokens` and `api_keys` rows, as in refresh rotation, logout and password change, so a
+  competing refresh waits on the `users` row and then finds its token revoked.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
   repositories, for the patch and the delete alike; the `users` write, the revocation and the
   audit row commit together or not at all, and a refusal (the last-admin rule, a taken address,
-  an unmapped role, a failed revocation) writes nothing. The successful `auth_audit_log` row is
+  an unmapped role, a failed revocation of the refresh tokens or the API keys) writes nothing. The successful `auth_audit_log` row is
   written after the commit, on the root handle, as its own `INSERT`; a delete of an already
   inactive account writes none.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.

@@ -368,9 +368,10 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   `authService.sessionTokenSecret` (`internal/service/auth_service.go`)) and the UI silently trades them for new access
 >   tokens signed with the new secret (the 401 handling in `setupInterceptors` and `refreshFor`, `gocrm-ui/src/api/client.ts`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
->   change and a password reset revoke that user's refresh tokens and end the access tokens issued
->   before them (they increment `users.token_version`, #236), and a deactivated user's refresh is
->   refused. Restoring a database backup needs the secrets it was written with; a backup also brings
+>   change, a password reset and a deactivation revoke that user's refresh tokens and end the access
+>   tokens issued before them (they increment `users.token_version`, #236); a password change, a
+>   password reset and a deactivation also revoke every API key of the user (#526), and a
+>   reactivation brings none of them back. Restoring a database backup needs the secrets it was written with; a backup also brings
 >   back older `token_version` values, so access tokens ended after it was taken pass again until
 >   they expire.
 > - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. With it the server refuses to

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -33,6 +34,34 @@ import (
 func WithUserRoleGovernance(roleRepo repository.RoleRepository, auditRepo repository.RoleAuditRepository, txManager *utils.TransactionManager) UserServiceOption {
 	return func(s *userService) {
 		s.governance = &roleGovernance{users: s.userRepo, roles: roleRepo, audit: auditRepo, txManager: txManager}
+	}
+}
+
+// userCredentialRevocation is the credential stores a governed deactivation
+// revokes through (revokeAllCredentials), bound to the governed transaction
+// on each use.
+type userCredentialRevocation struct {
+	apiKeys       repository.APIKeyRepository
+	refreshTokens repository.RefreshTokenRepository
+}
+
+// errCredentialRevocationUnavailable is a wiring fault: a governed write that
+// deactivates an account on a service built without
+// WithUserCredentialRevocation. Nothing is written; it is answered with the
+// generic 500.
+var errCredentialRevocationUnavailable = errors.New("deactivating an account needs the credential stores")
+
+// WithUserCredentialRevocation lets a governed write that deactivates an
+// account (SetActiveAs false, UpdateAs with is_active false) end every
+// credential of it in the same transaction: token_version incremented, every
+// refresh token and every API key revoked (revokeAllCredentials). A governed
+// deactivation on a service without this option fails and writes nothing.
+// It has no effect without WithUserRoleGovernance: the ungoverned fallback of
+// SetActiveAs and UpdateAs (the plain Update) writes is_active only and
+// revokes nothing.
+func WithUserCredentialRevocation(apiKeys repository.APIKeyRepository, refreshTokens repository.RefreshTokenRepository) UserServiceOption {
+	return func(s *userService) {
+		s.credentials = &userCredentialRevocation{apiKeys: apiKeys, refreshTokens: refreshTokens}
 	}
 }
 
@@ -238,8 +267,13 @@ func (s *userService) DeleteAs(ctx context.Context, actor Actor, id uint) error 
 }
 
 // governedWrite is the one transaction of every governed write to an existing
-// account: update, activation, deactivation and erasure.
+// account: update, activation, deactivation and erasure. A deactivation
+// (is_active false, also on an account already inactive) ends every
+// credential of the target after the users write: token_version incremented,
+// every refresh token and every API key revoked, continuing the lock order
+// with refresh_tokens → api_keys. An activation brings none of them back.
 func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, change governedChange) (*models.User, error) {
+	deactivates := !change.erase && change.isActive != nil && !*change.isActive
 	var result *models.User
 	err := s.governance.run(ctx, func(tx *governedTx) error {
 		admins, err := tx.userRoles.LockActiveAdmins()
@@ -313,6 +347,11 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 			// transaction.
 			return tx.users.Delete(id)
 		}
+		// A deactivation the service cannot complete is refused before any
+		// write, after the refusals every governed write answers first.
+		if deactivates && (s.credentials == nil || s.credentials.apiKeys == nil || s.credentials.refreshTokens == nil) {
+			return errCredentialRevocationUnavailable
+		}
 
 		fields := map[string]interface{}{}
 		if change.email != nil && *change.email != target.Email {
@@ -345,6 +384,20 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 				return fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
 			}
 			return err
+		}
+		if deactivates {
+			// target is the row lockUsers locked, so its token_version is
+			// current.
+			if err := revokeAllCredentials(credentialStores{
+				users:         tx.users,
+				refreshTokens: s.credentials.refreshTokens.WithTx(tx.handle),
+				apiKeys:       s.credentials.apiKeys.WithTx(tx.handle),
+			}, target, time.Now()); err != nil {
+				if isNotFound(err) {
+					return fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
+				}
+				return err
+			}
 		}
 		if roleChanged {
 			if err := tx.record(actor, models.RoleAuditUserRoleChanged, change.roleID, assignedRoleName(*change.role, custom), &id,

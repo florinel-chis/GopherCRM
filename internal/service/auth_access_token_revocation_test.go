@@ -657,10 +657,10 @@ func runAccessTokenPasswordChangeScenarios(t *testing.T, f *atvFixture) {
 		s := f.seed(t)
 		f.setVersion(t, s.owner.ID, 5)
 		caller, otherDevice := f.jwt(t, s.owner.ID), f.jwt(t, s.owner.ID)
-		var written map[string]interface{}
+		var written []map[string]interface{}
 		f.hooks.install(func(h *atvHookSet) {
 			h.updateFields = func(_ uint, fields map[string]interface{}) error {
-				written = fields
+				written = append(written, fields)
 				return nil
 			}
 		})
@@ -669,9 +669,12 @@ func runAccessTokenPasswordChangeScenarios(t *testing.T, f *atvFixture) {
 		require.NoError(t, err)
 		require.NotNil(t, tokens)
 
-		require.NotNil(t, written)
-		assert.Contains(t, written, "password", "one UpdateFields write carries the password")
-		assert.EqualValues(t, 6, written["token_version"], "and the incremented version")
+		// The password write, then the credential revocation's increment in
+		// the same transaction (#526).
+		require.Len(t, written, 2)
+		assert.Contains(t, written[0], "password", "the first UpdateFields write carries the password")
+		assert.NotContains(t, written[0], "token_version")
+		assert.Equal(t, map[string]interface{}{"token_version": uint(6)}, written[1], "the second carries the incremented version")
 		assert.Equal(t, uint(6), f.version(t, s.owner.ID), "incremented by exactly 1")
 		f.assertRevoked(t, caller, "the caller's own token")
 		f.assertRevoked(t, otherDevice)
@@ -766,27 +769,30 @@ func TestAccessTokenRevokedByPasswordResetMySQL(t *testing.T) {
 }
 
 func runAccessTokenPasswordResetScenarios(t *testing.T, f *atvFixture) {
-	t.Run("a confirmed reset ends every earlier access token in the password write", func(t *testing.T) {
+	t.Run("a confirmed reset ends every earlier access token in its transaction", func(t *testing.T) {
 		s := f.seed(t)
 		f.setVersion(t, s.owner.ID, 2)
 		before := f.jwt(t, s.owner.ID)
 		bystander := f.jwt(t, s.bystander.ID)
 		link := f.issueLink(t, s.owner)
-		var written map[string]interface{}
+		var written []map[string]interface{}
 		f.hooks.install(func(h *atvHookSet) {
 			h.updateFields = func(_ uint, fields map[string]interface{}) error {
-				written = fields
+				written = append(written, fields)
 				return nil
 			}
 		})
 
 		require.NoError(t, f.svc.ConfirmPasswordReset(link, atvNewPassword))
 
-		require.NotNil(t, written)
+		// The password write, then the credential revocation's increment in
+		// the same transaction (#526).
+		require.Len(t, written, 2)
 		for _, column := range []string{"password", "failed_login_attempts", "locked_until"} {
-			assert.Contains(t, written, column, "one UpdateFields write carries %s", column)
+			assert.Contains(t, written[0], column, "the first UpdateFields write carries %s", column)
 		}
-		assert.EqualValues(t, 3, written["token_version"], "and the incremented version")
+		assert.NotContains(t, written[0], "token_version")
+		assert.Equal(t, map[string]interface{}{"token_version": uint(3)}, written[1], "the second carries the incremented version")
 		assert.Equal(t, uint(3), f.version(t, s.owner.ID), "incremented by exactly 1")
 		f.assertRevoked(t, before)
 		f.assertAccepted(t, bystander, s.bystander.ID)
@@ -1146,8 +1152,8 @@ func TestAccessTokenRevocationLogsOmitPersonalData(t *testing.T) {
 	lines := []struct{ msg, operation string }{
 		{"Rejected access token of an ended session", "ValidateToken"},
 		{"Logout ended the access tokens issued before it", "Logout"},
-		{"Password changed; current session renewed, other sessions and earlier access tokens ended", "ChangePassword"},
-		{"Password reset completed; all sessions and earlier access tokens ended", "ConfirmPasswordReset"},
+		{"Password changed; current session renewed, other sessions, earlier access tokens and API keys ended", "ChangePassword"},
+		{"Password reset completed; all sessions, earlier access tokens and API keys ended", "ConfirmPasswordReset"},
 	}
 	wantOperation := map[string]string{}
 	for _, line := range lines {

@@ -181,6 +181,34 @@ func (_m *APIKeyRepository) Revoke(id uint, userID uint, at time.Time) (int64, e
 	return r0, r1
 }
 
+// RevokeAllForUser provides a mock function with given fields: userID, at
+func (_m *APIKeyRepository) RevokeAllForUser(userID uint, at time.Time) (int64, error) {
+	ret := _m.Called(userID, at)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RevokeAllForUser")
+	}
+
+	var r0 int64
+	var r1 error
+	if rf, ok := ret.Get(0).(func(uint, time.Time) (int64, error)); ok {
+		return rf(userID, at)
+	}
+	if rf, ok := ret.Get(0).(func(uint, time.Time) int64); ok {
+		r0 = rf(userID, at)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+
+	if rf, ok := ret.Get(1).(func(uint, time.Time) error); ok {
+		r1 = rf(userID, at)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // UpdateLastUsed provides a mock function with given fields: id
 func (_m *APIKeyRepository) UpdateLastUsed(id uint) error {
 	ret := _m.Called(id)

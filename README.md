@@ -1200,9 +1200,12 @@ gophercrm/
 
 ## Known Limitations
 
-- **Access tokens end early only on logout, password change and password reset.** These three
-  increment the account's `users.token_version`, which every JWT carries, so every access token
-  issued before them is refused at once (deactivation and erasure reject it too). Refresh rotation
+- **Access tokens end early only on logout, password change, password reset and deactivation.**
+  These increment the account's `users.token_version`, which every JWT carries, so every access
+  token issued before them is refused at once (erasure rejects it too). Password change, password
+  reset and deactivation (by an administrator or through SCIM) also revoke every API key of the
+  account for good, and reactivating an account brings none of its earlier credentials back;
+  logout leaves API keys alone. Refresh rotation
   does not: the access token it replaces stays valid until `JWT_EXPIRY_HOURS` elapses, and so does
   every token of an account whose role changes. There is no per-token denylist.
 - **Session handling has known gaps.** Browser tabs sharing a remembered session coordinate their
