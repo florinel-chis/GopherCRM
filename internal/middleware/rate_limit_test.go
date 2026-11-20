@@ -403,6 +403,11 @@ func TestRateLimitConcurrency(t *testing.T) {
 			}
 		}()
 
+		// The churning clients use capacity-1 addresses, so together with the
+		// hot client they never exceed the capacity: records come and go only
+		// through clock-driven idle reclaim, never through eviction. Eviction
+		// hands an evicted client a fresh burst by design, so the token bound
+		// below holds only for a client that is never evicted.
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
@@ -425,7 +430,7 @@ func TestRateLimitConcurrency(t *testing.T) {
 			go func(g int) {
 				defer wg.Done()
 				for i := 0; i < 100; i++ {
-					sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(g*1000+i), nil)
+					sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr((g*100+i)%(capacity-1)), nil)
 				}
 			}(g)
 		}
@@ -446,6 +451,54 @@ func TestRateLimitConcurrency(t *testing.T) {
 		}
 		assert.Equal(t, capacity, trackedVisitors(t, rl))
 		requireStatuses(t, router, rateLimitTestAddr(100000+capacity), nil, http.StatusNoContent)
+		assert.Equal(t, capacity, trackedVisitors(t, rl))
+	})
+
+	t.Run("churn of unseen addresses evicts under concurrency and stays bounded", func(t *testing.T) {
+		const capacity = 16
+		clock := newRateLimitClock()
+		rl := newRateLimiter(0.1, 3, capacity, clock.Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
+
+		var violations, refused atomic.Int64
+		var done atomic.Bool
+		var checker sync.WaitGroup
+		checker.Add(1)
+		go func() {
+			defer checker.Done()
+			for !done.Load() {
+				rl.mu.Lock()
+				if len(rl.visitors) > capacity || len(rl.visitors) != len(rl.queue) {
+					violations.Add(1)
+				}
+				rl.mu.Unlock()
+				runtime.Gosched()
+			}
+		}()
+
+		// Every request names an unseen address, so once the instance is full
+		// each admission evicts one record; every first request is admitted.
+		var wg sync.WaitGroup
+		for g := 0; g < 8; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				for i := 0; i < 100; i++ {
+					if i%10 == 0 {
+						clock.Advance(time.Second)
+					}
+					if sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(g*1000+i), nil).Code != http.StatusNoContent {
+						refused.Add(1)
+					}
+				}
+			}(g)
+		}
+		wg.Wait()
+		done.Store(true)
+		checker.Wait()
+
+		assert.Zero(t, violations.Load(), "visitor state exceeded capacity or diverged from the queue")
+		assert.Zero(t, refused.Load(), "an unseen address was refused")
 		assert.Equal(t, capacity, trackedVisitors(t, rl))
 	})
 }
