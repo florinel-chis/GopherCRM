@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Entra ID sign-in finds the SCIM-created account (#505).** Entra ID sends the `objectId` as
+  SCIM `externalId`, but its ID tokens carry a pairwise `sub`, so the first single sign-on of a
+  SCIM-provisioned person used to be refused as `email_taken`. Now an unknown `(iss, sub)` signs in
+  as the SCIM-created account when the configured issuer is Entra ID's tenant-specific
+  `https://login.microsoftonline.com/<tenant id>/v2.0`, the token's `tid` equals that tenant id
+  byte for byte and its `oid` equals the `externalId` SCIM stored under that issuer; the account
+  must be active and not erased (`account_inactive`, `account_erased` otherwise), and the
+  `(iss, sub)` link is written in the same governed transaction. `user_identities` gains `source`
+  (`oidc`|`scim`, default `oidc`; AutoMigrate on SQLite, `migrations/20261128120000_user_identity_source`
+  for MySQL/MariaDB, existing rows read `oidc`); SCIM create writes `scim`. Every other case keeps
+  the previous path, and email never links an account.
 - **SCIM 2.0 user delete (#504).** `DELETE /scim/v2/Users/{id}` answers 204 with an empty body
   and deactivates the account as `active` false does: in one governed transaction
   (`admin set → users → refresh_tokens`) it sets `is_active` false, increments `token_version` and

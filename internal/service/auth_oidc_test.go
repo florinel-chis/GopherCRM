@@ -28,6 +28,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -65,6 +66,14 @@ const (
 	oidcGraphPath           = "/graph/v1.0/me/getMemberObjects"
 
 	oidcUserInfoPath = "/userinfo"
+
+	// Entra ID tenants and object ids (#505). The oid, the sub and every
+	// email of the SCIM link subtests differ from each other.
+	oidcTestTenant      = "6f0c3a1e-0505-4d2b-9a11-000000000505"
+	oidcTestOtherTenant = "6f0c3a1e-0505-4d2b-9a11-000000000506"
+	oidcTestSCIMOID     = "0b5e7d2c-0505-4f1a-8e3d-00000000a1d0"
+	oidcTestOtherOID    = "0b5e7d2c-0505-4f1a-8e3d-00000000a1d1"
+	oidcTestPairwiseSub = "pairwise-subject-0505-Xk2Lq9"
 )
 
 // ------------------------------------------------------------ test issuer ---
@@ -113,6 +122,10 @@ type oidcTestIssuer struct {
 	// accessSubjects maps each issued access token to the sub of its grant.
 	accessSubjects map[string]string
 	userinfo       oidcFakeUserInfo
+	// path is the path of the issuer under the server ("" or
+	// "/<tenant>/v2.0", #505): discovery is served under it and iss carries
+	// it.
+	path string
 }
 
 // Modes of the fake userinfo endpoint (#451).
@@ -181,6 +194,7 @@ func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 		accessSubjects: map[string]string{}, userinfo: oidcFakeUserInfo{mode: userinfoModeJSON}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", issuer.discovery)
+	mux.HandleFunc("/"+oidcTestTenant+"/v2.0/.well-known/openid-configuration", issuer.discovery)
 	mux.HandleFunc("/jwks", issuer.jwks)
 	mux.HandleFunc("/token", issuer.token)
 	mux.HandleFunc(oidcGraphPath, issuer.graphMemberObjects)
@@ -368,6 +382,21 @@ func (i *oidcTestIssuer) lastAccessToken() string {
 
 func (i *oidcTestIssuer) URL() string { return i.server.URL }
 
+// Issuer is the issuer identifier: the server URL plus the tenant path when
+// one is set.
+func (i *oidcTestIssuer) Issuer() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.server.URL + i.path
+}
+
+// setPath sets the issuer path ("" for the bare server URL).
+func (i *oidcTestIssuer) setPath(path string) {
+	i.mu.Lock()
+	i.path = path
+	i.mu.Unlock()
+}
+
 func (i *oidcTestIssuer) rootCAs() *x509.CertPool {
 	pool := x509.NewCertPool()
 	pool.AddCert(i.server.Certificate())
@@ -379,13 +408,14 @@ func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
 	i.mu.Lock()
 	redirect := i.discoveryRedirect
 	omitUserInfo, plainUserInfo := i.userinfo.omitEndpoint, i.userinfo.plainHTTP
+	issuerPath := i.path
 	i.mu.Unlock()
 	if redirect {
 		http.Redirect(w, r, i.server.URL+"/moved/.well-known/openid-configuration", http.StatusFound)
 		return
 	}
 	document := map[string]interface{}{
-		"issuer":                                i.server.URL,
+		"issuer":                                i.server.URL + issuerPath,
 		"authorization_endpoint":                i.server.URL + "/authorize",
 		"token_endpoint":                        i.server.URL + "/token",
 		"jwks_uri":                              i.server.URL + "/jwks",
@@ -483,7 +513,7 @@ func (i *oidcTestIssuer) sign(grant oidcGrant) string {
 	spec := grant.spec
 	now := time.Now()
 	claims := map[string]interface{}{
-		"iss":   i.server.URL,
+		"iss":   i.Issuer(),
 		"sub":   spec.sub,
 		"aud":   oidcTestClientID,
 		"exp":   now.Add(5 * time.Minute).Unix(),
@@ -654,7 +684,7 @@ func (f *oidcFixture) configure(t *testing.T, mapping []SSORoleMapping) {
 	enabled, secret := true, oidcTestClientSecret
 	require.NoError(t, f.sso.Update(context.Background(), SSOSettingsUpdate{
 		Enabled:      &enabled,
-		IssuerURL:    f.issuer.URL(),
+		IssuerURL:    f.issuer.Issuer(),
 		ClientID:     oidcTestClientID,
 		ClientSecret: &secret,
 		RoleMapping:  mapping,
@@ -674,7 +704,9 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.mu.Unlock()
 	f.issuer.setTokenStatus(0)
 	f.issuer.setDiscoveryRedirect(false)
+	f.issuer.setPath("")
 	f.svc.beforeJITInsert = nil
+	f.svc.beforeSCIMLink = nil
 	f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db)
 	f.svc.audit = f.audit
 	f.svc.entraIssuerHost = oidcEntraIssuerHost
@@ -685,6 +717,10 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.issuer.resetUserInfo()
 	f.useSSO(f.defaultSSO)
 	f.configure(t, f.mapping())
+	cfg, err := f.sso.SSOConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, f.issuer.URL(), cfg.IssuerURL, "the configured issuer carries no tenant path")
+	require.Nil(t, f.svc.beforeSCIMLink, "the SCIM link seam is cleared")
 }
 
 // useSSO swaps the settings service of the fixture and of the sign-in.
@@ -702,6 +738,19 @@ func (f *oidcFixture) entra(t *testing.T) {
 	f.svc.entraIssuerHost = parsed.Hostname()
 	f.svc.graphBaseURL = f.issuer.URL() + "/graph"
 	f.svc.graphTimeout = 300 * time.Millisecond
+}
+
+// entraTenant is entra plus a tenant-specific issuer
+// <server>/<oidcTestTenant>/v2.0: discovery is served there, the ID tokens
+// carry it as iss and the settings name it (#505).
+func (f *oidcFixture) entraTenant(t *testing.T) {
+	t.Helper()
+	f.entra(t)
+	f.issuer.setPath("/" + oidcTestTenant + "/v2.0")
+	f.configure(t, f.mapping())
+	cfg, err := f.sso.SSOConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, oidcTestTenant, oidcEntraTenant(cfg.IssuerURL))
 }
 
 // graphMapping maps a group object id to sales and the app role to support.
@@ -752,7 +801,13 @@ func (f *oidcFixture) seedUser(t *testing.T, email string, role models.UserRole,
 
 func (f *oidcFixture) link(t *testing.T, userID uint, subject string) {
 	t.Helper()
-	require.NoError(t, f.db.Create(&models.UserIdentity{UserID: userID, Issuer: f.issuer.URL(), Subject: subject}).Error)
+	f.linkSource(t, userID, subject, models.UserIdentitySourceOIDC)
+}
+
+// linkSource links (issuer, subject) to userID with the given source.
+func (f *oidcFixture) linkSource(t *testing.T, userID uint, subject, source string) {
+	t.Helper()
+	require.NoError(t, f.db.Create(&models.UserIdentity{UserID: userID, Issuer: f.issuer.Issuer(), Subject: subject, Source: source}).Error)
 }
 
 func (f *oidcFixture) count(t *testing.T, table, where string, args ...interface{}) int64 {
@@ -1078,6 +1133,145 @@ var oidcSignInCases = []struct {
 		assert.Equal(t, int64(1), f.count(t, "users", "email = ?", email))
 		assert.Equal(t, int64(0), f.identities(t), "the losing sign-in left no identity")
 		assert.Equal(t, int64(0), f.count(t, "role_audit_log", ""))
+	}},
+	{"scim_oid_link", func(t *testing.T, f *oidcFixture) {
+		ctx := context.Background()
+		f.entraTenant(t)
+		scim := f.scimService()
+		record, err := scim.Create(ctx, scimInput("scim.person@crm.example.test", oidcTestSCIMOID, oidcAppRole))
+		require.NoError(t, err)
+		id := record.User.ID
+		rows := f.identityRows(t, id)
+		require.Len(t, rows, 1)
+		assert.Equal(t, f.issuer.Issuer(), rows[0].Issuer)
+		assert.Equal(t, oidcTestSCIMOID, rows[0].Subject)
+		assert.Equal(t, models.UserIdentitySourceSCIM, rows[0].Source)
+
+		tokens, err := f.signIn(t, oidcSCIMLinkSpec("token-only@idp.example.test"))
+		require.NoError(t, err)
+		require.NotNil(t, tokens.User)
+		assert.Equal(t, id, tokens.User.ID, "the SCIM-created account signs in")
+		assert.NotEmpty(t, tokens.AccessToken)
+		assert.NotEmpty(t, tokens.RefreshToken)
+		rows = f.identityRows(t, id)
+		require.Len(t, rows, 2, "the (iss, sub) link is added")
+		assert.Equal(t, [3]string{f.issuer.Issuer(), oidcTestSCIMOID, models.UserIdentitySourceSCIM},
+			[3]string{rows[0].Issuer, rows[0].Subject, rows[0].Source})
+		assert.Equal(t, [3]string{f.issuer.Issuer(), oidcTestPairwiseSub, models.UserIdentitySourceOIDC},
+			[3]string{rows[1].Issuer, rows[1].Subject, rows[1].Source})
+		assert.Equal(t, int64(2), f.identities(t))
+		assert.Equal(t, int64(1), f.users(t), "no account is provisioned")
+		assert.Equal(t, int64(0), f.count(t, "role_audit_log", "target_user_id <> ?", id))
+
+		// AC-6: the SCIM externalId is still the oid.
+		got, err := scim.Get(ctx, strconv.FormatUint(uint64(id), 10))
+		require.NoError(t, err)
+		assert.Equal(t, oidcTestSCIMOID, got.ExternalID)
+
+		// The next sign-in matches (iss, sub) directly, without oid or tid.
+		again, err := f.signIn(t, oidcValid(oidcTestPairwiseSub, "token-only@idp.example.test"))
+		require.NoError(t, err)
+		assert.Equal(t, id, again.User.ID)
+		assert.Equal(t, int64(2), f.identities(t))
+	}},
+	{"scim_oid_tid_mismatch", func(t *testing.T, f *oidcFixture) {
+		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(spec *oidcTokenSpec) {
+			spec.extra["tid"] = oidcTestOtherTenant
+		})
+	}},
+	{"scim_oid_tid_case_differs", func(t *testing.T, f *oidcFixture) {
+		require.NotEqual(t, oidcTestTenant, strings.ToUpper(oidcTestTenant))
+		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(spec *oidcTokenSpec) {
+			spec.extra["tid"] = strings.ToUpper(oidcTestTenant)
+		})
+	}},
+	{"scim_oid_missing", func(t *testing.T, f *oidcFixture) {
+		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(spec *oidcTokenSpec) {
+			delete(spec.extra, "oid")
+		})
+	}},
+	{"scim_oid_non_entra_issuer", func(t *testing.T, f *oidcFixture) {
+		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(*oidcTokenSpec) {
+			f.svc.entraIssuerHost = oidcEntraIssuerHost
+		})
+	}},
+	{"scim_oid_matches_oidc_row", func(t *testing.T, f *oidcFixture) {
+		oidcSCIMFallThrough(t, f, models.UserIdentitySourceOIDC, nil)
+	}},
+	{"scim_oid_email_only", func(t *testing.T, f *oidcFixture) {
+		f.entraTenant(t)
+		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
+		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
+		spec := oidcSCIMLinkSpec("scim.person@crm.example.test")
+		spec.extra["oid"] = oidcTestOtherOID
+		tokens, err := f.signIn(t, spec)
+		f.assertRefused(t, "email_taken", tokens, err, 1, 1)
+		assert.Len(t, f.identityRows(t, owner.ID), 1)
+		assert.Equal(t, int64(0), f.refreshTokens(t, owner.ID))
+	}},
+	{"scim_oid_deactivated", func(t *testing.T, f *oidcFixture) {
+		f.entraTenant(t)
+		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, false, "")
+		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
+		tokens, err := f.signIn(t, oidcSCIMLinkSpec("new.person@idp.example.test"))
+		f.assertRefused(t, "account_inactive", tokens, err, 1, 1)
+		assert.Len(t, f.identityRows(t, owner.ID), 1)
+		assert.Equal(t, int64(0), f.count(t, "user_identities", "subject = ?", oidcTestPairwiseSub))
+		assert.Equal(t, int64(0), f.count(t, "refresh_tokens", ""))
+	}},
+	{"scim_oid_erased", func(t *testing.T, f *oidcFixture) {
+		f.entraTenant(t)
+		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
+		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
+		require.NoError(t, repository.NewUserRepository(f.db).Delete(owner.ID))
+		tokens, err := f.signIn(t, oidcSCIMLinkSpec("new.person@idp.example.test"))
+		f.assertRefused(t, "account_erased", tokens, err, 1, 1)
+		assert.Len(t, f.identityRows(t, owner.ID), 1)
+		assert.Equal(t, int64(0), f.count(t, "user_identities", "subject = ?", oidcTestPairwiseSub))
+		assert.Equal(t, int64(0), f.count(t, "refresh_tokens", ""))
+	}},
+	{"scim_oid_concurrent_link_after_commit", func(t *testing.T, f *oidcFixture) {
+		f.entraTenant(t)
+		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
+		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
+		require.NoError(t, f.competitor.Create(&models.UserIdentity{UserID: owner.ID, Issuer: f.issuer.Issuer(),
+			Subject: oidcTestPairwiseSub, Source: models.UserIdentitySourceOIDC}).Error)
+		tokens, err := f.signIn(t, oidcSCIMLinkSpec("new.person@idp.example.test"))
+		require.NoError(t, err)
+		assert.Equal(t, owner.ID, tokens.User.ID, "the committed link matches directly")
+		f.assertOneSCIMLink(t, owner.ID)
+	}},
+	{"scim_oid_concurrent_link_before_insert", func(t *testing.T, f *oidcFixture) {
+		f.entraTenant(t)
+		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
+		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
+		var once sync.Once
+		f.svc.beforeSCIMLink = func() {
+			// A competing first sign-in of the same person commits the
+			// (iss, sub) link after this one's reads, before its insert.
+			once.Do(func() {
+				require.NoError(t, f.competitor.Create(&models.UserIdentity{UserID: owner.ID, Issuer: f.issuer.Issuer(),
+					Subject: oidcTestPairwiseSub, Source: models.UserIdentitySourceOIDC}).Error)
+			})
+		}
+		tokens, err := f.signIn(t, oidcSCIMLinkSpec("new.person@idp.example.test"))
+		if f.db.Dialector.Name() == "mysql" {
+			// MySQL/MariaDB: the link insert meets the unique index and the
+			// whole transaction rolls back.
+			assert.Nil(t, tokens)
+			assert.ErrorIs(t, err, ErrSSOSignInFailed)
+			assert.Equal(t, "identity_taken", oidcErrorCode(err))
+			assert.ErrorIs(t, err, repository.ErrUserIdentityTaken)
+			assert.Equal(t, int64(0), f.refreshTokens(t, owner.ID))
+		} else {
+			// SQLite (WAL): the first write after the competing commit is
+			// refused as busy and replayed; the replay matches (iss, sub).
+			require.NoError(t, err)
+			assert.NotErrorIs(t, err, repository.ErrUserIdentityTaken)
+			assert.Equal(t, owner.ID, tokens.User.ID)
+			assert.Equal(t, int64(1), f.refreshTokens(t, owner.ID))
+		}
+		f.assertOneSCIMLink(t, owner.ID)
 	}},
 	{"token_endpoint_error", func(t *testing.T, f *oidcFixture) {
 		f.issuer.setTokenStatus(http.StatusInternalServerError)
@@ -1752,6 +1946,92 @@ func openOIDCTestSQLite(t *testing.T) (*gorm.DB, *gorm.DB) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = competitorDB.Close() })
 	return db, competitor
+}
+
+// --------------------------------------------------- SCIM link (#505) ---
+
+// oidcSCIMLinkSpec is the ID token of the SCIM link subtests: a sub no row
+// holds, the oid SCIM stored as externalId and the configured tenant.
+func oidcSCIMLinkSpec(email string) oidcTokenSpec {
+	spec := oidcValid(oidcTestPairwiseSub, email)
+	spec.extra = map[string]interface{}{"oid": oidcTestSCIMOID, "tid": oidcTestTenant}
+	return spec
+}
+
+// scimService is the SCIM user service over the fixture's settings, so SCIM
+// create writes its identity under the configured issuer.
+func (f *oidcFixture) scimService() SCIMUserService {
+	return NewSCIMUserService(repository.NewSCIMUserRepository(f.db), f.sso,
+		WithSCIMUserWrites(repository.NewUserRepository(f.db), repository.NewRoleRepository(f.db), repository.NewRoleAuditRepository(f.db),
+			repository.NewUserIdentityRepository(f.db), repository.NewRefreshTokenRepository(f.db), utils.NewTransactionManager(f.db), f.audit))
+}
+
+// identityRows are the user_identities rows of userID, id ascending.
+func (f *oidcFixture) identityRows(t *testing.T, userID uint) []models.UserIdentity {
+	t.Helper()
+	var rows []models.UserIdentity
+	require.NoError(t, f.db.Where("user_id = ?", userID).Order("id").Find(&rows).Error)
+	return rows
+}
+
+// assertOneSCIMLink checks the end state of a concurrent link: one (iss, sub)
+// row, owned by the SCIM user, one user, no audit row for another user.
+func (f *oidcFixture) assertOneSCIMLink(t *testing.T, ownerID uint) {
+	t.Helper()
+	var links []models.UserIdentity
+	require.NoError(t, f.db.Where("issuer = ? AND subject = ?", f.issuer.Issuer(), oidcTestPairwiseSub).Find(&links).Error)
+	if assert.Len(t, links, 1, "exactly one (iss, sub) row") {
+		assert.Equal(t, ownerID, links[0].UserID)
+	}
+	assert.Equal(t, int64(1), f.users(t), "exactly one user")
+	assert.Equal(t, int64(0), f.count(t, "role_audit_log", "target_user_id <> ?", ownerID))
+}
+
+// oidcSCIMFallThrough is the scim_oid_link setup (an Entra ID tenant issuer
+// and an account whose (iss, oid) row has the given source) with one input
+// changed: the sign-in provisions a new account, which gets only its own
+// (iss, sub, oidc) row, and the seeded account is untouched.
+func oidcSCIMFallThrough(t *testing.T, f *oidcFixture, source string, change func(spec *oidcTokenSpec)) {
+	t.Helper()
+	f.entraTenant(t)
+	owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
+	f.linkSource(t, owner.ID, oidcTestSCIMOID, source)
+	spec := oidcSCIMLinkSpec("new.person@idp.example.test")
+	if change != nil {
+		change(&spec)
+	}
+	tokens, err := f.signIn(t, spec)
+	require.NoError(t, err)
+	require.NotNil(t, tokens.User)
+	assert.NotEqual(t, owner.ID, tokens.User.ID, "a new account is provisioned")
+	assert.Equal(t, int64(2), f.users(t))
+	rows := f.identityRows(t, tokens.User.ID)
+	if assert.Len(t, rows, 1) {
+		assert.Equal(t, [3]string{f.issuer.Issuer(), oidcTestPairwiseSub, models.UserIdentitySourceOIDC},
+			[3]string{rows[0].Issuer, rows[0].Subject, rows[0].Source})
+	}
+	owned := f.identityRows(t, owner.ID)
+	if assert.Len(t, owned, 1, "the seeded account keeps its one identity") {
+		assert.Equal(t, oidcTestSCIMOID, owned[0].Subject)
+		assert.Equal(t, source, owned[0].Source)
+	}
+	assert.Equal(t, int64(0), f.refreshTokens(t, owner.ID))
+}
+
+func TestOIDCEntraTenant(t *testing.T) {
+	for _, tc := range []struct{ issuer, want string }{
+		{"https://login.microsoftonline.com/" + oidcTestTenant + "/v2.0", oidcTestTenant},
+		{"https://login.microsoftonline.com/" + oidcTestTenant, oidcTestTenant},
+		{"https://login.microsoftonline.com/" + oidcTestTenant + "/", oidcTestTenant},
+		{"https://login.microsoftonline.com/common/v2.0", "common"},
+		{"https://login.microsoftonline.com", ""},
+		{"https://login.microsoftonline.com/", ""},
+		{"https://login.microsoftonline.com//v2.0", ""},
+		{"https://login.microsoftonline.com/%zz/v2.0", ""},
+		{"", ""},
+	} {
+		assert.Equal(t, tc.want, oidcEntraTenant(tc.issuer), tc.issuer)
+	}
 }
 
 func TestOIDCSignInSQLite(t *testing.T) {

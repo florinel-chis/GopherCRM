@@ -259,7 +259,8 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 				return err
 			}
 		}
-		if err := identities.Create(&models.UserIdentity{UserID: user.ID, Issuer: issuer, Subject: in.ExternalID}); err != nil {
+		if err := identities.Create(&models.UserIdentity{UserID: user.ID, Issuer: issuer, Subject: in.ExternalID,
+			Source: models.UserIdentitySourceSCIM}); err != nil {
 			if errors.Is(err, repository.ErrUserIdentityTaken) {
 				return fmt.Errorf("externalId is linked: %w", ErrSCIMUniqueness)
 			}

@@ -396,6 +396,15 @@ type oidcSignIn struct {
 	// identity lookup and the email check and before the users insert; nil
 	// in production.
 	beforeInsert func()
+	// scimSubject is the Entra ID oid of the token, set by the callback only
+	// when the issuer is Entra ID and the token's tid equals the configured
+	// issuer's tenant segment; empty otherwise. An unknown (iss, sub) whose
+	// (iss, scimSubject) is an identity SCIM created signs in as that account
+	// and links (iss, sub) to it.
+	scimSubject string
+	// beforeSCIMLink is a test seam that runs when the SCIM identity matched,
+	// after the plain reads and before the users lock; nil in production.
+	beforeSCIMLink func()
 }
 
 // ApplyOIDCSignIn is the one transaction of an OIDC sign-in. It takes the
@@ -408,9 +417,13 @@ type oidcSignIn struct {
 // governedWrite minus the actor-key and escalation checks (the mapping is the
 // administrator's grant): ErrCustomerLoginRole and ErrLastAdmin refuse, and a
 // changed role commits its user_role_changed audit row with auth_method oidc.
-// An unknown identity provisions an active user with the mapped role, its
-// identity row and its audit row, refused when any user, erased ones
-// included, holds the address in any letter case. The session is issued last,
+// An unknown identity whose Entra ID oid (scimSubject) is the subject of a
+// source=scim identity under the same issuer takes the known-identity steps
+// for that account and then inserts its (iss, sub) link; that second plain
+// read also names the users row to lock. Any other unknown identity
+// provisions an active user with the mapped role, its identity row and its
+// audit row, refused when any user, erased ones included, holds the address
+// in any letter case. Email never links an account. The session is issued last,
 // inside the same transaction. Every refusal is ErrSSOSignInFailed (through
 // oidcRefuse) and writes nothing; a refusal of a linked account names its
 // user for the audit row (#454).
@@ -435,33 +448,36 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			return oidcRefuse("identity_mismatch")
 		}
 
-		var user *models.User
-		if identity != nil {
-			users, err := tx.lockUsers(identity.UserID)
+		// signInExisting signs in as the linked account userID: it locks the
+		// users row, refuses an erased or deactivated account, re-applies the
+		// mapped role with its audit row and reads the row back. A known
+		// identity and a SCIM-created identity found by its oid share it.
+		signInExisting := func(userID uint) (*models.User, error) {
+			users, err := tx.lockUsers(userID)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			target := users[identity.UserID]
+			target := users[userID]
 			if target == nil {
-				return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
+				return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
 			}
 			if !target.IsActive {
-				return oidcRefusalForUser(oidcRefuse("account_inactive"), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuse("account_inactive"), target.ID)
 			}
 			mapped := in.roleID
 			roles, err := tx.lockRoles(target.RoleID, &mapped)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			role, roleID, custom, err := oidcMappedRole(roles[mapped])
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if role == models.RoleCustom && target.Role == models.RoleCustomer {
-				return oidcRefusalForUser(oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole), target.ID)
 			}
 			if role != models.RoleAdmin && isLastActiveAdmin(admins, target.ID) {
-				return oidcRefusalForUser(oidcRefuseWith("last_admin", apperrors.ErrLastAdmin), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuseWith("last_admin", apperrors.ErrLastAdmin), target.ID)
 			}
 			if role != target.Role || !sameRoleID(roleID, target.RoleID) {
 				fields := map[string]interface{}{"role": role, "role_id": nil}
@@ -470,20 +486,59 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				}
 				if err := tx.users.UpdateFields(target.ID, fields); err != nil {
 					if isNotFound(err) {
-						return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
+						return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
 					}
-					return err
+					return nil, err
 				}
 				if err := tx.record(Actor{UserID: target.ID, AuthMethod: AuthMethodOIDC}, models.RoleAuditUserRoleChanged,
 					roleID, assignedRoleName(role, custom), &target.ID,
 					userRoleAuditState{Role: target.Role, RoleID: target.RoleID},
 					userRoleAuditState{Role: role, RoleID: roleID}); err != nil {
-					return err
+					return nil, err
 				}
 			}
-			if user, err = tx.users.GetByID(target.ID); err != nil {
+			user, err := tx.users.GetByID(target.ID)
+			if err != nil {
 				if isNotFound(err) {
-					return oidcRefusalForUser(oidcRefuse("account_erased"), identity.UserID)
+					return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
+				}
+				return nil, err
+			}
+			return user, nil
+		}
+
+		// scimLink is the identity SCIM created for this person under the
+		// same issuer, found by the Entra ID oid the callback vetted. Only a
+		// byte-exact source=scim row counts; anything else falls through to
+		// provisioning below.
+		var scimLink *models.UserIdentity
+		if identity == nil && in.scimSubject != "" {
+			row, err := identities.GetByIssuerSubject(in.issuer, in.scimSubject)
+			if err != nil && !apperrors.IsNotFound(err) {
+				return err
+			}
+			if row != nil && row.Issuer == in.issuer && row.Subject == in.scimSubject &&
+				row.Source == models.UserIdentitySourceSCIM {
+				scimLink = row
+			}
+		}
+
+		var user *models.User
+		if identity != nil {
+			if user, err = signInExisting(identity.UserID); err != nil {
+				return err
+			}
+		} else if scimLink != nil {
+			if in.beforeSCIMLink != nil {
+				in.beforeSCIMLink()
+			}
+			if user, err = signInExisting(scimLink.UserID); err != nil {
+				return err
+			}
+			if err := identities.Create(&models.UserIdentity{UserID: user.ID, Issuer: in.issuer, Subject: in.subject,
+				Source: models.UserIdentitySourceOIDC}); err != nil {
+				if errors.Is(err, repository.ErrUserIdentityTaken) {
+					return oidcRefusalForUser(oidcRefuseWith("identity_taken", err), user.ID)
 				}
 				return err
 			}
@@ -527,7 +582,8 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				}
 				return err
 			}
-			if err := identities.Create(&models.UserIdentity{UserID: created.ID, Issuer: in.issuer, Subject: in.subject}); err != nil {
+			if err := identities.Create(&models.UserIdentity{UserID: created.ID, Issuer: in.issuer, Subject: in.subject,
+				Source: models.UserIdentitySourceOIDC}); err != nil {
 				if errors.Is(err, repository.ErrUserIdentityTaken) {
 					return oidcRefuseWith("identity_taken", err)
 				}

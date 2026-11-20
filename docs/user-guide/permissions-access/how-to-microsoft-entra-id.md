@@ -121,3 +121,14 @@ name. Add a groups claim to the token in **Token configuration** → **Add group
 groups), and grant `GroupMember.Read.All` with admin consent as in step 3. A person in more than 200
 groups has their groups read from Microsoft Graph; see group overage in the
 [troubleshooting table](single-sign-on.md#troubleshooting).
+
+## Accounts created through SCIM
+
+If Entra ID also provisions the people through [SCIM](scim-provisioning.md), keep the issuer URL
+tenant-specific, `https://login.microsoftonline.com/<tenant id>/v2.0` as in step 6. A person's first
+single sign-on then finds the account SCIM created for them: the token's `oid` must equal the
+`externalId` Entra ID sent (the `objectId`, the default mapping) and its `tid` must equal the
+`<tenant id>` of the issuer. From then on the person signs in to that account directly. A token
+from another tenant or without those claims is handled as a first sign-in, and an email address
+alone never links an account. Details:
+[SCIM provisioning](scim-provisioning.md#microsoft-entra-id-the-first-single-sign-on-of-a-scim-created-account).

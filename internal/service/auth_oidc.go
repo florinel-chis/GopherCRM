@@ -48,10 +48,13 @@ import (
 //
 //	admin set → users → roles → user_identities → refresh_tokens
 //
-// An identity is linked only by its exact (iss, sub) pair. A first sign-in
-// provisions a user (JIT) unless any user, erased ones included, already holds
-// its email address in any letter case; it is never linked to an existing
-// account. Every sign-in re-applies the mapped role through the governed role
+// An identity is found by its exact (iss, sub) pair. When that pair is
+// unknown and the issuer is Entra ID, a token whose tid equals the configured
+// issuer's tenant segment byte for byte and whose oid is the subject of the
+// identity SCIM created under that issuer signs in as that account and links
+// its (iss, sub) pair (#505). Any other first sign-in provisions a user (JIT)
+// unless any user, erased ones included, already holds its email address in
+// any letter case; email never links to an existing account. Every sign-in re-applies the mapped role through the governed role
 // write, so the last-admin rule and the role audit (auth_method oidc) apply.
 // Success returns the same token pair as a password login.
 //
@@ -195,6 +198,10 @@ type oidcService struct {
 	// beforeJITInsert is a test seam of the first sign-in (see
 	// oidcSignIn.beforeInsert); nil in production.
 	beforeJITInsert func()
+	// beforeSCIMLink is a test seam of the first sign-in that matched a
+	// SCIM-created identity by its oid (see oidcSignIn.beforeSCIMLink); nil
+	// in production.
+	beforeSCIMLink func()
 	// entraIssuerHost, graphBaseURL and graphTimeout drive the Microsoft
 	// Graph resolution of an Entra ID group overage. NewOIDCService sets the
 	// production values; tests in this package replace them directly.
@@ -390,6 +397,18 @@ func oidcIsEntraIssuer(issuerURL, entraHost string) bool {
 	return strings.EqualFold(parsed.Hostname(), entraHost)
 }
 
+// oidcEntraTenant is the first path segment of the issuer URL, the tenant of
+// an Entra ID issuer (https://login.microsoftonline.com/<tenant>/v2.0), or ""
+// when the URL does not parse or that segment is empty.
+func oidcEntraTenant(issuerURL string) string {
+	parsed, err := url.Parse(issuerURL)
+	if err != nil {
+		return ""
+	}
+	segment, _, _ := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
+	return segment
+}
+
 // mappingUsesGroups reports whether any role mapping entry matches on the
 // groups claim.
 func mappingUsesGroups(mapping []SSORoleMapping) bool {
@@ -450,6 +469,9 @@ type oidcClaims struct {
 	GivenName  json.RawMessage `json:"given_name"`
 	FamilyName json.RawMessage `json:"family_name"`
 	Name       json.RawMessage `json:"name"`
+	// OID and TID are the Entra ID object id and tenant id (#505).
+	OID json.RawMessage `json:"oid"`
+	TID json.RawMessage `json:"tid"`
 }
 
 func (s *oidcService) Callback(ctx context.Context, code, state string) (*AuthTokens, error) {
@@ -637,6 +659,18 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 		return nil, facts, oidcRefuse("no_mapping_match")
 	}
 
+	// The oid links to a SCIM-created account only under an Entra ID issuer
+	// and only when the token's tenant is the configured issuer's tenant,
+	// compared byte for byte; a non-string claim counts as absent.
+	scimSubject := ""
+	if oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
+		tid := oidcString(claims.TID)
+		oid := oidcString(claims.OID)
+		if tid != "" && tid == oidcEntraTenant(cfg.IssuerURL) && validOIDCSubject(oid) {
+			scimSubject = oid
+		}
+	}
+
 	passwordHash, err := oidcUnusablePasswordHash()
 	if err != nil {
 		return nil, facts, err
@@ -653,6 +687,9 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 		identities:   s.identities,
 		issue:        s.issue,
 		beforeInsert: s.beforeJITInsert,
+
+		scimSubject:    scimSubject,
+		beforeSCIMLink: s.beforeSCIMLink,
 	})
 	return tokens, facts, err
 }
