@@ -26250,6 +26250,103 @@ paths:
       summary: List webhook deliveries
       tags:
       - webhooks
+  /webhooks/deliveries/{id}/redeliver:
+    post:
+      description: |-
+        Puts a succeeded or failed delivery back into the queue: the same row becomes pending with attempts 0 and is due at once; last_http_status and error_code are cleared, last_attempt_at keeps its value. The runtime then sends it again with the same event id (webhook-id) and the full retry budget (10 attempts). No new row is written and the record the event names is not read.
+        A pending or sending delivery (already queued or being sent) is refused with 409, and so is a delivery whose endpoint is deleted or inactive. The endpoint is checked before the write; an endpoint deactivated in between still gets the row requeued, and the runtime then fails it with endpoint_inactive.
+        Roles: admin.
+      parameters:
+      - description: Delivery ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Delivery queued again (status pending)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_models.WebhookDelivery'
+              type: object
+        "400":
+          description: VALIDATION_ERROR - the id is not a positive integer (error.details.id)
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: UNAUTHORIZED - missing or malformed Authorization header, or
+            an invalid or expired token or API key
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: FORBIDDEN - role is not admin
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: NOT_FOUND - no delivery with that id
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "409":
+          description: CONFLICT - the delivery is pending or being sent, or its endpoint
+            is deleted or inactive
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst
+            30, per client IP, shared by every authenticated route; error.details.retry_after
+            is ''60s''; no Retry-After header'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: INTERNAL_ERROR - unexpected failure; the cause is never echoed
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Redeliver a logged webhook delivery
+      tags:
+      - webhooks
   /webhooks/endpoints:
     get:
       description: |-

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Webhook delivery redelivery (#502).** `POST /api/v1/webhooks/deliveries/{id}/redeliver`
+  (`webhooks.manage`) puts a `succeeded` or `failed` delivery back into the queue with one
+  conditional UPDATE of the same row: `pending`, `attempts` 0, due at once, `last_http_status` and
+  `error_code` cleared (`last_attempt_at` keeps its value). The runtime then sends it again with
+  the same event id (`webhook-id`) and the full retry budget of 10 attempts; the record it names is
+  not read. It answers 200 with the delivery; a `pending` or `sending` delivery is 409 `CONFLICT`
+  ("Webhook delivery is pending or being sent"), a delivery whose endpoint is deleted or inactive
+  is 409 ("Webhook endpoint is deleted or inactive"), an unknown id 404. No new row is written. No
+  UI change.
 - **Webhook endpoint test ping (#501).** `POST /api/v1/webhooks/endpoints/{id}/test`
   (`webhooks.manage`) sends one signed `webhook.ping` request (`{id, type, occurred_at}`, no
   `record_id`) to the endpoint, synchronously, through the same egress guard, signing, 10-second

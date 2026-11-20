@@ -491,4 +491,77 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 		stop()
 		assert.Empty(t, statements(), "empty input reads nothing")
 	})
+
+	t.Run("requeue of a finished row (#502)", func(t *testing.T) {
+		seeded := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+		attempted := seeded.Add(-time.Minute)
+		finished := func(status string, attempts int, httpStatus *int, code string) *models.WebhookDelivery {
+			row := seedWebhookDelivery(t, db, endpoint.ID, webhookRowSpec{status: status, attempts: attempts, updated: seeded})
+			require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("id = ?", row.ID).UpdateColumns(map[string]interface{}{
+				"last_attempt_at": attempted, "last_http_status": httpStatus, "error_code": code,
+			}).Error)
+			stored := webhookRow(t, db, row.ID)
+			return &stored
+		}
+		assertRequeued := func(t *testing.T, before *models.WebhookDelivery, now time.Time) {
+			t.Helper()
+			row := webhookRow(t, db, before.ID)
+			assert.Equal(t, models.WebhookDeliveryPending, row.Status)
+			assert.Equal(t, 0, row.Attempts)
+			require.NotNil(t, row.NextAttemptAt)
+			assert.WithinDuration(t, now, *row.NextAttemptAt, time.Second, "due now")
+			assert.Nil(t, row.LeaseUntil)
+			assert.Nil(t, row.LastHTTPStatus)
+			assert.Equal(t, "", row.ErrorCode)
+			assert.Equal(t, before.EventID, row.EventID, "the same event id")
+			assert.Equal(t, before.RecordID, row.RecordID)
+			assert.Equal(t, before.EndpointID, row.EndpointID)
+			require.NotNil(t, row.LastAttemptAt, "last_attempt_at keeps its value")
+			assert.WithinDuration(t, *before.LastAttemptAt, *row.LastAttemptAt, time.Second)
+			assert.True(t, row.UpdatedAt.After(before.UpdatedAt), "updated_at moves forward, so a concurrent prune pass leaves the row alone")
+		}
+
+		t.Run("a failed row is pending again, attempts and error fields cleared", func(t *testing.T) {
+			status := 503
+			before := finished(models.WebhookDeliveryFailed, models.WebhookMaxAttempts, &status, models.WebhookErrorHTTPStatus)
+			now := time.Now().UTC()
+			statements, stop := captureWebhookStatements(t, db, "webhook_repo_requeue")
+			require.NoError(t, repo.RequeueDelivery(ctx, before.ID, now))
+			stop()
+			assertRequeued(t, before, now)
+			captured := statements()
+			require.Len(t, captured, 1, "one statement: %v", captured)
+			upper := strings.ToUpper(captured[0])
+			assert.True(t, strings.HasPrefix(strings.TrimSpace(upper), "UPDATE"), captured[0])
+			assert.Contains(t, captured[0], "id =", "by primary key: %s", captured[0])
+			assert.Contains(t, upper, "STATUS IN", "the status predicate is in the statement: %s", captured[0])
+			assertNoLockingClause(t, captured[0])
+		})
+
+		t.Run("a succeeded row is pending again", func(t *testing.T) {
+			status := 200
+			before := finished(models.WebhookDeliverySucceeded, 1, &status, "")
+			now := time.Now().UTC()
+			require.NoError(t, repo.RequeueDelivery(ctx, before.ID, now))
+			assertRequeued(t, before, now)
+		})
+
+		t.Run("pending, sending and missing rows are not requeued and stay byte-identical", func(t *testing.T) {
+			now := time.Now().UTC()
+			pending := seedWebhookDelivery(t, db, endpoint.ID, webhookRowSpec{status: models.WebhookDeliveryPending, attempts: 2,
+				next: timePtr(now.Add(time.Minute).Truncate(time.Second)), updated: seeded})
+			sending := seedWebhookDelivery(t, db, endpoint.ID, webhookRowSpec{status: models.WebhookDeliverySending, attempts: 3,
+				lease: timePtr(now.Add(time.Minute).Truncate(time.Second)), updated: seeded})
+			for _, id := range []uint{pending.ID, sending.ID} {
+				before := webhookRow(t, db, id)
+				assert.ErrorIs(t, repo.RequeueDelivery(ctx, id, now), ErrWebhookDeliveryNotRequeued)
+				assert.Equal(t, before, webhookRow(t, db, id), "the row is unchanged")
+			}
+			var maxID uint
+			require.NoError(t, db.Model(&models.WebhookDelivery{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error)
+			assert.ErrorIs(t, repo.RequeueDelivery(ctx, maxID+1000, now), ErrWebhookDeliveryNotRequeued)
+			require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("id IN ?", []uint{pending.ID, sending.ID}).
+				Updates(map[string]interface{}{"status": models.WebhookDeliveryFailed, "lease_until": nil, "next_attempt_at": nil}).Error)
+		})
+	})
 }

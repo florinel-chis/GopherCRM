@@ -405,3 +405,44 @@ func (h *WebhookHandler) ListDeliveries(c *gin.Context) {
 	}
 	utils.RespondSuccessWithMeta(c, http.StatusOK, deliveries, formListMeta(c, offset, limit, total))
 }
+
+// RedeliverDelivery godoc
+// @Summary Redeliver a logged webhook delivery
+// @Description Puts a succeeded or failed delivery back into the queue: the same row becomes pending with attempts 0 and is due at once; last_http_status and error_code are cleared, last_attempt_at keeps its value. The runtime then sends it again with the same event id (webhook-id) and the full retry budget (10 attempts). No new row is written and the record the event names is not read.
+// @Description A pending or sending delivery (already queued or being sent) is refused with 409, and so is a delivery whose endpoint is deleted or inactive. The endpoint is checked before the write; an endpoint deactivated in between still gets the row requeued, and the runtime then fails it with endpoint_inactive.
+// @Description Roles: admin.
+// @Tags webhooks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Delivery ID"
+// @Success 200 {object} utils.APIResponse{data=models.WebhookDelivery} "Delivery queued again (status pending)"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no delivery with that id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT - the delivery is pending or being sent, or its endpoint is deleted or inactive"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
+// @Router /webhooks/deliveries/{id}/redeliver [post]
+func (h *WebhookHandler) RedeliverDelivery(c *gin.Context) {
+	logger := webhookHandlerLog("webhook_delivery_redeliver")
+	id, ok := parseWebhookID(c.Param("id"))
+	if !ok {
+		utils.RespondValidationError(c, map[string]string{"id": webhookIDRule})
+		return
+	}
+	delivery, err := h.webhookService.RedeliverDelivery(c.Request.Context(), id)
+	switch {
+	case err == nil:
+		utils.RespondSuccess(c, http.StatusOK, delivery)
+	case errors.Is(err, apperrors.ErrNotFound):
+		utils.RespondNotFound(c, "Webhook delivery not found")
+	case errors.Is(err, service.ErrWebhookDeliveryNotRedeliverable):
+		utils.RespondConflict(c, "Webhook delivery is pending or being sent")
+	case errors.Is(err, service.ErrWebhookEndpointUnavailable):
+		utils.RespondConflict(c, "Webhook endpoint is deleted or inactive")
+	default:
+		respondWebhookError(c, logger.WithField("delivery_id", id), err)
+	}
+}

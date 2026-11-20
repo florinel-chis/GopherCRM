@@ -21,7 +21,10 @@ import (
 // key lock. Endpoint delete locks the endpoint row first and then deletes its
 // delivery rows. MySQL reports changed rows, so a conditional write that
 // reports zero is re-checked with a read of its own predicate before it is
-// called a miss.
+// called a miss. A manual redelivery (RequeueDelivery, #502) is one such
+// conditional UPDATE by primary key, fenced on status IN ('succeeded',
+// 'failed'), with no locking read: it cannot overlap a claim, which needs
+// status = 'pending'.
 
 // WebhookPruneChunk bounds how many rows one prune DELETE removes.
 const WebhookPruneChunk = 500
@@ -34,6 +37,11 @@ var ErrWebhookDeliveryNotClaimed = errors.New("webhook delivery was not claimed"
 // ErrWebhookDeliveryNotSending is returned by FinishDelivery when the row is
 // no longer the sending row of the claimed attempt.
 var ErrWebhookDeliveryNotSending = errors.New("webhook delivery is not sending under this claim")
+
+// ErrWebhookDeliveryNotRequeued is returned by RequeueDelivery when no row
+// with that id is succeeded or failed: it is pending or sending, or it does
+// not exist.
+var ErrWebhookDeliveryNotRequeued = errors.New("webhook delivery was not requeued")
 
 type webhookRepository struct {
 	db *gorm.DB
@@ -224,6 +232,40 @@ func (r *webhookRepository) ClaimDelivery(ctx context.Context, id uint, now, lea
 		return nil, ErrWebhookDeliveryNotClaimed
 	}
 	return r.GetDelivery(ctx, id)
+}
+
+func (r *webhookRepository) RequeueDelivery(ctx context.Context, id uint, now time.Time) error {
+	now = now.UTC()
+	where := "id = ? AND status IN ?"
+	args := []interface{}{id, []string{models.WebhookDeliverySucceeded, models.WebhookDeliveryFailed}}
+	result := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).Where(where, args...).
+		Updates(map[string]interface{}{
+			"status":           models.WebhookDeliveryPending,
+			"attempts":         0,
+			"next_attempt_at":  now,
+			"lease_until":      nil,
+			"last_http_status": nil,
+			"error_code":       "",
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		// Re-checked with the write's own predicate. The requeue always moves
+		// the row to pending, so it is never an identical write: a row that no
+		// longer matches is pending, sending or gone, and one that still
+		// matches was not written at all.
+		matched, err := r.matchesAfterZero(ctx, where, args...)
+		if err != nil {
+			return err
+		}
+		if matched {
+			return fmt.Errorf("webhook delivery %d: requeue matched a row but changed none", id)
+		}
+		return ErrWebhookDeliveryNotRequeued
+	}
+	return nil
 }
 
 func (r *webhookRepository) FinishDelivery(ctx context.Context, id uint, claimedAttempts int, outcome WebhookDeliveryOutcome) error {

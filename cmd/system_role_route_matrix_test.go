@@ -115,27 +115,29 @@ var routeMatrixPublic = map[string]bool{
 // routeMatrixAfterFreeze is every protected route added after the golden was
 // frozen: the role API of #348, the quote PDF download of #384, the single
 // sign-on settings of #434, the sign-in audit of #455, the SCIM provider
-// tokens of #468 and the webhook endpoint test ping of #501. These routes are served and guarded, but the
+// tokens of #468, the webhook endpoint test ping of #501 and the webhook
+// delivery redelivery of #502. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
 var routeMatrixAfterFreeze = map[string]bool{
-	"GET /api/v1/permissions/catalogue":        true,
-	"GET /api/v1/roles":                        true,
-	"POST /api/v1/roles":                       true,
-	"GET /api/v1/roles/audit":                  true,
-	"GET /api/v1/roles/:id":                    true,
-	"PUT /api/v1/roles/:id":                    true,
-	"DELETE /api/v1/roles/:id":                 true,
-	"POST /api/v1/roles/:id/clone":             true,
-	"GET /api/v1/quotes/:id/pdf":               true,
-	"GET /api/v1/settings/sso":                 true,
-	"PUT /api/v1/settings/sso":                 true,
-	"GET /api/v1/audit/sign-ins":               true,
-	"GET /api/v1/settings/scim/tokens":         true,
-	"POST /api/v1/settings/scim/tokens":        true,
-	"DELETE /api/v1/settings/scim/tokens/:id":  true,
-	"POST /api/v1/webhooks/endpoints/:id/test": true,
+	"GET /api/v1/permissions/catalogue":              true,
+	"GET /api/v1/roles":                              true,
+	"POST /api/v1/roles":                             true,
+	"GET /api/v1/roles/audit":                        true,
+	"GET /api/v1/roles/:id":                          true,
+	"PUT /api/v1/roles/:id":                          true,
+	"DELETE /api/v1/roles/:id":                       true,
+	"POST /api/v1/roles/:id/clone":                   true,
+	"GET /api/v1/quotes/:id/pdf":                     true,
+	"GET /api/v1/settings/sso":                       true,
+	"PUT /api/v1/settings/sso":                       true,
+	"GET /api/v1/audit/sign-ins":                     true,
+	"GET /api/v1/settings/scim/tokens":               true,
+	"POST /api/v1/settings/scim/tokens":              true,
+	"DELETE /api/v1/settings/scim/tokens/:id":        true,
+	"POST /api/v1/webhooks/endpoints/:id/test":       true,
+	"POST /api/v1/webhooks/deliveries/:id/redeliver": true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -685,7 +687,11 @@ var matrixRequests = map[string]matrixRequest{
 	// network (secret_unavailable).
 	"POST /webhooks/endpoints/:id/test": {kind: "webhook_endpoint"},
 	"GET /webhooks/deliveries":          {},
-	"GET /audit/sign-ins":               {},
+	// The redelivery (after the freeze): the fixture deliveries belong to the
+	// inactive fixture endpoints, so an admin cell answers 409 and never
+	// reaches the network.
+	"POST /webhooks/deliveries/:id/redeliver": {kind: "webhook_delivery"},
+	"GET /audit/sign-ins":                     {},
 }
 
 // routeMatrixCases is the case set a route's shape requires.
@@ -1004,6 +1010,17 @@ func seedRouteMatrix(t *testing.T) *matrixFixtures {
 	create(hookOne)
 	create(hookTwo)
 	shared("webhook_endpoint", uid(hookOne.ID), uid(hookTwo.ID))
+	// One failed delivery per inactive endpoint (#502).
+	var hookDeliveryIDs []string
+	for i, hook := range []*models.WebhookEndpoint{hookOne, hookTwo} {
+		occurred := time.Now().UTC()
+		delivery := &models.WebhookDelivery{EndpointID: hook.ID, EventID: fmt.Sprintf("evt_%032x", 0x502000+i),
+			EventType: hook.EventTypes[0], RecordID: 1, OccurredAt: occurred, Status: models.WebhookDeliveryFailed,
+			Attempts: models.WebhookMaxAttempts, LastAttemptAt: &occurred, ErrorCode: models.WebhookErrorTimeout}
+		create(delivery)
+		hookDeliveryIDs = append(hookDeliveryIDs, uid(delivery.ID))
+	}
+	shared("webhook_delivery", hookDeliveryIDs[0], hookDeliveryIDs[1])
 
 	// SCIM provider tokens (#468): two usable tokens of the installation.
 	scimOne := &models.SCIMToken{Name: "Matrix SCIM one", TokenHash: "hmac$route-matrix-scim-one", CreatedAt: time.Now().UTC()}
@@ -1385,7 +1402,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 16)
+	assert.Len(t, routeMatrixAfterFreeze, 17)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {
@@ -1534,7 +1551,7 @@ func TestRouteMatrixFixtureAnchors(t *testing.T) {
 			"label": "labels", "api_key": "api_keys", "notification": "notifications", "aeo_prompt": "aeo_prompts",
 			"aeo_run": "aeo_runs", "form": "forms", "form_submission": "form_submissions", "form_delivery": "form_mail_deliveries",
 			"automation_rule": "automation_rules", "automation_run": "automation_runs", "webhook_endpoint": "webhook_endpoints",
-			"role": "roles", "scim_token": "scim_tokens",
+			"webhook_delivery": "webhook_deliveries", "role": "roles", "scim_token": "scim_tokens",
 		}
 		for kind, set := range fx.sets {
 			table, numeric := tables[kind]

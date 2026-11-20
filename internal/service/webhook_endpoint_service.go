@@ -23,8 +23,8 @@ import (
 // endpoint's signing secret is whsec_ plus the base64 of 32 random bytes,
 // stored sealed with utils.SecretBox under WebhookSecretContext and returned
 // once, in the create response. Log lines carry the operation and the
-// endpoint id (the test ping also its outcome, error code and HTTP status)
-// only: never the URL, its host, the secret or the sealed value.
+// endpoint id (the test ping also its outcome, error code and HTTP status; a
+// redelivery the delivery id and error code) only: never the URL, its host, the secret or the sealed value.
 
 // WebhookSecretContext is the SecretBox context of endpoint secrets; the
 // master secret is API_KEY_SECRET (falling back to JWT_SECRET).
@@ -40,6 +40,14 @@ const webhookEventTypesMaxItems = 20
 // ErrWebhooksUnavailable is returned by a service built without its
 // repository or secret box. It is a plain error: the handler answers 500.
 var ErrWebhooksUnavailable = errors.New("webhooks are not configured")
+
+// ErrWebhookDeliveryNotRedeliverable is returned by RedeliverDelivery when
+// the delivery is pending or sending: it is already queued or being sent.
+var ErrWebhookDeliveryNotRedeliverable = errors.New("webhook delivery is pending or being sent")
+
+// ErrWebhookEndpointUnavailable is returned by RedeliverDelivery when the
+// delivery's endpoint is deleted or inactive.
+var ErrWebhookEndpointUnavailable = errors.New("webhook endpoint is deleted or inactive")
 
 // WebhookValidationError is one refused input, keyed by the JSON field name.
 // The message never quotes the value.
@@ -365,4 +373,64 @@ func (s *webhookService) TestEndpoint(ctx context.Context, id uint) (*models.Web
 	}
 	utils.Logger.WithFields(fields).Info("Webhook endpoint test ping sent")
 	return result, nil
+}
+
+// RedeliverDelivery puts a finished (succeeded or failed) delivery back into
+// the queue (#502): the runtime sends it again under the same event_id with
+// the full retry budget. The endpoint must exist and be active; that check is
+// a read before the write, not part of its predicate, so an endpoint
+// deactivated in between still gets the row requeued (the runtime then fails
+// it endpoint_inactive). The record the delivery names is never read. It logs
+// the operation, the delivery id, the endpoint id and the error code only.
+func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*models.WebhookDelivery, error) {
+	const operation = "webhook_delivery_redeliver"
+	if err := s.available(); err != nil {
+		return nil, err
+	}
+	deliveryNotFound := func() error {
+		return fmt.Errorf("webhook delivery %d not found: %w", id, apperrors.ErrNotFound)
+	}
+	delivery, err := s.repo.GetDelivery(ctx, id)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, deliveryNotFound()
+		}
+		return nil, err
+	}
+	logger := utils.Logger.WithFields(logrus.Fields{
+		"operation":   operation,
+		"delivery_id": delivery.ID,
+		"endpoint_id": delivery.EndpointID,
+	})
+	endpoint, err := s.repo.GetEndpoint(ctx, delivery.EndpointID)
+	if err != nil && !isNotFound(err) {
+		return nil, err
+	}
+	if err != nil || !endpoint.IsActive {
+		logger.WithField("error_code", "endpoint_unavailable").Warn("Webhook delivery not redelivered")
+		return nil, ErrWebhookEndpointUnavailable
+	}
+	if err := s.repo.RequeueDelivery(ctx, id, time.Now().UTC()); err != nil {
+		if !errors.Is(err, repository.ErrWebhookDeliveryNotRequeued) {
+			logger.WithError(utils.LogError(err)).Error("Failed to redeliver webhook delivery")
+			return nil, err
+		}
+		if _, readErr := s.repo.GetDelivery(ctx, id); readErr != nil {
+			if isNotFound(readErr) {
+				return nil, deliveryNotFound()
+			}
+			return nil, readErr
+		}
+		logger.WithField("error_code", "not_redeliverable").Warn("Webhook delivery not redelivered")
+		return nil, ErrWebhookDeliveryNotRedeliverable
+	}
+	logger.WithField("error_code", "").Info("Webhook delivery queued for redelivery")
+	requeued, err := s.repo.GetDelivery(ctx, id)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, deliveryNotFound()
+		}
+		return nil, err
+	}
+	return requeued, nil
 }

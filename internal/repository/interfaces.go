@@ -437,6 +437,14 @@ type WebhookRepository interface {
 	// status = 'sending' and the claimed attempts, or returns
 	// ErrWebhookDeliveryNotSending.
 	FinishDelivery(ctx context.Context, id uint, claimedAttempts int, outcome WebhookDeliveryOutcome) error
+	// RequeueDelivery puts a finished (succeeded or failed) row back into the
+	// queue for a manual redelivery (#502) with one conditional UPDATE by
+	// primary key, fenced on status IN ('succeeded','failed'): status pending,
+	// attempts 0, next_attempt_at and updated_at now (UTC), lease_until and
+	// last_http_status NULL, error_code empty. event_id and last_attempt_at
+	// keep their stored values. A pending, sending or missing row returns
+	// ErrWebhookDeliveryNotRequeued. No locking read, no transaction.
+	RequeueDelivery(ctx context.Context, id uint, now time.Time) error
 	// RecoverExpiredLeases returns sending rows whose lease_until has passed
 	// to pending, or fails them with lease_expired when they reached
 	// maxAttempts. Rows re-claimed or finished since discovery are untouched.
