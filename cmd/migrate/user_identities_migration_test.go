@@ -185,7 +185,10 @@ func TestUserIdentitiesMigration(t *testing.T) {
 
 	assertShape := func(t *testing.T, tdb *migrationTestDB) {
 		t.Helper()
-		assert.Equal(t, wantIdentities, snapshotTable(t, tdb, userIdentitiesTable), "user_identities as MigrateDatabase creates it")
+		// source belongs to 20261128120000_user_identity_source (#505), which
+		// this migration does not create.
+		assert.Equal(t, withoutColumns(wantIdentities, []string{"source"}),
+			withoutColumns(snapshotTable(t, tdb, userIdentitiesTable), []string{"source"}), "user_identities as MigrateDatabase creates it")
 		assert.Equal(t, wantAttempts, snapshotTable(t, tdb, oidcLoginAttemptsTable), "oidc_login_attempts as MigrateDatabase creates it")
 		assertUserIdentitiesBinary(t, tdb.sql, tdb.name)
 		ddl := showCreateUserIdentities(t, tdb.sql)

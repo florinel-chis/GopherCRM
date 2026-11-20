@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -33,8 +32,7 @@ var webhookSecretRotationColumns = []string{"previous_secret_sealed", "previous_
 // TestWebhookSecretRotationMigrationFiles needs no database: the pair exists
 // with its headers, the up half adds exactly the two columns, each behind an
 // INFORMATION_SCHEMA probe, the down half drops only them, the model declares
-// the same, and it is the newest migration of the directory, which
-// latestMigrationVersion names.
+// the same, and it is older than the newest migration.
 func TestWebhookSecretRotationMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, webhookSecretRotationMigrationName+".up.sql"))
@@ -81,21 +79,9 @@ func TestWebhookSecretRotationMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "", tag, "a nullable datetime with no default and no index")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestSCIMTokensMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, webhookSecretRotationMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, webhookSecretRotationVersion, version)
-	assert.Equal(t, webhookSecretRotationVersion, latestMigrationVersion)
+	// The newest-migration assertions moved to
+	// TestUserIdentitySourceMigrationFiles (#505).
+	assert.Less(t, webhookSecretRotationVersion, latestMigrationVersion)
 	assert.Greater(t, webhookSecretRotationVersion, webhookSecretRotationPreviousVersion)
 }
 

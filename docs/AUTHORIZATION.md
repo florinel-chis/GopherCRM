@@ -605,9 +605,13 @@ is not accepted yet) and `roles` (absent, or an array of objects whose `value` i
 write but neither served on the resource nor advertised in the discovery documents.
 
 **Linking.** The created account gets one `user_identities` row: the effective single sign-on
-issuer (whether sign-on is enabled does not matter) with `externalId` as the subject. The
-provider must therefore send as `externalId` the value its ID tokens carry as `sub`; a later
-OIDC sign-in with the same issuer and `sub` then uses this account instead of provisioning one.
+issuer (whether sign-on is enabled does not matter) with `externalId` as the subject and
+`source` `scim` (#505). A later OIDC sign-in with the same issuer and a `sub` equal to
+`externalId` uses this account instead of provisioning one. Entra ID sends the `objectId` as
+`externalId` while its `sub` is pairwise, so for an Entra ID issuer an unknown `sub` also finds
+this account through the token's `oid` when its `tid` equals the configured issuer's tenant
+segment (see **Identity** under OpenID Connect sign-in); any other provider must send as
+`externalId` the value its ID tokens carry as `sub`.
 `externalId` must be 1 to 255 printable ASCII bytes without leading or trailing whitespace. On
 replace, `externalId` is ignored: the link set at creation never changes.
 
@@ -936,6 +940,20 @@ not printable ASCII, or has leading or trailing whitespace is refused on every e
 the binary collation still pads trailing spaces; a stored row is also compared byte for byte.
 `email`, `preferred_username` and `name` never link or authorize.
 
+An unknown `(iss, sub)` can still name an existing account in one case (#505): the configured
+issuer is Entra ID (host `login.microsoftonline.com`), the token's `tid` is a string equal byte
+for byte to the issuer's tenant segment (the first path segment of
+`https://login.microsoftonline.com/<tenant id>/v2.0`; no case folding, no trimming), and the
+token's `oid` is a valid subject equal byte for byte to the subject of a `user_identities` row
+with `source` `scim` under the same issuer, that is the `externalId` a SCIM create stored. The
+sign-in then takes the known-identity path for that account (refused as `account_erased` or
+`account_inactive` when the account is erased or deactivated, the mapping re-applied) and inserts
+the `(iss, sub)` link with `source` `oidc` in the same transaction, so the next sign-in matches
+`(iss, sub)` directly. A non-string `oid` or `tid`, another tenant, a non-Entra issuer, a
+multi-tenant issuer (`common`, `organizations`) or an `oid` that matches a row a sign-in wrote
+falls through to JIT provisioning unchanged. A concurrent first sign-in that committed the same
+`(iss, sub)` first makes the insert fail on the unique index (`identity_taken`, nothing written).
+
 **Mapping.** The role is the FIRST entry of the role mapping, in stored order, whose claim
 (`groups` or `roles`) holds its value exactly, case-sensitively. Each claim must be absent or a
 JSON array of strings. No match is 401 with nothing written. A token whose `_claim_names` has a
@@ -978,7 +996,7 @@ demoted (401, nothing written, no session), a custom role is not given to a cust
 a changed role commits one `role_audit_log` row with `auth_method` `oidc` and the signed-in user
 as actor. An unchanged role writes no row.
 
-**JIT provisioning.** An unknown identity creates an active user with the mapped role, the
+**JIT provisioning.** An unknown identity that no SCIM link names (see **Identity**) creates an active user with the mapped role, the
 `email` claim as given and `given_name`/`family_name` (cut to 100 bytes; when both are absent,
 `name` split at the first whitespace into a first name and the rest as the last name, #453), and
 a password that is
@@ -989,7 +1007,7 @@ SQLite refuses what the MySQL/MariaDB collation refuses). A concurrent first sig
 address or identity loses on the unique index and rolls back whole.
 
 **Passwords for linked accounts (#444, #457).** An account with a `user_identities` row, which
-only the first OIDC sign-in creates (an email never links an existing account) and erasure keeps,
+a SCIM create or the first OIDC sign-in creates (an email never links an existing account) and erasure keeps,
 is an account linked to single sign-on. Whether it may also use a password is the setting
 `allow_password` in `/settings/sso` (`security.sso.allow_password`, environment fallback
 `OIDC_ALLOW_PASSWORD`, default off; an unreadable stored value is off).
@@ -1177,9 +1195,13 @@ the issuer's published keys (issuer, audience, expiry, nonce).
 **Identity linking.** A `user_identities` table links an external identity to a `users` row. It
 is keyed by `(iss, sub)`, never by email: an email address can be reassigned or changed at the
 provider, and matching on it would let one person take over another's account. The same holds
-for `preferred_username` and the display name: none of them links or authorizes.
+for `preferred_username` and the display name: none of them links or authorizes. The one
+exception to "keyed by `(iss, sub)`" is an Entra ID first sign-in (#505): its pairwise `sub`
+never equals the `objectId` SCIM provisioning stores, so an unknown `(iss, sub)` whose `tid` is
+the configured tenant and whose `oid` is the subject of a SCIM-written identity under that issuer
+signs in as that account and links the `(iss, sub)` pair. It is still never matched by email.
 
-**JIT provisioning.** A first sign-in with an unknown `(iss, sub)` creates the account. It is a
+**JIT provisioning.** A first sign-in with an unknown `(iss, sub)` that no SCIM link names creates the account. It is a
 least-privilege account: it gets the role the mapping below yields and nothing more, and an
 identity that matches no mapping gets no access (deny by default, as in phase 1).
 

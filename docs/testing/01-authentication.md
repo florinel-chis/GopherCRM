@@ -1316,7 +1316,8 @@ resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /s
 #470 the create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`, TC-AUTH-075 to
 TC-AUTH-080); #471 the patch (`PATCH /scim/v2/Users/{id}`, TC-AUTH-081 to TC-AUTH-085), whose
 `active` false, like a PUT with `"active":false`, ends the account's sessions at once; #504 the
-delete (`DELETE /scim/v2/Users/{id}`, TC-AUTH-086), the same deactivation, never an erasure.
+delete (`DELETE /scim/v2/Users/{id}`, TC-AUTH-086), the same deactivation, never an erasure;
+#505 the Entra ID first sign-in that finds a SCIM-created account by `oid` and `tid` (TC-AUTH-087).
 `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are
 later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
@@ -1673,3 +1674,30 @@ later slices. See the *SCIM provisioning* section of
   found` with nothing written.
 - **Automation:** automated — Go: `TestSCIMUserDelete{SQLite,MySQL}`, `TestSCIMUserDeleteHandler`,
   `TestSCIMUserDeleteWired`
+
+### TC-AUTH-087 — An Entra ID first sign-in finds the SCIM-created account by oid and tid
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** Single sign-on configured with the tenant-specific Entra ID issuer
+  `https://login.microsoftonline.com/<tenant id>/v2.0` and a role mapping; a staff account created
+  through `POST /scim/v2/Users` with `externalId` = the person's `objectId` (its `user_identities`
+  row has `source` `scim`).
+- **Steps:**
+  1. Sign in with single sign-on as that person: the ID token carries a `sub` no account holds,
+     `oid` = the `externalId` and `tid` = the issuer's tenant id.
+  2. Sign in again with the same `sub` (with or without `oid`/`tid`).
+  3. `GET /scim/v2/Users/{id}` for the account.
+  4. Repeat step 1 from a clean state with one input changed each time: `tid` of another tenant,
+     `tid` in another letter case, no `oid` claim, an issuer that is not Entra ID, an `oid` that
+     equals a row a sign-in wrote.
+  5. Repeat step 1 with an `oid` that matches no SCIM link and the account's email address in the
+     `email` claim; then for a deactivated and for an erased SCIM-created account.
+- **Expected:** Step 1 signs in as the SCIM-created account: no new account, the account gets a
+  second `user_identities` row `(iss, sub)` with `source` `oidc`, and no role audit row names
+  another user. Step 2 signs in as the same account and adds no row. Step 3 still serves the
+  `objectId` as `externalId`. Each variant of step 4 provisions a new account with only its own
+  `(iss, sub)` row, and the SCIM-created account keeps its one row and gets no session. Step 5 is
+  the generic 401 with the audit reason `email_taken`, `account_inactive` and `account_erased`,
+  with nothing written. Two concurrent first sign-ins of the same `sub` commit exactly one link.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` (`scim_oid_*`),
+  `TestOIDCEntraTenant`, `TestSCIMUserWrites{SQLite,MySQL}` (`create`)

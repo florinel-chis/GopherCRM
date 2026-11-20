@@ -639,14 +639,21 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   and the `UPDATE` leaves zero affected rows and the generic refusal. The governed transaction (`ApplyOIDCSignIn`,
   `internal/service/user_governed_writes.go`) then locks the `users` rows of the active admins
   (`LockActiveAdmins`), reads the `user_identities` row of the exact `(issuer, subject)` pair with a
-  plain read, locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's
-  current custom role and of the mapped role (`RoleRepository.LockByIDs`), and then writes: the
-  role change and its `role_audit_log` row, or on a first sign-in the `users` insert, the
-  `user_identities` insert and the audit row, and last the `refresh_tokens` insert.
+  plain read; when that pair is unknown and the callback vetted an Entra ID `oid` (#505), it
+  plain-reads the `source` `scim` row of `(issuer, oid)`, which names the SCIM-created account. It
+  then locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's current
+  custom role and of the mapped role (`RoleRepository.LockByIDs`), and writes: the role change and
+  its `role_audit_log` row (for a SCIM-matched account also the `user_identities` insert of the
+  `(issuer, subject)` link), or on a first sign-in the `users` insert, the `user_identities` insert
+  and the audit row, and last the `refresh_tokens` insert.
 - **Order:** admin set → users → roles → user_identities → refresh_tokens. The plain identity
   read takes no lock; it only names the `users` row to lock. A first sign-in locks no existing
   `users` row: its new row and its identity row are inserts, and a competing first sign-in of the
-  same address or identity loses on the unique index and rolls back whole.
+  same address or identity loses on the unique index and rolls back whole. The plain read of the
+  SCIM row takes no lock either; a competing first sign-in that commits the same `(issuer,
+  subject)` link first makes the link insert fail on the unique index (`identity_taken`, rolled
+  back whole) on MySQL/MariaDB, while on SQLite the write after the competing commit is refused as
+  busy and the replay finds the committed link directly.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx` repositories;
   the role change, the audit row, the provisioned user, its identity and the refresh token commit
   together or not at all, and the access token is signed from the row the transaction wrote. The

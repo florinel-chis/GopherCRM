@@ -211,6 +211,9 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Equal(t, record.User.ID, identities[0].UserID)
 			assert.Equal(t, f.issuer.URL(), identities[0].Issuer)
 			assert.Equal(t, "sub-create", identities[0].Subject)
+			var source string
+			require.NoError(t, f.db.Raw("SELECT source FROM user_identities WHERE id = ?", identities[0].ID).Scan(&source).Error)
+			assert.Equal(t, models.UserIdentitySourceSCIM, source, "SCIM create writes source scim (#505)")
 
 			audits := f.roleAudits(t, record.User.ID)
 			require.Len(t, audits, 1)

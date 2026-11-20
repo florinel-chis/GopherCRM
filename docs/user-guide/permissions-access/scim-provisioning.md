@@ -112,20 +112,35 @@ plain-text answer `404 page not found`, not a SCIM error.
 
 Sign-in audit rows are listed in Settings → Sign-in audit (`/settings/sign-in-audit`).
 
-## Known limitation: Microsoft Entra ID and the first single sign-on
+## Microsoft Entra ID: the first single sign-on of a SCIM-created account
 
-Single sign-on recognises a person only by the exact pair of issuer and `sub` (the identifier in
-the provider's ID token). A SCIM create stores that link with the `externalId` as the `sub`.
+Single sign-on recognises a person by the exact pair of issuer and `sub` (the identifier in the
+provider's ID token). A SCIM create stores a link with the `externalId` as that identifier.
 
 Entra ID's default attribute mapping sends the user's `objectId` as `externalId`, but the `sub` in
 an Entra ID token is pairwise: it is different for every application and does not equal the
-`objectId`. The link created through SCIM therefore never matches, and the person's first single
-sign-on is handled as a first sign-in. When that sign-in would otherwise succeed (the ID token
-carries an email address and a role mapping row matches), GopherCRM finds the email address
-already held by the SCIM-created account and refuses: the person sees "Single sign-on failed. Try
-again or sign in with your password." and the sign-in audit shows the reason `email_taken`.
-GopherCRM never links accounts by email address.
+`objectId`. GopherCRM therefore also reads two other claims of an Entra ID token: `oid` (the
+person's object id) and `tid` (the tenant id). When a person's first single sign-on carries a
+`sub` that no account holds yet, GopherCRM signs them in as the account SCIM created for them when
+all of these hold:
 
-Provisioning again does not repair the link, because PUT ignores `externalId` and PATCH refuses
-it. The link works only when the provider's `externalId` equals the `sub` its ID tokens carry for
-that person.
+- the issuer configured in Settings → Single sign-on is Entra ID's tenant-specific issuer,
+  `https://login.microsoftonline.com/<tenant id>/v2.0`;
+- the token's `tid` equals the `<tenant id>` in that issuer, exactly (letter case included);
+- the token's `oid` equals the `externalId` SCIM stored for an account under that issuer.
+
+The account must be active and not erased. GopherCRM then stores the token's `sub` as a second
+link of that account, so every later sign-in finds the account by its `sub` directly. The account's
+`externalId`, as the provider reads it, stays the `objectId`.
+
+When any of these does not hold, the first sign-in is handled as before: it creates a new account
+or is refused. That is the case for a token from another tenant, a token without `oid` or `tid`, an
+issuer that is not Entra ID (or the multi-tenant `common` or `organizations` issuer), and an
+`objectId` that no SCIM create stored. A deactivated SCIM-created account is refused with the
+reason `account_inactive`, an erased one with `account_erased`; neither gets a new account.
+
+GopherCRM never links accounts by email address. A first sign-in that matches no SCIM link but
+carries the email address of an existing account is refused: the person sees "Single sign-on
+failed. Try again or sign in with your password." and the sign-in audit shows the reason
+`email_taken`. Other providers link only when the `externalId` they send equals the `sub` their ID
+tokens carry for that person.

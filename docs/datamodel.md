@@ -964,7 +964,9 @@ Links the exact `(iss, sub)` pair of an ID token to a user. No `deleted_at`, and
 row linked to the erased user, so that person's next sign-in is refused instead of provisioning a
 new account. Holds the issuer URL and the opaque subject only. Written by the first OIDC sign-in of
 a person and, since #470, by a SCIM user create (the effective issuer, with `externalId` as the
-subject), so a later sign-in with that pair uses the SCIM-created account.
+subject), so a later sign-in with that pair uses the SCIM-created account. An Entra ID first
+sign-in whose `tid` is the configured tenant and whose `oid` is the subject of such a `scim` row
+uses that account too and adds its own `(iss, sub)` row (#505).
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
@@ -973,6 +975,7 @@ subject), so a later sign-in with that pair uses the SCIM-created account.
 | user_id | bigint unsigned | No | - | Index `idx_user_identities_user_id`; FK `fk_user_identities_user` to `users.id` (ON DELETE RESTRICT) |
 | issuer | varchar(512) | No | - | `utf8mb4_bin` on MySQL/MariaDB (guarded by `ensureUserIdentityCollation`); unique index `idx_user_identities_issuer_subject (issuer, subject)` |
 | subject | varchar(255) | No | - | `utf8mb4_bin`; compared exactly. A sub with leading or trailing whitespace is refused before any lookup, because the binary collation still pads trailing spaces |
+| source | varchar(8) | No | `oidc` | Who wrote the row (#505, `migrations/20261128120000_user_identity_source.*.sql`): `scim` for the `(issuer, externalId)` link of a SCIM create, `oidc` for a sign-in (rows from before #505 read `oidc`). An Entra ID first sign-in with an unknown `(iss, sub)` uses only a `scim` row, found by the token's `oid`. No index |
 
 ### oidc_login_attempts
 
