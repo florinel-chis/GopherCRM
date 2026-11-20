@@ -1131,6 +1131,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `docs/FORKING.md` §7.3 citation of the AutoMigrate list points at the list again (#464).**
+  The conflict hot-spot table cited `internal/models/database.go:114-156`, lines inside an
+  unrelated backfill helper; it now cites `internal/models/database.go:212-275`, the
+  `tx.AutoMigrate(` call in `autoMigrateModels` through its closing parenthesis. Documentation only.
+
 - **Password reset is refused for an account linked to single sign-on while
   `security.sso.allow_password` is off, the default (#444, made a setting by #457).**
   With the setting off, `POST /auth/password-reset` issues no token and sends no mail for an
