@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Administrator guide: testing single sign-on (#481).** A sixth page,
+  `docs/user-guide/permissions-access/testing-single-sign-on.md`, tells an administrator how to
+  test single sign-on against their own Entra ID tenant: the Entra ID setup by reference to the
+  how-to, the values to copy, a local run with a break-glass local administrator and the secret in
+  a git-ignored env file, quick API checks, a live test table, where to read the result (sign-in
+  audit, the `oidc_sign_in` log lines), external `#EXT#` accounts and common errors. The overview
+  and the single sign-on page link it, and `scripts/ci/check-user-guide.py` checks it.
+
 - **SCIM 2.0 user patch (#471).** With a SCIM token, `PATCH /scim/v2/Users/{id}` applies an
   RFC 7644 PatchOp: `add`, `replace` and `remove` (op in any ASCII case, so Entra ID's `Replace`
   passes) on `active`, `userName`, `name`, `name.givenName`, `name.familyName`, `emails`,

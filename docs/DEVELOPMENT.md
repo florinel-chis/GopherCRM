@@ -2089,7 +2089,7 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   `docs/FEATURES.md` and `CHANGELOG.md`): run
   `go test -count=1 ./internal/permissions` after editing any of those four.
 - **The administrator guide under `docs/user-guide/permissions-access/` is checked by name**
-  (#447). `python3 scripts/ci/check-user-guide.py` resolves every backticked name in its five pages
+  (#447). `python3 scripts/ci/check-user-guide.py` resolves every backticked name in its six pages
   against the code: an environment variable or error code (and `NAME=` in a fenced block) must be a
   string literal in a tracked non-test Go file, as must a dotted setting or permission key; a
   `METHOD /path` route must exist with that method in `api/swagger.json`; a bare `/path` must be a

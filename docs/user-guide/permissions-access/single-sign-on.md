@@ -79,6 +79,7 @@ first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-i
 6. Switch **Enabled** on and click **Save**.
 7. Sign out and test with a person who should get each mapped role. Keep a local administrator
    account signed in elsewhere until the test passes.
+   [Testing single sign-on](testing-single-sign-on.md) lists the checks and test cases.
 
 **The client secret is write-only.** GopherCRM never shows it again. The page says "A client
 secret is set" or "No client secret is set". Leave the field empty to keep the stored secret, type
