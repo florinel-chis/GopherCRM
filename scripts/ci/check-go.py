@@ -66,12 +66,14 @@ MIGRATION_SOURCES = {
                     'quote_history_source_migration_test.go', 'user_identities_migration_test.go',
                     'auth_audit_log_migration_test.go', 'auth_audit_log_attempts_migration_test.go',
                     'scim_tokens_migration_test.go', 'webhook_secret_rotation_migration_test.go',
-                    'user_identity_source_migration_test.go', 'scim_group_members_migration_test.go'),
+                    'user_identity_source_migration_test.go', 'scim_group_members_migration_test.go',
+                    'admin_only_sso_scim_permissions_migration_test.go'),
     'internal/models': ('database_sqlite_upgrade_test.go', 'customer_website_upgrade_test.go',
                         'role_schema_test.go', 'webhook_secret_rotation_upgrade_test.go',
                         'user_identity_source_upgrade_test.go'),
     'internal/repository': ('lookup_index_plan_test.go', 'pagination_determinism_test.go',
-                            'company_domain_normalization_test.go', 'system_role_seed_test.go'),
+                            'company_domain_normalization_test.go', 'system_role_seed_test.go',
+                            'admin_only_permission_strip_test.go'),
 }
 KNOWN_SKIPS = {
     ('github.com/florinel-chis/gophercrm/test/integration',
@@ -129,7 +131,9 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
                             'TestUserIdentitySourceMigrationFiles',
                             'TestUserIdentitySourceMigration',
                             'TestSCIMGroupMembersMigrationFiles',
-                            'TestSCIMGroupMembersMigration'},
+                            'TestSCIMGroupMembersMigration',
+                            'TestAdminOnlyPermissionsMigrationFiles',
+                            'TestAdminOnlyPermissionsMigration'},
             'internal/models': {'TestMigrateDatabase_SQLiteUpgradeFromV120',
                                 'TestMigrateDatabase_SQLiteUpgradeFromHalfAppliedV120',
                                 'TestMigrateDatabase_SQLiteEnforcesForeignKeysAfterUpgrade',
@@ -143,7 +147,8 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
                                     'TestPaginationDeterminismSQLite', 'TestPaginationDeterminismMySQL',
                                     'TestCompanyDomainNormalizationSQLite',
                                     'TestCompanyDomainNormalizationMySQL',
-                                    'TestSystemRoleSeedSQLite', 'TestSystemRoleSeedMySQL'},
+                                    'TestSystemRoleSeedSQLite', 'TestSystemRoleSeedMySQL',
+                                    'TestAdminOnlyPermissionStripSQLite', 'TestAdminOnlyPermissionStripMySQL'},
         }
         if any(not names.issubset(selected.get(package, [])) for package, names in required_by_package.items()):
             raise go_checks.GateError('Missing required SQL migration or SQLite upgrade regressions')

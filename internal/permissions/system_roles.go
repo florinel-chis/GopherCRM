@@ -143,12 +143,12 @@ func ForUser(user *models.User) Set {
 }
 
 // ForCustomRole resolves stored role permissions as ForUser does for a custom
-// role.
+// role. System-only and admin-only keys are dropped.
 func ForCustomRole(stored []models.RolePermission) Set {
 	list := make([]Grant, 0, len(stored))
 	for _, permission := range stored {
 		node, ok := Leaf(permission.PermissionKey)
-		if !ok || node.SystemOnly {
+		if !ok || !node.CustomRoleMayHold() {
 			continue
 		}
 		list = append(list, Grant{Key: permission.PermissionKey, Scope: permission.Scope})

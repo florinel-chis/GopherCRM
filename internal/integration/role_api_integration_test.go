@@ -171,9 +171,10 @@ func (e *permissionEnv) roleState(id uint) string {
 	return fmt.Sprintf("name=%s description=%s permissions=%s", role.Name, role.Description, strings.Join(grants, ","))
 }
 
-// adminMatrixGrants is the admin system matrix as grants: what "a custom role
-// covering every admin permission" holds. It is read from the code matrix,
-// never written by hand.
+// adminMatrixGrants is the admin system matrix as grants, less the admin-only
+// keys: the most "a custom role covering every admin permission it can hold"
+// holds. It is read from the code matrix, never written by hand. Such a role
+// stays below the admin system role (#524).
 func adminMatrixGrants(t *testing.T) []string {
 	t.Helper()
 	matrix := permissions.ForSystemRole(string(models.RoleAdmin)).List()
@@ -181,8 +182,12 @@ func adminMatrixGrants(t *testing.T) []string {
 	grants := make([]string, 0, len(matrix))
 	for _, grant := range matrix {
 		require.Equal(t, models.PermissionScopeAll, grant.Scope)
+		if leaf, _ := permissions.Leaf(grant.Key); leaf.AdminOnly {
+			continue
+		}
 		grants = append(grants, grant.Key)
 	}
+	require.Len(t, grants, 74, "the admin matrix without the two admin-only keys")
 	return grants
 }
 
@@ -398,11 +403,14 @@ func runRoleAPI(t *testing.T, useMySQL bool) {
 		assert.Empty(t, leaves["roles.manage"].Scopes, "an all-only leaf lists no scope")
 		assert.True(t, leaves["roles.manage"].Selectable)
 		assert.False(t, leaves["tickets.view_own_customer"].Selectable, "a system-only leaf is not selectable")
+		assert.False(t, leaves["settings.sso_manage"].Selectable, "an admin-only leaf is not selectable")
+		assert.False(t, leaves["settings.scim_manage"].Selectable, "an admin-only leaf is not selectable")
+		assert.True(t, leaves["settings.update"].Selectable)
 	})
 }
 
-// TestRoleAPIRejectsInvalidPermissionsSQLite (#259 AC-8): an unknown key, a
-// system-only key and scope own on an all-only leaf are INVALID_PERMISSION
+// TestRoleAPIRejectsInvalidPermissionsSQLite (#259 AC-8, #524): an unknown
+// key, a system-only key, an admin-only key and scope own on an all-only leaf are INVALID_PERMISSION
 // with the offending keys, on create and on update, and write nothing.
 func TestRoleAPIRejectsInvalidPermissionsSQLite(t *testing.T) {
 	env := newPermissionEnv(t, false)
@@ -425,6 +433,8 @@ func TestRoleAPIRejectsInvalidPermissionsSQLite(t *testing.T) {
 	}{
 		{"an unknown key", []string{"leads.view", "leads.fly"}, []string{"leads.fly"}},
 		{"a system-only key", []string{"tickets.view_own_customer"}, []string{"tickets.view_own_customer"}},
+		{"an admin-only key (single sign-on)", []string{"settings.update", "settings.sso_manage"}, []string{"settings.sso_manage"}},
+		{"an admin-only key (SCIM)", []string{"settings.update", "settings.scim_manage"}, []string{"settings.scim_manage"}},
 		{"scope own on an all-only leaf", []string{"roles.manage:own", "leads.view:own"}, []string{"roles.manage"}},
 		{"a scope that is neither all nor own", []string{"leads.view:some"}, []string{"leads.view"}},
 		{"a key named twice", []string{"leads.view:own", "leads.view"}, []string{"leads.view"}},
@@ -846,4 +856,74 @@ func mustJSON(t *testing.T, value interface{}) []byte {
 
 func jsonUnmarshalString(raw string, target interface{}) error {
 	return json.Unmarshal([]byte(raw), target)
+}
+
+// TestAdminOnlySettingsPermissionsSQLite (#524): the single sign-on settings
+// and the SCIM tokens are opened by settings.sso_manage and
+// settings.scim_manage, which only the admin system role holds. A custom role
+// whose stored rows still hold both keys resolves without them and is refused
+// on all five routes, and a clone of the Admin role leaves them out.
+func TestAdminOnlySettingsPermissionsSQLite(t *testing.T) {
+	env := newPermissionEnv(t, false)
+	admin := env.user("admin", models.RoleAdmin)
+
+	ssoBody := map[string]interface{}{"enabled": false, "scopes": []string{"openid", "profile", "email"}}
+	tokenBody := map[string]interface{}{"name": "Directory"}
+
+	t.Run("the admin keeps both screens", func(t *testing.T) {
+		requireAnswer(t, env.do(admin, http.MethodGet, "/settings/sso", nil), http.StatusOK, "")
+		requireAnswer(t, env.do(admin, http.MethodGet, "/settings/scim/tokens", nil), http.StatusOK, "")
+		requireAnswer(t, env.do(admin, http.MethodPost, "/settings/scim/tokens", tokenBody), http.StatusCreated, "")
+	})
+
+	t.Run("a custom role with the stored keys is refused", func(t *testing.T) {
+		role := env.role("Settings keeper", "settings.view", "settings.update")
+		// The rows are written straight into the table, as a role saved
+		// before the keys became admin-only holds them.
+		for _, key := range []string{"settings.sso_manage", "settings.scim_manage"} {
+			require.NoError(t, env.db.Exec("INSERT INTO role_permissions (role_id, permission_key, scope) VALUES (?, ?, 'all')", role.ID, key).Error)
+		}
+		var stored int64
+		require.NoError(t, env.db.Model(&models.RolePermission{}).Where("role_id = ?", role.ID).Count(&stored).Error)
+		require.EqualValues(t, 4, stored)
+		holder := env.customUser("keeper", role)
+
+		var token models.SCIMToken
+		require.NoError(t, env.db.Order("id").First(&token).Error, "the admin's token")
+		for _, c := range []struct {
+			method, path string
+			body         interface{}
+		}{
+			{http.MethodGet, "/settings/sso", nil},
+			{http.MethodPut, "/settings/sso", ssoBody},
+			{http.MethodGet, "/settings/scim/tokens", nil},
+			{http.MethodPost, "/settings/scim/tokens", tokenBody},
+			{http.MethodDelete, "/settings/scim/tokens/" + uintPath(token.ID), nil},
+		} {
+			tokens := func() int64 {
+				var count int64
+				require.NoError(t, env.db.Model(&models.SCIMToken{}).Where("revoked_at IS NULL").Count(&count).Error)
+				return count
+			}
+			before := tokens()
+			response := env.do(holder, c.method, c.path, c.body)
+			requireAnswer(t, response, http.StatusForbidden, "FORBIDDEN")
+			assert.Equal(t, before, tokens(), "%s %s changed no token", c.method, c.path)
+		}
+	})
+
+	t.Run("a clone of the Admin role leaves both keys out", func(t *testing.T) {
+		var adminRole models.Role
+		require.NoError(t, env.db.Where("system_key = ?", "admin").First(&adminRole).Error)
+		response := env.do(admin, http.MethodPost, roleRoutePath(adminRole.ID)+"/clone", map[string]interface{}{"name": "Admin copy"})
+		requireAnswer(t, response, http.StatusCreated, "")
+		clone := decodeRole(t, response)
+		assert.Contains(t, clone.grants(), "settings.update:all")
+		assert.NotContains(t, clone.grants(), "settings.sso_manage:all")
+		assert.NotContains(t, clone.grants(), "settings.scim_manage:all")
+		assert.Len(t, clone.grants(), 74, "the admin matrix less the two admin-only keys")
+		var stored []models.RolePermission
+		require.NoError(t, env.db.Where("role_id = ? AND permission_key IN ?", clone.ID, models.AdminOnlyPermissionKeys).Find(&stored).Error)
+		assert.Empty(t, stored, "no admin-only row is stored")
+	})
 }

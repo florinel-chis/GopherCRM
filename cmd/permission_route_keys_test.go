@@ -36,9 +36,17 @@ var routeKeysAuthOnly = map[string]bool{
 }
 
 // routeKeysSystemOnly lists the RouteKeys entries whose AnyOf keys are all
-// system-only: no custom role can hold one, so "the key alone opens the route"
-// cannot be shown for them. Each member carries its reason. Expected empty.
-var routeKeysSystemOnly = map[string]string{}
+// system-only or admin-only: no custom role can hold one, so "the key alone
+// opens the route" cannot be shown for them. Each member carries its reason.
+// The five settings routes of the single sign-on and SCIM token screens are
+// the only members.
+var routeKeysSystemOnly = map[string]string{
+	"GET /settings/sso":                "admin-only key",
+	"PUT /settings/sso":                "admin-only key",
+	"GET /settings/scim/tokens":        "admin-only key",
+	"POST /settings/scim/tokens":       "admin-only key",
+	"DELETE /settings/scim/tokens/:id": "admin-only key",
+}
 
 // routeKeysEscalationRefused lists the routes on which a principal holding
 // only the route's key is refused with 403 ROLE_ESCALATION, and why that is a
@@ -117,10 +125,11 @@ func TestEveryRouteRequiresItsOwnKey(t *testing.T) {
 	}
 
 	// The tickable leaves: what a custom role can hold, each at scope all.
+	// systemOnly collects the rest, system-only and admin-only alike.
 	var tickable []string
 	systemOnly := map[string]bool{}
 	for _, leaf := range permissions.Leaves() {
-		if leaf.SystemOnly {
+		if !leaf.CustomRoleMayHold() {
 			systemOnly[leaf.Key] = true
 			continue
 		}

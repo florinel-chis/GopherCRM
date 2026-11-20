@@ -1379,7 +1379,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 - **Priority:** P1
 - **Type:** security
 - **Preconditions:** An admin; a sales, a support and a customer account; a custom role without
-  `settings.scim_manage` and one holding only it.
+  `settings.scim_manage`, and one whose stored `role_permissions` rows hold it (written into the
+  table directly: since #524 no custom role can be given the key).
 - **Steps:**
   1. As admin, `POST /api/v1/settings/scim/tokens` with `{"name":"Entra"}`, then with a blank and
      a 101-character name.
@@ -1392,9 +1393,9 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   the token under `API_KEY_SECRET`; no column holds the token; the list is newest first and
   carries `id`, `name`, `created_at`, `last_used_at`, `revoked_at` only. Step 3: 200 with
   `revoked_at` set, the same `revoked_at` the second time, 404, 400. Step 4: 403 `FORBIDDEN` for
-  sales, support, customer and the custom role without the key; 2xx for the role holding only
-  `settings.scim_manage`.
-- **Automation:** automated — Go: `TestSCIMTokenHandler`, `TestSCIMTokenStore{SQLite,MySQL}`, `TestSCIMRoutesWired`, `TestEveryRouteRequiresItsOwnKey`
+  sales, support, customer and both custom roles: the key is admin-only, and a stored row holding
+  it is dropped when the role's permissions are resolved.
+- **Automation:** automated — Go: `TestSCIMTokenHandler`, `TestSCIMTokenStore{SQLite,MySQL}`, `TestSCIMRoutesWired`, `TestEveryRouteRequiresItsOwnKey`, `TestAdminOnlySettingsPermissionsSQLite`
 
 ### TC-AUTH-069 — The Entra ID and Okta userName filters return the staff user
 - **Priority:** P0

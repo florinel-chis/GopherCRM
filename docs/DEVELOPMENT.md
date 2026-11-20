@@ -371,9 +371,9 @@ Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` (`cmd`), `Tes
 auth checker), `TestSCIMTokenSchemaSQLite` (`internal/models`), and the migration roots
 `TestSCIMTokensMigrationFiles` (it held the newest-migration assertion from #468, moved from
 `TestAuthAuditLogAttemptsMigrationFiles`, until #503 moved it on to
-`TestWebhookSecretRotationMigrationFiles`; the newest migration is now
-`20261129120000_add_scim_group_members`, whose `TestSCIMGroupMembersMigrationFiles` holds the
-assertion since #506) and `TestSCIMTokensMigration` (`cmd/migrate`), both
+`TestWebhookSecretRotationMigrationFiles`, then #506 to `TestSCIMGroupMembersMigrationFiles`; the
+newest migration is now `20261129120001_admin_only_sso_scim_permissions`, whose
+`TestAdminOnlyPermissionsMigrationFiles` holds the assertion since #524) and `TestSCIMTokensMigration` (`cmd/migrate`), both
 required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
@@ -471,8 +471,9 @@ subtests), `TestSCIMGroupHandler` and `TestSCIMDiscoveryDocuments` (`internal/ha
 `TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
 `TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
 (`internal/models`), `TestSCIMGroupsWired` (`cmd`), `TestConcurrencyDocSCIMGroupPatch`
-(`internal/config`), and `TestSCIMGroupMembersMigrationFiles` (the newest-migration assertion)
-and `TestSCIMGroupMembersMigration` (`cmd/migrate`), required by the migrations workflow,
+(`internal/config`), and `TestSCIMGroupMembersMigrationFiles` (it held the newest-migration
+assertion until #524 moved it to `TestAdminOnlyPermissionsMigrationFiles`) and
+`TestSCIMGroupMembersMigration` (`cmd/migrate`), required by the migrations workflow,
 `scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`. The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#groups-506).
 
@@ -891,6 +892,25 @@ SQLite roots use the production connector over a file under `t.TempDir()`; the M
 disposable `TEST_MYSQL_DSN` schema, skipped without the variable (the acceptance run sets it and
 fails on a skip). Operator follow-up (owner decision 9): register the migration and seed roots in
 `.github/workflows/migrations.yml` and the repository roots in `scripts/ci/check-go.py`.
+
+**Admin-only permissions (#524)** — `settings.sso_manage` and `settings.scim_manage` are
+`AdminOnly` leaves of the catalogue: the admin matrix holds them (`adminGrants` skips only
+`SystemOnly` leaves), and `Node.CustomRoleMayHold` keeps them out of every custom role, in
+`ForCustomRole`, `validateRolePermissions` (400 `INVALID_PERMISSION`), the catalogue's
+`selectable` and therefore a clone of Admin. `models.AdminOnlyPermissionKeys` lists the same keys
+for the startup data step `stripAdminOnlyRolePermissions` (`internal/models`, after
+`seedSystemRoles`): one plain SELECT finds the custom roles holding either key; each is then
+changed in its own transaction on the migration handle, which locks the `roles` row, reads its
+stored rows, deletes the two keys and, only when the DELETE removed a row, writes one
+`role_updated` audit row with `auth_method` `migration` and `actor_user_id` NULL, whose states hold
+the stored rows sorted by key. The SQL migration `20261129120001_admin_only_sso_scim_permissions`
+does the same on MySQL/MariaDB (`UTC_TIMESTAMP(3)`, keys ordered `utf8mb4_bin`); its down half
+restores nothing. Since the admin matrix holds keys no custom role can hold, an admin account is
+always above a custom-role caller under the escalation rule. Regression roots:
+`TestAdminOnlyPermissionStrip{SQLite,MySQL}` (`internal/repository`; the MySQL root also starts
+two pools at once), `TestStripAdminOnlyRolePermissionsSkipsStrippedRole` (`internal/models`),
+`TestAdminOnlyPermissionsMigration{Files,}` (`cmd/migrate`), `TestAdminOnlySettingsPermissionsSQLite`
+and the admin-only cases of `TestRoleAPIRejectsInvalidPermissionsSQLite` (`internal/integration`).
 
 **Role API and governed user writes (#259 S4, #348)** — `internal/service/role_service.go` serves
 `GET /permissions/catalogue`, `/roles` (list, create, get, update, delete), `POST /roles/{id}/clone`

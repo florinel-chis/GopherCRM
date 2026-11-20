@@ -708,7 +708,8 @@ blocked until the page is built.
   lands on `/unauthorized`. Step 5: without a reload or a new sign-in the Deals entry appears:
   the focus refetches `GET /users/me`, and a role change applies on the holder's next request
   (the editor says so on a custom role). A system role opens read-only with a Clone button; a
-  permission only a system role holds (`tickets.view_own_customer`) is not offered. Deleting a
+  permission only a system role holds (`tickets.view_own_customer`) is not offered, and neither are
+the two admin-only permissions (`settings.sso_manage`, `settings.scim_manage`). Deleting a
   role that users still hold answers 409 `ROLE_IN_USE` and the confirmation stays open with the
   number of holders; a name another role has answers 409 `ROLE_NAME_TAKEN` on the name field.
 - **Automation:** automated — `gocrm-ui/e2e/tests/roles.spec.ts` "a cloned role decides what its

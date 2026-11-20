@@ -38,7 +38,9 @@ A permission is a leaf of the catalogue tree, keyed `<group>.<action>`. The tree
 leaves in display order and `GET /permissions/catalogue` serves the tree. There are 77 leaves in
 20 groups. Sixteen can be held at scope `own` as well as `all` (`AllowsOwn`). One,
 `tickets.view_own_customer`, is system-only (`SystemOnly`): only the customer system role holds
-it, and no custom role can.
+it, and no custom role can. Two, `settings.sso_manage` and `settings.scim_manage`, are admin-only
+(`AdminOnly`): only the Admin system role can hold them, and no custom role can
+(`Node.CustomRoleMayHold`).
 
 | Permission | Title | Scopes |
 |---|---|---|
@@ -53,8 +55,8 @@ it, and no custom role can.
 | `roles.audit_view` | View the role audit log | all |
 | `settings.view` | View settings | all |
 | `settings.update` | Change settings | all |
-| `settings.sso_manage` | View and change single sign-on settings | all |
-| `settings.scim_manage` | Create, list and revoke SCIM provider tokens | all |
+| `settings.sso_manage` | View and change single sign-on settings | all (admin-only) |
+| `settings.scim_manage` | Create, list and revoke SCIM provider tokens | all (admin-only) |
 | `audit.sign_ins_view` | View the sign-in audit log | all |
 | `leads.view` | View leads | all, own |
 | `leads.create` | Create leads | all |
@@ -214,8 +216,13 @@ and customer 4. A cell is the scope the role holds the key at, or `-` when it do
 A custom role is a row of `roles` with its grants in `role_permissions` (tables in
 [datamodel.md](datamodel.md#role-model)). A user on one has `role = custom` and a `role_id`, and
 holds exactly what the role row grants (`permissions.ForUser`, `ForCustomRole`): a stored key the
-catalogue does not know, a system-only key and a scope the leaf does not allow are dropped when
-the set is resolved, and refused with 400 `INVALID_PERMISSION` when a role is written.
+catalogue does not know, a system-only key, an admin-only key (`settings.sso_manage`,
+`settings.scim_manage`) and a scope the leaf does not allow are dropped when the set is resolved,
+and refused with 400 `INVALID_PERMISSION` when a role is written. Cloning the Admin role
+therefore leaves the two admin-only keys out. On every start the application removes both keys
+from any custom role that still holds them, and the SQL migration
+`20261129120001_admin_only_sso_scim_permissions` does the same; each changed role gets one
+`role_updated` audit row (see Audit trail).
 
 Each grant has a scope:
 
@@ -296,6 +303,9 @@ whose permissions are above its own, and cannot edit, activate, deactivate or er
 permissions are above its own. `own` is below `all`, and a missing key is below `own`. The
 refusal is 403 `ROLE_ESCALATION`, and the rule applies to the caller's own account too. The
 customer system role counts as the empty set here, so a customer login is never above a manager.
+The admin system role holds the two admin-only keys, which no custom role can hold, so an admin
+account is always above a custom-role caller: only an admin can assign the admin role or edit,
+activate, deactivate or erase an admin account (#524).
 
 A customer login with a linked customer record (a `customers` row whose `user_id` is that login,
 erased rows included) asks for the customer key next to the user key: erasing it
@@ -313,8 +323,11 @@ writes one `role_audit_log` row in the transaction of the change; a failed inser
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
 to its own account, #435, or `scim` for a SCIM 2.0 user create, replace or patch, #470 and
-#471, or a SCIM group patch that changes a member's role, #506 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
-names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
+#471, or a SCIM group patch that changes a member's role, #506 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts, or `migration` for a startup or
+migration data step, #524, also with `actor_user_id` NULL), the action and the state before and
+after, as ids, role names, permission keys and scopes only. The `migration` rows of #524 record
+the role's stored permission rows, which can include a key the catalogue no longer resolves;
+the role API records the resolved set. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
 The three rules above are decided inside one transaction per write, after the rows are locked.
@@ -477,8 +490,8 @@ stores only its HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it is u
 `hmac$<hex>` form of API keys, with a name, `created_at`, `last_used_at` and `revoked_at`.
 Rotating that secret invalidates every token. A token is revoked, never deleted.
 
-**Admin API.** Three routes under the API prefix, each guarded by `settings.scim_manage` (among
-the system roles only admin holds it; a custom role may):
+**Admin API.** Three routes under the API prefix, each guarded by `settings.scim_manage` (an
+admin-only key: only the admin system role holds it, and no custom role can since #524):
 
 - `GET /settings/scim/tokens` lists every token, revoked ones included, newest first.
 - `POST /settings/scim/tokens` with `{"name": "..."}` (trimmed, 1 to 100 characters, else 400
@@ -1308,10 +1321,11 @@ session-bound CSRF protection in the same change.
 **Seams already in place.**
 
 - `role_audit_log.auth_method` records how the acting request authenticated. Its values today
-  are `bearer`, `api_key`, since #435 `oidc` and since #470 `scim` (`AuthMethodBearer`,
-  `AuthMethodAPIKey`, `AuthMethodOIDC`, `AuthMethodSCIM` in `internal/service/interfaces.go`);
-  SCIM added a value, not a column.
+  are `bearer`, `api_key`, since #435 `oidc`, since #470 `scim` and since #524 `migration`
+  (`AuthMethodBearer`, `AuthMethodAPIKey`, `AuthMethodOIDC`, `AuthMethodSCIM`,
+  `AuthMethodMigration` in `internal/service/interfaces.go`); SCIM added a value, not a column.
 - `role_audit_log.actor_user_id` is nullable, so a change made by a provisioning client that is
-  not a user is recorded without inventing an account: a SCIM write stores NULL (#470).
+  not a user is recorded without inventing an account: a SCIM write stores NULL (#470), and so
+  does a data step (#524).
 - Permissions are resolved per request from the user's role, so a role mapped at sign-in needs
   no new enforcement path.

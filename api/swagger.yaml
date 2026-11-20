@@ -7561,7 +7561,9 @@ definitions:
         - user_role_changed
         example: role_updated
       actor_user_id:
-        description: Id of the acting user; null for a SCIM write, which no user performs.
+        description: |-
+          Id of the acting user; null for a SCIM write or a data step, which no
+          user performs.
         example: 1
         type: integer
       after_state:
@@ -7569,13 +7571,15 @@ definitions:
       auth_method:
         description: |-
           How the acting request authenticated: bearer or api_key, oidc for the
-          role an OpenID Connect sign-in applied to its own account, or scim for
-          a SCIM 2.0 user create, replace or patch (actor null).
+          role an OpenID Connect sign-in applied to its own account, scim for a
+          SCIM 2.0 user create, replace or patch (actor null), or migration for a
+          startup or migration data step (actor null).
         enum:
         - bearer
         - api_key
         - oidc
         - scim
+        - migration
         example: bearer
         type: string
       before_state:

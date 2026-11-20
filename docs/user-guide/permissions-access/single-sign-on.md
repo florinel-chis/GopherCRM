@@ -65,7 +65,7 @@ returns, kept stable.
 
 ## Configure single sign-on
 
-You need `settings.sso_manage` (the Admin role holds it). Register GopherCRM at your provider
+You need `settings.sso_manage`; only the Admin role can hold it. Register GopherCRM at your provider
 first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-id.md).
 
 1. Open Settings → Single sign-on (`/settings/sso`).

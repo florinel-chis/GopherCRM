@@ -124,7 +124,7 @@ blocks a role or user delete.
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
 | actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
-| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) or a SCIM group patch that changes a member's role (#506) |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) or a SCIM group patch that changes a member's role (#506), or `migration` for a startup or migration data step (#524); `actor_user_id` is NULL for `scim` and `migration` |
 | action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |

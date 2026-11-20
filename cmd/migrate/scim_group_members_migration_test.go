@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -31,8 +30,7 @@ const (
 // TestSCIMGroupMembersMigrationFiles needs no database: the pair exists with
 // its headers, creates the table only when missing with the model's columns,
 // collation and index names, drops only it, the model declares the same, and
-// it is the newest migration of the directory, which latestMigrationVersion
-// names.
+// it is older than the newest migration.
 func TestSCIMGroupMembersMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, scimGroupMembersMigrationName+".up.sql"))
@@ -83,22 +81,9 @@ func TestSCIMGroupMembersMigrationFiles(t *testing.T) {
 	assert.Equal(t, scimGroupMembersTable, models.SCIMGroupMember{}.TableName())
 	assert.Equal(t, 256, models.SCIMGroupMemberValueMaxLength)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from
-	// TestUserIdentitySourceMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, scimGroupMembersMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, scimGroupMembersVersion, version)
-	assert.Equal(t, scimGroupMembersVersion, latestMigrationVersion)
+	// Older than the newest migration (the newest-migration assertions moved
+	// to TestAdminOnlyPermissionsMigrationFiles, #524).
+	assert.Less(t, scimGroupMembersVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, scimGroupMembersVersion, scimGroupMembersPreviousVersion)
 
 	source, err := os.ReadFile("main_test.go")
