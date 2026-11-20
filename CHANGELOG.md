@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 user patch (#471).** With a SCIM token, `PATCH /scim/v2/Users/{id}` applies an
+  RFC 7644 PatchOp: `add`, `replace` and `remove` (op in any ASCII case, so Entra ID's `Replace`
+  passes) on `active`, `userName`, `name`, `name.givenName`, `name.familyName`, `emails`,
+  `emails[type eq "work"].value` and `roles`, with a `path` or in the path-less form whose value
+  is an object of those attributes (Okta, and Entra ID's value-object form). `active` takes a JSON
+  boolean or the strings `true`/`false` in any ASCII case (Entra ID sends `"False"`). Operations
+  apply in order and the last write wins; a `userName` the patch sets wins over its `emails`. Any
+  other path or path-less key (`externalId`, `displayName`, `name.formatted`, extension URNs) is
+  400 `invalidPath`, a `remove` without a path 400 `noTarget`, a body that is not a PatchOp with a
+  non-empty `Operations` array 400 `invalidSyntax`, and a wrongly typed value or a `remove` of
+  `active`, `userName`, `emails` or `roles` 400 `invalidValue`. The touched attributes get the
+  checks of PUT; `roles` resolves through the role mapping, and an untouched role is kept. A write
+  that sets `active` false, through PATCH or PUT, now deprovisions at once: in the same governed
+  transaction it increments the account's `token_version`, so every access token issued before is
+  refused, and revokes every refresh token of the account. `active` true reactivates the account
+  without bringing the old sessions back. Demoting or deactivating the last active admin is 400
+  `invalidValue`; a role change writes the `user_role_changed` audit row with `auth_method`
+  `scim`, every success one sign-in audit row with method `scim`, and a refusal writes nothing.
+  `DELETE /scim/v2/Users/{id}` and `/Groups` are still not served. No new setting, table or
+  migration.
 - **SCIM 2.0 user create and replace (#470).** With a SCIM token, `POST /scim/v2/Users` creates
   a staff or custom account (201, `Location` equal to `meta.location`) and
   `PUT /scim/v2/Users/{id}` replaces its name, email, role and, when sent, `active` (200). The
@@ -26,8 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accounts. Each write is one governed transaction; a create and a role change write a
   `user_role_changed` audit row with `auth_method` `scim` and `actor_user_id` NULL, and every
   success writes one sign-in audit row with method `scim` and outcome `success`. A refusal writes
-  nothing. Deactivation through PUT does not end sessions yet (#471). No new setting, table or
-  migration.
+  nothing. No new setting, table or migration.
 - **SCIM 2.0 user read (#469).** With a SCIM token, `GET /scim/v2/Users/{id}` returns one core
   User resource and `GET /scim/v2/Users` a ListResponse in id order, paged by `startIndex`
   (1-based) and `count` (default and maximum 100, 0 for the total only), with the one filter

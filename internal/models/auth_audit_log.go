@@ -16,8 +16,8 @@ const (
 
 // AuthAuditLog is one sign-in outcome (#454): a password login, a single
 // sign-on callback, a refresh, a failed API-key authentication, a refused
-// SCIM authentication (#468) or a successful SCIM user create or replace
-// (#470, method scim, outcome success, the account's user id). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
+// SCIM authentication (#468) or a successful SCIM user create, replace or
+// patch (#470, #471, method scim, outcome success, the account's user id). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
 // /48 (IPv6) network, a user-agent family from a fixed vocabulary and, for a
 // single sign-on refusal after the ID token verified, an HMAC of the issuer
 // and subject. It never holds an email, a name, a subject, a token, a code, a

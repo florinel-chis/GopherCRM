@@ -8,7 +8,9 @@ package main
 // /Users/:id, with externalId taken from the identities under the effective
 // single sign-on issuer (ssoSettings). Issue #470 adds POST /Users and
 // PUT /Users/:id, whose role comes from the roles mapping and whose audit
-// rows carry method scim. Over a SQLite file opened by the real connector.
+// rows carry method scim. Issue #471 adds PATCH /Users/:id, whose active
+// false ends the sessions of the account. Over a SQLite file opened by the
+// real connector.
 
 import (
 	"bytes"
@@ -480,4 +482,110 @@ func TestSCIMUserWritesWired(t *testing.T) {
 	var authAudits []models.AuthAuditLog
 	require.NoError(t, models.DB.Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", stored.ID).Find(&authAudits).Error)
 	assert.Len(t, authAudits, 2, "one success row per write")
+}
+
+// TestSCIMUserPatchWired (#471): through setupRouter a SCIM PATCH in Entra
+// ID's form (op "Replace", value "False") deactivates a signed-in account and
+// ends its sessions at once: the earlier access token answers 401 on
+// GET /users/me and the earlier refresh token 401 on /auth/refresh. Okta's
+// path-less form reactivates the account, the old access token stays refused
+// and a new sign-in works. It fails when cmd/main.go leaves the refresh token
+// repository out of WithSCIMUserWrites (500 on the deactivating PATCH).
+func TestSCIMUserPatchWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+		var role models.Role
+		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&role).Error)
+		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d}]`, role.ID)
+	})
+	prefix := boot.cfg.API.Prefix
+	addr := 0
+	nextRemote := func() string {
+		addr++
+		return fmt.Sprintf("203.0.113.%d:1234", 150+addr)
+	}
+	type session struct {
+		Data struct {
+			Token        string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"data"`
+	}
+	login := func(email, password string) *httptest.ResponseRecorder {
+		return scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+email+`","password":"`+password+`"}`, nextRemote(), "")
+	}
+	signIn := func(email, password string) session {
+		t.Helper()
+		recorder := login(email, password)
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		var s session
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &s))
+		require.NotEmpty(t, s.Data.Token)
+		require.NotEmpty(t, s.Data.RefreshToken)
+		return s
+	}
+	createUser := func(email, password string, role models.UserRole) *models.User {
+		t.Helper()
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+		require.NoError(t, err)
+		user := &models.User{Email: email, Password: string(hash), FirstName: "Wired", LastName: "User", Role: role, IsActive: true}
+		require.NoError(t, models.DB.Create(user).Error)
+		return user
+	}
+
+	const password = "Wired-Passw0rd!-0471"
+	admin := createUser("admin-0471@crm.example.test", password, models.RoleAdmin)
+	adminSession := signIn(admin.Email, password)
+	recorder := scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"Entra"}`, nextRemote(), "Bearer "+adminSession.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	scimToken := "Bearer " + created.Data.Token
+
+	// A sales account with a password and no identity, signed in twice.
+	sales := createUser("sales-0471@crm.example.test", password, models.RoleSales)
+	first, second := signIn(sales.Email, password), signIn(sales.Email, password)
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+first.Data.Token)
+	require.Equal(t, http.StatusOK, recorder.Code, "the access token works before: %s", recorder.Body.String())
+
+	path := fmt.Sprintf("/scim/v2/Users/%d", sales.ID)
+	recorder = scimWiredSend(router, http.MethodPatch, path, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+		"Operations":[{"op":"Replace","path":"active","value":"False"}]}`, nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+	var patched scimWiredUser
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &patched))
+	assert.Equal(t, fmt.Sprint(sales.ID), patched.ID)
+	assert.False(t, patched.Active)
+
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+first.Data.Token)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the earlier access token is refused at once")
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/auth/refresh", `{"refresh_token":"`+first.Data.RefreshToken+`"}`, nextRemote(), "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the earlier refresh token is refused at once")
+
+	recorder = scimWiredSend(router, http.MethodPatch, path, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+		"Operations":[{"op":"replace","value":{"active":true}}]}`, nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &patched))
+	assert.True(t, patched.Active)
+
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+first.Data.Token)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the access token issued before the deactivation stays refused")
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/auth/refresh", `{"refresh_token":"`+second.Data.RefreshToken+`"}`, nextRemote(), "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the refresh token issued before the deactivation stays refused")
+	fresh := signIn(sales.Email, password)
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+fresh.Data.Token)
+	assert.Equal(t, http.StatusOK, recorder.Code, "a new sign-in works: %s", recorder.Body.String())
+
+	var stored models.User
+	require.NoError(t, models.DB.First(&stored, sales.ID).Error)
+	assert.True(t, stored.IsActive)
+	assert.Equal(t, uint(1), stored.TokenVersion, "the deactivation moved the generation once")
+	var successes int64
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", sales.ID).Count(&successes).Error)
+	assert.Equal(t, int64(2), successes, "one success row per patch")
 }

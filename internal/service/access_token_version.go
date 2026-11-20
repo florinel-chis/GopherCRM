@@ -12,7 +12,7 @@ import (
 
 // Access-token revocation (#236). Every access JWT carries the owner's
 // users.token_version as the integer claim `token_version`. Logout, a password
-// change and a password-reset confirmation increment the stored counter, so
+// change, a password-reset confirmation and a SCIM deactivation (#471) increment the stored counter, so
 // every JWT signed before them no longer matches and ValidateToken refuses it
 // with ErrAccessTokenRevoked. middleware.Auth answers that like any other
 // rejected credential: 401 "Invalid credentials". Refresh rotation and login

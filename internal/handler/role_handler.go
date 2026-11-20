@@ -159,7 +159,7 @@ type RoleAuditEntryResponse struct {
 	ActorUserID *uint `json:"actor_user_id" example:"1"`
 	// How the acting request authenticated: bearer or api_key, oidc for the
 	// role an OpenID Connect sign-in applied to its own account, or scim for
-	// a SCIM 2.0 user create or replace (actor null).
+	// a SCIM 2.0 user create, replace or patch (actor null).
 	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc,scim" example:"bearer"`
 	// Kind of change.
 	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed" example:"role_updated"`

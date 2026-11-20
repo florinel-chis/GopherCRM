@@ -117,8 +117,8 @@ var userUpdatableColumns = map[string]struct{}{
 	"failed_login_attempts": {},
 	"locked_until":          {},
 	"last_login_at":         {},
-	// token_version is the access-token generation (#236); logout, the
-	// password change and the reset write it under the users-row lock.
+	// token_version is the access-token generation (#236); logout, the password
+	// change, the reset and a SCIM deactivation write it under the users-row lock.
 	"token_version": {},
 	// role_id names a custom role (#344); nil clears it.
 	"role_id": {},

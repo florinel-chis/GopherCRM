@@ -3,7 +3,8 @@
 // three discovery documents of RFC 7643 (ServiceProviderConfig, Schemas and
 // ResourceTypes), and, for the Users read of #469, the User resource, the
 // userName filter grammar, the ASCII-only userName judge and the paging
-// rules. It has no state and no database access.
+// rules, and, for the Users patch of #471, the PatchOp parser. It has no
+// state and no database access.
 package scim
 
 import (
@@ -61,6 +62,10 @@ const (
 	// and replace (#470).
 	ScimTypeUniqueness    = "uniqueness"
 	ScimTypeInvalidSyntax = "invalidSyntax"
+	// ScimTypeInvalidPath and ScimTypeNoTarget answer the Users patch
+	// (#471).
+	ScimTypeInvalidPath = "invalidPath"
+	ScimTypeNoTarget    = "noTarget"
 )
 
 // WriteErrorType answers status with the SCIM error body carrying scimType,

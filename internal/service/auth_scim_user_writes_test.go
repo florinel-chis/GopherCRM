@@ -57,6 +57,27 @@ type scimWritesFixture struct {
 	customID uint
 	// newService builds the service over another configuration source.
 	newService func(source SCIMIssuerSource) SCIMUserService
+	// newServiceWith builds the service over the fixture's source with
+	// another refresh token repository (nil leaves it out).
+	newServiceWith func(refreshTokens repository.RefreshTokenRepository) SCIMUserService
+}
+
+// login signs the account in with its password and returns the access and
+// refresh tokens.
+func (f *scimWritesFixture) login(t *testing.T, email, password string) *AuthTokens {
+	t.Helper()
+	tokens, err := f.auth.LoginWithTokens(email, password)
+	require.NoError(t, err)
+	require.NotEmpty(t, tokens.AccessToken)
+	require.NotEmpty(t, tokens.RefreshToken)
+	return tokens
+}
+
+// liveRefreshTokens counts the refresh_tokens rows of userID that are not
+// revoked.
+func (f *scimWritesFixture) liveRefreshTokens(t *testing.T, userID uint) int64 {
+	t.Helper()
+	return f.count(t, "refresh_tokens", "user_id = ? AND is_revoked = ?", userID, false)
 }
 
 // scimCounts is the row count of users (erased rows included),
@@ -149,10 +170,16 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 	custom := &models.Role{Name: "SCIM Custom"}
 	require.NoError(t, repository.NewRoleRepository(db).Create(custom))
 	f := &scimWritesFixture{oidcFixture: base, source: &scimWritesSource{}, customID: custom.ID}
-	f.newService = func(source SCIMIssuerSource) SCIMUserService {
+	build := func(source SCIMIssuerSource, refreshTokens repository.RefreshTokenRepository) SCIMUserService {
 		return NewSCIMUserService(repository.NewSCIMUserRepository(db), source,
 			WithSCIMUserWrites(repository.NewUserRepository(db), repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db),
-				repository.NewUserIdentityRepository(db), utils.NewTransactionManager(db), f.audit))
+				repository.NewUserIdentityRepository(db), refreshTokens, utils.NewTransactionManager(db), f.audit))
+	}
+	f.newService = func(source SCIMIssuerSource) SCIMUserService {
+		return build(source, repository.NewRefreshTokenRepository(db))
+	}
+	f.newServiceWith = func(refreshTokens repository.RefreshTokenRepository) SCIMUserService {
+		return build(f.source, refreshTokens)
 	}
 	f.svc = f.newService(f.source)
 
@@ -329,19 +356,35 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			f.assertSuccessAudit(t, kim.ID)
 		}},
 		{"replace deactivates", func(t *testing.T) {
-			dan := f.seedUser(t, "dan@x.test", models.RoleSales, true, "")
+			const password = "Dan-Passw0rd!-471"
+			dan := f.seedUser(t, "dan@x.test", models.RoleSales, true, password)
+			first, second := f.login(t, "dan@x.test", password), f.login(t, "dan@x.test", password)
+			require.Equal(t, int64(2), f.liveRefreshTokens(t, dan.ID))
+			version := f.user(t, dan.ID).TokenVersion
+			require.Zero(t, f.count(t, "auth_audit_log", ""), "the fixture's password sign-in writes no audit row")
+
 			inactive := false
 			record, err := f.svc.Replace(ctx, uintString(dan.ID), SCIMUserInput{UserName: "dan@x.test", Active: &inactive, Roles: []string{scimRoleSales}})
 			require.NoError(t, err)
 			assert.False(t, record.User.IsActive)
-			assert.False(t, f.user(t, dan.ID).IsActive)
+			stored := f.user(t, dan.ID)
+			assert.False(t, stored.IsActive)
+			assert.Equal(t, version+1, stored.TokenVersion, "the deactivation ends every access token (#471)")
+			assert.Zero(t, f.liveRefreshTokens(t, dan.ID), "the deactivation revokes every refresh token (#471)")
+			assert.Equal(t, int64(2), f.refreshTokens(t, dan.ID), "revoked, not deleted")
 			assert.Empty(t, f.roleAudits(t, dan.ID))
 			f.assertSuccessAudit(t, dan.ID)
 
 			active := true
 			_, err = f.svc.Replace(ctx, uintString(dan.ID), SCIMUserInput{UserName: "dan@x.test", Active: &active, Roles: []string{scimRoleSales}})
 			require.NoError(t, err)
-			assert.True(t, f.user(t, dan.ID).IsActive, "active true reactivates")
+			stored = f.user(t, dan.ID)
+			assert.True(t, stored.IsActive, "active true reactivates")
+			assert.Equal(t, version+1, stored.TokenVersion, "a reactivation does not change the generation")
+			_, err = f.auth.ValidateToken(first.AccessToken)
+			assert.Error(t, err, "the old access token stays refused")
+			_, err = f.auth.RefreshAccessToken(second.RefreshToken)
+			assert.Error(t, err, "the old refresh token stays refused")
 		}},
 		{"replace not visible", func(t *testing.T) {
 			customer := f.seedUser(t, "cust@x.test", models.RoleCustomer, true, "")

@@ -397,8 +397,9 @@ MariaDB too), `TestSCIMUserHandler` (`internal/handler`), `TestParseUserFilter`,
 `invalidValue`, `ErrSCIMLastAdmin` among them), `service.ErrSCIMUniqueness` (409 `uniqueness`)
 and `apperrors.ErrNotFound` (404). `internal/service/scim_user_writes.go` holds `Create` and
 `Replace`, enabled by `service.WithSCIMUserWrites` on `NewSCIMUserService` (wired in
-`cmd/main.go` with the user, role, role-audit and identity repositories, the transaction manager
-and the sign-in audit writer; without the option both answer a wiring error, 500). Both run in
+`cmd/main.go` with the user, role, role-audit and identity repositories, the refresh token
+repository (#471), the transaction manager and the sign-in audit writer; without the option both
+answer a wiring error, 500). Both run in
 `roleGovernance.run` with the lock order of the OIDC sign-in, take the role from the `roles`
 entries of the SSO mapping (`oidcMatchRole` with no groups), refuse a missing or `customer`
 mapped role, keep the last-admin rule, record `user_role_changed` with
@@ -410,6 +411,28 @@ discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUse
 (`internal/handler`), `TestWriteErrorTypeWriteTypes` (`internal/scim`) and
 `TestSCIMUserWritesWired` (`cmd`). The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
+
+**SCIM user patch (#471)** — `PATCH /scim/v2/Users/:id` is mounted by `SetupSCIMRoutes`;
+`SCIMUserHandler.Patch` reads the body as the writes do (64 KiB, one JSON object, no trailing
+data) and parses it with `scim.ParseUserPatch` (`internal/scim/patch.go`, pure), which returns a
+`scim.UserPatch` of pointers (nil = untouched) or a `*scim.PatchError` whose `ScimType`
+(`invalidSyntax`, `invalidPath`, `noTarget`, `invalidValue`) the handler answers with a fixed
+detail that never echoes the path or value; service refusals go through `failWrite`. Paths and
+path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.EqualFold`).
+`scimUserService.Patch` (`internal/service/scim_user_writes.go`) runs in `roleGovernance.run`
+with `admin set → users → roles → refresh_tokens`, applies the patch to the locked row, checks
+only the touched attributes (Replace's sequence for a changed address), resolves `roles` through
+the mapping, keeps the last-admin rule and records `user_role_changed` only on a role change.
+A write that sets `active` false (Patch, and Replace since #471) adds
+`token_version = locked + 1` to its `users` write (`deprovisionFields`) and then calls
+`RefreshTokenRepository.WithTx(...).RevokeAllForUser` in the same transaction.
+`WithSCIMUserWrites` takes the refresh token repository (`cmd/main.go` passes
+`refreshTokenRepo`); without it Patch and a deactivating Replace answer a wiring error (500).
+Regression roots: `TestSCIMUserPatchSQLite` and `TestSCIMUserPatchMySQL` (`internal/service`,
+discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserPatchHandler`
+(`internal/handler`), `TestParsePatch` (`internal/scim`), `TestSCIMUserPatchWired` (`cmd`) and
+`TestConcurrencyDocSCIMUserPatch` (`internal/config`). The rules are in
+[AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
 
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
@@ -872,7 +895,7 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
   new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value
   (`bearer` or `api_key`), `oidc` (`service.AuthMethodOIDC`) for the role an OpenID Connect
   sign-in applied to its own account (#435), or `scim` (`service.AuthMethodSCIM`) for a SCIM user
-  create or replace (#470), whose `actor_user_id` is NULL. The log lines of these paths carry ids and action
+  create, replace or patch (#470, #471), whose `actor_user_id` is NULL. The log lines of these paths carry ids and action
   names only.
 
 Regression roots (`internal/integration`, on the real Auth, routes, handlers and repositories):
@@ -2185,9 +2208,9 @@ covering MySQL and MariaDB behaviour of the handlers.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
   `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
   OpenID Connect start and callback included), the six `/forms/public` routes, the two
-  `/quotes/public/response` routes and `POST /quotes/public/render`, and the seven `/scim/v2` routes
-  (the discovery documents of #468, the Users read of #469 and the Users create and replace of
-  #470), 25 in all. A new route in neither
+  `/quotes/public/response` routes and `POST /quotes/public/render`, and the eight `/scim/v2` routes
+  (the discovery documents of #468, the Users read of #469, the Users create and replace of
+  #470 and the Users patch of #471), 26 in all. A new route in neither
   fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its

@@ -57,7 +57,11 @@ fresh account. The same holds for a deactivated account until you activate it ag
 ## Does GopherCRM support SCIM or SAML?
 
 SAML: no. Single sign-on uses OpenID Connect only. SCIM 2.0: partly. An identity provider holding a
-SCIM token can read, create and update staff accounts, with the role taken from the single sign-on
-role mapping, so an account can exist before the person's first sign-in. Removing people and
-groups through SCIM is not supported yet: remove them at the provider and, where needed, deactivate
-them in GopherCRM. Without SCIM, accounts are created at the first sign-in.
+SCIM token can read, create, update and deactivate staff accounts, with the role taken from the
+single sign-on role mapping, so an account can exist before the person's first sign-in. When the
+provider deactivates an account, the person is signed out everywhere at once; reactivating it
+lets them sign in again, but not with the old sessions. SCIM does not delete accounts and does
+not manage groups: delete people in GopherCRM when their data must go. The provider's attribute
+mappings must send only the user name, active state, given and family name, work email and roles;
+an update that also sends, for example, `externalId` or `displayName` is refused, so remove those
+mappings at the provider. Without SCIM, accounts are created at the first sign-in.

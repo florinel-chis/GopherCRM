@@ -310,8 +310,8 @@ Every role create, clone, update and delete, and every change of a user's `role`
 writes one `role_audit_log` row in the transaction of the change; a failed insert rolls the
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
-to its own account, #435, or `scim` for a SCIM 2.0 user create or replace, #470, whose
-`actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
+to its own account, #435, or `scim` for a SCIM 2.0 user create, replace or patch, #470 and
+#471, whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
 names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -335,7 +335,7 @@ on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique interna
 `created_at`. Since #468 each refused SCIM authentication on `/scim/v2` writes one row of its
 own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
 SCIM tier in front of the authentication bounds them. Since #470 a successful SCIM user create
-or replace writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
+or replace, and since #471 a successful patch, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
 after its transaction; a refused one (400 or 409) writes none. Any other successful API-key or
 SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
@@ -460,9 +460,9 @@ Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RF
 pointed at `PUBLIC_BASE_URL/scim/v2`. #468 brought the tokens, the authentication and the
 discovery documents; #469 brought the read of the Users resource (see [Users read](#users-read-469)
 below) and #470 its create and replace (see
-[Users create and replace](#users-create-and-replace-470)). Patching and deleting users
-(`PATCH`/`DELETE /Users`), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped
-answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
+[Users create and replace](#users-create-and-replace-470)) and #471 its patch, which also
+deprovisions (see [Users patch](#users-patch-471)). `DELETE /Users`, `/Groups`, `/Schemas/{id}`,
+`/ResourceTypes/{id}` and a SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
 router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
 **Tokens.** A SCIM provider token belongs to the installation, not to a user. It is
@@ -520,8 +520,8 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
 - `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
   `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`.
 
-The advertised `patch` feature describes a later slice: today the Users read, create and
-replace below are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
+The advertised `patch` feature is the Users patch below; the Users read, create, replace and
+patch are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
 `GET /health`. The SPA's nginx does not proxy `/scim/v2`: SCIM clients talk to the backend origin
 directly.
 
@@ -617,8 +617,9 @@ only, so a created customer could never be read back.
 **Account.** A created account is active unless `active` is `false`, and its password is the
 bcrypt hash of random bytes that are discarded, so it cannot sign in with a password. On replace
 an absent `name` or sub-attribute clears it (PUT replaces), and an absent `active` leaves
-`is_active` as it is. `active: false` writes the same column a governed deactivation does; it does
-not end the account's sessions yet (#471).
+`is_active` as it is. Since #471 `active: false` deprovisions as a patch does (see
+[Users patch](#users-patch-471)): in the same transaction it increments the account's
+`token_version` and revokes every refresh token of the account, so its sessions end at once.
 
 **Answers.** Error details are fixed and never echo a submitted value.
 
@@ -653,7 +654,81 @@ the variants the Go judges drop, and that the padded and accented variants of a 
 are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource`,
 `TestWriteErrorType` and `TestWriteErrorTypeWriteTypes` (`internal/scim`),
 `TestSCIMTokenSchemaSQLite` (`internal/models`) and `TestSCIMTokensMigration{Files,}`
-(`cmd/migrate`).
+(`cmd/migrate`). The patch (#471) adds `TestSCIMUserPatchWired` (`cmd`),
+`TestSCIMUserPatchHandler` (`internal/handler`), `TestSCIMUserPatchSQLite`/`TestSCIMUserPatchMySQL`
+(`internal/service`, also run on MariaDB), `TestParsePatch` (`internal/scim`) and
+`TestConcurrencyDocSCIMUserPatch` (`internal/config`).
+
+### Users patch (#471)
+
+`PATCH /scim/v2/Users/{id}`, behind the same strict tier and token authentication, applies an
+RFC 7644 §3.5.2 PatchOp to a visible user and answers 200 with the User resource and
+`application/scim+json`.
+
+**Body.** One JSON object of at most 64 KiB, any `Content-Type`. `schemas` is ignored.
+`Operations` must be a non-empty array; each operation is an object with a string `op` (`add`,
+`replace` or `remove`, in any ASCII letter case, so Entra ID's `Replace` and `Add` pass), an
+optional string `path` and a `value`. `add` and `replace` behave the same.
+
+**Paths.** Attribute names match with ASCII-only case folding, without trimming and without a
+schema URN prefix:
+
+| Path | Value of `add`/`replace` | `remove` |
+|---|---|---|
+| `active` | a JSON boolean, or the string `true` or `false` in any ASCII case (Entra ID sends `"False"`) | 400 `invalidValue` |
+| `userName` | a string, stored as the email | 400 `invalidValue` |
+| `name` | an object; the given `givenName`/`familyName` are set, absent ones stay | clears both parts |
+| `name.givenName`, `name.familyName` | a string | clears the part |
+| `emails` | a non-empty array of objects with a string `value`; the entry with `primary: true` wins, then the first with `type` `work`, then a sole entry | 400 `invalidValue` |
+| `emails[type eq "work"].value` | a string | 400 `invalidValue` |
+| `roles` | an array of objects with a string `value` | 400 `invalidValue` |
+
+Without a `path` (Okta's form, and Entra ID's value-object form), an `add` or `replace` value must
+be an object whose keys are judged as paths by the same rules, for example
+`{"op":"replace","value":{"active":false}}` or `{"op":"Add","value":{"name.givenName":"Ann"}}`;
+dotted `name.*` keys apply after a `name` object in the same value. Unknown sub-attributes inside
+`name`, `emails` and `roles` entries are ignored, as on PUT. Operations apply in array order and
+the last write to an attribute wins. When any operation sets `userName`, `emails` values are still
+validated but do not change the email, because `userName` is the email.
+
+**Checks.** Only the touched attributes are checked, with the rules of PUT: `userName` and the
+name parts on their resulting values, the address uniqueness and format only when the email
+changes. `roles` resolves through the single sign-on role mapping as on PUT; an untouched role is
+kept as stored, without re-mapping and without an audit row. The patch is applied to the row
+locked in the transaction.
+
+**Answers.** Error details are fixed and never echo a path or a value.
+
+| Condition | Answer |
+|---|---|
+| Body over 64 KiB, not one JSON object, trailing data, no or an empty `Operations` array, an operation that is not an object, an `op` other than add/replace/remove, a non-string `path`, a path-less value that is not an object | 400 `invalidSyntax` |
+| A path or path-less key outside the table (`externalId`, `displayName`, `name.formatted`, another filter, an extension URN) | 400 `invalidPath` |
+| `remove` without a `path` | 400 `noTarget` |
+| A value of the wrong type (`null` included), `remove` of `active`, `userName`, `emails` or `roles`, `emails` without a winning entry, and every `invalidValue` of PUT for the touched attributes | 400 `invalidValue` |
+| The last active admin would lose the admin role or be deactivated | 400 `invalidValue` (`The last active admin must stay an active admin`) |
+| A changed `userName` held by another account, live or erased | 409 `uniqueness` |
+| An id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+
+**Session end.** A patch that sets `active` false (also on an already inactive account), like a
+PUT with `"active": false`, deprovisions at once: the same `users` write increments
+`token_version`, so every access token issued before is refused with 401, and every
+`refresh_tokens` row of the account is revoked in the same transaction. `active` true only sets
+`is_active`: the account can sign in again, but no earlier access or refresh token comes back.
+The administrator deactivation (`POST /users/{id}/deactivate`) is unchanged.
+
+**Transaction and audit.** One governed transaction in the order
+`admin set → users → roles → refresh_tokens` (see [CONCURRENCY.md](CONCURRENCY.md), flow "SCIM
+user patch"). A changed role or `role_id` writes one `role_audit_log` row (`user_role_changed`,
+`auth_method` `scim`, `actor_user_id` NULL). After the commit one `auth_audit_log` row (method
+`scim`, outcome `success`) names the account. A refusal writes nothing: no `users`,
+`refresh_tokens`, `role_audit_log` or `auth_audit_log` change.
+
+**Provider mappings.** The default attribute mappings of Entra ID and Okta send more than this
+list, for example `externalId` or `displayName` on update, and every such operation is refused
+whole with 400 `invalidPath`. Trim the provider's attribute mappings to `userName`, `active`,
+`name.givenName`, `name.familyName`, the work email and `roles` before turning provisioning on.
+
+Regression roots: see the end of the previous section.
 
 ## Least-privilege integration user
 
@@ -776,8 +851,9 @@ a `groups` claim has its groups read from the issuer's userinfo endpoint when th
 groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider tokens and the
 `/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
 #469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
-and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`). Patching and deprovisioning users
-through SCIM, and Groups, are not implemented yet; that is later work. The rest of the note
+and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the patch
+(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions.
+Deleting users and Groups through SCIM are not implemented yet; that is later work. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)

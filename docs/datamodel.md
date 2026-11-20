@@ -29,7 +29,7 @@ Represents system users with different roles and permissions.
 | role_id | bigint unsigned | No | NULL | index `idx_users_role_id`, foreign key `fk_users_custom_role` → `roles.id` ON DELETE RESTRICT | The custom role of an account whose role is `custom` (#344); NULL for every system-role account. Omitted from the JSON while NULL and not in the API reference yet. MySQL gets it from `20261119120000_add_roles_and_permissions`, SQLite from `MigrateDatabase`; existing accounts read NULL |
 | is_active | boolean | Yes | true | - | Account active status |
 | last_login_at | timestamp | No | - | - | Last login timestamp |
-| token_version | bigint unsigned | Yes | 0 | not null | Session generation (#236), hidden in API responses. Every access JWT carries it as the `token_version` claim and is refused once it differs; logout, a password change and a password reset increment it. MySQL gets it from `20261109120000_add_user_token_version`, SQLite from `MigrateDatabase`; existing accounts read 0 |
+| token_version | bigint unsigned | Yes | 0 | not null | Session generation (#236), hidden in API responses. Every access JWT carries it as the `token_version` claim and is refused once it differs; logout, a password change, a password reset and a SCIM write that sets `active` false (#471) increment it. MySQL gets it from `20261109120000_add_user_token_version`, SQLite from `MigrateDatabase`; existing accounts read 0 |
 
 ### User Roles
 - `admin` - Full system access
@@ -124,7 +124,7 @@ blocks a role or user delete.
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
 | actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
-| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create or replace (#470) |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) |
 | action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
@@ -993,8 +993,8 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 ### auth_audit_log
 
 One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback,
-a refresh, a refused SCIM authentication (#468, one row each) or a successful SCIM user create or
-replace (#470, method `scim`, outcome `success`, the account's `user_id`); refused API keys are counted in one row per reason, `user_id`, client network and UTC
+a refresh, a refused SCIM authentication (#468, one row each) or a successful SCIM user create,
+replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
