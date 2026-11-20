@@ -47,6 +47,11 @@ SCIM_ROUTES = {
     ('PUT', '/scim/v2/Users/{id}'),
     ('PATCH', '/scim/v2/Users/{id}'),
     ('DELETE', '/scim/v2/Users/{id}'),
+    ('GET', '/scim/v2/Groups'),
+    ('GET', '/scim/v2/Groups/{id}'),
+    ('PATCH', '/scim/v2/Groups/{id}'),
+    ('POST', '/scim/v2/Groups'),
+    ('DELETE', '/scim/v2/Groups/{id}'),
 }
 
 
@@ -132,7 +137,9 @@ class UserGuideCheckTest(unittest.TestCase):
 
     def test_known_scim_names_pass(self):
         self.write_guide('\n`GET /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `PUT /scim/v2/Users/:id`, '
-                         '`DELETE /scim/v2/Users/{id}`, '
+                         '`DELETE /scim/v2/Users/{id}`, `GET /scim/v2/Groups`, `GET /scim/v2/Groups/{id}`, '
+                         '`PATCH /scim/v2/Groups/:id`, `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}`, '
+                         '`/scim/v2/Groups`, '
                          '`GET /scim/v2/ServiceProviderConfig`, `PUBLIC_BASE_URL/scim/v2`, `/scim/v2/Users`.\n')
         code, out = run(self.dir)
         self.assertEqual(code, 0, out)
@@ -141,11 +148,12 @@ class UserGuideCheckTest(unittest.TestCase):
         # DELETE is served on a single user (#504), never on the collection.
         self.assert_fails_naming('\n`DELETE /scim/v2/Users`\n', 'DELETE /scim/v2/Users', 'route')
 
-    def test_scim_groups_is_unknown_route(self):
-        self.assert_fails_naming('\n`GET /scim/v2/Groups`\n', 'GET /scim/v2/Groups', 'route')
+    def test_scim_groups_put_is_unknown_route(self):
+        # #506 serves the Groups, but PUT /Groups/{id} is not routed.
+        self.assert_fails_naming('\n`PUT /scim/v2/Groups/{id}`\n', 'PUT /scim/v2/Groups/{id}', 'route')
 
-    def test_scim_groups_is_unknown_path(self):
-        self.assert_fails_naming('\n`/scim/v2/Groups`\n', '/scim/v2/Groups', 'path')
+    def test_scim_bulk_is_unknown_path(self):
+        self.assert_fails_naming('\n`/scim/v2/Bulk`\n', '/scim/v2/Bulk', 'path')
 
     def test_scim_token_routes_are_not_scim_routes(self):
         self.assert_fails_naming('\n`GET /scim/v2/settings/scim/tokens`\n',

@@ -1487,6 +1487,27 @@ type FormSubmissionPurgeChunk struct {
 	Deliveries int64
 }
 
+// SCIMGroupMemberRepository is the membership of the SCIM 2.0 Groups
+// resource (#506): scim_group_members rows, one per (group value, user). The
+// group value is compared exactly (BINARY on SQLite, utf8mb4_bin on
+// MySQL/MariaDB). The group patch reads and writes it inside its governed
+// transaction, after the users and roles locks.
+type SCIMGroupMemberRepository interface {
+	// ListMemberIDs returns the user ids of every row of groupValue,
+	// ascending, visible or not.
+	ListMemberIDs(groupValue string) ([]uint, error)
+	// ListVisibleMembers returns, in one query, the visible members (live,
+	// not customer) of each value by value, id ascending.
+	ListVisibleMembers(groupValues []string) (map[string][]uint, error)
+	// GroupsOfUsers returns the group values of each user by user.
+	GroupsOfUsers(userIDs []uint) (map[uint][]string, error)
+	// Add inserts the pairs; an existing pair is kept (no error).
+	Add(groupValue string, userIDs []uint) error
+	// Remove deletes the pairs; a missing pair is no error.
+	Remove(groupValue string, userIDs []uint) error
+	WithTx(tx *gorm.DB) SCIMGroupMemberRepository
+}
+
 // SCIMUserRepository is the SCIM 2.0 Users resource (#469) and the email
 // check of its replace (#470). A visible user is a live users row (not soft-deleted, so never an erased
 // account) whose role is not customer. Lists are id ascending.

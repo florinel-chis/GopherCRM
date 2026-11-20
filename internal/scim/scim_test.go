@@ -24,8 +24,13 @@ func TestDiscoveryLocations(t *testing.T) {
 		assert.Equal(t, "https://crm.example.test/scim/v2/ServiceProviderConfig", NewServiceProviderConfig(base).Meta.Location, base)
 		assert.Equal(t, "https://crm.example.test/scim/v2/ResourceTypes/User", NewResourceTypes(base).Resources[0].Meta.Location, base)
 		assert.Equal(t, "https://crm.example.test/scim/v2/Schemas/"+UserSchema, NewSchemas(base).Resources[0].Meta.Location, base)
+		assert.Equal(t, "https://crm.example.test/scim/v2/ResourceTypes/Group", NewResourceTypes(base).Resources[1].Meta.Location, base)
+		assert.Equal(t, "https://crm.example.test/scim/v2/Schemas/"+GroupSchema, NewSchemas(base).Resources[1].Meta.Location, base)
 	}
 	assert.Equal(t, MaxResults, NewServiceProviderConfig("").Filter.MaxResults)
-	assert.Equal(t, 1, NewSchemas("").TotalResults)
+	assert.Equal(t, 2, NewSchemas("").TotalResults, "User and Group (#506)")
+	assert.Equal(t, 2, NewResourceTypes("").TotalResults, "User and Group (#506)")
+	assert.Equal(t, "/Groups", NewResourceTypes("").Resources[1].Endpoint)
+	assert.Equal(t, GroupSchema, NewResourceTypes("").Resources[1].Schema)
 	assert.Equal(t, 1, NewResourceTypes("").StartIndex)
 }

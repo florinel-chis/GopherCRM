@@ -10,8 +10,9 @@ package main
 // PUT /Users/:id, whose role comes from the roles mapping and whose audit
 // rows carry method scim. Issue #471 adds PATCH /Users/:id, whose active
 // false ends the sessions of the account. Issue #504 adds DELETE /Users/:id,
-// the same deactivation, never an erasure. Over a SQLite file opened by the
-// real connector.
+// the same deactivation, never an erasure. Issue #506 adds the Groups:
+// GET /Groups and /Groups/:id, PATCH /Groups/:id and the 405 of POST and
+// DELETE. Over a SQLite file opened by the real connector.
 
 import (
 	"bytes"
@@ -696,4 +697,127 @@ func TestSCIMUserDeleteWired(t *testing.T) {
 	recorder = scimWiredSend(router, http.MethodDelete, "/scim/v2/Users/999999", "", nextRemote(), scimToken)
 	assert.Equal(t, http.StatusNotFound, recorder.Code)
 	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, recorder.Body.String())
+}
+
+// TestSCIMGroupsWired: issue #506 through the production router. GET
+// /Groups and PATCH /Groups/:id sit behind the SCIM token authentication
+// (each refusal writes one scim audit row); with a valid token the list is
+// exactly the groups-claim values of the role mapping, a members add changes
+// the role, and POST and DELETE answer a SCIM 405.
+func TestSCIMGroupsWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	var adminRole, salesRole models.Role
+	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+		require.NoError(t, models.DB.Where("system_key = ?", "admin").First(&adminRole).Error)
+		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&salesRole).Error)
+		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"groups","value":"Admins","role_id":%d},{"claim":"groups","value":"Sales","role_id":%d},{"claim":"roles","value":"CRM.Sales","role_id":%d}]`,
+			adminRole.ID, salesRole.ID, salesRole.ID)
+	})
+	prefix := boot.cfg.API.Prefix
+	addr := 0
+	nextRemote := func() string {
+		addr++
+		return fmt.Sprintf("198.51.100.%d:1234", 10+addr)
+	}
+	const password = "Wired-Passw0rd!-0506"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	admin := &models.User{Email: "admin-0506@crm.example.test", Password: string(hash), FirstName: "Scim", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+admin.Email+`","password":"`+password+`"}`, nextRemote(), "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var login struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &login))
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"Entra"}`, nextRemote(), "Bearer "+login.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	scimToken := "Bearer " + created.Data.Token
+
+	member := &models.User{Email: "member-0506@crm.example.test", Password: "x", FirstName: "Group", LastName: "Member", Role: models.RoleSales, IsActive: true}
+	require.NoError(t, models.DB.Create(member).Error)
+	// base64url of "Admins" and of "Sales".
+	const adminsID, salesID = "QWRtaW5z", "U2FsZXM"
+	addBody := fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"value":"%d"}]}]}`, member.ID)
+
+	var lastID uint
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error)
+	for _, route := range []struct{ method, path, body string }{
+		{http.MethodGet, "/scim/v2/Groups", ""},
+		{http.MethodPatch, "/scim/v2/Groups/" + adminsID, addBody},
+	} {
+		for _, tc := range []struct{ name, authorization, reason string }{
+			{"no header", "", "token_missing"},
+			{"unknown token", "Bearer scim_" + strings.Repeat("ab", 32), "token_invalid"},
+		} {
+			t.Run(route.method+" "+tc.name, func(t *testing.T) {
+				recorder := scimWiredSend(router, route.method, route.path, route.body, nextRemote(), tc.authorization)
+				assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+				assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+				assert.Equal(t, scimWiredBody, recorder.Body.String())
+				var rows []models.AuthAuditLog
+				require.NoError(t, models.DB.Where("id > ?", lastID).Order("id").Find(&rows).Error)
+				require.Len(t, rows, 1, "exactly one audit row")
+				lastID = rows[0].ID
+				assert.Equal(t, "scim", rows[0].Method)
+				assert.Equal(t, "refused", rows[0].Outcome)
+				assert.Equal(t, tc.reason, rows[0].Reason)
+			})
+		}
+	}
+	var stored models.User
+	require.NoError(t, models.DB.First(&stored, member.ID).Error)
+	assert.Equal(t, models.RoleSales, stored.Role, "a refused patch changes nothing")
+
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/Groups", "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+	var list struct {
+		TotalResults int `json:"totalResults"`
+		Resources    []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
+		} `json:"Resources"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &list))
+	assert.Equal(t, 2, list.TotalResults)
+	require.Len(t, list.Resources, 2)
+	assert.Equal(t, []string{"Admins", "Sales"}, []string{list.Resources[0].DisplayName, list.Resources[1].DisplayName})
+	assert.Equal(t, []string{adminsID, salesID}, []string{list.Resources[0].ID, list.Resources[1].ID})
+
+	recorder = scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/"+adminsID, addBody, nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"members":[{"value":"%d"}]`, member.ID))
+	require.NoError(t, models.DB.First(&stored, member.ID).Error)
+	assert.Equal(t, models.RoleAdmin, stored.Role, "the add maps the groups claim")
+	var roleAudits []models.RoleAuditEntry
+	require.NoError(t, models.DB.Where("target_user_id = ?", member.ID).Find(&roleAudits).Error)
+	require.Len(t, roleAudits, 1)
+	assert.Equal(t, "scim", roleAudits[0].AuthMethod)
+	assert.Nil(t, roleAudits[0].ActorUserID)
+	var successes int64
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", member.ID).Count(&successes).Error)
+	assert.Equal(t, int64(1), successes)
+
+	for _, tc := range []struct{ method, path, allow string }{
+		{http.MethodPost, "/scim/v2/Groups", "GET"},
+		{http.MethodDelete, "/scim/v2/Groups/" + adminsID, "GET, PATCH"},
+	} {
+		recorder = scimWiredSend(router, tc.method, tc.path, `{"displayName":"New"}`, nextRemote(), scimToken)
+		assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code, tc.method)
+		assert.Equal(t, tc.allow, recorder.Header().Get("Allow"), tc.method)
+		assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"), tc.method)
+		assert.Contains(t, recorder.Body.String(), `"status":"405"`, tc.method)
+	}
+	recorder = scimWiredSend(router, http.MethodPut, "/scim/v2/Groups/"+adminsID, `{}`, nextRemote(), scimToken)
+	assert.Equal(t, http.StatusNotFound, recorder.Code, "PUT /Groups/:id is not routed")
 }

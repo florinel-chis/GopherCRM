@@ -1,7 +1,6 @@
 package scim
 
 import (
-	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -41,20 +40,7 @@ func ParseUserFilter(raw string) (string, error) {
 	if !asciiEqualFold(attr, "userName") {
 		return "", ErrInvalidFilter
 	}
-	op, value, ok := strings.Cut(strings.TrimLeft(rest, " "), " ")
-	if !ok || !asciiEqualFold(op, "eq") {
-		return "", ErrInvalidFilter
-	}
-	value = strings.TrimLeft(value, " ")
-	end := stringLiteralEnd(value)
-	if end < 0 || end != len(value) {
-		return "", ErrInvalidFilter
-	}
-	var decoded string
-	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
-		return "", ErrInvalidFilter
-	}
-	return decoded, nil
+	return parseEqStringLiteral(rest)
 }
 
 // stringLiteralEnd returns the length of the JSON string literal s starts

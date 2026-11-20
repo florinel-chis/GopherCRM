@@ -124,7 +124,7 @@ blocks a role or user delete.
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
 | actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
-| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) or a SCIM group patch that changes a member's role (#506) |
 | action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
@@ -997,7 +997,8 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 
 One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback,
 a refresh, a refused SCIM authentication (#468, one row each) or a successful SCIM user create,
-replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`); refused API keys are counted in one row per reason, `user_id`, client network and UTC
+replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`), or one
+such row per member a successful SCIM group patch added or removed (#506); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
@@ -1039,6 +1040,23 @@ the installation, not to a user), no `updated_at`, no soft delete. Migration
 | created_at | datetime(3) | No | - | Written in UTC |
 | last_used_at | datetime(3) | Yes | NULL | The last successful SCIM authentication, best-effort |
 | revoked_at | datetime(3) | Yes | NULL | Set once by a conditional `UPDATE ... WHERE revoked_at IS NULL`; a second revoke keeps it |
+
+### scim_group_members
+
+The members of the SCIM Groups (#506), one row per group and user. A group is a distinct value of
+the single sign-on role mapping's `groups` entries; the row holds that value exactly and the
+member's id, no name or address. No `updated_at`, no soft delete, and erasure keeps the rows (an
+erased or customer member is simply not served). A row outlives a mapping edit: it is matched
+against the mapping again only by that user's next group patch. Written and read only by
+`PATCH /scim/v2/Groups/{id}` inside its governed transaction; the OIDC sign-in does not read it.
+Migration `20261129120000_add_scim_group_members`; on SQLite AutoMigrate creates the same table.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at | datetime(3) | Yes | NULL | |
+| group_value | varchar(256) | No | - | The mapping value; `utf8mb4_bin` on MySQL/MariaDB (guarded by `ensureSCIMGroupMemberCollation`), so `Sales` and `sales` are two groups. The mapping validation trims values, so the PAD SPACE of the collation cannot merge two real values. Unique index `idx_scim_group_members_group_user (group_value, user_id)` |
+| user_id | bigint unsigned | No | - | Index `idx_scim_group_members_user_id`; FK `fk_scim_group_members_user` to `users.id` (ON DELETE RESTRICT) |
 
 ## APIKey Model
 

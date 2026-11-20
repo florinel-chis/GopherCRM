@@ -61,7 +61,10 @@ SCIM token can read, create, update and deactivate staff accounts, with the role
 single sign-on role mapping, so an account can exist before the person's first sign-in. When the
 provider deactivates an account, the person is signed out everywhere at once; reactivating it
 lets them sign in again, but not with the old sessions. A SCIM DELETE deactivates the account the
-same way: SCIM never erases accounts and does not manage groups: delete people in GopherCRM when their data must go. The provider's attribute
+same way: SCIM never erases accounts: delete people in GopherCRM when their data must go. The
+provider can also read the groups of the role mapping and change their members; a member change
+sets the person's role from their groups, and a change that would leave no active administrator is
+refused. Groups cannot be created, renamed or deleted through SCIM. The provider's attribute
 mappings must send only the user name, active state, given and family name, work email and roles;
 an update that also sends, for example, `externalId` or `displayName` is refused, so remove those
 mappings at the provider. An administrator creates the provider's SCIM token under Settings →

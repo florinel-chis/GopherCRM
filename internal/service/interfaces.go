@@ -792,6 +792,24 @@ type WebhookService interface {
 	RedeliverDelivery(ctx context.Context, id uint) (*models.WebhookDelivery, error)
 }
 
+// SCIMGroupService is the SCIM 2.0 Groups resource (#506). The groups are
+// the distinct groups-claim values of the effective single sign-on role
+// mapping; members are the visible users (live, not customer) of
+// scim_group_members.
+type SCIMGroupService interface {
+	// List returns one page, ascending by value. displayName nil lists every
+	// group; otherwise only the one whose value equals it byte for byte.
+	List(ctx context.Context, displayName *string, startIndex, count int) (*SCIMGroupPage, error)
+	// Get returns the group rawID names; an id that does not decode or names
+	// no current group is apperrors.ErrNotFound.
+	Get(ctx context.Context, rawID string) (*SCIMGroupRecord, error)
+	// Patch changes the group's members and, in the same governed
+	// transaction, recomputes each affected user's role from the groups
+	// claim. Refusals are ErrSCIMInvalidValue, ErrSCIMGroupLastAdmin or
+	// apperrors.ErrNotFound and write nothing.
+	Patch(ctx context.Context, rawID string, p SCIMGroupPatch) (*SCIMGroupRecord, error)
+}
+
 // SCIMUserService is the SCIM 2.0 Users resource: the read (#469) and the
 // create and replace (#470). The read
 // serves visible users only (live, not customer), judges a userName filter

@@ -44,7 +44,10 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   SCIM user patch (#471) and a deactivating replace take the RBAC order and then revoke the
   account's refresh tokens last, which keeps `users → refresh_tokens`. The SCIM user delete
   (#504) takes the admin set and the target's `users` row, no `roles`, then revokes the refresh
-  tokens: `admin set → users → refresh_tokens`, a prefix-compatible subsequence.
+  tokens: `admin set → users → refresh_tokens`, a prefix-compatible subsequence. The SCIM group
+  patch (#506) follows `admin set → users → roles → scim_group_members`, then writes its
+  `role_audit_log` rows; it reads the group's membership rows with a locking read right after the
+  admin set (see the flow below).
   The admin set is the `users` rows of the active admins, locked by primary key in id order; a
   role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
@@ -723,6 +726,37 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.
 - **Status:** implemented
 
+### SCIM group patch
+
+- **Rows locked:** `PATCH /scim/v2/Groups/{id}` (`scimGroupService.Patch`,
+  `internal/service/scim_group_writes.go`) locks the `users` rows of the active admins
+  (`LockActiveAdmins`) first, so two group patches that both reach the same admin wait for each
+  other. `LockActiveAdmins` discovers the admins with a consistent read, so on MySQL/MariaDB a
+  patch that waited for an admin a concurrent handover demoted no longer sees the new admin in
+  that set; the last-admin rule therefore also counts every affected user that the locking read
+  of `LockLiveByIDs` shows as an active admin, and refuses a result without one.
+  It then reads the group's `scim_group_members` rows with a locking read
+  (`SCIMGroupMemberRepository.ListMemberIDs` on a `FOR UPDATE` handle), so it sees what a group
+  patch committed while it waited for the admin set rather than its REPEATABLE READ snapshot;
+  every other group patch holds the admin set before it reaches those rows, so this read waits on
+  no one. It locks the `users` rows of the members it adds or removes and of every id an add or a
+  replace names (`LockLiveByIDs`), then the `roles` rows of their current custom roles and of the
+  mapped roles (`RoleRepository.LockByIDs`), then reads those users' other memberships with the
+  same locking read (`GroupsOfUsers`). It writes the membership rows (`Remove`, then `Add`), then,
+  per user whose role changes, the `users` row (`UpdateFields`) and its `role_audit_log` row.
+- **Order:** admin set → users → roles → scim_group_members → role_audit_log. The membership
+  inserts take the shared foreign-key lock on `users` rows the patch already holds.
+- **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
+  repositories; the membership rows, the role writes and their audit rows commit together or not
+  at all, and a refusal (an id that is no visible user, a mapping to a missing or customer role,
+  a result without an active admin) writes nothing. One successful `auth_audit_log` row per user
+  whose membership changed is written after the commit, on the root handle; a patch that changes
+  nothing writes none.
+- **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.
+  With no active admin the admin set locks nothing; two group patches can then deadlock on
+  membership rows and the loser is replayed.
+- **Status:** implemented
+
 ## How the #175 failure modes are avoided
 
 **Foreign-key-check lock inversion.** On InnoDB an insert or update of a child row whose foreign key
@@ -773,6 +807,7 @@ same on MySQL 8 and MariaDB 10.11.
 | OIDC sign-in | #435 | implemented |
 | SCIM user create and replace | #470 | implemented |
 | SCIM user patch | #471 | implemented |
+| SCIM group patch | #506 | implemented |
 
 C2 and C3 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
 #183 comment of 14 Nov 2026 (C2 session credentials, C3 reset and API-key issuance, C4 erasure

@@ -11,8 +11,9 @@ Fails when the committed API reference is stale or incomplete:
   routes       every route the router registers (read from source by
                scripts/ci/apiroutes) has an operation and every operation a
                route; GET /health and the SCIM routes outside the base path
-               (/scim/v2: the discovery documents and the Users read and
-               writes, patch and delete included, served to identity providers and described by their
+               (/scim/v2: the discovery documents, the Users read and
+               writes, patch and delete included, and the Groups read, patch
+               and 405s, served to identity providers and described by their
                own discovery documents) are the exclusions.
                An operation behind middleware.Auth declares exactly the two
                alternatives [{BearerAuth: []}, {ApiKeyAuth: []}] (no anonymous
@@ -65,7 +66,8 @@ METHODS = ('get', 'post', 'put', 'patch', 'delete', 'head', 'options')
 DEFINITION_PREFIXES = ('github_com_florinel-chis_gophercrm_internal_', 'internal_')
 # Routes outside the API base path that the reference deliberately omits:
 # the health probe and the SCIM 2.0 routes, the discovery documents (#468)
-# and the Users read (#469) and writes (#470, #471, #504), which SCIM clients use from
+# and the Users read (#469) and writes (#470, #471, #504) and the Groups read,
+# patch and 405s (#506), which SCIM clients use from
 # /scim/v2 under their own RFC 7643 schemas.
 EXCLUDED_ROUTES = {
     ('GET', '/health'),
@@ -78,6 +80,11 @@ EXCLUDED_ROUTES = {
     ('PUT', '/scim/v2/Users/{id}'),
     ('PATCH', '/scim/v2/Users/{id}'),
     ('DELETE', '/scim/v2/Users/{id}'),
+    ('GET', '/scim/v2/Groups'),
+    ('GET', '/scim/v2/Groups/{id}'),
+    ('PATCH', '/scim/v2/Groups/{id}'),
+    ('POST', '/scim/v2/Groups'),
+    ('DELETE', '/scim/v2/Groups/{id}'),
 }
 SECURITY_HEADER = 'Authorization'
 # Security scheme -> the Authorization scheme word middleware.Auth accepts.

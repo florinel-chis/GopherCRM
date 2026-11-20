@@ -371,7 +371,9 @@ Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` (`cmd`), `Tes
 auth checker), `TestSCIMTokenSchemaSQLite` (`internal/models`), and the migration roots
 `TestSCIMTokensMigrationFiles` (it held the newest-migration assertion from #468, moved from
 `TestAuthAuditLogAttemptsMigrationFiles`, until #503 moved it on to
-`TestWebhookSecretRotationMigrationFiles`) and `TestSCIMTokensMigration` (`cmd/migrate`), both
+`TestWebhookSecretRotationMigrationFiles`; the newest migration is now
+`20261129120000_add_scim_group_members`, whose `TestSCIMGroupMembersMigrationFiles` holds the
+assertion since #506) and `TestSCIMTokensMigration` (`cmd/migrate`), both
 required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
@@ -446,6 +448,33 @@ already inactive one commits nothing and records no audit row, the last active a
 auth checker; run the MySQL root on MariaDB too), `TestSCIMUserDeleteHandler`
 (`internal/handler`), `TestSCIMUserDeleteWired` (`cmd`) and `TestConcurrencyDocSCIMUserPatch`
 (`internal/config`). The rules are in [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504).
+
+**SCIM groups (#506)** — `GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/:id` and the 405 of
+`POST /Groups` and `DELETE /Groups/:id` are mounted by `SetupSCIMRoutes` from the
+`SCIMGroupHandler` (`internal/handler/scim_group_handler.go`; its patch error switch tests
+`ErrSCIMGroupLastAdmin`, answered 400 `mutability`, before `ErrSCIMInvalidValue`). The groups are
+the distinct `groups`-claim values of the effective role mapping (`internal/service/scim_groups.go`,
+`SCIMGroupService`); the id is `scim.GroupID` (unpadded base64url), and `internal/scim/groups.go`
+and `group_patch.go` hold the Group resource, `ParseGroupFilter` and `ParseGroupPatch`. Membership
+is the `scim_group_members` table (`models.SCIMGroupMember`, `ensureSCIMGroupMemberCollation`,
+`internal/repository/scim_group_member_repository.go`; migration
+`20261129120000_add_scim_group_members`). `scimGroupService.Patch`
+(`internal/service/scim_group_writes.go`) runs `admin set → users → roles → scim_group_members →
+role_audit_log` in `roleGovernance.run`; it reads the group's rows and the members' other groups
+with a `FOR UPDATE` handle so MySQL's REPEATABLE READ snapshot, taken before the admin-set wait,
+is not used. It recomputes each added or removed visible member's role with `oidcMatchRole(mapping,
+groups, nil)` and `scimMappedRole`, and refuses with `ErrSCIMGroupLastAdmin` (standalone, not an
+`ErrSCIMInvalidValue`) only when admins existed and none is left. Regression roots:
+`TestSCIMGroupsSQLite` and `TestSCIMGroupsMySQL` (`internal/service/auth_scim_groups_test.go`,
+discovered by the auth checker; run the MySQL root on MariaDB too; the `last_admin_race`
+subtests), `TestSCIMGroupHandler` and `TestSCIMDiscoveryDocuments` (`internal/handler`),
+`TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
+`TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
+(`internal/models`), `TestSCIMGroupsWired` (`cmd`), `TestConcurrencyDocSCIMGroupPatch`
+(`internal/config`), and `TestSCIMGroupMembersMigrationFiles` (the newest-migration assertion)
+and `TestSCIMGroupMembersMigration` (`cmd/migrate`), required by the migrations workflow,
+`scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`. The rules are in
+[AUTHORIZATION.md](AUTHORIZATION.md#groups-506).
 
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
@@ -2258,9 +2287,10 @@ covering MySQL and MariaDB behaviour of the handlers.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
   `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
   OpenID Connect start and callback included), the six `/forms/public` routes, the two
-  `/quotes/public/response` routes and `POST /quotes/public/render`, and the nine `/scim/v2` routes
-  (the discovery documents of #468, the Users read of #469, the Users create and replace of
-  #470, the Users patch of #471 and the Users delete of #504), 27 in all. A new route in neither
+  `/quotes/public/response` routes and `POST /quotes/public/render`, and the fourteen `/scim/v2`
+  routes (the discovery documents of #468, the Users read of #469, the Users create and replace
+  of #470, the Users patch of #471, the Users delete of #504 and the five Groups routes of #506),
+  32 in all. A new route in neither
   fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its
@@ -3670,7 +3700,9 @@ Signing-secret rotation (#503): `TestWebhookSecretRotation{SQLite,MySQL}`
 transaction; the backend job runs it with `TEST_MYSQL_DSN`), `TestWebhookSignature` (the
 two-secret subtest), `TestWebhookRotateSecretHandler` (`internal/handler`),
 `TestWebhookSecretRotationSQLiteUpgrade` (`internal/models`), and
-`TestWebhookSecretRotationMigrationFiles` (it holds the newest-migration assertion since #503) and
+`TestWebhookSecretRotationMigrationFiles` (it held the newest-migration assertion from #503 until
+#505 moved it to `TestUserIdentitySourceMigrationFiles`; #506 moved it on to
+`TestSCIMGroupMembersMigrationFiles`) and
 `TestWebhookSecretRotationMigration` (`cmd/migrate`); the migration and SQLite-upgrade roots are
 required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`.

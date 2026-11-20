@@ -599,7 +599,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
-	// SCIM 2.0 provider (#468, #469, #470, #471, #504) on /scim/v2, outside the API prefix: the strict
+	// SCIM 2.0 provider (#468, #469, #470, #471, #504, #506) on /scim/v2, outside the API prefix: the strict
 	// tier first, so a throttled request writes no audit row, then the SCIM
 	// token authentication, which records every refusal with method scim.
 	scimTokenService := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), cfg.API.APIKeySecret)
@@ -614,8 +614,14 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	scimUserService := service.NewSCIMUserService(repository.NewSCIMUserRepository(models.DB), ssoSettings,
 		service.WithSCIMUserWrites(userRepo, roleRepo, roleAuditRepo, repository.NewUserIdentityRepository(models.DB), refreshTokenRepo,
 			txManager, authAudit))
+	// The Groups (#506) are the groups-claim values of the role mapping; a
+	// members patch recomputes the affected users' roles from the groups
+	// claim in one governed transaction, with the same audit rows.
+	scimGroupService := service.NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(models.DB), ssoSettings,
+		service.WithSCIMGroupWrites(userRepo, roleRepo, roleAuditRepo, txManager, authAudit))
 	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL),
-		handler.NewSCIMUserHandler(scimUserService, cfg.Forms.PublicBaseURL))
+		handler.NewSCIMUserHandler(scimUserService, cfg.Forms.PublicBaseURL),
+		handler.NewSCIMGroupHandler(scimGroupService, cfg.Forms.PublicBaseURL))
 
 	// Protected routes: moderate rate limiting charged before authentication (#466)
 	protected := router.Group("")
