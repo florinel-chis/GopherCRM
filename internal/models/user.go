@@ -73,8 +73,8 @@ type User struct {
 	LockedUntil *time.Time `json:"locked_until,omitempty" example:"2026-10-30T08:30:00Z" readonly:"true"`
 	// TokenVersion is the session generation of the account (#236). Every access
 	// JWT carries it as the token_version claim, and a token whose claim differs
-	// from the stored value is refused. Logout, a password change and a password
-	// reset increment it, which ends every access token issued before them.
+	// from the stored value is refused. Logout, a password change, a password reset
+	// and a SCIM deactivation (#471) increment it, ending every earlier access token.
 	// Server-maintained and never serialised.
 	TokenVersion uint `gorm:"not null;default:0" json:"-"`
 

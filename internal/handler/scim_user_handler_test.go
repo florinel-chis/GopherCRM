@@ -27,6 +27,7 @@ type stubSCIMUsers struct {
 	listCalls    []stubSCIMListCall
 	createCalls  []service.SCIMUserInput
 	replaceCalls []stubSCIMReplaceCall
+	patchCalls   []stubSCIMPatchCall
 	record       *service.SCIMUserRecord
 	page         *service.SCIMUserPage
 	err          error
@@ -50,6 +51,16 @@ func (s *stubSCIMUsers) Create(_ context.Context, in service.SCIMUserInput) (*se
 func (s *stubSCIMUsers) Replace(_ context.Context, rawID string, in service.SCIMUserInput) (*service.SCIMUserRecord, error) {
 	s.replaceCalls = append(s.replaceCalls, stubSCIMReplaceCall{rawID, in})
 	return s.record, s.err
+}
+
+func (s *stubSCIMUsers) Patch(_ context.Context, rawID string, p service.SCIMUserPatch) (*service.SCIMUserRecord, error) {
+	s.patchCalls = append(s.patchCalls, stubSCIMPatchCall{rawID, p})
+	return s.record, s.err
+}
+
+type stubSCIMPatchCall struct {
+	rawID string
+	patch service.SCIMUserPatch
 }
 
 type stubSCIMReplaceCall struct {
@@ -320,6 +331,135 @@ func TestSCIMUserWriteHandler(t *testing.T) {
 				assert.NotContains(t, w.Body.String(), secretSub, tc.name)
 				assert.Empty(t, w.Header().Get("Location"), tc.name)
 			}
+		}
+	})
+}
+
+// TestSCIMUserPatchHandler (#471): PATCH /scim/v2/Users/:id answers each
+// parse refusal with 400, its scimType and a fixed detail that echoes nothing
+// of the request, without calling the service; a parsed patch reaches the
+// service and answers 200 with the resource; service refusals map as for a
+// replace.
+func TestSCIMUserPatchHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const base = "https://crm.example.test"
+	const secret = "secret-471"
+	setup := func(stub *stubSCIMUsers) *gin.Engine {
+		router := gin.New()
+		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		return router
+	}
+	send := func(router *gin.Engine, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/9", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/scim+json")
+		router.ServeHTTP(w, request)
+		return w
+	}
+	user := models.User{Email: "jane@x.test", FirstName: "Jane", LastName: "Doe"}
+	user.ID = 9
+	user.CreatedAt = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	user.UpdatedAt = user.CreatedAt
+
+	t.Run("entra deactivation answers 200", func(t *testing.T) {
+		stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+		w := send(setup(stub), `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Replace","path":"active","value":"False"}]}`)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+		assert.Equal(t, "9", doc["id"])
+		assert.Equal(t, false, doc["active"])
+		require.Len(t, stub.patchCalls, 1)
+		assert.Equal(t, "9", stub.patchCalls[0].rawID)
+		inactive := false
+		assert.Equal(t, service.SCIMUserPatch{Active: &inactive}, stub.patchCalls[0].patch)
+	})
+
+	t.Run("parse refusals", func(t *testing.T) {
+		oversized := `{"Operations":[{"op":"replace","path":"userName","value":"` + secret + strings.Repeat("a", 64<<10) + `"}]}`
+		for _, tc := range []struct {
+			name, body, scimType, detail string
+		}{
+			{"malformed", `{"Operations":[{"op":"replace","path":"` + secret, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"array", `[{"op":"replace"}]`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"empty", ``, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"trailing data", `{"Operations":[{"op":"replace","path":"active","value":true}]} {}`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"over 64 KiB", oversized, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"empty Operations", `{"Operations":[]}`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"unknown op", `{"Operations":[{"op":"` + secret + `","path":"active","value":true}]}`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
+			{"externalId", `{"Operations":[{"op":"replace","path":"externalId","value":"` + secret + `"}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"displayName", `{"Operations":[{"op":"replace","value":{"displayName":"` + secret + `"}}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"name.formatted", `{"Operations":[{"op":"replace","path":"name.formatted","value":"` + secret + `"}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"unknown path", `{"Operations":[{"op":"replace","path":"` + secret + `","value":true}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"remove without path", `{"Operations":[{"op":"remove","value":{"active":"` + secret + `"}}]}`, "noTarget", "A remove operation needs a path"},
+			{"active yes", `{"Operations":[{"op":"replace","path":"active","value":"yes"}]}`, "invalidValue", "A User attribute is missing or invalid"},
+			{"active null", `{"Operations":[{"op":"replace","path":"active","value":null}]}`, "invalidValue", "A User attribute is missing or invalid"},
+			{"active secret", `{"Operations":[{"op":"replace","path":"active","value":"` + secret + `"}]}`, "invalidValue", "A User attribute is missing or invalid"},
+			{"remove roles", `{"Operations":[{"op":"remove","path":"roles"}]}`, "invalidValue", "A User attribute is missing or invalid"},
+		} {
+			stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+			w := send(setup(stub), tc.body)
+			require.Equal(t, http.StatusBadRequest, w.Code, "%s: %s", tc.name, w.Body.String())
+			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"), tc.name)
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), tc.name)
+			assert.Equal(t, tc.scimType, doc["scimType"], tc.name)
+			assert.Equal(t, tc.detail, doc["detail"], tc.name)
+			assert.Equal(t, "400", doc["status"], tc.name)
+			assert.Empty(t, stub.patchCalls, "%s: the service is not called", tc.name)
+			assert.NotContains(t, w.Body.String(), secret, tc.name)
+			assert.NotContains(t, w.Body.String(), "externalId", tc.name)
+			assert.NotContains(t, w.Body.String(), "displayName", tc.name)
+			assert.NotContains(t, w.Body.String(), "formatted", tc.name)
+		}
+	})
+
+	t.Run("accepted forms", func(t *testing.T) {
+		for name, body := range map[string]string{
+			"TRUE":      `{"Operations":[{"op":"replace","path":"active","value":"TRUE"}]}`,
+			"False":     `{"Operations":[{"op":"Replace","path":"active","value":"False"}]}`,
+			"okta":      `{"Operations":[{"op":"replace","value":{"active":true}}]}`,
+			"name":      `{"Operations":[{"op":"Add","value":{"name.givenName":"Ann"}}]}`,
+			"emails":    `{"Operations":[{"op":"replace","path":"emails[type eq \"work\"].value","value":"a@x.test"}]}`,
+			"roles":     `{"Operations":[{"op":"replace","path":"roles","value":[{"value":"CRM.Sales"}]}]}`,
+			"remove fn": `{"Operations":[{"op":"remove","path":"name.familyName"}]}`,
+		} {
+			stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+			w := send(setup(stub), body)
+			require.Equal(t, http.StatusOK, w.Code, "%s: %s", name, w.Body.String())
+			assert.Len(t, stub.patchCalls, 1, name)
+		}
+	})
+
+	t.Run("service refusals", func(t *testing.T) {
+		valid := `{"Operations":[{"op":"replace","path":"userName","value":"` + secret + `@x.test"}]}`
+		for _, tc := range []struct {
+			name     string
+			err      error
+			status   int
+			scimType string
+			detail   string
+		}{
+			{"invalid value", fmt.Errorf("x: %w", service.ErrSCIMInvalidValue), http.StatusBadRequest, "invalidValue", "A User attribute is missing or invalid"},
+			{"last admin", fmt.Errorf("x: %w", service.ErrSCIMLastAdmin), http.StatusBadRequest, "invalidValue", "The last active admin must stay an active admin"},
+			{"uniqueness", fmt.Errorf("x: %w", service.ErrSCIMUniqueness), http.StatusConflict, "uniqueness", "The userName or externalId is already in use"},
+			{"not found", fmt.Errorf("x: %w", apperrors.ErrNotFound), http.StatusNotFound, "", "User not found"},
+			{"anything else", errors.New(secret), http.StatusInternalServerError, "", "Internal server error"},
+		} {
+			stub := &stubSCIMUsers{err: tc.err}
+			w := send(setup(stub), valid)
+			require.Equal(t, tc.status, w.Code, "%s: %s", tc.name, w.Body.String())
+			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+			if tc.scimType == "" {
+				assert.NotContains(t, doc, "scimType", tc.name)
+			} else {
+				assert.Equal(t, tc.scimType, doc["scimType"], tc.name)
+			}
+			assert.Equal(t, tc.detail, doc["detail"], tc.name)
+			assert.NotContains(t, w.Body.String(), secret, tc.name)
 		}
 	})
 }

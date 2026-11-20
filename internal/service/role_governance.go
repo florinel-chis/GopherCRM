@@ -252,7 +252,7 @@ func (a governedActor) requireKeys(keys ...string) error {
 
 // record appends the audit row of a change, in the transaction of the change.
 // before and after are marshalled to JSON; nil is stored as NULL. An actor id
-// of 0 (a SCIM write, #470) stores actor_user_id NULL.
+// of 0 (a SCIM write, #470 and #471) stores actor_user_id NULL.
 func (tx *governedTx) record(actor Actor, action models.RoleAuditAction, roleID *uint, roleName string, targetUserID *uint, before, after interface{}) error {
 	entry := &models.RoleAuditEntry{
 		AuthMethod:   actor.AuthMethod,

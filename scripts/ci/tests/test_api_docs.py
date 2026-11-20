@@ -99,7 +99,7 @@ ROUTES = [
     {'method': 'POST', 'path': '/widgets/confirm', 'base': True, 'auth': False, 'responses': [429]},
 ] + [
     # The exclusions outside the base path: /health and the SCIM routes (the
-    # discovery documents and the Users read and writes).
+    # discovery documents and the Users read and writes, patch included).
     {'method': method, 'path': path, 'base': False, 'auth': False, 'responses': []}
     for method, path in sorted(gate.EXCLUDED_ROUTES)
 ]

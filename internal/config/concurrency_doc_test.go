@@ -47,6 +47,7 @@ var concurrencyDocFlowsInOrder = []string{
 	"RBAC user-role and role writes",
 	"OIDC sign-in",
 	"SCIM user create and replace",
+	"SCIM user patch",
 }
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
@@ -70,6 +71,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"RBAC user-role and role writes": "implemented",
 	"OIDC sign-in":                   "implemented",
 	"SCIM user create and replace":   "implemented",
+	"SCIM user patch":                "implemented",
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
@@ -89,6 +91,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"OIDC sign-in": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #470: the SCIM user create and replace are governed writes.
 	"SCIM user create and replace": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #471: the SCIM user patch is a governed write.
+	"SCIM user patch": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #385: every erasure root is one replayed transaction (a const block).
 	"User-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
 	"Customer-rooted erasure": {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
@@ -118,6 +122,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"RBAC user-role and role writes": "#348",
 	"OIDC sign-in":                   "#435",
 	"SCIM user create and replace":   "#470",
+	"SCIM user patch":                "#471",
 }
 
 type concurrencyDocSection struct {
@@ -1313,4 +1318,25 @@ func TestConcurrencyDocSCIMUserWrites(t *testing.T) {
 	replace := concurrencyDocFuncBody(t, file, "func (s *scimUserService) Replace(")
 	inOrder(replace, "governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockUsers(",
 		"tx.lockRoles(", "EmailTakenByOther(", "tx.users.UpdateFields(", "tx.record(", "s.writes.recordSuccess(")
+}
+
+// TestConcurrencyDocSCIMUserPatch pins the SCIM user patch flow (#471): the
+// documented order and, in Patch, the locks before the users write, the
+// revocation of the refresh tokens after it and the sign-in audit row after
+// the commit.
+func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Order"]),
+		"admin set → users → roles → refresh_tokens")
+
+	body := concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Patch(")
+	last := -1
+	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
+		"tx.users.UpdateFields(", "RevokeAllForUser(", "s.writes.recordSuccess("} {
+		at := strings.Index(body, statement)
+		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+			assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+			last = at
+		}
+	}
 }

@@ -29,8 +29,8 @@ const (
 	// sign-in (#435), whose mapped role is applied by the sign-in itself.
 	AuthMethodOIDC = "oidc"
 	// AuthMethodSCIM is recorded on the role audit row of a SCIM 2.0 user
-	// create or replace (#470), with actor_user_id NULL: the provisioning
-	// client is no user.
+	// create, replace or patch (#470, #471), with actor_user_id NULL: the
+	// provisioning client is no user.
 	AuthMethodSCIM = "scim"
 )
 
@@ -797,4 +797,8 @@ type SCIMUserService interface {
 	// the visible user rawID names (#470); an unknown id is
 	// apperrors.ErrNotFound.
 	Replace(ctx context.Context, rawID string, in SCIMUserInput) (*SCIMUserRecord, error)
+	// Patch applies a SCIM PatchOp to the visible user rawID names (#471);
+	// active false also ends every session of the account. Refusals are those
+	// of Replace and write nothing.
+	Patch(ctx context.Context, rawID string, p SCIMUserPatch) (*SCIMUserRecord, error)
 }

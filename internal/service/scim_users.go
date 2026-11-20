@@ -34,7 +34,7 @@ type SCIMUserPage struct {
 type scimUserService struct {
 	repo    repository.SCIMUserRepository
 	issuers SCIMIssuerSource
-	// writes is the create and replace half (#470); nil without
+	// writes is the create, replace and patch half (#470, #471); nil without
 	// WithSCIMUserWrites.
 	writes *scimUserWrites
 }
@@ -43,7 +43,7 @@ type scimUserService struct {
 type SCIMUserServiceOption func(*scimUserService)
 
 // NewSCIMUserService builds the SCIM Users read (#469) over the repository
-// and the issuer source. The create and replace (#470) need
+// and the issuer source. The create, replace and patch (#470, #471) need
 // WithSCIMUserWrites; without it they answer a wiring error.
 func NewSCIMUserService(repo repository.SCIMUserRepository, issuers SCIMIssuerSource, opts ...SCIMUserServiceOption) SCIMUserService {
 	s := &scimUserService{repo: repo, issuers: issuers}

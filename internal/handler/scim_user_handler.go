@@ -26,17 +26,21 @@ const (
 	scimInvalidValueDetail      = "A User attribute is missing or invalid"
 	scimLastAdminDetail         = "The last active admin must stay an active admin"
 	scimUniquenessDetail        = "The userName or externalId is already in use"
+	scimInvalidPatchDetail      = "The request body is not a valid SCIM PatchOp"
+	scimInvalidPathDetail       = "The patch names an attribute this provider does not support"
+	scimNoTargetDetail          = "A remove operation needs a path"
 )
 
-// scimUserBodyMaxBytes bounds a create or replace body.
+// scimUserBodyMaxBytes bounds a create, replace or patch body.
 const scimUserBodyMaxBytes = 64 << 10
 
 // SCIMUserHandler serves the SCIM 2.0 Users resource: the read (#469),
 // GET /scim/v2/Users/:id and GET /scim/v2/Users with startIndex/count paging
 // and the one filter userName eq "<value>" (attributes and
-// excludedAttributes are ignored), and the create and replace (#470), POST
-// /scim/v2/Users and PUT /scim/v2/Users/:id. Not part of the OpenAPI
-// document: /scim/v2 lies outside the API base path.
+// excludedAttributes are ignored), the create and replace (#470), POST
+// /scim/v2/Users and PUT /scim/v2/Users/:id, and the patch (#471), PATCH
+// /scim/v2/Users/:id. Not part of the OpenAPI document: /scim/v2 lies outside
+// the API base path.
 type SCIMUserHandler struct {
 	users         service.SCIMUserService
 	publicBaseURL string
@@ -127,6 +131,40 @@ func (h *SCIMUserHandler) Replace(c *gin.Context) {
 	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
 }
 
+// Patch answers PATCH /scim/v2/Users/:id: 200 with the patched resource.
+func (h *SCIMUserHandler) Patch(c *gin.Context) {
+	raw, ok := readSCIMObject(c)
+	if !ok {
+		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidPatchDetail)
+		return
+	}
+	patch, err := scim.ParseUserPatch(raw)
+	if err != nil {
+		var patchErr *scim.PatchError
+		if !errors.As(err, &patchErr) {
+			h.fail(c, err)
+			return
+		}
+		detail := scimInvalidPatchDetail
+		switch patchErr.ScimType {
+		case scim.ScimTypeInvalidPath:
+			detail = scimInvalidPathDetail
+		case scim.ScimTypeNoTarget:
+			detail = scimNoTargetDetail
+		case scim.ScimTypeInvalidValue:
+			detail = scimInvalidValueDetail
+		}
+		scim.WriteErrorType(c, http.StatusBadRequest, patchErr.ScimType, detail)
+		return
+	}
+	record, err := h.users.Patch(scimWriteContext(c), c.Param("id"), patch)
+	if err != nil {
+		h.failWrite(c, err)
+		return
+	}
+	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
+}
+
 // scimWriteContext carries the request id and the client facts the sign-in
 // audit row is written with, as middleware.SCIMAuth builds them.
 func scimWriteContext(c *gin.Context) context.Context {
@@ -150,25 +188,36 @@ type scimUserBody struct {
 	} `json:"roles"`
 }
 
-// readSCIMUserBody reads one JSON object of at most scimUserBodyMaxBytes,
-// whatever the Content-Type. Anything else (an oversized body, another JSON
-// value, trailing data, a known attribute of the wrong type, a roles entry
-// without a string value) answers 400 invalidSyntax and reports false.
+// readSCIMObject reads one JSON object of at most scimUserBodyMaxBytes,
+// whatever the Content-Type, and reports false for anything else: an
+// oversized body, another JSON value or trailing data.
+func readSCIMObject(c *gin.Context) (json.RawMessage, bool) {
+	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, scimUserBodyMaxBytes))
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, false
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, false
+	}
+	if trimmed := bytes.TrimLeft(raw, " \t\r\n"); len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, false
+	}
+	return raw, true
+}
+
+// readSCIMUserBody reads the body of a create or replace through
+// readSCIMObject. Anything else (what readSCIMObject refuses, a known
+// attribute of the wrong type, a roles entry without a string value) answers
+// 400 invalidSyntax and reports false.
 func readSCIMUserBody(c *gin.Context) (service.SCIMUserInput, bool) {
 	var in service.SCIMUserInput
 	invalid := func() (service.SCIMUserInput, bool) {
 		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidSyntaxDetail)
 		return service.SCIMUserInput{}, false
 	}
-	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, scimUserBodyMaxBytes))
-	var raw json.RawMessage
-	if err := decoder.Decode(&raw); err != nil {
-		return invalid()
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return invalid()
-	}
-	if trimmed := bytes.TrimLeft(raw, " \t\r\n"); len(trimmed) == 0 || trimmed[0] != '{' {
+	raw, ok := readSCIMObject(c)
+	if !ok {
 		return invalid()
 	}
 	var body scimUserBody
@@ -215,7 +264,7 @@ func (h *SCIMUserHandler) writeStatus(c *gin.Context, status int, document any) 
 	c.Data(status, scim.ContentType, body)
 }
 
-// failWrite maps the refusals of a create or replace; anything else goes to
+// failWrite maps the refusals of a create, replace or patch; anything else goes to
 // fail. No answer echoes a request value.
 func (h *SCIMUserHandler) failWrite(c *gin.Context, err error) {
 	switch {

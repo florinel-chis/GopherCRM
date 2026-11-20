@@ -1308,14 +1308,16 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   still write one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
 
-## SCIM 2.0 provider (FEATURES 1.15 to 1.17)
+## SCIM 2.0 provider (FEATURES 1.15 to 1.18)
 
 `/scim/v2` is served outside the API prefix to identity providers. #468 covers the provider
 tokens, the SCIM authentication and the three discovery documents; #469 the read of the Users
 resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /scim/v2/Users/{id}`);
 #470 the create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`, TC-AUTH-075 to
-TC-AUTH-080). Patch and delete, `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
-SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
+TC-AUTH-080); #471 the patch (`PATCH /scim/v2/Users/{id}`, TC-AUTH-081 to TC-AUTH-085), whose
+`active` false, like a PUT with `"active":false`, ends the account's sessions at once. Delete,
+`/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are
+later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
 
 ### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
@@ -1541,14 +1543,16 @@ SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* 
 - **Steps:**
   1. `PUT /scim/v2/Users/<sales id>` with a new name, a new email and roles mapped to support.
   2. `PUT` the support account keeping its role, without `name`.
-  3. `PUT` with `"active":false`.
+  3. Sign the sales account in twice, then `PUT` it with `"active":false`.
   4. `PUT` to an unknown, the erased, the customer id and `abc`.
   5. `PUT` with `userName` `ann@x.test`.
 - **Expected:** Step 1: 200; the row holds the new names, email and role `support`; one
   `role_audit_log` row (`auth_method` `scim`, `actor_user_id` NULL, before `{role: sales}`, after
   `{role: support}`) and one `auth_audit_log` success row; `externalId` stays `sub-sam` (an
   `externalId` in the body is ignored). Step 2: no `role_audit_log` row, one `auth_audit_log` row, names cleared. Step 3:
-  `is_active` false. Step 4: 404 `User not found`. Step 5: 409 `uniqueness`, nothing written.
+  `is_active` false, `token_version` one higher and both `refresh_tokens` rows revoked in the
+  same transaction (#471); after a reactivating `PUT` the earlier access and refresh tokens are
+  still refused. Step 4: 404 `User not found`. Step 5: 409 `uniqueness`, nothing written.
 - **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`replace changes role`, `replace keeps role`, `replace deactivates`, `replace not visible`, `replace email taken`), `TestSCIMUserWritesWired`
 
 ### TC-AUTH-079 — SCIM cannot demote or deactivate the last active admin
@@ -1572,3 +1576,74 @@ SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* 
 - **Expected:** The sign-in returns tokens for the SCIM-created user id; the users and
   `user_identities` row counts are unchanged.
 - **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`sign-in reuses account`)
+
+### TC-AUTH-081 — A SCIM patch in Entra ID's form deactivates an account
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A sales account that has signed in with its password.
+- **Steps:**
+  1. `PATCH /scim/v2/Users/<id>` with
+     `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Replace","path":"active","value":"False"}]}`.
+- **Expected:** 200 `application/scim+json` with `active` false; the row is inactive, its other
+  columns unchanged; no `role_audit_log` row and one `auth_audit_log` row (method `scim`, outcome
+  `success`, the account's `user_id`).
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`entra deactivate`), `TestSCIMUserPatchHandler`, `TestSCIMUserPatchWired`
+
+### TC-AUTH-082 — A SCIM patch in Okta's path-less form deactivates and reactivates
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A support account that has signed in.
+- **Steps:**
+  1. `PATCH` with `{"Operations":[{"op":"replace","value":{"active":false}}]}`.
+  2. `PATCH` the now inactive account with `"active":false` again.
+  3. `PATCH` with `{"Operations":[{"op":"replace","value":{"active":true}}]}`.
+- **Expected:** Steps 1 and 3: 200 with `active` false, then true. Each `active` false moves
+  `token_version` up by one (also on the already inactive row); `active` true does not.
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`okta deactivate`, `reactivate`), `TestSCIMUserPatchWired`
+
+### TC-AUTH-083 — A SCIM deactivation ends every session at once; reactivation brings none back
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A sales account with a password, signed in twice (two access and two
+  refresh tokens).
+- **Steps:**
+  1. `PATCH` `active` false.
+  2. Before any refresh call, read the account's `refresh_tokens` rows and `token_version`.
+  3. `GET /users/me` with the first access token; `POST /auth/refresh` with the first refresh
+     token.
+  4. `PATCH` `active` true; repeat step 3 with the first access token and the second refresh
+     token; sign in again.
+- **Expected:** Step 2: every row is revoked and `token_version` is one higher. Step 3: both 401.
+  Step 4: the old access token and the unused refresh token stay 401 (the account is active, so
+  only the generation refuses the access token); the new sign-in succeeds and its tokens work.
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`sessions end`, `reactivate`), `TestSCIMUserWrites{SQLite,MySQL}` (`replace deactivates`), `TestSCIMUserPatchWired`
+
+### TC-AUTH-084 — A SCIM patch outside the supported paths is refused and writes nothing
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** A sales account.
+- **Steps:**
+  1. `PATCH` with path `externalId`, `displayName` or `name.formatted`, and path-less with
+     `{"value":{"active":true,"externalId":"x"}}`.
+  2. `PATCH` with `{"op":"remove"}` and no path.
+  3. `PATCH` with `{"Operations":[]}`, and with an `op` of `move`.
+  4. `PATCH` `active` with `"yes"` or `null`, and `remove` of `active`, `userName`, `emails` or
+     `roles`.
+- **Expected:** Step 1: 400 `invalidPath`; step 2: 400 `noTarget`; step 3: 400 `invalidSyntax`;
+  step 4: 400 `invalidValue`. Each detail is fixed and echoes no path or value; the service is not
+  called and nothing is written.
+- **Automation:** automated — Go: `TestParsePatch`, `TestSCIMUserPatchHandler`, `TestSCIMUserPatch{SQLite,MySQL}` (`refusals write nothing`)
+
+### TC-AUTH-085 — A SCIM patch cannot demote or deactivate the last active admin
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** Exactly one active admin, signed in once.
+- **Steps:**
+  1. `PATCH` with path `active` and `"False"`.
+  2. `PATCH` path-less with `{"value":{"active":false}}`.
+  3. `PATCH` `roles` mapped to sales.
+- **Expected:** Each answers 400 `invalidValue` with the detail "The last active admin must stay an
+  active admin"; the account stays an active admin, its `token_version` and refresh tokens are
+  unchanged, and no `role_audit_log` or `auth_audit_log` row is written. With a second active
+  admin the same deactivation succeeds.
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`last admin`)

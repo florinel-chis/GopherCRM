@@ -40,7 +40,9 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   inversion of the reset request's order (see both flows).
 - `admin set → users (id ascending) → roles (id ascending)` (#259, implemented by #348) for every governed user write and, without the admin set, every role write.
   The OIDC sign-in (#435) continues the chain: `admin set → users → roles → user_identities → refresh_tokens`.
-  The SCIM user create and replace (#470) follow `admin set → users → roles → user_identities`.
+  The SCIM user create and replace (#470) follow `admin set → users → roles → user_identities`; the
+  SCIM user patch (#471) and a deactivating replace take the RBAC order and then revoke the
+  account's refresh tokens last, which keeps `users → refresh_tokens`.
   The admin set is the `users` rows of the active admins, locked by primary key in id order; a
   role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
@@ -654,17 +656,43 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   set, the target's `users` row (`LockLiveByIDs`) and the `roles` rows of the target's current
   custom role and of the mapped role, reads whether another user holds a changed address
   (`SCIMUserRepository.EmailTakenByOther`, plain), then writes the `users` columns and, on a role
-  change, the audit row. It touches no `user_identities` row.
+  change, the audit row. It touches no `user_identities` row. A replace with `active` false (#471)
+  also writes `token_version` in the same `users` write and then revokes every `refresh_tokens`
+  row of the account (`RefreshTokenRepository.RevokeAllForUser`), after the `users` write.
 - **Order:** admin set → users → roles → user_identities, the OIDC sign-in's order without its
-  `refresh_tokens` step. A create locks no existing `users` row: its new row and its identity row
-  are inserts, and a competing create of the same address or identity, or a first OIDC sign-in,
-  loses on the unique index and rolls back whole (409).
+  `refresh_tokens` step; a deactivating replace takes `refresh_tokens` last instead of
+  `user_identities` (see the SCIM user patch). A create locks no existing `users` row: its new row
+  and its identity row are inserts, and a competing create of the same address or identity, or a
+  first OIDC sign-in, loses on the unique index and rolls back whole (409).
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
   repositories; the user, its identity and the audit row commit together or not at all. The
   successful `auth_audit_log` row is written after the commit, on the root handle, as its own
   `INSERT`.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write; a
   replayed attempt inserts fresh rows.
+- **Status:** implemented
+
+### SCIM user patch
+
+- **Rows locked:** `PATCH /scim/v2/Users/{id}` (`scimUserService.Patch`,
+  `internal/service/scim_user_writes.go`) locks the `users` rows of the active admins
+  (`LockActiveAdmins`), the target's `users` row (`LockLiveByIDs`) and the `roles` rows of the
+  target's current custom role and, when the patch sets `roles`, of the mapped role
+  (`RoleRepository.LockByIDs`). The patch is applied to the locked row. A changed address is
+  checked with a plain read (`SCIMUserRepository.EmailTakenByOther`); then the touched `users`
+  columns are written in one `UPDATE`, which on `active` false also sets `token_version` to the
+  locked value plus one, then every `refresh_tokens` row of the account is revoked
+  (`RefreshTokenRepository.RevokeAllForUser`, only on `active` false), then, on a role change,
+  the `role_audit_log` row is inserted. It touches no `user_identities` row.
+- **Order:** admin set → users → roles → refresh_tokens. The `users` row comes before its
+  `refresh_tokens` rows, as in refresh rotation, logout and password change, so a competing
+  refresh waits on the `users` row and then finds its token revoked.
+- **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
+  repositories; the `users` write, the revocation and the audit row commit together or not at
+  all, and a refusal (the last-admin rule, a taken address, an unmapped role, a failed
+  revocation) writes nothing. The successful `auth_audit_log` row is written after the commit, on
+  the root handle, as its own `INSERT`.
+- **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.
 - **Status:** implemented
 
 ## How the #175 failure modes are avoided
@@ -716,6 +744,7 @@ same on MySQL 8 and MariaDB 10.11.
 | RBAC user-role and role writes | #348 | implemented |
 | OIDC sign-in | #435 | implemented |
 | SCIM user create and replace | #470 | implemented |
+| SCIM user patch | #471 | implemented |
 
 C2 and C3 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
 #183 comment of 14 Nov 2026 (C2 session credentials, C3 reset and API-key issuance, C4 erasure
