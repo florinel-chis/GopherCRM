@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Administrator guide (#447).** `docs/user-guide/permissions-access/` holds five pages on roles,
+  permissions and single sign-on: an overview, roles and permissions (the system roles per
+  permission group, custom roles, assigning roles, API keys, the last-admin and escalation rules,
+  the role audit trail), single sign-on (OpenID Connect sign-in, the settings,
+  mixed accounts, troubleshooting), a Microsoft Entra ID walk-through and an FAQ. README and
+  `docs/AUTHORIZATION.md` link it. The new check `scripts/ci/check-user-guide.py` fails when a
+  setting or permission key, environment variable, error code, API route or SPA path the guide
+  names no longer exists in the code; its unit test runs in `make verify-hygiene`. The pre-commit
+  hook allows the new `docs/user-guide` folder.
 - **Sign-in audit API and screen (#455).** `GET /api/v1/audit/sign-ins` reads the sign-in audit
   log, newest first, paginated, filtered by method, outcome, reason, user id and a from/to range;
   an unknown filter value is a 400. It is guarded by the new permission `audit.sign_ins_view`,

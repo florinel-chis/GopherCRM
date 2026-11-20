@@ -2008,6 +2008,17 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   keys and routes of its integration-user section, and the pointers to it in `README.md`,
   `docs/FEATURES.md` and `CHANGELOG.md`): run
   `go test -count=1 ./internal/permissions` after editing any of those four.
+- **The administrator guide under `docs/user-guide/permissions-access/` is checked by name**
+  (#447). `python3 scripts/ci/check-user-guide.py` resolves every backticked name in its five pages
+  against the code: an environment variable or error code (and `NAME=` in a fenced block) must be a
+  string literal in a tracked non-test Go file, as must a dotted setting or permission key; a
+  `METHOD /path` route must exist with that method in `api/swagger.json`; a bare `/path` must be a
+  swagger path or a `path:` entry of `gocrm-ui/src/routes/index.tsx`. It fails on a missing page
+  and on a class with no token at all. Write a route with one method per backticked token
+  (`GET /settings/sso`, never a combined pair), path parameters as `{id}` as in the swagger, and
+  without the `/api/v1` prefix; write host names without backticks. Its unit test,
+  `scripts/ci/tests/test_user_guide.py`, runs the check on the real guide inside
+  `make verify-hygiene`, so a rename in the code that the guide still names fails the `hygiene` job.
 
 Since 11 November 2026 CI runs no browser spec outside a release: the complete browser matrix on
 MySQL, MariaDB and SQLite runs only when the release workflow calls CI with `full: true`. Browser

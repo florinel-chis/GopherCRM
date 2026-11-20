@@ -16,7 +16,7 @@
 
 set -e
 
-ALLOWED_DOCS_DIRS="img screenshots testing"
+ALLOWED_DOCS_DIRS="img screenshots testing user-guide"
 
 fail() {
     echo "pre-commit: $1" >&2
