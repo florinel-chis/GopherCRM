@@ -39,7 +39,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `waitForURL('/')`. Treat the dashboard as effectively unautomated.
 - `docs/ROADMAP.md` used to list `/dashboard/stats` as unguarded. It is guarded now —
   `SetupDashboardRoutes` applies `RequireRole(admin, sales, support)` to all nine routes
-  (`internal/handler/routes.go:105`) — and ROADMAP's follow-up section records the fix. Cases here
+  (`internal/handler/routes.go` `SetupDashboardRoutes`) — and ROADMAP's follow-up section records the fix. Cases here
   assert the guard, not the old defect.
 - A **customer**-role account is obtainable in-test from public `POST /auth/register`, which always
   forces `customer`. **Sales** and **support** accounts are not: they require an admin-authenticated
@@ -105,7 +105,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
   (`middleware.RequireRole` → `utils.RespondForbidden`). No endpoint leaks counts to a customer.
 - **Known issue:** `docs/ROADMAP.md` historically listed `/dashboard/stats` as unguarded; the guard
-  now exists at `internal/handler/routes.go:105`. This case pins it so the regression cannot return.
+  now exists in `internal/handler/routes.go` `SetupDashboardRoutes`. This case pins it so the regression cannot return.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-004 — Sales-role user sees the full dashboard with system-wide numbers
@@ -213,7 +213,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Read `total_leads`, `total_customers` and `conversion_rate` from `GET /dashboard/stats`.
   2. Read the Conversion Rate card on `/`.
 - **Expected:** `conversion_rate == total_customers / total_leads * 100`
-  (`dashboard_handler.go:141`), rendered to one decimal. On the current seeded database that is
+  (`internal/handler/dashboard_handler.go` `DashboardHandler.GetStats`), rendered to one decimal. On the current seeded database that is
   `95 / 71 * 100 = 133.8 %`; the screenshot run captured `90 / 65 * 100 = 138.5 %`. The card shows a
   value above 100 % and no clamping occurs.
 - **Known issue:** the formula divides two unrelated populations. `total_customers` counts **all**
@@ -232,7 +232,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Route-intercept `**/dashboard/stats` and fulfil with a payload whose `total_leads` is 0.
   2. Navigate to `/`.
 - **Expected:** the card shows `0.0%`. The handler guards the division with `if totalLeads > 0`
-  (`dashboard_handler.go:140`), so no `NaN`/`+Inf` reaches the JSON. The frontend's
+  (`internal/handler/dashboard_handler.go` `DashboardHandler.GetStats`), so no `NaN`/`+Inf` reaches the JSON. The frontend's
   `(stats?.conversion_rate || 0).toFixed(1)` gives the same result if the field is missing.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
@@ -246,8 +246,8 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   3. Reload `/` and re-read the trend lines.
 - **Expected:** the trends are unchanged: green "12 %" under Total Leads, green "8 %" under Total
   Customers, red "5 %" under Open Tickets, and none under Pending Tasks or Conversion Rate. They are
-  literals passed as `trend={12}`, `trend={8}` and `trend={-5}` in `Dashboard.tsx` (lines 149, 162,
-  175); the API returns no trend data at all.
+  literals passed as `trend={12}`, `trend={8}` and `trend={-5}` in the `Dashboard` component of
+  `gocrm-ui/src/pages/Dashboard.tsx`; the API returns no trend data at all.
 - **Known issue:** the arrows imply a period-over-period comparison the backend never computes. They
   will read "12 % up" on an empty database.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
@@ -300,7 +300,8 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. On `/`, click "New Lead"; assert the URL, then go back to `/`.
   2. Repeat for "New Ticket", "New Task" and "View Customers".
 - **Expected:** the four buttons navigate to `/leads/new`, `/tickets/new`, `/tasks/new` and
-  `/customers` respectively (`Dashboard.tsx` lines 215, 223, 231, 238) and the target page renders.
+  `/customers` respectively (the `navigate('/leads/new')`, `navigate('/tickets/new')`, `navigate('/tasks/new')` and
+  `navigate('/customers')` handlers in `gocrm-ui/src/pages/Dashboard.tsx`) and the target page renders.
   FEATURES.md row 2.2 is **untested**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
@@ -435,7 +436,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   ISO week; `quarter` → 8 labels formatted `YYYY-QN`; `year` → 5 labels formatted `YYYY`;
   `banana` and the omitted case → the 12-month series (the `default` arm of `buildTimeBuckets`).
   No 400 is returned for an unrecognised period.
-- **Known issue:** the UI can never exercise the other windows — `Dashboard.tsx:113` hardcodes
+- **Known issue:** the UI can never exercise the other windows — the `Dashboard` component in `gocrm-ui/src/pages/Dashboard.tsx` hardcodes
   `dashboardApi.getSalesPerformance('month')` and renders no period selector, even though
   `dashboardApi` types the parameter as `'week' | 'month' | 'quarter' | 'year'`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new; API-level assertions
@@ -516,7 +517,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   1. Route-intercept `**/dashboard/activities**` and fulfil with `{"success":true,"data":[]}`.
   2. Navigate to `/`.
 - **Expected:** the Recent Activities paper shows the text "Nothing yet" in the secondary text
-  colour and no list items (`Dashboard.tsx:304`). The same placeholder applies to Upcoming Tasks.
+  colour and no list items (`gocrm-ui/src/pages/Dashboard.tsx`, "Nothing yet"). The same placeholder applies to Upcoming Tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/dashboard.spec.ts` (new)
 
 ### TC-DASH-043 — The activity feed is scoped to the caller before the limit
@@ -539,7 +540,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   out. The default (10) and the cap (50) are unchanged. Customer callers still get 403.
 - **Automation:** automated — `internal/integration/dashboard_visibility_integration_test.go`
   `TestDashboardActivityVisibility{SQLite,MySQL}` and `TestDashboardVisibilityBeforeLimit{SQLite,MySQL}`;
-  `dashboard_handler_test.go` `TestGetActivities_SalesScopedSources`, `TestGetActivities_SupportScopedSources`
+  `internal/handler/dashboard_handler_test.go` `DashboardHandlerTestSuite.TestGetActivities_SalesScopedSources`, `internal/handler/dashboard_handler_test.go` `DashboardHandlerTestSuite.TestGetActivities_SupportScopedSources`
 
 ---
 
@@ -732,9 +733,9 @@ are the test's own; only those are deleted.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` (new; the spec does
   not open the chart today). Vitest: `PipelineChart.test.tsx`, `Dashboard.test.tsx` "shows the
   pipeline chart and the won-this-month tile for the %s role". Go:
-  `dashboard_handler_test.go` `TestGetPipeline_ResponseShape`; `deal_service_test.go`
-  `TestDealService_DashboardPipeline`; `deal_pipeline_integration_test.go`
-  `TestDashboardPipeline`.
+  `internal/handler/dashboard_handler_test.go` `DashboardHandlerTestSuite.TestGetPipeline_ResponseShape`;
+  `internal/service/deal_service_test.go` `TestDealService_DashboardPipeline`;
+  `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestDashboardPipeline`.
 
 ### TC-DASH-039 — Winning a deal shows in the "Won this month" tile
 - **Priority:** P0
@@ -752,7 +753,8 @@ are the test's own; only those are deleted.
   dashboard "Won this month" tile counts a deal moved to Won on the board" (the tile's count grows
   by exactly one after the move and the tile links to the board). Not asserted end to end: the
   amount per currency and moving the deal back out of won. Vitest: `WonThisMonthTile.test.tsx`.
-  Go: `deal_pipeline_integration_test.go` `TestDashboardPipeline`, `TestWonThisMonthFollowsTheStage`.
+  Go: `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestDashboardPipeline`,
+  `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestWonThisMonthFollowsTheStage`.
 
 ### TC-DASH-040 — Sales sees only its own deals in the widgets
 - **Priority:** P1
@@ -762,9 +764,9 @@ are the test's own; only those are deleted.
   1. As sales, `GET /api/v1/dashboard/pipeline`.
 - **Expected:** **200**; stages and the won tile count only the caller's deals. There is no
   owner parameter on this endpoint.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_service_test.go`
-  `TestDealService_DashboardPipeline`; `deal_pipeline_integration_test.go`
-  `TestDashboardPipeline`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `internal/service/deal_service_test.go` `TestDealService_DashboardPipeline`;
+  `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestDashboardPipeline`.
 
 ### TC-DASH-041 — Support and customer get no deal widgets
 - **Priority:** P1
@@ -777,8 +779,9 @@ are the test's own; only those are deleted.
   support with an empty list, this endpoint refuses, and the dashboard page does not request it
   for support or customer (Vitest `Dashboard.test.tsx` "shows no deal widgets and makes no pipeline
   request for the %s role").
-- **Automation:** blocked — needs a role-login helper for support. Go: `dashboard_handler_test.go`
-  `TestGetPipeline_RoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.
+- **Automation:** blocked — needs a role-login helper for support. Go:
+  `internal/handler/dashboard_handler_test.go` `DashboardHandlerTestSuite.TestGetPipeline_RoleMatrix`;
+  `test/integration/deal_pipeline_integration_test.go` `DealPipelineIntegrationTestSuite.TestRolesAndBadFilters`.
 
 ### TC-DASH-042 — The won month is the calendar month in UTC
 - **Priority:** P2
@@ -788,5 +791,5 @@ are the test's own; only those are deleted.
   1. Read the tile during September and during October (UTC).
 - **Expected:** the first deal counts for September only, the second for October only. A server
   in UTC+3 at 01:30 on 1 October local time still reports September.
-- **Automation:** blocked — needs a controllable clock. Go: `deal_repository_test.go`
-  `TestDealRepository_WonBetweenMonthBoundaries`; `deal_service_test.go` `TestUTCMonthBounds`.
+- **Automation:** blocked — needs a controllable clock. Go:
+  `internal/repository/deal_repository_test.go` `TestDealRepository_WonBetweenMonthBoundaries`; `internal/service/deal_service_test.go` `TestUTCMonthBounds`.

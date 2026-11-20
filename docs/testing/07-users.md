@@ -450,8 +450,8 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Automation:** automated — `tests/auth_user_write_errors_test.go`
   `TestUserWriteFailureIsInternalError` (real handlers, services and repositories on SQLite with
   the role governance wired; the insert is failed by a GORM callback);
-  `internal/handler/user_handler_test.go` `TestCreate_ServiceErrorMapping` and
-  `internal/handler/auth_handler_test.go` `TestRegister_StoreFailure_InternalError` pin the
+  `internal/handler/user_handler_test.go` `UserHandlerTestSuite.TestCreate_ServiceErrorMapping` and
+  `internal/handler/auth_handler_test.go` `AuthHandlerTestSuite.TestRegister_StoreFailure_InternalError` pin the
   order duplicate, governance refusal, 500.
 
 ### TC-USER-023 — Abandon the create form
@@ -866,8 +866,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   the user key alone.
 - **Automation:** planned — needs a fixture that links a login to a customer. Go coverage:
   `internal/repository/identity_erasure_test.go` (`user_root_erases_the_whole_graph`,
-  `staff_login_link_is_never_followed`); `erasure_pii_sweep_test.go`
-  `TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable`; the custom-role expectations in
+  `staff_login_link_is_never_followed`);
+  `test/integration/erasure_pii_sweep_test.go` `TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable`; the custom-role expectations in
   `internal/integration` `TestLinkedCustomerLoginWrites{SQLite,MySQL}` and `internal/service`
   `TestGovernedWritesToLinkedCustomerLogin`.
 

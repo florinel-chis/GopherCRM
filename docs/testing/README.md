@@ -135,7 +135,12 @@ Every case carries a stable ID (`TC-<AREA>-NNN`, unique within its document) and
 - **Steps** — concrete UI actions with real field names and selectors where they matter.
 - **Expected** — the observed behaviour, with HTTP statuses for API-visible effects.
 - **Known issue** — present only when the behaviour is defective or surprising, citing
-  `docs/FEATURES.md` / `docs/ROADMAP.md` or the code location.
+  `docs/FEATURES.md` / `docs/ROADMAP.md` or the code location. Cite the code by file plus symbol,
+  never by line number: Go code as `` `internal/handler/lead_handler.go` `LeadHandler.Create` ``
+  (full repository path, then the function, method, type or `Suite.TestName` that holds the
+  behaviour), other files by full path plus a function, component or const name, a route path or a
+  short quoted anchor. `scripts/ci/check-doc-citations.py` checks the paths and the Go symbols and
+  fails on a `file.go:N`-style line citation.
 - **Automation** — `automated` (exact spec file + test title), `planned` (target spec file), or
   `blocked` (with the concrete blocker).
 

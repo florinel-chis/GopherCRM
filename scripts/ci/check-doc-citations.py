@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""Check that the code the converted guides cite exists in the tracked tree.
+"""Check that the code the tracked docs cite exists in the tracked tree.
 
 Citations by line number drift silently whenever the cited file changes, so
-the converted guides cite code by file plus symbol or anchor, and this check
-resolves those citations against the tracked tree. Spans are backtick spans
-outside fenced code blocks.
+the docs cite code by file plus symbol or anchor, and this check resolves
+those citations against the tracked tree. Without FILE arguments it checks
+every tracked docs/**/*.md and README.md (from `git ls-files`, never a
+directory walk) except the files in EXEMPT_FILES; a file passed explicitly is
+checked in full, exempt or not. Spans are backtick spans outside fenced code
+blocks. Every checked file goes through all three rules.
 
 a. Paths. A span, without a leading ./ and a trailing :N, :N-M or :N,M, is a
    path when it has no whitespace, contains /, does not start with /, and its
    first segment is the first segment of a tracked file or the span is listed
    in IGNORED_OUTPUTS. A span with <, >, {, } or $ is a placeholder and is
-   skipped; a span in IGNORED_OUTPUTS is skipped; a span with * must match at
-   least one tracked file (fnmatch); any other path, without a trailing /,
-   must be a tracked file or have a tracked file under it.
+   skipped; a span in IGNORED_OUTPUTS, or below one, is skipped; a missing
+   Playwright spec the test catalog plans (PLANNED_SPEC in a PLANNED_SPEC_DOCS
+   file) is skipped; a span with * must match at least one tracked file
+   (fnmatch); any other path, without a trailing /, must be a tracked file or
+   have a tracked file under it.
 b. Symbols. A Go symbol is cited as `P.go` `S` (path span, one space, symbol
    span) or `S` (`P.go` (symbol span, a space, an opening parenthesis, path
    span). S is Name, Type.Name or pkg.Name, optionally followed by (), or the
@@ -22,15 +27,14 @@ b. Symbols. A Go symbol is cited as `P.go` `S` (path span, one space, symbol
    (Iface.Method) or a struct field (Type.Field), optionally qualified by the
    file's package name. The declared names come from the go/parser helper
    scripts/ci/docsymbols, run once per check.
-c. Line citations. A file in CONVERTED_FILES may not contain a file.go:N,
-   .ts, .tsx, .py, .sh or .sql line citation anywhere, fenced blocks
-   included.
+c. Line citations. A checked file may not contain a file.go:N, .ts, .tsx,
+   .py, .sh or .sql line citation anywhere, fenced blocks included.
 
 Existence is judged against `git ls-files` only, never the working tree, so
 an untracked or gitignored local file does not count and a local run agrees
-with the CI checkout. A converted file that yields no checked path span or no
-symbol pair fails, so a broken extractor cannot pass empty. Standard library
-only.
+with the CI checkout. A file in CONVERTED_FILES that yields no checked path
+span or no symbol pair fails, so a broken extractor cannot pass empty.
+Standard library only.
 
 Usage: python3 scripts/ci/check-doc-citations.py [--repo-root DIR] [FILE ...]
 """
@@ -43,11 +47,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Docs that are not checked by default, each with the test that pins it.
+# internal/config/concurrency_doc_test.go recomputes the line citations of
+# docs/CONCURRENCY.md from the code, so they cannot drift silently; this is
+# the only full exemption. An exemption applies to discovered files only.
+EXEMPT_FILES = {
+    'docs/CONCURRENCY.md': 'internal/config/concurrency_doc_test.go',
+}
+
 # The guides whose line-number citations were converted to symbol citations:
 # the fork and extension guides (#487), then the use-case, provisioning and
-# smaller guides and the README (#488). docs/DOCKER.md keeps its Compose line
-# citations (docker-compose*.yml:N), which a Go test recomputes; they are not
-# .go/.ts/.tsx/.py/.sh/.sql citations, so rule c does not apply to them.
+# smaller guides and the README (#488). Each must keep at least one checked
+# path and one symbol pair, so a broken extractor cannot pass them empty.
+# docs/DOCKER.md keeps its Compose line citations (docker-compose*.yml:N),
+# which a Go test recomputes; they are not .go/.ts/.tsx/.py/.sh/.sql
+# citations, so rule c does not apply to them.
 CONVERTED_FILES = (
     'docs/FORKING.md',
     'docs/EXTENDING.md',
@@ -63,9 +77,22 @@ CONVERTED_FILES = (
 
 # Gitignored build outputs and local configuration the guides legitimately
 # cite. They exist only after a build or a local setup, never in a checkout,
-# so they are skipped rather than checked. `git check-ignore` is not used:
-# .git/info/exclude and the global excludes differ per machine.
-IGNORED_OUTPUTS = ('bin/gophercrm', 'gocrm-ui/.env', 'gocrm-ui/dist')
+# so they are skipped rather than checked, and so is any path below one.
+# `git check-ignore` is not used: .git/info/exclude and the global excludes
+# differ per machine.
+IGNORED_OUTPUTS = (
+    'bin/gophercrm', 'gocrm-ui/.env', 'gocrm-ui/dist',
+    # gitignored, local only
+    'docs/specs', 'docs/plans', 'gocrm-ui/node_modules',
+)
+
+# The one path-check skip. The test catalog names the Playwright specs it
+# plans (docs/testing/README.md says so); dropping those names would change
+# its Automation lines and case counts. A planned spec is skipped only in a
+# catalog file and only while it is missing; the same path in any other doc
+# is a missing path.
+PLANNED_SPEC_DOCS = 'docs/testing/*.md'
+PLANNED_SPEC = 'gocrm-ui/e2e/tests/*.spec.ts'
 
 BACKTICK_SPAN = re.compile(r'`([^`\n]+)`')
 LINE_SUFFIX = re.compile(r':[0-9][0-9,-]*$')
@@ -136,13 +163,31 @@ class Tree:
     def is_path(self, path):
         if not path or any(c.isspace() for c in path) or '/' not in path or path.startswith('/'):
             return False
-        return path.split('/', 1)[0] in self.first_segments or path in IGNORED_OUTPUTS
+        return path.split('/', 1)[0] in self.first_segments or is_ignored_output(path)
 
     def exists(self, path):
         if '*' in path:
             return any(fnmatch.fnmatch(name, path) for name in self.files)
         path = path.rstrip('/')
         return path in self.files or path in self.dirs
+
+
+def is_ignored_output(path):
+    """Whether path is an IGNORED_OUTPUTS entry or lies below one (segment boundaries)."""
+    path = path.rstrip('/')
+    return any(path == entry or path.startswith(entry + '/') for entry in IGNORED_OUTPUTS)
+
+
+def is_planned_spec(doc, path):
+    """Whether path names a Playwright spec the test catalog plans."""
+    return fnmatch.fnmatchcase(doc, PLANNED_SPEC_DOCS) and fnmatch.fnmatchcase(path, PLANNED_SPEC)
+
+
+def default_files(repo_root):
+    """Every tracked docs/**/*.md plus README.md, minus EXEMPT_FILES."""
+    return [name for name in tracked_files(repo_root)
+            if ((name.startswith('docs/') and name.endswith('.md')) or name == 'README.md')
+            and name not in EXEMPT_FILES]
 
 
 def go_symbols(repo_root, go_paths):
@@ -211,7 +256,10 @@ def check(repo_root, files):
             path = normalize_path(span)
             if not tree.is_path(path):
                 continue
-            if PLACEHOLDER.search(path) or path in IGNORED_OUTPUTS:
+            if PLACEHOLDER.search(path) or is_ignored_output(path):
+                counts['skipped'] += 1
+                continue
+            if is_planned_spec(name, path) and not tree.exists(path):
                 counts['skipped'] += 1
                 continue
             counts['paths'] += 1
@@ -230,10 +278,10 @@ def check(repo_root, files):
             local = symbol[len(package) + 1:] if symbol.startswith(package + '.') else None
             if symbol not in symbols and local not in symbols:
                 problems.append('%s:%d: `%s`: unknown symbol %s in %s' % (name, number, symbol_span, symbol, path))
+        for number, line in enumerate(text.splitlines(), 1):
+            for match in LINE_CITATION.finditer(line):
+                problems.append('%s:%d: `%s`: line citation' % (name, number, line_context(line, match)))
         if name in CONVERTED_FILES:
-            for number, line in enumerate(text.splitlines(), 1):
-                for match in LINE_CITATION.finditer(line):
-                    problems.append('%s:%d: `%s`: line citation' % (name, number, line_context(line, match)))
             if file_paths == 0:
                 problems.append('%s: no path citation found; the extractor or the guide is broken' % name)
             if file_pairs == 0:
@@ -255,16 +303,25 @@ def line_context(line, match):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--repo-root', default=None, help='default: the repository holding this script')
-    parser.add_argument('files', nargs='*', help='repo-relative doc files; default: %s' % ', '.join(CONVERTED_FILES))
+    parser.add_argument('files', nargs='*',
+                        help='repo-relative doc files, checked in full; default: every tracked docs/**/*.md '
+                             'and README.md except %s' % ', '.join(sorted(EXEMPT_FILES)))
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root) if args.repo_root else default_repo_root()
-    problems, counts = check(repo_root, args.files or list(CONVERTED_FILES))
+    files = args.files
+    if not files:
+        try:
+            files = default_files(repo_root)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print('git ls-files failed in %s: %s' % (repo_root, exc))
+            return 1
+    problems, counts = check(repo_root, files)
     if problems:
         for line in problems:
             print(line)
         return 1
-    print('OK: %d path citations, %d symbol citations, %d skipped placeholders or ignored outputs'
-          % (counts['paths'], counts['symbols'], counts['skipped']))
+    print('OK: %d path citations, %d symbol citations, %d skipped placeholders, ignored outputs '
+          'or planned specs, in %d files' % (counts['paths'], counts['symbols'], counts['skipped'], len(files)))
     return 0
 
 

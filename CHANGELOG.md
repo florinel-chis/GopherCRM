@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   them. The eight files join the citation check, the stale migration stems, short paths and
   value-as-symbol citations it reported in them are fixed, and `gocrm-ui/dist` is allowed as a
   build output.
+- **Every tracked doc cites code by symbol (#489).** The test-case catalog under `docs/testing`
+  no longer cites code by line number: its `file:N` citations, bare `:N` continuations and prose
+  line references now name the file plus the Go symbol (a testify suite test as `Suite.TestName`),
+  or for other files the full path plus a function, component, route or short quoted anchor.
+  `scripts/ci/check-doc-citations.py` now checks every tracked `docs/**/*.md` and `README.md`,
+  discovered through `git ls-files`, with all three rules. `docs/CONCURRENCY.md` is the one
+  exemption, because `internal/config/concurrency_doc_test.go` recomputes its line citations; the
+  one path skip is a planned Playwright spec named in the catalog that does not exist yet; and the
+  local-only `docs/specs`, `docs/plans` and `gocrm-ui/node_modules` are ignored outputs. The stale
+  migration stems, short paths and misattributed symbols the wider check found in the catalog and
+  in `docs/DEVELOPMENT.md` are fixed, and the development guide and the catalog's case format
+  describe the rule.
 - **Administrator guide: testing single sign-on (#481).** A sixth page,
   `docs/user-guide/permissions-access/testing-single-sign-on.md`, tells an administrator how to
   test single sign-on against their own Entra ID tenant: the Entra ID setup by reference to the

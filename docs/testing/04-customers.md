@@ -98,8 +98,8 @@ depend on that are flagged.
   3. Click the Edit (pencil) icon, change the Company Name, click "Update Customer".
   4. Return to `/customers`, click the Delete (bin) icon on the same row and confirm.
 - **Expected:** Step 1–2: 200, and the view / edit / delete icon buttons all render — `DataTable`
-  renders them whenever `onEdit`/`onDelete` are supplied and `CustomerList.tsx:206-207` supplies them
-  unconditionally, with no role check. Step 3: `PUT /api/v1/customers/{id}` returns 403 with
+  renders them whenever `onEdit`/`onDelete` are supplied and `gocrm-ui/src/pages/customers/CustomerList.tsx` (`onEdit={`, `onDelete={`)
+  supplies them unconditionally, with no role check. Step 3: `PUT /api/v1/customers/{id}` returns 403 with
   `error.message` "Insufficient permissions to update customers"; the page stays on the edit form and
   an error snackbar reads "Failed to update customer". Step 4: `DELETE /api/v1/customers/{id}` returns
   403 "Only administrators can delete customers"; the snackbar reads "Failed to delete customer" and
@@ -161,7 +161,7 @@ depend on that are flagged.
   1. `/customers` → "Add Customer".
   2. Fill only Company Name, Primary Contact Name (two words), Email, Phone.
   3. Click "Create Customer".
-- **Expected:** 201. The zod schema (`CustomerForm.tsx:21-37`) requires company_name, contact_name,
+- **Expected:** 201. The zod schema (`customerSchema` in `gocrm-ui/src/pages/customers/CustomerForm.tsx`) requires company_name, contact_name,
   email and phone; everything else is optional. Note that phone is required by the *frontend* only —
   `CreateCustomerRequest` marks only first_name, last_name and email as `binding:"required"`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can create customer with minimal required data"
@@ -201,9 +201,9 @@ depend on that are flagged.
   3. Click "Create Customer".
 - **Expected:** `POST /api/v1/customers` returns **409** with
   `error.message` "customer with this email already exists" (no driver text — see
-  `customer_handler.go` `Create`). The UI stays on `/customers/new` and shows an error snackbar
+  `internal/handler/customer_handler.go` `CustomerHandler.Create`). The UI stays on `/customers/new` and shows an error snackbar
   reading exactly **"Failed to create customer"**.
-- **Known issue:** `CustomerForm.tsx:82-84` discards the server message and always renders the same
+- **Known issue:** the `createMutation` `onError` in `gocrm-ui/src/pages/customers/CustomerForm.tsx` discards the server message and always renders the same
   generic string, so the user is not told the email is the problem. FEATURES.md row 4.2 records only
   the backend half ("Duplicate email now returns 409"). The existing E2E assertion passes on its URL
   branch, not on the message branch.
@@ -217,7 +217,7 @@ depend on that are flagged.
   1. `/customers` → "Add Customer".
   2. Fill Company Name, Email, Phone, and set Primary Contact Name to a single word ("Cher").
   3. Click "Create Customer".
-- **Expected:** The client splits the name on spaces (`customers.ts:64`), so it sends
+- **Expected:** The client splits the name on spaces (`createCustomer` in `gocrm-ui/src/api/endpoints/customers.ts`), so it sends
   `first_name:"Cher", last_name:""`. `POST /api/v1/customers` returns **400** (binding failure on the
   required `last_name`) and the snackbar reads "Failed to create customer". The form stays on
   `/customers/new` with no field-level error.
@@ -333,7 +333,7 @@ depend on that are flagged.
   exists". The page stays on `/customers/{B}/edit` and the snackbar reads "Failed to update
   customer". B's stored email is unchanged.
 - **Known issue:** As with create, the 409 message is replaced by a generic string
-  (`CustomerForm.tsx:96-98`).
+  (the `updateMutation` `onError` in `gocrm-ui/src/pages/customers/CustomerForm.tsx`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
 ### TC-CUST-018 — Clearing an optional field on edit clears it server-side
@@ -437,7 +437,7 @@ depend on that are flagged.
   2. Observe the entries and check the network tab.
 - **Expected:** Exactly two list items: "Customer account created — System — {created_at}" and
   "Customer information updated — Unknown — {updated_at}". No activity request is issued.
-- **Known issue:** The list is a hardcoded literal in `CustomerDetail.tsx:104-119`; there is no
+- **Known issue:** The list is a hardcoded literal (`const activities` in `gocrm-ui/src/pages/customers/CustomerDetail.tsx`); there is no
   activity store. The second entry always attributes to "Unknown" because it reads
   `customer.owner?.email` and `models.Customer` has no `owner` field.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
@@ -517,8 +517,8 @@ depend on that are flagged.
   `assigned_to_id`.
 - **Automation:** planned — needs a fixture that links a login to a customer. Go coverage:
   `internal/repository/identity_erasure_test.go` (`customer_root_erases_the_whole_graph`,
-  `staff_login_link_is_never_followed`); `erasure_pii_sweep_test.go`
-  `TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable`.
+  `staff_login_link_is_never_followed`);
+  `test/integration/erasure_pii_sweep_test.go` `TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable`.
 
 ### TC-CUST-026 — Sales user cannot delete a customer
 - **Priority:** P0
@@ -572,7 +572,7 @@ depend on that are flagged.
   2. Type a 6-character term into the search box at normal speed.
 - **Expected:** Six `GET /api/v1/customers` requests, one per character — `handleSearch` sets state
   directly with no debounce and the search value is part of the TanStack Query key
-  (`CustomerList.tsx:51-54, 142-144`).
+  (`handleSearch` and `queryKey: ['customers', filters]` in `gocrm-ui/src/pages/customers/CustomerList.tsx`).
 - **Known issue:** Undebounced search against a route covered by `RateLimitModerate` (120/min,
   burst 30); a fast typist on a long term can approach the limit. Compare the roadmap note on rate
   limiting having no integration coverage (FEATURES.md 11.2 / G22).
@@ -660,7 +660,7 @@ depend on that are flagged.
   1. `/customers`.
   2. Look for an "Export" / "Download CSV" button in the header, the toolbar and the row menu.
 - **Expected:** No such control exists anywhere on the page. `customersApi.exportCustomers` is
-  implemented in `gocrm-ui/src/api/endpoints/customers.ts:115-127` but has no caller — the frontend
+  implemented in `gocrm-ui/src/api/endpoints/customers.ts` (`exportCustomers`) but has no caller — the frontend
   API surface is the intended contract, and the missing piece here is the UI, not the backend.
 - **Known issue:** FEATURES.md 10b lists the endpoint as delivered; the UI half is outstanding.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; assert the absence
@@ -745,7 +745,7 @@ depend on that are flagged.
   1. Open the customer's detail page and its row menu on `/customers`.
   2. Open the edit form.
 - **Expected:** No "Assign", "Owner" or "Account manager" control exists in any of the three places.
-  `customersApi.assignCustomer` exists (`customers.ts:110-113`, posting `{ user_id }`, which matches
+  `customersApi.assignCustomer` exists (`gocrm-ui/src/api/endpoints/customers.ts`, posting `{ user_id }`, which matches
   `handler.AssignCustomerRequest`) but has no caller, and `CustomerForm` has no assignee field.
 - **Known issue:** As with export, the backend shipped in the 2026-08 build-out and the UI did not.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new; assert absence today)
@@ -801,7 +801,7 @@ depend on that are flagged.
   parameter is silently discarded and the full ticket list comes back with 200.
 - **Known issue:** A customer-scoped panel headed "Support Tickets" shows other customers' ticket
   subjects. The correctly scoped route exists and is ownership-checked
-  (`TicketHandler.ListByCustomer`), but `CustomerDetail.tsx:82-86` calls
+  (`TicketHandler.ListByCustomer`), but `gocrm-ui/src/pages/customers/CustomerDetail.tsx` calls
   `ticketsApi.getTickets({ customer_id })` instead. Related to the G27 IDOR that was fixed on the
   other route; FEATURES.md 5.9 records "still no E2E test" but not this frontend mismatch.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
@@ -816,7 +816,7 @@ depend on that are flagged.
   2. `GET /api/v1/customers/{Y}/tickets`.
   3. `GET /api/v1/customers/{X}/tickets`.
 - **Expected:** Step 2 → **403** "Customers can only view their own tickets"
-  (`ticket_handler.go` `ListByCustomer` resolves the caller's own customer record via
+  (`internal/handler/ticket_handler.go` `TicketHandler.ListByCustomer` resolves the caller's own customer record via
   `customerService.GetByUserID` and compares ids; a lookup failure is also 403, never a leak).
   Step 3 → **200** with that customer's own tickets and a `{tickets, total}` payload.
 - **Known issue:** This route was the G27 IDOR (any authenticated user could read any customer's

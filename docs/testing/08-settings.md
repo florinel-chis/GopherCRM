@@ -118,8 +118,9 @@ blocked until the page is built.
   page offers no control to drive, so the flow cannot be executed from the UI at all.
 - **Known issue:** FEATURES.md 8.1 — "No E2E test"; the underlying cause is that the page is a stub.
 - **Automation:** blocked — the API Keys page is a heading-only stub, so there is no create control;
-  backend behaviour is covered by `internal/handler/apikey_handler_test.go` `TestCreate_Success` and
-  `tests/apikey_integration_test.go` `TestCreateAPIKey`
+  backend behaviour is covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_Success` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKey`
 
 ### TC-SET-004 — Reject a key name shorter than three characters
 - **Priority:** P1
@@ -132,8 +133,8 @@ blocked until the page is built.
   `binding:"required,min=3,max=100"` on `CreateAPIKeyRequest.Name`, and the bind error is routed
   through `gin.ErrorTypeBind` to the error-handler middleware. A name of 101 characters is rejected
   the same way. No key row is created.
-- **Automation:** blocked — no create form exists; `apikey_handler_test.go` `TestUpdate_InvalidName`
-  covers the equivalent rule on update
+- **Automation:** blocked — no create form exists;
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_InvalidName` covers the equivalent rule on update
 
 ### TC-SET-005 — Generate a key with a future expiry
 - **Priority:** P1
@@ -146,8 +147,9 @@ blocked until the page is built.
   `2026-12-31T23:59:59Z`) returns **201** and the stored record carries that `expires_at`. Omitting
   the field leaves `expires_at` null and the key never expires. Expiry cannot be lifted afterwards:
   `PUT /api-keys/{id}` only accepts `name` and `is_active`.
-- **Automation:** blocked — no create form; covered by `apikey_handler_test.go`
-  `TestCreate_WithFutureExpiresAt` and `tests/apikey_integration_test.go` `TestCreateAPIKeyWithExpiry`
+- **Automation:** blocked — no create form; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_WithFutureExpiresAt` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithExpiry`
 
 ### TC-SET-006 — Reject a past or malformed expiry
 - **Priority:** P1
@@ -159,9 +161,10 @@ blocked until the page is built.
 - **Expected:** Both are **400** with distinct messages from `APIKeyHandler.Create`: `expires_at must
   be in the future` and `expires_at must be an RFC3339 timestamp`. No key is minted in either case —
   the handler deliberately refuses to issue a credential that could never authenticate.
-- **Automation:** blocked — no create form; covered by `apikey_handler_test.go`
-  `TestCreate_PastExpiresAt` / `TestCreate_MalformedExpiresAt` and
-  `tests/apikey_integration_test.go` `TestCreateAPIKeyWithPastExpiry`
+- **Automation:** blocked — no create form; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_PastExpiresAt` /
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_MalformedExpiresAt` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithPastExpiry`
 
 ---
 
@@ -181,8 +184,9 @@ blocked until the page is built.
   there is no admin-wide view and the `user_id` / `is_active` fields of `APIKeyFilters` are ignored by
   the server. Revoked keys are included, distinguishable by `is_active=false`. Each row shows the
   8-character prefix, never the plaintext key, plus `last_used_at`.
-- **Automation:** blocked — no table in the page; covered by `apikey_handler_test.go`
-  `TestList_Success` and `tests/apikey_integration_test.go` `TestListAPIKeys`
+- **Automation:** blocked — no table in the page; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestList_Success` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestListAPIKeys`
 
 ### TC-SET-008 — Refuse to read another user's key
 - **Priority:** P0
@@ -197,8 +201,10 @@ blocked until the page is built.
   as forbidden as anyone else. An id that does not exist is **404** `API key not found`; a
   non-numeric id is **400** `Invalid API key ID`.
 - **Automation:** blocked — no UI surface and no role-login helper; covered by
-  `apikey_handler_test.go` `TestGet_Forbidden` / `TestGet_NotFound` / `TestGet_InvalidID` and
-  `tests/apikey_integration_test.go` `TestGetAPIKey`
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_Forbidden` /
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_NotFound` /
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_InvalidID` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestGetAPIKey`
 
 ### TC-SET-009 — Confirm the stored hash never reaches the browser
 - **Priority:** P2
@@ -231,9 +237,11 @@ blocked until the page is built.
   inactive — so it stays in the list with `is_active=false`. The subsequent API-key call is rejected
   at authentication (`ValidateAPIKey` returns "API key has been revoked"), surfacing as **401**.
   Revoking someone else's key is **403**; an unknown id is **404**.
-- **Automation:** blocked — no revoke control in the page; covered by `apikey_handler_test.go`
-  `TestRevoke_Success` / `TestRevoke_Forbidden` / `TestRevoke_NotFound` and
-  `tests/apikey_integration_test.go` `TestRevokeAPIKey`
+- **Automation:** blocked — no revoke control in the page; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_Success` /
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_Forbidden` /
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_NotFound` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestRevokeAPIKey`
 
 ### TC-SET-011 — Rename a key, and reject an update that changes nothing
 - **Priority:** P1
@@ -246,8 +254,9 @@ blocked until the page is built.
   `At least one of name or is_active must be provided` — the request struct uses pointers precisely
   so that an omitted `is_active` is not read as "deactivate", and a body with no updatable field is
   refused rather than reported as a successful no-op.
-- **Automation:** blocked — no edit control; covered by `apikey_handler_test.go` `TestUpdate_Rename`
-  and `TestUpdate_EmptyBody`
+- **Automation:** blocked — no edit control; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_Rename` and
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_EmptyBody`
 
 ### TC-SET-012 — Reactivate a revoked key
 - **Priority:** P2
@@ -261,8 +270,9 @@ blocked until the page is built.
   owner-controlled flag, not a tombstone. Expiry is unaffected by this endpoint: an expired key stays
   unusable however `is_active` is set, because expiry is checked separately in `ValidateAPIKey`.
   Anyone wanting an irreversible kill must create a new key and abandon the old one.
-- **Automation:** blocked — no edit control; covered by `apikey_handler_test.go`
-  `TestUpdate_Reactivate` and `tests/apikey_integration_test.go` `TestUpdateAPIKey`
+- **Automation:** blocked — no edit control; covered by
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_Reactivate` and
+  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestUpdateAPIKey`
 
 ---
 
@@ -317,7 +327,7 @@ blocked until the page is built.
   states, and nothing in the API can extend an expiry.
 - **Automation:** blocked — waiting out a real expiry is not viable in an E2E run and the API
   refuses a past `expires_at` at creation; covered by `tests/apikey_integration_test.go`
-  `TestExpiredAPIKeyIsRejectedAtAuth`
+  `APIKeyIntegrationTestSuite.TestExpiredAPIKeyIsRejectedAtAuth`
 
 ---
 
@@ -443,7 +453,7 @@ blocked until the page is built.
   discarded in favour of a generic message (`handleSaveEdit` ignores the error body).
 - **Automation:** blocked — no seeded entry is an integer since #224 retired
   `security.session_timeout_hours`; backend coverage in `tests/configuration_integration_test.go`
-  `TestSetConfiguration_InvalidValue` (a test-only `test.choice.integer` entry)
+  `ConfigurationIntegrationTestSuite.TestSetConfiguration_InvalidValue` (a test-only `test.choice.integer` entry)
 
 ### TC-SET-023 — Clear the integer field and observe the null rejection
 - **Priority:** P2
@@ -480,7 +490,7 @@ blocked until the page is built.
   tests cover with test-only entries. Correctly typed values still work.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (API-level assertions
   alongside the UI ones); backend coverage in `tests/configuration_integration_test.go`
-  `TestSetConfiguration_TypeMismatch` and `TestSetConfiguration_CorrectTypesStillAccepted`
+  `ConfigurationIntegrationTestSuite.TestSetConfiguration_TypeMismatch` and `TestSetConfiguration_CorrectTypesStillAccepted`
 
 ### TC-SET-025 — Cancel an edit without writing
 - **Priority:** P2
@@ -530,8 +540,8 @@ blocked until the page is built.
   in `configurationService.GetByKey`, wrapping it as `apperrors.ErrNotFound`; the handler maps that
   to 404 and anything else to 500, so a driver failure is not reported as an unknown key.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`; backend coverage in
-  `tests/configuration_integration_test.go` `TestResetConfiguration_UnknownKey` and
-  `TestSetConfiguration_UnknownKey`
+  `tests/configuration_integration_test.go` `ConfigurationIntegrationTestSuite.TestResetConfiguration_UnknownKey` and
+  `tests/configuration_integration_test.go` `ConfigurationIntegrationTestSuite.TestSetConfiguration_UnknownKey`
 
 ### TC-SET-028 — Confirm a multi-key configuration write is atomic
 - **Priority:** P2
@@ -545,7 +555,7 @@ blocked until the page is built.
   `db.Transaction`, but no HTTP route writes more than one key, so there is nothing to exercise from
   a test session.
 - **Known issue:** FEATURES.md 9.4 — the row previously cited
-  `test/integration/configuration_transaction_test.go`, which does not exist; configuration
+  a configuration_transaction_test.go under test/integration, which does not exist; configuration
   transactionality is untested.
 - **Automation:** blocked — no endpoint writes multiple configurations, so there is no user-facing
   behaviour to assert; would need a Go integration test against `BulkUpsert`
@@ -565,8 +575,9 @@ blocked until the page is built.
   `POST /configurations/{key}/reset` both return **400** `Configuration is read-only`
   (`ErrConfigurationReadOnly`, raised in `configurationService.Set` and `.Reset`).
 - **Automation:** blocked — no seeded read-only configuration exists to drive the UI path; the API
-  path is covered by `tests/configuration_integration_test.go` `TestSetConfiguration_ReadOnly` and
-  `TestResetConfiguration_ReadOnly`, which create their own row
+  path is covered by
+  `tests/configuration_integration_test.go` `ConfigurationIntegrationTestSuite.TestSetConfiguration_ReadOnly` and
+  `tests/configuration_integration_test.go` `ConfigurationIntegrationTestSuite.TestResetConfiguration_ReadOnly`, which create their own row
 
 ---
 
@@ -636,8 +647,8 @@ blocked until the page is built.
   whose setting cannot be read is omitted. No `RequireRole` guards
   this route, deliberately: it is the one configuration read the frontend is allowed to make.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`; backend coverage in
-  `tests/configuration_integration_test.go` `TestGetUIConfigurations` and, for the lead-conversion
-  entries, `configuration_handler_test.go` `TestGetUIConfigurations_CarriesTheLeadConversionContract`
+  `tests/configuration_integration_test.go` `ConfigurationIntegrationTestSuite.TestGetUIConfigurations` and, for the lead-conversion
+  entries, `internal/handler/configuration_handler_test.go` `ConfigurationHandlerTestSuite.TestGetUIConfigurations_CarriesTheLeadConversionContract`
 
 ### TC-SET-034 — Confirm configuration changes reach the leads pages
 - **Priority:** P1

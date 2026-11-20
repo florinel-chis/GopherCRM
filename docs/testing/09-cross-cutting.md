@@ -73,14 +73,14 @@ system roles holding the key are named in brackets.
 | SPA route | SPA gate | Nav item shown to | API guard for the data the page loads |
 |---|---|---|---|
 | `/login`, `/register`, `/unauthorized` | none (public) | — | — |
-| `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`routes.go:105`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
-| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `leads.view` (list, detail), `leads.create` (new), `leads.update` (edit) [admin, sales] (pathless layouts, #120, #380) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`routes.go:24`) → 403 for support and customer |
-| `/customers`, `/customers/:id`, `/customers/:id/edit` | `customers.view` (list, detail) [admin, sales, support]; `customers.update` (edit) [admin, sales] (#380) | admin, sales, support | list/get: handler allows admin, sales, support (`customer_handler.go:249`, `:341`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
+| `/` (Dashboard) | authenticated | all roles | `GET /dashboard/*` → `RequireRole(admin, sales, support)` (`internal/handler/routes.go` `SetupDashboardRoutes`); the page skips the calls entirely for `customer` (`Dashboard.tsx` `canViewStats`) |
+| `/leads`, `/leads/new`, `/leads/:id`, `/leads/:id/edit` | `leads.view` (list, detail), `leads.create` (new), `leads.update` (edit) [admin, sales] (pathless layouts, #120, #380) | admin, sales | whole `/leads` group is `RequireRole(admin, sales)` (`internal/handler/routes.go` `SetupLeadRoutes`) → 403 for support and customer |
+| `/customers`, `/customers/:id`, `/customers/:id/edit` | `customers.view` (list, detail) [admin, sales, support]; `customers.update` (edit) [admin, sales] (#380) | admin, sales, support | list/get: handler allows admin, sales, support (`internal/handler/customer_handler.go` `CustomerHandler.List`, `internal/handler/customer_handler.go` `CustomerHandler.Get`) → 403 for customer; create: `RequireRole(admin, sales)`; delete + export: `RequireRole(admin)`; assign: `RequireRole(admin, sales)` |
 | `/customers/new` | `customers.create` [admin, sales] (#120, #380) | — ("Add Customer" on the list for admin and sales) | `POST /customers` → `RequireRole(admin, sales)` |
-| `/tickets`, `/tickets/:id` | any of `tickets.view`, `tickets.view_own_customer` [all four] (#380) | admin, sales, support (sales since #241) | list/get: 403 only for customer (`ticket_handler.go:136`, `:354`) — sales reads, read-only |
-| `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`routes/index.tsx:396,413`) | — | create: admin + support (`ticket_handler.go:70`); update: 403 for customer and sales (`:410`, `:416`), support only for its own assignment (`:447`); delete: admin only (`:511`) |
-| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`task_handler.go:241`); create: admin, support, sales (`:69`) → 403 for customer; delete: admin only (`:499`) |
-| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`routes/index.tsx:522-566`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`user_handler.go:333`); `/configurations` is admin except `/configurations/ui` |
+| `/tickets`, `/tickets/:id` | any of `tickets.view`, `tickets.view_own_customer` [all four] (#380) | admin, sales, support (sales since #241) | list/get: 403 only for customer (`internal/handler/ticket_handler.go` `TicketHandler.List`, `internal/handler/ticket_handler.go` `TicketHandler.Get`) — sales reads, read-only |
+| `/tickets/new`, `/tickets/:id/edit` | `tickets.create` (new), `tickets.update` (edit) [admin, support] (`gocrm-ui/src/routes/index.tsx`, `requiredPermission="tickets.create"`, `requiredPermission="tickets.update"`) | — | create: admin + support (`internal/handler/ticket_handler.go` `TicketHandler.Create`); update: 403 for customer and sales, support only for its own assignment (`internal/handler/ticket_handler.go` `TicketHandler.Update`); delete: admin only (`internal/handler/ticket_handler.go` `TicketHandler.Delete`) |
+| `/tasks`, `/tasks/new`, `/tasks/:id`, `/tasks/:id/edit` | `tasks.view` [all four] (#380) | all roles | list: admin sees all, everyone else only their own (`internal/handler/task_handler.go` `TaskHandler.List`); create: admin, support, sales (`internal/handler/task_handler.go` `TaskHandler.Create`) → 403 for customer; delete: admin only (`internal/handler/task_handler.go` `TaskHandler.Delete`) |
+| `/users`, `/users/new`, `/users/:id`, `/users/:id/edit`, `/settings/configuration` | `users.view`, `users.create`, `users.update`, `settings.view` [admin] (`gocrm-ui/src/routes/index.tsx`, `requiredPermission="users.view"` through `requiredPermission="settings.view"`) | Users: admin; Configuration: admin | `POST/GET /users` and `DELETE /users/:id` are `RequireRole(admin)`; `GET /users/:id` is self-or-admin (`internal/handler/user_handler.go` `UserHandler.Get`); `/configurations` is admin except `/configurations/ui` |
 | `/settings/webhooks` | `webhooks.manage` [admin] (#409) | admin (Settings > Webhooks) | the whole `/webhooks` group needs `webhooks.manage`: 403 for sales, support and customer |
 | `/settings/profile`, `/settings/api-keys` | authenticated only (no key) | all roles | `/users/me` and the whole `/api-keys` group carry no role guard |
 | anything else (`*`) | **outside** `ProtectedRoute` | — | — |
@@ -125,7 +125,7 @@ support and customer from the customer edit form.
 - **Steps:** Navigate to `/no-such-page`.
 - **Expected:** The URL stays `/no-such-page` and the 404 page renders (`404`, "Page Not Found",
   "Go to Dashboard"). The catch-all `*` route is declared **outside** the `ProtectedRoute` branch
-  (`routes/index.tsx:686`), so an unknown path is never authentication-gated.
+  (`gocrm-ui/src/routes/index.tsx`, `path: '*'`), so an unknown path is never authentication-gated.
 - **Known issue:** The 404 page leaks the existence of the SPA shell to anonymous visitors and its
   "Go to Dashboard" button navigates to `/`, which then bounces to `/login`. Harmless, but the
   two-hop journey is easy to mistake for a bug.
@@ -156,7 +156,7 @@ support and customer from the customer edit form.
   loaded and no `GET /api/v1/users` request is issued. Issuing that request directly from an
   `APIRequestContext` with the sales token returns **403** with
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
-  (`internal/middleware/auth.go:91`).
+  (`internal/middleware/permission.go` `RequireAnyPermission`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
 
 ### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
@@ -169,7 +169,8 @@ support and customer from the customer edit form.
   2. Click it.
   3. Open the first ticket.
 - **Expected:** Both pages render and `GET /api/v1/tickets` and `GET /api/v1/tickets/:id` return
-  **200** — the ticket handler rejects only the `customer` role (`ticket_handler.go:136`, `:354`).
+  **200** — the ticket handler rejects only the `customer` role
+  (`internal/handler/ticket_handler.go` `TicketHandler.List`, `internal/handler/ticket_handler.go` `TicketHandler.Get`).
   The **Create Ticket** button is absent and the row Edit/Delete icons are absent (`TicketList`
   `canCreate`/`canEdit`/`canDelete`). Nav gating and API gating agree since #241: `MainLayout`
   lists the Tickets entry for `['admin','sales','support']`.
@@ -180,9 +181,10 @@ support and customer from the customer edit form.
 - **Type:** rbac
 - **Preconditions:** Logged in as a `sales` user; a ticket id created earlier by the admin.
 - **Steps:** Navigate to `/tickets/new`, then to `/tickets/<id>/edit`.
-- **Expected:** Both land on `/unauthorized` — the pathless layout routes at `routes/index.tsx:393-424`
-  ask for `tickets.create` and `tickets.update`, which sales does not hold. A direct
-  `PUT /api/v1/tickets/<id>` with the sales token returns **403** (`ticket_handler.go:415`).
+- **Expected:** Both land on `/unauthorized` — the pathless layout routes in
+  `gocrm-ui/src/routes/index.tsx` ask for `tickets.create` and `tickets.update`, which sales does not hold. A direct
+  `PUT /api/v1/tickets/<id>` with the sales token returns **403**
+  (`internal/handler/ticket_handler.go` `TicketHandler.Update`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-008 — Support opens /leads and gets an empty table instead of a refusal
@@ -194,7 +196,7 @@ support and customer from the customer edit form.
   1. Confirm the sidebar has no **Leads** entry.
   2. Navigate directly to `/leads`.
 - **Expected:** The Leads page renders with its heading, search box and filters. `GET /api/v1/leads`
-  returns **403** (`routes.go:24`), the table body is empty and the pagination reads `0-0 of 0`.
+  returns **403** (`internal/handler/routes.go` `SetupLeadRoutes`), the table body is empty and the pagination reads `0-0 of 0`.
   **No error message, snackbar or Access Denied screen is shown.**
 - **Known issue:** `LeadList` destructures only `{ data, isLoading }` from `useQuery` and never reads
   `isError`, so an authorization failure is indistinguishable from "no leads yet". The same pattern
@@ -211,9 +213,10 @@ support and customer from the customer edit form.
   2. Fill the form from `generateTicketData()` and save.
   3. Return to `/tickets` and inspect the row actions for the new ticket.
 - **Expected:** `/tickets/new` renders (support is in the SPA guard list) and
-  `POST /api/v1/tickets` returns **201** (`ticket_handler.go:70`). Back on the list, the Delete icon
+  `POST /api/v1/tickets` returns **201** (`internal/handler/ticket_handler.go` `TicketHandler.Create`). Back on the list, the Delete icon
   is not rendered for support (`TicketList` `canDelete` is admin-only) and a direct
-  `DELETE /api/v1/tickets/:id` with the support token returns **403** (`ticket_handler.go:508`).
+  `DELETE /api/v1/tickets/:id` with the support token returns **403**
+  (`internal/handler/ticket_handler.go` `TicketHandler.Delete`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-010 — Customer sees a three-item sidebar
@@ -235,8 +238,8 @@ support and customer from the customer edit form.
   exist.
 - **Steps:** Navigate to `/customers`, then `/tickets`, then `/tickets/new`.
 - **Expected:** `/customers` and `/tickets` both render their page shells with an empty table;
-  `GET /api/v1/customers` returns **403** (`customer_handler.go:249`) and `GET /api/v1/tickets`
-  returns **403** (`ticket_handler.go:136`). `/tickets/new` is the only one that is properly
+  `GET /api/v1/customers` returns **403** (`internal/handler/customer_handler.go` `CustomerHandler.List`) and `GET /api/v1/tickets`
+  returns **403** (`internal/handler/ticket_handler.go` `TicketHandler.List`). `/tickets/new` is the only one that is properly
   refused: it redirects to `/unauthorized`.
 - **Known issue:** Read routes for other people's business data are gated only by the API; the SPA
   shows a page that looks like an empty account rather than a refusal. Same root cause as
@@ -252,9 +255,9 @@ support and customer from the customer edit form.
   1. Open **Tasks** from the sidebar.
   2. Click **New Task** (or navigate to `/tasks/new`), fill the form and save.
 - **Expected:** `GET /api/v1/tasks` returns **200** but only with tasks assigned to this user —
-  `task_handler.go:241` gives the full list to admins and the caller's own tasks to everyone else.
+  `TaskHandler.List` (`internal/handler/task_handler.go`) gives the full list to admins and the caller's own tasks to everyone else.
   The `/tasks/new` route renders (no SPA gate), but `POST /api/v1/tasks` returns **403**
-  (`task_handler.go:74`, which admits only admin, support and sales) and the form surfaces the
+  (`internal/handler/task_handler.go` `TaskHandler.Create`, which admits only admin, support and sales) and the form surfaces the
   failure without navigating away.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
@@ -267,7 +270,7 @@ support and customer from the customer edit form.
   the Sales Performance chart, Recent Activities and Upcoming Tasks are all absent. No request is
   made to `/api/v1/dashboard/*` — `Dashboard.tsx` sets `canViewStats` false for the customer role and
   passes `enabled: canViewStats` to every query, deliberately anticipating the
-  `RequireRole(admin, sales, support)` guard at `routes.go:105`.
+  `RequireRole(admin, sales, support)` guard in `internal/handler/routes.go` `SetupDashboardRoutes`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-014 — Profile and API Keys are reachable by every role
@@ -277,7 +280,7 @@ support and customer from the customer edit form.
   self-registered).
 - **Steps:** For each role, navigate to `/settings/profile` and `/settings/api-keys`.
 - **Expected:** Both render for all four roles. `GET /api/v1/users/me` and `GET /api/v1/api-keys`
-  return **200** — neither route carries a `RequireRole` guard (`routes.go:14`, `:77-86`).
+  return **200** — neither route carries a `RequireRole` guard (`internal/handler/routes.go` `SetupUserRoutes`, `internal/handler/routes.go` `SetupAPIKeyRoutes`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ### TC-XCUT-015 — The customer list shows a Delete icon to sales, which the API refuses
@@ -289,11 +292,11 @@ support and customer from the customer edit form.
   2. Click the row Delete icon and confirm in the dialog.
 - **Expected:** The icon **is** rendered — `CustomerList` passes `onDelete` unconditionally, unlike
   `UserList` which gates it on `isAdmin`. `DELETE /api/v1/customers/:id` returns **403**
-  (`routes.go:44`), the error snackbar "Failed to delete customer" appears, the dialog stays open
+  (`internal/handler/routes.go` `SetupCustomerRoutes`), the error snackbar "Failed to delete customer" appears, the dialog stays open
   and the row is still listed after a reload.
 - **Known issue:** Frontend gating and backend guard disagree here in the dangerous direction — the
   UI offers an irreversible action that the caller is not allowed to perform. Not listed in
-  FEATURES; the equivalent gating exists on `UserList.tsx:319`.
+  FEATURES; the equivalent gating exists in `gocrm-ui/src/pages/users/UserList.tsx` (`canDelete`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new)
 
 ---
@@ -362,7 +365,7 @@ into a sign-out test.
 - **Steps:** Submit the login form with the seeded admin email and a wrong password.
 - **Expected:** The error alert "Invalid email or password" is shown on the login form, the URL stays
   `/login`, and **no** `POST /auth/refresh` request is made — the interceptor skips any URL
-  containing `/auth/` (`api/client.ts:262`), which is what stops the redirect loop.
+  containing `/auth/` (`gocrm-ui/src/api/client.ts`, `isAuthEndpoint`), which is what stops the redirect loop.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with wrong
   password" asserts the message but not the absence of the refresh call; extend it.
 
@@ -481,7 +484,7 @@ into a sign-out test.
   2. Trigger a duplicate-email conflict by creating a customer with the email of an existing one.
 - **Expected:** The wire body is `{"success":true,"data":{...},"meta":{...}}`, while the page code
   receives `data` directly — the response interceptor replaces `response.data` with
-  `response.data.data` whenever `success` is true and `data` is defined (`api/client.ts:247`). On the
+  `response.data.data` whenever `success` is true and `data` is defined (the `ApiClient` response interceptor in `gocrm-ui/src/api/client.ts`). On the
   conflict, the wire body is `{"success":false,"error":{"code":"CONFLICT","message":...}}` and the
   interceptor replaces `error.response.data` with the inner `error` object, which is what the form
   renders.
@@ -561,7 +564,7 @@ into a sign-out test.
   ticket create admits (`Dashboard.tsx` `canCreateTicket`). **New Lead** is refused by the route
   guard: since #120 `/leads/new` sits under an admin+sales `ProtectedRoute`, so the app redirects
   to `/unauthorized` ("Access Denied") before any form renders, matching `RequireRole(admin,
-  sales)` on the API (`routes.go:24`). **New Task** still opens a form whose save is refused by
+  sales)` on the API (`internal/handler/routes.go` `SetupLeadRoutes`). **New Task** still opens a form whose save is refused by
   the API, and **View Customers** opens a list whose request is 403.
 - **Known issue:** The dashboard offers three actions to a customer-role user and none of them
   works; one ends on Access Denied, the task form still fails only after it has been filled in.
@@ -582,7 +585,8 @@ into a sign-out test.
   3. Change **Rows per page** to 25.
 - **Expected:** The default is 10 rows (`LeadList` `filters.limit = 10`) and the select offers
   exactly 5, 10, 25, 50 (`DataTable` `rowsPerPageOptions`). Page 2 issues `?page=2&limit=10`; the
-  handler converts it with `offset = (page-1) * limit` (`lead_handler.go:182`). Changing the page
+  handler converts it with `offset = (page-1) * limit`
+  (`internal/handler/lead_handler.go` `LeadHandler.List`). Changing the page
   size issues `?page=1&limit=25` — the page index is explicitly reset — and the footer reads
   `1-25 of N`. The same behaviour holds on `/customers`, `/tickets`, `/tasks` and `/users`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -594,7 +598,7 @@ into a sign-out test.
 - **Steps:** `GET /api/v1/customers?limit=500`.
 - **Expected:** **200**, at most 100 rows, and `meta` reads
   `{"page":1,"per_page":100,"total":N,"total_pages":ceil(N/100)}` — `utils.ParseOffsetLimit`
-  clamps at 100 (`internal/utils/response.go:164`). Verified live against the running backend.
+  clamps at 100 (`internal/utils/response.go` `ParseOffsetLimit`). Verified live against the running backend.
 - **Known issue:** The cap is unreachable from the UI: the largest rows-per-page option is 50, so
   this can only be asserted through the API context.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
@@ -618,12 +622,12 @@ into a sign-out test.
   1. `GET /api/v1/leads?sort_by=created_at&sort_order=desc` and record the ordering.
   2. `GET /api/v1/leads?sort_by=password;DROP TABLE leads&sort_order=desc`.
   3. `GET /api/v1/leads?sort_by=created_at&sort_order=sideways`.
-- **Expected:** All three return **200**. The unknown column is blanked (`sortBy = ""` at
-  `lead_handler.go:202`) and the query falls back to the repository default ordering — there is no
+- **Expected:** All three return **200**. The unknown column is blanked (`sortBy = ""` in
+  `LeadHandler.List` (`internal/handler/lead_handler.go`)) and the query falls back to the repository default ordering — there is no
   400 and no error message, so the only visible effect is that the requested order is not applied.
   An invalid `sort_order` is coerced to `asc` at the lead handler. The same silent-fallback pattern
-  is in `ticket_handler.go:162`, `task_handler.go:227`, `user_handler.go:265` and
-  `customer_handler.go:274`; the deeper `utils.ValidateSort` allowlist
+  is in `internal/handler/ticket_handler.go` `TicketHandler.List`, `internal/handler/task_handler.go` `TaskHandler.List`,
+  `internal/handler/user_handler.go` `UserHandler.List` and `internal/handler/customer_handler.go` `CustomerHandler.List`; the deeper `utils.ValidateSort` allowlist
   (`internal/utils/sort.go`) is what actually keeps the value out of the `ORDER BY`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/pagination-sort.spec.ts` (new)
 
@@ -660,8 +664,8 @@ into a sign-out test.
   role they narrow only the caller's own tasks. An empty value ("All") is ignored, and a value
   outside the task enums is 400 `VALIDATION_ERROR`.
 - **Known issue:** none since #427. Tasks now filter server-side like tickets (#218, FEATURES 5.5),
-  users (#428, FEATURES 7.8) and leads (#426, FEATURES 3.8): `TaskHandler.List` validates `status`
-  and `priority` (`task_handler.go:295`) and passes them to `TaskService.ListFiltered`
+  users (#428, FEATURES 7.8) and leads (#426, FEATURES 3.8): `TaskHandler.List` (`internal/handler/task_handler.go`)
+  validates `status` and `priority` and passes them to `TaskService.ListFiltered`
   (FEATURES 6.5).
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can filter tasks by
   status (#427)" and "admin can filter tasks by priority (#427)", each asserting the non-matching
@@ -747,7 +751,7 @@ into a sign-out test.
 - **Steps:**
   1. Delete it from `/customers` and confirm.
   2. Create a new customer with the same email.
-- **Expected:** `DELETE /api/v1/customers/:id` returns **200** for admin (`routes.go:44`), the
+- **Expected:** `DELETE /api/v1/customers/:id` returns **200** for admin (`internal/handler/routes.go` `SetupCustomerRoutes`), the
   snackbar "Customer deleted successfully" appears, the row is gone, and the re-creation returns
   **201** rather than the **409** a live duplicate would produce. If the customer came from a
   converted lead, the originating lead is erased too (the identity cascade in the plain customer
@@ -769,7 +773,7 @@ into a sign-out test.
 - **Expected:** Step 1 returns **200**, shows "User deleted successfully" and removes the row.
   Step 2 finds nothing and the registration succeeds with **201**. In step 3 the row still shows
   its Delete icon, and the direct API call returns **400** with "You cannot delete your own
-  account" (`user_handler.go:512`) — not a 403.
+  account" (`internal/handler/user_handler.go` `UserHandler.Delete`) — not a 403.
 - **Known issue:** The `DataTable` row Delete icon carries **no** self-deletion guard (the old
   toolbar menu's disabled Delete item never opened, and the per-row menu that replaced it in #114
   carries only Activate/Deactivate). The 400 from the API is the real protection. FEATURES 7.4
@@ -785,11 +789,12 @@ into a sign-out test.
 - **Expected:** The ticket is still listed and still opens — erasure keeps the row and its foreign
   keys (FEATURES 12.9). The **Customer** column and the detail page's Customer field both read
   `N/A`. The API confirms why: GORM's `Preload("Customer")` skips the soft-deleted row, so the
-  value-typed `Customer` field (`internal/models/ticket.go:25`) serialises as a zero object
+  value-typed `Ticket.Customer` (`internal/models/ticket.go`) field serialises as a zero object
   (`"customer":{"id":0,"first_name":"","email":"",...}`). The anonymised `.invalid` placeholder
   address never reaches the client.
-- **Known issue:** `TicketList.tsx:144` and `TicketDetail.tsx:182` read `customer.company_name`,
-  but the API field is `company` (`internal/models/customer.go:9`), so the Customer column shows
+- **Known issue:** `gocrm-ui/src/pages/tickets/TicketList.tsx` and
+  `gocrm-ui/src/pages/tickets/TicketDetail.tsx` read `customer.company_name`, but the API field is
+  `company` — `Customer.Company` (`internal/models/customer.go`) — so the Customer column shows
   `N/A` for **live** customers too — an erased and a healthy customer are indistinguishable here.
 - **Automation:** planned — `gocrm-ui/e2e/tests/erasure-ui.spec.ts` (new)
 
@@ -801,18 +806,18 @@ into a sign-out test.
 - **Steps:** Open `/tasks` and then the task's detail page.
 - **Expected:** The task is still listed, and the **Assigned To** cell reads "Unassigned" — but it
   reads "Unassigned" for **every** task, erased assignee or live one. The column's id is `assignee`
-  (`TaskList.tsx:165`), a field that never exists on the payload: the API sends the user object as
-  `assigned_to` (`internal/models/task.go:30`), and `transformTaskFromBackend`
-  (`api/endpoints/tasks.ts:36`) then overwrites `assigned_to` with the numeric `assigned_to_id`
+  (`gocrm-ui/src/pages/tasks/TaskList.tsx`, `id: 'assignee'`), a field that never exists on the payload: the API sends the user object as
+  `assigned_to` from `Task.AssignedTo` (`internal/models/task.go`), and `transformTaskFromBackend`
+  (`gocrm-ui/src/api/endpoints/tasks.ts`) then overwrites `assigned_to` with the numeric `assigned_to_id`
   without ever setting `assignee`. The cell's `format` therefore always receives `undefined` and
-  falls into its "Unassigned" fallback (`TaskList.tsx:172`) — erasure produces no visible change
+  falls into its "Unassigned" fallback (`gocrm-ui/src/pages/tasks/TaskList.tsx`, `'Unassigned'`) — erasure produces no visible change
   here. Ticket assignees are the surface where erasure *is* observable: `TicketList` reads the
-  `assigned_to` object the API sends, and `Ticket.AssignedTo` is a pointer
-  (`internal/models/ticket.go:27`), so a live assignee shows their name and an erased one
+  `assigned_to` object the API sends, and `Ticket.AssignedTo` (`internal/models/ticket.go`)
+  is a pointer, so a live assignee shows their name and an erased one
   "Unassigned".
 - **Known issue:** The task **detail** page has the same field mismatch — it reads `task.assignee`
   and `task.creator`, which the payload never carries, so it shows "Unassigned"/"Unknown" for every
-  task regardless of erasure (`TaskDetail.tsx:222`, `:236`). No task surface distinguishes an
+  task regardless of erasure (`gocrm-ui/src/pages/tasks/TaskDetail.tsx`, `task.assignee` and `task.creator`). No task surface distinguishes an
   erased assignee from a healthy one; asserting an erasure-specific rendering on tasks would be
   wrong.
 - **Automation:** planned — `gocrm-ui/e2e/tests/erasure-ui.spec.ts` (new)
