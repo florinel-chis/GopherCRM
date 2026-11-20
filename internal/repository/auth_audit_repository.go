@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -55,13 +56,15 @@ func (r *authAuditRepository) RecordAggregated(entry *models.AuthAuditLog) (uint
 
 // PruneCreatedBefore deletes at most limit rows created before before, oldest
 // id first: a plain read of the ids, then a delete by primary key that repeats
-// the predicate, so no range of created_at is locked.
-func (r *authAuditRepository) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
+// the predicate, so no range of created_at is locked. Both statements run on
+// ctx (#485).
+func (r *authAuditRepository) PruneCreatedBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
+	db := r.db.WithContext(ctx)
 	var ids []uint
-	if err := r.db.Model(&models.AuthAuditLog{}).
+	if err := db.Model(&models.AuthAuditLog{}).
 		Where("created_at < ?", before.UTC()).
 		Order("id ASC").Limit(limit).
 		Pluck("id", &ids).Error; err != nil {
@@ -70,7 +73,7 @@ func (r *authAuditRepository) PruneCreatedBefore(before time.Time, limit int) (i
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	result := r.db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.AuthAuditLog{})
+	result := db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.AuthAuditLog{})
 	return result.RowsAffected, result.Error
 }
 

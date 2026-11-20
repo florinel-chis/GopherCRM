@@ -1897,6 +1897,9 @@ attempts created more than `service.OIDCLoginAttemptRetention` (one day) earlier
 repeating the predicate, until a chunk deletes fewer than 500). The prune does not change the
 sweep's count or error; a failure is logged through `utils.LogError` and a non-zero count as
 `pruned single sign-on attempts` with the `pruned` field.
+Since #485 both prunes (this one and the sign-in audit prune of #454) run their statements on the
+sweep's context, so `Stop` cancels a prune that is waiting for a database connection instead of
+letting it use up main's shared drain deadline.
 
 Regression roots, on SQLite and on a disposable `TEST_MYSQL_DSN` schema unless noted:
 `TestBulkOutcomeRecovery{SQLite,MySQL}` (a failed completion rolls the batch back; a rolled-back

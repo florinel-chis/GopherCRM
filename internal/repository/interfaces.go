@@ -810,8 +810,9 @@ type OIDCLoginAttemptRepository interface {
 	Claim(stateHash string, now time.Time) (*models.OIDCLoginAttempt, error)
 	// PruneCreatedBefore deletes at most limit rows created before before,
 	// oldest id first (a plain read of the ids, then a delete by primary key),
-	// and returns how many it deleted.
-	PruneCreatedBefore(before time.Time, limit int) (int64, error)
+	// and returns how many it deleted. Both statements run on ctx, so a
+	// cancelled ctx ends a prune that is waiting for the database (#485).
+	PruneCreatedBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 	WithTx(tx *gorm.DB) OIDCLoginAttemptRepository
 }
 
@@ -826,8 +827,9 @@ type AuthAuditRepository interface {
 	RecordAggregated(entry *models.AuthAuditLog) (uint, error)
 	// PruneCreatedBefore deletes at most limit rows created before before,
 	// oldest id first (a plain read of the ids, then a delete by primary key),
-	// and returns how many it deleted.
-	PruneCreatedBefore(before time.Time, limit int) (int64, error)
+	// and returns how many it deleted. Both statements run on ctx, so a
+	// cancelled ctx ends a prune that is waiting for the database (#485).
+	PruneCreatedBefore(ctx context.Context, before time.Time, limit int) (int64, error)
 	// List returns one page of the rows matching filter, created_at
 	// descending then id descending, and the number of matching rows.
 	List(filter AuthAuditFilter, offset, limit int) ([]models.AuthAuditLog, int64, error)
