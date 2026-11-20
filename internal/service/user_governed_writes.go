@@ -84,10 +84,29 @@ func assignedRoleName(role models.UserRole, custom *models.Role) string {
 	return string(role)
 }
 
-// isLastActiveAdmin reports whether the locked active admin set is this
-// account alone.
-func isLastActiveAdmin(admins []models.User, id uint) bool {
-	return len(admins) == 1 && admins[0].ID == id
+// isLastActiveAdmin reports whether target is the only active admin before a
+// write that touches this one account, so the write would leave none.
+//
+// The active admin set before the write is admins plus target when target's
+// own locked row is an active admin. LockActiveAdmins discovers its ids with a
+// consistent read, so on MySQL/MariaDB REPEATABLE READ an admin promoted by a
+// transaction that committed while this one waited on the lock (a SCIM group
+// handover, #506) is missing from admins; only the locking read of lockUsers
+// sees that row. Counting it can only make the guard refuse more often during
+// such a race, never less.
+func isLastActiveAdmin(admins []models.User, target *models.User) bool {
+	if target == nil {
+		return false
+	}
+	before := make(map[uint]struct{}, len(admins)+1)
+	for _, a := range admins {
+		before[a.ID] = struct{}{}
+	}
+	if target.Role == models.RoleAdmin && target.IsActive && !target.DeletedAt.Valid {
+		before[target.ID] = struct{}{}
+	}
+	_, counted := before[target.ID]
+	return counted && len(before) == 1
 }
 
 func (s *userService) CreateAs(ctx context.Context, actor Actor, user *models.User, password string) error {
@@ -285,7 +304,7 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 		leavesAdmins := change.erase ||
 			(change.role != nil && *change.role != models.RoleAdmin) ||
 			(change.isActive != nil && !*change.isActive)
-		if leavesAdmins && isLastActiveAdmin(admins, target.ID) {
+		if leavesAdmins && isLastActiveAdmin(admins, target) {
 			return fmt.Errorf("user %d: %w", id, apperrors.ErrLastAdmin)
 		}
 
@@ -476,7 +495,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			if role == models.RoleCustom && target.Role == models.RoleCustomer {
 				return nil, oidcRefusalForUser(oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole), target.ID)
 			}
-			if role != models.RoleAdmin && isLastActiveAdmin(admins, target.ID) {
+			if role != models.RoleAdmin && isLastActiveAdmin(admins, target) {
 				return nil, oidcRefusalForUser(oidcRefuseWith("last_admin", apperrors.ErrLastAdmin), target.ID)
 			}
 			if role != target.Role || !sameRoleID(roleID, target.RoleID) {

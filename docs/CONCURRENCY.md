@@ -588,8 +588,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
-  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:223`, and
-  `CreateAs`, `internal/service/user_governed_writes.go:93`) locks the `users` rows of the active
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:242`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:112`) locks the `users` rows of the active
   admins (`LockActiveAdmins`, `internal/repository/user_repository.go:297`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
@@ -610,7 +610,13 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `role_permissions` rows after its `roles` row. A role write starts at the actor's `users` row:
   users before roles. The actor is read again under its lock and every refusal (the lost
   permission, the escalation rule, the customer-login rule, the last-admin invariant) is decided
-  after the locks, from the locked rows. Whether a customer login has a linked customer record
+  after the locks, from the locked rows. The last-admin rule counts the locked row of the account
+  being changed as an admin before the write whenever that row is an active admin, next to the
+  admin set: `LockActiveAdmins` discovers the admins with a consistent read, so on MySQL/MariaDB an
+  admin promoted by a transaction that committed while this one waited (a SCIM group handover,
+  #506) is missing from that set, and only the locking read of `LockLiveByIDs` sees it (#513).
+  During such a race this can only refuse more often, never less: a write is refused even when a
+  third admin was promoted concurrently, which is deliberate. Whether a customer login has a linked customer record
   (`HasLinkedCustomerRecord`, a plain read of `customers` by `user_id` after the locks) takes no
   lock, so the lock order is unchanged. The role delete is the one place where `users` rows are
   not taken in ascending id: its holder reads lock by `role_id`, after the actor's row and, the
@@ -619,7 +625,7 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:295`), once and without a retry of its own. By then
+  (`internal/service/user_governed_writes.go:314`), once and without a retry of its own. By then
   the write holds the target's `users` row, so the nested erasure takes leads and customers after
   users, the one inversion of the erasure order (#385); `governedWrite` is not reordered.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
@@ -645,7 +651,10 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   plain read; when that pair is unknown and the callback vetted an Entra ID `oid` (#505), it
   plain-reads the `source` `scim` row of `(issuer, oid)`, which names the SCIM-created account. It
   then locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's current
-  custom role and of the mapped role (`RoleRepository.LockByIDs`), and writes: the role change and
+  custom role and of the mapped role (`RoleRepository.LockByIDs`). The last-admin refusal of a
+  re-applied role counts the locked `users` row as an admin before the sign-in when it is an
+  active admin, next to the admin set, as every governed write does (#513). It then writes: the
+  role change and
   its `role_audit_log` row (for a SCIM-matched account also the `user_identities` insert of the
   `(issuer, subject)` link), or on a first sign-in the `users` insert, the `user_identities` insert
   and the audit row, and last the `refresh_tokens` insert.
@@ -683,6 +692,11 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   change, the audit row. It touches no `user_identities` row. A replace with `active` false (#471)
   also writes `token_version` in the same `users` write and then revokes every `refresh_tokens`
   row of the account (`RefreshTokenRepository.RevokeAllForUser`), after the `users` write.
+  The last-admin rule counts the target's locked `users` row as an admin before the write whenever
+  that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
+  a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
+  while this write waited is missing from that set, and only the locking read of `LockLiveByIDs`
+  sees it (#513). This can only refuse more often during such a race, never less.
 - **Order:** admin set → users → roles → user_identities, the OIDC sign-in's order without its
   `refresh_tokens` step; a deactivating replace takes `refresh_tokens` last instead of
   `user_identities` (see the SCIM user patch). A create locks no existing `users` row: its new row
@@ -713,6 +727,11 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   writes no role; on an active target it writes `is_active` false and `token_version` plus one in
   one `UPDATE`, then revokes every `refresh_tokens` row of the account. On an already inactive
   target it writes nothing and commits an empty transaction.
+  The last-admin rule counts the target's locked `users` row as an admin before the write whenever
+  that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
+  a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
+  while this write waited is missing from that set, and only the locking read of `LockLiveByIDs`
+  sees it (#513). This can only refuse more often during such a race, never less.
 - **Order:** admin set → users → roles → refresh_tokens (the delete: admin set → users →
   refresh_tokens). The `users` row comes before its
   `refresh_tokens` rows, as in refresh rotation, logout and password change, so a competing
