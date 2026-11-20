@@ -88,6 +88,7 @@ elif sys.argv[1] == 'test':
             self.assertIn('TestLookupIndexesMigration', selected['cmd/migrate'])
             self.assertIn('TestProductsAndQuotesMigration', selected['cmd/migrate'])
             self.assertIn('TestMigrationAutomationSchema', selected['cmd/migrate'])
+            self.assertIn('TestSchemaParityMigration', selected['cmd/migrate'])
             for name in ('TestLookupIndexesServeLookupsSQLite', 'TestPaginationDeterminismSQLite',
                          'TestPaginationDeterminismMySQL', 'TestCompanyDomainNormalizationSQLite',
                          'TestCompanyDomainNormalizationMySQL'):

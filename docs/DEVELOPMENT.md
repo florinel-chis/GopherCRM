@@ -2492,6 +2492,16 @@ SQLite: the SQL files in `migrations/` are written for MySQL. The global DB hand
 The data model is documented in [datamodel.md](datamodel.md). Operational notes for the SQLite
 flavour — single-connection pool, WAL, backups — are in the README and [DOCKER.md](DOCKER.md).
 
+On MySQL and MariaDB both paths exist, and `cmd/migrate/schema_parity_migration_test.go`
+(`TestSchemaParityMigration`) compares them: it builds one fresh schema from every SQL migration and
+one with `models.MigrateDatabaseWith`, then compares the tables, each column's type and nullability,
+and the indexes (unique or not, index type, ordered columns with prefix lengths; the index name is
+ignored) from `INFORMATION_SCHEMA`. Column defaults, collations, column order, foreign keys and index
+or constraint names are not compared. A new difference fails the test with one line per difference:
+fix the model or the migration, or add it to `schemaParityAllowList` in that file with a reason. An
+allow-list entry that no longer matches a difference on the engine under test fails as well. The
+test needs `TEST_MYSQL_DSN` and skips without it.
+
 ## Deleting personal data
 
 Deleting a user, customer or lead performs a **permanent erasure**, not a recoverable soft delete.
