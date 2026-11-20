@@ -94,7 +94,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   search matches name or SKU. Step 3: ordered as asked, with `id` as tie-breaker. Step 4: **400**
   `BAD_REQUEST`, `success: false`, no `data` rows. Step 5: the deleted product is absent from every
   list and search and its `GET` is **404**.
-- **Automation:** automated — `product_integration_test.go` `TestProductListPaginationSortAndFilters`;
+- **Automation:** automated — `test/integration/product_integration_test.go` `TestProductListPaginationSortAndFilters`;
   `internal/repository/product_repository_test.go` `TestProductRepository_ListFiltersSortsAndHidesDeleted`,
   `_ListRejectsUnknownSortColumns`; `internal/utils/sort_test.go` `TestValidateSortProductsAndQuotes`.
 
@@ -110,7 +110,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   `is_active` true; the second keeps the explicit false and the 0. Each of the others is **400**
   `VALIDATION_ERROR`. The widths are `models.ProductNameMaxLength` 200 and `ProductSKUMaxLength`
   64, held to the column types by a test.
-- **Automation:** automated — `product_handler_test.go`
+- **Automation:** automated — `internal/handler/product_handler_test.go`
   `TestProductHandler_CreateDefaultsActiveAndKeepsExplicitValues`, `TestProductPriceBindingTagMatchesTheModel`;
   `internal/service/product_service_test.go` `TestProductService_*`; `internal/models/product_test.go`
   `TestProductColumnWidthsMatchConstants`.
@@ -124,7 +124,7 @@ asserts the core outcome, the rest is pinned in Vitest).
 - **Expected:** **204**; the quote's line still reads with its copied description, price and total
   and `product_id` set; the quote can still be edited and sent; a new line of the deleted product is
   **400** `INVALID_REFERENCE`; the product's `GET` is **404**.
-- **Automation:** automated — `product_integration_test.go` `TestProductDeleteKeepsQuoteLines`.
+- **Automation:** automated — `test/integration/product_integration_test.go` `TestProductDeleteKeepsQuoteLines`.
 
 ## 15.2 Create a quote
 
@@ -165,7 +165,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   totals are unchanged; the second line copies the *new* name and price and rounds half up. Step 3:
   the overrides win within the same bounds; the USD product is **400** `VALIDATION_ERROR`; the other
   three are **400** `INVALID_REFERENCE`; nothing is written by a refusal.
-- **Automation:** automated — `quote_integration_test.go` `TestQuoteLineSnapshotsProductPrice`;
+- **Automation:** automated — `test/integration/quote_integration_test.go` `TestQuoteLineSnapshotsProductPrice`;
   `internal/models/quote_test.go` `TestQuoteLineTotalRoundsHalfUp`, `TestQuoteTotalsSumLines`.
 
 ### TC-PQ-007 — Bounds are refused without writes and nothing overflows
@@ -182,8 +182,8 @@ asserts the core outcome, the rest is pinned in Vitest).
 - **Expected:** Every one is **400** `VALIDATION_ERROR` and the quote row and its lines are byte for
   byte what they were. 10^6 × 10^12 is 10^18, still an int64, and it is refused by the gross check
   before any multiplication by the discount. Exactly the bound is accepted.
-- **Automation:** automated — `quote_service_test.go` `TestQuoteLineLimitsRejectedWithoutWrites`;
-  `quote_handler_test.go` `TestQuoteLineBindingTagsMatchTheModel`, `TestQuoteHandlerMapsServiceErrors`;
+- **Automation:** automated — `internal/service/quote_service_test.go` `TestQuoteLineLimitsRejectedWithoutWrites`;
+  `internal/handler/quote_handler_test.go` `TestQuoteLineBindingTagsMatchTheModel`, `TestQuoteHandlerMapsServiceErrors`;
   for the fractional bounds (#343) `TestQuoteFractionalQuantityBoundsRejectedWithoutWrites`
   (`internal/service`) and `TestQuoteLineQuantityBinding` (`internal/handler`).
 
@@ -200,7 +200,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   `quote_lines` changes. Step 2: **404** on a draft; on a locked quote the lock answers first.
   Step 3: **200**; the currency may change only once the quote has no lines (**409** otherwise);
   `valid_until: null` clears the date.
-- **Automation:** automated — `quote_integration_test.go` `TestQuoteLockedOutsideDraft`;
+- **Automation:** automated — `test/integration/quote_integration_test.go` `TestQuoteLockedOutsideDraft`;
   `internal/repository/quote_repository_test.go` `TestQuoteRepository_DraftWritesAreConditional`,
   `_LinesBelongToTheirQuote`.
 
@@ -223,9 +223,9 @@ asserts the core outcome, the rest is pinned in Vitest).
   or marked expired. Step 3: `GET /quotes/{id}/history` lists the five rows oldest first with the
   acting user. The claim is a conditional update: a status flipped between the locking read and the
   claim leaves the claim matching nothing.
-- **Automation:** automated — `quote_service_test.go` `TestQuoteStatusTransitionMatrix`;
-  `quote_handler_test.go` `TestQuoteStatusBindingTagsMatchTheModel`; `internal/models/quote_test.go`
-  `TestQuoteTransitionsAreExactlyTheFiveAllowedMoves`; `quote_repository_test.go`
+- **Automation:** automated — `internal/service/quote_service_test.go` `TestQuoteStatusTransitionMatrix`;
+  `internal/handler/quote_handler_test.go` `TestQuoteStatusBindingTagsMatchTheModel`; `internal/models/quote_test.go`
+  `TestQuoteTransitionsAreExactlyTheFiveAllowedMoves`; `internal/repository/quote_repository_test.go`
   `TestQuoteRepository_ClaimStatusIsConditional`, `_StatusChangesOldestFirstAndLatestID`.
 
 ### TC-PQ-010 — Concurrent transitions and line writes stay consistent
@@ -241,7 +241,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   **409** `ErrQuoteHasNoLines` with the quote still draft, or is **409** `ErrQuoteLocked`. No
   committed sent quote has zero lines and the committed totals always equal the sum of the lines.
 - **Automation:** automated — `internal/service/quote_status_regression_test.go`
-  `TestQuoteStatusConcurrentSQLite`, `TestQuoteStatusConcurrentMySQL`; `quote_repository_test.go`
+  `TestQuoteStatusConcurrentSQLite`, `TestQuoteStatusConcurrentMySQL`; `internal/repository/quote_repository_test.go`
   `TestQuoteRepository_LockingReadsCarryForUpdateOnMySQLOnly` (the `FOR UPDATE` clause is rendered
   on MySQL and dropped on SQLite).
 
@@ -261,8 +261,8 @@ asserts the core outcome, the rest is pinned in Vitest).
   filter is inside the query, before pagination); the other rep's deal is **403**. Step 2: **403**
   on every route, nothing changes and no mail is sent. Step 3: every quote, and the reassignment
   works. Step 4: **403** everywhere; no token is **401**.
-- **Automation:** automated — `quote_integration_test.go` `TestQuoteVisibilityForSales`;
-  `quote_handler_test.go` `TestQuoteHandler_SalesIsScopedToItsOwnQuotes`; `quote_repository_test.go`
+- **Automation:** automated — `test/integration/quote_integration_test.go` `TestQuoteVisibilityForSales`;
+  `internal/handler/quote_handler_test.go` `TestQuoteHandler_SalesIsScopedToItsOwnQuotes`; `internal/repository/quote_repository_test.go`
   `TestQuoteRepository_ListScopesOwnerBeforePaginationAndDeleteIsSoft`.
 
 ### TC-PQ-012 — Delete rules
@@ -275,7 +275,7 @@ asserts the core outcome, the rest is pinned in Vitest).
 - **Expected:** Step 1: **204**, then **409** `CONFLICT`, then **403**. Step 2: **204**; the quote is
   **404** and absent from the lists; its lines and history rows stay in their tables; a second
   delete is **404**.
-- **Automation:** automated — `quote_integration_test.go` `TestQuoteDeleteRules`.
+- **Automation:** automated — `test/integration/quote_integration_test.go` `TestQuoteDeleteRules`.
 
 ## 15.6 Email
 
@@ -299,7 +299,7 @@ asserts the core outcome, the rest is pinned in Vitest).
   or the body — a transport error that quotes the address is returned, not logged: the service
   does not log it, and the SMTP mailer's own failure line keeps the reply code without its text.
 - **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailDelivery`,
-  `TestQuoteEmailLogsOmitPersonalData`; `quote_handler_test.go` `TestQuoteHandlerMapsServiceErrors`;
+  `TestQuoteEmailLogsOmitPersonalData`; `internal/handler/quote_handler_test.go` `TestQuoteHandlerMapsServiceErrors`;
   `internal/mailer/smtp_relay_reply_test.go` `TestSMTPMailerSendLogOmitsTheRelayReply` (a stub relay
   answers `RCPT TO` with a 550 that echoes the address; the log line carries `smtp_code=550` and not
   the address).
@@ -320,8 +320,8 @@ asserts the core outcome, the rest is pinned in Vitest).
   not block a later send. Step 2: the mail that went out carries the pre-revision total and the
   call is **409** with `last_emailed_at` unchanged, because the marker is read before the quote;
   a second send with nothing racing is stamped with the revised rendering.
-- **Automation:** automated — `quote_email_test.go` `TestQuoteEmailRevisedDuringSend`;
-  `quote_repository_test.go` `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
+- **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailRevisedDuringSend`;
+  `internal/repository/quote_repository_test.go` `TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft`.
 
 ### TC-PQ-015 — The SMTP transport refuses header injection
 - **Priority:** P0

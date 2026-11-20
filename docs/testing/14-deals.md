@@ -62,9 +62,9 @@ names the Go test that already pins its API behaviour.
   keeps, `currency` absent keeps.
 - **Only the admin account is available to e2e.** Sales sessions need an admin-authenticated
   `POST /users` plus a role-login helper that does not exist yet. Cases that need one are marked
-  *blocked*; the backend half of every such case is pinned by `internal/handler/deal_handler_test.go`
-  `TestRoleMatrix` / `TestSalesMayOnlyTouchItsOwnDeals` and
-  `test/integration/deal_integration_test.go` `TestRoleMatrix` / `TestSalesOwnerRuleAndOwnDealsOnly`.
+  *blocked*; the backend half of every such case is pinned by
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`) / `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`) and
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`) / `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 - **The moderate rate tier applies.** 120 req/min with a burst of 30 per IP.
 
 ---
@@ -83,8 +83,8 @@ names the Go test that already pins its API behaviour.
   body is `{success:true, data:[…], meta:{page, per_page, total, total_pages}}` — `data` is the
   bare array, each item carrying `owner`, `company`, `customer` and `lead` when linked.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-deals.spec.ts`
-  "admin can view the deals list page". Go: `deal_handler_test.go`
-  `TestList_PassesEveryFilterAndReturnsTheArrayWithMeta`.
+  "admin can view the deals list page". Go:
+  `DealHandlerTestSuite.TestList_PassesEveryFilterAndReturnsTheArrayWithMeta` (`internal/handler/deal_handler_test.go`).
 
 ### TC-DEAL-002 — Search matches title and notes
 - **Priority:** P1
@@ -100,8 +100,8 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can filter the list by stage"
   (types the run stamp, which only the two titles of that run carry, and expects two rows; the
   notes half and `meta.total` are pinned in Go). Go:
-  `deal_repository_test.go` `TestDealRepository_ListFiltersSortsAndPaginates`,
-  `deal_integration_test.go` `TestListFiltersSortAndPagination`.
+  `TestDealRepository_ListFiltersSortsAndPaginates` (`internal/repository/deal_repository_test.go`),
+  `DealIntegrationTestSuite.TestListFiltersSortAndPagination` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-003 — Filter by stage and by open deals, server-side
 - **Priority:** P1
@@ -118,8 +118,8 @@ names the Go test that already pins its API behaviour.
   (picks "Proposal" on top of a search and expects the one proposal row with its stage chip,
   then "All stages" brings both rows back; the "Open only" toggle is Vitest `DealList.test.tsx`
   and the 400s are Go). Go:
-  `deal_handler_test.go` `TestList_BadFiltersAre400`, `deal_repository_test.go`
-  `TestDealRepository_ListFiltersSortsAndPaginates`.
+  `DealHandlerTestSuite.TestList_BadFiltersAre400` (`internal/handler/deal_handler_test.go`),
+  `TestDealRepository_ListFiltersSortsAndPaginates` (`internal/repository/deal_repository_test.go`).
 
 ### TC-DEAL-004 — Sort by an allowed column; an unknown column is refused
 - **Priority:** P1
@@ -132,8 +132,8 @@ names the Go test that already pins its API behaviour.
   allowlist is `id, title, stage, amount_cents, probability, expected_close_date, closed_at,
   created_at, updated_at` (`utils.AllowedSortColumns["deals"]`); the default is `created_at desc`
   with `id` as tie-breaker.
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `sort_test.go`,
-  `deal_repository_test.go` `TestDealRepository_ListRejectsUnknownSortColumns`.
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `internal/utils/sort_test.go`,
+  `TestDealRepository_ListRejectsUnknownSortColumns` (`internal/repository/deal_repository_test.go`).
 
 ### TC-DEAL-005 — Sales sees its own deals only; support and customer roles get 403
 - **Priority:** P0
@@ -145,9 +145,9 @@ names the Go test that already pins its API behaviour.
 - **Expected:** Step 1: each rep sees only its own deals, and the `owner_id` filter does not widen
   the scope (the handler overrides it with the caller). Step 2: **403** "Insufficient permissions"
   from the group guard; the sidebar hides "Deals" for those roles.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go`
-  `TestRoleMatrix`, `TestList_SalesIsAlwaysNarrowedToItself`; `deal_integration_test.go`
-  `TestRoleMatrix`, `TestSalesOwnerRuleAndOwnDealsOnly`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestList_SalesIsAlwaysNarrowedToItself` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`), `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 
 ## 14.2 Create
 
@@ -166,9 +166,9 @@ names the Go test that already pins its API behaviour.
   company and sees the formatted amount on both detail pages" (creates in qualification with
   every field and the company, asserts the 201, each field and the company link on the detail
   page, the one history row and the deal in the company's Deals section; the response body is
-  pinned in Go). Go: `deal_handler_test.go`
-  `TestCreate_PassesTheFieldsAndTheCallerAsOwner`; `deal_integration_test.go`
-  `TestCreateAppliesDefaultsAndValidates`.
+  pinned in Go). Go:
+  `DealHandlerTestSuite.TestCreate_PassesTheFieldsAndTheCallerAsOwner` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestCreateAppliesDefaultsAndValidates` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-007 — A minimal deal takes the defaults
 - **Priority:** P1
@@ -181,11 +181,11 @@ names the Go test that already pins its API behaviour.
   `amount_cents` 0, `owner_id` the caller. Changing the setting in Settings > Configuration
   changes the currency of the next deal without a restart; a stored value that is not three
   upper-case letters falls back to `EUR` with a warning in the log.
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_service_test.go`
-  `TestDealService_CurrencyDefaultComesFromConfiguration`,
-  `TestDealService_CreateWritesTheDealAndItsFirstHistoryRowTogether`; `deal_integration_test.go`
-  `TestDefaultCurrencyFollowsTheConfiguration`; `configuration_handler_test.go`
-  `TestGetUIConfigurations_CarriesTheDefaultDealCurrency`.
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go:
+  `TestDealService_CurrencyDefaultComesFromConfiguration` (`internal/service/deal_service_test.go`),
+  `TestDealService_CreateWritesTheDealAndItsFirstHistoryRowTogether` (`internal/service/deal_service_test.go`);
+  `DealIntegrationTestSuite.TestDefaultCurrencyFollowsTheConfiguration` (`test/integration/deal_integration_test.go`);
+  `ConfigurationHandlerTestSuite.TestGetUIConfigurations_CarriesTheDefaultDealCurrency` (`internal/handler/configuration_handler_test.go`).
 
 ### TC-DEAL-008 — Validation errors keep the form open
 - **Priority:** P1
@@ -208,13 +208,13 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "validation errors keep the form
   open" (an empty title, `12,5` as amount and `EU` as currency, all refused by the form before
   any request, so the 400s of the API are pinned in Go).
-  Go: `deal_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
-  `TestCreate_ValuesLongerThanTheirColumnAre400`,
-  `TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage` (create and update),
-  `TestDealAmountBindingTagMatchesTheModel`; `deal_service_test.go`
-  `TestCreate_ValidationFailuresNeverReachTheWrite`, `TestAmountBound_OnCreateAndUpdate`;
-  `deal_repository_test.go` `TestDealRepository_PipelineAggregatesTheMaximumAmount`;
-  `deal_test.go`. Vitest: `DealForm.test.tsx` "refuses an amount above the API bound of
+  Go: `DealHandlerTestSuite.TestCreate_BindingRejectsBadBodies` (`internal/handler/deal_handler_test.go`),
+  `DealHandlerTestSuite.TestCreate_ValuesLongerThanTheirColumnAre400` (`internal/handler/deal_handler_test.go`),
+  `TestDeal_AmountAboveTheBoundIsRefusedWithANumericMessage` (`internal/handler/deal_handler_test.go`), for create and update,
+  `TestDealAmountBindingTagMatchesTheModel` (`internal/handler/deal_handler_test.go`);
+  `DealServiceTestSuite.TestCreate_ValidationFailuresNeverReachTheWrite` (`internal/service/deal_service_test.go`), `DealServiceTestSuite.TestAmountBound_OnCreateAndUpdate` (`internal/service/deal_service_test.go`);
+  `TestDealRepository_PipelineAggregatesTheMaximumAmount` (`internal/repository/deal_repository_test.go`);
+  `internal/models/deal_test.go`. Vitest: `DealForm.test.tsx` "refuses an amount above the API bound of
   1000000000000 cents and accepts the bound".
 
 ### TC-DEAL-009 — An unknown company, customer, lead or owner is INVALID_REFERENCE
@@ -226,10 +226,10 @@ names the Go test that already pins its API behaviour.
      `owner_id`.
 - **Expected:** **400** with `error.code` `INVALID_REFERENCE` and a message naming the field
   (`unknown company_id 999999: …`). A soft-deleted row counts as unknown. Nothing is written.
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_handler_test.go`
-  `TestCreate_UnknownReferencesAreInvalidReference`; `deal_service_test.go`
-  `TestCreate_EachLinkMustBeALiveRow`; `deal_integration_test.go`
-  `TestCreateAppliesDefaultsAndValidates`.
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go:
+  `DealHandlerTestSuite.TestCreate_UnknownReferencesAreInvalidReference` (`internal/handler/deal_handler_test.go`);
+  `DealServiceTestSuite.TestCreate_EachLinkMustBeALiveRow` (`internal/service/deal_service_test.go`);
+  `DealIntegrationTestSuite.TestCreateAppliesDefaultsAndValidates` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-010 — Sales owns what it creates and cannot assign anybody else
 - **Priority:** P0
@@ -240,8 +240,8 @@ names the Go test that already pins its API behaviour.
   2. As admin, create a deal with `owner_id` of a sales user.
 - **Expected:** Step 1: **201** with `owner_id` the sales user; then **403** "You can only assign
   deals to yourself". Step 2: **201** with the named owner. `owner_id: 0` is a 400.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go`
-  `TestCreate_OwnerRules`; `deal_integration_test.go` `TestSalesOwnerRuleAndOwnDealsOnly`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `DealHandlerTestSuite.TestCreate_OwnerRules` (`internal/handler/deal_handler_test.go`); `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-011 — Amounts render per currency
 - **Priority:** P2
@@ -256,8 +256,8 @@ names the Go test that already pins its API behaviour.
   company and sees the formatted amount on both detail pages" (EUR only: `1234.56` renders as
   `€1,234.56` on the detail page and in the company's Deals section; the second currency and the
   list column are Vitest `dealFormat.test.ts` and `DealList.test.tsx`). Go: n/a
-  (presentation); the integer contract is pinned by `deal_integration_test.go`
-  `TestCreateAppliesDefaultsAndValidates`.
+  (presentation); the integer contract is pinned by
+  `DealIntegrationTestSuite.TestCreateAppliesDefaultsAndValidates` (`test/integration/deal_integration_test.go`).
 
 ## 14.3 Edit
 
@@ -275,9 +275,9 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can edit the title and amount"
   (changes the title and the amount of an unlinked deal and asserts the 200 and the detail page;
   the link rules are Vitest `DealForm.test.tsx` and Go). Go:
-  `deal_handler_test.go` `TestUpdate_ReplacesTheFieldsAndKeepsTheOwner`,
-  `TestUpdate_LinksAbsentKeepZeroClearsValueSets`; `deal_integration_test.go`
-  `TestStageJourneyWithHistory`.
+  `DealHandlerTestSuite.TestUpdate_ReplacesTheFieldsAndKeepsTheOwner` (`internal/handler/deal_handler_test.go`),
+  `DealHandlerTestSuite.TestUpdate_LinksAbsentKeepZeroClearsValueSets` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestStageJourneyWithHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-013 — Editing the stage on the form goes through the transition rules
 - **Priority:** P0
@@ -289,9 +289,9 @@ names the Go test that already pins its API behaviour.
 - **Expected:** **200** with `probability` 0, `closed_at` set and `lost_reason` stored; the history
   has a new row "Qualification to Lost". A `PUT` that keeps the stage adds no row and applies
   `probability` only when sent.
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_service_test.go`
-  `TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges`;
-  `deal_integration_test.go` `TestStageJourneyWithHistory`.
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go:
+  `TestDealService_UpdateGoesThroughTheTransitionOnlyWhenTheStageChanges` (`internal/service/deal_service_test.go`);
+  `DealIntegrationTestSuite.TestStageJourneyWithHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-014 — Sales cannot edit another rep's deal nor reassign its own
 - **Priority:** P0
@@ -302,9 +302,9 @@ names the Go test that already pins its API behaviour.
   2. As rep A, `PUT` its own deal with `owner_id` of rep B.
 - **Expected:** Step 1: **403** "You can only view your own deals". Step 2: **403** "You can only
   assign deals to yourself". Admin may do both.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go`
-  `TestSalesMayOnlyTouchItsOwnDeals`, `TestUpdate_OwnerRules`; `deal_integration_test.go`
-  `TestRoleMatrix`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestUpdate_OwnerRules` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.4 Stage changes and history
 
@@ -323,10 +323,10 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "moving through the open stages grows
   the history by one row each time" (asserts both 200s, the stage chip, 40% then 70%, the three
   rows with their texts and that nothing is closed; the name and timestamp on each row are Vitest
-  `DealHistory.test.tsx`). Go: `deal_service_test.go`
-  `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
-  `deal_repository_test.go` `TestDealRepository_StageChangesAreListedOldestFirstWithTheUser`;
-  `deal_handler_test.go` `TestHistory_ReturnsTheRowsAsGivenWithTheUser`.
+  `DealHistory.test.tsx`). Go:
+  `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory` (`internal/service/deal_service_test.go`);
+  `TestDealRepository_StageChangesAreListedOldestFirstWithTheUser` (`internal/repository/deal_repository_test.go`);
+  `DealHandlerTestSuite.TestHistory_ReturnsTheRowsAsGivenWithTheUser` (`internal/handler/deal_handler_test.go`).
 
 ### TC-DEAL-016 — Winning a deal pins the probability and shows closed_at
 - **Priority:** P0
@@ -337,8 +337,8 @@ names the Go test that already pins its API behaviour.
 - **Expected:** **200**: `stage` `won`, `probability` 100 whatever was sent, `closed_at` set to now
   and shown on the detail page. The history gains "… to Won".
 - **Automation:** planned — `admin-deals.spec.ts` (new). Go:
-  `deal_service_test.go` `TestApplyDealTransition`; `deal_integration_test.go`
-  `TestStageJourneyWithHistory`.
+  `TestApplyDealTransition` (`internal/service/deal_service_test.go`);
+  `DealIntegrationTestSuite.TestStageJourneyWithHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-017 — Losing a deal asks for a reason and stores it
 - **Priority:** P0
@@ -354,8 +354,8 @@ names the Go test that already pins its API behaviour.
   shows closed_at and the reason, and moving back clears them" (the empty reason is refused with
   the dialog still open and the stage unchanged, then the 200, the Lost chip, closed_at, the
   reason, 0% and the second history row; the 255-character limit is Go). Go:
-  `deal_handler_test.go` `TestChangeStage_PassesTheBodyThroughAndReturnsTheMovedDeal`,
-  `TestChangeStage_BindingRejectsBadBodies`; `deal_integration_test.go` `TestStageJourneyWithHistory`.
+  `DealHandlerTestSuite.TestChangeStage_PassesTheBodyThroughAndReturnsTheMovedDeal` (`internal/handler/deal_handler_test.go`),
+  `DealHandlerTestSuite.TestChangeStage_BindingRejectsBadBodies` (`internal/handler/deal_handler_test.go`); `DealIntegrationTestSuite.TestStageJourneyWithHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-018 — Reopening clears closed_at and the lost reason
 - **Priority:** P1
@@ -368,8 +368,8 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "marking a deal lost needs a reason,
   shows closed_at and the reason, and moving back clears them" (reopens to "Proposal" rather than
   "Qualification" and asserts the 200, the chip, closed_at and the reason gone and the third
-  history row; the probability is Go). Go: `deal_service_test.go`
-  `TestApplyDealTransition`, `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`.
+  history row; the probability is Go). Go:
+  `TestApplyDealTransition` (`internal/service/deal_service_test.go`), `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory` (`internal/service/deal_service_test.go`).
 
 ### TC-DEAL-019 — Asking for the current stage again changes nothing
 - **Priority:** P2
@@ -379,8 +379,8 @@ names the Go test that already pins its API behaviour.
   1. `POST /api/v1/deals/{id}/stage` `{stage:"won", probability: 5}`.
 - **Expected:** **200** with the deal exactly as it was — probability still 100, the same
   `closed_at` — and no new history row. `{stage:"closed"}` is a **400**; an unknown deal a **404**.
-- **Automation:** planned — `admin-deals.spec.ts` (new). Go: `deal_service_test.go`
-  `TestChangeStage_SameStageWritesNothing`; `deal_integration_test.go` `TestStageJourneyWithHistory`.
+- **Automation:** planned — `admin-deals.spec.ts` (new). Go:
+  `DealServiceTestSuite.TestChangeStage_SameStageWritesNothing` (`internal/service/deal_service_test.go`); `DealIntegrationTestSuite.TestStageJourneyWithHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-020 — Sales cannot move or read the history of another rep's deal
 - **Priority:** P0
@@ -389,8 +389,8 @@ names the Go test that already pins its API behaviour.
 - **Steps:**
   1. As rep A, `POST /api/v1/deals/{rep B's deal}/stage` and `GET …/history`.
 - **Expected:** **403** on both, before the service is reached; on its own deal both are **200**.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go`
-  `TestSalesMayOnlyTouchItsOwnDeals`; `deal_integration_test.go` `TestRoleMatrix`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`); `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.5 Detail and sub-lists
 
@@ -407,8 +407,8 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can create a deal for a
   company and sees the formatted amount on both detail pages" (a deal linked to a company only:
   the company link and the history are asserted; the customer and lead links are Vitest
-  `DealDetail.test.tsx` and Go, the 404 is Go). Go: `deal_repository_test.go`
-  `TestDealRepository_GetByIDPreloadsTheAssociations`; `deal_handler_test.go` `TestGet_NotFoundAndBadID`.
+  `DealDetail.test.tsx` and Go, the 404 is Go). Go:
+  `TestDealRepository_GetByIDPreloadsTheAssociations` (`internal/repository/deal_repository_test.go`); `DealHandlerTestSuite.TestGet_NotFoundAndBadID` (`internal/handler/deal_handler_test.go`).
 
 ### TC-DEAL-022 — Company and customer detail pages list their deals
 - **Priority:** P1
@@ -426,9 +426,9 @@ names the Go test that already pins its API behaviour.
   company and sees the formatted amount on both detail pages" (the company page's Deals section
   lists the deal with its amount; the customer page, the "New deal" pre-selection and the 404s
   are Vitest `CompanyDetail.test.tsx` / `CustomerDetail.test.tsx` and Go). Go:
-  `deal_handler_test.go` `TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404`;
-  `deal_repository_test.go` `TestCompanyRepository_DealCountAndUnlinkDeals`;
-  `deal_integration_test.go` `TestListFiltersSortAndPagination`.
+  `DealHandlerTestSuite.TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404` (`internal/handler/deal_handler_test.go`);
+  `TestCompanyRepository_DealCountAndUnlinkDeals` (`internal/repository/deal_repository_test.go`);
+  `DealIntegrationTestSuite.TestListFiltersSortAndPagination` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-023 — Sales sees only its own deals in the sub-lists
 - **Priority:** P0
@@ -437,9 +437,9 @@ names the Go test that already pins its API behaviour.
 - **Steps:**
   1. As each rep, `GET /api/v1/companies/{id}/deals`; as support, the same.
 - **Expected:** Each rep sees one deal with `meta.total` 1; the admin sees two; support is **403**.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go`
-  `TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404`; `deal_service_test.go`
-  `TestListByCompany_ScopesTheFilterToTheCompanyAndOwner`; `deal_integration_test.go` `TestRoleMatrix`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `DealHandlerTestSuite.TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404` (`internal/handler/deal_handler_test.go`);
+  `DealServiceTestSuite.TestListByCompany_ScopesTheFilterToTheCompanyAndOwner` (`internal/service/deal_service_test.go`); `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.6 Delete and data
 
@@ -451,8 +451,8 @@ names the Go test that already pins its API behaviour.
   1. As the sales owner, `DELETE /api/v1/deals/{id}`.
 - **Expected:** **403** even on its own deal (`RequireRole(admin)` on the route); the delete button
   is hidden for sales.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_handler_test.go` `TestRoleMatrix`;
-  `deal_integration_test.go` `TestRoleMatrix`.
+- **Automation:** blocked — needs a role-login helper. Go: `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-025 — Admin deletes a deal; the history stays
 - **Priority:** P0
@@ -466,9 +466,9 @@ names the Go test that already pins its API behaviour.
 - **Automation:** automated (partial) — `admin-deals.spec.ts` "admin can delete a deal" (deletes
   from the list row rather than the detail page and asserts the row is gone from the narrowed
   list; the 404s and the kept history rows are Go). Go:
-  `deal_service_test.go` `TestDealService_DeleteIsSoftAndHistoryStays`; `deal_repository_test.go`
-  `TestDealRepository_DeleteIsSoftAndKeepsTheHistory`; `deal_integration_test.go`
-  `TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory`.
+  `TestDealService_DeleteIsSoftAndHistoryStays` (`internal/service/deal_service_test.go`);
+  `TestDealRepository_DeleteIsSoftAndKeepsTheHistory` (`internal/repository/deal_repository_test.go`);
+  `DealIntegrationTestSuite.TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-026 — Deleting a company unlinks its deals; erasing a person keeps them
 - **Priority:** P0
@@ -484,17 +484,17 @@ names the Go test that already pins its API behaviour.
   title reads `[redacted]` and its notes and lost reason are empty (#245); nothing of the person
   appears in `deals` or `deal_stage_changes`.
 - **Automation:** planned — `admin-deals.spec.ts` (new); `admin-companies.spec.ts` for the company
-  half. Go: `deal_service_test.go` `TestCompanyServiceDelete_UnlinksDealsToo`;
-  `deal_integration_test.go` `TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory`,
-  `TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory`; `erasure_pii_sweep_test.go`
-  `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` now lists both tables. The
+  half. Go: `TestCompanyServiceDelete_UnlinksDealsToo` (`internal/service/deal_service_test.go`);
+  `TestErasingALinkedCustomerLeadAndUserKeepsTheDealAndItsHistory` (`test/integration/deal_integration_test.go`),
+  `DealIntegrationTestSuite.TestCompanyDeleteUnlinksDealsAndDealDeleteKeepsHistory` (`test/integration/deal_integration_test.go`);
+  `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` (`test/integration/erasure_pii_sweep_test.go`) now lists both tables. The
   text redaction (#245) is pinned in Go: `internal/repository/business_text_erasure_test.go`
   `TestCustomerErasureScrubsDealText{SQLite,MySQL}`, `TestLeadErasureScrubsDealAndQuoteText{SQLite,MySQL}`
   (lead, converted lead, customer-role login, a refused sales erasure that changes nothing),
   `TestBusinessTextErasureLeavesUnrelatedRecords{SQLite,MySQL}` (another customer's deal and a deal
   owned by an erased staff user stay byte for byte), `TestBusinessTextErasurePurgesDealNotifications{SQLite,MySQL}`
-  (notifications about the deal are deleted); over HTTP, `tests/business_text_erasure_test.go`
-  `TestBusinessTextErasureAPISQLite`.
+  (notifications about the deal are deleted); over HTTP,
+  `TestBusinessTextErasureAPISQLite` (`tests/business_text_erasure_test.go`).
 
 ## 14.7 Pipeline board (2026-09-30)
 
@@ -523,10 +523,10 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   weighted line; Won and Lost start collapsed). Not asserted end to end: the column order, the API
   response, a second currency and the exclusion of soft-deleted deals — Vitest `DealBoard.test.tsx`
   "renders the five stage columns in order with their counts and totals" and the Go tests.
-  Go: `deal_repository_test.go`
-  `TestDealRepository_PipelineGroupsByStageAndCurrency`, `TestDealRepository_PipelineAggregatesTheMaximumAmount`; `deal_service_test.go`
-  `TestBuildDealPipelineStages_Layout`; `deal_handler_test.go` `TestPipeline_ResponseShape`;
-  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+  Go:
+  `TestDealRepository_PipelineGroupsByStageAndCurrency` (`internal/repository/deal_repository_test.go`), `TestDealRepository_PipelineAggregatesTheMaximumAmount` (`internal/repository/deal_repository_test.go`);
+  `TestBuildDealPipelineStages_Layout` (`internal/service/deal_service_test.go`); `DealHandlerTestSuite.TestPipeline_ResponseShape` (`internal/handler/deal_handler_test.go`);
+  `DealPipelineIntegrationTestSuite.TestPipelineAsAdmin` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-028 — Weighted totals round half up once per stage and currency
 - **Priority:** P1
@@ -539,8 +539,8 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   **400110**; negotiation EUR = 0.5 → **1**. Rounding is applied to the stage-and-currency sum,
   not per deal (two 1-cent deals at 50 % give 1, not 2).
 - **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
-  Go: `deal_service_test.go` `TestWeightedCents_RoundsHalfUpOnce`, `TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal`;
-  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+  Go: `TestWeightedCents_RoundsHalfUpOnce` (`internal/service/deal_service_test.go`), `TestBuildDealPipelineStages_RoundsTheTotalNotEachDeal` (`internal/service/deal_service_test.go`);
+  `DealPipelineIntegrationTestSuite.TestPipelineAsAdmin` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-029 — "Move to…" moves a card and updates both columns
 - **Priority:** P0
@@ -554,7 +554,7 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Negotiation through its menu moves it and updates both headers" (the stage
   response is 200, the card leaves Qualification and appears under Negotiation, and both header
   counts change by one). Not asserted end to end: the request body, the header totals and the
-  history row. Go: `deal_service_test.go` `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory`;
+  history row. Go: `TestDealService_ChangeStageAppliesTheRulesAndAppendsHistory` (`internal/service/deal_service_test.go`);
   Vitest `DealBoard.test.tsx` "moves a card to Proposal from its menu and refetches both columns and
   the pipeline".
 
@@ -569,7 +569,7 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
 - **Automation:** automated (partial) — `admin-deals-board.spec.ts` "moving a card to Lost asks for a reason and shows it under the expanded Lost column" (the dialog
   takes the reason, the stage response is 200, the card appears under the expanded Lost column,
   and the detail page shows the Lost chip and the reason). Not asserted end to end: the request
-  body and the weighted total. Go: `deal_service_test.go` `TestApplyDealTransition`; Vitest
+  body and the weighted total. Go: `TestApplyDealTransition` (`internal/service/deal_service_test.go`); Vitest
   `DealBoard.test.tsx` "asks for a reason before moving a card to Lost and sends it".
 
 ### TC-DEAL-031 — Sales sees only its own deals on the board
@@ -580,9 +580,9 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   1. As sales, `GET /api/v1/deals/pipeline` and `GET /api/v1/deals/pipeline?owner_id=<other>`.
 - **Expected:** both **200** with the caller's own deals only; `owner_id` cannot widen it, as on
   the list. `company_id` still narrows within the caller's deals.
-- **Automation:** blocked — needs a role-login helper. Go: `deal_service_test.go`
-  `TestDealService_PipelineScoping`; `deal_pipeline_integration_test.go`
-  `TestPipelineAsSalesIsScopedToItself`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `TestDealService_PipelineScoping` (`internal/service/deal_service_test.go`);
+  `DealPipelineIntegrationTestSuite.TestPipelineAsSalesIsScopedToItself` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-032 — Admin filters the pipeline by owner and company
 - **Priority:** P2
@@ -596,9 +596,9 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   five empty stages. Step 2: **400** "owner_id must be a positive integer" / "company_id must be a
   positive integer", the list's rule.
 - **Automation:** planned — `admin-deals-board.spec.ts` (new; the spec makes no API call today).
-  Go: `deal_handler_test.go` `TestPipeline_PassesTheFiltersAndTheCaller`, `TestPipeline_BadFiltersAre400`;
-  `deal_repository_test.go` `TestDealRepository_PipelineOwnerAndCompanyFilters`;
-  `deal_pipeline_integration_test.go` `TestPipelineAsAdmin`.
+  Go: `DealHandlerTestSuite.TestPipeline_PassesTheFiltersAndTheCaller` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestPipeline_BadFiltersAre400` (`internal/handler/deal_handler_test.go`);
+  `TestDealRepository_PipelineOwnerAndCompanyFilters` (`internal/repository/deal_repository_test.go`);
+  `DealPipelineIntegrationTestSuite.TestPipelineAsAdmin` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-033 — Support and customer cannot read the pipeline
 - **Priority:** P1
@@ -608,8 +608,8 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   1. As each, `GET /api/v1/deals/pipeline`; open `/deals/board`.
 - **Expected:** **403** from the deals guard; the board route and its nav entry are not offered to
   these roles.
-- **Automation:** blocked — needs a role-login helper for support. Go: `deal_handler_test.go`
-  `TestRoleMatrix`; `deal_pipeline_integration_test.go` `TestRolesAndBadFilters`.
+- **Automation:** blocked — needs a role-login helper for support. Go:
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`); `DealPipelineIntegrationTestSuite.TestRolesAndBadFilters` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-034 — Sales cannot link or read another rep's lead through a deal
 - **Priority:** P0
@@ -633,11 +633,10 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   `lead_id` that is sent is always checked, even when it equals the stored one; only an absent
   `lead_id` keeps a hidden link unchecked.
 - **Automation:** blocked — needs a role-login helper for sales. Go:
-  `lead_visibility_integration_test.go` `TestDealWrites_SalesCannotLinkAnotherRepsLead`,
-  `TestDealReads_HideHistoricalLinks`, `TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle`;
-  `deal_lead_visibility_test.go`
-  `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy`; `deal_lead_visibility_handler_test.go`
-  `TestDealRoutes_HideALeadTheOwnerMayNotSee`, `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink`.
+  `LeadVisibilityIntegrationTestSuite.TestDealWrites_SalesCannotLinkAnotherRepsLead` (`internal/integration/lead_visibility_integration_test.go`),
+  `LeadVisibilityIntegrationTestSuite.TestDealReads_HideHistoricalLinks` (`internal/integration/lead_visibility_integration_test.go`), `LeadVisibilityIntegrationTestSuite.TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle` (`internal/integration/lead_visibility_integration_test.go`);
+  `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy` (`internal/service/deal_lead_visibility_test.go`);
+  `TestDealRoutes_HideALeadTheOwnerMayNotSee` (`internal/handler/deal_lead_visibility_handler_test.go`), `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink` (`internal/handler/deal_lead_visibility_handler_test.go`).
 
 ### TC-DEAL-035 — GET /deals/{id}/tasks lists a deal's tasks under the deal rule
 - **Priority:** P0

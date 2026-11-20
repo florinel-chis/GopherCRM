@@ -28,19 +28,19 @@ where the behaviour is surprising a **Known issue** line names it.
   name. A case that creates a label must therefore use a run-scoped name (`labels.spec.ts` derives
   one from `Date.now()` plus a random suffix) and delete it again, or the shared database — and the
   screenshot captures taken from it — fills up with run debris.
-- **`/labels` is open to every system role.** `SetupLabelRoutes` (`internal/handler/routes.go:81`) leaves
+- **`/labels` is open to every system role.** `SetupLabelRoutes` (`internal/handler/routes.go`) leaves
   `GET /labels` open to every authenticated role, and the SPA route
   (`gocrm-ui/src/routes/index.tsx`) and the sidebar entry (`MainLayout.tsx`) ask for `labels.view`,
   which all four system roles hold (a custom role without it is redirected to `/unauthorized`).
   Write access is enforced per verb: create and update need admin, sales or support; delete needs
   admin. The page hides the buttons to match (`labels.create`, `labels.update`, `labels.delete`;
-  `LabelList.tsx:62-64`).
+  `canCreate`/`canUpdate`/`canDelete` in `gocrm-ui/src/pages/labels/LabelList.tsx`).
 - **Only the admin account is available to e2e.** Sales and support accounts require an
   admin-authenticated `POST /users` plus a role-login helper that does not exist yet; a *customer*
   is obtainable through public registration, which `registration.spec.ts` already does. Cases that
   need a non-admin, non-customer session are marked *blocked* with that note.
-- The label editor validates client-side with zod (`LabelList.tsx:46-51`) before any request is
-  made, and the API validates again in `normalizeLabel` (`internal/service/label_service.go:150`).
+- The label editor validates client-side with zod (`labelSchema` in `gocrm-ui/src/pages/labels/LabelList.tsx`) before any request is
+  made, and the API validates again in `normalizeLabel` (`internal/service/label_service.go`).
   A case that expects an HTTP status must state which of the two layers it is exercising.
 - Task creation through the UI always needs an assignee (`assigned_to_id` is `binding:"required"`),
   which is why `TasksPage.fillTaskForm` picks one — see TC-TASK-008.
@@ -66,7 +66,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Read the name cell of every row in order.
-- **Expected:** The names are in ascending order. The ordering is `ORDER BY name ASC` in the repository (`label_repository.go:94`), not a client-side sort, and the table offers no column sorting.
+- **Expected:** The names are in ascending order. The ordering is `ORDER BY name ASC` in the repository (`labelRepository.List` (`internal/repository/label_repository.go`)), not a client-side sort, and the table offers no column sorting.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-003 — The Tasks column counts the tasks carrying the label
@@ -76,7 +76,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Read the Tasks cell of the label's row.
-- **Expected:** The cell reads `1`. The count comes from a second query joined against `tasks` with `tasks.deleted_at IS NULL` (`label_repository.go:161-187`), so a soft-deleted task stops being counted.
+- **Expected:** The cell reads `1`. The count comes from a second query joined against `tasks` with `tasks.deleted_at IS NULL` (`labelRepository.countTasksByLabel` (`internal/repository/label_repository.go`)), so a soft-deleted task stops being counted.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "admin can attach an existing label to a new task"
 
 ### TC-LABEL-004 — The Color column shows the swatch and the uppercased hex
@@ -86,7 +86,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Read the Color cell of that row.
-- **Expected:** A coloured square (`data-testid="label-swatch-{id}"`) followed by `#D62728`. The value is uppercased for display only (`LabelList.tsx:211`); the stored value keeps the case it was sent with.
+- **Expected:** A coloured square (`data-testid="label-swatch-{id}"`) followed by `#D62728`. The value is uppercased for display only (`label.color.toUpperCase()` in `gocrm-ui/src/pages/labels/LabelList.tsx`); the stored value keeps the case it was sent with.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "admin can create a label from the labels management page"
 
 ### TC-LABEL-005 — Empty state when no labels exist
@@ -128,7 +128,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Preconditions:** Admin logged in; a label named `Renewal` exists.
 - **Steps:**
   1. Open the create dialog, enter `RENEWAL`, submit.
-- **Expected:** 409, same snackbar as TC-LABEL-007. The service pre-checks with `LOWER(name) = LOWER(?)` (`label_repository.go:136`) precisely so MySQL (case-insensitive collation) and the SQLite test database agree; without it the E2E result would depend on the backing database.
+- **Expected:** 409, same snackbar as TC-LABEL-007. The service pre-checks with `LOWER(name) = LOWER(?)` (`labelRepository.ExistsByNameInsensitive` (`internal/repository/label_repository.go`)) precisely so MySQL (case-insensitive collation) and the SQLite test database agree; without it the E2E result would depend on the backing database.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended). Covered at unit level by `internal/service/label_service_test.go`.
 
 ### TC-LABEL-009 — Leading and trailing whitespace is trimmed from the name
@@ -138,7 +138,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open the create dialog and enter `"  Renewal  "`.
   2. Submit.
-- **Expected:** The request body carries `Renewal` (the page trims at `LabelList.tsx:150`), and the service trims again in `normalizeLabel`. The stored name has no padding, so a later `Renewal` is a duplicate.
+- **Expected:** The request body carries `Renewal` (the page trims with `data.name.trim()` in `gocrm-ui/src/pages/labels/LabelList.tsx`), and the service trims again in `normalizeLabel`. The stored name has no padding, so a later `Renewal` is a duplicate.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-010 — A blank name is rejected before any request
@@ -156,7 +156,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Preconditions:** Admin logged in.
 - **Steps:**
   1. Open the create dialog, enter 51 characters, submit.
-- **Expected:** "Name must be 50 characters or fewer" and no request. The limit mirrors the `varchar(50)` column, and the service enforces it again in runes, not bytes (`label_service.go:155`).
+- **Expected:** "Name must be 50 characters or fewer" and no request. The limit mirrors the `varchar(50)` column, and the service enforces it again in runes, not bytes (`normalizeLabel` (`internal/service/label_service.go`)).
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-012 — A malformed hex colour is rejected
@@ -166,7 +166,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open the create dialog, enter a valid name, clear the Hex color field and type `red` (then repeat with `#FFF`).
   2. Submit.
-- **Expected:** "Color must be a hex value such as #1F77B4" and no request in both cases. The three-digit shorthand is deliberately refused at every layer: the binding tag pairs `hexcolor` with `len=7` (`label_handler.go:30`) and the service regex demands exactly six digits.
+- **Expected:** "Color must be a hex value such as #1F77B4" and no request in both cases. The three-digit shorthand is deliberately refused at every layer: the binding tag pairs `hexcolor` with `len=7` (`CreateLabelRequest` (`internal/handler/label_handler.go`)) and the service regex demands exactly six digits.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-013 — A free hex colour outside the preset palette is accepted
@@ -210,7 +210,7 @@ where the behaviour is surprising a **Known issue** line names it.
   1. Navigate to `/labels` and click the edit icon on the label's row.
   2. Replace the name, click a different preset swatch, submit.
   3. Open the task's detail page.
-- **Expected:** The dialog opens prefilled with the current name and colour. `PUT /api/v1/labels/{id}` returns 200 and the response carries the refreshed `task_count` (the handler re-reads after the write, `label_handler.go:157`). The row shows the new name and colour, the task count is unchanged at `1` — renaming never detaches anything — and the task detail page shows the new name because tasks carry labels by reference.
+- **Expected:** The dialog opens prefilled with the current name and colour. `PUT /api/v1/labels/{id}` returns 200 and the response carries the refreshed `task_count` (the handler re-reads after the write, `LabelHandler.Update` (`internal/handler/label_handler.go`)). The row shows the new name and colour, the task count is unchanged at `1` — renaming never detaches anything — and the task detail page shows the new name because tasks carry labels by reference.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "admin can rename and recolour a label"
 
 ### TC-LABEL-017 — Recolouring without renaming is not a duplicate
@@ -219,7 +219,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Preconditions:** Admin logged in; any label.
 - **Steps:**
   1. Open the edit dialog, change only the colour, submit.
-- **Expected:** 200, not 409. The dialog always sends both fields, so the name collides with the label's own row; `ExistsByNameInsensitive` is called with the label's id as `excludeID` (`label_service.go:89`) precisely to allow that.
+- **Expected:** 200, not 409. The dialog always sends both fields, so the name collides with the label's own row; `ExistsByNameInsensitive` is called with the label's id as `excludeID` in `labelService.Update` (`internal/service/label_service.go`) precisely to allow that.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended). Covered at unit level by `internal/service/label_service_test.go`.
 
 ### TC-LABEL-018 — Renaming onto another label's name is rejected
@@ -241,7 +241,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels` and click the delete icon on the first label.
   2. Read the dialog, cancel, and repeat on the second label.
-- **Expected:** The dialog is titled "Delete Label" and reads `Delete the label "<name>"? It will be removed from 1 task. This action cannot be undone.` — singular for one task, `0 tasks` / `2 tasks` otherwise (`LabelList.tsx:326`). The count comes from the list payload, so it is as fresh as the last `GET /labels`.
+- **Expected:** The dialog is titled "Delete Label" and reads `Delete the label "<name>"? It will be removed from 1 task. This action cannot be undone.` — singular for one task, `0 tasks` / `2 tasks` otherwise (`pendingDeleteCount` in `gocrm-ui/src/pages/labels/LabelList.tsx`). The count comes from the list payload, so it is as fresh as the last `GET /labels`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "deleting a label detaches it from the tasks that carry it" (the "1 task" wording) and "a label no task carries can be deleted" (the "0 tasks" wording)
 
 ### TC-LABEL-020 — Deleting a label detaches it from every task
@@ -251,7 +251,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Delete the label from `/labels` and confirm.
   2. Open the task's detail page.
-- **Expected:** `DELETE /api/v1/labels/{id}` returns 204 with an empty body, the snackbar reads "Label deleted successfully" and the row disappears. The task itself still exists and renders normally, without the chip: the repository clears `task_labels` and hard-deletes the row in one transaction (`label_repository.go:68-83`), so no orphaned join row is left to break the task's preload.
+- **Expected:** `DELETE /api/v1/labels/{id}` returns 204 with an empty body, the snackbar reads "Label deleted successfully" and the row disappears. The task itself still exists and renders normally, without the chip: the repository clears `task_labels` and hard-deletes the row in one transaction (`labelRepository.Delete` (`internal/repository/label_repository.go`)), so no orphaned join row is left to break the task's preload.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "deleting a label detaches it from the tasks that carry it"
 
 ### TC-LABEL-021 — Deleting an unused label
@@ -300,7 +300,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Navigate to `/labels`.
   2. Look for the "Create Label" button and the row action icons.
-- **Expected:** None of them are rendered (`canCreate`/`canUpdate`/`canDelete`, `LabelList.tsx:62-64`). The API backs this up: `POST` and `PUT` require admin, sales or support and answer 403 for a customer.
+- **Expected:** None of them are rendered (`canCreate`/`canUpdate`/`canDelete` in `gocrm-ui/src/pages/labels/LabelList.tsx`). The API backs this up: `POST` and `PUT` require admin, sales or support and answer 403 for a customer.
 - **Automation:** planned — `gocrm-ui/e2e/tests/labels.spec.ts` (extended)
 
 ### TC-LABEL-026 — Sales and support may create and edit but not delete
@@ -371,7 +371,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Steps:**
   1. Open `/tasks/{id}/edit`, remove the chip with its delete icon, save.
   2. Open the task detail page.
-- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`task_handler.go:50`) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
+- **Expected:** `PUT /api/v1/tasks/{id}` carries `label_ids: []` and returns 200 with `labels: []`; the detail page shows no chips. `label_ids` is a pointer server-side (`UpdateTaskRequest.LabelIDs` (`internal/handler/task_handler.go`)) so an empty array clears the set while an absent field leaves it untouched — the frontend always sends the field from this form.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "editing a task replaces its label set"
 
 ### TC-LABEL-033 — An unknown label id rejects the whole write
@@ -455,7 +455,7 @@ where the behaviour is surprising a **Known issue** line names it.
   1. Navigate to `/tasks` and search for the first task's title.
   2. Click its label chip.
 - **Expected:** The result set is **all** tasks carrying the label, not the intersection with the search term. Applying the label filter empties the search box and disables it, with the helper text "Clear the label filter to search", so the rendered controls never claim a narrowing the server is not applying. Removing the label filter re-enables the box.
-- **Known issue:** `TaskHandler.List` branches on `label_id` before `search` (`internal/handler/task_handler.go` `List`), so a request carrying both silently drops the search — the two filters cannot be combined server-side. The precedence is documented in the swagger annotation for the endpoint. The frontend mirrors it rather than contradicting it (`TaskList.tsx` `handleLabelFilterChange`); it is still a server-side limitation, not a feature.
+- **Known issue:** `TaskHandler.List` (`internal/handler/task_handler.go`) branches on `label_id` before it looks at `search`, so a request carrying both silently drops the search — the two filters cannot be combined server-side. The precedence is documented in the swagger annotation for the endpoint. The frontend mirrors it rather than contradicting it (`handleLabelFilterChange` in `gocrm-ui/src/pages/tasks/TaskList.tsx`); it is still a server-side limitation, not a feature.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "clicking a label chip in the list filters the tasks by that label". The search-box half is covered at unit level by `gocrm-ui/src/pages/tasks/TaskList.test.tsx`.
 
 ### TC-LABEL-041 — Applying a label filter returns to page 1
@@ -476,7 +476,7 @@ where the behaviour is surprising a **Known issue** line names it.
   1. `GET /api/v1/tasks?label_id=999999`.
   2. `GET /api/v1/tasks?label_id=abc` and `?label_id=0`.
 - **Expected:** Step 1 returns 200 with `tasks: []` and `total: 0` — no 404. In step 2 the unparseable and non-positive values are ignored entirely and the full list comes back, matching how `sort_by` handles a value it does not recognise.
-- **Automation:** blocked — not reachable through the UI: the filter only offers ids from the label list. The ignored-value half is covered by `internal/handler/task_labels_handler_test.go` `TestList_MalformedLabelIDIsIgnored`.
+- **Automation:** blocked — not reachable through the UI: the filter only offers ids from the label list. The ignored-value half is covered by `internal/handler/task_labels_handler_test.go` `TaskLabelHandlerTestSuite.TestList_MalformedLabelIDIsIgnored`.
 
 ### TC-LABEL-043 — Non-admin roles keep their assignee scoping under a label filter
 - **Priority:** P0

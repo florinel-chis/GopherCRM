@@ -2,8 +2,8 @@
 
 Each rule is shown to fail on a fixture repository (a real git repository, so
 "tracked" means what `git ls-files` says) and to pass once the citation is
-right; the converted guides must pass against the real repository, with the
-Go symbol helper actually run.
+right; every tracked doc the check discovers must pass against the real
+repository, with the Go symbol helper actually run.
 """
 
 import contextlib
@@ -149,16 +149,94 @@ class DocCitationCheckTest(unittest.TestCase):
         self.assertIn('`bin/gophercrm`: missing path', out)
         self.assertIn('`gocrm-ui/.env`: missing path', out)
 
-    def test_a_non_converted_file_may_cite_lines_but_paths_and_symbols_are_checked(self):
-        self.write('docs/OTHER.md', 'Lines: `pkg/sample.go:3`.\n')
-        code, out = run(self.root, 'docs/OTHER.md')
-        self.assertEqual(code, 0, out)
+    def test_a_non_converted_file_is_checked_by_every_rule(self):
         self.write('docs/OTHER.md', 'Lines: `pkg/sample.go:3`, `pkg/absent.go`, `pkg/sample.go` `Nope`.\n')
         code, out = run(self.root, 'docs/OTHER.md')
         self.assertEqual(code, 1, out)
-        self.assertNotIn('line citation', out)
+        self.assertIn('docs/OTHER.md:1: `pkg/sample.go:3`: line citation', out)
         self.assertIn('`pkg/absent.go`: missing path', out)
         self.assertIn('unknown symbol Nope in pkg/sample.go', out)
+
+    def test_line_citation_in_an_unlisted_doc_fails_by_default(self):
+        self.write('docs/NEW.md', 'See `pkg/sample.go:3`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/NEW.md:', out)
+        self.assertIn('line citation', out)
+
+    def test_exempt_doc_may_cite_lines(self):
+        self.write('docs/CONCURRENCY.md', 'See `pkg/sample.go:3` and `pkg/sample.go` `Nope`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.startswith('OK:'), out)
+        # Passed explicitly, the exempt doc is checked in full.
+        code, out = run(self.root, 'docs/CONCURRENCY.md')
+        self.assertEqual(code, 1, out)
+        self.assertIn('line citation', out)
+        self.assertIn('unknown symbol Nope', out)
+
+    def test_default_files_are_every_tracked_doc(self):
+        for path in ('README.md', 'docs/A.md', 'docs/testing/B.md', 'docs/CONCURRENCY.md',
+                     'other/README.md', 'docs/notes.txt'):
+            self.write(path, '# doc\n')
+        self.write('docs/X.md', '# untracked\n', track=False)
+        self.assertEqual(sorted(gate.default_files(self.root)),
+                         ['README.md', 'docs/A.md', 'docs/testing/B.md'])
+        self.assertEqual(set(gate.EXEMPT_FILES), {'docs/CONCURRENCY.md'})
+
+    def test_exemptions_name_a_test_that_reads_the_doc(self):
+        tracked = set(gate.tracked_files(ROOT))
+        for doc, test in gate.EXEMPT_FILES.items():
+            self.assertIn(doc, tracked, doc)
+            self.assertIn(test, tracked, test)
+            self.assertIn(doc, (ROOT / test).read_text(encoding='utf-8'), test)
+
+    def test_catalog_planned_spec_is_skipped_but_pairs_are_checked(self):
+        self.write('gocrm-ui/package.json', '{}\n')
+        self.write('docs/testing/X.md', 'Planned: `gocrm-ui/e2e/tests/planned.spec.ts`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 skipped', out)
+        self.write('docs/testing/X.md', 'Planned: `gocrm-ui/e2e/tests/planned.spec.ts`; `pkg/sample.go` `Nope`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn('planned.spec.ts', out)
+        self.assertIn('docs/testing/X.md:1: `Nope`: unknown symbol Nope in pkg/sample.go', out)
+
+    def test_missing_non_spec_path_in_catalog_fails(self):
+        self.write('docs/testing/X.md', 'See `pkg/absent.go`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/testing/X.md:1: `pkg/absent.go`: missing path', out)
+
+    def test_planned_spec_outside_catalog_fails(self):
+        self.write('gocrm-ui/package.json', '{}\n')
+        self.write('docs/X.md', 'Planned: `gocrm-ui/e2e/tests/planned.spec.ts`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/X.md:1: `gocrm-ui/e2e/tests/planned.spec.ts`: missing path', out)
+
+    def test_missing_path_in_development_guide_fails(self):
+        self.write('docs/DEVELOPMENT.md', 'See `pkg/absent.go`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/DEVELOPMENT.md:1: `pkg/absent.go`: missing path', out)
+
+    def test_local_directories_are_ignored(self):
+        # docs/ and gocrm-ui/ are tracked top-level segments, so the spans are
+        # path candidates and only IGNORED_OUTPUTS lets them pass.
+        self.write('gocrm-ui/package.json', '{}\n')
+        self.write('docs/LOCAL.md', 'Local: `docs/specs/`, `docs/plans/x.md`, `gocrm-ui/node_modules` '
+                                    'and `gocrm-ui/node_modules/x`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn('4 skipped', out)
+        # The match is by whole path segments, not a string prefix.
+        self.write('docs/LOCAL.md', 'Not local: `gocrm-ui/node_modulesX` and `docs/specsfoo.md`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('`gocrm-ui/node_modulesX`: missing path', out)
+        self.assertIn('`docs/specsfoo.md`: missing path', out)
 
     def test_a_converted_file_without_citations_fails(self):
         self.write('docs/FORKING.md', '# Nothing cited\n')

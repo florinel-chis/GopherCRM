@@ -188,7 +188,7 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
     oldest are trimmed.
   - Before the fix, everything after the first block header counted as form blocks, so a few public
     submissions erased the staff note.
-  · automated · `lead_notes_test.go` `TestAppendLeadNotesKeepsStaffTextWrittenAfterABlock`, and on
+  · automated · `internal/service/lead_notes_test.go` `TestAppendLeadNotesKeepsStaffTextWrittenAfterABlock`, and on
   MySQL and MariaDB by `forms-public-api.spec.ts`.
 
 ## Retention purge
@@ -219,7 +219,7 @@ same outcomes in sequence.
   404 and the invalid-link page over HTTP.
 - **TC-FORM-094 — the runtime sweeps at start and on every tick, drains a chunk in flight, and logs
   counts only** · automated · `form_retention_runtime_test.go`
-  `TestFormRetentionRuntime{Lifecycle,StopDuringChunk}`; `form_submission_purge_test.go`
+  `TestFormRetentionRuntime{Lifecycle,StopDuringChunk}`; `internal/service/form_submission_purge_test.go`
   `TestFormSubmissionPurgeLogsOmitPersonalData`. **Known issue:** both form-delete dialogs still say
   "Collected submissions are retained" until a separate frontend task merges.
 

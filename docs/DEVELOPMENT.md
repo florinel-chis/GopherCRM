@@ -376,8 +376,8 @@ required by the migrations workflow, `scripts/ci/check-go.py migration` and
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
 
 **SCIM user read (#469)** — `GET /scim/v2/Users` and `/Users/:id` are mounted by the same
-`SetupSCIMRoutes` (`internal/handler/scim_user_handler.go`: query parsing, status mapping, the
-`application/scim+json` answer). `internal/service/scim_users.go` (`SCIMUserService`) applies the
+`SetupSCIMRoutes` (`internal/handler/scim_routes.go`); `internal/handler/scim_user_handler.go` does
+the query parsing, the status mapping and the `application/scim+json` answer. `internal/service/scim_users.go` (`SCIMUserService`) applies the
 userName judge, pages a filtered set in Go and takes `externalId` from the identities under the
 effective issuer of the SSO settings service, compared byte for byte; the reads are in
 `internal/repository/scim_user_repository.go` (`SCIMUserRepository`: live, non-customer users;
@@ -443,12 +443,13 @@ issued only to a live, active owner.
   through the user repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})` on a fresh
   `Session` (`lockLiveCredentialOwner`; `FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite).
   A missing, erased (soft-deleted) or inactive locked row writes nothing. With
-  `WithAuthIdentities` (`cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
+  `WithAuthIdentities` (`internal/service/auth_service.go`; `cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
   repository skips the check) a plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read then
   refuses an account with a linked OpenID Connect identity the same way (#444, `error_code`
   `sso_account`), and the confirm refuses such an account's token with `ErrInvalidResetToken`
   too. Both run that read only while `security.sso.allow_password` is off (#457): the policy,
-  `WithAuthSSOPasswordPolicy` (`cmd/main.go` passes the SSO settings service; nil means off), is
+  `WithAuthSSOPasswordPolicy` (`internal/service/auth_service.go`; `cmd/main.go` passes the SSO
+  settings service; nil means off), is
   read once before the transaction begins, never inside it, because the SQLite pool holds one
   connection. With the setting on the read is skipped and a linked account is treated like a
   local one. Password login applies the same rule: inside its issuing transaction, after the owner
@@ -1004,7 +1005,7 @@ non-zero digit beyond the third decimal place.
   refuses a rounded gross above 10^12 inside it.
 - **The email.** `RenderQuoteEmail` prints `quantity 1.5 x …`; a whole quantity renders exactly as
   before (`quantity 3 x 9.99 EUR`).
-- **The schema.** MySQL/MariaDB: `migrations/20261118120000_store_quote_line_quantity_milli` adds
+- **The schema.** MySQL/MariaDB: `migrations/20261118120000_store_quote_line_quantity_milli.up.sql` adds
   `quantity_milli` when missing, copies `quantity × 1000` where it is still 0 while `quantity`
   exists, and drops `quantity`, each step behind an `INFORMATION_SCHEMA` probe; its down half
   re-adds `quantity bigint NOT NULL` (no default), sets it to `GREATEST(1, (quantity_milli + 500)
@@ -1162,7 +1163,7 @@ PDF, and that no render leaves a file descriptor open; `RealBinary` drives the b
 host's `ps` output meanwhile, and skips without the variable; none of the six is in a no-skip
 gate: CI has no browser. The stand-in browser of these roots is the test binary itself, run as
 `TestHelperQuotePDFBrowser`, which returns at once in an ordinary run);
-`TestQuoteEmailPDFAttachment` (`quote_email_test.go`, in `MAILER_CALLER_ROOTS`);
+`TestQuoteEmailPDFAttachment` (`internal/service/quote_email_test.go`, in `MAILER_CALLER_ROOTS`);
 `TestQuotePDFHandler`, `TestQuotePublicRender`, `TestUIConfigurationsQuotePDFAvailable`
 (`internal/handler`); `TestSMTPAttachment`, `TestLogMailerAttachment` (`internal/mailer`);
 `TestDockerfileShipsHeadlessShell`, `TestLoad_QuotePDFChromePath` (`internal/config`).
@@ -1655,7 +1656,7 @@ the comment with its `delivery`. A not-found error is 404; anything else, includ
   is classified and never logged.
 - **Schema.** `ticket_mail_deliveries` (see [datamodel.md](datamodel.md#ticket-mail-delivery)) comes
   from `models.MigrateDatabase` on SQLite and from
-  `migrations/20261113120000_add_ticket_mail_deliveries` (created only when missing) on
+  `migrations/20261113120000_add_ticket_mail_deliveries.up.sql` (created only when missing) on
   MySQL/MariaDB.
 
 Regression roots: `TestTicketCommentEmailHandlerFlag`, `TestTicketCommentEmailHandlerErrorMapping`
@@ -1725,7 +1726,7 @@ profiles is an operator follow-up.
 
 **Lookup indexes are measured (#109).** `leads.email`, `leads.classification`,
 `leads.external_id` and `companies.domain` carry non-unique indexes declared in the model tags and
-in `migrations/20261029140000_add_lead_company_lookup_indexes`; the plans before and after are in
+in `migrations/20261029140000_add_lead_company_lookup_indexes.up.sql`; the plans before and after are in
 [datamodel.md](datamodel.md#lookup-indexes-and-query-plans). A predicate that wraps an indexed
 column in a function (`LOWER(domain)`) hides it from the index on SQLite and on MySQL/MariaDB;
 store the value normalised and compare it plainly instead. `TestLookupIndexesServeLookupsSQLite`
@@ -1885,7 +1886,7 @@ through `idx_bulk_operations_status` (no locking read, no `UPDATE` whose predica
 index): an index-driven `UPDATE` locks the secondary index before the primary key, the reverse of
 `CompletePending`'s order, and deadlocks (MySQL/MariaDB error 1213) against live batches. The
 index (non-unique, `bulk_operations(status)`) comes from `models.MigrateDatabase` on SQLite and
-from `migrations/20261110120000_add_bulk_operation_status_index` on MySQL/MariaDB. `failed`
+from `migrations/20261110120000_add_bulk_operation_status_index.up.sql` on MySQL/MariaDB. `failed`
 therefore means none of the batch's records changed, with one exception: rows already `pending`
 when this was deployed recorded `completed` after their commit under the old code, so their batch
 may have committed; they are swept to `failed` all the same (outcome unknown, documented, not
@@ -2102,28 +2103,39 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   without the `/api/v1` prefix; write host names without backticks. Its unit test,
   `scripts/ci/tests/test_user_guide.py`, runs the check on the real guide inside
   `make verify-hygiene`, so a rename in the code that the guide still names fails the `hygiene` job.
-- **The guides cite code by symbol, and the citations are checked** (#487, #488).
-  `python3 scripts/ci/check-doc-citations.py` reads the files in its `CONVERTED_FILES` list
-  (`docs/FORKING.md` and `docs/EXTENDING.md` since #487; `docs/USE_CASES.md`,
-  `docs/SERVER_PROVISIONING.md`, `README.md`, `docs/REFACTORING_GUIDE.md`, `docs/FEATURES.md`,
-  `docs/DOCKER.md`, `docs/datamodel.md` and `docs/SETUP.md` since #488; pass other files as
-  arguments). Every backticked
+- **The docs cite code by symbol, and the citations are checked** (#487, #488, #489).
+  `python3 scripts/ci/check-doc-citations.py` checks every tracked `docs/**/*.md` and `README.md`,
+  discovered through `git ls-files`, so a new doc is covered the moment it is tracked (pass file
+  names as arguments to check only those; a file named explicitly is checked in full). The one
+  exempt doc is `docs/CONCURRENCY.md`, listed in the script's `EXEMPT_FILES` with the test that
+  pins it: `internal/config/concurrency_doc_test.go` recomputes its line citations from the code,
+  so they cannot drift silently. Every other doc goes through all three rules. Every backticked
   repository path must be a tracked file or directory, judged by `git ls-files` only, so an
   untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must
-  match a tracked file, a path with `<`, `>`, `{`, `}` or `$` is a placeholder, and the gitignored
-  outputs the guides legitimately cite are listed in its `IGNORED_OUTPUTS` allowlist
-  (`bin/gophercrm`, `gocrm-ui/.env`, `gocrm-ui/dist`). A Go symbol is cited next to its file, as
+  match a tracked file, and a path with `<`, `>`, `{`, `}` or `$` is a placeholder. The gitignored
+  outputs and local directories the docs legitimately cite are listed in its `IGNORED_OUTPUTS`
+  allowlist (`bin/gophercrm`, `gocrm-ui/.env`, `gocrm-ui/dist`, and the local-only `docs/specs`,
+  `docs/plans` and `gocrm-ui/node_modules`), which also covers any path below an entry. The one
+  path skip is a planned Playwright spec: a missing `gocrm-ui/e2e/tests/*.spec.ts` cited in a
+  `docs/testing/*.md` catalog file passes, because the catalog names the specs it plans and
+  dropping those names would change its Automation lines and case counts; the same missing spec
+  in any other doc fails. A Go symbol is cited next to its file, as
   `` `internal/models/database.go` `autoMigrateModels` `` or
   `` `setupDependencies` (`cmd/main.go`) ``, with a full repository path; the symbol (a func, a
-  method as `Type.Method` or `(*Type).Method`, a type, var or const, an interface method or a
-  struct field, optionally prefixed by the package name) must be declared in that file, which the
-  go/parser helper `scripts/ci/docsymbols` lists. A converted file may not contain a
-  `file.go:N`-style line citation (`.go`, `.ts`, `.tsx`, `.py`, `.sh`, `.sql`) anywhere; cite a
-  non-Go file by a heading, job or step name, key, shell function or a short quoted anchor
-  instead. The six Compose and Dockerfile line citations in `docs/FORKING.md` and the Compose line
-  citations in `docs/DOCKER.md` stay, because tests recompute them from the files
-  (`TestComposeUIDocCitations` for `docs/DOCKER.md`). Its unit test, `scripts/ci/tests/test_doc_citations.py`, runs the check on the
-  real guides inside `make verify-hygiene`.
+  method as `Type.Method` or `(*Type).Method`, a testify suite test as `Suite.TestName`, a type,
+  var or const, an interface method or a struct field, optionally prefixed by the package name)
+  must be declared in that file, which the go/parser helper `scripts/ci/docsymbols` lists. A
+  symbol that is not next to its path in one of those two forms is not checked, so keep the pair
+  together. No checked doc may cite code by line: a `file.go:N`-style citation (`.go`, `.ts`,
+  `.tsx`, `.py`, `.sh`, `.sql`) anywhere, fenced blocks included, fails. Cite a non-Go file by its
+  full path plus a function, component or const name, a route path, a heading, job or step name,
+  key, shell function or a short quoted anchor that exists in that file. In review, treat a line
+  citation in a doc as a defect and ask for the file plus symbol or anchor. The six Compose and
+  Dockerfile line citations in `docs/FORKING.md` and the Compose line citations in
+  `docs/DOCKER.md` stay, because tests recompute them from the files
+  (`TestComposeUIDocCitations` for `docs/DOCKER.md`) and rule c does not match `.yml` citations.
+  Its unit test, `scripts/ci/tests/test_doc_citations.py`, runs the check with its default
+  discovery on the real tree inside `make verify-hygiene`.
 
 Since 11 November 2026 CI runs no browser spec outside a release: the complete browser matrix on
 MySQL, MariaDB and SQLite runs only when the release workflow calls CI with `full: true`. Browser
@@ -2157,7 +2169,7 @@ The same runner also hosts the feature analysis workflow (`gophercrm-runner anal
 gitignored `docs/specs/` document and never changes tracked files.
 
 Runner changes require `make verify-runner` and the focused checks selected by the policy.
-Install `automation/langflow[flows]`
+Install `automation/langflow` with its `flows` extra
 in an isolated Python 3.12 environment and set `RUNNER_PYTHON` when that interpreter is not
 `python3`. This target runs the deterministic workflow suite, compares the checked-in graph
 without rewriting it, and tests the read-only database probe. Runner CI uses the same target,
@@ -2348,7 +2360,7 @@ points the Axios client at the backend.
 ## Database
 
 GORM over MySQL 8.0+ by default, with SQLite selectable through `DB_DRIVER` (pure-Go driver, no
-cgo). `internal/database.Open` is the single place a connection is opened and owns every
+cgo). `internal/database/database.go` `Open` is the single place a connection is opened and owns every
 driver-specific decision — dialector, DSN shape, connection pool.
 
 Auto-migration runs on startup via `models.MigrateDatabase()` and is the **only** schema path on
@@ -3018,7 +3030,7 @@ one MySQL/MariaDB database.
   under 90 s. Several processes on one SQLite file are not supported.
 
 Schema: `models.AEORun` (`json:"-"` on the four columns) via `MigrateDatabase` on SQLite, and
-`migrations/20261114120000_add_aeo_run_ownership` (each column and index only when missing) on
+`migrations/20261114120000_add_aeo_run_ownership.up.sql` (each column and index only when missing) on
 MySQL/MariaDB; see [datamodel.md](datamodel.md#aeo-run-ownership). Regression roots:
 `TestAEORunOwnership{SchemaSQLite,SQLiteUpgrade,JSONHidden}` (`internal/models`);
 `TestAEORunOwnershipMigrationFiles` (the newest-migration assertion has since moved to
@@ -3231,7 +3243,7 @@ The pieces, and why each is shaped the way it is:
     sanitised database error of a failed renewal or recovery); never the instance id.
   - *Schema.* `models.AutomationRun.OwnerInstance` (`varchar(64)`) and `HeartbeatAt`
     (`datetime(3)`), both nullable, from `MigrateDatabase` on SQLite and
-    `migrations/20261116120000_add_automation_run_leases` (each column only when missing, no
+    `migrations/20261116120000_add_automation_run_leases.up.sql` (each column only when missing, no
     index, no backfill) on MySQL/MariaDB; see [datamodel.md](datamodel.md#automation-run-leases).
 - **Waits and schedules survive a restart.** A wait step advances the run to `waiting` with
   `resume_at = now + duration` (written in UTC, compared with a UTC parameter, so SQLite's text
@@ -3337,7 +3349,7 @@ The pieces, and why each is shaped the way it is:
   body through `validateRule` — the normalisation and every check of a create, the staff-user
   lookups included — and then to the same `DryRun`; it starts no transaction, takes no lock and
   saves nothing (no temporary rule row), and the report carries `draft: true`.
-- **Rule validation.** `validateRule` (`internal/service/automation_validation.go`) collects every
+- **Rule validation.** `automationService.validateRule` (`internal/service/automation_validation.go`) collects every
   refusal in one pass into a `*RuleValidationError`: each `{field, code, message}` goes to
   `error.details.fields`, while `Error()` and `Unwrap()` are those of the first refusal exactly as
   the single-error validator produced it (`step N: ...: validation failed`, or
@@ -3493,7 +3505,7 @@ commits. Code: `internal/models/webhook.go`,
   `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
   ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
   `company_id`, and bulk task status.
-- **Deleted events (#437).** `enqueueDeletedWebhookEvents` (`webhook_outbox.go`) reads the active
+- **Deleted events (#437).** `enqueueDeletedWebhookEvents` (`internal/service/webhook_outbox.go`) reads the active
   endpoints subscribed to the deleted type (`ListActiveEndpointsFor`, a plain read), then the
   announced pairs (`WebhookRepository.ListAnnouncedRecords`: one plain
   `SELECT DISTINCT endpoint_id, record_id FROM webhook_deliveries WHERE endpoint_id IN ? AND
@@ -3563,7 +3575,7 @@ commits. Code: `internal/models/webhook.go`,
   and never logged.
 - **Schema.** `webhook_endpoints` and `webhook_deliveries` (see
   [datamodel.md](datamodel.md#outbound-webhooks)) from `MigrateDatabase` on SQLite and
-  `migrations/20261120120000_add_outbound_webhooks` (created only when missing) on MySQL/MariaDB.
+  `migrations/20261120120000_add_outbound_webhooks.up.sql` (created only when missing) on MySQL/MariaDB.
 
 Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`);
 `TestEgressPublicClient` (`internal/aeo`); `TestWebhookRepository{SQLite,MySQL}`

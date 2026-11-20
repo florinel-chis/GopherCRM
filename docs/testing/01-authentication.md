@@ -41,8 +41,8 @@ file, not by trusting the coverage matrix.
   helper; `AdminAuthHelper` only logs in the seeded admin.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData()`) or `fixtures/test-data.ts` (`generateTestUser()`). Never hardcode an email.
-- `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`internal/middleware/rate_limit.go:124`,
-  applied at `cmd/main.go:194`). Any case that issues more than five auth requests in quick
+- `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`RateLimitStrict` (`internal/middleware/rate_limit.go`),
+  applied in `setupDependencies` (`cmd/main.go`)). Any case that issues more than five auth requests in quick
   succession must space them out (≈6 s per extra token) or run the backend with
   `DISABLE_RATE_LIMIT=true`, which bypasses the strict tier only.
 - Deleting a user is irreversible GDPR erasure (`internal/repository/erasure.go`). Only delete
@@ -78,7 +78,7 @@ file, not by trusting the coverage matrix.
   3. Navigate to `/users`.
 - **Expected:** The register call returns **201**; the response `data.user.role` is `customer`.
   Gin's binder silently drops the unknown `role` key because `handler.RegisterRequest` has no such
-  field (`internal/handler/auth_handler.go:46`), and the handler hard-codes
+  field (`internal/handler/auth_handler.go` `RegisterRequest`), and the handler hard-codes
   `Role: models.RoleCustomer`. `/users` redirects to `/unauthorized`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/registration.spec.ts` (extended)
 
@@ -91,8 +91,8 @@ file, not by trusting the coverage matrix.
   2. Log out from the avatar menu.
   3. Go to `/register` and submit the identical form.
 - **Expected:** `POST /auth/register` returns **409**; the page shows a MUI error alert containing
-  `user with this email already exists` (the literal text from
-  `internal/handler/auth_handler.go` `RespondConflict`, surfaced by `Register.tsx` as
+  `user with this email already exists` (the literal text that
+  `AuthHandler.Register` (`internal/handler/auth_handler.go`) passes to `utils.RespondConflict`, surfaced by `Register.tsx` as
   `err.response?.data?.message` after `client.ts` unwraps the `{success,error}` envelope).
 - **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "shows error for duplicate email registration"
 
@@ -257,7 +257,7 @@ file, not by trusting the coverage matrix.
 - **Known issue:** The existing spec hardcodes `admin@gophercrm.local` / `GopherCRM2024!`, which
   `global-setup.ts` does not seed, and asserts the JWT in `localStorage` while leaving "Remember me"
   unticked — the app writes to `sessionStorage` in that case (`client.ts` `writeToken`). The same
-  wrong assumption is in `gocrm-ui/e2e/helpers/admin-auth.ts:47`;
+  wrong assumption is in `gocrm-ui/e2e/helpers/admin-auth.ts` (`createAndLoginAdmin`);
   `gocrm-ui/e2e/screenshots/helpers/login.ts` documents the trap and ticks the box instead. A
   rewrite should use `testAdminCredentials` and assert the redirect, not a storage key.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "successful login redirects to dashboard"
@@ -280,7 +280,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go:252-278`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_service.go` `authService.authenticate`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +343,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go:317-320`, and again under the owner lock,
+  the same error (`internal/service/auth_service.go` `authService.authenticate`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +366,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go:280-314`), so a correct password
+  password result is examined (`internal/service/auth_service.go` `authService.authenticate`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -442,7 +442,7 @@ file, not by trusting the coverage matrix.
   `apiClient.startSession`, which removes the record and both keys from both storages before
   writing the record and then its mirrors (#184).
 - **Known issue:** Any helper that asserts `localStorage.getItem('gophercrm_token')` after an
-  unticked login fails — `gocrm-ui/e2e/helpers/admin-auth.ts:47` still does exactly that.
+  unticked login fails — `gocrm-ui/e2e/helpers/admin-auth.ts` (`localStorage.getItem('gophercrm_token')`) still does exactly that.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new)
 
 ### TC-AUTH-028 — With "Remember me" the tokens go to localStorage
@@ -478,7 +478,7 @@ file, not by trusting the coverage matrix.
   removed at once, without waiting for a refresh another tab may be running under the session lock;
   that refresh then stores nothing (#184). Navigating back to `/` redirects to `/login`.
 - **Known issue:** FEATURES.md row 1.4 still says "There is no server-side logout endpoint"; that row
-  is superseded by section 10b — the route is registered at `cmd/main.go:222` behind the auth
+  is superseded by section 10b — the route is registered in `setupDependencies` (`cmd/main.go`) behind the auth
   middleware. Closes gap **G11**.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (new logout describe block)
 
@@ -567,7 +567,7 @@ file, not by trusting the coverage matrix.
 - **Priority:** P0
 - **Type:** regression
 - **Expected:** `POST /auth/refresh` rotates in one transaction (`internal/service/auth_service.go`
-  `RefreshAccessToken`, `internal/repository/refresh_token_repository.go` `ClaimForRotation`). The
+  `authService.RefreshAccessToken`, `internal/repository/refresh_token_repository.go` `refreshTokenRepository.ClaimForRotation`). The
   presented token is looked up; the owner is re-read with a locking read (the transaction-bound
   `UserRepository`, `FOR UPDATE` on MySQL, a plain read on SQLite) before the token is claimed by
   a conditional update that revokes the row only while it is still not revoked and strictly
@@ -768,7 +768,7 @@ file, not by trusting the coverage matrix.
   generic **400**.
 - **Automation:** blocked — needs mail capture (with `SMTP_HOST` unset the mailer only writes a
   redacted log line) *and* the missing `/reset-password` SPA route. The API round trip is
-  covered in Go by `tests/auth_session_integration_test.go` `TestPasswordResetRoundTrip`.
+  covered in Go by `tests/auth_session_integration_test.go` `AuthSessionIntegrationTestSuite.TestPasswordResetRoundTrip`.
 
 ### TC-AUTH-037a — Reset confirmation is atomic and single-use
 - **Priority:** P0
@@ -780,7 +780,7 @@ file, not by trusting the coverage matrix.
   re-check, the password, lockout and `token_version` update (one write; the increment ends every
   earlier access token, #236) and the revocation of every refresh token of the
   account then run in one transaction (`internal/service/auth_service.go`
-  `ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `MarkUsed`).
+  `authService.ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `passwordResetTokenRepository.MarkUsed`).
   The owner re-check is a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL,
   a plain read on SQLite): it sees the account as currently committed, so an owner deactivated or
   erased by another connection after the token lookup is refused instead of being reactivated by
@@ -875,8 +875,8 @@ file, not by trusting the coverage matrix.
 - **Automation:** `internal/service/auth_change_password_regression_test.go`
   (`TestChangePassword{Validation,Renewal,Atomicity,ConcurrentRefresh}{SQLite,MySQL}`; the MySQL
   concurrency root runs on a schema built by the real migrations and forces both lock orderings);
-  `tests/auth_session_integration_test.go` `TestChangePasswordRenewsCurrentSession`,
-  `TestChangePasswordWithAPIKeyNeverIssuesSession`; Vitest `client.refresh.test.ts`
+  `tests/auth_session_integration_test.go` `AuthSessionIntegrationTestSuite.TestChangePasswordRenewsCurrentSession`,
+  `AuthSessionIntegrationTestSuite.TestChangePasswordWithAPIKeyNeverIssuesSession`; Vitest `client.refresh.test.ts`
   (`ApiClient.changePassword`) and `Profile.test.tsx`. The access-token side (#236):
   `internal/service/auth_access_token_revocation_test.go`
   (`TestAccessTokenVersionClaim`, `TestAccessTokenRevokedBy{Logout,PasswordChange,PasswordReset}{SQLite,MySQL}`,
@@ -905,7 +905,7 @@ file, not by trusting the coverage matrix.
 - **Expected:** The user list renders and the URL does not contain `/login` or `/unauthorized`.
   `/users` sits under the pathless `ProtectedRoute requiredPermission="users.view"` layout route in
   `routes/index.tsx` (the key comes from `GET /users/me`), and `GET /api/v1/users` passes its `RequireRole(admin)` guard
-  (`internal/handler/routes.go:13`).
+  (`internal/handler/routes.go` `SetupUserRoutes`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "logged in user can access protected routes"
 
 ### TC-AUTH-041 — Non-admin roles are bounced from /users by the client before the API is called
@@ -968,7 +968,7 @@ file, not by trusting the coverage matrix.
 - **Expected:** **403** `{success:false}` ("Public registration is disabled"); no account is
   created. The gate fails closed: a missing configuration row or a configuration read error
   answers the same 403.
-- **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "a direct POST /auth/register is refused with 403"; Go: `internal/middleware/registration_test.go`, `tests/auth_integration_test.go` `TestRegisterEndpoint_GatedByConfiguration`
+- **Automation:** automated — `gocrm-ui/e2e/tests/registration.spec.ts` "a direct POST /auth/register is refused with 403"; Go: `internal/middleware/registration_test.go`, `tests/auth_integration_test.go` `AuthIntegrationTestSuite.TestRegisterEndpoint_GatedByConfiguration`
 
 ### TC-AUTH-046 — GET /auth/registration reports the sign-up switch without authentication
 - **Priority:** P1

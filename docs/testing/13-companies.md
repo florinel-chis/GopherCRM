@@ -46,8 +46,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Only the admin account is available to e2e.** Sales and support sessions need an
   admin-authenticated `POST /users` plus a role-login helper that does not exist yet. Cases that
   need one are marked *blocked* with that note; the backend half of every such case is pinned by
-  `internal/handler/company_handler_test.go` `TestRoleMatrix` and
-  `test/integration/company_integration_test.go` `TestRoleMatrix`.
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and
+  `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 - **The moderate rate tier applies.** 120 req/min with a burst of 30 per IP; a spec that creates
   many companies in a tight loop can 429 itself.
 
@@ -85,8 +85,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "admin can search companies" (searches by name and expects one row; the industry, city and
   domain halves are pinned in Go).
-  Go: `company_repository_test.go` `TestCompanyRepository_ListSearchSortAndPaginate`,
-  `company_integration_test.go` `TestListSearchSortAndPagination`.
+  Go: `TestCompanyRepository_ListSearchSortAndPaginate` (`internal/repository/company_repository_test.go`),
+  `CompanyIntegrationTestSuite.TestListSearchSortAndPagination` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-003 — Sort by an allowed column; an unknown column is refused
 - **Priority:** P1
@@ -100,7 +100,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   (`utils.AllowedSortColumns["companies"]`); the default order is `created_at desc`. Unlike the
   customers list, which silently drops an unknown `sort_by`, this endpoint rejects it.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
-  Go: `company_handler_test.go` `TestList_UnknownSortColumnIs400`, `sort_test.go`.
+  Go: `CompanyHandlerTestSuite.TestList_UnknownSortColumnIs400` (`internal/handler/company_handler_test.go`), `internal/utils/sort_test.go`.
 
 ### TC-COMP-004 — Pagination
 - **Priority:** P2
@@ -124,8 +124,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   **403** "Insufficient permissions" from the group-level `RequireRole(admin, sales, support)`;
   the sidebar item is hidden for that role and the SPA route redirects to `/unauthorized`.
 - **Automation:** blocked — needs a role-login helper (customer half obtainable via
-  `/register`). Go: `company_handler_test.go` `TestRoleMatrix`,
-  `company_integration_test.go` `TestRoleMatrix`.
+  `/register`). Go: `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`),
+  `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.2 Create
 
@@ -143,8 +143,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   stripped. The list shows the new row; the detail page shows every field.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "admin can create a company with all fields and sees them on the detail page" (fills a plain
-  domain, so the normalisation half is pinned in Go: `company_service_test.go`
-  `TestNormalizeCompanyDomain`)
+  domain, so the normalisation half is pinned in Go:
+  `TestNormalizeCompanyDomain` (`internal/service/company_service_test.go`))
 
 ### TC-COMP-007 — Validation: name required, website must be http(s), employee range from the list
 - **Priority:** P1
@@ -161,8 +161,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   is **400** "company name is required".
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "validation errors keep the form open" (steps 1 and 2, client-side; step 3 is Go only).
-  Go: `company_handler_test.go` `TestCreate_BindingRejectsBadBodies`,
-  `company_service_test.go` `TestCreate_ValidationFailures`.
+  Go: `CompanyHandlerTestSuite.TestCreate_BindingRejectsBadBodies` (`internal/handler/company_handler_test.go`),
+  `CompanyServiceTestSuite.TestCreate_ValidationFailures` (`internal/service/company_service_test.go`).
 
 ### TC-COMP-008 — Values longer than their column are refused with 400
 - **Priority:** P1
@@ -174,10 +174,10 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Expected:** **400** each time, the message naming the field and its limit ("name is too long
   (at most 200 characters)", "Notes are too long (at most 65535 bytes)"). Varchar columns are
   measured in characters, notes in bytes. The limits are `models.Company*MaxLength`, held to the
-  declared column widths by `company_column_limits_test.go`, so MySQL and MariaDB never see a
+  declared column widths by `internal/models/company_column_limits_test.go`, so MySQL and MariaDB never see a
   value they would reject with a driver error (SQLite would accept it silently).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
-  Go: `company_handler_test.go` `TestCreate_ValuesLongerThanTheirColumnAre400`.
+  Go: `CompanyHandlerTestSuite.TestCreate_ValuesLongerThanTheirColumnAre400` (`internal/handler/company_handler_test.go`).
 
 ### TC-COMP-009 — Duplicate domain is 409 on create
 - **Priority:** P0
@@ -195,8 +195,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   "a duplicate domain is refused with the server message on the domain field" (sends the same
   domain, not the upper-case scheme variant; it asserts the 409 and that the domain field shows
   a server message, not the exact text).
-  Go: `company_handler_test.go` `TestCreate_DuplicateDomainIs409`,
-  `company_integration_test.go` `TestCreateNormalisesTheDomainAndRefusesDuplicates`.
+  Go: `CompanyHandlerTestSuite.TestCreate_DuplicateDomainIs409` (`internal/handler/company_handler_test.go`),
+  `CompanyIntegrationTestSuite.TestCreateNormalisesTheDomainAndRefusesDuplicates` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-010 — Unknown owner_id is 400 INVALID_REFERENCE
 - **Priority:** P1
@@ -208,7 +208,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   `unknown owner_id 999999: assignee not found`. A soft-deleted user is unknown too. The bad
   reference is in the body, so it is not a 404.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (request context).
-  Go: `company_handler_test.go` `TestCreate_UnknownOwnerIsInvalidReference`.
+  Go: `CompanyHandlerTestSuite.TestCreate_UnknownOwnerIsInvalidReference` (`internal/handler/company_handler_test.go`).
 
 ### TC-COMP-011 — Sales creates a company and becomes its owner; naming another owner is 403
 - **Priority:** P0
@@ -219,9 +219,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   2. `POST /api/v1/companies` with `owner_id` of another user.
 - **Expected:** Step 1: 201 and `owner_id` is the sales user's own id. Step 2: **403** "You can
   only assign companies to yourself". Admins may name any live user or leave the owner empty.
-- **Automation:** blocked — needs a role-login helper. Go: `company_handler_test.go`
-  `TestCreate_SalesGetsItselfAsOwnerWhenNoneIsSent`, `TestCreate_SalesMayNotAssignSomebodyElse`;
-  `company_integration_test.go` `TestSalesOwnerRuleAndOwnLeadsOnly`.
+- **Automation:** blocked — needs a role-login helper. Go:
+  `CompanyHandlerTestSuite.TestCreate_SalesGetsItselfAsOwnerWhenNoneIsSent` (`internal/handler/company_handler_test.go`), `CompanyHandlerTestSuite.TestCreate_SalesMayNotAssignSomebodyElse` (`internal/handler/company_handler_test.go`);
+  `CompanyIntegrationTestSuite.TestSalesOwnerRuleAndOwnLeadsOnly` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-012 — Support cannot create or update; customer role cannot reach the routes
 - **Priority:** P0
@@ -232,7 +232,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   2. As customer role: `GET /api/v1/companies/{id}`.
 - **Expected:** Step 1: **403** on both (`RequireRole(admin, sales)` on POST and PUT). Step 2:
   **403** (group guard). The UI hides the Add and Edit buttons from support.
-- **Automation:** blocked — needs a role-login helper. Go: `TestRoleMatrix` (both files).
+- **Automation:** blocked — needs a role-login helper. Go:
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.3 Detail and edit
 
@@ -262,7 +263,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "admin can edit a company" (changes the industry and checks the detail page; clearing the
   website and the kept owner are pinned in Go and in `CompanyForm.test.tsx`).
-  Go: `company_handler_test.go` `TestUpdate_ReplacesTheFieldsAndKeepsTheOwner`.
+  Go: `CompanyHandlerTestSuite.TestUpdate_ReplacesTheFieldsAndKeepsTheOwner` (`internal/handler/company_handler_test.go`).
 
 ### TC-COMP-015 — Duplicate domain is 409 on update; a company may keep its own domain
 - **Priority:** P0
@@ -275,8 +276,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Expected:** Step 1: **409** with the duplicate-domain message; B is unchanged. Step 2: 200 —
   the pre-check excludes the row being updated (`ExistsByDomain(domain, excludeID)`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
-  Go: `company_service_test.go` `TestUpdate_ExcludesItselfFromTheDuplicateCheck`,
-  `TestUpdate_DuplicateDomainIs409Sentinel`.
+  Go: `CompanyServiceTestSuite.TestUpdate_ExcludesItselfFromTheDuplicateCheck` (`internal/service/company_service_test.go`),
+  `CompanyServiceTestSuite.TestUpdate_DuplicateDomainIs409Sentinel` (`internal/service/company_service_test.go`).
 
 ### TC-COMP-016 — Owner rules on update
 - **Priority:** P0
@@ -288,8 +289,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Expected:** Step 1: **403**, **403**, then 200 with Y as owner. Step 2: 200 with `owner_id`
   absent from the response (cleared), then **400** `INVALID_REFERENCE`.
 - **Automation:** blocked — needs a role-login helper for the sales half; the admin half is
-  planned in `admin-companies.spec.ts` (request context). Go: `company_handler_test.go`
-  `TestUpdate_OwnerRules`.
+  planned in `admin-companies.spec.ts` (request context). Go:
+  `CompanyHandlerTestSuite.TestUpdate_OwnerRules` (`internal/handler/company_handler_test.go`).
 
 ## 13.4 Delete
 
@@ -314,14 +315,14 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "deleting a company leaves the customer with its text company only" (customer half through the
   UI; the lead half, the 404 afterwards and the domain reuse are pinned in Go).
-  Go: `company_service_test.go` `TestCompanyServiceDelete_UnlinksLeadsAndCustomersThenSoftDeletes`,
-  `TestCompanyServiceDelete_RollsBackTheUnlinksWhenTheDeleteFails`;
-  `company_integration_test.go` `TestDeleteUnlinksLeadsAndCustomers`; lock order (#182):
-  `company_delete_lock_test.go` `TestCompanyServiceDeleteLocksCompanyFirst`,
-  `TestCompanyServiceDeleteRacedAfterPreReadSQLite`; `TestLeadCompanyLockOrderOutcomesSQLite`,
-  `TestLeadConversionVsCompanyDeleteMySQL`, `TestLeadUpdateVsCompanyDeleteMySQL`,
-  `TestBulkLeadStatusVsCompanyDeleteMySQL` (`internal/service`, the MySQL roots skip without
-  `TEST_MYSQL_DSN`); `TestCompanyRepositoryLockLive{SQLite,MySQL}` (`internal/repository`).
+  Go: `TestCompanyServiceDelete_UnlinksLeadsAndCustomersThenSoftDeletes` (`internal/service/company_service_test.go`),
+  `TestCompanyServiceDelete_RollsBackTheUnlinksWhenTheDeleteFails` (`internal/service/company_service_test.go`);
+  `CompanyIntegrationTestSuite.TestDeleteUnlinksLeadsAndCustomers` (`test/integration/company_integration_test.go`); lock order (#182):
+  `TestCompanyServiceDeleteLocksCompanyFirst` (`internal/service/company_delete_lock_test.go`),
+  `TestCompanyServiceDeleteRacedAfterPreReadSQLite` (`internal/service/company_delete_lock_test.go`); `TestLeadCompanyLockOrderOutcomesSQLite` (`internal/service/lead_company_lock_order_test.go`),
+  `TestLeadConversionVsCompanyDeleteMySQL` (`internal/service/lead_company_lock_order_mysql_test.go`), `TestLeadUpdateVsCompanyDeleteMySQL` (`internal/service/lead_company_lock_order_mysql_test.go`),
+  `TestBulkLeadStatusVsCompanyDeleteMySQL` (`internal/service/bulk_lead_company_delete_test.go`) — the MySQL roots skip without
+  `TEST_MYSQL_DSN`; `internal/repository/company_lock_live_test.go` `TestCompanyRepositoryLockLive{SQLite,MySQL}`.
 
 ### TC-COMP-018 — Sales and support cannot delete
 - **Priority:** P0
@@ -331,7 +332,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   1. As each: `DELETE /api/v1/companies/{id}`.
 - **Expected:** **403** both times (`RequireRole(admin)` on DELETE); the row remains. The UI hides
   the delete icon from both roles.
-- **Automation:** blocked — needs a role-login helper. Go: `TestRoleMatrix` (both files).
+- **Automation:** blocked — needs a role-login helper. Go:
+  `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 
 ## 13.5 The link from customers and leads
 
@@ -351,7 +353,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   independent: neither overwrites the other.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-companies.spec.ts`
   "linking a customer to a company shows the link on both detail pages".
-  Go: `company_integration_test.go` `TestLeadAndCustomerCompanyLinkThroughTheAPI`.
+  Go: `CompanyIntegrationTestSuite.TestLeadAndCustomerCompanyLinkThroughTheAPI` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-020 — Link a lead to a company; sales sees only its own leads on the company
 - **Priority:** P0
@@ -368,9 +370,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   leads sub-list is admin and sales only, as the leads endpoints are; support still reads
   `/companies/{id}/customers`.
 - **Automation:** blocked — needs a role-login helper; the admin half is planned in
-  `admin-companies.spec.ts`. Go: `company_integration_test.go`
-  `TestSalesOwnerRuleAndOwnLeadsOnly`, `company_repository_test.go`
-  `TestCompanyRepository_ListLeadsScopesByOwnerAndListCustomersPaginates`.
+  `admin-companies.spec.ts`. Go:
+  `CompanyIntegrationTestSuite.TestSalesOwnerRuleAndOwnLeadsOnly` (`test/integration/company_integration_test.go`),
+  `TestCompanyRepository_ListLeadsScopesByOwnerAndListCustomersPaginates` (`internal/repository/company_repository_test.go`).
 
 ### TC-COMP-021 — Unknown company_id is 400 INVALID_REFERENCE on leads and customers
 - **Priority:** P0
@@ -383,8 +385,8 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   `unknown company_id 999999: company not found` each time; nothing is written. A soft-deleted
   company is unknown too. This is the scalar counterpart of the `label_ids` rule on tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (request context).
-  Go: `company_link_handler_test.go`, `company_link_service_test.go`,
-  `company_integration_test.go` `TestLeadAndCustomerCompanyLinkThroughTheAPI`.
+  Go: `internal/handler/company_link_handler_test.go`, `internal/service/company_link_service_test.go`,
+  `CompanyIntegrationTestSuite.TestLeadAndCustomerCompanyLinkThroughTheAPI` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-022 — On update, absent company_id keeps the link and 0 clears it
 - **Priority:** P0
@@ -398,8 +400,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   original `company_id`. Step 2: the PUT bodies carry `company_id: 0`; the responses carry no
   `company_id`, the detail pages show no linked company, and the free-text company is unchanged.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
-  Go: `company_link_handler_test.go` `TestUpdate_CompanyIDAbsentKeepsZeroClearsValueSets` (leads
-  and customers), `company_integration_test.go` `TestLeadAndCustomerCompanyLinkThroughTheAPI`.
+  Go: `LeadHandlerTestSuite.TestUpdate_CompanyIDAbsentKeepsZeroClearsValueSets` (`internal/handler/company_link_handler_test.go`)
+  and `CustomerHandlerTestSuite.TestUpdate_CompanyIDAbsentKeepsZeroClearsValueSets` (`internal/handler/company_link_handler_test.go`)
+  (leads and customers), `CompanyIntegrationTestSuite.TestLeadAndCustomerCompanyLinkThroughTheAPI` (`test/integration/company_integration_test.go`).
 
 ### TC-COMP-023 — Erasing a linked customer keeps the company and the link
 - **Priority:** P0
@@ -414,9 +417,9 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   `customer_count` drops to 0 because it counts live rows. The erased row's `company_id` is kept
   (business link, like `assigned_to_id`). Nothing of the person appears in the `companies` table.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-companies.spec.ts` (new).
-  Go: `company_integration_test.go`
-  `TestErasingALinkedCustomerAndLeadKeepsTheCompanyLinkAndTheCompany`;
-  `erasure_pii_sweep_test.go` `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
+  Go:
+  `TestErasingALinkedCustomerAndLeadKeepsTheCompanyLinkAndTheCompany` (`test/integration/company_integration_test.go`);
+  `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates` (`test/integration/erasure_pii_sweep_test.go`)
   now lists `companies`.
 
 ### TC-COMP-024 — Public form submissions still create leads without a company link

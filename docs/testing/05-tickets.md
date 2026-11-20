@@ -78,10 +78,10 @@ gating); where the two disagree, that disagreement gets its own case.
   populated `customer` object. Assert `N/A` *and* assert (via `page.waitForResponse`) that the
   `GET /tickets` payload contains `tickets[].customer.company` with the expected company name — the
   data is present, only the rendering is wrong.
-- **Known issue:** `TicketList.tsx:144` formats the column as `value?.company_name`, but the backend
-  serialises the field as `company` (`internal/models/customer.go:9`) and
-  `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts:46`) does not map the nested
-  customer the way `transformCustomerFromBackend` (`endpoints/customers.ts:31`) does. Same root
+- **Known issue:** `gocrm-ui/src/pages/tickets/TicketList.tsx` formats the column as `value.company_name`, but the backend
+  serialises the field as `company` (`Customer.Company` (`internal/models/customer.go`)) and
+  `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts`) does not map the nested
+  customer the way `transformCustomerFromBackend` (`gocrm-ui/src/api/endpoints/customers.ts`) does. Same root
   cause as TC-TICK-026. Not recorded in FEATURES.md section 5.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
@@ -128,7 +128,7 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** The API returns **403** with `error.message` "Customers cannot list all tickets"
   (`ticket_handler.go` List). The page still renders the "Tickets" heading, the filter bar and the
   table header, with zero body rows and no error message: `client.ts` has no 403 branch, and
-  `TicketList.tsx:315` falls back to `data?.data || []`. The "Create Ticket" button is hidden.
+  `gocrm-ui/src/pages/tickets/TicketList.tsx` falls back to `data?.data || []`. The "Create Ticket" button is hidden.
 - **Known issue:** A 403 is silently indistinguishable from "no tickets exist"; the pattern is
   pinned by `TicketList.test.tsx` "handles API errors gracefully", which asserts only the header row
   survives.
@@ -152,7 +152,7 @@ gating); where the two disagree, that disagreement gets its own case.
   "Create Ticket" button **is** visible (support may create) and every row offers Edit, but not
   Delete.
 - **Known issue:** The row-level Edit affordance is granted to all support users
-  (`TicketList.tsx:92` sets `canEdit = canCreate`), while the API only permits editing one's own
+  (`canEdit` in `gocrm-ui/src/pages/tickets/TicketList.tsx` decides it), while the API only permits editing one's own
   assignments — see TC-TICK-023.
 - **Automation:** API half automated — `TestTicketListVisibility{SQLite,MySQL}` in
   `internal/integration/ticket_visibility_integration_test.go`; UI half planned —
@@ -190,7 +190,7 @@ gating); where the two disagree, that disagreement gets its own case.
   5. Click "Create Ticket" (`button[type="submit"]`).
 - **Expected:** `POST /api/v1/tickets` is sent with `{title, description, status, priority,
   customer_id, assigned_to_id}` (the frontend renames `subject` → `title`,
-  `endpoints/tickets.ts:80`) and returns **201**. A "Ticket created successfully" snackbar appears
+  `title: data.subject` in `gocrm-ui/src/api/endpoints/tickets.ts`) and returns **201**. A "Ticket created successfully" snackbar appears
   and the app navigates to `/tickets`, where the new subject is present in the table.
 - **Known issue:** The 201 body has `customer: {"id":0,...}` — the handler responds with the
   in-memory struct and never re-reads with the `Customer` preload, and `json:"customer,omitempty"`
@@ -207,7 +207,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Navigate to `/tickets/new`.
   2. Click "Create Ticket" without filling anything.
 - **Expected:** No network request is made. The zod resolver
-  (`TicketForm.tsx:24-31`) surfaces "Subject is required", "Description is required" and
+  (`ticketSchema` in `gocrm-ui/src/pages/tickets/TicketForm.tsx`) surfaces "Subject is required", "Description is required" and
   "Customer is required" (the last as the Customer field's helper text). The URL stays
   `/tickets/new`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin sees validation errors for invalid ticket data"
@@ -221,7 +221,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Navigate to `/tickets/new`, fill subject and the long description, select the customer.
   2. Submit.
 - **Expected:** 201. `Description` is `type:text` in the schema
-  (`internal/models/ticket.go:21`) and no length validation exists on either side, so the whole
+  (`Ticket.Description` (`internal/models/ticket.go`)) and no length validation exists on either side, so the whole
   body round-trips. The detail page renders it with `white-space: pre-wrap`, preserving the
   paragraph breaks.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` "admin can handle ticket
@@ -237,7 +237,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Set Status to "Resolved".
   3. Submit and open the new ticket's detail page.
 - **Expected:** The request body does contain `"status":"resolved"`, but the created ticket comes
-  back and renders as **Open**. `CreateTicketRequest` (`ticket_handler.go:29`) has no `Status`
+  back and renders as **Open**. `CreateTicketRequest` (`internal/handler/ticket_handler.go`) has no `Status`
   field, and the handler hard-codes `Status: models.TicketStatusOpen`.
 - **Known issue:** The form offers a control that cannot take effect; the only way to reach a
   non-open status is a follow-up edit. Not recorded in FEATURES.md row 5.2.
@@ -266,7 +266,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Observe the Customer field.
   3. Fill subject and description and submit.
 - **Expected:** The URL is `/tickets/new?customer_id=<id>`; `customer_id` is prefilled from the
-  query string and the Autocomplete is **disabled** (`TicketForm.tsx:224`). The visible label may
+  query string and the Autocomplete is **disabled** (`disabled={!!preselectedCustomerId}` in `gocrm-ui/src/pages/tickets/TicketForm.tsx`). The visible label may
   be blank until the customers query resolves. Submitting posts the correct `customer_id` and
   returns 201.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
@@ -287,7 +287,7 @@ gating); where the two disagree, that disagreement gets its own case.
   or admin users" — the handler responds with `err.Error()` and the service wraps
   `apperrors.ErrInvalidAssigneeRole` in `fmt.Errorf` with the sentinel's own text, so the phrase is
   doubled (`ticket_service.go` Create, `ticket_handler.go` Create). Should the form ever submit such
-  an id, the UI shows only the generic "Failed to create ticket" snackbar — `TicketForm.tsx:96`
+  an id, the UI shows only the generic "Failed to create ticket" snackbar — the create mutation's `onError` in `gocrm-ui/src/pages/tickets/TicketForm.tsx`
   discards the server message — and stays on `/tickets/new`.
 - **Known issue:** The picker is labelled "Support Agent" and queries
   `usersApi.getUsers({ role: 'support', is_active: true })`. Since #428 `GET /users` filters `role`
@@ -306,7 +306,7 @@ gating); where the two disagree, that disagreement gets its own case.
   3. Fill subject, description, select a customer, submit.
 - **Expected:** `/tickets/new` renders — `ProtectedRoute requiredPermission="tickets.create"`
   admits support. The Customer picker is populated (`GET /customers` has no role guard). The agent
-  picker is **empty**: `GET /users` is `RequireRole(admin)` (`routes.go:13`) and returns 403 for
+  picker is **empty**: `GET /users` is `RequireRole(admin)` (`SetupUserRoutes` (`internal/handler/routes.go`)) and returns 403 for
   support. Submitting still yields **201** and the ticket is assigned to the creating support user
   per TC-TICK-011.
 - **Known issue:** A support user cannot hand a new ticket to a colleague through the UI; the
@@ -321,7 +321,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. Navigate directly to `/tickets/new`.
   2. Separately, issue `POST /api/v1/tickets` with the sales user's bearer token via
      `request.post()`.
-- **Expected:** The SPA redirects to `/unauthorized` (`ProtectedRoute.tsx:36`,
+- **Expected:** The SPA redirects to `/unauthorized` (`gocrm-ui/src/components/ProtectedRoute.tsx`,
   `<Navigate to="/unauthorized" replace />`) and the form never mounts. The direct API call returns
   **403** with "Only support and admin users can create tickets" (`ticket_handler.go` Create); note
   the handler rejects *before* binding the body, so a malformed payload also yields 403, not 400.
@@ -403,7 +403,7 @@ gating); where the two disagree, that disagreement gets its own case.
   generic "Failed to update ticket" snackbar, stays on the edit form, and the ticket remains
   Closed after a reload.
 - **Known issue:** The specific backend message is dropped by the mutation's `onError`
-  (`TicketForm.tsx:111`), so the user is not told *why*.
+  (the update mutation's `onError` in `gocrm-ui/src/pages/tickets/TicketForm.tsx`), so the user is not told *why*.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
 ### TC-TICK-021 — The Customer field is blank when the edit form loads
@@ -418,8 +418,8 @@ gating); where the two disagree, that disagreement gets its own case.
   contains the customer. Submitting without touching it still preserves the association
   (`customer_id` is carried in the form values, and the backend ignores `customer_id` on update
   anyway).
-- **Known issue:** `TicketForm.tsx:125` seeds `selectedCustomer` from `ticket.customer`, the raw
-  backend object, while `getOptionLabel` (line 214) reads `option.company_name` — a field only the
+- **Known issue:** `gocrm-ui/src/pages/tickets/TicketForm.tsx` seeds `selectedCustomer` from `ticket.customer`, the raw
+  backend object, while its customer `getOptionLabel` reads `option.company_name` — a field only the
   customers endpoint's transform creates. Same `company` vs `company_name` mismatch as TC-TICK-002.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
 
@@ -450,7 +450,7 @@ gating); where the two disagree, that disagreement gets its own case.
 - **Expected:** The `PUT` body **omits** `assigned_to_id` entirely, the API returns 200, and the
   detail page still shows the original assignee. Unassigning is not achievable through the UI, and
   not through the API either.
-- **Known issue:** `endpoints/tickets.ts:95` only forwards `assigned_to_id` when it is not
+- **Known issue:** `updateTicket` in `gocrm-ui/src/api/endpoints/tickets.ts` only forwards `assigned_to_id` when it is not
   `undefined`, and clearing the picker sets it to `undefined`; on the backend
   `UpdateTicketRequest.AssignedToID` is a `*uint`, so an explicit `null` also decodes to `nil` and
   is skipped by `if req.AssignedToID != nil`. `TicketForm.test.tsx` "unassigns ticket by clearing
@@ -471,9 +471,9 @@ gating); where the two disagree, that disagreement gets its own case.
   row-level Edit icon **is** offered and `/tickets/<B>/edit` renders (the route guard only checks
   that `tickets.update` is held, at either scope), but the `PUT` returns **403** "You can only update tickets assigned to you"
   (`ticket_handler.go` Update); the UI shows "Failed to update ticket" and stays on the form. On
-  `/tickets/<B>` neither Edit nor Delete is rendered (`TicketDetail.tsx:129-134`) — but see
+  `/tickets/<B>` neither Edit nor Delete is rendered (`canEdit`/`canDelete` in `gocrm-ui/src/pages/tickets/TicketDetail.tsx`) — but see
   TC-TICK-027, that page never finishes loading for this user anyway.
-- **Known issue:** The list-level affordance (`TicketList.tsx:92`) is coarser than the API rule;
+- **Known issue:** The list-level affordance (`canEdit` in `gocrm-ui/src/pages/tickets/TicketList.tsx`) is coarser than the API rule;
   only the detail page mirrors it.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
@@ -509,12 +509,12 @@ gating); where the two disagree, that disagreement gets its own case.
   (`first_name last_name`), not the user who created the ticket. "Assigned To" is correct.
   `docs/screenshots/tickets/03-detail.png` captures exactly this state: `Customer: N/A` beside
   `Created By: Gregg Nader`.
-- **Known issue:** Two separate defects. (a) `TicketDetail.tsx:182` reads
+- **Known issue:** Two separate defects. (a) `gocrm-ui/src/pages/tickets/TicketDetail.tsx` reads
   `ticket.customer?.company_name`, which the backend never sends — it sends `company`
-  (`internal/models/customer.go:9`); the association *is* preloaded
-  (`ticket_repository.go` `GetByID` does `Preload("Customer")`), so the screenshot's `N/A` is a
+  (`Customer.Company` (`internal/models/customer.go`)); the association *is* preloaded
+  (`ticketRepository.GetByID` (`internal/repository/ticket_repository.go`) does `Preload("Customer")`), so the screenshot's `N/A` is a
   field-name bug, not a missing join. (b) There is no creator column on `models.Ticket` at all, so
-  `transformTicketFromBackend` (`endpoints/tickets.ts:51`) sets `created_by = backendTicket.customer`
+  `transformTicketFromBackend` (`gocrm-ui/src/api/endpoints/tickets.ts`) sets `created_by = backendTicket.customer`
   with the comment "Assuming customer created the ticket". Neither is recorded in FEATURES.md
   row 5.1/5.3.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tickets.spec.ts` (extended)
@@ -529,7 +529,7 @@ gating); where the two disagree, that disagreement gets its own case.
   2. Navigate to `/tickets/999999`.
 - **Expected:** Case 1: `GET /tickets/<id>` returns **403** "You can only view tickets assigned to
   you" (`ticket_handler.go` Get). Case 2: **404** "Ticket not found". In both cases the page shows
-  the loading spinner indefinitely and never renders an error: `TicketDetail.tsx:125` short-circuits
+  the loading spinner indefinitely and never renders an error: `gocrm-ui/src/pages/tickets/TicketDetail.tsx` short-circuits
   on `isLoading || !ticket`, and a failed query leaves `ticket` undefined forever. Assert the
   spinner is still present after the query has settled and that no ticket heading appears.
 - **Known issue:** No 403/404 surface on the detail route; the same trap applies to a customer-role
@@ -569,7 +569,7 @@ gating); where the two disagree, that disagreement gets its own case.
   the ticket belongs to their own customer record. The rule is
   `canEdit` = `tickets.update` at scope all (admin), or at scope own (support) when
   `assigned_to_id === user.id`; `canDelete` = `tickets.delete` (admin)
-  (`TicketDetail.tsx:129-134`), mirrored by `TicketDetail.test.tsx` (6 unit tests) and, for custom
+  (`canEdit`/`canDelete` in `gocrm-ui/src/pages/tickets/TicketDetail.tsx`), mirrored by `TicketDetail.test.tsx` (6 unit tests) and, for custom
   permission lists, `TicketDetail.permissions.test.tsx`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-rbac.spec.ts` (new)
 
@@ -588,7 +588,7 @@ gating); where the two disagree, that disagreement gets its own case.
   3. Return to `/tickets` and search for the ticket's subject.
 - **Expected:** `DELETE /api/v1/tickets/<id>` returns **204 No Content**. A "Ticket deleted
   successfully" snackbar appears, the app navigates to `/tickets`, and the row is gone. This is an
-  ordinary GORM soft delete (`ticket_repository.go` `Delete`) — no field is overwritten, unlike the
+  ordinary GORM soft delete (`ticketRepository.Delete` (`internal/repository/ticket_repository.go`)) — no field is overwritten, unlike the
   GDPR erasure applied to users, customers and leads; in the same transaction the ticket's comment
   mail delivery records (#219) are hard-deleted (see TC-TICK-071). A subsequent `GET /tickets/<id>`
   returns 404.
@@ -617,7 +617,7 @@ gating); where the two disagree, that disagreement gets its own case.
   1. As each non-admin role, load `/tickets` and `/tickets/<id>` and look for delete controls.
   2. As each, issue `DELETE /api/v1/tickets/<id>` directly.
 - **Expected:** No delete icon anywhere for any non-admin (`canDelete = can('tickets.delete')` in
-  both `TicketList.tsx:90` and `TicketDetail.tsx:134`). Every direct `DELETE` returns **403**
+  both `gocrm-ui/src/pages/tickets/TicketList.tsx` and `gocrm-ui/src/pages/tickets/TicketDetail.tsx`). Every direct `DELETE` returns **403**
   "Only administrators can delete tickets" — including for the support user the ticket is assigned
   to, and including for a non-existent id, because the role check precedes the id parse
   (`ticket_handler.go` Delete). The ticket still exists afterwards.
@@ -776,7 +776,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   1. Navigate to `/tickets`.
   2. Type the unique token into "Search tickets...".
 - **Expected:** `GET /tickets?...&search=<token>` returns exactly one row, and `data.total` is 1.
-  Search is genuinely server-side: `ticket_repository.go` `Search` matches
+  Search is genuinely server-side: `ticketRepository.Search` (`internal/repository/ticket_repository.go`) matches
   `title LIKE ? OR description LIKE ? OR resolution LIKE ?` and `CountSearch` recounts, so the
   pagination footer agrees with the row count. Search also takes precedence over the plain sorted
   listing in the handler.
@@ -817,7 +817,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   1. Navigate to `/tickets`; click the "Subject" column header, then click it again.
   2. Repeat for "Status", "Priority", "Created" and "Last Updated".
 - **Expected:** The first click issues `sort_by=title&sort_order=asc` (the UI maps `subject` →
-  `title`, `TicketList.tsx:213-221`), the second `sort_order=desc`, and the rows reorder accordingly.
+  `title`, `handleSort` in `gocrm-ui/src/pages/tickets/TicketList.tsx`), the second `sort_order=desc`, and the rows reorder accordingly.
   `created_at`, `updated_at`, `title`, `status` and `priority` are the whole allowlist in
   `TicketHandler.List`; the repository routes them through `utils.SafeOrderClause`. Sorting also
   resets to page 1.
@@ -880,7 +880,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   2. Call `GET /api/v1/customers/<other-customer-id>/tickets`.
 - **Expected:** Step 1 returns **200** with only that customer's tickets and a matching `total`.
   Step 2 returns **403** "Customers can only view their own tickets"
-  (`ticket_handler.go` `ListByCustomer`, which resolves the caller's customer record via
+  (`TicketHandler.ListByCustomer` (`internal/handler/ticket_handler.go`), which resolves the caller's customer record via
   `customerService.GetByUserID` and compares ids). A lookup failure — including a customer-role user
   with no linked customer record — also yields 403, never a 500.
 - **Known issue:** This was gap **G27**, an IDOR with no ownership check at all; it is fixed and
@@ -918,7 +918,7 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
   1. Open `/customers/<A>` and switch to the Tickets tab.
   2. Look for customer B's ticket in the list.
 - **Expected:** Customer B's ticket **is** listed under customer A. The page calls
-  `ticketsApi.getTickets({ customer_id })` (`CustomerDetail.tsx:83-85`), i.e.
+  `ticketsApi.getTickets({ customer_id })` (`gocrm-ui/src/pages/customers/CustomerDetail.tsx`), i.e.
   `GET /tickets?customer_id=<id>` — and `customer_id` is not among the query parameters
   `TicketHandler.List` reads, so it is ignored and every ticket comes back. The purpose-built
   `GET /customers/:id/tickets` route is never called by the frontend.
@@ -934,8 +934,8 @@ the server. Sources: `internal/handler/ticket_handler.go` (`List`),
 
 `SetupBulkStatusRoutes` registers this route with no `RequireRole` guard; all authorization lives in
 `BulkHandler.BulkUpdateTicketStatus` and `bulkStatusService.BulkSetTicketStatus`. No UI calls it —
-`ticketsApi.bulkUpdateStatus` exists in `endpoints/tickets.ts` but no page imports it, and
-`DataTable.tsx:292` still carries a `// TODO: Implement bulk delete functionality`. These cases are
+`ticketsApi.bulkUpdateStatus` exists in `gocrm-ui/src/api/endpoints/tickets.ts` but no page imports it, and
+`gocrm-ui/src/components/DataTable.tsx` still carries a `// TODO: Implement bulk delete functionality`. These cases are
 therefore API-level, driven from a Playwright `request` context with a UI verification pass afterwards.
 
 ### TC-TICK-044 — Admin sets one status across several tickets
@@ -987,7 +987,7 @@ therefore API-level, driven from a Playwright `request` context with a UI verifi
   3. POST `{"ticket_ids":[A,B],"status":"closed"}`.
 - **Expected:** Step 1 returns **400** with `error.details.closed_ids` containing B, and A is
   untouched — the bulk route must not be a way around the single-record reopen ban
-  (`bulk_status_service.go:239-253`). Step 3 succeeds (200): moving a closed ticket *to* closed is
+  (`bulkStatusService.BulkSetTicketStatus` (`internal/service/bulk_status_service.go`)). Step 3 succeeds (200): moving a closed ticket *to* closed is
   not a reopen.
 - **Automation:** planned — `gocrm-ui/e2e/tests/tickets-bulk-status.spec.ts` (new)
 
@@ -1016,7 +1016,7 @@ not show them yet; these cases are API and backend level. Sources: `internal/mod
 (`IsOverdue`, `MarshalJSON`), `internal/handler/ticket_handler.go` (`parseDueAt`),
 `internal/service/ticket_service.go` (`CreateComment`), `internal/repository/ticket_repository.go`
 (`CreateCommentWithFirstResponse`, `Create`, `Update`) and
-`migrations/20261108120000_add_ticket_sla_fields`.
+`migrations/20261108120000_add_ticket_sla_fields.up.sql`.
 
 ### TC-TICK-050 — Set, change, keep and clear due_at
 - **Priority:** P0
