@@ -866,6 +866,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Sign-in audit: a revoked API key is recorded as `key_revoked` (#465).** The API-key lookup
+  now returns a key whatever its `is_active` flag says, so the existing revocation check refuses a
+  revoked key and the `auth_audit_log` row reads `key_revoked` with the owner's user id instead of
+  `key_invalid` with none. The 401 the client gets is unchanged, byte for byte.
+
 - **Single sign-on: sign-in hygiene (#453).** Every `oidc_sign_in` log line now carries a
   `request_id` (the HTTP request's, passed to the service on its context) and an `attempt_id` (the
   `oidc_login_attempts` row, `0` before Start created it or the callback claimed it); codes,

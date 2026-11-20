@@ -832,6 +832,9 @@ type AuthAuditRepository interface {
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)
+	// GetByKeyHash returns the live (not soft-deleted) key with that hash
+	// whatever is_active says; the caller (ValidateAPIKey) refuses inactive
+	// keys, so a revoked key is recorded as key_revoked with its owner.
 	GetByKeyHash(keyHash string) (*models.APIKey, error)
 	GetByUserID(userID uint) ([]models.APIKey, error)
 	Update(apiKey *models.APIKey) error

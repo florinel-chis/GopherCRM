@@ -21,6 +21,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
 func TestAuthAuditWired(t *testing.T) {
@@ -108,6 +109,20 @@ func TestAuthAuditWired(t *testing.T) {
 	recorder = send(http.MethodGet, "/leads", "", "req-454", "ApiKey bogus")
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	assertRow(t, newRow(t), "api_key", "refused", "key_invalid", 0)
+	bogusKeyBody := recorder.Body.String()
+
+	// #465: a revoked key is found by the lookup and refused as key_revoked
+	// with its owner, while the client gets the same 401 as for a bogus key.
+	const revokedRaw = "gcrm_revoked0465abcdef0123456789"
+	revoked := &models.APIKey{Name: "revoked 0465", KeyHash: utils.HashAPIKeyHMAC(revokedRaw, boot.cfg.API.APIKeySecret),
+		Prefix: "0465abcd", UserID: user.ID}
+	require.NoError(t, models.DB.Create(revoked).Error)
+	// The default:true tag overwrites a false IsActive on create.
+	require.NoError(t, models.DB.Model(&models.APIKey{}).Where("id = ?", revoked.ID).Update("is_active", false).Error)
+	recorder = send(http.MethodGet, "/leads", "", "req-454", "ApiKey "+revokedRaw)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	assert.Equal(t, bogusKeyBody, recorder.Body.String(), "a revoked key gets the bogus key's answer byte for byte")
+	assertRow(t, newRow(t), "api_key", "refused", "key_revoked", user.ID)
 
 	recorder = send(http.MethodGet, "/leads", "", "req-454", "Bearer bogus")
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
