@@ -2102,6 +2102,24 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   without the `/api/v1` prefix; write host names without backticks. Its unit test,
   `scripts/ci/tests/test_user_guide.py`, runs the check on the real guide inside
   `make verify-hygiene`, so a rename in the code that the guide still names fails the `hygiene` job.
+- **The fork and extension guides cite code by symbol, and the citations are checked** (#487).
+  `python3 scripts/ci/check-doc-citations.py` reads the files in its `CONVERTED_FILES` list
+  (`docs/FORKING.md` and `docs/EXTENDING.md`; pass other files as arguments). Every backticked
+  repository path must be a tracked file or directory, judged by `git ls-files` only, so an
+  untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must
+  match a tracked file, a path with `<`, `>`, `{`, `}` or `$` is a placeholder, and the gitignored
+  outputs the guides legitimately cite are listed in its `IGNORED_OUTPUTS` allowlist
+  (`bin/gophercrm`, `gocrm-ui/.env`). A Go symbol is cited next to its file, as
+  `` `internal/models/database.go` `autoMigrateModels` `` or
+  `` `setupDependencies` (`cmd/main.go`) ``, with a full repository path; the symbol (a func, a
+  method as `Type.Method` or `(*Type).Method`, a type, var or const, an interface method or a
+  struct field, optionally prefixed by the package name) must be declared in that file, which the
+  go/parser helper `scripts/ci/docsymbols` lists. A converted file may not contain a
+  `file.go:N`-style line citation (`.go`, `.ts`, `.tsx`, `.py`, `.sh`, `.sql`) anywhere; cite a
+  non-Go file by a heading, job or step name, key or a short quoted anchor instead. The six
+  Compose and Dockerfile line citations in `docs/FORKING.md` stay, because tests recompute them
+  from the files. Its unit test, `scripts/ci/tests/test_doc_citations.py`, runs the check on the
+  real guides inside `make verify-hygiene`.
 
 Since 11 November 2026 CI runs no browser spec outside a release: the complete browser matrix on
 MySQL, MariaDB and SQLite runs only when the release workflow calls CI with `full: true`. Browser

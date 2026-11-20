@@ -18,20 +18,20 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 
 | Rule | Where it lives | Long form |
 |---|---|---|
-| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data`, `internal/handler/form_public_handler.go:85,166-222`), the customer CSV export (`customer_handler.go:569,617`), the lead CSV export (`lead_handler.go:941,993`), and deletes that answer an empty 204 (`customer_handler.go:534`) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" (line 87) |
-| Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" (line 90) |
-| Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" (line 459) |
-| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `internal/utils/response.go:152`, `internal/repository/page_order.go` | "Pagination" (line 712), "Paginated reads walk a total order" (line 593) |
-| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go:276`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | line 567 |
-| Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `internal/utils/transaction.go:149-176` | "Transaction management" (line 94) |
+| Every JSON response uses the `{success, data, error, meta}` envelope, sent only through `utils.Respond*`. The existing non-JSON contracts stay as they are: the public embed script and the hosted and confirmation pages (`c.Data` in `FormPublicHandler.EmbedScript`, `FormPublicHandler.ViewPage`, `FormPublicHandler.ConfirmPage` and `FormPublicHandler.Confirm` (`internal/handler/form_public_handler.go`)), the customer CSV export (`CustomerHandler.Export` (`internal/handler/customer_handler.go`)), the lead CSV export (`LeadHandler.Export` (`internal/handler/lead_handler.go`)), and deletes that answer an empty 204 (`CustomerHandler.Delete` (`internal/handler/customer_handler.go`)) | `internal/utils/response.go` | DEVELOPMENT.md, "Unified API response" |
+| Errors are sentinels classified with `errors.Is`; misses are wrapped as `fmt.Errorf("<entity> %d not found: %w", id, ...)`; `apperrors.IsNotFound` covers raw `gorm.ErrRecordNotFound` too | `internal/errors/errors.go` | "Error types" |
+| Sort columns come only from a per-entity allowlist | `utils.ValidateSort`, `utils.AllowedSortColumns` in `internal/utils/sort.go` | "Sort validation" |
+| Lists parse paging through `utils.ParseOffsetLimit` and walk a total order (sort column, then `id`) | `ParseOffsetLimit` (`internal/utils/response.go`), `internal/repository/page_order.go` | "Pagination", "Paginated reads walk a total order" |
+| Unpaginated reads are one ordered statement, never `FindInBatches` with a non-id order | `customerRepository.ListAllForExport` (`internal/repository/customer_repository.go`), `leadRepository.ListAllForExport` (`internal/repository/lead_repository.go`) | "Unpaginated reads must not mix a non-id `ORDER BY` with `FindInBatches`" |
+| Multi-step writes run in `TransactionManager.WithTransaction`; nested calls reuse the transaction under a savepoint | `TransactionManager.WithTransaction` (`internal/utils/transaction.go`) | "Transaction management" |
 | Transactions that lock rows of more than one table lock them in the one documented order and retry only the whole root | `internal/utils/transaction.go`, `internal/service/lead_service.go` | [CONCURRENCY.md](CONCURRENCY.md) |
-| A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | line 228 onwards |
+| A single-use token is spent by a conditional `UPDATE` inside the transaction that does the dependent writes; mail goes out after the commit | password reset, refresh rotation, form confirmation | "Authentication", from "A password reset link is spent only by a committed reset" |
 | Lead visibility has one policy: admin sees all leads, sales its own, every other role none | `service.CanViewLead`, `RedactTaskLead(s)`, `RedactDealLead(s)` in `internal/service/lead_visibility.go` | code comments in that file |
 | A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
-| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go:114`, `migrations/` | [Database](DEVELOPMENT.md#database) |
-| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" (line 748) |
+| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go` `autoMigrateModels`, `migrations/` | [Database](DEVELOPMENT.md#database) |
+| Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
 
@@ -55,7 +55,8 @@ Two review rules apply to every recipe (`REVIEW.md`, "Tests"):
      --base "$(git rev-parse origin/main)" --head "$(git rev-parse HEAD)"
    ```
 
-   Any path under `SHARED_PREFIXES` or in `SHARED_FILES` (`validation.py:39-51`: `migrations/`,
+   Any path under `SHARED_PREFIXES` or in `SHARED_FILES` (`SHARED_PREFIXES` and `SHARED_FILES` in
+   `automation/langflow/gophercrm_runner/validation.py`: `migrations/`,
    `cmd/`, `internal/models/`, `internal/config/`, `internal/middleware/`, `internal/utils/`,
    `internal/handler/routes.go`, both `interfaces.go` files, `go.mod`, the frontend `routes/`,
    `layouts/`, `types/` and `components/` folders, among others) is shared infrastructure. Outside
@@ -88,14 +89,14 @@ dependency injection is manual.
 
 ### 3.2 AutoMigrate (the SQLite half)
 
-Add the model to `autoMigrateModels` in `internal/models/database.go:114`, after the models it
-references (products and quotes sit at lines 125-128). On SQLite this is the only schema path;
-`cmd/migrate` refuses database commands there (`ErrSQLiteUnsupported`, `cmd/migrate/main.go:26`).
+Add the model to `internal/models/database.go` `autoMigrateModels`, after the models it
+references (products and quotes sit after the comment "Product and Quote before QuoteLine"). On SQLite this is the only schema path;
+`cmd/migrate` refuses database commands there (`ErrSQLiteUnsupported` (`cmd/migrate/main.go`)).
 
 ### 3.3 SQL migration pair (the MySQL/MariaDB half)
 
 - Create the pair with `go run ./cmd/migrate -command create -name add_<entity>`
-  (`createNewMigration`, `cmd/migrate/main.go:205`). It writes
+  (`createNewMigration` (`cmd/migrate/main.go`)). It writes
   `migrations/<timestamp>_add_<entity>.{up,down}.sql`. The repository holds 12 pairs (`ls
   migrations/*.up.sql | wc -l`, measured on 4dfe404).
 - New tables use `CREATE TABLE IF NOT EXISTS`, with column, index and constraint names identical to
@@ -106,11 +107,11 @@ references (products and quotes sit at lines 125-128). On SQLite this is the onl
   existing table makes the SQLite side rebuild that table; that needs its own upgrade fixture test.
 - Never edit a migration that has shipped. Add a new pair instead.
 - Add the table to `expectedTables` in `TestMigrationFiles_PairsAndCompleteness`
-  (`cmd/migrate/main_test.go:77`). Add a migration test modelled on `TestProductsAndQuotesMigration`
-  (`cmd/migrate/products_quotes_migration_test.go:165`): fresh install, AutoMigrate first, schema
+  (`cmd/migrate/main_test.go`). Add a migration test modelled on `TestProductsAndQuotesMigration`
+  (`cmd/migrate/products_quotes_migration_test.go`): fresh install, AutoMigrate first, schema
   parity, rollback.
 
-**On a fork:** migration versions are numeric, and golang-migrate (`cmd/migrate/main.go:101-110`)
+**On a fork:** migration versions are numeric, and golang-migrate (`main` (`cmd/migrate/main.go`), through `migrate.NewWithDatabaseInstance`)
 does not apply a file numbered below the newest version a database has already applied. Merge
 upstream first, give fork migrations timestamps later than upstream's latest, re-stamp unreleased
 fork migrations after every upstream sync, and rehearse a populated-database upgrade before
@@ -123,13 +124,14 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 - Provide `WithTx(tx *gorm.DB) <Entity>Repository` so the service can bind the repository to a
   transaction (`product_repository.go`, last function).
 - List: validate the sort with `utils.ValidateSort("<table>", sortBy, sortOrder)` after adding the
-  table to `AllowedSortColumns` (`internal/utils/sort.go:9`), then order by the column and by `id`
+  table to `AllowedSortColumns` (`internal/utils/sort.go`), then order by the column and by `id`
   in the same direction. Use `orderPage` / `orderByColumnThenID` from `page_order.go` when the
   endpoint has a "no sort" default. Search filters are bound parameters, never interpolated
   (`productSearchClause`).
 - A delete that matched no row returns `gorm.ErrRecordNotFound` (`productRepository.Delete`).
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
-  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md line 988).
+  `ErrDuplicatedKey` never fires here (DEVELOPMENT.md, [Gotchas](DEVELOPMENT.md#gotchas), "Do not rely on
+  `gorm.ErrDuplicatedKey`").
 - Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
   rejection of an unknown sort column and soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
@@ -142,11 +144,11 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
   `internal/service/<entity>_service.go`.
 - Validate input and wrap with sentinels: `fmt.Errorf("... : %w", apperrors.ErrValidation)` and
   `fmt.Errorf("product %d not found: %w", id, apperrors.ErrProductNotFound)`
-  (`internal/service/product_service.go:51,120`). Declare new sentinels in
+  (`validateProduct` and `productService.GetByID` in `internal/service/product_service.go`). Declare new sentinels in
   `internal/errors/errors.go` next to the existing ones.
 - Multi-step writes take `*utils.TransactionManager` and run inside `WithTransaction`, using the
   `WithTx` repositories. `QuoteService` is the reference for conditional claims in one transaction
-  (DEVELOPMENT.md line 462).
+  (DEVELOPMENT.md, "Quotes: conditional claims, one transaction each").
 - Record-level visibility (who sees which row) belongs here or in the repository query, applied
   **before** pagination, so counts and pages agree. If the entity can link a lead, apply
   `CanViewLead` on write and redact on every read; never write a separate role check for a lead
@@ -158,22 +160,23 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 - `internal/handler/<entity>_handler.go`: parse with `ShouldBindJSON`, page with
   `utils.ParseOffsetLimit`, answer through `utils.Respond*`, and map errors with `errors.Is` /
-  `apperrors.IsNotFound` (the error switch at `internal/handler/product_handler.go:317-320`).
+  `apperrors.IsNotFound` (the error switch in `ProductHandler.respondError` (`internal/handler/product_handler.go`)).
   Handlers never import gorm.
 - Annotate each handler (`@Summary`, `@Security BearerAuth`, `@Security ApiKeyAuth`, `@Router`;
-  see `product_handler.go:66-80`). Annotations describe what the code does, including its warts.
+  see `ProductHandler.Create` (`internal/handler/product_handler.go`)). Annotations describe what the code does, including its warts.
 - Regenerate the spec with `make swagger` (writes `api/swagger.json` and `api/swagger.yaml`).
 
 ### 3.7 Routes and wiring
 
 - Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Guard the group with
   `middleware.RequirePermission(...)` and narrow individual routes where needed
-  (`SetupProductRoutes`, `routes.go:99-107`: group admin+sales, writes admin).
-- In `cmd/main.go`, `setupDependencies` (line 257): construct the repository with `models.DB`
-  (line 270), the service (line 314), the handler (line 378), and register the routes in the
-  `protected` group (line 487). There is no container; the wiring is plain code.
+  (`SetupProductRoutes` (`internal/handler/routes.go`): group admin+sales, writes admin).
+- In `setupDependencies` (`cmd/main.go`): construct the repository with `models.DB`
+  (`repository.NewProductRepository`), the service (`service.NewProductService`), the handler
+  (`handler.NewProductHandler`), and register the routes in the `protected` group
+  (`handler.SetupProductRoutes(protected, productHandler)`). There is no container; the wiring is plain code.
 - If a static path sits next to a `/:id` route, extend `TestAllRouteSetupsCoexist`
-  (`internal/handler/routes_test.go:17`).
+  (`internal/handler/routes_test.go`).
 - Every protected route is recorded in the system-role route matrix,
   `cmd/testdata/system_role_route_matrix.json`. Declare each new route in `matrixRequests`
   (`cmd/system_role_route_matrix_test.go`: fixture kind, valid body, note), seed a fixture kind for
@@ -186,15 +189,16 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 Service tests use testify mocks in `internal/mocks/` (and four repository mocks in
 `internal/repository/mocks/`). Several carry a "generated" header but were written by hand
-(`internal/mocks/ProductRepository.go:2`). Add the mock for your new interface and review it: a
+(the header of `internal/mocks/ProductRepository.go`). Add the mock for your new interface and review it: a
 wrong mock lets a test pass for the wrong reason (`REVIEW.md`, last paragraph).
 
 ### 3.9 Frontend
 
-- Types in `gocrm-ui/src/types/index.ts` (the `Product` interface is at line 193).
+- Types in `gocrm-ui/src/types/index.ts` (the `export interface Product` declaration).
 - Endpoint module `gocrm-ui/src/api/endpoints/<entity>.ts`, exported from `endpoints/index.ts`.
-  The axios client (`src/api/client.ts:216`) unwraps the success envelope, so endpoint functions
-  receive `data` directly. Error envelopes are unwrapped flat (`client.ts:237`); read them with
+  The axios client (the response interceptor in `setupInterceptors`, `gocrm-ui/src/api/client.ts`)
+  unwraps the success envelope, so endpoint functions receive `data` directly. Error envelopes are
+  unwrapped flat ("Unwrap error response if it's in the wrapped format" in the same interceptor); read them with
   `getAPIError` (`src/utils/apiError.ts`), which returns `{code, message, details}`.
 - Pages under `gocrm-ui/src/pages/<entity>/` (TanStack Query, react-hook-form with zod), lazily
   imported in `gocrm-ui/src/routes/index.tsx` behind `<ProtectedRoute requiredPermission="...">`
@@ -225,8 +229,8 @@ Decide first whether the new table stores personal data or only refers to people
   subscriptions addressed to a person needs the same question.
   For a table that really holds ids only, still prove it. Add the table to the list in
   `TestThePersonalDataSweepCoversEveryTableTheApplicationMigrates`
-  (`test/integration/erasure_pii_sweep_test.go:247`), and add a canary test like
-  `TestThePersonalDataSweepCoversQuoteTables` (line 314) that writes the person into the table and
+  (`test/integration/erasure_pii_sweep_test.go`), and add a canary test like
+  `TestThePersonalDataSweepCoversQuoteTables` (`test/integration/erasure_pii_sweep_test.go`) that writes the person into the table and
   asserts the sweep sees it. A sweep that cannot see a table proves nothing; the quote canary
   proves the sweep can see quote rows, and `business_text_erasure_sweep_test.go` proves the
   erasure clears them.
@@ -248,7 +252,7 @@ Decide first whether the new table stores personal data or only refers to people
   #385 leaves open under #183 (the governed user write still locks against it in the opposite
   order; see [CONCURRENCY.md](CONCURRENCY.md)). A new table that an
   erasure must lock goes into that order, after the tables it depends on, by primary key only. A new table that copies a person's email without a link to
-  the erased row can follow `scrubUnlinkedSubmissions` (`erasure.go`).
+  the erased row can follow `scrubUnlinkedSubmissions` (`internal/repository/erasure.go`).
 
 ### 3.11 Tests at every layer
 
@@ -286,8 +290,8 @@ schema). A root that skipped proves nothing.
 - **Endpoint.** Handler method with annotations, route in the entity's `Setup...Routes` with its
   guard, service method behind the interface, `make swagger`. Test the denied roles and the record
   scope, not only the success path. Static segments next to `/:id` go into `routes_test.go`.
-  Bulk changes follow `SetupBulkStatusRoutes` (`routes.go:280`): at most 100 ids, all or nothing,
-  per-item authorization (DEVELOPMENT.md line 755). A new protected route also goes into the
+  Bulk changes follow `SetupBulkStatusRoutes` (`internal/handler/routes.go`): at most 100 ids, all or nothing,
+  per-item authorization (DEVELOPMENT.md, "Bulk endpoints"). A new protected route also goes into the
   route tests of `cmd`: the system-role golden is frozen and is not regenerated, so list the route
   on `routeMatrixAfterFreeze`, give it a `matrixRequests` entry and add its key to
   `permissions.RouteKeys` (DEVELOPMENT.md, "System-role route matrix"). A change to what an
@@ -299,16 +303,16 @@ schema). A root that skipped proves nothing.
 
 ## 5. Add a setting
 
-- Seed it in `DefaultConfigurations()` (`internal/models/configuration.go:265`) with key, type,
+- Seed it in `DefaultConfigurations()` (`internal/models/configuration.go`) with key, type,
   category, default and description. `configRepo.InitializeDefaults()` runs at every start
-  (`cmd/main.go:157`) on both drivers; re-seeding refreshes metadata but never overwrites a stored
-  value (`BulkUpsert`, `internal/repository/configuration_repository.go:62`). Changing a default
+  (`main` (`cmd/main.go`)) on both drivers; re-seeding refreshes metadata but never overwrites a stored
+  value (`configurationRepository.BulkUpsert` (`internal/repository/configuration_repository.go`)). Changing a default
   therefore does not touch existing installations.
-- A secret gets `IsSensitive: true` (the AEO keys, `configuration.go:367-404`): encrypted at rest by
+- A secret gets `IsSensitive: true` (the AEO keys, the `integration.aeo.*_api_key` entries of `DefaultConfigurations` (`internal/models/configuration.go`)): encrypted at rest by
   `internal/utils/secretbox.go`, blanked in responses, read only through `GetSecret`. The key derives
   from `API_KEY_SECRET` (falling back to `JWT_SECRET`); rotating it orphans stored secrets.
 - Everything in category `ui` reaches every authenticated user through `GET /configurations/ui`
-  (`GetUIConfigurations`, `internal/handler/configuration_handler.go:409`). Never put a sensitive
+  (`ConfigurationHandler.GetUIConfigurations` (`internal/handler/configuration_handler.go`)). Never put a sensitive
   key there.
 - Ship the consumer and its test in the same change. A seeded setting nobody reads is a defect.
   To retire one, remove it from `DefaultConfigurations`, add its key to
@@ -320,16 +324,16 @@ schema). A root that skipped proves nothing.
 ## 6. Add an automation event or step
 
 Read [Automation runtime](DEVELOPMENT.md#automation-runtime) first. The vocabulary lives in
-`internal/models/automation.go`: seven event types plus the `schedule` trigger (lines 30-43), five
-origins (lines 49-55) and six step types (lines 58-65).
+`internal/models/automation.go`: ten event types plus the `schedule` trigger (the `Event types.` const
+block), five origins (`Event origins.`) and six step types (`Step types.`).
 
 **A new step type:**
 
-1. Constant in `internal/models/automation.go`. `step_type` is `varchar(20)` (line 274), so keep the
+1. Constant in `internal/models/automation.go`. `step_type` is `varchar(20)` (`internal/models/automation.go` `AutomationStep.StepType`), so keep the
    name short.
-2. Validation in `validateStep` (`internal/service/automation_validation.go:288`).
-3. Dry run in `AutomationEngine.DryRun` (`internal/service/automation_dry_run.go:17`).
-4. Execution in `planStep` (`internal/service/automation_engine.go:695`): build a `stepPlan` whose
+2. Validation in `validateStep` (`internal/service/automation_validation.go`).
+3. Dry run in `AutomationEngine.DryRun` (`internal/service/automation_dry_run.go`).
+4. Execution in `AutomationEngine.planStep` (`internal/service/automation_engine.go`): build a `stepPlan` whose
    `effect` writes through the transaction-bound repositories, so it commits or rolls back with the
    run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`,
    called from `executeStep`); copy that path for any external side effect. Several replicas may
@@ -338,7 +342,7 @@ origins (lines 49-55) and six step types (lines 58-65).
    owner checks as the email step: the locking check of the run row in its first transaction and
    the plain read just before the call.
 5. Erasure: if the step writes anything that can name a person, `cancelAutomationForEntity`
-   (`internal/repository/erasure.go:602`) must reach it.
+   (`internal/repository/erasure.go`) must reach it.
 6. UI: `gocrm-ui/src/pages/automation/RuleStepFields.tsx`, `ruleFormSchema.ts`,
    `automationFormat.ts`, and the types in `gocrm-ui/src/types/automation.ts`.
 7. Tests: execution and dry run (`automation_step_execution_test.go`,
@@ -348,20 +352,21 @@ origins (lines 49-55) and six step types (lines 58-65).
 **A new event or trigger:**
 
 1. Constant in the event block. `event_type` and `trigger_type` are `varchar(40)`; `entity_type`
-   and `origin` are `varchar(20)` (lines 214-216, 310-315).
+   and `origin` are `varchar(20)` (`AutomationRule.EntityType` and `AutomationRule.TriggerType` (`internal/models/automation.go`),
+   `AutomationEvent.EventType` and `AutomationEvent.Origin` (`internal/models/automation.go`)).
 2. Record the event **inside the write transaction** of the business change, through the
-   functional option pattern (`WithLeadAutomationEvents`, `internal/service/lead_service.go:71`;
-   helpers in `internal/service/automation_events.go`). Wire the option in `cmd/main.go`
-   (`setupDependencies`, lines 226-273). A write that rolls back must record nothing.
+   functional option pattern (`WithLeadAutomationEvents` (`internal/service/lead_service.go`);
+   helpers in `internal/service/automation_events.go`). Wire the option in `setupDependencies`
+   (`cmd/main.go`). A write that rolls back must record nothing.
 3. Writes made by automation itself record origin `automation`, which the dispatcher claims but
    never turns into a run. That is the loop guard; keep it.
 4. Allow the trigger for its entity in `automationTriggerTypes`
-   (`internal/service/automation_validation.go:109`). `validateRule` refuses any trigger missing
-   from that map before `validateTrigger` runs (`automation_validation.go:144-153`), so without
+   (`internal/service/automation_validation.go`). `validateRule` refuses any trigger missing
+   from that map before `validateTrigger` runs (`automationService.validateRule` (`internal/service/automation_validation.go`)), so without
    this step a rule on the new event cannot be saved.
 5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
    (`automation_engine.go`), the erasure cancel for that entity, and validation of values in
-   `validateTrigger`/`validAutomationValue` (`automation_validation.go`). Tickets (#242) are the
+   `validateTrigger`/`validAutomationValue` (`internal/service/automation_validation.go`). Tickets (#242) are the
    third worked entity and show the variants: a run's owner taken from another column
    (`recordFromTicket`, `assigned_to_id`), condition fields and placeholder allowlists of their own
    (`automation_condition.go`; no free text and no customer field), a role rule on
@@ -393,13 +398,12 @@ missing (see the roadmap).
 
 ## 7. Add a form field type
 
-Constant and `validateFieldType` in `internal/models/form.go:54-62,365`; submitted-value validation
-in `validateValues` (`internal/service/form_service.go:781`, called from `SubmitPublic` at line
-713); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
+Constant (`FormFieldText` and its siblings) and `validateFieldType` in `internal/models/form.go`; submitted-value validation
+in `formService.validateValues` (`internal/service/form_service.go`), called from `formService.SubmitPublic` (`internal/service/form_service.go`); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
-`FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts:9`) first: the builder imports it, and
+`FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
-`z.enum` in `gocrm-ui/src/pages/forms/FormBuilder.tsx:49,86`.
+`z.enum` of the field schema in `gocrm-ui/src/pages/forms/FormBuilder.tsx`.
 Do not reorder the spam layers in `SubmitPublic` and do not change the success-shaped response for
 spam: both are deliberate (`REVIEW.md`, "Skip"). Mapping a field to a new lead column is a schema
 change (section 3).
@@ -413,17 +417,17 @@ it in `AEO_EGRESS_ALLOWED_ORIGINS` or `AEO_EGRESS_LOCAL_ORIGINS` ([AEO_SECURITY.
 
 If a new named engine is still required:
 
-1. Implement `Provider` (`Name`, `Model`, `Query`; `internal/aeo/provider.go:81`). For an
+1. Implement `Provider` (`Name`, `Model`, `Query`; `internal/aeo/provider.go` `Provider`). For an
    OpenAI-compatible API, configure `NewOpenAICompatProvider` instead of writing a client; the
    module uses exactly two provider SDKs (`anthropic-sdk-go` and `openai-go`, `go.mod`), with no
    hand-rolled HTTP.
 2. Register it in `LoadProvidersWithGuard` and `ProviderStatusesFor` in the same file.
-3. Add an egress key in `internal/config/aeo_egress.go` (constants and `aeoEgressKeys`, lines
-   17-28) and the engine's official HTTPS origin in `officialOrigins` (`internal/aeo/egress.go:50`).
-4. Environment variables in `AEOConfig` (`internal/config/config.go:144`, defaults at line 317).
+3. Add an egress key in `internal/config/aeo_egress.go` (its key constants and `aeoEgressKeys`) and
+   the engine's official HTTPS origin in `officialOrigins` (`internal/aeo/egress.go`).
+4. Environment variables in `AEOConfig` (`internal/config/config.go`, defaults in its `Load` block).
 5. Admin settings: the sensitive key in `DefaultConfigurations()` (next to the five existing keys),
-   the model/base-URL overrides via `aeoConfigProviders` (`internal/models/aeo_configuration.go:11`),
-   and the overlay in `EffectiveAEOConfig` (`internal/service/aeo_credentials.go:41`).
+   the model/base-URL overrides via `aeoConfigProviders` (`internal/models/aeo_configuration.go`),
+   and the overlay in `EffectiveAEOConfig` (`internal/service/aeo_credentials.go`).
 6. UI: `gocrm-ui/src/pages/aeo/AEOSettings.tsx` and `AEOProviderConnections.tsx`.
 7. Tests: `internal/aeo/provider_test.go`, `egress_test.go`, `aeo_credentials_test.go`, and the
    `aeo-providers.spec.ts` browser spec.
@@ -435,7 +439,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 
 - **Integration.** Create a dedicated user for each integration, issue an API key for it
   (`POST /api/v1/api-keys`) and send it as `Authorization: ApiKey <key>`
-  (`internal/middleware/auth.go:43-46`):
+  (`Auth` (`internal/middleware/auth.go`)):
 
   ```bash
   curl -s -H "Authorization: ApiKey $GOPHERCRM_KEY" \
@@ -448,7 +452,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
   both; the setup, the keys per case, rotation and revocation are in
   [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user). A key of a
   system-role user is bound by that role: a support identity sees only tickets assigned to it,
-  and a sales identity gets 403 on ticket create (`internal/handler/ticket_handler.go:167`). The
+  and a sales identity gets 403 on ticket create (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)). The
   lead external-id lookup is not routed (#215).
 - **Export.** Copy `ListAllForExport`: one ordered statement with a total order, filtered and
   sorted through the allowlist; never `FindInBatches` with a non-id order.
@@ -458,7 +462,7 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
 This recipe has the highest blast radius in this guide: a missed check either leaks data or locks
 users out.
 
-Roles are a string type with five values (`internal/models/user.go:15-26`): the four system
+Roles are a string type with five values (`UserRole` (`internal/models/user.go`)): the four system
 roles and `custom`, the role of an account on a custom role (`role_id`). They are checked in
 several layers at once:
 
@@ -467,14 +471,14 @@ several layers at once:
   its entry in `permissions.RouteKeys` (`internal/permissions/routes.go`), or
   `TestEveryRouteRequiresItsOwnKey` fails;
 - permission and scope checks inside handlers, all through `internal/handler/permission_context.go`
-  (tickets: `ticket_handler.go:88-415`); a system role is its matrix in
+  (tickets: the `TicketHandler` methods in `internal/handler/ticket_handler.go`); a system role is its matrix in
   `internal/permissions/system_roles.go`;
 - service policies (`CanViewLead` and the redaction helpers, ticket and dashboard scoping, staff
   checks for automation assignees in `automation_validation.go`, `staffUserProblem`);
 - user management: the `oneof=admin sales support customer custom` binding in
-  `internal/handler/user_handler.go:40,57`; registration always creates `customer`;
-- the frontend: the `role` unions in `gocrm-ui/src/types/index.ts:6,527` and
-  `src/api/endpoints/users.ts:18,27` (the user ones include `custom`, which travels with
+  `CreateUserRequest.Role` and `UpdateUserRequest.Role` (`internal/handler/user_handler.go`); registration always creates `customer`;
+- the frontend: the `role` unions of `User` and `RegisterRequest` in `gocrm-ui/src/types/index.ts` and of
+  `CreateUserData` and `UpdateUserData` in `src/api/endpoints/users.ts` (the user ones include `custom`, which travels with
   `role_id`), and the system-role fixture the UI tests are fed from
   (`src/permissions/systemRoleFixture.ts`, compared with the golden matrix by
   `systemRoleFixture.test.ts`). Routes, navigation and buttons read permission keys, not role
@@ -524,21 +528,21 @@ it is the cleanest removal.
 | Layer | Remove or change |
 |---|---|
 | Backend | `internal/aeo/`; `internal/service/aeo_*`; `internal/repository/aeo_repository.go`; `internal/handler/aeo_handler.go`, `aeo_routes.go`; `AEORepository` and `AEOService` in both `interfaces.go`; the AEO mocks |
-| Wiring | `cmd/main.go` (import line 12; construction lines 352-377; handler line 416; reconcile and scheduler lines 444-476; route line 534); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)` and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge, the stale bulk operation sweep and the webhook sender. The outbound webhook sender (#345) uses the AEO egress guard (`internal/aeo/egress.go`, `egress_public.go`: `(*aeo.EgressGuard).PublicHTTPClient`, `aeo.CheckPublicURL`); keep those two files, or move them to a package of their own, when removing the module. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
-| Configuration | `AEOConfig` and its block (`internal/config/config.go:144,327`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key in `configuration.go:367-410`; `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` calls `validateAEOProviderSetting` for every string setting (line 102; keep the plain `c.Value = str` assignment), and `DefaultConfigurations` appends `defaultAEOProviderConfigurations()` (line 417; return `defaults` alone). Without both edits the backend does not compile |
-| Models and schema | `internal/models/aeo.go`; five models from `autoMigrateModels` (`database.go:139-143`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
+| Wiring | `cmd/main.go` (the `internal/aeo` import; in `setupDependencies` the construction from `aeoRepo` and `aeo.LoadProviders` to `aeoRuntime.runs.Service()`, the handler `handler.NewAEOHandler`, the reconcile `aeoService.ReconcileRunningRuns` and `aeoRuntime.startScheduler`, and the route call `handler.SetupAEORoutes`); `cmd/aeo_runtime.go`. The shutdown drain is shared: `setupDependencies` returns `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)` and `drainAEO` (`cmd/aeo_runtime.go`) runs it, so keep a drain for the automation worker, the form retention purge, the stale bulk operation sweep and the webhook sender. The outbound webhook sender (#345) uses the AEO egress guard (`internal/aeo/egress.go`, `egress_public.go`: `(*aeo.EgressGuard).PublicHTTPClient`, `aeo.CheckPublicURL`); keep those two files, or move them to a package of their own, when removing the module. Runs are coordinated across replicas through the ownership columns of `aeo_runs` (`owner_instance`, `heartbeat_at`, `running_lock`, `schedule_slot`; #229): the service claims with `AEORepository.ClaimRun`, renews the heartbeat, and the engine finalizes through the conditional `FinishRun` (there is no full-struct run update) |
+| Configuration | `AEOConfig` and its `AEO:` block in `Load` (`internal/config/config.go`), `internal/config/aeo_egress.go`; the five sensitive keys and the generation-engine key (`integration.aeo.generation_engine`) in `DefaultConfigurations` (`internal/models/configuration.go`); `internal/models/aeo_configuration.go`, together with its two callers in `internal/models/configuration.go`: `Configuration.SetValue` (`internal/models/configuration.go`) calls `validateAEOProviderSetting` for every string setting (keep the plain `c.Value = str` assignment), and `DefaultConfigurations` (`internal/models/configuration.go`) appends `defaultAEOProviderConfigurations()` at its end (return `defaults` alone). Without both edits the backend does not compile |
+| Models and schema | `internal/models/aeo.go`; five models from `internal/models/database.go` `autoMigrateModels` (`AEOProfile` to `AEOCitation`); a new drop pair for the `aeo_*` tables created in `20261001120000_v1_2_0_schema_parity` and extended by `20261114120000_add_aeo_run_ownership`; their names in `expectedTables` and in the sweep table list |
 | Dependencies | `anthropic-sdk-go` and `openai-go` in `go.mod`, then `go mod tidy` |
-| Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (`routes/index.tsx:466-491`, the `aeo.view` guard), the AEO nav group (`MainLayout.tsx`, from line 169), the AEO case in `ConfigurationSettings.test.tsx` |
-| Tests and CI | AEO tests; `aeo-providers.spec.ts`; screenshot spec `10-aeo.spec.ts`; the `aeo` profile, `AEO_REQUIRED_ROOTS` and the `aeo` entry in `validation.py` (imported by `scripts/ci/check-go.py:7`); the AEO port and variables in `scripts/e2e/run.sh`; `internal/aeo/tls_roots_e2e.go` goes with the package |
+| Frontend | `src/pages/aeo/`, `src/api/endpoints/aeo.ts` and its export, the routes (the `aeo.view` `ProtectedRoute` group in `routes/index.tsx`), the AEO nav group (`MainLayout.tsx`, the `title: 'AEO'` entry), the AEO case in `ConfigurationSettings.test.tsx` |
+| Tests and CI | AEO tests; `aeo-providers.spec.ts`; screenshot spec `10-aeo.spec.ts`; the `aeo` profile, `AEO_REQUIRED_ROOTS` and the `aeo` entry in `validation.py` (imported at the top of `scripts/ci/check-go.py`); the AEO port and variables in `scripts/e2e/run.sh`; `internal/aeo/tls_roots_e2e.go` goes with the package |
 | Docs | `docs/AEO_SECURITY.md`, `docs/testing/11-aeo.md`, README and FEATURES sections |
 
 **Other modules:**
 
 | Module | Prefer | Coupling to watch |
 |---|---|---|
-| Automation | `AUTOMATION_ENABLED=false` (`internal/config/config.go:360`) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`erasure.go:558-562`, and `probeAutomationTables`, `erasure.go:581`, for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
-| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring `cmd/main.go:293-294,373-401,479-481,596-598,628-629`; AutoMigrate `database.go:125-128`; a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
-| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`cmd/main.go:246-247`), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`erasure_cascade.go:73,107`) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`erasure.go:199`) |
+| Automation | `AUTOMATION_ENABLED=false` (read by `Load` (`internal/config/config.go`)) stops the worker on that instance; events are still recorded in the outbox. The worker may run on several replicas sharing MySQL/MariaDB (run leases, #237) | Event capture runs inside lead, deal, ticket, form and bulk transactions through the `With...AutomationEvents` options (`cmd/main.go`, `setupDependencies`); the ticket delete cancels the ticket's runs (`ticket_repository.go`). Erasure skips the automation tables if they are absent (`purgeUserNotifications` (`internal/repository/erasure.go`), and `probeAutomationTables` (`internal/repository/erasure.go`) for the cancel of a lead erasure). UI: `pages/automation/`, `NotificationBell.tsx`, the runs section in `LeadDetail.tsx` and `DealDetail.tsx` |
+| Products and quotes | Removal (quotes reference deals and customers, nothing references quotes) | Wiring in `setupDependencies` (`cmd/main.go`): `productRepo` and `quoteRepo`, the product and quote services through `service.WithQuotePDF`, the three product and quote handlers, `handler.SetupQuotePublicRoutes`, and `handler.SetupProductRoutes` with `handler.SetupQuoteRoutes`; AutoMigrate `internal/models/database.go` `autoMigrateModels` (the product and quote models); a drop pair can reuse the body of `20261026120000_add_products_and_quotes.down.sql`; UI: `pages/products/`, `pages/quotes/`, nav, the quotes list in `DealDetail.tsx`, `Breadcrumbs.tsx` |
+| Forms | Removal is possible but touches erasure | `internal/forms/` (challenge, reCAPTCHA), `internal/handler/form_*` and `assets/form_embed.js`, the CORS public prefix (`middleware.CORSWithPublicPrefixes` in `setupRouter` (`cmd/main.go`)), `cfg.Forms`, `WithFormAutomationEvents`, the retention purge (`cmd/form_retention_runtime.go`, `internal/service/form_submission_purge.go`, `form_retention_runtime.go`), `scrubLeadFormSubmissions` in the lead erasure plan (`leadErasurePlan` and `scrubLeadFormSubmissions` (`internal/repository/erasure_cascade.go`)) and `scrubUnlinkedSubmissions`, which every erasure with an email column runs (`eraseRecord` (`internal/repository/erasure.go`)) |
 
 **Never remove:** users and authentication, leads, customers, companies (foreign-key targets of
 leads, customers and deals), configuration, and erasure. Every other module depends on them.
@@ -547,19 +551,20 @@ leads, customers and deals), configuration, and erasure. Every other module depe
 
 | Gate | What it checks | Where |
 |---|---|---|
-| `plan` job | Picks one profile from the diff and records the documentation impact | `.github/workflows/ci.yml:39`; `scripts/ci/plan-validation.py` reads `validation.py` from the **base** ref (the base at lines 67-71, the read at line 96), so a change cannot weaken its own gate |
-| `hygiene` | File-size guard, e2e runner self-test, deploy-script test, Python tests for `scripts/ci` and `scripts/release` | `ci.yml:72`, `make verify-hygiene` |
-| `migrations` | Fresh install, populated upgrade, rollback and reapply on MySQL 8 and MariaDB 10.11, plus the SQLite upgrade fixtures; rejects skips. Both engines run on a `full` run (a release, or a manual dispatch with `full: true`); a pull request that changes migration code (`migrations/`, `cmd/migrate/`, the workflow or its coverage gate) runs the MySQL 8 leg alone, which is not a required check; any other pull request does not run it | `.github/workflows/migrations.yml`, called from `ci.yml:96`; on `full`, `backend` requires its success |
-| `backend` | Outside `full`: the gofmt check on every tracked Go file (`scripts/ci/check-go-format.py`), module build and vet, `python3 scripts/ci/check-api-docs.py`, and `go test -count=1` (no `-race`) on the changed packages, their importers and the packages that read the changed files; no Go test for a documentation-only change. On `full`: `make verify-api-docs`, `make verify-backend` (the same gofmt check, build, vet, `go test -race`), `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8 | `ci.yml:101`, `scripts/ci/check-changed-go.py` |
-| `db-gates` | Outside `full`: the same selected packages against MariaDB 10.11 (`TEST_MYSQL_DSN` set, no `-race`, skips not rejected). On `full`: `check-go.py transaction` on MariaDB | `ci.yml:200` |
-| `frontend` | `npm ci`, build, lint with zero warnings, Vitest | `ci.yml:172`, `make verify-frontend` |
-| `e2e` | Playwright on MySQL 8, MariaDB 10.11 and SQLite through `scripts/e2e/run.sh`; only when the release workflow calls CI | `ci.yml:257` |
+| `plan` job | Picks one profile from the diff and records the documentation impact | the `plan` job of `.github/workflows/ci.yml`; `scripts/ci/plan-validation.py` reads `validation.py` from the **base** ref (`main` there: the `base = {...}` lookup, then the `git show` of `validation.py`), so a change cannot weaken its own gate |
+| `hygiene` | File-size guard, e2e runner self-test, deploy-script test, Python tests for `scripts/ci` and `scripts/release` | the `hygiene` job of `ci.yml`, `make verify-hygiene` |
+| `migrations` | Fresh install, populated upgrade, rollback and reapply on MySQL 8 and MariaDB 10.11, plus the SQLite upgrade fixtures; rejects skips. Both engines run on a `full` run (a release, or a manual dispatch with `full: true`); a pull request that changes migration code (`migrations/`, `cmd/migrate/`, the workflow or its coverage gate) runs the MySQL 8 leg alone, which is not a required check; any other pull request does not run it | `.github/workflows/migrations.yml`, called from the `migrations` job of `ci.yml`; on `full`, `backend` requires its success |
+| `backend` | Outside `full`: the gofmt check on every tracked Go file (`scripts/ci/check-go-format.py`), module build and vet, `python3 scripts/ci/check-api-docs.py`, and `go test -count=1` (no `-race`) on the changed packages, their importers and the packages that read the changed files; no Go test for a documentation-only change. On `full`: `make verify-api-docs`, `make verify-backend` (the same gofmt check, build, vet, `go test -race`), `check-go.py transaction` and `check-auth.py --persistence` on MySQL 8 | the `backend` job of `ci.yml`, `scripts/ci/check-changed-go.py` |
+| `db-gates` | Outside `full`: the same selected packages against MariaDB 10.11 (`TEST_MYSQL_DSN` set, no `-race`, skips not rejected). On `full`: `check-go.py transaction` on MariaDB | the `db-gates` job of `ci.yml` |
+| `frontend` | `npm ci`, build, lint with zero warnings, Vitest | the `frontend` job of `ci.yml`, `make verify-frontend` |
+| `e2e` | Playwright on MySQL 8, MariaDB 10.11 and SQLite through `scripts/e2e/run.sh`; only when the release workflow calls CI | the `e2e` job of `ci.yml` |
 | No-skip SQL gate | Required SQL roots must pass; any skip or fail is an error | `scripts/release/check-sql-tests.py` |
-| Release | Full matrix; every `cmd/migrate` and `internal/integration` root against MySQL with no skips | `.github/workflows/release.yml:94-98` |
+| Release | Full matrix; every `cmd/migrate` and `internal/integration` root against MySQL with no skips | the `Fresh, upgrade, rollback and real SQL integration tests` step of `.github/workflows/release.yml` |
 
 The selector knows 9 profiles: `full`, `mailer`, `aeo`, `migration`, `transaction`,
 `auth-persistence`, `auth`, `runner` and `contextual`
-(`sed -n 584,586p automation/langflow/gophercrm_runner/validation.py`, measured on 4dfe404). Each
+(the `profile = (...)` expression of `plan` in
+`automation/langflow/gophercrm_runner/validation.py`, measured on 4dfe404). Each
 bounded profile's scope is in [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md).
 
 Points that catch people out:
@@ -571,8 +576,8 @@ Points that catch people out:
   backend job has no database, so MySQL roots skip there. A test that reads files outside its own
   package needs a row in that script's `EXTERNAL_READERS` table. On a `full` run the `make
   verify-backend` step sets no `TEST_MYSQL_DSN` either, so MySQL roots skip there too, and the
-  migrations workflow runs a fixed list of roots (`migrations.yml`, the `-run` expression at lines
-  61-62). Add a new migration root to that list, to the `--migrations-only` set in `check-sql-tests.py` and to
+  migrations workflow runs a fixed list of roots (`migrations.yml`, the `-run` expression of the
+  `Migrations, SQLite upgrades and repository SQL regressions` step). Add a new migration root to that list, to the `--migrations-only` set in `check-sql-tests.py` and to
   `MIGRATION_SOURCES` (and the required set) in `scripts/ci/check-go.py`, or it first runs against
   MySQL at release time. A pull request that changes migration code runs that list on MySQL 8 only. A new auth MySQL root in a file `check-auth.py` already selects runs on
   `full` through `check-auth.py --persistence` (#230); a MySQL root anywhere else needs a checker
@@ -584,8 +589,8 @@ Points that catch people out:
   for a release; pull-request CI runs the targeted Go selection instead
   (`python3 scripts/ci/check-changed-go.py --base origin/main` reproduces it for committed changes). Bounded
   profiles (`auth`, `auth-persistence`, `transaction`, `migration`, `aeo`, `mailer`) replace it with
-  their targeted commands (`core_commands`, `validation.py:605-617`; [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md),
-  line 21). Run what the planner selects for your diff, or `make verify` when you want the full set.
+  their targeted commands (`core_commands` in `automation/langflow/gophercrm_runner/validation.py`;
+  [VALIDATION_RELEASE.md](VALIDATION_RELEASE.md#validation-policy), the "Hygiene and core checks" row). Run what the planner selects for your diff, or `make verify` when you want the full set.
 - **Documentation impact** is advisory input to review, not approval
   ([DOCUMENTATION_WORKFLOW.md](DOCUMENTATION_WORKFLOW.md)). The reviewer still decides whether
   each listed document is accurate.
@@ -594,9 +599,9 @@ Points that catch people out:
   files over the size limit. New files in `docs/` are fine.
 
 On a fork, keep the `gophercrm_runner` Python package even if you never use the remediation runner:
-ordinary CI imports it (`scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13`,
-`scripts/ci/plan-documentation.py:10-12`, `scripts/ci/check-go.py:7`, and
-`scripts/ci/plan-validation.py:96` reads `validation.py`; `scripts/ci/check-changed-go.py:24` goes through `go_checks.py`). The Langflow graphs, the runner runtime
+ordinary CI imports it (the `gophercrm_runner` imports at the top of `scripts/ci/check-auth.py`,
+`scripts/ci/go_checks.py`, `scripts/ci/plan-documentation.py` and `scripts/ci/check-go.py`, and `main` in
+`scripts/ci/plan-validation.py` reads `validation.py`; `scripts/ci/check-changed-go.py` goes through `go_checks.py`). The Langflow graphs, the runner runtime
 and `remediation-runner.yml` can go. [FORKING.md](FORKING.md) has the full keep/drop list.
 
 ## 13. Working with coding agents
