@@ -152,7 +152,7 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, rowsBefore, rows(t), "a repeat adds no row anywhere")
 		}},
 		{"last admin", func(t *testing.T) {
-			admin := f.seedUser(t, "admin@x.test", models.RoleAdmin, true, scimDeletePassword)
+			admin := f.seedLinked(t, "admin@x.test", models.RoleAdmin, true, scimDeletePassword)
 			f.login(t, admin.Email, scimDeletePassword)
 			before := f.patchState(t, admin.ID)
 			require.Equal(t, int64(1), before.liveSessions)
@@ -166,7 +166,7 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			assert.Zero(t, f.count(t, "auth_audit_log", ""), "a refusal writes no audit row")
 		}},
 		{"second admin", func(t *testing.T) {
-			admin := f.seedUser(t, "admin@x.test", models.RoleAdmin, true, scimDeletePassword)
+			admin := f.seedLinked(t, "admin@x.test", models.RoleAdmin, true, scimDeletePassword)
 			f.seedUser(t, "admin2@x.test", models.RoleAdmin, true, "")
 			f.login(t, admin.Email, scimDeletePassword)
 			version := f.user(t, admin.ID).TokenVersion
@@ -180,9 +180,9 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			f.assertSuccessAudit(t, admin.ID)
 		}},
 		{"not found", func(t *testing.T) {
-			customer := f.seedUser(t, "cust@x.test", models.RoleCustomer, true, scimDeletePassword)
+			customer := f.seedLinked(t, "cust@x.test", models.RoleCustomer, true, scimDeletePassword)
 			f.login(t, customer.Email, scimDeletePassword)
-			erased := f.seedUser(t, "gone@x.test", models.RoleSales, true, "")
+			erased := f.seedLinked(t, "gone@x.test", models.RoleSales, true, "")
 			require.NoError(t, repository.NewUserRepository(f.db).Delete(erased.ID), "erasure through the real path")
 			rowsBefore := rows(t)
 			customerBefore := f.patchState(t, customer.ID)
@@ -195,8 +195,17 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, customerBefore, f.patchState(t, customer.ID))
 			assert.Equal(t, erasedBefore, f.user(t, erased.ID))
 		}},
+		{"local account is not found", func(t *testing.T) {
+			local := f.seedLocalAdmin(t)
+			before := f.patchState(t, local.ID)
+			rowsBefore := rows(t)
+			err := f.svc.Delete(ctx, uintString(local.ID))
+			assert.ErrorIs(t, err, apperrors.ErrNotFound)
+			assert.Equal(t, before, f.patchState(t, local.ID), "the local account is unchanged")
+			assert.Equal(t, rowsBefore, rows(t), "a not-found writes nothing")
+		}},
 		{"not wired", func(t *testing.T) {
-			ivy := f.seedUser(t, "ivy@x.test", models.RoleSales, true, scimDeletePassword)
+			ivy := f.seedLinked(t, "ivy@x.test", models.RoleSales, true, scimDeletePassword)
 			f.login(t, ivy.Email, scimDeletePassword)
 			before := f.patchState(t, ivy.ID)
 			assert.ErrorIs(t, f.newServiceWith(nil).Delete(ctx, uintString(ivy.ID)), errSCIMWritesNotWired,
@@ -215,7 +224,7 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			run  func(t *testing.T)
 		}{"last_admin_race/after_handover", func(t *testing.T) {
 			x := f.seedUser(t, "x@x.test", models.RoleAdmin, true, scimDeletePassword)
-			y := f.seedUser(t, "y@x.test", models.RoleSales, true, scimDeletePassword)
+			y := f.seedLinked(t, "y@x.test", models.RoleSales, true, scimDeletePassword)
 			f.login(t, y.Email, scimDeletePassword)
 			require.Equal(t, int64(1), f.liveRefreshTokens(t, y.ID))
 			versionBefore := f.user(t, y.ID).TokenVersion

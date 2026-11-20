@@ -35,6 +35,12 @@ import (
 // token, and revokes every refresh token of the account. A refusal writes
 // nothing, audit rows included. Delete deactivates the same way and never
 // erases; on an already inactive account it writes nothing.
+//
+// Replace, Patch and Delete change managed accounts only: live, not customer,
+// and linked by a user_identities row under the effective single sign-on
+// issuer (repository.SCIMUserRepository). Any other id, an account created
+// locally included, is apperrors.ErrNotFound, judged right after the users
+// lock and before any check or write, so nothing is written.
 
 // Refusals of a SCIM user write. The handler answers ErrSCIMInvalidValue with
 // 400 invalidValue and ErrSCIMUniqueness with 409 uniqueness.
@@ -111,6 +117,30 @@ func deprovisionFields(fields map[string]interface{}, locked *models.User, deact
 	if deactivates {
 		fields["token_version"] = locked.TokenVersion + 1
 	}
+}
+
+// requireManaged refuses, as a not-found, a locked target that is not
+// managed under issuer: one without a user_identities row whose issuer equals
+// issuer byte for byte (an account created locally, or linked only under
+// another issuer). It runs right after the users lock, before the last-admin
+// rule, the address check and any write, so a refusal writes nothing. The
+// identities are a plain read through the transaction: the application never
+// deletes a user_identities row, so the lock order does not change.
+func (s *scimUserService) requireManaged(tx *governedTx, issuer string, id uint) error {
+	if issuer != "" {
+		identities, err := s.repo.WithTx(tx.handle).IdentitiesForUsers(issuer, []uint{id})
+		if err != nil {
+			return fmt.Errorf("read the identities of scim user %d: %w", id, err)
+		}
+		for _, identity := range identities {
+			// utf8mb4_bin PAD SPACE also returns an issuer with a trailing
+			// space on MySQL/MariaDB: judge it byte for byte.
+			if identity.Issuer == issuer {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
 }
 
 // parseSCIMUserID parses the id of a Users resource; anything but a positive
@@ -283,7 +313,7 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 	return &SCIMUserRecord{User: *created, ExternalID: in.ExternalID}, nil
 }
 
-// Replace overwrites the visible user rawID names. externalId is ignored: the
+// Replace overwrites the managed account rawID names. externalId is ignored: the
 // link set at creation never changes. Active false deprovisions (#471).
 func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUserInput) (*SCIMUserRecord, error) {
 	deactivates := in.Active != nil && !*in.Active
@@ -301,6 +331,7 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 	if err != nil {
 		return nil, fmt.Errorf("read the single sign-on settings: %w", err)
 	}
+	issuer := cfg.IssuerURL
 	mapped, matched := oidcMatchRole(cfg.RoleMapping, nil, in.Roles)
 	if !matched {
 		return nil, scimInvalid("no roles mapping entry matches")
@@ -319,6 +350,9 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		target := users[id]
 		if target == nil || target.Role == models.RoleCustomer {
 			return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		if err := s.requireManaged(tx, issuer, id); err != nil {
+			return err
 		}
 		roles, err := tx.lockRoles(target.RoleID, &mapped)
 		if err != nil {
@@ -392,14 +426,14 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		return nil, err
 	}
 	s.writes.recordSuccess(ctx, result.ID)
-	records, err := s.withExternalIDs(ctx, []models.User{*result})
+	records, err := s.withExternalIDs(issuer, []models.User{*result})
 	if err != nil {
 		return nil, err
 	}
 	return &records[0], nil
 }
 
-// Patch applies a SCIM PatchOp (#471) to the visible user rawID names, with
+// Patch applies a SCIM PatchOp (#471) to the managed account rawID names, with
 // the checks of Replace for the attributes it touches. The patch is applied
 // to the row locked in the transaction. Untouched roles keep the stored role
 // and write no role audit row; active false deprovisions as in Replace.
@@ -411,12 +445,13 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := s.issuers.SSOConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read the single sign-on settings: %w", err)
+	}
+	issuer := cfg.IssuerURL
 	var mapped *uint
 	if p.Roles != nil {
-		cfg, err := s.issuers.SSOConfig(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("read the single sign-on settings: %w", err)
-		}
 		roleID, matched := oidcMatchRole(cfg.RoleMapping, nil, *p.Roles)
 		if !matched {
 			return nil, scimInvalid("no roles mapping entry matches")
@@ -438,6 +473,9 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		target := users[id]
 		if target == nil || target.Role == models.RoleCustomer {
 			return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		if err := s.requireManaged(tx, issuer, id); err != nil {
+			return err
 		}
 		roles, err := tx.lockRoles(target.RoleID, mapped)
 		if err != nil {
@@ -540,14 +578,14 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		return nil, err
 	}
 	s.writes.recordSuccess(ctx, result.ID)
-	records, err := s.withExternalIDs(ctx, []models.User{*result})
+	records, err := s.withExternalIDs(issuer, []models.User{*result})
 	if err != nil {
 		return nil, err
 	}
 	return &records[0], nil
 }
 
-// Delete deactivates the visible user rawID names (#504) the way active false
+// Delete deactivates the managed account rawID names (#504) the way active false
 // does: in one governed transaction it sets is_active false, increments
 // token_version and revokes every refresh token. It never erases: no
 // deleted_at, and email, names, role, role_id and the identity link stay. An
@@ -562,6 +600,11 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 	if err != nil {
 		return err
 	}
+	cfg, err := s.issuers.SSOConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("read the single sign-on settings: %w", err)
+	}
+	issuer := cfg.IssuerURL
 	changed := true
 	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
 		admins, err := tx.userRoles.LockActiveAdmins()
@@ -575,6 +618,9 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 		target := users[id]
 		if target == nil || target.Role == models.RoleCustomer {
 			return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		if err := s.requireManaged(tx, issuer, id); err != nil {
+			return err
 		}
 		if !target.IsActive {
 			changed = false

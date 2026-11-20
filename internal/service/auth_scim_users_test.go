@@ -8,7 +8,10 @@ package service
 // LOWER(email) = LOWER(?) also returns padded, accented and Unicode-fold
 // variants, and user_identities.issuer is utf8mb4_bin PAD SPACE, so an issuer
 // with a trailing space comes back too: the MySQL root proves that the Go
-// judges drop them.
+// judges drop them. Issue #529: only accounts linked under the configured
+// issuer (by a SCIM create or an OIDC sign-in) are served; a local account,
+// one linked only under another issuer and one whose issuer differs by a
+// trailing space are not listed, counted or read.
 
 import (
 	"context"
@@ -62,9 +65,13 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 		}
 		return u
 	}
+	identityFrom := func(userID uint, issuer, subject, source string) {
+		t.Helper()
+		require.NoError(t, db.Create(&models.UserIdentity{UserID: userID, Issuer: issuer, Subject: subject, Source: source}).Error)
+	}
 	identity := func(userID uint, issuer, subject string) {
 		t.Helper()
-		require.NoError(t, db.Create(&models.UserIdentity{UserID: userID, Issuer: issuer, Subject: subject}).Error)
+		identityFrom(userID, issuer, subject, models.UserIdentitySourceSCIM)
 	}
 
 	jose := seed("jose@scim.example.test", models.RoleSales, true)
@@ -76,8 +83,15 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 	customer := seed("cust@scim.example.test", models.RoleCustomer, true)
 	erased := seed("gone@scim.example.test", models.RoleSales, true)
 	erasedEmail := erased.Email
+	kurt := seed("kurt@scim.example.test", models.RoleSupport, true)
+	linked := seed("lnkd@scim.example.test", models.RoleSales, true)
+	// A local administrator: a password and no identity link.
+	local := seed("locl@scim.example.test", models.RoleAdmin, true)
 
 	identity(jose.ID, scimUsersTestIssuer, "sub-jose")
+	identity(deactivated.ID, scimUsersTestIssuer, "sub-idle")
+	identity(kurt.ID, scimUsersTestIssuer, "sub-kurt")
+	identityFrom(linked.ID, scimUsersTestIssuer, "sub-linked", models.UserIdentitySourceOIDC)
 	identity(other.ID, "https://other.example.test", "sub-other")
 	identity(padded.ID, scimUsersTestIssuer+" ", "sub-padded")
 	// The lower id carries the subject that sorts last, so only the id order
@@ -92,7 +106,8 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 	require.NoError(t, db.Unscoped().First(&erasedRow, erased.ID).Error)
 	require.True(t, erasedRow.DeletedAt.Valid, "erasure soft-deletes")
 
-	visibleIDs := []uint{jose.ID, kate.ID, deactivated.ID, other.ID, padded.ID, twice.ID}
+	// The served accounts: linked under the issuer, live, not customer.
+	visibleIDs := []uint{jose.ID, deactivated.ID, twice.ID, kurt.ID, linked.ID}
 
 	list := func(t *testing.T, userName *string, startIndex, count int) *SCIMUserPage {
 		t.Helper()
@@ -122,7 +137,7 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 		if !mysql {
 			return
 		}
-		rows, err := repo.FindVisibleByEmailFolded(value)
+		rows, err := repo.FindManagedByEmailFolded(scimUsersTestIssuer, value)
 		require.NoError(t, err)
 		if len(rows) == 0 {
 			t.Logf("this engine does not return the stored row for this variant; candidate assertion skipped")
@@ -167,7 +182,7 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 		{"pad variant", "jose@scim.example.test ", jose},
 		{"accent variant", "josé@scim.example.test", jose},
 		{"long s variant (U+017F)", "joſe@scim.example.test", jose},
-		{"Kelvin variant (U+212A)", "Kate@scim.example.test", kate},
+		{"Kelvin variant (U+212A)", "Kurt@scim.example.test", kurt},
 	} {
 		t.Run(tc.name+" is judged out", func(t *testing.T) {
 			candidates(t, tc.value, tc.stored.ID)
@@ -227,8 +242,8 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 		assert.Equal(t, 2, page.StartIndex)
 		assert.Equal(t, visibleIDs[1:3], ids(page))
 
-		page = list(t, nil, 6, 5)
-		assert.Equal(t, visibleIDs[5:], ids(page))
+		page = list(t, nil, 5, 5)
+		assert.Equal(t, visibleIDs[4:], ids(page), "the last page holds the rest")
 
 		page = list(t, nil, 10, 5)
 		assert.Equal(t, len(visibleIDs), page.Total)
@@ -273,25 +288,54 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 			external[r.User.ID] = r.ExternalID
 		}
 		assert.Equal(t, "sub-jose", external[jose.ID], "the identity under the configured issuer")
-		assert.Equal(t, "", external[other.ID], "an identity under another issuer is ignored")
-		assert.Equal(t, "", external[padded.ID], "an issuer with a trailing space is another issuer")
 		assert.Equal(t, "sub-z-first", external[twice.ID], "the lowest id wins")
-		assert.Equal(t, "", external[kate.ID], "no identity")
-
-		got, err := svc.Get(ctx, fmt.Sprint(padded.ID))
-		require.NoError(t, err)
-		assert.Equal(t, "", got.ExternalID)
-
-		noIssuer := NewSCIMUserService(repo, scimIssuerStub(""))
-		page, err = noIssuer.List(ctx, nil, 1, 100)
-		require.NoError(t, err)
-		require.Len(t, page.Users, len(visibleIDs))
+		assert.Equal(t, "sub-linked", external[linked.ID], "an identity an OIDC sign-in linked")
 		for _, r := range page.Users {
-			assert.Equal(t, "", r.ExternalID, "no issuer configured: user %d", r.User.ID)
+			assert.NotEmpty(t, r.ExternalID, "every served account is linked: user %d", r.User.ID)
 		}
-		got, err = noIssuer.Get(ctx, fmt.Sprint(jose.ID))
+	})
+
+	for _, tc := range []struct {
+		name string
+		user *models.User
+	}{
+		{"local admin without identity", local},
+		{"account without identity", kate},
+		{"account linked under another issuer", other},
+		{"account linked under the issuer plus a trailing space", padded},
+	} {
+		t.Run(tc.name+" is not served", func(t *testing.T) {
+			page := list(t, nil, 1, 100)
+			assert.Equal(t, len(visibleIDs), page.Total, "not counted")
+			assert.NotContains(t, ids(page), tc.user.ID, "not listed")
+			byName := filter(t, tc.user.Email)
+			assert.Equal(t, 0, byName.Total, "not found by its exact address")
+			assert.Empty(t, byName.Users)
+			_, err := svc.Get(ctx, fmt.Sprint(tc.user.ID))
+			assert.ErrorIs(t, err, apperrors.ErrNotFound)
+		})
+	}
+
+	t.Run("account linked by an oidc sign-in is served", func(t *testing.T) {
+		got, err := svc.Get(ctx, fmt.Sprint(linked.ID))
 		require.NoError(t, err)
-		assert.Equal(t, "", got.ExternalID)
+		assert.Equal(t, linked.Email, got.User.Email)
+		assert.Equal(t, "sub-linked", got.ExternalID)
+		page := filter(t, linked.Email)
+		assert.Equal(t, []uint{linked.ID}, ids(page))
+	})
+
+	t.Run("empty issuer serves no account", func(t *testing.T) {
+		noIssuer := NewSCIMUserService(repo, scimIssuerStub(""))
+		page, err := noIssuer.List(ctx, nil, 1, 100)
+		require.NoError(t, err)
+		assert.Equal(t, 0, page.Total)
+		assert.Empty(t, page.Users)
+		page, err = noIssuer.List(ctx, &jose.Email, 1, 100)
+		require.NoError(t, err)
+		assert.Equal(t, 0, page.Total)
+		_, err = noIssuer.Get(ctx, fmt.Sprint(jose.ID))
+		assert.ErrorIs(t, err, apperrors.ErrNotFound)
 	})
 
 	t.Run("count is capped at 100", func(t *testing.T) {
@@ -300,6 +344,11 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 			extra[i] = models.User{Email: fmt.Sprintf("bulk-%03d@scim.example.test", i), Password: "x", FirstName: "Bulk", LastName: "User", Role: models.RoleSupport, IsActive: true}
 		}
 		require.NoError(t, db.CreateInBatches(extra, 50).Error)
+		links := make([]models.UserIdentity, len(extra))
+		for i := range extra {
+			links[i] = models.UserIdentity{UserID: extra[i].ID, Issuer: scimUsersTestIssuer, Subject: fmt.Sprintf("sub-bulk-%03d", i), Source: models.UserIdentitySourceSCIM}
+		}
+		require.NoError(t, db.CreateInBatches(links, 50).Error)
 		page := list(t, nil, 1, 500)
 		assert.Equal(t, len(visibleIDs)+100, page.Total)
 		assert.Len(t, page.Users, 100)

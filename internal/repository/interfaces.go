@@ -1491,11 +1491,15 @@ type FormSubmissionPurgeChunk struct {
 // transaction, after the users and roles locks.
 type SCIMGroupMemberRepository interface {
 	// ListMemberIDs returns the user ids of every row of groupValue,
-	// ascending, visible or not.
+	// ascending, managed or not.
 	ListMemberIDs(groupValue string) ([]uint, error)
-	// ListVisibleMembers returns, in one query, the visible members (live,
-	// not customer) of each value by value, id ascending.
-	ListVisibleMembers(groupValues []string) (map[string][]uint, error)
+	// ListManagedMembers returns, in one query, the members of each value
+	// that are managed under issuer (see SCIMUserRepository), by value, id
+	// ascending. An empty issuer lists none.
+	ListManagedMembers(issuer string, groupValues []string) (map[string][]uint, error)
+	// ManagedUserIDs returns, as a set, the ids that are managed under
+	// issuer. A plain read.
+	ManagedUserIDs(issuer string, ids []uint) (map[uint]bool, error)
 	// GroupsOfUsers returns the group values of each user by user.
 	GroupsOfUsers(userIDs []uint) (map[uint][]string, error)
 	// Add inserts the pairs; an existing pair is kept (no error).
@@ -1506,24 +1510,29 @@ type SCIMGroupMemberRepository interface {
 }
 
 // SCIMUserRepository is the SCIM 2.0 Users resource (#469) and the email
-// check of its replace (#470). A visible user is a live users row (not soft-deleted, so never an erased
-// account) whose role is not customer. Lists are id ascending.
+// check of its replace (#470). A managed account under an issuer is a live
+// users row (not soft-deleted, so never an erased account) whose role is not
+// customer and that carries at least one user_identities row whose issuer
+// equals that issuer exactly, written by a SCIM create or an OIDC sign-in
+// alike. An empty issuer manages no account. SCIM serves and changes managed
+// accounts only. Lists are id ascending.
 type SCIMUserRepository interface {
-	// GetVisibleByID returns the visible user id, or gorm.ErrRecordNotFound.
-	GetVisibleByID(id uint) (*models.User, error)
-	// ListVisible returns the total of visible users and the window at
-	// offset of at most limit rows.
-	ListVisible(offset, limit int) ([]models.User, int64, error)
-	// FindVisibleByEmailFolded returns the candidates whose email matches
-	// under LOWER(email) = LOWER(?) and the column collation. The caller
-	// judges every row.
-	FindVisibleByEmailFolded(email string) ([]models.User, error)
+	// GetManagedByID returns the account id names when it is managed under
+	// issuer, or gorm.ErrRecordNotFound.
+	GetManagedByID(issuer string, id uint) (*models.User, error)
+	// ListManaged returns the total of accounts managed under issuer and
+	// the window at offset of at most limit rows.
+	ListManaged(issuer string, offset, limit int) ([]models.User, int64, error)
+	// FindManagedByEmailFolded returns the accounts managed under issuer
+	// whose email matches under LOWER(email) = LOWER(?) and the column
+	// collation. The caller judges every row.
+	FindManagedByEmailFolded(issuer, email string) ([]models.User, error)
 	// IdentitiesForUsers returns the user_identities rows of userIDs whose
 	// issuer matches under the column collation, in one query. The caller
 	// compares the issuer byte for byte.
 	IdentitiesForUsers(issuer string, userIDs []uint) ([]models.UserIdentity, error)
 	// EmailTakenByOther reports whether a user other than id, live or
-	// erased, holds email under LOWER(email) = LOWER(?) and the column
+	// erased, managed or not, holds email under LOWER(email) = LOWER(?) and the column
 	// collation (#470).
 	EmailTakenByOther(email string, id uint) (bool, error)
 	// WithTx binds the repository to a transaction.

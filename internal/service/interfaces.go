@@ -797,8 +797,8 @@ type WebhookService interface {
 
 // SCIMGroupService is the SCIM 2.0 Groups resource (#506). The groups are
 // the distinct groups-claim values of the effective single sign-on role
-// mapping; members are the visible users (live, not customer) of
-// scim_group_members.
+// mapping; members are the managed accounts (live, not customer, linked
+// under the effective single sign-on issuer) of scim_group_members.
 type SCIMGroupService interface {
 	// List returns one page, ascending by value. displayName nil lists every
 	// group; otherwise only the one whose value equals it byte for byte.
@@ -808,38 +808,42 @@ type SCIMGroupService interface {
 	Get(ctx context.Context, rawID string) (*SCIMGroupRecord, error)
 	// Patch changes the group's members and, in the same governed
 	// transaction, recomputes each affected user's role from the groups
-	// claim. Refusals are ErrSCIMInvalidValue, ErrSCIMGroupLastAdmin or
+	// claim. A member an add or a replace names must be a managed account.
+	// Refusals are ErrSCIMInvalidValue, ErrSCIMGroupLastAdmin or
 	// apperrors.ErrNotFound and write nothing.
 	Patch(ctx context.Context, rawID string, p SCIMGroupPatch) (*SCIMGroupRecord, error)
 }
 
 // SCIMUserService is the SCIM 2.0 Users resource: the read (#469) and the
-// create and replace (#470). The read
-// serves visible users only (live, not customer), judges a userName filter
+// create and replace (#470). The read and the replace, patch and delete
+// serve and change managed accounts only: live, not customer, and linked by a
+// user_identities row whose issuer equals the effective single sign-on issuer
+// exactly (repository.SCIMUserRepository). The read judges a userName filter
 // with scim.UserNameMatches (ASCII-only case folding) on every candidate the
 // database returns, and sets externalId from the identity under the
 // configured single sign-on issuer, compared byte for byte.
 type SCIMUserService interface {
-	// Get returns the visible user rawID names; anything else, a malformed id
-	// included, is apperrors.ErrNotFound.
+	// Get returns the managed account rawID names; anything else, a
+	// malformed id or an account not linked under the issuer included, is
+	// apperrors.ErrNotFound.
 	Get(ctx context.Context, rawID string) (*SCIMUserRecord, error)
-	// List returns one page, id ascending. userName nil lists every visible
-	// user; otherwise only the users whose email it matches.
+	// List returns one page, id ascending. userName nil lists every managed
+	// account; otherwise only the managed accounts whose email it matches.
 	List(ctx context.Context, userName *string, startIndex, count int) (*SCIMUserPage, error)
 	// Create provisions a staff or custom account linked by (issuer,
 	// externalId) with the role the roles mapping names (#470). Refusals are
 	// ErrSCIMInvalidValue or ErrSCIMUniqueness and write nothing.
 	Create(ctx context.Context, in SCIMUserInput) (*SCIMUserRecord, error)
 	// Replace overwrites the name, email, role and (when sent) active flag of
-	// the visible user rawID names (#470); an unknown id is
-	// apperrors.ErrNotFound.
+	// the managed account rawID names (#470); an unknown or not managed id
+	// is apperrors.ErrNotFound.
 	Replace(ctx context.Context, rawID string, in SCIMUserInput) (*SCIMUserRecord, error)
-	// Patch applies a SCIM PatchOp to the visible user rawID names (#471);
+	// Patch applies a SCIM PatchOp to the managed account rawID names (#471);
 	// active false also ends every session of the account. Refusals are those
 	// of Replace and write nothing.
 	Patch(ctx context.Context, rawID string, p SCIMUserPatch) (*SCIMUserRecord, error)
-	// Delete deactivates the visible user rawID names (#504) as active false
-	// does and never erases it. An unknown or not visible id is
+	// Delete deactivates the managed account rawID names (#504) as active
+	// false does and never erases it. An unknown or not managed id is
 	// apperrors.ErrNotFound; the last active admin is ErrSCIMLastAdmin; an
 	// already inactive account is nil and writes nothing.
 	Delete(ctx context.Context, rawID string) error

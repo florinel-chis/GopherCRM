@@ -22,7 +22,7 @@ func (r *scimGroupMemberRepository) WithTx(tx *gorm.DB) SCIMGroupMemberRepositor
 }
 
 // ListMemberIDs returns the user ids of every row of groupValue, ascending,
-// visible or not.
+// managed or not.
 func (r *scimGroupMemberRepository) ListMemberIDs(groupValue string) ([]uint, error) {
 	ids := []uint{}
 	if err := r.db.Model(&models.SCIMGroupMember{}).Where("group_value = ?", groupValue).
@@ -32,22 +32,25 @@ func (r *scimGroupMemberRepository) ListMemberIDs(groupValue string) ([]uint, er
 	return ids, nil
 }
 
-// ListVisibleMembers returns, in one query, the visible members of each of
-// groupValues by value, id ascending. A visible member is a live users row
-// whose role is not customer. A value without visible members is absent.
-func (r *scimGroupMemberRepository) ListVisibleMembers(groupValues []string) (map[string][]uint, error) {
+// ListManagedMembers returns, in one query, the members of each of
+// groupValues that are managed under issuer, by value, id ascending. A
+// managed member is a live users row whose role is not customer and that
+// carries a user_identities row under issuer (see whereManagedBy). A value
+// without managed members is absent; an empty issuer lists none.
+func (r *scimGroupMemberRepository) ListManagedMembers(issuer string, groupValues []string) (map[string][]uint, error) {
 	members := map[string][]uint{}
-	if len(groupValues) == 0 {
+	if len(groupValues) == 0 || issuer == "" {
 		return members, nil
 	}
 	var rows []struct {
 		GroupValue string
 		UserID     uint
 	}
-	if err := r.db.Table("scim_group_members").
+	query := r.db.Table("scim_group_members").
 		Select("scim_group_members.group_value, scim_group_members.user_id").
 		Joins("JOIN users ON users.id = scim_group_members.user_id").
-		Where("scim_group_members.group_value IN ? AND users.deleted_at IS NULL AND users.role <> ?", groupValues, models.RoleCustomer).
+		Where("scim_group_members.group_value IN ? AND users.deleted_at IS NULL AND users.role <> ?", groupValues, models.RoleCustomer)
+	if err := whereManagedBy(query, issuer).
 		Order("scim_group_members.user_id ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, err
@@ -56,6 +59,26 @@ func (r *scimGroupMemberRepository) ListVisibleMembers(groupValues []string) (ma
 		members[row.GroupValue] = append(members[row.GroupValue], row.UserID)
 	}
 	return members, nil
+}
+
+// ManagedUserIDs returns the subset of ids that are managed under issuer
+// (live, not customer, with a user_identities row under issuer), as a set.
+// It is a plain read: user_identities rows are never deleted, so the group
+// patch judges the ids it already locked without a further lock.
+func (r *scimGroupMemberRepository) ManagedUserIDs(issuer string, ids []uint) (map[uint]bool, error) {
+	managed := map[uint]bool{}
+	if len(ids) == 0 || issuer == "" {
+		return managed, nil
+	}
+	found := []uint{}
+	query := r.db.Model(&models.User{}).Where("users.id IN ? AND users.role <> ?", ids, models.RoleCustomer)
+	if err := whereManagedBy(query, issuer).Pluck("users.id", &found).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range found {
+		managed[id] = true
+	}
+	return managed, nil
 }
 
 // GroupsOfUsers returns the group values of each of userIDs by user, in

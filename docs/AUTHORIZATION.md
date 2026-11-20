@@ -561,14 +561,25 @@ Two routes, behind the same strict tier and token authentication, answer with
 
 - `GET /scim/v2/Users/{id}` answers 200 with one User resource, or 404 with the SCIM error body
   (`"detail":"User not found"`, the id is not echoed) when the id is not a positive decimal
-  integer, names no user, or names an erased or customer account.
+  integer, names no user, or names an erased or customer account or an account not linked to the
+  issuer.
 - `GET /scim/v2/Users` answers a `ListResponse` with `totalResults`, `itemsPerPage` (the number
   of resources returned), `startIndex` and `Resources` (always an array, `[]` when empty), in
   ascending id order.
 
-**Visibility.** A user is served when its row is live (erasure soft-deletes, so an erased
-account is never served) and its role is not `customer`: the staff roles and `custom`. A
-deactivated account is served with `"active":false`.
+**Visibility.** SCIM serves and changes managed accounts only (#529). An account is managed when
+its row is live (erasure soft-deletes, so an erased account is never served), its role is not
+`customer` (the staff roles and `custom`), and it has at least one `user_identities` row whose
+`issuer` equals the effective single sign-on issuer byte for byte, whatever its `source` (`scim`
+from a SCIM create, `oidc` from a sign-in). The repository applies this in SQL
+(`SCIMUserRepository`, an `EXISTS` on `user_identities` with a `LENGTH` guard, since the
+`utf8mb4_bin` PAD SPACE collation alone would also match an issuer with a trailing space), so
+`totalResults` and paging count managed accounts only. With no issuer configured no account is
+managed. Every other account, an account created locally (such as the local administrator) or
+linked only under another issuer included, is treated as an unknown id: absent from the list and
+from a `userName eq` filter, 404 on read, replace, patch and delete, and refused as a group member.
+Changing the issuer hides the accounts linked only under the old one. A deactivated managed account
+is served with `"active":false`.
 
 **Resource.** `schemas` (the core User URN), `id` (the user id as a string), `externalId` (see
 below), `userName` (the email), `name.givenName`/`name.familyName` (first and last name), one
@@ -617,8 +628,8 @@ Two more routes behind the same strict tier and token authentication:
 - `POST /scim/v2/Users` creates a staff or custom account linked to the identity provider and
   answers 201 with the User resource, a `Location` header equal to its `meta.location`, and
   `application/scim+json`.
-- `PUT /scim/v2/Users/{id}` replaces the name, email, role and (when sent) `active` of a visible
-  user and answers 200 with the resource.
+- `PUT /scim/v2/Users/{id}` replaces the name, email, role and (when sent) `active` of a managed
+  account and answers 200 with the resource.
 
 **Body.** Any request `Content-Type` is accepted (`application/scim+json` or
 `application/json`). The body is read up to 64 KiB and must be one JSON object. The attributes
@@ -662,7 +673,7 @@ an absent `name` or sub-attribute clears it (PUT replaces), and an absent `activ
 | `externalId` absent or invalid (create); `userName` empty or over 255 bytes; a name part over 100 characters; no issuer configured or one over 512 bytes (create); no `roles` mapping entry matches; the mapped role is missing or `customer`; `userName` not an email address | 400 `invalidValue` |
 | The last active admin would lose the admin role or be deactivated (replace) | 400 `invalidValue` |
 | `userName` held by another account, live or erased, in any letter case; on create also an `externalId` already linked under the issuer | 409 `uniqueness` |
-| Replace of an id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+| Replace of an id that is not a positive integer, names no user, or names an erased or customer account or an account not linked to the issuer | 404 `User not found` |
 
 The address format rule (the one `POST /users` applies) runs after the uniqueness checks, so on
 MySQL and MariaDB, whose collation equates padded and accented variants with a stored address,
@@ -694,11 +705,17 @@ are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserRe
 `TestSCIMUserDeleteWired` (`cmd`), `TestSCIMUserDeleteHandler` (`internal/handler`) and
 `TestSCIMUserDeleteSQLite`/`TestSCIMUserDeleteMySQL` (`internal/service`, also run on MariaDB),
 and extends `TestConcurrencyDocSCIMUserPatch`.
+The managed-account rule (#529) is proven by the local-account, other-issuer, padded-issuer,
+empty-issuer and `oidc`-link subtests of `TestSCIMUsers{SQLite,MySQL}`,
+`TestSCIMUserWrites{SQLite,MySQL}`, `TestSCIMUserPatch{SQLite,MySQL}`,
+`TestSCIMUserDelete{SQLite,MySQL}` and `TestSCIMGroups{SQLite,MySQL}` (`internal/service`, the
+MySQL roots also on MariaDB) and by `TestSCIMUsersWired`, `TestSCIMUserPatchWired`,
+`TestSCIMUserDeleteWired` and `TestSCIMGroupsWired` (`cmd`).
 
 ### Users patch (#471)
 
 `PATCH /scim/v2/Users/{id}`, behind the same strict tier and token authentication, applies an
-RFC 7644 §3.5.2 PatchOp to a visible user and answers 200 with the User resource and
+RFC 7644 §3.5.2 PatchOp to a managed account and answers 200 with the User resource and
 `application/scim+json`.
 
 **Body.** One JSON object of at most 64 KiB, any `Content-Type`. `schemas` is ignored.
@@ -743,7 +760,7 @@ locked in the transaction.
 | A value of the wrong type (`null` included), `remove` of `active`, `userName`, `emails` or `roles`, `emails` without a winning entry, and every `invalidValue` of PUT for the touched attributes | 400 `invalidValue` |
 | The last active admin would lose the admin role or be deactivated | 400 `invalidValue` (`The last active admin must stay an active admin`) |
 | A changed `userName` held by another account, live or erased | 409 `uniqueness` |
-| An id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+| An id that is not a positive integer, names no user, or names an erased or customer account or an account not linked to the issuer | 404 `User not found` |
 
 **Session end.** A patch that sets `active` false (also on an already inactive account), like a
 PUT with `"active": false`, deprovisions at once: the same `users` write increments
@@ -769,17 +786,17 @@ Regression roots: see the end of the previous section.
 ### Users delete (#504)
 
 `DELETE /scim/v2/Users/{id}`, behind the same strict tier and token authentication, deactivates a
-visible user the way a patch with `active` false does, and never erases it. The request body is
+managed account the way a patch with `active` false does, and never erases it. The request body is
 not read.
 
 **Answers.**
 
 | Condition | Answer |
 |---|---|
-| An active visible account, deactivated | 204, empty body |
-| An already inactive visible account | 204, empty body; nothing is written |
+| An active managed account, deactivated | 204, empty body |
+| An already inactive managed account | 204, empty body; nothing is written |
 | The last active admin | 400 `invalidValue` (`The last active admin must stay an active admin`) |
-| An id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+| An id that is not a positive integer, names no user, or names an erased or customer account or an account not linked to the issuer | 404 `User not found` |
 
 **What it writes.** On an active account one `users` write sets `is_active` false and
 `token_version` to the locked value plus one, so every access token issued before is refused with
@@ -814,7 +831,7 @@ unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT
 | Route | Answer |
 |---|---|
 | `GET /scim/v2/Groups` | 200 `ListResponse`, ascending by value, paged by `startIndex`/`count`; the only filter is `displayName eq "<value>"`, anything else 400 `invalidFilter` |
-| `GET /scim/v2/Groups/{id}` | 200 Group with its visible members (live, not customer), id ascending; an id that does not decode or names no current group is 404 `Group not found` |
+| `GET /scim/v2/Groups/{id}` | 200 Group with its managed members (live, not customer, linked to the issuer), id ascending; an id that does not decode or names no current group is 404 `Group not found` |
 | `PATCH /scim/v2/Groups/{id}` | 200 Group; see below |
 | `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}` | 405 SCIM error with `Allow: GET` or `Allow: GET, PATCH` |
 
@@ -824,11 +841,14 @@ unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT
 set: `add`/`replace` with path `members` or path-less with `{"members": [...]}`, `remove` with
 `members[value eq "<id>"]`, or path `members` with a list or without a value (every member). A
 `displayName` or any other path is 400 `invalidPath`, a remove without a path `noTarget`. Every id
-an `add` or `replace` names must be a visible account (a deactivated one may be added), otherwise
-the whole patch is 400 `invalidValue`; removing a non-member is a no-op, and a member row is
-removed even when its account is no longer visible.
+an `add` or `replace` names must be a managed account (a deactivated one may be added), otherwise
+the whole patch is 400 `invalidValue`, as for an unknown id; removing a non-member is a no-op, and a
+member row is removed even when its account is not managed. Such a leftover row of an account that
+is not managed (for example a local account's row stored before #529) is only deleted: the account
+gets no role change, no `users` write and no audit row, and the last-admin rule does not count it as
+losing the admin role.
 
-**Roles.** Each added or removed visible account gets the role of the sign-in's first-match rule
+**Roles.** Each added or removed managed account gets the role of the sign-in's first-match rule
 on the groups claim, over its groups after the change (`oidcMatchRole` with the groups only); no
 match keeps its role, and a mapping to a missing role row or to the customer role refuses the patch
 with `invalidValue`. A group patch maps the groups claim only and a Users write the roles claim
@@ -849,7 +869,7 @@ refusal with `invalidValue`.
 **Transaction and audit.** One governed transaction, `admin set → users → roles →
 scim_group_members → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md), flow "SCIM group
 patch"); each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
-and after the commit one `auth_audit_log` success row (method `scim`) names each account whose
+and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
 membership changed. A refusal, and a patch that changes nothing, write nothing.
 
 Regression roots: `TestSCIMGroupsWired` (`cmd`), `TestSCIMGroupHandler` and

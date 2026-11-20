@@ -694,7 +694,11 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   set, the target's `users` row (`LockLiveByIDs`) and the `roles` rows of the target's current
   custom role and of the mapped role, reads whether another user holds a changed address
   (`SCIMUserRepository.EmailTakenByOther`, plain), then writes the `users` columns and, on a role
-  change, the audit row. It touches no `user_identities` row. A replace with `active` false (#471)
+  change, the audit row. Right after the `users` lock it reads the target's `user_identities` rows
+  with a plain read (`SCIMUserRepository.IdentitiesForUsers`) and refuses, as a not-found and before
+  any check or write, an account with no identity under the effective issuer (#529); the
+  application never deletes a `user_identities` row, so this read needs no lock and the order does
+  not change. It writes no `user_identities` row. A replace with `active` false (#471)
   also writes `token_version` in the same `users` write and then revokes every `refresh_tokens`
   row of the account (`RefreshTokenRepository.RevokeAllForUser`), after the `users` write.
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
@@ -726,10 +730,13 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   columns are written in one `UPDATE`, which on `active` false also sets `token_version` to the
   locked value plus one, then every `refresh_tokens` row of the account is revoked
   (`RefreshTokenRepository.RevokeAllForUser`, only on `active` false), then, on a role change,
-  the `role_audit_log` row is inserted. It touches no `user_identities` row.
+  the `role_audit_log` row is inserted. Like the replace, it plain-reads the target's
+  `user_identities` rows right after the `users` lock and refuses an account not linked under the
+  effective issuer as a not-found before anything is written (#529); it writes no
+  `user_identities` row.
   `DELETE /scim/v2/Users/{id}` (`scimUserService.Delete`, #504) locks the admin set
   (`LockActiveAdmins`) and the target's `users` row (`LockLiveByIDs`) and no `roles` row, since it
-  writes no role; on an active target it writes `is_active` false and `token_version` plus one in
+  writes no role; it plain-reads the target's identities as the patch does (#529); on an active target it writes `is_active` false and `token_version` plus one in
   one `UPDATE`, then revokes every `refresh_tokens` row of the account. On an already inactive
   target it writes nothing and commits an empty transaction.
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
@@ -764,7 +771,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   patch committed while it waited for the admin set rather than its REPEATABLE READ snapshot;
   every other group patch holds the admin set before it reaches those rows, so this read waits on
   no one. It locks the `users` rows of the members it adds or removes and of every id an add or a
-  replace names (`LockLiveByIDs`), then the `roles` rows of their current custom roles and of the
+  replace names (`LockLiveByIDs`), plain-reads which of them are linked under the effective issuer
+  (`SCIMGroupMemberRepository.ManagedUserIDs`, #529; identities are never deleted), then the `roles` rows of their current custom roles and of the
   mapped roles (`RoleRepository.LockByIDs`), then reads those users' other memberships with the
   same locking read (`GroupsOfUsers`). It writes the membership rows (`Remove`, then `Add`), then,
   per user whose role changes, the `users` row (`UpdateFields`) and its `role_audit_log` row.
@@ -772,9 +780,9 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   inserts take the shared foreign-key lock on `users` rows the patch already holds.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
   repositories; the membership rows, the role writes and their audit rows commit together or not
-  at all, and a refusal (an id that is no visible user, a mapping to a missing or customer role,
-  a result without an active admin) writes nothing. One successful `auth_audit_log` row per user
-  whose membership changed is written after the commit, on the root handle; a patch that changes
+  at all, and a refusal (an id that is no managed account, a mapping to a missing or customer role,
+  a result without an active admin) writes nothing. One successful `auth_audit_log` row per managed
+  account whose membership changed is written after the commit, on the root handle; a patch that changes
   nothing writes none.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.
   With no active admin the admin set locks nothing; two group patches can then deadlock on

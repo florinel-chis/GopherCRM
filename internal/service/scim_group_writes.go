@@ -28,18 +28,23 @@ import (
 // memberships are read the same way after the users and roles locks.
 //
 // The operations apply in order to the member set. Every id an add or a
-// replace names must be a visible user (live, not customer; a deactivated
-// one may be added); a remove of a non-member is a no-op, and a member row is
-// removed even when its user is no longer visible. Each affected visible user
-// (added or removed) gets the role of the sign-in's first-match rule on its
-// groups after the change (the groups claim only, never roles); no match keeps
-// its role. A mapping to a missing role row or to customer refuses the patch
-// with ErrSCIMInvalidValue. The last-admin rule judges the result: the patch
-// is refused with ErrSCIMGroupLastAdmin only when an active admin exists
-// before it and none after it, so a handover to another active user passes.
-// A role change writes its user_role_changed row (auth_method scim, NULL
-// actor); after the commit one successful auth_audit_log row with method scim
-// names each user whose membership changed. A refusal writes nothing; a patch
+// replace names must be a managed account (live, not customer, linked under
+// the effective single sign-on issuer, see repository.SCIMUserRepository; a
+// deactivated one may be added), else the patch is refused with
+// ErrSCIMInvalidValue like an unknown id. A remove of a non-member is a
+// no-op, and a member row is removed even when its account is not managed;
+// such an account is otherwise left alone: no role change, no users write, no
+// audit row, and the last-admin rule does not count it as losing its role.
+// Each affected managed account (added or removed) gets the role of the
+// sign-in's first-match rule on its groups after the change (the groups claim
+// only, never roles); no match keeps its role. A mapping to a missing role
+// row or to customer refuses the patch with ErrSCIMInvalidValue. The
+// last-admin rule judges the result: the patch is refused with
+// ErrSCIMGroupLastAdmin only when an active admin exists before it and none
+// after it, so a handover to another active user passes. A role change
+// writes its user_role_changed row (auth_method scim, NULL actor); after the
+// commit one successful auth_audit_log row with method scim names each
+// managed account whose membership changed. A refusal writes nothing; a patch
 // that changes nothing writes nothing.
 
 // ErrSCIMGroupLastAdmin refuses a group patch whose result leaves no active
@@ -120,6 +125,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 	if err != nil {
 		return nil, err
 	}
+	issuer := cfg.IssuerURL
 
 	var changed []uint
 	err = s.writes.governance.run(ctx, func(tx *governedTx) error {
@@ -204,35 +210,43 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		if err != nil {
 			return err
 		}
-		visible := func(id uint) *models.User {
-			if u := users[id]; u != nil && u.Role != models.RoleCustomer {
+		// A plain read of the identity links of the locked ids: the
+		// application never deletes a user_identities row.
+		linked, err := s.members.WithTx(tx.handle).ManagedUserIDs(issuer, sortedIDs(lockSet))
+		if err != nil {
+			return err
+		}
+		managed := func(id uint) *models.User {
+			if u := users[id]; u != nil && u.Role != models.RoleCustomer && linked[id] {
 				return u
 			}
 			return nil
 		}
 		for id := range named {
-			if visible(id) == nil {
-				return scimInvalid("a member is not a visible user")
+			if managed(id) == nil {
+				return scimInvalid("a member is not a managed account")
 			}
 		}
 		if len(affected) == 0 {
 			return nil
 		}
 
-		// The groups of each affected visible user after the change.
-		affectedVisible := []uint{}
+		// The groups of each affected managed account after the change. A
+		// row of an account that is not managed is only removed: its role,
+		// its users row and its audit rows are left alone.
+		affectedManaged := []uint{}
 		for _, id := range sortedIDs(affected) {
-			if visible(id) != nil {
-				affectedVisible = append(affectedVisible, id)
+			if managed(id) != nil {
+				affectedManaged = append(affectedManaged, id)
 			}
 		}
 		mappedIDs := map[uint]uint{}
-		if len(affectedVisible) > 0 {
-			groupsOf, err := members.GroupsOfUsers(affectedVisible)
+		if len(affectedManaged) > 0 {
+			groupsOf, err := members.GroupsOfUsers(affectedManaged)
 			if err != nil {
 				return err
 			}
-			for _, id := range affectedVisible {
+			for _, id := range affectedManaged {
 				groups := make([]string, 0, len(groupsOf[id])+1)
 				for _, value := range groupsOf[id] {
 					if value != group {
@@ -248,7 +262,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 			}
 		}
 		var roleIDs []*uint
-		for _, id := range affectedVisible {
+		for _, id := range affectedManaged {
 			roleIDs = append(roleIDs, users[id].RoleID)
 			if mapped, ok := mappedIDs[id]; ok {
 				mapped := mapped
@@ -260,7 +274,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 			return err
 		}
 		results := map[uint]scimGroupRoleChange{}
-		for _, id := range affectedVisible {
+		for _, id := range affectedManaged {
 			u := users[id]
 			result := scimGroupRoleChange{user: u, role: u.Role, roleID: u.RoleID}
 			if mapped, ok := mappedIDs[id]; ok {
@@ -272,7 +286,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		}
 
 		// The last-admin rule, judged on the result. The admin set before
-		// the patch is the locked admins plus every affected visible user
+		// the patch is the locked admins plus every affected managed account
 		// that the locking read of lockUsers shows as an active admin:
 		// LockActiveAdmins discovers its ids with a consistent read, so on
 		// MySQL/MariaDB REPEATABLE READ a patch that committed while this
@@ -282,16 +296,17 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		for _, admin := range admins {
 			before[admin.ID] = true
 		}
-		for _, id := range affectedVisible {
+		for _, id := range affectedManaged {
 			if u := users[id]; u.IsActive && u.Role == models.RoleAdmin {
 				before[id] = true
 			}
 		}
+		// An admin the patch gives no role result keeps its role: it is
+		// unaffected, or only a leftover membership row of an account that
+		// is not managed is removed.
 		after := map[uint]bool{}
 		for _, admin := range admins {
-			if !affected[admin.ID] {
-				after[admin.ID] = true
-			} else if r, ok := results[admin.ID]; ok && r.role == models.RoleAdmin {
+			if r, ok := results[admin.ID]; !ok || r.role == models.RoleAdmin {
 				after[admin.ID] = true
 			}
 		}
@@ -310,7 +325,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		if err := members.Add(group, sortedIDs(added)); err != nil {
 			return fmt.Errorf("add scim group members: %w", err)
 		}
-		for _, id := range affectedVisible {
+		for _, id := range affectedManaged {
 			r := results[id]
 			if r.role == r.user.Role && sameRoleID(r.roleID, r.user.RoleID) {
 				continue
@@ -330,7 +345,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				return err
 			}
 		}
-		changed = sortedIDs(affected)
+		changed = affectedManaged
 		return nil
 	})
 	if err != nil {
@@ -341,7 +356,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 			s.writes.audit.Record(ctx, AuthAuditEntry{Method: AuthAuditMethodSCIM, Outcome: AuthAuditOutcomeSuccess, UserID: id})
 		}
 	}
-	records, err := s.withMembers([]string{group})
+	records, err := s.withMembers(issuer, []string{group})
 	if err != nil {
 		return nil, err
 	}

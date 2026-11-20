@@ -14,10 +14,11 @@ import (
 // single sign-on role mapping's groups-claim entries, read on every call and
 // ordered by bytes; it cannot be created, renamed or deleted through SCIM.
 // Its id is scim.GroupID(value). Membership is stored in scim_group_members;
-// a group serves only its visible members (live, not customer), id ascending.
+// a group serves only its managed members, id ascending: live, not customer,
+// and linked under the effective issuer (repository.SCIMUserRepository).
 // The patch half is in scim_group_writes.go.
 
-// SCIMGroupRecord is one group: its mapping value and its visible members'
+// SCIMGroupRecord is one group: its mapping value and its managed members'
 // user ids, ascending (never nil).
 type SCIMGroupRecord struct {
 	Value     string
@@ -89,13 +90,14 @@ func resolveGroup(cfg EffectiveSSOConfig, rawID string) (string, error) {
 	return "", scimGroupNotFound()
 }
 
-// withMembers pairs the values with their visible members in one query.
-func (s *scimGroupService) withMembers(values []string) ([]SCIMGroupRecord, error) {
+// withMembers pairs the values with their members managed under issuer in
+// one query.
+func (s *scimGroupService) withMembers(issuer string, values []string) ([]SCIMGroupRecord, error) {
 	records := make([]SCIMGroupRecord, len(values))
 	if len(values) == 0 {
 		return records, nil
 	}
-	members, err := s.members.ListVisibleMembers(values)
+	members, err := s.members.ListManagedMembers(issuer, values)
 	if err != nil {
 		return nil, fmt.Errorf("read scim group members: %w", err)
 	}
@@ -146,14 +148,14 @@ func (s *scimGroupService) List(ctx context.Context, displayName *string, startI
 		}
 		page = values[offset:end]
 	}
-	records, err := s.withMembers(page)
+	records, err := s.withMembers(cfg.IssuerURL, page)
 	if err != nil {
 		return nil, err
 	}
 	return &SCIMGroupPage{Total: total, StartIndex: startIndex, Groups: records}, nil
 }
 
-// Get returns the group rawID names with its visible members.
+// Get returns the group rawID names with its managed members.
 func (s *scimGroupService) Get(ctx context.Context, rawID string) (*SCIMGroupRecord, error) {
 	cfg, err := s.sso.SSOConfig(ctx)
 	if err != nil {
@@ -163,7 +165,7 @@ func (s *scimGroupService) Get(ctx context.Context, rawID string) (*SCIMGroupRec
 	if err != nil {
 		return nil, err
 	}
-	records, err := s.withMembers([]string{value})
+	records, err := s.withMembers(cfg.IssuerURL, []string{value})
 	if err != nil {
 		return nil, err
 	}
