@@ -624,14 +624,16 @@ it from `go.mod` instead is #223.
 ### 7.4 Migration versions
 
 `migrations/` is applied by golang-migrate (`main` (`cmd/migrate/main.go`), through `migrate.NewWithDatabaseInstance`) on MySQL and MariaDB.
-Versions are numeric timestamps (`go run ./cmd/migrate -command create -name <name>` stamps
-`time.Now()` as `YYYYMMDDHHMMSS`). A plain `up` does not apply a migration numbered below the
+Versions are integers: `go run ./cmd/migrate -command create -name <name>` takes the newest
+version in `migrations/` + 1 (only an empty directory starts from the current UTC time as
+`YYYYMMDDHHMMSS`), and the `cmd/migrate` tests require every version to be unique, paired and
+increasing. A plain `up` does not apply a migration numbered below the
 newest version the database has already applied, so an upstream migration older than your newest
 fork migration would be silently skipped on an existing database. The procedure:
 
 1. Merge upstream first.
-2. Give fork migrations timestamps later than upstream's newest.
-3. Before releasing, re-stamp any fork migration that has not yet shipped if a merge brought in a
+2. Give fork migrations versions above upstream's newest.
+3. Before releasing, renumber any fork migration that has not yet shipped if a merge brought in a
    newer upstream one.
 4. Rehearse a populated-database upgrade. The `cmd/migrate` tests and
    `.github/workflows/migrations.yml` (MySQL 8 and MariaDB 10.11) run fresh install, populated

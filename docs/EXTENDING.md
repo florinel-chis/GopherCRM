@@ -97,7 +97,8 @@ references (products and quotes sit after the comment "Product and Quote before 
 
 - Create the pair with `go run ./cmd/migrate -command create -name add_<entity>`
   (`createNewMigration` (`cmd/migrate/main.go`)). It writes
-  `migrations/<timestamp>_add_<entity>.{up,down}.sql`. The repository holds 12 pairs (`ls
+  `migrations/<version>_add_<entity>.{up,down}.sql`, where `<version>` is the newest existing
+  version + 1 (the clock is used only for an empty directory). The repository holds 12 pairs (`ls
   migrations/*.up.sql | wc -l`, measured on 4dfe404).
 - New tables use `CREATE TABLE IF NOT EXISTS`, with column, index and constraint names identical to
   what AutoMigrate produces. The new binary may already have created the table before the operator
@@ -113,7 +114,7 @@ references (products and quotes sit after the comment "Product and Quote before 
 
 **On a fork:** migration versions are numeric, and golang-migrate (`main` (`cmd/migrate/main.go`), through `migrate.NewWithDatabaseInstance`)
 does not apply a file numbered below the newest version a database has already applied. Merge
-upstream first, give fork migrations timestamps later than upstream's latest, re-stamp unreleased
+upstream first, give fork migrations versions above upstream's newest, renumber unreleased
 fork migrations after every upstream sync, and rehearse a populated-database upgrade before
 release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
