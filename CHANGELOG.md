@@ -295,7 +295,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `APP_BASE_URL/auth/callback`) and `POST /auth/oidc/callback` `{code, state}` finishes the
   sign-in, both on the strict public `/auth` tier. They use the issuer, client and role mapping of
   the single sign-on settings (#434). Success returns the same `token`, `refresh_token` and `user`
-  as `POST /auth/login`; no cookie is set. Single sign-on off is 404, on but unconfigured,
+  as `POST /auth/login`. Single sign-on off is 404, on but unconfigured,
   undiscoverable or with a failing token endpoint is 503 `SSO_UNAVAILABLE`, and every refusal is
   401 "Single sign-on failed". Identities are linked only by the exact `(iss, sub)` pair in the new
   `user_identities` table; a subject with leading or trailing whitespace is refused on every
@@ -1063,6 +1063,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit and confirm answers are unchanged, and nothing retries automatically.
 
 ### Changed
+
+- **Single sign-on finishes only in the browser that started it (#528).** `POST /auth/oidc/start`
+  now sets a short-lived sign-in cookie, `gophercrm_oidc_state` (`HttpOnly`, `SameSite=Lax`, ten
+  minutes, `Path=<API_PREFIX>/auth/oidc`, sent only over HTTPS when `APP_BASE_URL` is https), tied to the
+  sign-in it stored; a refused start sets none. `POST /auth/oidc/callback` refuses a callback that
+  arrives without that cookie or with a different value, after spending the attempt, with the
+  usual 401 "Single sign-on failed", and records the new sign-in audit reasons `binding_missing`
+  and `binding_mismatch`. A later start in the same browser replaces the cookie, so only the
+  latest sign-in started there can finish; a successful callback clears it. The cookie carries no
+  credential and no other route reads it. The web app sends credentials on these two calls only.
+  The web app and the API must be served from the same site, as the shipped nginx proxy does.
 
 - **SCIM reads and changes only the accounts it created or that are linked to the single sign-on
   issuer (#529).** An account is served by the SCIM Users and Groups resources when it is live, not

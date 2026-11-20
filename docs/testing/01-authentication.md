@@ -1022,13 +1022,16 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   with `response_type=code`, the stored `client_id`, `code_challenge_method=S256` and a
   `code_challenge`, a `state` and a `nonce`, `redirect_uri=<APP_BASE_URL>/auth/callback` and the
   effective `scope`. One `oidc_login_attempts` row holds the HMAC of the state (never the state),
-  expiring ten minutes later. No `Set-Cookie`. After the callback, whether it signed in or was
+  expiring ten minutes later. `Set-Cookie: gophercrm_oidc_state=<the state of the URL>` with
+  `Path=/api/v1/auth/oidc`, `Max-Age=600`, `HttpOnly`, `SameSite=Lax`, and sent only over HTTPS
+  when `APP_BASE_URL` is https (#528); a refused start (404, 500, 503) sets no cookie, and a successful
+  callback clears it (`Max-Age=0`). After the callback, whether it signed in or was
   refused after the claim, the row is spent (`used_at` set) and its `nonce` and `code_verifier`
   are empty; a callback on an expired attempt answers the generic 401 and empties both without
   spending the row, also when that clearing fails. Rows created more than a day ago are deleted by
   the stale bulk-operation sweep (#453). Each `oidc_sign_in` log line carries `request_id` and
   `attempt_id` (#453).
-- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`, `/attempt_cleared_when_used`, `/attempt_cleared_when_expired`, `/attempt_claim_lost_after_read`, `/attempts_pruned_after_a_day`, `/log_correlation`, `TestOIDCClaimExpiredClearFails`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler` (incl. `request_id_reaches_service`); `cmd/bulk_recovery_runtime_test.go` `TestBulkOperationRecoveryProductionWiring`
+- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`, `/attempt_cleared_when_used`, `/attempt_cleared_when_expired`, `/attempt_claim_lost_after_read`, `/attempts_pruned_after_a_day`, `/log_correlation`, `/start_cookie_secure`, `TestOIDCClaimExpiredClearFails`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler` (incl. `start_ok_http`, `start_ok_https`, `callback_ok`, `request_id_reaches_service`); `cmd/bulk_recovery_runtime_test.go` `TestBulkOperationRecoveryProductionWiring`
 
 ### TC-AUTH-050 — A first sign-in provisions the user, a later one re-applies the mapping
 - **Priority:** P0
@@ -1074,9 +1077,13 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
      Entra ID (TC-AUTH-058 covers Entra ID), or a `sub` that differs
      from a linked one only by a trailing space.
   3. Sign in as an identity whose user is deactivated, or erased (its identity row is kept).
+  4. Call back with a valid unspent state but without the `gophercrm_oidc_state` cookie (another
+     browser), or with the cookie of another sign-in (a browser that started its own) (#528).
 - **Expected:** **401** `UNAUTHORIZED` "Single sign-on failed" for each, with no user, identity,
-  refresh token or audit row written. A token endpoint that fails is **503** `SSO_UNAVAILABLE`.
-- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `reused_state`, `expired_state`, `issuer_changed_after_start`, `wrong_nonce`, `wrong_audience`, `bad_signature`, `malformed_groups_claim`, `no_mapping_match`, `group_overage`, `subject_trailing_space`, `deactivated_user`, `erased_user`, `token_endpoint_error`
+  refresh token or audit row written. In step 4 the attempt is spent all the same, and the
+  sign-in audit row carries the reason `binding_missing` or `binding_mismatch` and the spent
+  `attempt_id`; an unknown state stays `state_invalid` whatever the cookie. A token endpoint that fails is **503** `SSO_UNAVAILABLE`.
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `reused_state`, `expired_state`, `issuer_changed_after_start`, `wrong_nonce`, `wrong_audience`, `bad_signature`, `malformed_groups_claim`, `no_mapping_match`, `group_overage`, `subject_trailing_space`, `deactivated_user`, `erased_user`, `token_endpoint_error`, `binding_missing`, `binding_mismatch`; `TestOIDCHandler` (`callback_without_cookie`, `callback_ok`, `callback_refused`); browser: `sso.spec.ts` S13 (a callback opened in a fresh browser, and in a browser that started its own sign-in)
 
 ### TC-AUTH-053 — The mapping cannot demote the last active admin; password login stays
 - **Priority:** P1

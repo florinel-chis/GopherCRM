@@ -769,9 +769,17 @@ func oidcOverage(sub, email string) oidcTokenSpec {
 	}}
 }
 
+// oidcStartURL is the authorization URL of a Start, "" when it failed.
+func oidcStartURL(authz *OIDCAuthorization, err error) (string, error) {
+	if authz == nil {
+		return "", err
+	}
+	return authz.URL, err
+}
+
 func (f *oidcFixture) start(t *testing.T) string {
 	t.Helper()
-	authURL, err := f.svc.Start(context.Background())
+	authURL, err := oidcStartURL(f.svc.Start(context.Background()))
 	require.NoError(t, err)
 	return authURL
 }
@@ -780,7 +788,7 @@ func (f *oidcFixture) start(t *testing.T) string {
 func (f *oidcFixture) signIn(t *testing.T, spec oidcTokenSpec) (*AuthTokens, error) {
 	t.Helper()
 	code, state := f.issuer.authorize(t, f.start(t), spec)
-	return f.svc.Callback(context.Background(), code, state)
+	return f.svc.Callback(context.Background(), code, state, state)
 }
 
 func (f *oidcFixture) seedUser(t *testing.T, email string, role models.UserRole, active bool, password string) *models.User {
@@ -862,6 +870,41 @@ func (f *oidcFixture) assertRefused(t *testing.T, code string, tokens *AuthToken
 		require.NoError(t, f.db.Order("id DESC").First(&newest).Error)
 		assert.Equal(t, newest.ID, *row.AttemptID, "the attempt of this subtest")
 	}
+}
+
+// captureLogs sends the logger's output, at debug level, to a buffer for the
+// rest of the subtest.
+func (f *oidcFixture) captureLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	previous := utils.Logger
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
+	var output bytes.Buffer
+	utils.Logger.SetOutput(&output)
+	t.Cleanup(func() { utils.Logger = previous })
+	return &output
+}
+
+// assertBindingRefused checks a callback refused for its sign-in cookie
+// (#528): the generic refusal with the code, the audit row naming the claimed
+// attempt, the attempt spent, nothing written, and no log line carrying the
+// state.
+func (f *oidcFixture) assertBindingRefused(t *testing.T, code, state string, output *bytes.Buffer, tokens *AuthTokens, err error) {
+	t.Helper()
+	f.assertRefused(t, code, tokens, err, 0, 0)
+	var attempt models.OIDCLoginAttempt
+	require.NoError(t, f.db.Where("state_hash = ?", hashOpaqueToken(state, f.auth.sessionTokenSecret())).First(&attempt).Error)
+	row := f.lastAudit(t)
+	require.NotNil(t, row.AttemptID)
+	assert.Equal(t, attempt.ID, *row.AttemptID, "the audit row names the claimed attempt")
+	assert.NotNil(t, attempt.UsedAt, "the attempt is spent")
+	assert.Equal(t, "", attempt.Nonce, "the nonce is cleared")
+	assert.Equal(t, "", attempt.CodeVerifier, "the verifier is cleared")
+	assert.Equal(t, int64(0), f.count(t, "refresh_tokens", ""), "no refresh token")
+	assert.Equal(t, int64(0), f.users(t), "no user")
+	assert.Equal(t, int64(0), f.identities(t), "no identity")
+	logs := output.String()
+	assert.Contains(t, logs, `"error_code":"`+code+`"`, "the refusal is logged by its code")
+	assert.NotContains(t, logs, state, "no log line carries the state or the cookie")
 }
 
 // lastAudit is the newest auth_audit_log row.
@@ -1008,17 +1051,52 @@ var oidcSignInCases = []struct {
 	}},
 	{"reused_state", func(t *testing.T, f *oidcFixture) {
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-reuse", "reuse@idp.example.test"))
-		_, err := f.svc.Callback(context.Background(), code, state)
+		_, err := f.svc.Callback(context.Background(), code, state, state)
 		require.NoError(t, err)
 		users, identities := f.users(t), f.identities(t)
-		tokens, err := f.svc.Callback(context.Background(), code, state)
+		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "state_invalid", tokens, err, users, identities)
 	}},
 	{"expired_state", func(t *testing.T, f *oidcFixture) {
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-expired", "expired@idp.example.test"))
 		f.advance(10*time.Minute + time.Second)
-		tokens, err := f.svc.Callback(context.Background(), code, state)
+		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
+	}},
+	{"binding_missing", func(t *testing.T, f *oidcFixture) {
+		output := f.captureLogs(t)
+		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-binding-missing", "binding-missing@idp.example.test"))
+		tokens, err := f.svc.Callback(context.Background(), code, state, "")
+		f.assertBindingRefused(t, "binding_missing", state, output, tokens, err)
+	}},
+	{"binding_mismatch", func(t *testing.T, f *oidcFixture) {
+		output := f.captureLogs(t)
+		// The cookie of another sign-in: a Start in another browser.
+		other, err := f.svc.Start(context.Background())
+		require.NoError(t, err)
+		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-binding-mismatch", "binding-mismatch@idp.example.test"))
+		require.NotEqual(t, state, other.State)
+		tokens, err := f.svc.Callback(context.Background(), code, state, other.State)
+		f.assertBindingRefused(t, "binding_mismatch", state, output, tokens, err)
+		assert.NotContains(t, output.String(), other.State, "no log line carries the other cookie")
+	}},
+	{"start_cookie_secure", func(t *testing.T, f *oidcFixture) {
+		for base, want := range map[string]bool{
+			"https://crm.example.test":  true,
+			"HTTPS://crm.example.test/": true,
+			"http://localhost:5173":     false,
+		} {
+			svc := NewOIDCService(f.sso, f.auth, repository.NewUserRepository(f.db), repository.NewRoleRepository(f.db),
+				repository.NewRoleAuditRepository(f.db), repository.NewRefreshTokenRepository(f.db),
+				repository.NewUserIdentityRepository(f.db), repository.NewOIDCLoginAttemptRepository(f.db),
+				utils.NewTransactionManager(f.db), base, WithOIDCClock(f.now), WithOIDCRootCAs(f.issuer.rootCAs()))
+			authz, err := svc.Start(context.Background())
+			require.NoError(t, err, base)
+			assert.Equal(t, want, authz.SecureCookie, base)
+			parsed, err := url.Parse(authz.URL)
+			require.NoError(t, err)
+			assert.Equal(t, parsed.Query().Get("state"), authz.State, "the cookie value is the state of the URL")
+		}
 	}},
 	{"issuer_changed_after_start", func(t *testing.T, f *oidcFixture) {
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-moved", "moved@idp.example.test"))
@@ -1027,7 +1105,7 @@ var oidcSignInCases = []struct {
 		require.NoError(t, f.sso.Update(context.Background(), SSOSettingsUpdate{
 			Enabled: &enabled, IssuerURL: other.URL(), ClientID: oidcTestClientID, ClientSecret: &secret, RoleMapping: f.mapping(),
 		}))
-		tokens, err := f.svc.Callback(context.Background(), code, state)
+		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "issuer_changed", tokens, err, 0, 0)
 	}},
 	{"wrong_nonce", func(t *testing.T, f *oidcFixture) {
@@ -1293,7 +1371,7 @@ var oidcSignInCases = []struct {
 	}},
 	{"issuer_redirect", func(t *testing.T, f *oidcFixture) {
 		f.issuer.setDiscoveryRedirect(true)
-		authURL, err := f.svc.Start(context.Background())
+		authURL, err := oidcStartURL(f.svc.Start(context.Background()))
 		assert.Empty(t, authURL)
 		assert.ErrorIs(t, err, ErrSSOUnavailable)
 		assert.Equal(t, int64(0), f.count(t, "oidc_login_attempts", ""))
@@ -1307,7 +1385,7 @@ var oidcSignInCases = []struct {
 
 		const sub, email = "subject-private-0435", "private-0435@idp.example.test"
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid(sub, email))
-		_, err := f.svc.Callback(context.Background(), code, state)
+		_, err := f.svc.Callback(context.Background(), code, state, state)
 		require.NoError(t, err)
 		goodToken := f.issuer.lastIDToken()
 
@@ -1315,7 +1393,7 @@ var oidcSignInCases = []struct {
 		bad := oidcValid(badSub, badEmail)
 		bad.nonce = "wrong-nonce-0435"
 		badCode, badState := f.issuer.authorize(t, f.start(t), bad)
-		_, err = f.svc.Callback(context.Background(), badCode, badState)
+		_, err = f.svc.Callback(context.Background(), badCode, badState, badState)
 		require.ErrorIs(t, err, ErrSSOSignInFailed)
 		badToken := f.issuer.lastIDToken()
 
@@ -1683,7 +1761,7 @@ var oidcSignInCases = []struct {
 		var authURL string
 		started := segment(func() {
 			var err error
-			authURL, err = f.svc.Start(okCtx)
+			authURL, err = oidcStartURL(f.svc.Start(okCtx))
 			require.NoError(t, err)
 		})
 		code, state := f.issuer.authorize(t, authURL, oidcValid(sub, email))
@@ -1691,7 +1769,7 @@ var oidcSignInCases = []struct {
 		require.Len(t, started, 1)
 		assertLine(t, started[0], "Single sign-on started", "req-453-ok", okAttempt.ID)
 		succeeded := segment(func() {
-			_, err := f.svc.Callback(okCtx, code, state)
+			_, err := f.svc.Callback(okCtx, code, state, state)
 			require.NoError(t, err)
 		})
 		require.Len(t, succeeded, 1)
@@ -1705,7 +1783,7 @@ var oidcSignInCases = []struct {
 		var badURL string
 		badStarted := segment(func() {
 			var err error
-			badURL, err = f.svc.Start(badCtx)
+			badURL, err = oidcStartURL(f.svc.Start(badCtx))
 			require.NoError(t, err)
 		})
 		badCode, badState := f.issuer.authorize(t, badURL, bad)
@@ -1714,7 +1792,7 @@ var oidcSignInCases = []struct {
 		require.Len(t, badStarted, 1)
 		assertLine(t, badStarted[0], "Single sign-on started", "req-453-bad", badAttempt.ID)
 		refused := segment(func() {
-			_, err := f.svc.Callback(badCtx, badCode, badState)
+			_, err := f.svc.Callback(badCtx, badCode, badState, badState)
 			require.ErrorIs(t, err, ErrSSOSignInFailed)
 		})
 		require.Len(t, refused, 1)
@@ -1724,7 +1802,7 @@ var oidcSignInCases = []struct {
 
 		unknownCtx := utils.WithRequestID(context.Background(), "req-453-unknown")
 		unknown := segment(func() {
-			_, err := f.svc.Callback(unknownCtx, "code-unknown-0453", "state-unknown-0453")
+			_, err := f.svc.Callback(unknownCtx, "code-unknown-0453", "state-unknown-0453", "state-unknown-0453")
 			require.ErrorIs(t, err, ErrSSOSignInFailed)
 		})
 		require.Len(t, unknown, 1)
@@ -1747,7 +1825,7 @@ var oidcSignInCases = []struct {
 			require.NoError(t, f.db.Where("state_hash = ?", hash).First(&before).Error)
 			assert.NotEmpty(t, before.Nonce, "the nonce is stored until the callback")
 			assert.NotEmpty(t, before.CodeVerifier, "the verifier is stored until the callback")
-			_, err := f.svc.Callback(context.Background(), code, state)
+			_, err := f.svc.Callback(context.Background(), code, state, state)
 			if wantErr {
 				assert.Equal(t, "nonce_mismatch", oidcErrorCode(err))
 			} else {
@@ -1769,7 +1847,7 @@ var oidcSignInCases = []struct {
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-expired-clear", "expired-clear@idp.example.test"))
 		hash := hashOpaqueToken(state, f.auth.sessionTokenSecret())
 		f.advance(10*time.Minute + time.Second)
-		tokens, err := f.svc.Callback(context.Background(), code, state)
+		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
 		var after models.OIDCLoginAttempt
 		require.NoError(t, f.db.Where("state_hash = ?", hash).First(&after).Error)
@@ -1789,7 +1867,7 @@ var oidcSignInCases = []struct {
 			// this claim's read and its update.
 			once.Do(func() { competing, competingErr = competitor.Claim(hash, f.now().UTC()) })
 		}))
-		tokens, err := f.svc.Callback(context.Background(), code, state)
+		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
 		require.NoError(t, competingErr, "the competing claim succeeded")
 		require.NotNil(t, competing)
@@ -1945,7 +2023,7 @@ func runOIDCSignIn(t *testing.T, f *oidcFixture) {
 			done := make(chan error, 1)
 			go func() {
 				var err error
-				tokens, err = f.svc.Callback(context.Background(), code, state)
+				tokens, err = f.svc.Callback(context.Background(), code, state, state)
 				done <- err
 			}()
 			err := awaitLockWaitThenCommit(t, f.db, handover, done)
@@ -2254,7 +2332,7 @@ func TestOIDCClaimExpiredClearFails(t *testing.T) {
 
 	code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-clear-fails", "clear-fails@idp.example.test"))
 	f.advance(10*time.Minute + time.Second)
-	tokens, err := f.svc.Callback(context.Background(), code, state)
+	tokens, err := f.svc.Callback(context.Background(), code, state, state)
 	f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
 	assert.NotErrorIs(t, err, ErrSSOUnavailable)
 	assert.NotErrorIs(t, err, errForced, "the database error does not reach the caller")

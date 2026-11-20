@@ -14,6 +14,8 @@ export const SIGN_IN_AUDIT_REASONS = [
   'account_erased',
   'account_inactive',
   'account_locked',
+  'binding_mismatch',
+  'binding_missing',
   'claims_invalid',
   'customer_login_role',
   'discovery_failed',

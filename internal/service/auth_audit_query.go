@@ -34,6 +34,8 @@ var authAuditReasons = map[string]bool{
 	"account_erased":            true,
 	"account_inactive":          true,
 	"account_locked":            true,
+	"binding_mismatch":          true,
+	"binding_missing":           true,
 	"claims_invalid":            true,
 	"customer_login_role":       true,
 	"discovery_failed":          true,

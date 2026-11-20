@@ -122,7 +122,7 @@ npm ci
 cp .env.example .env   # VITE_API_BASE_URL=http://localhost:8080/api/v1
 ```
 
-`VITE_*` values are read at build time by Vite. `VITE_API_BASE_URL` must point at the backend's API prefix.
+`VITE_*` values are read at build time by Vite. `VITE_API_BASE_URL` must point at the backend's API prefix. Single sign-on needs the SPA and the API on the same site (the same registrable domain and scheme; different ports of `localhost` qualify), because the browser must keep and return the sign-in cookie of `POST /auth/oidc/start`.
 
 ### 3. Run the frontend
 

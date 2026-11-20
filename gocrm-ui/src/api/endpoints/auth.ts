@@ -29,16 +29,28 @@ export const authApi = {
 
   // Starts an OpenID Connect sign-in: the answer is the issuer URL the
   // browser goes to. The backend refuses it while single sign-on is off.
+  // The answer also sets an HttpOnly sign-in cookie that the callback must
+  // send back, so a sign-in finishes only in the browser that started it.
+  // Credentials are sent on this call and the callback so the browser keeps
+  // and returns that cookie when the SPA and the API run on different ports
+  // of the same site (dev, e2e); behind the shipped nginx they share one
+  // origin and nothing changes. No other call sends credentials.
   startOIDC: async (): Promise<OIDCStartResponse> => {
-    const response = await api.post<OIDCStartResponse>('/auth/oidc/start');
+    const response = await api.post<OIDCStartResponse>('/auth/oidc/start', undefined, {
+      withCredentials: true,
+    });
     return response.data;
   },
 
   // Exchanges the single-use code and state from the issuer's redirect for a
-  // session. The path stays under /auth/ so the client never tries a token
-  // refresh on its 401.
+  // session, with the sign-in cookie of startOIDC. The path stays under
+  // /auth/ so the client never tries a token refresh on its 401.
   oidcCallback: async (code: string, state: string): Promise<LoginResponse> => {
-    const response = await api.post<LoginResponse>('/auth/oidc/callback', { code, state });
+    const response = await api.post<LoginResponse>(
+      '/auth/oidc/callback',
+      { code, state },
+      { withCredentials: true }
+    );
     return response.data;
   },
 

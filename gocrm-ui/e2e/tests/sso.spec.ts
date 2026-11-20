@@ -647,4 +647,86 @@ test.describe('Single sign-on with the test issuer', () => {
       await issuer.dispose();
     }
   });
+
+  test('S13: a sign-in finishes only in the browser that started it', async ({ browser }) => {
+    const who = uniqueIdentity('binding');
+    createdEmails.add(who.email);
+    const cookieName = 'gophercrm_oidc_state';
+    const cookiePath = `${new URL(API_BASE_URL).pathname}/auth/oidc`;
+
+    // The audit totals of the two refusal reasons, before this test.
+    const admin = await APIClient.admin();
+    const auditTotal = async (reason: string): Promise<number> => {
+      const response = await admin.get('/audit/sign-ins', { method: 'oidc', reason });
+      expect(response.ok(), await response.text()).toBeTruthy();
+      // meta.total is omitted when it is 0.
+      return (await response.json()).meta?.total ?? 0;
+    };
+    const stateOf = (callbackURL: string) => new URL(callbackURL).searchParams.get('state') ?? '';
+    const signInCookie = async (context: BrowserContext) =>
+      (await context.cookies()).find((cookie) => cookie.name === cookieName);
+    const startAndCapture = (page: Page) =>
+      captureCallback(page, async () => {
+        await page.goto('/login');
+        await page.getByRole('button', { name: 'Sign in with single sign-on' }).click();
+        await page.waitForURL((url) => url.href.startsWith(`${OIDC_ISSUER_URL}/authorize?`));
+        await new TestIssuerPage(page).signIn({ ...who, roles: [CLAIM_SALES] });
+      });
+
+    const contexts: BrowserContext[] = [];
+    const newContext = async () => {
+      const context = await browser.newContext({ ignoreHTTPSErrors: true, baseURL: UI_BASE_URL });
+      contexts.push(context);
+      return context;
+    };
+    try {
+      const missingBefore = await auditTotal('binding_missing');
+      const mismatchBefore = await auditTotal('binding_mismatch');
+
+      // Browser A starts a sign-in; its callback URL U1 is captured unspent.
+      const a = await newContext();
+      const pageA = await a.newPage();
+      const u1 = await startAndCapture(pageA);
+      expect(stateOf(u1)).not.toBe('');
+      const cookie = await signInCookie(a);
+      expect(cookie, 'the sign-in cookie of browser A').toBeTruthy();
+      expect(cookie?.httpOnly).toBe(true);
+      expect(cookie?.sameSite).toBe('Lax');
+      expect(cookie?.path).toBe(cookiePath);
+      expect(cookie?.value).toBe(stateOf(u1));
+
+      // U1 opened in a fresh browser B, which holds no cookie: refused.
+      const b = await newContext();
+      const pageB = await b.newPage();
+      expect(await openCallback(pageB, u1)).toBe(401);
+      await expectRefusal(pageB);
+
+      // A second sign-in in A replaces A's cookie: only the latest start in a
+      // browser can finish.
+      const u2 = await startAndCapture(pageA);
+      expect(stateOf(u2)).not.toBe(stateOf(u1));
+      expect((await signInCookie(a))?.value).toBe(stateOf(u2));
+
+      // Browser C starts a sign-in of its own, stops at the issuer, then opens
+      // U2: its cookie names another sign-in, so it is refused.
+      const c = await newContext();
+      const pageC = await c.newPage();
+      await pageC.goto('/login');
+      await pageC.getByRole('button', { name: 'Sign in with single sign-on' }).click();
+      await pageC.waitForURL((url) => url.href.startsWith(`${OIDC_ISSUER_URL}/authorize?`), {
+        timeout: LOAD,
+      });
+      const cookieC = await signInCookie(c);
+      expect(cookieC?.value).toBeTruthy();
+      expect(cookieC?.value).not.toBe(stateOf(u2));
+      expect(await openCallback(pageC, u2)).toBe(401);
+      await expectRefusal(pageC);
+
+      expect(await auditTotal('binding_missing')).toBe(missingBefore + 1);
+      expect(await auditTotal('binding_mismatch')).toBe(mismatchBefore + 1);
+    } finally {
+      for (const context of contexts) await context.close();
+      await admin.dispose();
+    }
+  });
 });

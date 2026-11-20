@@ -104,6 +104,9 @@ Notes on the wiring:
   `/api/v1`, i.e. same-origin through the nginx proxy). To point the UI at a
   different API origin, rebuild:
   `docker compose build ui --build-arg VITE_API_BASE_URL=https://api.example.com/api/v1`.
+  Single sign-on needs the UI and the API on the same site (the same registrable domain and
+  scheme, for example `crm.example.com` and `api.example.com`), because the browser must keep and
+  return the sign-in cookie of `POST /auth/oidc/start` (#528).
 - `gocrm-ui/Dockerfile` also accepts an optional `VITE_APP_NAME` build
   argument (#303), the product name the sign-in and registration pages show.
   The product name comes from one helper,

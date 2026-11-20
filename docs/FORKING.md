@@ -375,8 +375,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   they expire.
 > - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. With it the server refuses to
 >   start while `DISABLE_RATE_LIMIT=true` is set in production (environment or `.env`), so the
->   test-only switch cannot lift the `/auth` tier of a deployment. The application issues no cookies, and
->   authentication is header-only.
+>   test-only switch cannot lift the `/auth` tier of a deployment. The only cookie the application
+>   sets is the short-lived sign-in cookie of single sign-on (`gophercrm_oidc_state`, #528), which
+>   carries no credential, and authentication is header-only.
 > - **`TRUSTED_PROXIES`.** The rate limiter keys on `c.ClientIP()`
 >   (`rateLimiter.middlewareWith` (`internal/middleware/rate_limit.go`)). Behind a reverse proxy or CDN with no trusted
 >   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
