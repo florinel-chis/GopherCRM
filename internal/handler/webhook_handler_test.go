@@ -41,6 +41,8 @@ type fakeWebhookService struct {
 	pingFails bool
 	// redeliverErr is what RedeliverDelivery returns.
 	redeliverErr error
+	// rotateErr is what RotateEndpointSecret returns.
+	rotateErr error
 }
 
 func (f *fakeWebhookService) record(call string) {
@@ -64,8 +66,25 @@ func (f *fakeWebhookService) missing(id uint) error {
 
 func fakeWebhookEndpoint(id uint) *models.WebhookEndpoint {
 	now := time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)
+	previous := "enc:v1:previous-sealed-canary"
+	expires := now.Add(24 * time.Hour)
 	return &models.WebhookEndpoint{ID: id, CreatedAt: now, UpdatedAt: now, URL: "https://hooks.example.com/x",
-		EventTypes: models.WebhookEventTypes{models.WebhookEventLeadCreated}, SecretSealed: "enc:v1:sealed-canary", IsActive: true}
+		EventTypes: models.WebhookEventTypes{models.WebhookEventLeadCreated}, SecretSealed: "enc:v1:sealed-canary", IsActive: true,
+		PreviousSecretSealed: &previous, PreviousSecretExpiresAt: &expires}
+}
+
+// fakeRotatedSecret is the secret the fake RotateEndpointSecret returns.
+const fakeRotatedSecret = "whsec_bmV3LXNlY3JldA=="
+
+func (f *fakeWebhookService) RotateEndpointSecret(_ context.Context, id uint) (*models.WebhookEndpointSecretRotated, error) {
+	f.record("rotate")
+	if err := f.missing(id); err != nil {
+		return nil, err
+	}
+	if f.rotateErr != nil {
+		return nil, f.rotateErr
+	}
+	return &models.WebhookEndpointSecretRotated{WebhookEndpoint: *fakeWebhookEndpoint(id), Secret: fakeRotatedSecret}, nil
 }
 
 func (f *fakeWebhookService) CreateEndpoint(_ context.Context, input service.WebhookEndpointInput) (*models.WebhookEndpointCreated, error) {
@@ -207,6 +226,7 @@ var webhookRoutes = []webhookRoute{
 	{http.MethodDelete, "/webhooks/endpoints/1", "", http.StatusNoContent},
 	{http.MethodGet, "/webhooks/deliveries", "", http.StatusOK},
 	{http.MethodPost, "/webhooks/endpoints/1/test", "", http.StatusOK},
+	{http.MethodPost, "/webhooks/endpoints/1/rotate-secret", "", http.StatusOK},
 	{http.MethodPost, "/webhooks/deliveries/1/redeliver", "", http.StatusOK},
 }
 
@@ -242,16 +262,19 @@ func TestWebhookRoutesAdminOnly(t *testing.T) {
 		})
 	}
 
-	t.Run("the secret appears only in the create answer", func(t *testing.T) {
+	t.Run("the secret appears only in the create and rotate-secret answers", func(t *testing.T) {
 		fake := &fakeWebhookService{}
 		router := newWebhookRouter(t, fake)
 		for _, route := range webhookRoutes {
 			rec, _ := serveWebhook(t, router, route.method, route.path, "Bearer admin-credential", route.body)
 			assert.NotContains(t, rec.Body.String(), "sealed-canary", "%s %s", route.method, route.path)
-			assert.NotContains(t, rec.Body.String(), "secret_sealed")
-			if route.method == http.MethodPost && route.path == "/webhooks/endpoints" {
+			assert.NotContains(t, rec.Body.String(), "secret_sealed", "neither secret_sealed nor previous_secret_sealed")
+			switch {
+			case route.method == http.MethodPost && route.path == "/webhooks/endpoints":
 				assert.Contains(t, rec.Body.String(), `"secret":"whsec_c2VjcmV0"`)
-			} else {
+			case route.method == http.MethodPost && route.path == "/webhooks/endpoints/1/rotate-secret":
+				assert.Contains(t, rec.Body.String(), `"secret":"`+fakeRotatedSecret+`"`)
+			default:
 				assert.NotContains(t, rec.Body.String(), "whsec_", "%s %s", route.method, route.path)
 			}
 		}
@@ -473,4 +496,75 @@ func TestWebhookRedeliverHandler(t *testing.T) {
 			assert.Equal(t, 1, fake.callCount())
 		})
 	}
+}
+
+func TestWebhookRotateSecretHandler(t *testing.T) {
+	const admin = "Bearer admin-credential"
+
+	t.Run("a rotation is 200 with the new secret and the window end", func(t *testing.T) {
+		fake := &fakeWebhookService{}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/4/rotate-secret", admin, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.True(t, envelope.Success)
+		var data map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(envelope.Data, &data))
+		assert.JSONEq(t, `4`, string(data["id"]))
+		assert.JSONEq(t, `"`+fakeRotatedSecret+`"`, string(data["secret"]))
+		assert.JSONEq(t, `"2026-11-21T09:30:00Z"`, string(data["previous_secret_expires_at"]))
+		assert.NotContains(t, data, "previous_secret_sealed")
+		assert.NotContains(t, data, "secret_sealed")
+		assert.NotContains(t, rec.Body.String(), "sealed-canary")
+		assert.Equal(t, []string{"rotate"}, fake.calls)
+	})
+
+	t.Run("the endpoint read never carries a secret", func(t *testing.T) {
+		fake := &fakeWebhookService{}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodGet, "/webhooks/endpoints/4", admin, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var data map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(envelope.Data, &data))
+		assert.Contains(t, data, "previous_secret_expires_at")
+		for _, key := range []string{"secret", "secret_sealed", "previous_secret_sealed"} {
+			assert.NotContains(t, data, key)
+		}
+		assert.NotContains(t, rec.Body.String(), "sealed-canary")
+		assert.NotContains(t, rec.Body.String(), "whsec_")
+	})
+
+	for _, id := range []string{"0", "abc"} {
+		id := id
+		t.Run("id "+id+" is 400 without a service call", func(t *testing.T) {
+			fake := &fakeWebhookService{}
+			router := newWebhookRouter(t, fake)
+			rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/"+id+"/rotate-secret", admin, "")
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			require.NotNil(t, envelope.Error)
+			assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code)
+			assert.Contains(t, envelope.Error.Details, "id")
+			assert.Zero(t, fake.callCount())
+		})
+	}
+
+	t.Run("an unknown endpoint is 404", func(t *testing.T) {
+		fake := &fakeWebhookService{notFound: true}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/999/rotate-secret", admin, "")
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeNotFound, envelope.Error.Code)
+		assert.Equal(t, "Webhook endpoint not found", envelope.Error.Message)
+	})
+
+	t.Run("an unexpected error is 500 without the cause", func(t *testing.T) {
+		fake := &fakeWebhookService{rotateErr: errors.New("driver canary-cause")}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/4/rotate-secret", admin, "")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeInternal, envelope.Error.Code)
+		assert.NotContains(t, rec.Body.String(), "canary-cause")
+		assert.NotContains(t, rec.Body.String(), "whsec_")
+	})
 }

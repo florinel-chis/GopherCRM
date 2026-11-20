@@ -33,7 +33,8 @@ type WebhookEndpointCreateRequest struct {
 }
 
 // WebhookEndpointUpdateRequest changes an endpoint. An absent field keeps the
-// stored value; at least one must be present. The secret never changes.
+// stored value; at least one must be present. It never changes the secret:
+// POST /webhooks/endpoints/{id}/rotate-secret does.
 type WebhookEndpointUpdateRequest struct {
 	// New target URL, under the same rules as on create.
 	URL *string `json:"url" maxLength:"2048" example:"https://hooks.example.com/gophercrm"`
@@ -131,7 +132,7 @@ func (h *WebhookHandler) ListEndpoints(c *gin.Context) {
 
 // CreateEndpoint godoc
 // @Summary Register a webhook endpoint
-// @Description Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned in this response only: it is stored encrypted and no other route ever shows it.
+// @Description Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
 // @Description From then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, PUT /customers/{id}, PUT /tickets/{id} or the lead and ticket bulk status endpoints (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event only for the active endpoints subscribed to it that already hold a created or updated delivery of that record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
 // @Description The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
 // @Description Roles: admin.
@@ -253,7 +254,7 @@ func (h *WebhookHandler) TestEndpoint(c *gin.Context) {
 
 // UpdateEndpoint godoc
 // @Summary Update a webhook endpoint
-// @Description Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret never changes and is not returned.
+// @Description Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret is not changed (POST /webhooks/endpoints/{id}/rotate-secret replaces it) and is not returned.
 // @Description Deliveries already enqueued keep their endpoint: those of an endpoint set inactive fail with endpoint_inactive when they are claimed, and those of an endpoint whose URL changed are sent to the new URL.
 // @Description Roles: admin.
 // @Tags webhooks
@@ -350,6 +351,40 @@ func (h *WebhookHandler) DeleteEndpoint(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// RotateSecret godoc
+// @Summary Rotate the signing secret of a webhook endpoint
+// @Description Generates a new signing secret (whsec_ followed by the base64 of 32 random bytes) for the endpoint and returns it in this response only: it is stored encrypted and no other route shows it. The replaced secret is kept, encrypted, as the previous secret until previous_secret_expires_at, 24 hours from now.
+// @Description While that window is open every delivery, retry, redelivery and test ping carries two space-separated signatures in webhook-signature (v1,<new> v1,<previous>, the new one first), so a consumer can switch to the new secret without missing a request. From previous_secret_expires_at on only the new signature is sent, and the next delivery clears the previous secret. A second rotation inside the window replaces the previous secret: at most two secrets ever sign.
+// @Description It works on an inactive endpoint and never reads the stored secrets, so an endpoint whose secret cannot be opened any more (API_KEY_SECRET rotated) can be given a new one. No request body is read.
+// @Description Roles: admin.
+// @Tags webhooks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Endpoint ID"
+// @Success 200 {object} utils.APIResponse{data=models.WebhookEndpointSecretRotated} "Secret rotated; the new secret is shown once"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure; the cause is never echoed"
+// @Router /webhooks/endpoints/{id}/rotate-secret [post]
+func (h *WebhookHandler) RotateSecret(c *gin.Context) {
+	logger := webhookHandlerLog("webhook_endpoint_rotate_secret")
+	id, ok := parseWebhookID(c.Param("id"))
+	if !ok {
+		utils.RespondValidationError(c, map[string]string{"id": webhookIDRule})
+		return
+	}
+	rotated, err := h.webhookService.RotateEndpointSecret(c.Request.Context(), id)
+	if err != nil {
+		respondWebhookError(c, logger.WithField("endpoint_id", id), err)
+		return
+	}
+	utils.RespondSuccess(c, http.StatusOK, rotated)
 }
 
 // ListDeliveries godoc

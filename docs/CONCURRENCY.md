@@ -59,7 +59,13 @@ with no locking read, so it cannot overlap a claim (which needs `pending`), and 
 `updated_at` forward, so a prune pass whose `DELETE` re-checks the finished state and the cutoff
 leaves the requeued row alone. Its endpoint check is a plain read before the write, not part of the
 predicate: an endpoint deactivated in between still gets the row requeued, and the runtime then
-fails it with `endpoint_inactive`. The outbox rows a create path writes are inserts into its own
+fails it with `endpoint_inactive`. A signing-secret rotation (#503, `RotateEndpointSecret`) is one
+`UPDATE webhook_endpoints … WHERE id = ?` by primary key with no read before it, so concurrent
+rotations serialise on the endpoint row and each keeps the other's secret as the previous one. The
+runtime's clear of an expired previous secret (`ClearExpiredPreviousSecret`) is a conditional
+`UPDATE` by primary key fenced on `previous_secret_expires_at <= now` in the statement, so a
+rotation committed after the runtime read the endpoint is never cleared; it leaves `updated_at`
+alone. Neither adds a lock edge. The outbox rows a create path writes are inserts into its own
 transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
 the chains above. The same holds for the updated events (#408): the lead update, the ticket update
 and the lead and ticket bulk status batches insert their rows after the record write, inside the

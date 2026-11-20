@@ -33,7 +33,7 @@ export interface WebhookEndpoint {
   is_active: boolean;
 }
 
-// The answer of a create: the only response that ever carries the secret.
+// The answer of a create; the secret is also returned once by the API's rotate-secret.
 export interface WebhookEndpointCreated extends WebhookEndpoint {
   secret: string;
 }

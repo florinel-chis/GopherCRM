@@ -22,7 +22,7 @@ import (
 // The webhook endpoint registry (#345). Admin only (the route guard). An
 // endpoint's signing secret is whsec_ plus the base64 of 32 random bytes,
 // stored sealed with utils.SecretBox under WebhookSecretContext and returned
-// once, in the create response. Log lines carry the operation and the
+// once, in the create or the rotate-secret response. Log lines carry the operation and the
 // endpoint id (the test ping also its outcome, error code and HTTP status; a
 // redelivery the delivery id and error code) only: never the URL, its host, the secret or the sealed value.
 
@@ -315,7 +315,9 @@ func (s *webhookService) ListDeliveries(ctx context.Context, filter repository.W
 // synchronously, through the shared send path of deliveries (egress guard,
 // signing, WebhookRequestTimeout, no redirect followed). It works on an
 // inactive endpoint, is never retried and writes nothing: the endpoint read
-// is its only database statement. An unusable secret is a failed outcome
+// is its only database statement. Inside a rotation window it carries both
+// signatures, and it never clears an expired previous secret. An unusable
+// current secret is a failed outcome
 // (secret_unavailable) without any network work. It logs one line carrying
 // the operation, the endpoint id, the outcome, the error code and the HTTP
 // status only.
@@ -336,20 +338,20 @@ func (s *webhookService) TestEndpoint(ctx context.Context, id uint) (*models.Web
 		return nil, err
 	}
 
+	// One clock reading decides the rotation window and stamps the ping. The
+	// ping never clears an expired previous secret: it writes nothing.
 	var outcome attemptOutcome
-	secret, openErr := s.box.Open(endpoint.SecretSealed)
-	if openErr != nil || secret == "" {
-		outcome = attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable}
-	} else if _, keyErr := webhookKey(secret); keyErr != nil {
+	sentAt := time.Now()
+	secrets, ok := webhookSigningSecrets(s.box, endpoint, sentAt, utils.Logger, "webhook_endpoint_test")
+	if !ok {
 		outcome = attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable}
 	} else {
 		outcome = sendWebhook(ctx, s.pingClients, endpoint.URL, s.pingTimeout, func(reqCtx context.Context) (*http.Request, error) {
-			sentAt := time.Now()
 			body, err := webhookPingBody(eventID, sentAt)
 			if err != nil {
 				return nil, err
 			}
-			return newSignedWebhookRequest(reqCtx, endpoint.URL, secret, eventID, body, sentAt)
+			return newSignedWebhookRequest(reqCtx, endpoint.URL, secrets, eventID, body, sentAt)
 		})
 	}
 
@@ -373,6 +375,46 @@ func (s *webhookService) TestEndpoint(ctx context.Context, id uint) (*models.Web
 	}
 	utils.Logger.WithFields(fields).Info("Webhook endpoint test ping sent")
 	return result, nil
+}
+
+// WebhookSecretOverlap is how long the secret a rotation replaces still signs
+// requests next to the new one (#503).
+const WebhookSecretOverlap = 24 * time.Hour
+
+// RotateEndpointSecret generates a new signing secret, stores it sealed and
+// keeps the replaced sealed secret as the previous one until now +
+// WebhookSecretOverlap, in one UPDATE by primary key (#503). It works on an
+// inactive endpoint and never opens the current or the previous secret, so a
+// secret sealed under a rotated API_KEY_SECRET can be replaced. It logs the
+// operation and the endpoint id only.
+func (s *webhookService) RotateEndpointSecret(ctx context.Context, id uint) (*models.WebhookEndpointSecretRotated, error) {
+	logger := webhookLog("webhook_endpoint_rotate_secret").WithField("endpoint_id", id)
+	if err := s.available(); err != nil {
+		return nil, err
+	}
+	secret, err := newWebhookSecret()
+	if err != nil {
+		logger.WithField("error_code", "secret_generation_failed").Error("Webhook secret could not be generated")
+		return nil, err
+	}
+	sealed, err := s.box.Seal(secret)
+	if err != nil {
+		logger.WithField("error_code", "secret_seal_failed").Error("Webhook secret could not be sealed")
+		return nil, err
+	}
+	now := time.Now().UTC()
+	if err := s.repo.RotateEndpointSecret(ctx, id, sealed, now.Add(WebhookSecretOverlap), now); err != nil {
+		if !isNotFound(err) {
+			logger.WithError(utils.LogError(err)).Error("Failed to rotate webhook endpoint secret")
+		}
+		return nil, s.notFound(id, err)
+	}
+	logger.Info("Webhook endpoint secret rotated")
+	endpoint, err := s.GetEndpoint(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &models.WebhookEndpointSecretRotated{WebhookEndpoint: *endpoint, Secret: secret}, nil
 }
 
 // RedeliverDelivery puts a finished (succeeded or failed) delivery back into

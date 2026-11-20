@@ -66,7 +66,10 @@ func TestWebhookEndpointService(t *testing.T) {
 			require.NoError(t, err)
 			assert.NotContains(t, string(body), created.Secret, name)
 			assert.NotContains(t, string(body), "whsec_", name)
-			assert.NotContains(t, string(body), "secret", name)
+			// No secret key and no sealed column; previous_secret_expires_at
+			// (#503) is the one field whose name says secret.
+			assert.NotContains(t, string(body), `"secret"`, name)
+			assert.NotContains(t, string(body), "secret_sealed", name)
 			assert.NotContains(t, string(body), stored.SecretSealed, name)
 		}
 		var reread models.WebhookEndpoint

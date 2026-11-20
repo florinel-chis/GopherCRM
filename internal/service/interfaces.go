@@ -769,9 +769,13 @@ type WebhookService interface {
 	CreateEndpoint(ctx context.Context, input WebhookEndpointInput) (*models.WebhookEndpointCreated, error)
 	GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error)
 	ListEndpoints(ctx context.Context, offset, limit int, sortBy, sortOrder string) ([]models.WebhookEndpoint, int64, error)
-	// UpdateEndpoint writes the fields the patch carries; the secret never
-	// changes.
+	// UpdateEndpoint writes the fields the patch carries; it never changes
+	// the secret (RotateEndpointSecret does).
 	UpdateEndpoint(ctx context.Context, id uint, patch WebhookEndpointPatch) (*models.WebhookEndpoint, error)
+	// RotateEndpointSecret replaces the signing secret and returns the new
+	// one this once; the replaced secret keeps signing next to it for
+	// WebhookSecretOverlap (#503).
+	RotateEndpointSecret(ctx context.Context, id uint) (*models.WebhookEndpointSecretRotated, error)
 	// DeleteEndpoint hard-deletes the endpoint and its delivery rows in one
 	// transaction, endpoint row locked first.
 	DeleteEndpoint(ctx context.Context, id uint) error

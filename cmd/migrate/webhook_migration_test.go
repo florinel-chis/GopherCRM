@@ -144,14 +144,21 @@ func TestWebhookMigration(t *testing.T) {
 	t.Cleanup(func() { models.DB = previousDB })
 
 	// The parity reference: the tables as MigrateDatabase creates them on top
-	// of the previous SQL head.
+	// of the previous SQL head (wantModel), and the same without the two
+	// columns #503 added to webhook_endpoints (want), which is what this
+	// migration creates at its version.
 	reference := openMigrationTestDB(t, baseDSN, "whk_ref")
 	require.NoError(t, reference.m.Migrate(webhooksPreviousVersion))
 	for _, table := range webhookMigrationTables {
 		assert.NotContains(t, listTables(t, reference.sql, reference.name), table)
 	}
 	runMigrateDatabase(t, reference.dsn)
-	want := snapshotWebhookTables(t, reference)
+	wantModel := snapshotWebhookTables(t, reference)
+	want := map[string]tableSchema{
+		"webhook_endpoints":  withoutColumns(wantModel["webhook_endpoints"], webhookSecretRotationColumns),
+		"webhook_deliveries": wantModel["webhook_deliveries"],
+	}
+	require.Len(t, wantModel["webhook_endpoints"].Columns, len(want["webhook_endpoints"].Columns)+2)
 	require.NotEmpty(t, want["webhook_endpoints"].Columns)
 	require.NotEmpty(t, want["webhook_deliveries"].Columns)
 	assert.Contains(t, want["webhook_deliveries"].Indexes, "idx_webhook_deliveries_endpoint_event (endpoint_id,event_id) non_unique=0")
@@ -207,7 +214,12 @@ func TestWebhookMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(webhooksVersion), version)
-			assert.Equal(t, want, snapshotWebhookTables(t, tdb), "the SQL migration and AutoMigrate produce the same tables")
+			if autoMigrateFirst {
+				// The tables AutoMigrate created are kept as they are.
+				assert.Equal(t, wantModel, snapshotWebhookTables(t, tdb), "the tables AutoMigrate created are kept")
+			} else {
+				assert.Equal(t, want, snapshotWebhookTables(t, tdb), "the SQL migration and AutoMigrate produce the same tables")
+			}
 			if autoMigrateFirst {
 				var count int
 				require.NoError(t, tdb.sql.QueryRow("SELECT COUNT(*) FROM webhook_deliveries").Scan(&count))
@@ -215,7 +227,7 @@ func TestWebhookMigration(t *testing.T) {
 			}
 
 			runMigrateDatabase(t, tdb.dsn)
-			assert.Equal(t, want, snapshotWebhookTables(t, tdb), "MigrateDatabase does not change the tables")
+			assert.Equal(t, wantModel, snapshotWebhookTables(t, tdb), "MigrateDatabase adds only the #503 columns")
 			insertMigrationWebhookRows(t, tdb.sql, 3)
 			require.ErrorIs(t, tdb.m.Migrate(webhooksVersion), migrate.ErrNoChange)
 

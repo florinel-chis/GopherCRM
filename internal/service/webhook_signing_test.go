@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,7 +95,7 @@ func TestWebhookSignature(t *testing.T) {
 			RecordID: 42, OccurredAt: occurred, Status: models.WebhookDeliverySending, Attempts: 1}
 
 		sentAt := time.Unix(1795000000, 0)
-		req, err := NewWebhookRequest(context.Background(), "https://example.com/hook", secret, delivery, sentAt)
+		req, err := NewWebhookRequest(context.Background(), "https://example.com/hook", []string{secret}, delivery, sentAt)
 		require.NoError(t, err)
 		body, err := io.ReadAll(req.Body)
 		require.NoError(t, err)
@@ -119,7 +120,7 @@ func TestWebhookSignature(t *testing.T) {
 		}
 
 		// A retry gets a fresh timestamp and signature; both verify.
-		retry, err := NewWebhookRequest(context.Background(), "https://example.com/hook", secret, delivery, sentAt.Add(time.Minute))
+		retry, err := NewWebhookRequest(context.Background(), "https://example.com/hook", []string{secret}, delivery, sentAt.Add(time.Minute))
 		require.NoError(t, err)
 		retryBody, err := io.ReadAll(retry.Body)
 		require.NoError(t, err)
@@ -127,6 +128,47 @@ func TestWebhookSignature(t *testing.T) {
 		assert.Equal(t, "1795000060", retry.Header.Get("webhook-timestamp"))
 		assert.NotEqual(t, req.Header.Get("webhook-signature"), retry.Header.Get("webhook-signature"))
 		require.NoError(t, verifyStandardWebhook(secret, retry.Header, retryBody, sentAt.Add(time.Minute), 5*time.Minute))
+	})
+
+	t.Run("two secrets give two space-separated signatures, the first secret first (#503)", func(t *testing.T) {
+		newSecret, err := newWebhookSecret()
+		require.NoError(t, err)
+		oldSecret, err := newWebhookSecret()
+		require.NoError(t, err)
+		eventID, err := newWebhookEventID()
+		require.NoError(t, err)
+		delivery := &models.WebhookDelivery{ID: 9, EndpointID: 4, EventID: eventID, EventType: models.WebhookEventLeadCreated,
+			RecordID: 42, OccurredAt: time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)}
+		sentAt := time.Unix(1795000000, 0)
+
+		req, err := NewWebhookRequest(context.Background(), "https://example.com/hook", []string{newSecret, oldSecret}, delivery, sentAt)
+		require.NoError(t, err)
+		body, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		signedNew, err := SignWebhook(newSecret, eventID, 1795000000, body)
+		require.NoError(t, err)
+		signedOld, err := SignWebhook(oldSecret, eventID, 1795000000, body)
+		require.NoError(t, err)
+		assert.Equal(t, signedNew+" "+signedOld, req.Header.Get("webhook-signature"), "exactly v1,<new> v1,<old>")
+
+		// Each part verifies with its own secret over the same id, timestamp
+		// and body, and only with it.
+		parts := strings.Split(req.Header.Get("webhook-signature"), " ")
+		require.Len(t, parts, 2)
+		for i, secret := range []string{newSecret, oldSecret} {
+			only := req.Header.Clone()
+			only.Set("webhook-signature", parts[i])
+			require.NoError(t, verifyStandardWebhook(secret, only, body, sentAt, 5*time.Minute), "part %d", i)
+			other := []string{oldSecret, newSecret}[i]
+			assert.Error(t, verifyStandardWebhook(other, only, body, sentAt, 5*time.Minute), "part %d with the other secret", i)
+		}
+
+		// One secret is still exactly SignWebhook's output, and none is refused.
+		single, err := NewWebhookRequest(context.Background(), "https://example.com/hook", []string{newSecret}, delivery, sentAt)
+		require.NoError(t, err)
+		assert.Equal(t, signedNew, single.Header.Get("webhook-signature"))
+		_, err = NewWebhookRequest(context.Background(), "https://example.com/hook", nil, delivery, sentAt)
+		assert.Error(t, err)
 	})
 
 	t.Run("generated secrets are whsec_ plus 32 random bytes", func(t *testing.T) {

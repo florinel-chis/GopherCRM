@@ -64,8 +64,8 @@ func assertWebhookSchemaSQLite(t *testing.T) {
 	require.True(t, DB.Migrator().HasTable("webhook_deliveries"))
 
 	names, endpoint := webhookColumns(t, "webhook_endpoints")
-	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "secret_sealed", "updated_at", "url"}, names,
-		"exactly these columns, no deleted_at")
+	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "previous_secret_expires_at", "previous_secret_sealed",
+		"secret_sealed", "updated_at", "url"}, names, "exactly these columns, no deleted_at")
 	assert.Equal(t, 1, endpoint["id"].PK)
 	for _, name := range []string{"url", "event_types", "secret_sealed", "is_active"} {
 		assert.Equal(t, 1, endpoint[name].NotNull, "%s is NOT NULL", name)
@@ -74,6 +74,12 @@ func assertWebhookSchemaSQLite(t *testing.T) {
 	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["event_types"].Type))
 	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["secret_sealed"].Type))
 	assert.Nil(t, endpoint["is_active"].Dflt, "is_active has no column default (GORM would substitute it for an explicit false)")
+	// The rotation columns (#503) are nullable with no default.
+	for _, name := range []string{"previous_secret_sealed", "previous_secret_expires_at"} {
+		assert.Equal(t, 0, endpoint[name].NotNull, "%s is nullable", name)
+		assert.Nil(t, endpoint[name].Dflt, "%s has no default", name)
+	}
+	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["previous_secret_sealed"].Type))
 	assert.Empty(t, webhookIndexes(t, "webhook_endpoints"), "the endpoint table has only its primary key")
 
 	names, delivery := webhookColumns(t, "webhook_deliveries")
@@ -174,7 +180,8 @@ func TestWebhookJSON(t *testing.T) {
 	raw, err := json.Marshal(endpoint)
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "sealed-canary")
-	assert.NotContains(t, string(raw), "secret")
+	assert.NotContains(t, string(raw), `"secret"`, "no secret key")
+	assert.NotContains(t, string(raw), "secret_sealed")
 	var decoded map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &decoded))
 	keys := make([]string, 0, len(decoded))
@@ -182,8 +189,28 @@ func TestWebhookJSON(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "updated_at", "url"}, keys)
+	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "previous_secret_expires_at", "updated_at", "url"}, keys)
 	assert.Equal(t, []interface{}{"lead.created"}, decoded["event_types"], "event_types is an array")
+	assert.Nil(t, decoded["previous_secret_expires_at"], "null without a rotation")
+
+	// After a rotation (#503) the expiry is serialised, the previous sealed
+	// secret never.
+	previousSealed := "enc:v1:previous-sealed-canary"
+	expires := created.Add(24 * time.Hour)
+	rotatedEndpoint := endpoint
+	rotatedEndpoint.PreviousSecretSealed = &previousSealed
+	rotatedEndpoint.PreviousSecretExpiresAt = &expires
+	raw, err = json.Marshal(rotatedEndpoint)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"previous_secret_expires_at":"2026-11-21T09:30:00Z"`)
+	assert.NotContains(t, string(raw), "previous-sealed-canary")
+	assert.NotContains(t, string(raw), "previous_secret_sealed")
+	assert.NotContains(t, string(raw), "secret_sealed")
+	rotatedRaw, err := json.Marshal(WebhookEndpointSecretRotated{WebhookEndpoint: rotatedEndpoint, Secret: "whsec_bmV3"})
+	require.NoError(t, err)
+	assert.Contains(t, string(rotatedRaw), `"secret":"whsec_bmV3"`)
+	assert.Contains(t, string(rotatedRaw), `"previous_secret_expires_at":"2026-11-21T09:30:00Z"`)
+	assert.NotContains(t, string(rotatedRaw), "sealed")
 
 	raw, err = json.Marshal(WebhookEndpoint{})
 	require.NoError(t, err)

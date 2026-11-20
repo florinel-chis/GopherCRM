@@ -1204,6 +1204,8 @@ pruned 30 days after their last change.
 | event_types | string | Yes | | `varchar(255)` | canonical comma-separated sorted subset of `customer.created`, `customer.deleted`, `customer.updated`, `lead.created`, `lead.deleted`, `lead.updated`, `ticket.created`, `ticket.deleted`, `ticket.updated` (all nine are 134 bytes); JSON array |
 | secret_sealed | string | Yes | | `varchar(255)` | `utils.SecretBox` (context `webhook-endpoint-secret`) of `whsec_` + base64(32 bytes); `json:"-"` |
 | is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
+| previous_secret_sealed | string | No | NULL | `varchar(255)` | the sealed secret the last rotation replaced (#503), same box and context; `json:"-"` |
+| previous_secret_expires_at | datetime | No | NULL | `datetime(3)` | end of the rotation overlap window (rotation + 24 h): until then every request carries a signature under each secret; cleared by the runtime's next send after it; serialised, null without a rotation |
 
 ### webhook_deliveries
 
@@ -1226,7 +1228,9 @@ pruned 30 days after their last change.
 
 The status index serves only plain (non-locking) discovery reads; every write is by primary key.
 MySQL and MariaDB get both tables from `20261120120000_add_outbound_webhooks` (created only when
-missing; the down drops both); SQLite from `MigrateDatabase`.
+missing; the down drops both); SQLite from `MigrateDatabase`. The two rotation columns of
+`webhook_endpoints` come from `20261127120000_webhook_secret_rotation` (each added only when
+missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite.
 
 ## API Request/Response Format
 

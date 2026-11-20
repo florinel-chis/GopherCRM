@@ -21,7 +21,10 @@ import (
 // base64-decoded part of the whsec_ secret, and the signature header carries
 // "v1," followed by the base64 HMAC-SHA256. A consumer recomputes it, compares
 // in constant time, refuses a timestamp far from its own clock (five minutes
-// is the usual tolerance) and deduplicates on webhook-id.
+// is the usual tolerance) and deduplicates on webhook-id. During the overlap
+// window of a secret rotation (#503) the header carries two space-separated
+// signatures, under the new secret first and the previous one second; a
+// consumer accepts the request when any of them verifies.
 
 // WebhookSecretPrefix starts every endpoint signing secret.
 const WebhookSecretPrefix = "whsec_"
@@ -93,13 +96,15 @@ func SignWebhook(secret, eventID string, unixSeconds int64, body []byte) (string
 }
 
 // NewWebhookRequest builds one signed attempt of delivery to url at sentAt:
-// every attempt gets its own timestamp and signature.
-func NewWebhookRequest(ctx context.Context, url, secret string, delivery *models.WebhookDelivery, sentAt time.Time) (*http.Request, error) {
+// every attempt gets its own timestamp and signatures, one per secret in
+// secrets (the current secret first, then the previous one inside a rotation
+// window).
+func NewWebhookRequest(ctx context.Context, url string, secrets []string, delivery *models.WebhookDelivery, sentAt time.Time) (*http.Request, error) {
 	body, err := WebhookBody(delivery)
 	if err != nil {
 		return nil, err
 	}
-	return newSignedWebhookRequest(ctx, url, secret, delivery.EventID, body, sentAt)
+	return newSignedWebhookRequest(ctx, url, secrets, delivery.EventID, body, sentAt)
 }
 
 // webhookPingPayload is the body of a test ping: no record_id and no record
@@ -121,13 +126,23 @@ func webhookPingBody(eventID string, occurredAt time.Time) ([]byte, error) {
 }
 
 // newSignedWebhookRequest builds one signed POST of body to url at sentAt
-// with the Standard Webhooks headers, eventID being the webhook-id.
-func newSignedWebhookRequest(ctx context.Context, url, secret, eventID string, body []byte, sentAt time.Time) (*http.Request, error) {
-	timestamp := sentAt.Unix()
-	signature, err := SignWebhook(secret, eventID, timestamp, body)
-	if err != nil {
-		return nil, err
+// with the Standard Webhooks headers, eventID being the webhook-id. The
+// webhook-signature header holds one "v1," signature per secret, in the order
+// given, joined by one space. No secret is an error.
+func newSignedWebhookRequest(ctx context.Context, url string, secrets []string, eventID string, body []byte, sentAt time.Time) (*http.Request, error) {
+	if len(secrets) == 0 {
+		return nil, errWebhookSecretInvalid
 	}
+	timestamp := sentAt.Unix()
+	signatures := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		signature, err := SignWebhook(secret, eventID, timestamp, body)
+		if err != nil {
+			return nil, err
+		}
+		signatures = append(signatures, signature)
+	}
+	signature := strings.Join(signatures, " ")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err

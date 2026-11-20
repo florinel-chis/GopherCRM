@@ -22,8 +22,9 @@ interface WebhookSecretDialogProps {
 
 /**
  * Shows the signing secret of a newly registered endpoint. The API returns it
- * in the create response only, so this dialog is the single place it is ever
- * rendered.
+ * once, in the create response (the API-only rotate-secret route returns a new
+ * one once, with no screen control), so this dialog is the single place it is
+ * ever rendered.
  */
 export const WebhookSecretDialog: React.FC<WebhookSecretDialogProps> = ({ secret, onClose }) => {
   const { showSuccess, showError } = useSnackbar();
