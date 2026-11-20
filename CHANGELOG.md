@@ -1348,6 +1348,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A users write racing a SCIM group handover can no longer remove the last active admin
+  (#513).** SCIM user replace, patch and delete, the governed user write behind
+  `PUT`/activate/deactivate/`DELETE /users` and the OIDC sign-in role re-apply judged the
+  last-admin rule only from the admin set `LockActiveAdmins` returned. On MySQL/MariaDB that set
+  is discovered with a consistent read, so a handover X → Y that committed while the write waited
+  on X left it empty, and a demotion, deactivation or deletion of Y committed with no active admin
+  left. The guard now also counts the target's own locked row when it is an active admin; the
+  write is refused as before (409 `LAST_ADMIN`, SCIM 400 `invalidValue`, OIDC `last_admin`).
+
 - **The `cmd/migrate` MySQL-backed tests read their server only from `TEST_MYSQL_DSN` (#514).**
   They now skip when the variable is unset or empty and fail when it names a server that does
   not answer. They no longer probe a local MySQL with the `.env` configuration, `$USER`, `root`

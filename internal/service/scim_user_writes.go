@@ -328,7 +328,7 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		if err != nil {
 			return err
 		}
-		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target.ID) {
+		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 
@@ -469,7 +469,7 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		if err := checkSCIMProfile(after); err != nil {
 			return err
 		}
-		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target.ID) {
+		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 
@@ -580,7 +580,7 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 			changed = false
 			return nil
 		}
-		if isLastActiveAdmin(admins, target.ID) {
+		if isLastActiveAdmin(admins, target) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 		fields := map[string]interface{}{"is_active": false}

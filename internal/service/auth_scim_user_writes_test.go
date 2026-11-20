@@ -459,6 +459,35 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 		}},
 	}
 	if mysql {
+		// #513: a handover X -> Y that commits while a replace of Y with
+		// roles mapped to sales waits for the admin set. The write's admin
+		// set comes back empty; the locking read of Y must still count Y as
+		// the admin before it.
+		cases = append(cases, struct {
+			name string
+			run  func(t *testing.T)
+		}{"last_admin_race/after_handover", func(t *testing.T) {
+			x := f.seedUser(t, "x@x.test", models.RoleAdmin, true, "")
+			y := f.seedUser(t, "y@x.test", models.RoleSales, true, "")
+
+			handover := holdAdminHandover(t, f.db, f.roleIDs, x.ID, y.ID)
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.svc.Replace(ctx, uintString(y.ID), SCIMUserInput{UserName: "y@x.test", Roles: []string{scimRoleSales}})
+				done <- err
+			}()
+			err := awaitLockWaitThenCommit(t, f.db, handover, done)
+
+			require.ErrorIs(t, err, ErrSCIMLastAdmin)
+			assert.Equal(t, int64(1), countActiveAdmins(t, f.db), "exactly one active admin remains")
+			stored := f.user(t, y.ID)
+			assert.Equal(t, models.RoleAdmin, stored.Role, "Y keeps role admin")
+			assert.True(t, stored.IsActive)
+			assert.Zero(t, f.count(t, "role_audit_log", ""), "no role audit row")
+			assert.Zero(t, f.count(t, "auth_audit_log", ""), "no sign-in audit row")
+		}})
+	}
+	if mysql {
 		// The utf8mb4_unicode_ci collation equates padded and accented
 		// variants with the stored address.
 		cases = append(cases, struct {

@@ -1926,6 +1926,37 @@ func runOIDCSignIn(t *testing.T, f *oidcFixture) {
 			tc.run(t, f)
 		})
 	}
+	if f.db.Dialector.Name() == "mysql" {
+		// #513: a handover X -> Y that commits while a sign-in of Y's linked
+		// identity, whose claims map to sales, waits for the admin set. The
+		// sign-in's admin set comes back empty; the locking read of Y must
+		// still count Y as the admin before the role is re-applied. Needs a
+		// second connection and InnoDB lock waits, so it runs only under the
+		// MySQL root and leaves oidcSignInCases (and the SQLite root) as is.
+		t.Run("last_admin_race/after_handover", func(t *testing.T) {
+			f.reset(t)
+			x := f.seedUser(t, "x@crm.example.test", models.RoleAdmin, true, "")
+			y := f.seedUser(t, "y@crm.example.test", models.RoleSales, true, "")
+			f.link(t, y.ID, "subject-y")
+			code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-y", "y@idp.example.test"))
+
+			handover := holdAdminHandover(t, f.db, f.roleIDs, x.ID, y.ID)
+			var tokens *AuthTokens
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				tokens, err = f.svc.Callback(context.Background(), code, state)
+				done <- err
+			}()
+			err := awaitLockWaitThenCommit(t, f.db, handover, done)
+
+			f.assertRefused(t, "last_admin", tokens, err, 2, 1)
+			assert.Equal(t, int64(1), countActiveAdmins(t, f.db), "exactly one active admin remains")
+			assert.Equal(t, models.RoleAdmin, f.user(t, y.ID).Role, "Y stays admin")
+			assert.Equal(t, int64(0), f.count(t, "role_audit_log", ""), "no audit row")
+			assert.Equal(t, int64(0), f.refreshTokens(t, y.ID), "no refresh token")
+		})
+	}
 }
 
 // openOIDCTestSQLite opens a SQLite file through the production connector

@@ -284,7 +284,9 @@ caller does not hold where the table names no role for that case (`ErrNotHeld`).
 No role change, deactivation or erasure can leave the installation without an active admin: a
 write that would is refused with 409 `LAST_ADMIN`, also when the last admin demotes or
 deactivates itself. Only active, non-erased users on the admin system role count; a custom role
-holding every permission does not.
+holding every permission does not. A concurrent handover of the admin role (a SCIM group patch
+that demotes one admin and promotes another) cannot strand the installation either: the locked
+row of the account being changed counts as an admin before the write whenever it is one (#513).
 
 ## Escalation rule
 

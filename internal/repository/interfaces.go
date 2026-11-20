@@ -66,7 +66,10 @@ type UserRoleMaintenance interface {
 	// non-locking SELECT, then locks those rows by primary key in id order
 	// (FOR UPDATE on MySQL/MariaDB, a plain read on SQLite) and returns the
 	// locked rows that still match, in id order. No locking statement filters
-	// on role, so no lock is taken through idx_users_role.
+	// on role, so no lock is taken through idx_users_role. The result can miss
+	// an admin committed by a concurrent transaction after the discovery read,
+	// so a guard that judges a target must also count the target's own locked
+	// row.
 	LockActiveAdmins() ([]models.User, error)
 	// ClearRoleIDOfErased sets role_id NULL on the soft-deleted users that
 	// reference roleID and returns how many rows it changed. Live users are

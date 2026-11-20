@@ -421,6 +421,41 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.NoError(t, err)
 		}},
 	}
+	if f.db.Dialector.Name() == "mysql" {
+		// #513: a handover X -> Y that commits while the patch active false of Y waits
+		// for the admin set. The write's admin set comes back empty; the
+		// locking read of Y must still count Y as the admin before it.
+		cases = append(cases, struct {
+			name string
+			run  func(t *testing.T)
+		}{"last_admin_race/after_handover", func(t *testing.T) {
+			x := f.seedUser(t, "x@x.test", models.RoleAdmin, true, scimPatchPassword)
+			y := f.seedUser(t, "y@x.test", models.RoleSales, true, scimPatchPassword)
+			f.login(t, y.Email, scimPatchPassword)
+			require.Equal(t, int64(1), f.liveRefreshTokens(t, y.ID))
+			versionBefore := f.user(t, y.ID).TokenVersion
+			rolesBefore := f.count(t, "role_audit_log", "")
+
+			deactivate := parsePatch(t, `{"Operations":[{"op":"replace","path":"active","value":false}]}`)
+			handover := holdAdminHandover(t, f.db, f.roleIDs, x.ID, y.ID)
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.svc.Patch(ctx, uintString(y.ID), deactivate)
+				done <- err
+			}()
+			err := awaitLockWaitThenCommit(t, f.db, handover, done)
+
+			require.ErrorIs(t, err, ErrSCIMLastAdmin)
+			assert.Equal(t, int64(1), countActiveAdmins(t, f.db), "exactly one active admin remains")
+			stored := f.user(t, y.ID)
+			assert.Equal(t, models.RoleAdmin, stored.Role, "Y stays admin")
+			assert.True(t, stored.IsActive, "Y stays active")
+			assert.Equal(t, versionBefore, stored.TokenVersion, "token_version is unchanged")
+			assert.Equal(t, int64(1), f.liveRefreshTokens(t, y.ID), "Y's refresh tokens stay unrevoked")
+			assert.Zero(t, f.count(t, "auth_audit_log", ""), "the refused write wrote no audit row")
+			assert.Equal(t, rolesBefore, f.count(t, "role_audit_log", ""), "no role audit row")
+		}})
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f.reset(t)
