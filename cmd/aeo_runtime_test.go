@@ -408,6 +408,10 @@ func TestAEORuntimeShutdown(t *testing.T) {
 
 		// Keep the connection held: only cancelling the owner's context can
 		// release StartRun and let the scheduler finish before the deadline.
+		// A boot pass of the stale bulk-operation sweep (its single sign-on
+		// attempt or sign-in audit prune) or of the webhook sender may also be
+		// among the waiters on the held connection; each is cancelled by its
+		// own Stop, so all of them leave within the one shared deadline (#485).
 		require.NoError(t, boot.stopWithin(t, 5*time.Second))
 		assert.Equal(t, 1, boot.logs.count(`"msg":"AEO scheduler stopped"`))
 		assert.Empty(t, boot.stub.authorizations())

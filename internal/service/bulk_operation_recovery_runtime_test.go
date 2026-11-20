@@ -6,9 +6,11 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,9 +20,11 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/glebarez/sqlite"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // recordingSweepRepo records every sweep the runtime asks for. Only
@@ -348,7 +352,7 @@ type recordingPruneRepo struct {
 	err     error
 }
 
-func (r *recordingPruneRepo) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
+func (r *recordingPruneRepo) PruneCreatedBefore(_ context.Context, before time.Time, limit int) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.befores = append(r.befores, before)
@@ -431,6 +435,17 @@ func TestBulkOperationRecoveryOIDCAttemptPruning(t *testing.T) {
 		assert.Zero(t, prune.calls())
 		assert.Nil(t, rt.oidcAttempts)
 	})
+
+	t.Run("stop cancels a prune waiting for the database", func(t *testing.T) {
+		held := openHeldPruneDatabase(t, &models.OIDCLoginAttempt{})
+		logger, out := capturingLogger()
+		logger.SetLevel(logrus.DebugLevel)
+		rt := NewBulkOperationRecoveryRuntime(newRecordingSweepRepo(), logger,
+			WithBulkRecoveryClock(func() time.Time { return now }),
+			WithBulkRecoveryTicker(newManualTicker().factory),
+			WithOIDCAttemptPruning(repository.NewOIDCLoginAttemptRepository(held.db)))
+		stopCancelsWaitingPrune(t, rt, held, out, "single sign-on attempt prune interrupted")
+	})
 }
 
 // recordingAuditPruneRepo records the prune calls of the sign-in audit log.
@@ -439,8 +454,82 @@ type recordingAuditPruneRepo struct {
 	inner recordingPruneRepo
 }
 
-func (r *recordingAuditPruneRepo) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
-	return r.inner.PruneCreatedBefore(before, limit)
+func (r *recordingAuditPruneRepo) PruneCreatedBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
+	return r.inner.PruneCreatedBefore(ctx, before, limit)
+}
+
+// heldPruneDatabase is a file-backed SQLite database with model migrated and
+// a pool of one connection, which the root holds until release (#485). A
+// prune started meanwhile waits in the pool for that connection.
+type heldPruneDatabase struct {
+	db      *gorm.DB
+	sqlDB   *sql.DB
+	waits   int64
+	release func()
+}
+
+func openHeldPruneDatabase(t *testing.T, model interface{}) *heldPruneDatabase {
+	t.Helper()
+	dsn := filepath.Join(t.TempDir(), "prune.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	db, err := gorm.Open(sqlite.Open(dsn), automationGormConfig())
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	require.NoError(t, db.AutoMigrate(model))
+
+	held, err := sqlDB.Conn(context.Background())
+	require.NoError(t, err)
+	var once sync.Once
+	return &heldPruneDatabase{
+		db:      db,
+		sqlDB:   sqlDB,
+		waits:   sqlDB.Stats().WaitCount,
+		release: func() { once.Do(func() { _ = held.Close() }) },
+	}
+}
+
+// awaitPruneWaiting returns once a statement waits for the held connection.
+// The bulk step is a fake, so the waiter is the prune.
+func (h *heldPruneDatabase) awaitPruneWaiting(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool { return h.sqlDB.Stats().WaitCount > h.waits },
+		5*time.Second, 5*time.Millisecond, "the prune never waited for the held connection")
+}
+
+// stopCancelsWaitingPrune starts rt while the connection is held, waits until
+// the prune waits for it, and asserts Stop cancels the prune under a 5 s
+// deadline and logs interrupted at info, with no warning at all.
+func stopCancelsWaitingPrune(t *testing.T, rt *BulkOperationRecoveryRuntime, held *heldPruneDatabase, out *lockedBuffer, interrupted string) {
+	t.Helper()
+	// Registered after the database's own cleanup, so it runs first: the
+	// connection goes back and the goroutine joins before the database and
+	// the logger are torn down, also when an assertion below failed.
+	t.Cleanup(func() {
+		held.release()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = rt.Stop(ctx)
+	})
+
+	rt.Start(context.Background())
+	held.awaitPruneWaiting(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	require.NoError(t, rt.Stop(ctx), "Stop cancels the prune waiting for the database")
+
+	var found int
+	for _, line := range logLines(t, out.String()) {
+		assert.NotEqual(t, "warning", line["level"], "no warning: %v", line)
+		if line["msg"] == interrupted {
+			found++
+			assert.Equal(t, "info", line["level"])
+		}
+	}
+	assert.Equal(t, 1, found, "one %q line", interrupted)
 }
 
 func TestBulkOperationRecoveryAuthAuditPruning(t *testing.T) {
@@ -515,5 +604,15 @@ func TestBulkOperationRecoveryAuthAuditPruning(t *testing.T) {
 		_, err := rt.Sweep(context.Background())
 		require.NoError(t, err)
 		assert.Zero(t, audit.inner.calls())
+	})
+	t.Run("stop cancels a prune waiting for the database", func(t *testing.T) {
+		held := openHeldPruneDatabase(t, &models.AuthAuditLog{})
+		logger, out := capturingLogger()
+		logger.SetLevel(logrus.DebugLevel)
+		rt := NewBulkOperationRecoveryRuntime(newRecordingSweepRepo(), logger,
+			WithBulkRecoveryClock(func() time.Time { return now }),
+			WithBulkRecoveryTicker(newManualTicker().factory),
+			WithAuthAuditPruning(repository.NewAuthAuditRepository(held.db), 90))
+		stopCancelsWaitingPrune(t, rt, held, out, "sign-in audit prune interrupted")
 	})
 }

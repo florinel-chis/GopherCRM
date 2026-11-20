@@ -399,7 +399,7 @@ func PruneAuthAuditLog(ctx context.Context, repo repository.AuthAuditRepository,
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		deleted, err := repo.PruneCreatedBefore(cutoff, authAuditPruneChunk)
+		deleted, err := repo.PruneCreatedBefore(ctx, cutoff, authAuditPruneChunk)
 		total += deleted
 		if err != nil {
 			return total, err

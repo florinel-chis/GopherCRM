@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -154,13 +155,15 @@ func (r *oidcLoginAttemptRepository) Claim(stateHash string, now time.Time) (*mo
 
 // PruneCreatedBefore deletes at most limit attempts created before before,
 // oldest id first: a plain read of the ids, then a delete by primary key that
-// repeats the predicate, so no range of created_at is locked.
-func (r *oidcLoginAttemptRepository) PruneCreatedBefore(before time.Time, limit int) (int64, error) {
+// repeats the predicate, so no range of created_at is locked. Both statements
+// run on ctx (#485).
+func (r *oidcLoginAttemptRepository) PruneCreatedBefore(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
+	db := r.db.WithContext(ctx)
 	var ids []uint
-	if err := r.db.Model(&models.OIDCLoginAttempt{}).
+	if err := db.Model(&models.OIDCLoginAttempt{}).
 		Where("created_at < ?", before.UTC()).
 		Order("id ASC").Limit(limit).
 		Pluck("id", &ids).Error; err != nil {
@@ -169,7 +172,7 @@ func (r *oidcLoginAttemptRepository) PruneCreatedBefore(before time.Time, limit 
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	result := r.db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.OIDCLoginAttempt{})
+	result := db.Where("id IN ? AND created_at < ?", ids, before.UTC()).Delete(&models.OIDCLoginAttempt{})
 	return result.RowsAffected, result.Error
 }
 

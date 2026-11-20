@@ -267,7 +267,7 @@ func PruneOIDCLoginAttempts(ctx context.Context, repo repository.OIDCLoginAttemp
 		if err := ctx.Err(); err != nil {
 			return total, err
 		}
-		deleted, err := repo.PruneCreatedBefore(cutoff, oidcAttemptPruneChunk)
+		deleted, err := repo.PruneCreatedBefore(ctx, cutoff, oidcAttemptPruneChunk)
 		total += deleted
 		if err != nil {
 			return total, err

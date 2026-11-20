@@ -1233,6 +1233,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Shutdown cancels a stale bulk-operation sweep prune that is waiting for the database (#485).**
+  The stale bulk-operation sweep's single sign-on attempt prune and sign-in audit prune now run
+  their statements on the sweep's context (`PruneCreatedBefore` takes a `context.Context`). Before,
+  a prune waiting for a pooled connection or a lock ignored `Stop`, used up the whole shared drain
+  deadline and made the later stops (webhook sender, AEO) report that they did not stop; this was
+  the cause of the intermittent `TestAEORuntimeShutdown` failure.
+
 - **The `docs/FORKING.md` §7.3 citation of the AutoMigrate list points at the list again (#464).**
   The conflict hot-spot table cited `internal/models/database.go:114-156`, lines inside an
   unrelated backfill helper; it now cites `internal/models/database.go:212-275`, the
