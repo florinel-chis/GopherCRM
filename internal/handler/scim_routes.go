@@ -6,13 +6,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// SetupSCIMRoutes mounts the SCIM 2.0 discovery documents (#468) on the
-// /scim/v2 group, which carries its own strict rate tier and the SCIM token
-// authentication, outside the API prefix.
-func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler) {
+// SetupSCIMRoutes mounts the SCIM 2.0 discovery documents (#468) and the
+// read of the Users resource (#469) on the /scim/v2 group, which carries its
+// own strict rate tier and the SCIM token authentication, outside the API
+// prefix.
+func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMUserHandler) {
 	router.GET("/ServiceProviderConfig", handler.ServiceProviderConfig)
 	router.GET("/Schemas", handler.Schemas)
 	router.GET("/ResourceTypes", handler.ResourceTypes)
+	router.GET("/Users", users.List)
+	router.GET("/Users/:id", users.Get)
 }
 
 // SetupSCIMTokenRoutes mounts the administration of the SCIM provider tokens

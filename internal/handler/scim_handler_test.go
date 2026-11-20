@@ -88,7 +88,7 @@ func TestSCIMDiscoveryDocuments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const base = "https://crm.example.test"
 	router := gin.New()
-	SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base+"/"))
+	SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base+"/"), NewSCIMUserHandler(nil, base))
 
 	t.Run("ServiceProviderConfig", func(t *testing.T) {
 		doc := getSCIMDocument(t, router, "/scim/v2/ServiceProviderConfig?attributes=patch")

@@ -1310,9 +1310,12 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
 
 ## SCIM 2.0 provider (FEATURES 1.15)
 
-`/scim/v2` is served outside the API prefix to identity providers (#468). This slice covers the
-provider tokens, the SCIM authentication and the three discovery documents; `/Users` and
-`/Groups` are later slices. See the *SCIM provisioning* section of `docs/AUTHORIZATION.md`.
+`/scim/v2` is served outside the API prefix to identity providers. #468 covers the provider
+tokens, the SCIM authentication and the three discovery documents; #469 the read of the Users
+resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /scim/v2/Users/{id}`).
+User writes (create, replace, patch, delete), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and
+a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
+`docs/AUTHORIZATION.md`.
 
 ### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
 - **Priority:** P0
@@ -1384,3 +1387,96 @@ provider tokens, the SCIM authentication and the three discovery documents; `/Us
   sales, support, customer and the custom role without the key; 2xx for the role holding only
   `settings.scim_manage`.
 - **Automation:** automated — Go: `TestSCIMTokenHandler`, `TestSCIMTokenStore{SQLite,MySQL}`, `TestSCIMRoutesWired`, `TestEveryRouteRequiresItsOwnKey`
+
+### TC-AUTH-069 — The Entra ID and Okta userName filters return the staff user
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A SCIM token; the single sign-on issuer `https://idp.example.test`; a staff
+  user with a `user_identities` row under that issuer (subject `sub-469`). Each request comes
+  from its own client address.
+- **Steps:**
+  1. `GET /scim/v2/Users?filter=userName+eq+"<email>"` (Entra ID shape).
+  2. `GET /scim/v2/Users?filter=userName%20eq%20%22<email>%22&startIndex=1&count=100` (Okta shape).
+  3. Repeat step 1 with the address in other ASCII letter case, and with
+     `urn:ietf:params:scim:schemas:core:2.0:User:userName EQ`.
+  4. `GET /scim/v2/Users/<id>`.
+- **Expected:** Steps 1 to 3: 200 `application/scim+json`, a ListResponse with `totalResults` 1,
+  `startIndex` 1, `itemsPerPage` 1. The resource has `id` (the user id as a string), `userName`
+  and one `emails` entry (the email, `work`, primary), `name.givenName`/`familyName`, `active`,
+  `externalId` `sub-469` and `meta.location` `PUBLIC_BASE_URL/scim/v2/Users/<id>`. Step 4: 200
+  with the same resource.
+- **Automation:** automated — Go: `TestSCIMUsersWired`, `TestSCIMUsers{SQLite,MySQL}`, `TestParseUserFilter`, `TestUserResource`
+
+### TC-AUTH-070 — The userName judge folds ASCII case only
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** Staff users `jose@…` and `kate@…`; MySQL 8 or MariaDB 10.11, where
+  `users.email` is `utf8mb4_unicode_ci`.
+- **Steps:**
+  1. Filter by an unknown address.
+  2. Filter by `"jose@… "` (trailing space), `"josé@…"`, `"joſe@…"` (U+017F LONG S) and
+     `"Kate@…"` written with U+212A KELVIN SIGN.
+- **Expected:** Each answers 200 with `totalResults` 0 and `"Resources":[]`, although the database
+  returns the stored row for every variant of step 2: the returned row is kept only when it is
+  equal byte for byte after folding `A`-`Z` alone.
+- **Automation:** automated — Go: `TestSCIMUsers{SQLite,MySQL}` (MySQL 8 and MariaDB), `TestUserNameMatches`, `TestSCIMUsersWired`
+
+### TC-AUTH-071 — Erased and customer accounts are never served
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A staff user, a customer user, a user erased through `DELETE /users/:id`
+  and a deactivated staff user.
+- **Steps:**
+  1. `GET /scim/v2/Users/<erased id>` and `/<customer id>`.
+  2. `GET /scim/v2/Users` without a filter.
+  3. Filter by the customer's email and by the erased user's former email.
+  4. `GET /scim/v2/Users/<deactivated id>`.
+- **Expected:** Step 1: 404 with
+  `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`.
+  Step 2: `totalResults` counts only the live non-customer users and no resource carries either
+  id. Step 3: `totalResults` 0. Step 4: 200 with `"active":false`.
+- **Automation:** automated — Go: `TestSCIMUsersWired`, `TestSCIMUsers{SQLite,MySQL}`
+
+### TC-AUTH-072 — Unsupported filters and malformed paging are SCIM 400s
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** A SCIM token.
+- **Steps:**
+  1. `GET /scim/v2/Users` with each filter: empty, `externalId eq "x"`, `emails.value eq "x"`,
+     `id eq "1"`, `userName ne "x"`, `userName co "x"`, `userName sw "x"`, `userName pr`,
+     `userName eq x`, `userName eq "a" and active eq true`, `(userName eq "a")`,
+     `userName eq "a" b`.
+  2. `GET /scim/v2/Users?count=abc` and `?startIndex=1.5`.
+  3. `GET /scim/v2/Users/abc`, `/0`, `/-1` and `/18446744073709551616`.
+- **Expected:** Step 1: 400 `application/scim+json` with `"scimType":"invalidFilter"` and
+  `"status":"400"`; no user is read. Step 2: 400 with `"scimType":"invalidValue"`. Step 3: the
+  SCIM 404, without the id echoed.
+- **Automation:** automated — Go: `TestSCIMUserHandler`, `TestParseUserFilter`, `TestParsePaging`, `TestSCIMUsersWired`
+
+### TC-AUTH-073 — The user list pages as RFC 7644 says
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** More than 100 visible users.
+- **Steps:**
+  1. `GET /scim/v2/Users`, then with `startIndex=2&count=2`, `startIndex=0`, `count=0`,
+     `count=-1` and `count=500`.
+  2. A `userName eq` filter that matches one user, with `startIndex=2`.
+- **Expected:** Step 1: id ascending; `startIndex` absent or below 1 is 1; `count` absent is 100,
+  negative 0, above 100 is 100; `count=0` gives `totalResults` with `"Resources":[]`;
+  `itemsPerPage` is the number of resources returned. Step 2: `totalResults` 1 and no resource.
+- **Automation:** automated — Go: `TestSCIMUsers{SQLite,MySQL}`, `TestSCIMUserHandler`, `TestParsePaging`
+
+### TC-AUTH-074 — externalId is the subject under the configured issuer, byte for byte
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** The issuer `https://idp.example.test`; users with an identity under it, one
+  under `https://other.example.test`, one under `https://idp.example.test ` (trailing space), one
+  with two subjects under it and one without any.
+- **Steps:**
+  1. `GET /scim/v2/Users`.
+  2. Clear the issuer setting and `OIDC_ISSUER_URL`, then repeat.
+- **Expected:** Step 1: `externalId` is the subject under the configured issuer, the lowest id's
+  of the two; it is omitted for the other issuer, the trailing-space issuer (also on MySQL 8 and
+  MariaDB, where `utf8mb4_bin` is PAD SPACE) and the user without one. Step 2: no resource has
+  `externalId`.
+- **Automation:** automated — Go: `TestSCIMUsers{SQLite,MySQL}`, `TestSCIMUsersWired`

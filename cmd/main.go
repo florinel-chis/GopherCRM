@@ -598,13 +598,17 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
-	// SCIM 2.0 provider (#468) on /scim/v2, outside the API prefix: the strict
+	// SCIM 2.0 provider (#468, #469) on /scim/v2, outside the API prefix: the strict
 	// tier first, so a throttled request writes no audit row, then the SCIM
 	// token authentication, which records every refusal with method scim.
 	scimTokenService := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), cfg.API.APIKeySecret)
 	scimGroup.Use(middleware.RateLimitStrictSCIM())
 	scimGroup.Use(middleware.SCIMAuth(scimTokenService, authAudit))
-	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL))
+	// The Users read (#469) takes externalId from the identities under the
+	// effective single sign-on issuer.
+	scimUserService := service.NewSCIMUserService(repository.NewSCIMUserRepository(models.DB), ssoSettings)
+	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL),
+		handler.NewSCIMUserHandler(scimUserService, cfg.Forms.PublicBaseURL))
 
 	// Protected routes: moderate rate limiting charged before authentication (#466)
 	protected := router.Group("")

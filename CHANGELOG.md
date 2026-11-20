@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 user read (#469).** With a SCIM token, `GET /scim/v2/Users/{id}` returns one core
+  User resource and `GET /scim/v2/Users` a ListResponse in id order, paged by `startIndex`
+  (1-based) and `count` (default and maximum 100, 0 for the total only), with the one filter
+  `userName eq "<value>"`; any other filter is 400 `invalidFilter` and a non-integer
+  `startIndex` or `count` 400 `invalidValue`, in the RFC 7644 error shape with the new
+  `scimType`. Erased and customer accounts are never served (404 by id); deactivated staff are
+  served with `active` false. The userName match is judged in Go on each row the database returns,
+  with ASCII-only case folding, so the MySQL/MariaDB collation of `users.email` cannot match a
+  padded, accented or Unicode-fold variant (U+017F LONG S, U+212A KELVIN SIGN) of a stored
+  address. `externalId` is the subject of the user's identity under the configured single sign-on
+  issuer, compared byte for byte. The routes are outside the OpenAPI document like the discovery
+  routes. No new setting, table or migration.
 - **SCIM 2.0 provider, first slice (#468).** `/scim/v2` is served outside the API prefix to
   identity providers. Administrators issue SCIM provider tokens through
   `GET`/`POST /api/v1/settings/scim/tokens` and revoke them with
@@ -24,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (or `token_invalid`); a strict tier (10 requests a minute, burst 5, per client address)
   answers 429 in the same shape before the authentication. The sign-in audit filters and the
   SPA's lists offer the new method and reasons. The discovery routes are excluded from the
-  OpenAPI document like `GET /health`. Users and Groups provisioning are later slices.
+  OpenAPI document like `GET /health`. User provisioning beyond the read in #469, and Groups, are
+  later slices.
 - **Administrator guide (#447).** `docs/user-guide/permissions-access/` holds five pages on roles,
   permissions and single sign-on: an overview, roles and permissions (the system roles per
   permission group, custom roles, assigning roles, API keys, the last-admin and escalation rules,
