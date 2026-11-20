@@ -141,21 +141,6 @@ func (failingUserLookup) GetByEmail(string) (*models.User, error) {
 	return nil, errors.New("connection refused")
 }
 
-// unfilteredAPIKeys looks a key up without the is_active filter of the real
-// repository, so ValidateAPIKey's own revocation check is reached.
-type unfilteredAPIKeys struct {
-	repository.APIKeyRepository
-	db *gorm.DB
-}
-
-func (r unfilteredAPIKeys) GetByKeyHash(hash string) (*models.APIKey, error) {
-	var key models.APIKey
-	if err := r.db.Where("key_hash = ?", hash).First(&key).Error; err != nil {
-		return nil, err
-	}
-	return &key, nil
-}
-
 func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 	e := newAuthAuditEnv(t, db)
 	var lastID uint
@@ -303,17 +288,16 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 		user := e.seedUser(t, "ak-revoked-0454@crm.example.test")
 		raw, key := e.seedAPIKey(t, user.ID, "revoked", nil)
 		require.NoError(t, e.db.Model(&models.APIKey{}).Where("id = ?", key.ID).Update("is_active", false).Error)
-		// The shipped repository filters revoked keys out of the lookup, so
-		// the real service records them as key_invalid.
+		var stored models.APIKey
+		require.NoError(t, e.db.First(&stored, key.ID).Error)
+		require.Nil(t, stored.LastUsedAt, "the seeded key has never been used")
 		before := e.maxAuditID(t)
-		apiKey(t, e.auth, raw, "req-ak-revoked")
-		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodAPIKey, AuthAuditOutcomeRefused, "key_invalid", 0, "req-ak-revoked")
-		// A lookup that returns it reaches the revocation check.
-		unfiltered := newAuthAuditAuthService(db, unfilteredAPIKeys{repository.NewAPIKeyRepository(db), db}, oidcTestAPIKeySecret)
-		before = e.maxAuditID(t)
-		err := apiKey(t, unfiltered, raw, "req-ak-revoked")
+		err := apiKey(t, e.auth, raw, "req-ak-revoked")
 		assert.Equal(t, "API key has been revoked", err.Error())
 		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodAPIKey, AuthAuditOutcomeRefused, "key_revoked", user.ID, "req-ak-revoked")
+		var after models.APIKey
+		require.NoError(t, e.db.First(&after, key.ID).Error)
+		assert.Nil(t, after.LastUsedAt, "a revoked key is never stamped as used")
 	})
 	t.Run("api_key_key_expired", func(t *testing.T) {
 		user := e.seedUser(t, "ak-expired-0454@crm.example.test")

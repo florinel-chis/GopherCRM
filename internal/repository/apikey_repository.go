@@ -30,7 +30,7 @@ func (r *apiKeyRepository) GetByID(id uint) (*models.APIKey, error) {
 
 func (r *apiKeyRepository) GetByKeyHash(keyHash string) (*models.APIKey, error) {
 	var apiKey models.APIKey
-	err := r.db.Preload("User").Where("key_hash = ? AND is_active = ?", keyHash, true).First(&apiKey).Error
+	err := r.db.Preload("User").Where("key_hash = ?", keyHash).First(&apiKey).Error
 	if err != nil {
 		return nil, err
 	}

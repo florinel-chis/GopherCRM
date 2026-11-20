@@ -353,9 +353,10 @@ or the full user agent. Neither are they logged.
   sign-on while `allow_password` is off), `internal_error`.
 - `refresh`: `token_invalid` (unknown, revoked, expired or already spent), `account_inactive`,
   `account_erased`, `unavailable` (the 503 `SESSION_REFRESH_UNAVAILABLE` path).
-- `api_key`: `key_invalid` (no such key), `key_expired`, `account_inactive`, `account_erased`
-  (the owner row is gone). `key_revoked` exists for a revoked key the lookup returns; the
-  shipped lookup only returns active keys, so a revoked key is recorded as `key_invalid`.
+- `api_key`: `key_invalid` (no live key with that hash), `key_revoked` (a revoked key,
+  `is_active` false, recorded with the owner's `user_id`), `key_expired`, `account_inactive`,
+  `account_erased` (the owner row is gone). A key that is both revoked and expired is recorded
+  as `key_revoked`.
 - `oidc`: the `error_code` of the refusal (`state_invalid`, `issuer_changed`, `id_token_missing`,
   `id_token_invalid`, `nonce_mismatch`, `claims_invalid`, `group_overage`, `groups_malformed`,
   `roles_malformed`, `subject_invalid`, `issuer_invalid`, `groups_unavailable`,

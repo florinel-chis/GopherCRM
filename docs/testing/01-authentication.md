@@ -1226,8 +1226,8 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
      locked, deactivated and linked accounts.
   2. Refresh with a live refresh token, an unknown one, and one whose owner was deactivated or
      erased meanwhile.
-  3. Call a protected route with `ApiKey` and an unknown, an expired key and the key of a
-     deactivated or erased owner; then with a bad `Bearer` token.
+  3. Call a protected route with `ApiKey` and an unknown, a revoked, an expired key and the key
+     of a deactivated or erased owner; then with a bad `Bearer` token.
   4. Finish a single sign-on that succeeds, one with an unknown state and one whose groups match
      no mapping entry.
   5. Send one request with an `X-Request-ID` of 100 characters or with a space.
@@ -1236,8 +1236,8 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
   account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
   `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`; `api_key`
-  `key_invalid`, `key_expired`, `account_inactive`, `account_erased` (the account's `user_id` when
-  the key was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
+  `key_invalid`, `key_revoked`, `key_expired`, `account_inactive`, `account_erased` (the
+  account's `user_id` when the key was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
   bad Bearer token adds no row. Every row carries the request id and the client's `/24`; the
   request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
   `audit_id`.
