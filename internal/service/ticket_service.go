@@ -49,8 +49,8 @@ type ticketService struct {
 // ticket.created in one transaction run by txManager (#345), and Update run
 // as one transaction with a locking read that enqueues ticket.updated when a
 // stored value changed (#408), also without automation events. Delete then
-// soft-deletes the ticket and enqueues ticket.deleted for the endpoints that
-// announced it in one transaction (#437).
+// soft-deletes the ticket and enqueues ticket.deleted for the active endpoints
+// subscribed to ticket.deleted in one transaction (#437, #531).
 func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) TicketServiceOption {
 	return func(s *ticketService) {
 		s.webhooks = repo
@@ -425,8 +425,8 @@ func (s *ticketService) Delete(id uint) error {
 	// open automation runs (record_deleted) and purges its notifications in the
 	// transaction that soft-deletes it (#242). With webhooks wired (#437) that
 	// transaction is a savepoint of one run by txManager, which then enqueues
-	// ticket.deleted for the endpoints that announced the ticket: the delete
-	// and its outbox rows commit together or not at all.
+	// ticket.deleted for the active endpoints subscribed to ticket.deleted: the
+	// delete and its outbox rows commit together or not at all.
 	if err := s.deleteTicket(id); err != nil {
 		if isNotFound(err) {
 			logger.Warn("Ticket deleted meanwhile")

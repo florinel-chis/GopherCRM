@@ -15,8 +15,7 @@ import (
 // changed a stored value, writes one webhook_deliveries row per active
 // subscribed endpoint inside its writing transaction (an outbox). Since #437 a
 // ticket delete and every erasure of a lead or a customer write a deleted
-// event, but only for the active subscribed endpoints that already hold a
-// created or updated delivery row of that record. A background runtime
+// event for every active subscribed endpoint (#531). A background runtime
 // delivers the committed rows. Both tables hold ids, event
 // types, statuses and timestamps only: a delivery carries the record id, and a
 // consumer fetches the record through the API, where erasure and visibility

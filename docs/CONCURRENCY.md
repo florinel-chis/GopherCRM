@@ -203,15 +203,16 @@ governed user write does the same around its nested erasure.
   (#395). Last, inside the unit, the erasure listener the shipped server wires (#437,
   `notifyListener`, `internal/repository/erasure_cascade.go:809`) writes the `lead.deleted` and
   `customer.deleted` webhook events of the leads and customers that were live when locked: a
-  plain read of the active `webhook_endpoints`, a plain `SELECT DISTINCT endpoint_id, record_id`
-  of their announcing `webhook_deliveries` rows, then one `INSERT` into `webhook_deliveries`. It
+  plain read of the active `webhook_endpoints`, then one `INSERT` into `webhook_deliveries` with a
+  row for every active endpoint subscribed to the deleted type, whether or not that endpoint
+  received an earlier event for the record; `webhook_deliveries` is not read (#531). It
   locks nothing, and a restarted or replayed attempt writes its rows again inside that attempt
   only.
 - **Order:** automation runs → leads → customers → users → refresh_tokens →
   password_reset_tokens → api_keys, ids ascending inside each table, after a discovery of the
   graph with plain reads (`discoverErasureGraph`, `internal/repository/erasure_cascade.go:497`);
   after the credential rows, deals and quotes text, then `quote_response_tokens` (#395).
-  The webhook outbox reads and insert come after all of them (#437).
+  The webhook outbox read and insert come after all of them (#437).
   The credential ids are read with a plain `SELECT … WHERE user_id IN (…)` after the `users`
   lock and then locked by primary key. No locking read filters on `leads.customer_id`,
   `customers.user_id`, `deleted_at` or a credential table's `user_id`: such a read locks an index

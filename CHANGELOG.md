@@ -275,11 +275,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `customer.deleted` for each lead and customer it found live and erased, at the end of the unit
   through an erasure listener on the lead, customer and user repositories, so the erasure
   protocol (discovery, lock order, re-check, restart) is unchanged and a rolled-back delete sends
-  nothing. A deleted event goes only to active endpoints subscribed to it that still hold a
-  created or updated delivery of that record (a delivery pruned after 30 days, or an endpoint
-  registered again, means no deleted event). An erasure sends exactly what a delete sends: the
-  thin body, no reason and no personal data. No migration: all nine types stored together take
-  134 of the 255 bytes of `webhook_endpoints.event_types`.
+  nothing. A deleted event goes to every active endpoint subscribed to it, whether or not that
+  endpoint received an earlier event for the record (#531). An erasure sends exactly what a
+  delete sends: the thin body, no reason and no personal data. No migration: all nine types stored
+  together take 134 of the 255 bytes of `webhook_endpoints.event_types`.
 - **OpenID Connect sign-in, SPA (#436).** `GET /auth/registration` also returns `sso_enabled`,
   the effective single sign-on switch (false when it cannot be read; nothing else of the
   configuration is exposed), so the login page needs no second request on the strict `/auth`
@@ -1064,6 +1063,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit and confirm answers are unchanged, and nothing retries automatically.
 
 ### Changed
+
+- **Webhooks: deleted events go to every endpoint subscribed to them (#531).** `lead.deleted`,
+  `customer.deleted` and `ticket.deleted` now go to every active endpoint subscribed to the event
+  type, whether or not that endpoint received an earlier event for the record: an endpoint
+  subscribed to the deleted types only, a record created before the endpoint was registered and a
+  record whose earlier deliveries were pruned all get the deleted event. The outbox no longer
+  reads the delivery log when it writes a deleted event: one read of the subscribed endpoints,
+  then one insert, in the same transaction as the delete or erasure. Which records produce a
+  deleted event, the event body and the transaction boundaries are unchanged. No migration.
 
 - **`migrate create` numbers a new migration as the newest existing version + 1 (#522).**
   `go run ./cmd/migrate -command create -name <name>` now takes the highest version in the

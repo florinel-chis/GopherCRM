@@ -3589,16 +3589,15 @@ commits. Code: `internal/models/webhook.go`,
   `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
   ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
   `company_id`, and bulk task status.
-- **Deleted events (#437).** `enqueueDeletedWebhookEvents` (`internal/service/webhook_outbox.go`) reads the active
-  endpoints subscribed to the deleted type (`ListActiveEndpointsFor`, a plain read), then the
-  announced pairs (`WebhookRepository.ListAnnouncedRecords`: one plain
-  `SELECT DISTINCT endpoint_id, record_id FROM webhook_deliveries WHERE endpoint_id IN ? AND
-  record_id IN ? AND event_type IN ?` over the created and updated types of the same entity, any
-  status), and inserts one `pending` row per (endpoint, record) pair found, one event id per
-  record, in the shape of the created rows; nothing found means no insert. So an endpoint gets a
-  deleted event only for a record it was told about, and only while that announcement is still in
-  the log (finished rows are pruned after 30 days; a re-created endpoint starts empty): a
-  documented limit, not a defect. `TicketService.Delete` with `WithTicketWebhooks` runs
+- **Deleted events (#437, #531).** `enqueueDeletedWebhookEvents` (`internal/service/webhook_outbox.go`)
+  refuses a type that is not one of the three deleted types, de-duplicates the record ids and
+  hands them to `enqueueWebhookEvents`: one plain read of the active endpoints subscribed to the
+  deleted type (`ListActiveEndpointsFor`), then one insert of one `pending` row per (endpoint,
+  record), one event id per record, in the shape of the created rows; no subscribed endpoint means
+  no insert. It does not read `webhook_deliveries`, so a deleted event goes to every active
+  endpoint subscribed to it, whether or not that endpoint received an earlier event for the record
+  (an endpoint subscribed to the deleted types only, a record created before the endpoint existed,
+  a record whose earlier deliveries were pruned). `TicketService.Delete` with `WithTicketWebhooks` runs
   `ticketRepo.WithTx(tx).Delete` (its own transaction becomes a savepoint) and then the
   `ticket.deleted` enqueue in one `txManager` transaction; the 404 pre-read stays outside it.
   Erasure writes `lead.deleted` and `customer.deleted` through a production listener option on

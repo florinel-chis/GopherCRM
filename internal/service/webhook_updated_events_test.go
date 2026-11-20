@@ -267,7 +267,12 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 
 		assert.Zero(t, env.updatedDeliveries(), "none of these is an update event")
 		assertFanOut(t, env, models.WebhookEventCustomerCreated, converted.ID, a.ID, c.ID)
-		assert.Equal(t, int64(2), env.allDeliveries(), "the conversion's customer.created rows only")
+		// The delete and the erasures write their deleted events for a, the
+		// one active endpoint subscribed to the deleted types (#531).
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, erasedLead.ID, a.ID)
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, erasedCustomer.ID, a.ID)
+		assertFanOut(t, env, models.WebhookEventTicketDeleted, deletedTicket.ID, a.ID)
+		assert.Equal(t, int64(5), env.allDeliveries(), "the conversion's customer.created rows and the deleted rows only")
 	})
 
 	t.Run("raw event_types bound", func(t *testing.T) {
@@ -444,6 +449,10 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 	})
 
 	t.Run("no row was left by any refusal", func(t *testing.T) {
-		assert.Zero(t, env.allDeliveries())
+		// The only rows are the customer.deleted rows of the erasure that
+		// prepared "customer update of a customer that is no longer live",
+		// one per endpoint (#531).
+		assert.Equal(t, int64(2), env.count(&models.WebhookDelivery{}, "event_type = ?", models.WebhookEventCustomerDeleted))
+		assert.Equal(t, int64(2), env.allDeliveries())
 	})
 }
