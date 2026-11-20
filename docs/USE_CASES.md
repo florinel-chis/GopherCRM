@@ -38,26 +38,27 @@ These caveats apply to every recipe that takes in leads through forms.
 
 - **Repeat enquiries do not create a new lead.** The newest live lead with the same email gets a
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
-  were (`applySubmissionLead`, `internal/service/form_service.go:1170-1240`). Matching is
-  installation-wide, not per form (`GetLatestByEmail`,
-  `internal/repository/lead_repository.go:301`). A rule that routes on `source` sees the form that
+  were (`formService.applySubmissionLead` (`internal/service/form_service.go`)). Matching is
+  installation-wide, not per form
+  (`leadRepository.GetLatestByEmail` (`internal/repository/lead_repository.go`)). A rule that routes on `source` sees the form that
   created the lead, not the form just submitted. To act on every enquiry, trigger on
   `lead_form_submitted`: it follows the `lead_created` or `lead_updated` of each finalised
   submission, carries the form and submission ids, can be narrowed with `trigger.form_id`, and lets
   conditions branch on that submission's own `utm_*` and `referrer_host` (#220).
 - **Form mail failures are recorded, not hidden.** Confirmation, follow-up and each team notification
   get their own delivery row, sent after the submission is stored and stamped `sent`, `failed`,
-  `log_only` (no `SMTP_HOST`) or `skipped` (`sendAndStamp`, `internal/service/form_mail_delivery.go:237-289`).
+  `log_only` (no `SMTP_HOST`) or `skipped` (`formService.sendAndStamp` (`internal/service/form_mail_delivery.go`)).
   Staff see the rows on the submission and in `GET /forms/deliveries`; admin and sales retry by hand.
 - **Double opt-in confirms an email address. It does not record consent.** A form with consent
   text refuses a submission without the consent flag
-  (`internal/service/form_service.go:833-835`). The submission row does not store the consent text
-  or its version (`FormSubmission`, `internal/models/form.go:465`). Keep your own record of what
+  (`formService.validateValues` (`internal/service/form_service.go`)). The submission row does not
+  store the consent text or its version (`FormSubmission` (`internal/models/form.go`)). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
   and IP addresses. Erasing a lead, customer or user scrubs the unlinked submissions whose `email`
-  matches that person's address, in the same erasure (`docs/DEVELOPMENT.md:1268`); every other
-  unlinked submission stays (`docs/DEVELOPMENT.md:1279`). Set `FORM_RETENTION_DAYS` (3 days at
+  matches that person's address, in the same erasure
+  (`docs/DEVELOPMENT.md`, "Deleting personal data", `scrubUnlinkedSubmissions`); every other
+  unlinked submission stays (`docs/DEVELOPMENT.md`, "matches no erased row"). Set `FORM_RETENTION_DAYS` (3 days at
   least, off by default) to remove spam and never-confirmed rows permanently at that age. The
   first boot with it set removes the existing backlog, so take a backup first if you may want
   those rows. Received and confirmed submissions are not purged. Until a separate frontend task
@@ -68,21 +69,21 @@ These caveats apply to every recipe that takes in leads through forms.
   visitor shares the proxy's address and one rate-limit bucket.
 - **A request cancelled before its commit writes nothing; one cancelled after it does not undo
   anything.** Public form submit and confirm, lead conversion and bulk status updates run on the
-  HTTP request's context (`docs/DEVELOPMENT.md:166-170`, #194). A visitor who closes the tab while
+  HTTP request's context (`docs/DEVELOPMENT.md`, "Request context (#107)", #194). A visitor who closes the tab while
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
-  before the response is written (`storeReceivedSubmission` and `ConfirmSubmission`,
-  `internal/service/form_service.go:927-960,1024-1068`), so a disconnect after the commit leaves the
+  before the response is written (`formService.storeReceivedSubmission` (`internal/service/form_service.go`) and
+  `formService.ConfirmSubmission` (`internal/service/form_service.go`)), so a disconnect after the commit leaves the
   submission stored and the token spent. A client that sees no response cannot conclude that
   nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
   status to be in `leads.conversion.allowed_statuses`. The seeded value is `contacted` and
-  `qualified` (`internal/models/configuration.go:268-281`), so a fresh form lead (status `new`)
+  `qualified`, from `DefaultConfigurations` (`internal/models/configuration.go`), so a fresh form lead (status `new`)
   must be worked before it can be converted. `leads.conversion.require_notes` can require notes,
   and `leads.conversion.auto_assign_owner` (on by default) makes the lead's owner the customer's
-  account manager (`ConvertToCustomer`, `internal/service/lead_service.go:755`). The UI offers
+  account manager (`leadService.ConvertToCustomer` (`internal/service/lead_service.go`)). The UI offers
   Convert only on the allowed statuses (#192). A lead without an email cannot be converted (400),
-  and one whose email already belongs to a customer gets a 409 (`internal/handler/lead_handler.go:873-875`).
+  and one whose email already belongs to a customer gets a 409 (`LeadHandler.ConvertToCustomer` (`internal/handler/lead_handler.go`)).
 
 ## 1. Small agency: website forms to leads
 
@@ -95,41 +96,44 @@ and turns some into deals and quotes.
 
 1. An admin builds a form: fields (exactly one email field, named `email`), consent text, notify
    emails, a default lead owner, allowed origins, double opt-in, and a follow-up mail that can carry
-   a content link (`Form`, `internal/models/form.go:172-276`; screens in `gocrm-ui/src/pages/forms/`).
-   The default owner must be an active admin or sales user (`checkLeadOwner`,
-   `internal/service/form_service.go:534`). Under **Submission action** the admin chooses what a
+   a content link (`Form` (`internal/models/form.go`); screens in `gocrm-ui/src/pages/forms/`).
+   The default owner must be an active admin or sales user
+   (`formService.checkLeadOwner` (`internal/service/form_service.go`)). Under **Submission action** the admin chooses what a
    submission creates: a lead (this recipe), a support ticket for the live customer with the
    submitted address (#213, #335), or nothing. A ticket form requires double opt-in and has no lead
    owner; the builder switches double opt-in on and refuses to save without it.
 2. The site embeds the snippet served from `GET /api/v1/forms/public/embed.js`
-   (`internal/handler/form_public_routes.go:26`; usage comment at the top of
+   (`SetupFormPublicRoutes` (`internal/handler/form_public_routes.go`); usage comment at the top of
    `internal/handler/assets/form_embed.js`). The alternatives are the hosted page at
-   `/api/v1/forms/public/:key/view` (`form_public_routes.go:30`) or a native POST. When the form
+   `/api/v1/forms/public/:key/view`, routed in the same function, or a native POST. When the form
    has an allowlist and you use the hosted page, the CRM's own host must be in the allowed origins,
-   because the hosted page submits from the CRM origin (`requestOrigin`,
-   `internal/handler/form_public_handler.go:250-257`; `originAllowed`,
-   `internal/service/form_service.go:658`). Test both embed paths from a real browser.
+   because the hosted page submits from the CRM origin
+   (`requestOrigin` (`internal/handler/form_public_handler.go`);
+   `originAllowed` (`internal/service/form_service.go`)). Test both embed paths from a real browser.
 3. Spam layers run in a fixed order: validation, then the HMAC time trap (3 seconds to 24 hours),
-   origin, honeypot, and optional reCAPTCHA v3 (`SubmitPublic`,
-   `internal/service/form_service.go:712-775`; `internal/forms/`). A spam verdict gets the same
+   origin, honeypot, and optional reCAPTCHA v3
+   (`formService.SubmitPublic` (`internal/service/form_service.go`); `internal/forms/`). A spam verdict gets the same
    response as a genuine submission and is stored with `status=spam`.
 4. With double opt-in, `GET /forms/public/confirm` renders a button and only the POST spends the
    token. The token claim, the lead write and the submission update are one transaction, and mail
-   goes out after the commit (`ConfirmSubmission`, `internal/service/form_service.go:1038`;
+   goes out after the commit (`formService.ConfirmSubmission` (`internal/service/form_service.go`);
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
-   every lead (`CanViewLead`, `internal/service/lead_visibility.go:29`). A form that creates
+   every lead (`CanViewLead` (`internal/service/lead_visibility.go`)). A form that creates
    leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
-   (`internal/models/form.go:356-358`, called from `internal/service/form_service.go:525`). A form
+   (`Form.ValidateDefinition` (`internal/models/form.go`), called from
+   `formService.prepare` (`internal/service/form_service.go`)). A form
    with lead creation turned off may have no owner; its submissions are stored and no lead is
-   written (`internal/service/form_service.go:942-949`).
+   written (`formService.storeReceivedSubmission` (`internal/service/form_service.go`) and
+   `formService.confirmInTransaction` (`internal/service/form_service.go`) check `CreateLead`).
 6. Automation reacts to `lead_created` (and `lead_updated` for repeats), or to `lead_form_submitted`
    for every finalised enquiry, optionally narrowed to one form with `trigger.form_id`. Typical
    steps: a condition on `source` or on the enquiry's `utm_campaign`, `create_task`, `notify`,
-   `wait`, a condition `status == new`, and a staff `send_email` (event and step names in
-   `internal/models/automation.go:31-64`; condition fields in
-   `internal/service/automation_condition.go:47-74`). Dry-run a rule before enabling it
+   `wait`, a condition `status == new`, and a staff `send_email` (event names such as
+   `AutomationEventLeadFormSubmitted` (`internal/models/automation.go`), step names such as
+   `AutomationStepCreateTask` (`internal/models/automation.go`); condition fields in
+   `automationConditionFields` (`internal/service/automation_condition.go`)). Dry-run a rule before enabling it
    (`internal/service/automation_dry_run.go`).
 7. Conversion to a customer, then a deal and a quote (`internal/service/lead_service.go`,
    `internal/service/deal_service.go`, `internal/service/quote_service.go`).
@@ -143,7 +147,8 @@ and turns some into deals and quotes.
 2. Set `SMTP_*`, `PUBLIC_BASE_URL` (confirmation links), `APP_BASE_URL` (password-reset links),
    `TRUSTED_PROXIES` and `CORS_ALLOWED_ORIGINS`. The shipped Compose files do not forward SMTP,
    `PUBLIC_BASE_URL`, automation or reCAPTCHA variables, and they hard-code localhost URLs
-   (`docker-compose.yml:54-65`, `docker-compose.sqlite.yml:37-48`). If you deploy with Compose,
+   (the `backend` service's `environment` block in `docker-compose.yml` and
+   `docker-compose.sqlite.yml`, with `APP_BASE_URL: http://localhost:${UI_PORT:-3000}`). If you deploy with Compose,
    apply `docker-compose.production.example.yml` with a second `-f` (see "Production override
    example" in [DOCKER.md](DOCKER.md)).
 3. Create the first admin with `create-admin` (`cmd/create-admin`), then create sales users from
@@ -151,7 +156,7 @@ and turns some into deals and quotes.
 4. Create one form per site with allowed origins, notify emails, a default owner and double
    opt-in. Embed it and submit once from a real browser.
 5. Write rules for created and updated leads, dry-run them, then enable them. The worker starts on
-   every instance by default (`AUTOMATION_ENABLED`, `internal/config/config.go:360`). Several API
+   every instance by default (`AUTOMATION_ENABLED`, `AutomationConfig.Enabled` (`internal/config/config.go`)). Several API
    instances sharing one MySQL/MariaDB database may all run it: run claims carry a heartbeat
    lease (#237, `docs/DEVELOPMENT.md`, "Run leases"). Keep replica clocks in sync and stop every
    instance before an upgrade; a SQLite deployment stays one process.
@@ -167,18 +172,18 @@ containers (backend and UI) with a fixed project name, port and subnet
 values. One shared installation does not work for several clients, for two reasons:
 
 - lead email matching is installation-wide, so enquiries from different clients' sites merge into
-  one lead (`internal/repository/lead_repository.go:301`);
-- AEO tracks exactly one brand per installation (`AEOProfile`, `internal/models/aeo.go:28-31`).
+  one lead (`leadRepository.GetLatestByEmail` (`internal/repository/lead_repository.go`));
+- AEO tracks exactly one brand per installation (`AEOProfile` (`internal/models/aeo.go`)).
 
 ### Gaps
 
 - Reassigning a lead from the lead list: `POST /leads/:id/assign` is routed (an admin on any lead, a
   sales user on its own, #185) and `leadsApi.assignLead` calls it
-  (`gocrm-ui/src/api/endpoints/leads.ts:137`), but no screen offers it yet. The API, `owner_id` on a
+  (`assignLead` in `gocrm-ui/src/api/endpoints/leads.ts`), but no screen offers it yet. The API, `owner_id` on a
   lead update (admin only) and the automation `assign_owner` step are the working paths today.
 - Attribution: each finalised enquiry stores its own `utm_source`, `utm_medium`, `utm_campaign`,
   `utm_term`, `utm_content` and `referrer_host` on its `form_submissions` row, apart from the lead's
-  `source` (`FormSubmission`, `internal/models/form.go:503-524`). A `lead_form_submitted` rule,
+  `source` (`FormSubmission` (`internal/models/form.go`)). A `lead_form_submitted` rule,
   narrowed to one form with `trigger.form_id`, can branch on them. The values come from hidden
   `utm_*` fields or the `page_url` query; the embed script does not fill the hidden fields from the
   host page. The `utm_*` lines also still land in the lead's notes. Do not map them into `source`.
@@ -209,9 +214,9 @@ values. One shared installation does not work for several clients, for two reaso
 - a multi-client portal, or client logins that show a client "their" leads;
 - nurture campaigns;
 - AEO as a ranking or traffic measure: it samples answers and matches brand mentions literally
-  (`DetectMentions`, `internal/aeo/analysis.go:42`);
+  (`DetectMentions` (`internal/aeo/analysis.go`));
 - client reports built with `npm run screenshots`: the AEO screenshot suite serves fixed fictional
-  fixtures, not your data (`gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15`);
+  fixtures, not your data (`mockAeoApi` in `gocrm-ui/e2e/screenshots/10-aeo.spec.ts`);
 - "assign from the lead list": no screen offers it.
 
 ## 2. Consultancy or professional services
@@ -227,24 +232,25 @@ lost deal.
 2. The lead is worked to `contacted` or `qualified`, then converted under the
    `leads.conversion.*` rules (shared caveats). If the lead links a company record, the link carries
    over to the customer when that company is still live; conversion does not create a company
-   (`internal/service/lead_service.go:856-869`). Companies are created and linked separately, with
-   normalised, unique domains (`normalizeCompany`, `internal/service/company_service.go:204`).
+   (`leadService.convertAttempt` (`internal/service/lead_service.go`)). Companies are created and linked separately, with
+   normalised, unique domains (`normalizeCompany` (`internal/service/company_service.go`)).
 3. A deal moves through five stages (`qualification`, `proposal`, `negotiation`, `won`, `lost`),
    with a stage-history row per change and a `lost_reason` kept while lost
    (`internal/service/deal_service.go`, `internal/models/deal_pipeline.go`).
 4. A quote is built from catalogue products standing in for service packages, printed from the
    browser (`gocrm-ui/src/pages/quotes/QuotePrint.tsx`) or emailed as plain text
    (`internal/service/quote_email.go`).
-5. A `deal_stage_changed` rule creates a follow-up task (`internal/models/automation.go:36`).
+5. A `deal_stage_changed` rule creates a follow-up task (`AutomationEventDealStageChanged` (`internal/models/automation.go`)).
 
 ### Setup
 
-- Set `deals.default_currency` in Settings (`internal/models/configuration.go:345`).
+- Set `deals.default_currency` in Settings (`DefaultConfigurations` (`internal/models/configuration.go`)).
 - Create the products (admin only) and the sales users. Configure SMTP for quote email.
 - Review the pipeline on the dashboard (`/` in the browser) and the deal board (`/deals/board`,
-  `gocrm-ui/src/routes/index.tsx:53,213`), both admin and sales. An integration reads the same
+  `gocrm-ui/src/routes/index.tsx`: `element: <Dashboard />` and `path: 'deals/board'`), both admin
+  and sales. An integration reads the same
   totals from the authenticated API at `GET /api/v1/dashboard/pipeline`
-  (`internal/handler/routes.go:226`).
+  (`SetupDashboardRoutes` (`internal/handler/routes.go`)).
 - The quote email subject reads "Quote Q-… from" followed by the `general.company_name` setting,
   or `GopherCRM` when it is blank (`internal/service/quote_email.go`, #292). The printed quote's
   heading shows the same setting (#291).
@@ -260,7 +266,7 @@ renewals are not modelled.
   edits it since #325); the email of a sent quote carries a single-use
   client accept/decline link that opens a public page of the web application (#382, #383; staff
   can still record the answer); acceptance does not move the deal; expiry is a manual status (acceptance is refused
-  once `valid_until` has passed, `internal/models/quote.go:92-95`); a PDF of the quote (download and email
+  once `valid_until` has passed, `quoteService.ChangeStatus` (`internal/service/quote_service.go`)); a PDF of the quote (download and email
   attachment) exists when the server has a browser binary, `chrome-headless-shell` or a full
   Chrome or Chromium (`QUOTE_PDF_CHROME_PATH`,
   #384), otherwise browser print only
@@ -286,20 +292,22 @@ engines describe its product against competitors.
 
 - **Demo and gated-content forms.** The follow-up mail replaces `{content_link}` with the form's
   content URL, and is sent only when the form has a follow-up subject (`recordAcceptedMail` and
-  `renderFormFollowUp`, `internal/service/form_mail_delivery.go:124-148,350-356`). With double
+  `renderFormFollowUp`: `formService.recordAcceptedMail` (`internal/service/form_mail_delivery.go`),
+  `renderFormFollowUp` (`internal/service/form_mail_delivery.go`)). With double
   opt-in, the follow-up goes out after confirmation, so the link reaches only a confirmed address.
 - **Routing.** Automation conditions can test a lead's `source`, `classification`, `company`,
-  `status` and `owner_id` (`internal/service/automation_condition.go:47-57`). A
+  `status` and `owner_id`, the lead entries of
+  `automationConditionFields` (`internal/service/automation_condition.go`). A
   `lead_form_submitted` rule can also test the triggering submission's `utm_source`,
   `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and `referrer_host`
-  (`internal/service/automation_condition.go:68-74`).
+  (`automationAttributionFields` (`internal/service/automation_condition.go`)).
 - **AEO.** One brand profile with aliases, owned domains and competitors
-  (`internal/models/aeo.go:28-31`). Prompts can be generated by the engine set in
-  `integration.aeo.generation_engine` (`internal/models/configuration.go:408`). Runs go to
+  (`AEOProfile` (`internal/models/aeo.go`)). Prompts can be generated by the engine set in
+  `integration.aeo.generation_engine` (`DefaultConfigurations` (`internal/models/configuration.go`)). Runs go to
   Anthropic, OpenAI, Gemini, Kimi, Perplexity or a custom OpenAI-compatible engine, each
   restricted by the egress policy (`internal/aeo/`, `docs/AEO_SECURITY.md`). The dashboard shows
   share of voice and citations (`gocrm-ui/src/pages/aeo/AEODashboard.tsx`). AEO read routes are
-  open to admin, sales and support; writes to admin and sales (`internal/handler/aeo_routes.go:17-18`).
+  open to admin, sales and support; writes to admin and sales (`SetupAEORoutes` (`internal/handler/aeo_routes.go`)).
 
 ### Setup
 
@@ -308,17 +316,19 @@ engines describe its product against competitors.
   `API_KEY_SECRET` (or `JWT_SECRET`, which it falls back to) orphans them
   (`docs/ROADMAP.md`, "Sensitive settings — follow-ups").
 - Review the scheduler: `AEO_SCHEDULE_ENABLED` defaults to `true` and `AEO_SCHEDULE_HOUR` to 6
-  (`internal/config/config.go:347-348`). Scheduled runs spend provider credit.
+  (`AEOConfig.ScheduleEnabled` (`internal/config/config.go`),
+  `AEOConfig.ScheduleHour` (`internal/config/config.go`)). Scheduled runs spend provider credit.
 - `AEO_QUERY_TIMEOUT_SECONDS` (default 60) needs raising for a slow self-hosted engine. A model
   server on your LAN needs an `AEO_EGRESS_LOCAL_ORIGINS` entry (`docs/AEO_SECURITY.md`).
-- Review the default model IDs (`internal/config/config.go:327-345`). Pinned IDs get retired, so
+- Review the default model IDs (the `AEO_<ENGINE>_MODEL` defaults in `Load` (`internal/config/config.go`)). Pinned IDs get retired, so
   prefer rolling aliases where the provider offers them.
 - Add reCAPTCHA keys if the forms attract spam (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`).
 
 ### Gaps
 
-- Lead `external_id` is stored (`internal/models/lead.go:67`), and `LeadService.GetByExternalID`
-  exists (`internal/service/lead_service.go:230`), but no route calls it: #215.
+- Lead `external_id` is stored (`Lead.ExternalID` (`internal/models/lead.go`)), and
+  `LeadService.GetByExternalID` exists
+  (`leadService.GetByExternalID` (`internal/service/lead_service.go`)), but no route calls it: #215.
 - AEO results can be exported as CSV or JSON through `GET /aeo/export` (#244) or the export
   buttons on the AEO dashboard and in the prompts answer drawer (#318); there is no threshold
   alerting, and scheduled client reports are a deliberate cut (#320, docs/ROADMAP.md).
@@ -339,17 +349,20 @@ history. This is a staff-maintained register, not a shared helpdesk.
 ### Existing flow
 
 - Companies with normalised domains; customers linked to a company and to an account manager.
-- Staff create tickets (support and admin, `internal/handler/ticket_handler.go:88`), assign them,
+- Staff create tickets (support and admin, `TicketHandler.Create` (`internal/handler/ticket_handler.go`)), assign them,
   write internal notes or public comments, and record a resolution
   (`internal/service/ticket_service.go`). A ticket has a title, description, status, priority,
   customer, assignee and resolution, and nothing else (`Ticket`, `internal/models/ticket.go`).
 - A customer user can read its own ticket at `GET /tickets/:id`, with internal comments removed
-  (`internal/handler/ticket_handler.go:384-404`), and `TicketDetail` renders it read-only
-  (`gocrm-ui/src/pages/tickets/TicketDetail.tsx:129-134`). `GET /tickets` and `GET /tickets/my`
-  refuse customers (`ticket_handler.go:154,316`), but `GET /customers/:id/tickets` lists the
+  (`TicketHandler.Get` (`internal/handler/ticket_handler.go`)), and `TicketDetail` renders it
+  read-only (`canOnRecord('tickets.update'` in `gocrm-ui/src/pages/tickets/TicketDetail.tsx`).
+  `GET /tickets` and `GET /tickets/my` refuse customers
+  (`TicketHandler.List` (`internal/handler/ticket_handler.go`),
+  `TicketHandler.ListMyTickets` (`internal/handler/ticket_handler.go`)), but `GET /customers/:id/tickets` lists the
   tickets of the customer record linked to the caller's account and refuses any other id
-  (`internal/handler/routes.go:151`, `ticket_handler.go:248-258`; tested in
-  `internal/integration/ticket_visibility_integration_test.go:560`). The UI has no customer
+  (`SetupTicketRoutes` (`internal/handler/routes.go`),
+  `TicketHandler.ListByCustomer` (`internal/handler/ticket_handler.go`); tested in
+  `runTicketCustomerVisibility` (`internal/integration/ticket_visibility_integration_test.go`)). The UI has no customer
   ticket navigation, create form or comment form.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
 - Bulk status updates, at most 100 ids, all or nothing (`internal/service/bulk_status_service.go`).
@@ -359,23 +372,25 @@ history. This is a staff-maintained register, not a shared helpdesk.
 
 - Seed companies and customers with a script against the REST API. There is no import screen.
 - Assign tickets deliberately. A ticket created without `assigned_to_id` is assigned to the
-  user who created it (`internal/handler/ticket_handler.go:108-111`), so an admin or an
+  user who created it (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)), so an admin or an
   integration key that omits the field becomes the assignee. Nothing distributes tickets among
   support users; the `tickets.auto_assign_support` setting that suggested otherwise was retired
   in #224.
 - Train staff on the difference between internal notes and public comments.
 - An integration that creates both customers and tickets **with one identity** uses the key of
   a dedicated user on a custom role holding `customers.create` and `tickets.create`
-  (`internal/handler/routes.go:42`, `internal/handler/ticket_handler.go:167`): no system role
+  (`SetupCustomerRoutes` (`internal/handler/routes.go`),
+  `TicketHandler.Create` (`internal/handler/ticket_handler.go`)): no system role
   other than admin holds both, and an API key has no scopes of its own, it acts with its owner's
-  permissions (`APIKey`, `internal/models/apikey.go:9`). Such a key can read nothing and must
+  permissions (`APIKey` (`internal/models/apikey.go`)). Such a key can read nothing and must
   name `assigned_to_id` on every ticket it creates. Setup, rotation and revocation:
   [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 
 ### Gaps before a shared desk
 
 - Support users see only tickets assigned to them, in the list and the detail
-  (`internal/handler/ticket_handler.go:195`). There is no unassigned or shared queue: #259.
+  (`TicketHandler.List` (`internal/handler/ticket_handler.go`),
+  `TicketHandler.Get` (`internal/handler/ticket_handler.go`)). There is no unassigned or shared queue: #259.
 - Ticket status and priority filters run server-side (#218, delivered): `GET /tickets` applies
   them before pagination, so totals are correct, and for support they only narrow the assigned
   tickets (`docs/FEATURES.md`, 5.5).
@@ -385,7 +400,7 @@ history. This is a staff-maintained register, not a shared helpdesk.
   tickets, can be mapped to an external system's ids (delivered, #212): `POST
   /customers/{id}/external-ids` and the exact lookup `GET /customers?source=&scope=&external_id=`.
 - Ticket title, description and resolution survive erasure, as business records
-  (`docs/DEVELOPMENT.md:1276`). When they name the person, redact them through `PUT /tickets/{id}`
+  (`docs/DEVELOPMENT.md`, "Business records. Free text may have been typed"). When they name the person, redact them through `PUT /tickets/{id}`
   before `DELETE /customers/{id}`, as the operator procedure for ticket text in
   `docs/DEVELOPMENT.md` (*Deleting personal data*) describes.
 - Ticket automation triggers are delivered (#242, rule screens #312): an admin rule, built in the
@@ -447,7 +462,7 @@ A provider that runs courses for individuals and corporate groups.
     on `source`. Trigger on `lead_form_submitted` with `trigger.form_id` set to the course's form
     instead: it starts for every finalised enquiry, a repeat included, and the run can branch on
     that enquiry's own `utm_*` values (#220).
-- **Limit:** automation schedules run daily in UTC (`internal/models/automation.go:12`).
+- **Limit:** automation schedules run daily in UTC (`AutomationTrigger.HourUTC` (`internal/models/automation.go`)).
 - **Do not promise:** sessions, capacity, booking or attendance tracking.
 
 ## 7. Poor fits
@@ -459,7 +474,7 @@ Each of these would need a different core model, not a recipe.
 | Field-service dispatch | No dispatch calendar, no offline mode and no attachments |
 | Recruiting | No attachments for CVs, and the pipeline links one deal to one customer, where recruiting needs many candidates per opening |
 | Nonprofit donor CRM | No recurring gifts, campaigns or nurture email to contacts |
-| Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`internal/models/aeo.go:28-31`) |
+| Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`AEOProfile` (`internal/models/aeo.go`)) |
 | Regulated health records | No field-level encryption, no read audit, and a single access token cannot be revoked on its own: only logout, a password change or a reset ends access tokens early, all of an account's at once (#236; `docs/ROADMAP.md`, "Access-token revocation beyond the session-ending events") |
 | An e-commerce order system inside the CRM | Products and quotes are sales tools; the shop platform stays the system of record for orders, stock and payment |
 
@@ -470,18 +485,18 @@ planning around an issue number.
 
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
-| Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts:137` | — |
-| Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `internal/service/form_service.go:1170-1240`; `internal/models/form.go:503-524` | #220 |
-| Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `internal/service/form_mail_delivery.go:451-489` | — |
-| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md:1268,1276,1279` | #214 |
+| Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts` (`assignLead`) | — |
+| Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `applyFormAttribution` (`internal/service/form_attribution.go`); `formService.applySubmissionLead` (`internal/service/form_service.go`); `FormSubmission` (`internal/models/form.go`) | #220 |
+| Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `formService.RetryDelivery` (`internal/service/form_mail_delivery.go`) | — |
+| Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md`, "Deleting personal data" (`scrubUnlinkedSubmissions`, "matches no erased row", "Operator procedure for ticket text") | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
-| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; `docker-compose.yml:41-65`; `docker-compose.sqlite.yml:25-48`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
-| Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `internal/models/apikey.go:9` | #211 |
+| Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; the `backend` service's `environment` block in `docker-compose.yml` and `docker-compose.sqlite.yml`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
+| Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `APIKey` (`internal/models/apikey.go`) | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
-| Route the lead `external_id` lookup | 3 | `internal/service/lead_service.go:230` | #215 |
-| Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `internal/handler/ticket_handler.go:195`; `docs/FEATURES.md` 5.5 | #259 |
+| Route the lead `external_id` lookup | 3 | `leadService.GetByExternalID` (`internal/service/lead_service.go`) | #215 |
+| Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `TicketHandler.List` (`internal/handler/ticket_handler.go`); `docs/FEATURES.md` 5.5 | #259 |
 | Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |
 | Nurture or customer email from automation | 1, 2, 3 | `docs/ROADMAP.md`, "Email to leads and customers" | #238 |
@@ -491,4 +506,4 @@ planning around an issue number.
 | Delivered: a task's deal link on the task form (admin and sales), task detail and deal detail. Still open: tasks created by earlier automation runs are not backfilled | 2 | `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #240 |
 | Delivered: ticket automation triggers (`ticket_created`, `ticket_updated`, `ticket_status_changed`, schedule) in the API and the rule form, rule list, run list and dry run (#312), cancelled on ticket delete. Still open: comment/SLA/overdue triggers and support run visibility | 4 | `internal/service/automation_validation.go`; `gocrm-ui/src/types/automation.ts`; `docs/ROADMAP.md`, "Follow-up automation — deliberate v1 cuts" | #242, #312 |
 | Ticket attachments | 4 | `internal/models/ticket.go` | #243 |
-| Delivered: AEO export of one run or a 7/30/90-day window as CSV or JSON (`GET /aeo/export`, admin, sales, support; at most 10,000 answers), with download buttons on the AEO dashboard and in the prompts answer drawer (#318). Still open: threshold alerting; scheduled or emailed client reports are a deliberate cut (#320, docs/ROADMAP.md); the screenshot suite stays fixtures only | 1, 3 | `internal/handler/aeo_export.go`; `gocrm-ui/src/pages/aeo/aeoExport.ts`; `docs/DEVELOPMENT.md`, "AEO export (#244)"; `gocrm-ui/e2e/screenshots/10-aeo.spec.ts:11-15` (fixtures only) | #244, #318, #320 |
+| Delivered: AEO export of one run or a 7/30/90-day window as CSV or JSON (`GET /aeo/export`, admin, sales, support; at most 10,000 answers), with download buttons on the AEO dashboard and in the prompts answer drawer (#318). Still open: threshold alerting; scheduled or emailed client reports are a deliberate cut (#320, docs/ROADMAP.md); the screenshot suite stays fixtures only | 1, 3 | `internal/handler/aeo_export.go`; `gocrm-ui/src/pages/aeo/aeoExport.ts`; `docs/DEVELOPMENT.md`, "AEO export (#244)"; `gocrm-ui/e2e/screenshots/10-aeo.spec.ts` (`mockAeoApi`, fixtures only) | #244, #318, #320 |

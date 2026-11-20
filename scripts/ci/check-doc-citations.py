@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that the code the fork and extension guides cite exists in the tracked tree.
+"""Check that the code the converted guides cite exists in the tracked tree.
 
 Citations by line number drift silently whenever the cited file changes, so
 the converted guides cite code by file plus symbol or anchor, and this check
@@ -43,14 +43,29 @@ import subprocess
 import sys
 from pathlib import Path
 
-# The guides whose line-number citations were converted to symbol citations.
-CONVERTED_FILES = ('docs/FORKING.md', 'docs/EXTENDING.md')
+# The guides whose line-number citations were converted to symbol citations:
+# the fork and extension guides (#487), then the use-case, provisioning and
+# smaller guides and the README (#488). docs/DOCKER.md keeps its Compose line
+# citations (docker-compose*.yml:N), which a Go test recomputes; they are not
+# .go/.ts/.tsx/.py/.sh/.sql citations, so rule c does not apply to them.
+CONVERTED_FILES = (
+    'docs/FORKING.md',
+    'docs/EXTENDING.md',
+    'docs/USE_CASES.md',
+    'docs/SERVER_PROVISIONING.md',
+    'README.md',
+    'docs/REFACTORING_GUIDE.md',
+    'docs/FEATURES.md',
+    'docs/DOCKER.md',
+    'docs/datamodel.md',
+    'docs/SETUP.md',
+)
 
 # Gitignored build outputs and local configuration the guides legitimately
 # cite. They exist only after a build or a local setup, never in a checkout,
 # so they are skipped rather than checked. `git check-ignore` is not used:
 # .git/info/exclude and the global excludes differ per machine.
-IGNORED_OUTPUTS = ('bin/gophercrm', 'gocrm-ui/.env')
+IGNORED_OUTPUTS = ('bin/gophercrm', 'gocrm-ui/.env', 'gocrm-ui/dist')
 
 BACKTICK_SPAN = re.compile(r'`([^`\n]+)`')
 LINE_SUFFIX = re.compile(r':[0-9][0-9,-]*$')

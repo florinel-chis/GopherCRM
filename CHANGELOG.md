@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name), every Go symbol cited next to a `.go` path must be declared in that file (read by the new
   go/parser helper `scripts/ci/docsymbols`), and the two guides may not cite code by line number.
   Its unit test runs in `make verify-hygiene`.
+- **More guides cite code by symbol (#488).** `docs/USE_CASES.md`, `docs/SERVER_PROVISIONING.md`,
+  `README.md`, `docs/REFACTORING_GUIDE.md`, `docs/FEATURES.md`, `docs/DOCKER.md`,
+  `docs/datamodel.md` and `docs/SETUP.md` no longer cite code, scripts or configuration by line
+  number: Go code is cited as file plus symbol, other files by a function name, step, key or short
+  quoted anchor. The Compose line citations in `docs/DOCKER.md` stay, because a test recomputes
+  them. The eight files join the citation check, the stale migration stems, short paths and
+  value-as-symbol citations it reported in them are fixed, and `gocrm-ui/dist` is allowed as a
+  build output.
 - **Administrator guide: testing single sign-on (#481).** A sixth page,
   `docs/user-guide/permissions-access/testing-single-sign-on.md`, tells an administrator how to
   test single sign-on against their own Entra ID tenant: the Entra ID setup by reference to the
