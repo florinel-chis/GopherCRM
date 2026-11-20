@@ -113,7 +113,9 @@ func stripAdminOnlyPermissionsOfRole(tx *gorm.DB, roleID uint) error {
 		beforeState, afterState := string(beforeJSON), string(afterJSON)
 		id := role.ID
 		entry := RoleAuditEntry{
-			CreatedAt:   t.NowFunc(),
+			// UTC, as every other role audit writer stamps it, so the row sorts
+			// in place in GET /roles/audit on a host outside UTC.
+			CreatedAt:   t.NowFunc().UTC(),
 			AuthMethod:  RoleAuditAuthMethodMigration,
 			Action:      RoleAuditRoleUpdated,
 			RoleID:      &id,

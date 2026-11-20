@@ -105,6 +105,11 @@ func insertStripGrants(t *testing.T, db *gorm.DB, roleID uint, grants []stripAud
 }
 
 func runAdminOnlyPermissionStrip(t *testing.T, db *gorm.DB, useMySQL bool) {
+	// The handle's clock runs three hours east of UTC, so an audit row stamped
+	// in local time instead of UTC is told apart on every host and driver.
+	previousNow := db.Config.NowFunc
+	t.Cleanup(func() { db.Config.NowFunc = previousNow })
+	db.Config.NowFunc = func() time.Time { return time.Now().In(time.FixedZone("UTC+3", 3*3600)) }
 	roles := NewRoleRepository(db)
 	// The custom roles are created after the first start, as the role API did
 	// before the keys became admin-only; their rows are written straight into
@@ -172,7 +177,9 @@ func runAdminOnlyPermissionStrip(t *testing.T, db *gorm.DB, useMySQL bool) {
 			assert.Equal(t, "migration", row.AuthMethod)
 			assert.Equal(t, expected.role.Name, row.RoleName)
 			assert.Nil(t, row.TargetUserID)
-			assert.False(t, row.CreatedAt.IsZero())
+			assert.WithinDuration(t, time.Now().UTC(), row.CreatedAt, time.Minute, "created_at is stamped in UTC")
+			_, offset := row.CreatedAt.Zone()
+			assert.Zero(t, offset, "created_at is stored in UTC, as roleAuditRepository.Create stores it")
 			assert.Equal(t, stripAuditState{Name: expected.role.Name, Description: expected.role.Description, Permissions: expected.grant},
 				decodeStripState(t, row.BeforeState), "before_state of role %d", *row.RoleID)
 			assert.Equal(t, stripAuditState{Name: expected.role.Name, Description: expected.role.Description, Permissions: withoutAdminOnly(expected.grant)},
