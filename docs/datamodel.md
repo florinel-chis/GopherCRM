@@ -990,8 +990,8 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 
 ### auth_audit_log
 
-One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback or
-a refresh; refused API keys are counted in one row per reason, `user_id`, client network and UTC
+One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback,
+a refresh or a refused SCIM authentication (#468, one row each); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
@@ -1002,7 +1002,7 @@ subject, a token, a code, a state, a nonce, a password, a full IP address or a f
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Written in UTC; index `idx_auth_audit_log_created_at` (the prune) |
-| method | varchar(16) | No | - | `password`, `oidc`, `refresh` or `api_key` |
+| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key` or `scim` (#468) |
 | outcome | varchar(16) | No | - | `success` or `refused` |
 | reason | varchar(64) | No | - | Stable reason code of a refusal (see [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log)); `''` on success |
 | user_id | bigint unsigned | Yes | NULL | The account, when the account row was found; index `idx_auth_audit_log_user_id`; no foreign key |
@@ -1015,6 +1015,24 @@ subject, a token, a code, a state, a nonce, a password, a full IP address or a f
 | user_agent_family | varchar(64) | No | - | `<browser> on <OS>` from a fixed vocabulary; `''` without a user agent |
 | attempts | bigint unsigned | No | 1 | How many outcomes the row counts: 1, or for an `api_key` row the refusals of its reason, account, network and minute (one upsert adds 1); the row keeps the first refusal's `request_id`, `user_agent_family` and `created_at` |
 | aggregate_key | varchar(191) | Yes | NULL | `api_key|<reason>|<user id or 0>|<client network>|<UTC minute>` on an aggregated API-key row, NULL otherwise; unique index `idx_auth_audit_log_aggregate_key` (NULLs never collide); internal, never returned or logged |
+
+### scim_tokens
+
+The bearer tokens an identity provider uses on `/scim/v2` (#468), one row per token. Only the
+HMAC-SHA256 of the token is stored, keyed like API keys (`API_KEY_SECRET`, else `JWT_SECRET`), in
+the `hmac$<hex>` form; the plaintext (`scim_` + 64 hex characters) is shown once, on creation. A
+token is revoked by stamping `revoked_at` and is never deleted. No foreign key (a token belongs to
+the installation, not to a user), no `updated_at`, no soft delete. Migration
+`20261126120000_add_scim_tokens`; on SQLite AutoMigrate creates the same table.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| name | varchar(100) | No | - | The label the administrator chose (trimmed, 1 to 100 characters) |
+| token_hash | varchar(128) | No | - | `utils.HashAPIKeyHMAC` of the token; unique index `idx_scim_tokens_token_hash`; never returned or logged |
+| created_at | datetime(3) | No | - | Written in UTC |
+| last_used_at | datetime(3) | Yes | NULL | The last successful SCIM authentication, best-effort |
+| revoked_at | datetime(3) | Yes | NULL | Set once by a conditional `UPDATE ... WHERE revoked_at IS NULL`; a second revoke keeps it |
 
 ## APIKey Model
 

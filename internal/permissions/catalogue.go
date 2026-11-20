@@ -30,6 +30,9 @@ const (
 	// settings.view and settings.update do not: the SSO rows are reserved
 	// and hidden from the generic /configurations endpoints.
 	SettingsSSOManage = "settings.sso_manage"
+	// SettingsSCIMManage opens the SCIM provider tokens
+	// (/settings/scim/tokens, #468).
+	SettingsSCIMManage = "settings.scim_manage"
 
 	// AuditSignInsView opens the sign-in audit log (GET /audit/sign-ins).
 	AuditSignInsView = "audit.sign_ins_view"
@@ -158,6 +161,7 @@ var catalogue = []Node{
 		leaf(SettingsView, "View settings"),
 		leaf(SettingsUpdate, "Change settings"),
 		leaf(SettingsSSOManage, "View and change single sign-on settings"),
+		leaf(SettingsSCIMManage, "Create, list and revoke SCIM provider tokens"),
 	),
 	group("audit", "Audit",
 		leaf(AuditSignInsView, "View the sign-in audit log"),

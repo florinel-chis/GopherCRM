@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 provider, first slice (#468).** `/scim/v2` is served outside the API prefix to
+  identity providers. Administrators issue SCIM provider tokens through
+  `GET`/`POST /api/v1/settings/scim/tokens` and revoke them with
+  `DELETE /api/v1/settings/scim/tokens/{id}`, guarded by the new permission
+  `settings.scim_manage` (held by the admin system role). A token (`scim_` + 64 hex characters)
+  is shown once; the new `scim_tokens` table stores only its HMAC under `API_KEY_SECRET`, plus
+  `last_used_at` and `revoked_at` (migration `20261126120000_add_scim_tokens`, AutoMigrate on
+  SQLite). With a valid `Authorization: Bearer` token, `GET /scim/v2/ServiceProviderConfig`,
+  `/scim/v2/Schemas` (the core User schema) and `/scim/v2/ResourceTypes` answer in
+  `application/scim+json`. A user's JWT or API key is refused there, and a SCIM token is refused
+  on the API. Every refusal is the same 401 in the RFC 7644 error shape and writes one sign-in
+  audit row with the new method `scim` and the new reasons `token_missing` and `token_revoked`
+  (or `token_invalid`); a strict tier (10 requests a minute, burst 5, per client address)
+  answers 429 in the same shape before the authentication. The sign-in audit filters and the
+  SPA's lists offer the new method and reasons. The discovery routes are excluded from the
+  OpenAPI document like `GET /health`. Users and Groups provisioning are later slices.
 - **Administrator guide (#447).** `docs/user-guide/permissions-access/` holds five pages on roles,
   permissions and single sign-on: an overview, roles and permissions (the system roles per
   permission group, custom roles, assigning roles, API keys, the last-admin and escalation rules,

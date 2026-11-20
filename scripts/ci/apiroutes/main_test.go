@@ -272,29 +272,39 @@ func TestSpecPath(t *testing.T) {
 	}
 }
 
-// The real router: every route is found and only /health sits outside the
-// base path.
+// The real router: every route is found and only /health and the three SCIM
+// discovery routes sit outside the base path.
 func TestExtractRepositoryRouter(t *testing.T) {
 	routes, err := Extract(filepath.Join("..", "..", ".."), DefaultSources)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Outside the base path: the health probe and the SCIM 2.0 discovery
+	// documents (#468), which carry their own token authentication rather
+	// than middleware.Auth.
+	outsideWant := map[string]bool{
+		"GET /health":                        true,
+		"GET /scim/v2/ServiceProviderConfig": true,
+		"GET /scim/v2/Schemas":               true,
+		"GET /scim/v2/ResourceTypes":         true,
+	}
 	outside := 0
 	for _, r := range routes {
 		if !r.Base {
 			outside++
-			if r.Method != "GET" || r.Path != "/health" {
+			if !outsideWant[r.Method+" "+r.Path] {
 				t.Errorf("unexpected route outside the base path: %s %s", r.Method, r.Path)
 			}
 		}
 	}
-	if outside != 1 || len(routes) < 100 {
+	if outside != len(outsideWant) || len(routes) < 100 {
 		t.Fatalf("got %d routes, %d outside the base path", len(routes), outside)
 	}
 	for _, r := range routes {
-		// /quotes/public/ is the client response link of a quote email (#382).
+		// /quotes/public/ is the client response link of a quote email (#382);
+		// /scim/v2/ is authenticated by SCIM tokens, not middleware.Auth.
 		public := r.Path == "/health" || strings.HasPrefix(r.Path, "/forms/public/") ||
-			strings.HasPrefix(r.Path, "/quotes/public/") ||
+			strings.HasPrefix(r.Path, "/quotes/public/") || strings.HasPrefix(r.Path, "/scim/v2/") ||
 			(strings.HasPrefix(r.Path, "/auth/") && r.Path != "/auth/logout" && r.Path != "/auth/change-password")
 		if r.Auth == public {
 			t.Errorf("%s %s: auth = %t", r.Method, r.Path, r.Auth)

@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; SCIM is later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; SCIM Users and Groups are later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -35,7 +35,7 @@ picker lists the roles of `GET /roles`; the role API stays available for the sam
 
 A permission is a leaf of the catalogue tree, keyed `<group>.<action>`. The tree is the
 `catalogue` variable in `internal/permissions/catalogue.go`; `permissions.Leaves()` returns the
-leaves in display order and `GET /permissions/catalogue` serves the tree. There are 76 leaves in
+leaves in display order and `GET /permissions/catalogue` serves the tree. There are 77 leaves in
 20 groups. Sixteen can be held at scope `own` as well as `all` (`AllowsOwn`). One,
 `tickets.view_own_customer`, is system-only (`SystemOnly`): only the customer system role holds
 it, and no custom role can.
@@ -54,6 +54,7 @@ it, and no custom role can.
 | `settings.view` | View settings | all |
 | `settings.update` | Change settings | all |
 | `settings.sso_manage` | View and change single sign-on settings | all |
+| `settings.scim_manage` | Create, list and revoke SCIM provider tokens | all |
 | `audit.sign_ins_view` | View the sign-in audit log | all |
 | `leads.view` | View leads | all, own |
 | `leads.create` | Create leads | all |
@@ -125,7 +126,7 @@ The four system roles are fixed matrices in code (`systemRoles` in
 `internal/permissions/system_roles.go`, read through `permissions.ForSystemRole`), pinned by
 `internal/permissions/testdata/system_roles.golden.json`. They are not stored in
 `role_permissions`, and they can be neither edited nor deleted (409 `SYSTEM_ROLE_IMMUTABLE`).
-admin holds every leaf that is not system-only at `all` (75 grants); sales holds 37, support 17
+admin holds every leaf that is not system-only at `all` (76 grants); sales holds 37, support 17
 and customer 4. A cell is the scope the role holds the key at, or `-` when it does not hold it.
 
 | Permission | admin | sales | support | customer |
@@ -142,6 +143,7 @@ and customer 4. A cell is the scope the role holds the key at, or `-` when it do
 | `settings.view` | all | - | - | - |
 | `settings.update` | all | - | - | - |
 | `settings.sso_manage` | all | - | - | - |
+| `settings.scim_manage` | all | - | - | - |
 | `audit.sign_ins_view` | all | - | - | - |
 | `leads.view` | all | own | - | - |
 | `leads.create` | all | all | - | - |
@@ -329,13 +331,16 @@ row, whose `attempts` is how many there were. The first refusal of that bucket w
 every later one adds 1 to `attempts` in the same statement (`INSERT ... ON DUPLICATE KEY UPDATE`
 on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique internal
 `aggregate_key`), so the row keeps the first refusal's `request_id`, `user_agent_family` and
-`created_at`. A successful API-key request writes nothing, and neither does a refused Bearer
-token, a 400, `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
+`created_at`. Since #468 each refused SCIM authentication on `/scim/v2` writes one row of its
+own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
+SCIM tier in front of the authentication bounds them. A successful API-key or SCIM request
+writes nothing, and neither does a refused Bearer token on the API, a 400,
+`POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
 Answers, status codes and messages are the same as before.
 
 **Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
-`api_key`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
+`api_key`, `scim`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
 account, when the account row was found, else NULL); `attempt_id` (the `oidc_login_attempts` row
 a callback claimed, else NULL); `request_id` (the request's `X-Request-ID`, stored only when it
 matches `^[A-Za-z0-9._:-]{1,64}$`, else empty); `subject_ref` (see below, else NULL);
@@ -367,6 +372,10 @@ or the full user agent. Neither are they logged.
   `is_active` false, recorded with the owner's `user_id`), `key_expired`, `account_inactive`,
   `account_erased` (the owner row is gone). A key that is both revoked and expired is recorded
   as `key_revoked`.
+- `scim` (#468): `token_missing` (no `Authorization` header, another scheme than `Bearer`, or an
+  empty token), `token_invalid` (no SCIM token has that hash: an unknown token, a user's JWT or
+  API key, a token altered in case or padding) and `token_revoked` (a revoked SCIM token). The
+  row never names the token.
 - `oidc`: the `error_code` of the refusal (`state_invalid`, `issuer_changed`, `id_token_missing`,
   `id_token_invalid`, `nonce_mismatch`, `claims_invalid`, `group_overage`, `groups_malformed`,
   `roles_malformed`, `subject_invalid`, `issuer_invalid`, `groups_unavailable`,
@@ -400,7 +409,8 @@ that `/24` or `/48` and however many replicas they reach: a burst of bogus keys 
 writes at most one `key_invalid` row a minute, and its `attempts` still counts every refusal.
 Password, refresh and single sign-on rows stay one per request; their number is bounded by the
 strict tier on `/auth` (10 requests a minute, burst 5, per client address, applied before the
-handler, so a 429 writes nothing). `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
+handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded the same
+way by the strict SCIM tier on `/scim/v2`. `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
 `gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
 test-only.
 
@@ -439,6 +449,76 @@ outcome, reason, user and time range, so the SQL below is optional):
    `attempt_id` and, on the `Single sign-on refused` line, `audit_id`, the row's `id`.
 4. To see whether the same person keeps failing, group by `subject_ref`:
    `SELECT subject_ref, reason, COUNT(*) FROM auth_audit_log WHERE method = 'oidc' AND outcome = 'refused' GROUP BY subject_ref, reason;`
+
+## SCIM provisioning
+
+Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RFC 7644) at
+`/scim/v2`, outside the API prefix, so an identity provider such as Entra ID or Okta can be
+pointed at `PUBLIC_BASE_URL/scim/v2`. This slice is authentication and discovery only: no user or
+group can be provisioned yet. `/Users`, `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
+SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets
+the router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
+
+**Tokens.** A SCIM provider token belongs to the installation, not to a user. It is
+`scim_` followed by the hex of 32 random bytes, shown once when it is created; `scim_tokens`
+stores only its HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it is unset), in the
+`hmac$<hex>` form of API keys, with a name, `created_at`, `last_used_at` and `revoked_at`.
+Rotating that secret invalidates every token. A token is revoked, never deleted.
+
+**Admin API.** Three routes under the API prefix, each guarded by `settings.scim_manage` (among
+the system roles only admin holds it; a custom role may):
+
+- `GET /settings/scim/tokens` lists every token, revoked ones included, newest first.
+- `POST /settings/scim/tokens` with `{"name": "..."}` (trimmed, 1 to 100 characters, else 400
+  `VALIDATION_ERROR` with `details.name`) answers 201 with `{token, scim_token}`; `token` is the
+  plaintext, never returned again.
+- `DELETE /settings/scim/tokens/:id` revokes and answers 200 with the token; revoking a revoked
+  token keeps its first `revoked_at`. An id that is not a positive integer is 400, an unknown id
+  404.
+
+A token's JSON is `id`, `name`, `created_at`, `last_used_at` and `revoked_at`: never the token
+and never its hash. There is no Settings screen for tokens yet.
+
+**Authentication.** Every `/scim/v2` request needs `Authorization: Bearer <token>` with a SCIM
+token (the scheme word is case-insensitive, the token is not trimmed). A user's JWT or API key is
+not a SCIM token and is refused, and a SCIM token is not accepted by the API. A successful
+request updates `last_used_at` best-effort (a failed write is logged without the token and never
+changes the answer) and writes no audit row. Every refusal is the same 401 whatever its reason,
+and writes one sign-in audit row with method `scim` and reason `token_missing`, `token_invalid`
+or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or hash is logged.
+
+**Rate limit.** `/scim/v2` has its own strict tier, charged before the authentication: 10
+requests a minute, burst 5, per client address, per process. A throttled request is answered
+429 without a token lookup or an audit row. `DISABLE_RATE_LIMIT=true` and the `gophercrm_e2e`
+build switch lift it as they lift the `/auth` tier.
+
+**Errors.** Errors of the SCIM group use the RFC 7644 §3.12 shape with the content type
+`application/scim+json`, for example
+`{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`;
+`status` is the HTTP status as a string. The 429 has `"status":"429"`.
+
+**Discovery.** With a valid token, three documents answer 200 with `application/scim+json`;
+query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/scim/v2`:
+
+- `GET /scim/v2/ServiceProviderConfig`: `patch` supported, `filter` supported with `maxResults`
+  100, `bulk` (with `maxOperations` and `maxPayloadSize` 0), `changePassword`, `sort` and `etag`
+  not supported, and one `oauthbearertoken` authentication scheme.
+- `GET /scim/v2/Schemas`: a `ListResponse` (`totalResults` 1, `startIndex` 1) with the core User
+  schema (`urn:ietf:params:scim:schemas:core:2.0:User`): `userName` (required, not case-exact,
+  unique on the server), `name` (`givenName`, `familyName`), `emails` (multi-valued: `value`,
+  `type` with canonical values `work`, `home`, `other`, and `primary`) and `active`, each with
+  every RFC 7643 §7 characteristic. Its `meta.location` is
+  `PUBLIC_BASE_URL/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User`.
+- `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
+  `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`.
+
+The advertised features describe what the Users slice will serve. These routes are outside the
+OpenAPI document (whose base path is the API prefix), like `GET /health`. The SPA's nginx does not
+proxy `/scim/v2`: SCIM clients talk to the backend origin directly. Regression roots:
+`TestSCIMRoutesWired` and `TestSCIMStrictTierWired` (`cmd`), `TestSCIMAuth` (`internal/middleware`),
+`TestSCIMTokenHandler` and `TestSCIMDiscoveryDocuments` (`internal/handler`),
+`TestSCIMTokenStore{SQLite,MySQL}` (`internal/service`), `TestSCIMTokenSchemaSQLite`
+(`internal/models`) and `TestSCIMTokensMigration{Files,}` (`cmd/migrate`).
 
 ## Least-privilege integration user
 
@@ -558,7 +638,9 @@ linking by `(iss, sub)` in `user_identities`, JIT provisioning and the role mapp
 on every sign-in. Since #436 the SPA offers the sign-in (see
 [SPA sign-in and settings](#spa-sign-in-and-settings-436) below). Since #451 an ID token without
 a `groups` claim has its groups read from the issuer's userinfo endpoint when the mapping uses
-groups (see Mapping below). SCIM is not implemented; that is later work. The rest of the note
+groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider tokens and the
+`/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
+provisioning users and groups through SCIM is not implemented yet, that is later work. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)

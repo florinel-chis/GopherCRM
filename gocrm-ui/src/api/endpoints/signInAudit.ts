@@ -6,7 +6,7 @@ import type { ApiResponseWithMeta } from '../client';
 // accepts as filters; signInAudit.test.ts holds them equal to the API
 // specification.
 
-export const SIGN_IN_AUDIT_METHODS = ['api_key', 'oidc', 'password', 'refresh'] as const;
+export const SIGN_IN_AUDIT_METHODS = ['api_key', 'oidc', 'password', 'refresh', 'scim'] as const;
 
 export const SIGN_IN_AUDIT_OUTCOMES = ['refused', 'success'] as const;
 
@@ -46,6 +46,8 @@ export const SIGN_IN_AUDIT_REASONS = [
   'subject_invalid',
   'token_exchange_failed',
   'token_invalid',
+  'token_missing',
+  'token_revoked',
   'unavailable',
   'userinfo_subject_mismatch',
 ] as const;

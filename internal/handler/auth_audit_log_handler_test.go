@@ -140,6 +140,20 @@ func TestAuthAuditLogHandler(t *testing.T) {
 		assert.Equal(t, time.UTC, svc.filter.To.Location())
 	})
 
+	t.Run("the SCIM method and its reasons are accepted (#468)", func(t *testing.T) {
+		for _, query := range []string{"?method=scim", "?reason=token_missing", "?reason=token_revoked",
+			"?method=scim&outcome=refused&reason=token_invalid"} {
+			svc := &fakeAuthAuditLogService{}
+			w := authAuditGet(newAuthAuditLogTestRouter(svc, asSystemRole("admin")), query)
+			require.Equal(t, http.StatusOK, w.Code, "%s: %s", query, w.Body.String())
+			require.Equal(t, 1, svc.calls, query)
+		}
+		svc := &fakeAuthAuditLogService{}
+		w := authAuditGet(newAuthAuditLogTestRouter(svc, asSystemRole("admin")), "?method=scim")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "scim", svc.filter.Method)
+	})
+
 	t.Run("no filter and empty values filter nothing", func(t *testing.T) {
 		svc := &fakeAuthAuditLogService{}
 		w := authAuditGet(newAuthAuditLogTestRouter(svc, asSystemRole("admin")), "?method=&outcome=&reason=&user_id=&from=&to=")

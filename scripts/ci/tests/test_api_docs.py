@@ -97,7 +97,10 @@ ROUTES = [
     {'method': 'GET', 'path': '/widgets/{id}', 'base': True, 'auth': True, 'responses': [401]},
     {'method': 'POST', 'path': '/widgets', 'base': True, 'auth': True, 'responses': [401]},
     {'method': 'POST', 'path': '/widgets/confirm', 'base': True, 'auth': False, 'responses': [429]},
-    {'method': 'GET', 'path': '/health', 'base': False, 'auth': False, 'responses': []},
+] + [
+    # The exclusions outside the base path: /health and the SCIM discovery.
+    {'method': method, 'path': path, 'base': False, 'auth': False, 'responses': []}
+    for method, path in sorted(gate.EXCLUDED_ROUTES)
 ]
 INPUTS = [
     {'method': 'GET', 'path': '/widgets/{id}', 'query': ['fields'], 'form': [], 'body': False, 'file': 'h.go', 'line': 1},
@@ -526,7 +529,8 @@ class RepositorySpecTests(unittest.TestCase):
         # reads it from the router source.
         documented = [{'method': m.upper(), 'path': p, 'base': True, 'auth': bool(op.get('security'))}
                       for p, m, op in gate.operations(spec)]
-        routes = documented + [{'method': 'GET', 'path': '/health', 'base': False, 'auth': False}]
+        routes = documented + [{'method': method, 'path': path, 'base': False, 'auth': False}
+                               for method, path in sorted(gate.EXCLUDED_ROUTES)]
         found = gate.check_spec(spec, routes, gate.closed_sets(gate.go_constants(ROOT)), (),
                                 gate.configured_base_path(ROOT))
         self.assertEqual(found, [])

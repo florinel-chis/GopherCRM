@@ -32,6 +32,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAuthAuditLogMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAuthAuditLogAttemptsMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAuthAuditLogAttemptsMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMTokensMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMTokensMigration'),
     }
     migration_roots = len(required)
     if migrations_only:
