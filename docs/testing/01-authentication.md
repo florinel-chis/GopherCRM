@@ -1307,3 +1307,80 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   (`attempts` 2) and for each reason and account. Password, refresh and single sign-on outcomes
   still write one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
+
+## SCIM 2.0 provider (FEATURES 1.15)
+
+`/scim/v2` is served outside the API prefix to identity providers (#468). This slice covers the
+provider tokens, the SCIM authentication and the three discovery documents; `/Users` and
+`/Groups` are later slices. See the *SCIM provisioning* section of `docs/AUTHORIZATION.md`.
+
+### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A fresh server; an admin with a password and an API key; one SCIM token and
+  a second one that was revoked. Each request below comes from its own client address.
+- **Steps:**
+  1. `GET /scim/v2/ServiceProviderConfig` without `Authorization`, with
+     `Bearer scim_<64 hex no token has>`, with the revoked token, with the admin's JWT and with
+     the admin's API key as `Bearer`.
+  2. Repeat with the valid token upper-cased and with a trailing space.
+  3. Read the new `auth_audit_log` rows and the server log.
+  4. Call `GET /api/v1/users` with the valid SCIM token as `Bearer`.
+- **Expected:** Steps 1 and 2: each 401 with content type `application/scim+json` and the body
+  `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`,
+  byte for byte the same. Step 3: one row per request, method `scim`, outcome `refused`,
+  `user_id` NULL, `attempts` 1, reasons `token_missing`, `token_invalid`, `token_revoked`,
+  `token_invalid`, `token_invalid` (and `token_invalid` for both step 2 variants); no log line
+  holds a presented token or the hash of a stored one. Step 4: 401 — a SCIM token is not a
+  credential of the API.
+- **Automation:** automated — Go: `TestSCIMRoutesWired`, `TestSCIMAuth`, `TestSCIMTokenStore{SQLite,MySQL}`
+
+### TC-AUTH-066 — The strict SCIM tier answers 429 before the authentication
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** A fresh server (the tier is per process); `DISABLE_RATE_LIMIT` unset.
+- **Steps:**
+  1. From one client address send six rapid `GET /scim/v2/ServiceProviderConfig` without a token.
+  2. Read the `scim` rows of `auth_audit_log`.
+- **Expected:** Requests 1 to 5 are 401; the sixth is 429 with content type
+  `application/scim+json` and body status `"429"`. Step 2: five rows; the 429 added none. The
+  `/auth`, moderate and generous tiers answer as before.
+- **Automation:** automated — Go: `TestSCIMStrictTierWired`, `TestSCIMAuth` (subtest `the strict SCIM tier answers before the authentication`)
+
+### TC-AUTH-067 — With a valid token the three discovery documents follow RFC 7643
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** A SCIM token; `PUBLIC_BASE_URL` set to the backend's public origin.
+- **Steps:**
+  1. `GET /scim/v2/ServiceProviderConfig`, `/scim/v2/Schemas` and `/scim/v2/ResourceTypes` with
+     `Authorization: Bearer <token>`, each also with a query string.
+  2. Read the token in `GET /api/v1/settings/scim/tokens`.
+- **Expected:** Each answers 200 with `application/scim+json`; query parameters change nothing.
+  ServiceProviderConfig: `patch` supported, `filter` supported with `maxResults` 100, `bulk`,
+  `sort`, `etag` and `changePassword` not supported, one `oauthbearertoken` scheme. Schemas and
+  ResourceTypes: ListResponses with `totalResults` 1 and `startIndex` 1; the User schema holds
+  `userName`, `name` (`givenName`, `familyName`), `emails` (`value`, `type`, `primary`) and
+  `active`, each with every §7 characteristic; the resource type is `User` at `/Users`.
+  `meta.location` starts with `PUBLIC_BASE_URL/scim/v2/`. Step 2: `last_used_at` is set.
+- **Automation:** automated — Go: `TestSCIMDiscoveryDocuments`, `TestSCIMRoutesWired`, `TestDiscoveryLocations`
+
+### TC-AUTH-068 — SCIM tokens are issued once, stored as a hash and revoked by an admin only
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** An admin; a sales, a support and a customer account; a custom role without
+  `settings.scim_manage` and one holding only it.
+- **Steps:**
+  1. As admin, `POST /api/v1/settings/scim/tokens` with `{"name":"Entra"}`, then with a blank and
+     a 101-character name.
+  2. Read the `scim_tokens` row; `GET /api/v1/settings/scim/tokens`.
+  3. `DELETE /api/v1/settings/scim/tokens/:id` twice, then with an unknown id and with `0`.
+  4. Call the three routes, with otherwise valid requests, as each other role and both custom
+     roles.
+- **Expected:** Step 1: 201 with `token` (`scim_` + 64 hex) and `scim_token`; the bad names are
+  400 `VALIDATION_ERROR` with `details.name`. Step 2: `token_hash` is the `hmac$` HMAC-SHA256 of
+  the token under `API_KEY_SECRET`; no column holds the token; the list is newest first and
+  carries `id`, `name`, `created_at`, `last_used_at`, `revoked_at` only. Step 3: 200 with
+  `revoked_at` set, the same `revoked_at` the second time, 404, 400. Step 4: 403 `FORBIDDEN` for
+  sales, support, customer and the custom role without the key; 2xx for the role holding only
+  `settings.scim_manage`.
+- **Automation:** automated — Go: `TestSCIMTokenHandler`, `TestSCIMTokenStore{SQLite,MySQL}`, `TestSCIMRoutesWired`, `TestEveryRouteRequiresItsOwnKey`

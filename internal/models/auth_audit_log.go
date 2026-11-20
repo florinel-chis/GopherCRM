@@ -15,8 +15,8 @@ const (
 )
 
 // AuthAuditLog is one sign-in outcome (#454): a password login, a single
-// sign-on callback, a refresh, or a failed API-key authentication. The row is
-// pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
+// sign-on callback, a refresh, a failed API-key authentication or a refused
+// SCIM authentication (#468). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
 // /48 (IPv6) network, a user-agent family from a fixed vocabulary and, for a
 // single sign-on refusal after the ID token verified, an HMAC of the issuer
 // and subject. It never holds an email, a name, a subject, a token, a code, a
@@ -33,7 +33,7 @@ type AuthAuditLog struct {
 	ID uint `gorm:"primarykey" json:"id"`
 	// Written explicitly in UTC.
 	CreatedAt time.Time `gorm:"not null;index:idx_auth_audit_log_created_at" json:"created_at"`
-	// password, oidc, refresh or api_key.
+	// password, oidc, refresh, api_key or scim.
 	Method string `gorm:"type:varchar(16);not null" json:"method"`
 	// success or refused.
 	Outcome string `gorm:"type:varchar(16);not null" json:"outcome"`

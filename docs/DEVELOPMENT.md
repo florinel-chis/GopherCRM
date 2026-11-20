@@ -355,6 +355,26 @@ that checks the PKCE verifier and the redirect URI; the MySQL root skips without
 mapping, overage, subject whitespace, JIT, erasure) are in
 [AUTHORIZATION.md](AUTHORIZATION.md#oidc-sign-in-435).
 
+**SCIM provider tokens and discovery (#468)** — `/scim/v2` is mounted in `setupRouter` outside
+the API prefix (`scimGroup`, passed to `setupDependencies`) with its own strict tier
+(`middleware.RateLimitStrictSCIM`, 10/min, burst 5, a 429 in the SCIM error shape) in front of
+`middleware.SCIMAuth`, then the three discovery documents (`internal/scim`,
+`internal/handler/scim_handler.go`). Tokens live in `scim_tokens` as `utils.HashAPIKeyHMAC`
+hashes (`internal/service/scim_token.go`); the lookup is by hash and the row is accepted only
+when `hmac.Equal` holds, because MySQL and MariaDB compare `token_hash` case-insensitively. Each
+refusal writes one `auth_audit_log` row with method `scim` (`token_missing`, `token_invalid`,
+`token_revoked`); neither a token nor a hash is logged. The admin API
+(`/settings/scim/tokens`, `settings.scim_manage`) is routed from `internal/handler/scim_routes.go`.
+Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` (`cmd`), `TestSCIMAuth`
+(`internal/middleware`), `TestSCIMTokenHandler`, `TestSCIMDiscoveryDocuments`
+(`internal/handler`), `TestSCIMTokenStore{SQLite,MySQL}` (`internal/service`, discovered by the
+auth checker), `TestSCIMTokenSchemaSQLite` (`internal/models`), and the migration roots
+`TestSCIMTokensMigrationFiles` (it holds the newest-migration assertion since #468, moved from
+`TestAuthAuditLogAttemptsMigrationFiles`) and `TestSCIMTokensMigration` (`cmd/migrate`), both
+required by the migrations workflow, `scripts/ci/check-go.py migration` and
+`scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
+[AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
+
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
 

@@ -238,6 +238,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		&OIDCLoginAttempt{},
 		// Sign-in audit log (#454): ids only, no foreign key.
 		&AuthAuditLog{},
+		// SCIM provider tokens (#468): a hash only, no foreign key.
+		&SCIMToken{},
 		&Ticket{},
 		&TicketComment{},
 		// Ticket comment mail deliveries (#219): ids only, no foreign key.

@@ -18,6 +18,7 @@ var authAuditMethods = map[string]bool{
 	AuthAuditMethodOIDC:     true,
 	AuthAuditMethodRefresh:  true,
 	AuthAuditMethodAPIKey:   true,
+	AuthAuditMethodSCIM:     true,
 }
 
 var authAuditOutcomes = map[string]bool{
@@ -27,7 +28,8 @@ var authAuditOutcomes = map[string]bool{
 
 // authAuditReasons is every reason code the service writes: the constants
 // above, the single sign-on refusal codes of oidcRefuse/oidcRefuseWith, the
-// 503 codes of ssoUnavailable and the owner-lock codes of the login.
+// 503 codes of ssoUnavailable, the owner-lock codes of the login and the SCIM
+// refusals.
 var authAuditReasons = map[string]bool{
 	"account_erased":            true,
 	"account_inactive":          true,
@@ -64,11 +66,13 @@ var authAuditReasons = map[string]bool{
 	"subject_invalid":           true,
 	"token_exchange_failed":     true,
 	"token_invalid":             true,
+	"token_missing":             true,
+	"token_revoked":             true,
 	"unavailable":               true,
 	"userinfo_subject_mismatch": true,
 }
 
-// IsAuthAuditMethod reports whether value is one of the four methods.
+// IsAuthAuditMethod reports whether value is one of the five methods.
 func IsAuthAuditMethod(value string) bool { return authAuditMethods[value] }
 
 // IsAuthAuditOutcome reports whether value is success or refused.

@@ -189,7 +189,9 @@ class ReleaseTests(unittest.TestCase):
                    'TestUserIdentitiesMigration',
                    'TestAuthAuditLogMigration',
                    'TestAuthAuditLogAttemptsMigrationFiles',
-                   'TestAuthAuditLogAttemptsMigration']]
+                   'TestAuthAuditLogAttemptsMigration',
+                   'TestSCIMTokensMigrationFiles',
+                   'TestSCIMTokensMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})

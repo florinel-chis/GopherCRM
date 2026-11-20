@@ -833,6 +833,21 @@ type AuthAuditRepository interface {
 	List(filter AuthAuditFilter, offset, limit int) ([]models.AuthAuditLog, int64, error)
 }
 
+// SCIMTokenRepository is the persistence of scim_tokens (#468): the bearer
+// tokens of /scim/v2, stored as HMAC hashes only.
+type SCIMTokenRepository interface {
+	Create(token *models.SCIMToken) error
+	// List returns every token, id descending.
+	List() ([]models.SCIMToken, error)
+	// FindByHash returns the token with that hash, revoked or not.
+	FindByHash(hash string) (*models.SCIMToken, error)
+	// Revoke sets revoked_at to at when it is NULL (one conditional UPDATE)
+	// and returns the row; an unknown id is gorm.ErrRecordNotFound.
+	Revoke(id uint, at time.Time) (*models.SCIMToken, error)
+	// TouchLastUsed sets last_used_at to at.
+	TouchLastUsed(id uint, at time.Time) error
+}
+
 type APIKeyRepository interface {
 	Create(apiKey *models.APIKey) error
 	GetByID(id uint) (*models.APIKey, error)

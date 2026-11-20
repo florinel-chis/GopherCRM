@@ -98,27 +98,36 @@ var routeMatrixPublic = map[string]bool{
 	"GET /api/v1/quotes/public/response":         true,
 	"POST /api/v1/quotes/public/response":        true,
 	"POST /api/v1/quotes/public/render":          true,
+	// SCIM 2.0 discovery (#468): outside the API prefix, behind the SCIM
+	// token authentication instead of Auth, and not permission-guarded.
+	"GET /scim/v2/ServiceProviderConfig": true,
+	"GET /scim/v2/Schemas":               true,
+	"GET /scim/v2/ResourceTypes":         true,
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was
 // frozen: the role API of #348, the quote PDF download of #384, the single
-// sign-on settings of #434 and the sign-in audit of #455. These routes are served and guarded, but the
+// sign-on settings of #434, the sign-in audit of #455 and the SCIM provider
+// tokens of #468. These routes are served and guarded, but the
 // golden cannot record them, so the replay and the recorded-versus-served
 // comparison leave them out. TestRouteMatrixCoversEveryProtectedRoute holds
 // the list to the router, the golden and permissions.RouteKeys.
 var routeMatrixAfterFreeze = map[string]bool{
-	"GET /api/v1/permissions/catalogue": true,
-	"GET /api/v1/roles":                 true,
-	"POST /api/v1/roles":                true,
-	"GET /api/v1/roles/audit":           true,
-	"GET /api/v1/roles/:id":             true,
-	"PUT /api/v1/roles/:id":             true,
-	"DELETE /api/v1/roles/:id":          true,
-	"POST /api/v1/roles/:id/clone":      true,
-	"GET /api/v1/quotes/:id/pdf":        true,
-	"GET /api/v1/settings/sso":          true,
-	"PUT /api/v1/settings/sso":          true,
-	"GET /api/v1/audit/sign-ins":        true,
+	"GET /api/v1/permissions/catalogue":       true,
+	"GET /api/v1/roles":                       true,
+	"POST /api/v1/roles":                      true,
+	"GET /api/v1/roles/audit":                 true,
+	"GET /api/v1/roles/:id":                   true,
+	"PUT /api/v1/roles/:id":                   true,
+	"DELETE /api/v1/roles/:id":                true,
+	"POST /api/v1/roles/:id/clone":            true,
+	"GET /api/v1/quotes/:id/pdf":              true,
+	"GET /api/v1/settings/sso":                true,
+	"PUT /api/v1/settings/sso":                true,
+	"GET /api/v1/audit/sign-ins":              true,
+	"GET /api/v1/settings/scim/tokens":        true,
+	"POST /api/v1/settings/scim/tokens":       true,
+	"DELETE /api/v1/settings/scim/tokens/:id": true,
 }
 
 // matrixRoleNameCounter makes every role name a request creates unique, so no
@@ -583,6 +592,10 @@ var matrixRequests = map[string]matrixRequest{
 	// nothing for restoreMatrixState to undo.
 	"GET /settings/sso": {},
 	"PUT /settings/sso": {body: fixedBody(matrixBody{})},
+	// SCIM provider tokens (after the freeze, see routeMatrixAfterFreeze).
+	"GET /settings/scim/tokens":        {},
+	"POST /settings/scim/tokens":       {body: fixedBody(matrixBody{"name": "Matrix SCIM token"})},
+	"DELETE /settings/scim/tokens/:id": {kind: "scim_token"},
 
 	// dashboard
 	"GET /dashboard/stats":               {},
@@ -980,6 +993,13 @@ func seedRouteMatrix(t *testing.T) *matrixFixtures {
 	create(hookTwo)
 	shared("webhook_endpoint", uid(hookOne.ID), uid(hookTwo.ID))
 
+	// SCIM provider tokens (#468): two usable tokens of the installation.
+	scimOne := &models.SCIMToken{Name: "Matrix SCIM one", TokenHash: "hmac$route-matrix-scim-one", CreatedAt: time.Now().UTC()}
+	scimTwo := &models.SCIMToken{Name: "Matrix SCIM two", TokenHash: "hmac$route-matrix-scim-two", CreatedAt: time.Now().UTC()}
+	create(scimOne)
+	create(scimTwo)
+	shared("scim_token", uid(scimOne.ID), uid(scimTwo.ID))
+
 	// roles: two unassigned custom roles without permissions. They are part
 	// of the snapshot, so the restore after a cell that renamed or deleted
 	// one puts it back under the same id, and removes every role a cell
@@ -1353,7 +1373,7 @@ func TestRouteMatrixCoversEveryProtectedRoute(t *testing.T) {
 		_, keyed := permissions.RouteKeys[method+" "+strings.TrimPrefix(path, routeMatrixPrefix)]
 		assert.True(t, keyed, "%s is on routeMatrixAfterFreeze without a permissions.RouteKeys entry", key)
 	}
-	assert.Len(t, routeMatrixAfterFreeze, 12)
+	assert.Len(t, routeMatrixAfterFreeze, 15)
 	for key := range routeMatrixPublic {
 		found := false
 		for _, route := range h.router.Routes() {
@@ -1502,7 +1522,7 @@ func TestRouteMatrixFixtureAnchors(t *testing.T) {
 			"label": "labels", "api_key": "api_keys", "notification": "notifications", "aeo_prompt": "aeo_prompts",
 			"aeo_run": "aeo_runs", "form": "forms", "form_submission": "form_submissions", "form_delivery": "form_mail_deliveries",
 			"automation_rule": "automation_rules", "automation_run": "automation_runs", "webhook_endpoint": "webhook_endpoints",
-			"role": "roles",
+			"role": "roles", "scim_token": "scim_tokens",
 		}
 		for kind, set := range fx.sets {
 			table, numeric := tables[kind]

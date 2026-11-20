@@ -25,7 +25,11 @@ import (
 // reason, user id, client network and UTC minute, whose attempts is the number
 // of refusals in that bucket; the first refusal writes the row and every later
 // one adds 1 to it in the same upsert statement, so its request id, user-agent
-// family and created_at stay the first refusal's. A row is pseudonymous: the method, the outcome, a
+// family and created_at stay the first refusal's. Each refused SCIM
+// authentication on /scim/v2 (#468) is one row of its own, method scim,
+// attempts 1 and user_id NULL, with reason token_missing, token_invalid or
+// token_revoked; they are not aggregated, because the strict rate tier in
+// front of the SCIM authentication bounds them. A row is pseudonymous: the method, the outcome, a
 // stable reason code, the user id when the account is known, the sign-in
 // attempt id, the request id (only when it matches
 // ^[A-Za-z0-9._:-]{1,64}$), an HMAC reference of a refused single sign-on
@@ -47,6 +51,7 @@ const (
 	AuthAuditMethodOIDC     = "oidc"
 	AuthAuditMethodRefresh  = "refresh"
 	AuthAuditMethodAPIKey   = "api_key"
+	AuthAuditMethodSCIM     = "scim"
 )
 
 // Outcomes of an auth_audit_log row.
@@ -72,6 +77,9 @@ const (
 	AuthAuditReasonKeyRevoked         = "key_revoked"
 	AuthAuditReasonKeyExpired         = "key_expired"
 	AuthAuditReasonSSODisabled        = "sso_disabled"
+	// SCIM refusals (#468); a bad SCIM token reuses token_invalid.
+	AuthAuditReasonTokenMissing = "token_missing"
+	AuthAuditReasonTokenRevoked = "token_revoked"
 )
 
 // Bounds of the stored claim values.

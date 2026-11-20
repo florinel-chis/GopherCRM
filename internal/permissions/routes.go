@@ -159,6 +159,9 @@ var RouteKeys = map[string]RouteKey{
 	"POST /configurations/:key/reset":        key(SettingsUpdate),
 	"GET /settings/sso":                      key(SettingsSSOManage),
 	"PUT /settings/sso":                      key(SettingsSSOManage),
+	"GET /settings/scim/tokens":              key(SettingsSCIMManage),
+	"POST /settings/scim/tokens":             key(SettingsSCIMManage),
+	"DELETE /settings/scim/tokens/:id":       key(SettingsSCIMManage),
 
 	// sign-in audit
 	"GET /audit/sign-ins": key(AuditSignInsView),

@@ -139,7 +139,7 @@ var authAuditReasonConstant = regexp.MustCompile(`\b(AuthAuditReason[A-Za-z]+)\s
 
 func TestAuthAuditReasonVocabulary(t *testing.T) {
 	reasons := AuthAuditReasons()
-	assert.Len(t, reasons, 37)
+	assert.Len(t, reasons, 39)
 	assert.True(t, sort.StringsAreSorted(reasons))
 	for _, reason := range reasons {
 		assert.True(t, IsAuthAuditReason(reason), reason)
@@ -150,7 +150,7 @@ func TestAuthAuditReasonVocabulary(t *testing.T) {
 	assert.False(t, IsAuthAuditMethod("password "))
 	assert.False(t, IsAuthAuditMethod("PASSWORD"))
 	assert.False(t, IsAuthAuditOutcome("Refused"))
-	assert.Equal(t, []string{"api_key", "oidc", "password", "refresh"}, AuthAuditMethods())
+	assert.Equal(t, []string{"api_key", "oidc", "password", "refresh", "scim"}, AuthAuditMethods())
 	assert.Equal(t, []string{"refused", "success"}, AuthAuditOutcomes())
 
 	files, err := filepath.Glob("*.go")

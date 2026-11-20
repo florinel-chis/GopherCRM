@@ -5054,6 +5054,7 @@ definitions:
         - oidc
         - refresh
         - api_key
+        - scim
         example: password
         type: string
       outcome:
@@ -7565,6 +7566,55 @@ definitions:
         description: Number of live users on the role, deactivated ones included.
         example: 3
         type: integer
+    type: object
+  internal_handler.SCIMTokenCreateRequest:
+    description: Body of POST /settings/scim/tokens.
+    properties:
+      name:
+        description: A label for the token, such as the identity provider's name;
+          trimmed, 1 to 100 characters.
+        example: Entra ID
+        type: string
+    type: object
+  internal_handler.SCIMTokenCreatedResponse:
+    description: A new SCIM provider token. token is shown only in this answer; only
+      its HMAC is stored.
+    properties:
+      scim_token:
+        allOf:
+        - $ref: '#/definitions/internal_handler.SCIMTokenResponse'
+        description: The stored token.
+      token:
+        description: 'The bearer token for the identity provider: scim_ followed by
+          64 hex characters. Shown once.'
+        example: scim_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        type: string
+    type: object
+  internal_handler.SCIMTokenResponse:
+    description: A SCIM provider token. Neither the token nor its hash is ever returned
+      after creation.
+    properties:
+      created_at:
+        description: UTC creation time (RFC 3339).
+        example: "2026-11-26T09:00:00Z"
+        type: string
+      id:
+        description: Token id.
+        example: 3
+        type: integer
+      last_used_at:
+        description: The last successful SCIM authentication with the token (best-effort);
+          null when never used.
+        example: "2026-11-26T10:00:00Z"
+        type: string
+      name:
+        description: The label given at creation.
+        example: Entra ID
+        type: string
+      revoked_at:
+        description: When the token was revoked; null while it is usable.
+        example: "2026-11-27T09:00:00Z"
+        type: string
     type: object
   internal_handler.SSORoleMappingEntry:
     description: 'One role mapping entry: an ID-token claim value that grants a role.'
@@ -10489,7 +10539,7 @@ paths:
   /audit/sign-ins:
     get:
       description: |-
-        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback or refresh, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh or refused SCIM authentication, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
         Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
         Permission: audit.sign_ins_view (among the system roles, admin only).
       parameters:
@@ -10512,6 +10562,7 @@ paths:
         - oidc
         - password
         - refresh
+        - scim
         in: query
         name: method
         type: string
@@ -10560,6 +10611,8 @@ paths:
         - subject_invalid
         - token_exchange_failed
         - token_invalid
+        - token_missing
+        - token_revoked
         - unavailable
         - userinfo_subject_mismatch
         in: query
@@ -22956,6 +23009,248 @@ paths:
       summary: List the role audit log
       tags:
       - users
+  /settings/scim/tokens:
+    get:
+      description: 'Requires settings.scim_manage (route guard, repeated in the handler);
+        only the admin system role holds it. Every SCIM provider token, revoked ones
+        included, newest first (id descending). Neither a token nor its hash is returned.
+        An identity provider sends a token as Authorization: Bearer <token> on /scim/v2,
+        which lies outside the API base path and is not described here.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The tokens, newest first
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_handler.SCIMTokenResponse'
+                  type: array
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold settings.scim_manage (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the tokens could not be read'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: List the SCIM provider tokens (admin)
+      tags:
+      - configurations
+    post:
+      consumes:
+      - application/json
+      description: 'Requires settings.scim_manage (route guard, repeated in the handler);
+        only the admin system role holds it. Issues a bearer token for an identity
+        provider''s SCIM client: scim_ followed by the hex of 32 random bytes. The
+        token is returned once, in this answer; only its HMAC-SHA256 under API_KEY_SECRET
+        (else JWT_SECRET) is stored, so rotating that secret invalidates every token.'
+      parameters:
+      - description: The token's label
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handler.SCIMTokenCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: The token, shown once, and the stored row
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.SCIMTokenCreatedResponse'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: the body is not a JSON object (details.body),
+            or name is blank after trimming or longer than 100 characters (details.name)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold settings.scim_manage (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the token could not be generated or stored'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Create a SCIM provider token (admin)
+      tags:
+      - configurations
+  /settings/scim/tokens/{id}:
+    delete:
+      description: Requires settings.scim_manage (route guard, repeated in the handler);
+        only the admin system role holds it. Stamps revoked_at; from then on the token
+        is refused on /scim/v2 (401, audit reason token_revoked). The row is kept.
+        Revoking a revoked token answers 200 with its original revoked_at.
+      parameters:
+      - description: Token ID
+        in: path
+        minimum: 1
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: The revoked token
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_handler.SCIMTokenResponse'
+              type: object
+        "400":
+          description: 'VALIDATION_ERROR: id is not a positive integer (details.id)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "401":
+          description: 'UNAUTHORIZED: missing or malformed Authorization header, or
+            an invalid, expired or revoked credential, or a deactivated or erased
+            account'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "403":
+          description: 'FORBIDDEN: the caller does not hold settings.scim_manage (Insufficient
+            permissions)'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "404":
+          description: 'NOT_FOUND: no token has this id'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "429":
+          description: 'TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute,
+            burst 30, per client IP); details.retry_after is 60s and no Retry-After
+            header is sent'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+        "500":
+          description: 'INTERNAL_ERROR: the token could not be revoked or read back'
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
+            - properties:
+                error:
+                  $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError'
+              type: object
+      security:
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      summary: Revoke a SCIM provider token (admin)
+      tags:
+      - configurations
   /settings/sso:
     get:
       description: 'Requires settings.sso_manage (route guard, repeated in the handler);

@@ -257,7 +257,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 	})
 
 	api := router.Group(cfg.API.Prefix)
-	stopAEO := setupDependencies(backgroundCtx, api, cfg)
+	scimGroup := router.Group("/scim/v2")
+	stopAEO := setupDependencies(backgroundCtx, api, scimGroup, cfg)
 
 	return router, stopAEO
 }
@@ -266,7 +267,7 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 // group and returns the function that drains the automation worker, the form
 // retention purge, the bulk operation sweep, the webhook sender and the AEO
 // runtime at shutdown, in that order, before main closes the database.
-func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
 	// Outbound webhooks (#345): one repository is the outbox of every create,
 	// update and delete path (lead, customer, ticket, form) and the store of
 	// the registry and the delivery log. It is built before the user, lead and
@@ -597,6 +598,14 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
+	// SCIM 2.0 provider (#468) on /scim/v2, outside the API prefix: the strict
+	// tier first, so a throttled request writes no audit row, then the SCIM
+	// token authentication, which records every refusal with method scim.
+	scimTokenService := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), cfg.API.APIKeySecret)
+	scimGroup.Use(middleware.RateLimitStrictSCIM())
+	scimGroup.Use(middleware.SCIMAuth(scimTokenService, authAudit))
+	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL))
+
 	// Protected routes: moderate rate limiting charged before authentication (#466)
 	protected := router.Group("")
 	protected.Use(middleware.RateLimitModerate()) // 120 req/min, burst 30, per client address
@@ -625,6 +634,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, c
 		handler.SetupNotificationRoutes(protected, notificationHandler)
 		handler.SetupWebhookRoutes(protected, webhookHandler)
 		handler.SetupAuthAuditRoutes(protected, handler.NewAuthAuditLogHandler(service.NewAuthAuditLogService(authAuditRepo)))
+		handler.SetupSCIMTokenRoutes(protected, handler.NewSCIMTokenHandler(scimTokenService))
 
 		protectedAuth := protected.Group("/auth")
 		{

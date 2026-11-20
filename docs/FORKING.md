@@ -21,7 +21,7 @@ moves faster than this page.
 
 Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:268`).
+wiring is in `setupDependencies` (`cmd/main.go:269`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -354,9 +354,9 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:369`), refresh and password-reset tokens (`cmd/main.go:333`), form confirmation
+>   (`cmd/main.go:370`), refresh and password-reset tokens (`cmd/main.go:334`), form confirmation
 >   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
->   encryption of sensitive settings (`cmd/main.go:316`, `internal/utils/secretbox.go`). Rotating
+>   encryption of sensitive settings (`cmd/main.go:317`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
@@ -372,7 +372,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 > - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. The setting has no other
 >   effect: the application issues no cookies, and authentication is header-only.
 > - **`TRUSTED_PROXIES`.** The rate limiter keys on `c.ClientIP()`
->   (`internal/middleware/rate_limit.go:185`). Behind a reverse proxy or CDN with no trusted
+>   (`internal/middleware/rate_limit.go:211`). Behind a reverse proxy or CDN with no trusted
 >   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
 >   noisy user locks out everyone on `/auth`.
 > - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
@@ -600,9 +600,9 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:268` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` in `cmd/main.go:269` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
-| the AutoMigrate list in `internal/models/database.go:212-275` | append your models at the end, in one block |
+| the AutoMigrate list in `internal/models/database.go:212-277` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
 | seeded settings in `internal/models/configuration.go` | a fork-specific key prefix, appended at the end |
 | `CHANGELOG.md` | a separate fork section, or a separate file |

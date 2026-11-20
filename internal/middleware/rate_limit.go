@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/scim"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -173,7 +174,32 @@ func (rl *rateLimiter) fullAt(lim *rate.Limiter, now time.Time) time.Time {
 	return now.Add(time.Duration(math.Ceil(wait*float64(time.Second))) + time.Millisecond)
 }
 
+// rateLimitResponder writes the 429 answer of a throttled request.
+type rateLimitResponder func(c *gin.Context)
+
+// respondAPIRateLimited is the 429 of the API tiers: the APIResponse envelope
+// with TOO_MANY_REQUESTS and details.retry_after.
+func respondAPIRateLimited(c *gin.Context) {
+	utils.RespondError(c, http.StatusTooManyRequests,
+		utils.ErrCodeTooManyRequests,
+		"Too many requests. Please try again later.",
+		gin.H{
+			"retry_after": "60s",
+		})
+}
+
+// respondSCIMRateLimited is the 429 of the SCIM tier: the RFC 7644 error body.
+func respondSCIMRateLimited(c *gin.Context) {
+	scim.WriteError(c, http.StatusTooManyRequests, "Too many requests. Please try again later.")
+}
+
+// middleware is the limiter with the API tiers' 429.
 func (rl *rateLimiter) middleware() gin.HandlerFunc {
+	return rl.middlewareWith(respondAPIRateLimited)
+}
+
+// middlewareWith is the limiter answering a throttled request with respond.
+func (rl *rateLimiter) middlewareWith(respond rateLimitResponder) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Skip rate limiting for CORS preflight requests — these are
 		// browser-generated and should not consume rate limit tokens.
@@ -193,12 +219,7 @@ func (rl *rateLimiter) middleware() gin.HandlerFunc {
 			utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit exceeded")
 		}
 
-		utils.RespondError(c, http.StatusTooManyRequests,
-			utils.ErrCodeTooManyRequests,
-			"Too many requests. Please try again later.",
-			gin.H{
-				"retry_after": "60s",
-			})
+		respond(c)
 		c.Abort()
 	}
 }
@@ -226,6 +247,18 @@ func RateLimitStrict() gin.HandlerFunc {
 		}
 	}
 	return RateLimit(10.0/60.0, 5)
+}
+
+// RateLimitStrictSCIM is the strict tier of /scim/v2 (#468): 10 requests per
+// minute with burst of 5 per client address, its own instance, bypassed by
+// DISABLE_RATE_LIMIT=true and by the e2e build switch like RateLimitStrict.
+// It runs before the SCIM authentication, so a throttled request writes no
+// audit row, and it answers 429 with the SCIM error body.
+func RateLimitStrictSCIM() gin.HandlerFunc {
+	if os.Getenv("DISABLE_RATE_LIMIT") == "true" || e2eRateLimitDisabled() {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return newRateLimiter(10.0/60.0, 5, rateLimitVisitorCapacity, time.Now).middlewareWith(respondSCIMRateLimited)
 }
 
 // RateLimitModerate returns a moderate rate limit middleware for general API endpoints.

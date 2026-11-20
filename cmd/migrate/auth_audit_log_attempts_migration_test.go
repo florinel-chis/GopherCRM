@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -33,8 +32,8 @@ var authAuditLogAttemptsColumns = []string{"attempts", "aggregate_key"}
 // TestAuthAuditLogAttemptsMigrationFiles needs no database: the pair exists
 // with its headers, the up half adds exactly the two columns and the unique
 // index, each behind an INFORMATION_SCHEMA probe, the down half drops only
-// them, the model declares the same, and the pair is the newest migration of
-// the directory, which latestMigrationVersion names.
+// them, and the model declares the same. The newest-migration check moved to
+// TestSCIMTokensMigrationFiles (#468).
 func TestAuthAuditLogAttemptsMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, authAuditLogAttemptsMigrationName+".up.sql"))
@@ -88,21 +87,9 @@ func TestAuthAuditLogAttemptsMigrationFiles(t *testing.T) {
 	assert.Equal(t, "type:varchar(191);uniqueIndex:"+authAuditLogAggregateIndex, tag)
 	assert.Equal(t, 191, models.AuthAuditAggregateKeyMaxLength)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAuthAuditLogMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, authAuditLogAttemptsMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, authAuditLogAttemptsVersion, version)
-	assert.Equal(t, authAuditLogAttemptsVersion, latestMigrationVersion)
+	// The newest-migration assertion moved to TestSCIMTokensMigrationFiles
+	// (#468).
+	assert.Less(t, authAuditLogAttemptsVersion, latestMigrationVersion, "#468 added a later migration")
 	assert.Greater(t, authAuditLogAttemptsVersion, authAuditLogAttemptsPreviousVersion)
 }
 
