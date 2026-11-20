@@ -419,7 +419,7 @@ strict tier on `/auth` (10 requests a minute, burst 5, per client address, appli
 handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded the same
 way by the strict SCIM tier on `/scim/v2`. `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
 `gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
-test-only.
+test-only. With `DISABLE_RATE_LIMIT` or the e2e switch set, `SERVER_MODE=production` stops startup.
 
 **Reading the log.** Since #455 `GET /audit/sign-ins` returns the rows, guarded by
 `audit.sign_ins_view`; among the system roles only admin holds it, and a custom role may. The
@@ -504,7 +504,8 @@ or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or ha
 **Rate limit.** `/scim/v2` has its own strict tier, charged before the authentication: 10
 requests a minute, burst 5, per client address, per process. A throttled request is answered
 429 without a token lookup or an audit row. `DISABLE_RATE_LIMIT=true` and the `gophercrm_e2e`
-build switch lift it as they lift the `/auth` tier.
+build switch lift it as they lift the `/auth` tier (the server refuses to start in production
+mode with either one set).
 
 **Errors.** Errors of the SCIM group use the RFC 7644 §3.12 shape with the content type
 `application/scim+json`, for example

@@ -1977,18 +1977,24 @@ to 120 req/min, burst 30. OPTIONS preflight requests are excluded. Limiting is k
 `c.ClientIP()`, which is why `TRUSTED_PROXIES` must be set correctly — otherwise a spoofed
 `X-Forwarded-For` defeats the limiter. With no trusted proxies every client behind one proxy
 shares the proxy's bucket; with a trusted proxy the rightmost untrusted forwarded address,
-IPv4 or IPv6, is the identity.
+IPv4 or IPv6, is the identity. The bucket key is that address for an IPv4 client (an
+IPv4-mapped IPv6 address counts as its IPv4 address) and its /64 network for an IPv6 client
+(`rateLimitClientKey`), so the addresses of one IPv6 /64 share one bucket.
 
 Visitor state is bounded and owns no goroutine:
 
 - **Per-instance capacity.** Every `RateLimit(...)` call — and therefore every tier and every
-  route group that constructs one — has its own token buckets and tracks at most 10,000 client
-  IPs. State is held in process memory, so limits are neither shared between replicas nor kept
+  route group that constructs one — has its own token buckets and tracks at most 10,000
+  clients. State is held in process memory, so limits are neither shared between replicas nor kept
   across restarts.
-- **Conservative overflow.** When an instance is full, a previously unseen IP gets the ordinary
-  429 envelope. Existing clients are never evicted to make room and keep spending their own
-  remaining tokens. A flood of distinct IPs can therefore lock out new clients of that tier until
-  records expire; it cannot buy anyone a fresh burst.
+- **Eviction at capacity.** When an instance is full and no record can be reclaimed, a new
+  client is still admitted: the record with the earliest reclaim time, the least recently active
+  client, is dropped to make room (one per admission, without a log line), so the count never
+  exceeds 10,000. A more recently active client keeps its bucket and its remaining tokens, and a
+  throttled one stays throttled. The dropped client's bucket may not have refilled, so it starts
+  again with a fresh burst on its next request. The reclaim time is the later of last-seen plus
+  five minutes and the refill-to-burst time; every live tier refills within 30 s, so the order is
+  the last-seen order.
 - **Idle expiry.** A record is reclaimed only after five minutes without a request (throttled
   requests count as activity) *and* once its bucket has refilled to the full burst. Dropping it
   is then indistinguishable from keeping it, so expiry never grants tokens early, even for a
@@ -2004,24 +2010,30 @@ relevant assertions (per-IP keys, spoofed-header resistance, 429 envelope) now e
 production `RateLimit`. The unused `config.RateLimitConfig` struct remains and has never
 configured the live tiers. There are no runtime knobs for capacity or idle expiry.
 
-`internal/middleware/rate_limit_test.go` covers capacity and repeated overflow
+`internal/middleware/rate_limit_test.go` covers admission and eviction at capacity
 (`TestRateLimitCapacity`), clock-driven refill and safe expiry (`TestRateLimitExpiry`), goroutine-free
 construction and disposal (`TestRateLimitLifecycle`), concurrent arrivals and cleanup under `-race`
 (`TestRateLimitConcurrency`), the 429/abort/OPTIONS contract (`TestRateLimitHTTPBehavior`),
 untrusted and trusted proxy identities including IPv6 (`TestRateLimitTrustedProxy`) and per-instance
-state (`TestRateLimitTierIsolation`). Expiry tests use an injected clock rather than sleeping.
+state (`TestRateLimitTierIsolation`) and the client keys with the IPv6 /64 grouping
+(`TestRateLimitClientKey`). Expiry tests use an injected clock rather than sleeping.
+`internal/middleware/rate_limit_live_test.go` adds `TestProductionRefusesRateLimitSwitch`, the
+startup refusal of the switches below in production mode.
 
 `DISABLE_RATE_LIMIT=true` bypasses **only the Strict tier**. The check lives inside
 `middleware.RateLimitStrict`, which returns a pass-through handler when the variable is set, so the
 moderate tier on authenticated traffic stays active regardless — including on `/auth/logout` and
 `/auth/change-password`, which are authenticated and therefore never saw the strict tier to begin
-with. That remains the behavior of ordinary builds.
+with. That remains the behavior of ordinary builds outside production mode. With
+`DISABLE_RATE_LIMIT=true` and `SERVER_MODE=production` the server refuses to start, whether the
+switch comes from the environment or from `.env` (`middleware.CheckRateLimitSwitch`, called in
+`main` before the database is opened).
 
 `make e2e` builds a separate disposable binary with the `gophercrm_e2e` build tag and sets
 `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true`. Together these opt functional browser tests out of all
 three live tiers, avoiding cross-test token-bucket state and dashboard 429s. Ordinary binaries
 ignore this switch, even if it is set. The tagged binary also keeps every tier enabled unless the
-switch is exactly `true`. Do not deploy the tagged test binary. `make verify-backend` tests live-tier
+switch is exactly `true`, and refuses to start with it in production mode. Do not deploy the tagged test binary. `make verify-backend` tests live-tier
 burst enforcement, the legacy strict-only switch, ordinary-build isolation, and the tagged opt-out;
 no browser assertion or retry setting is relaxed.
 
@@ -2382,7 +2394,8 @@ settings:
 - `API_PREFIX` (default `/api/v1`)
 - `TRUSTED_PROXIES` — comma-separated CIDRs; empty means trust none
 - `LOG_LEVEL`, `LOG_FORMAT` (`json` / `text`)
-- `DISABLE_RATE_LIMIT` — test-only escape hatch, never enable in production
+- `DISABLE_RATE_LIMIT` — test-only; lifts the strict tier. `true` stops startup when
+  `SERVER_MODE` is `production`
 - `AUTOMATION_ENABLED` (default true) — starts the follow-up automation worker and runs the
   boot-time stale sweep; the API and the event capture work without it, but no run starts or
   resumes and no stranded run is touched. It may be on for any number of replicas sharing one

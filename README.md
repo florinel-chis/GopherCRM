@@ -1261,10 +1261,12 @@ gophercrm/
   (`embed.js`, the definition and the hosted view). `DISABLE_RATE_LIMIT=true` bypasses the strict
   tier alone — the check lives inside `RateLimitStrict` — so the moderate tier still applies to
   test traffic.
-- **Rate limits are per process and per middleware instance.** Each instance tracks at most 10,000
-  client IPs; when it is full, previously unseen IPs get the ordinary 429 until idle records are
-  reclaimed (after five idle minutes, and only once the bucket has refilled). Limits are not shared
-  between replicas, and behind a proxy they depend on `TRUSTED_PROXIES`. See
+- **Rate limits are per process and per middleware instance.** Clients are counted per IPv4
+  address and per IPv6 /64 network. Each instance tracks at most 10,000 clients; when it is full, a
+  new client is still admitted and the least recently active record is dropped (that client
+  starts again with a fresh burst). Idle records are also reclaimed after five idle minutes once
+  the bucket has refilled. Limits are not shared between replicas, and behind a proxy they depend
+  on `TRUSTED_PROXIES`. `DISABLE_RATE_LIMIT=true` stops startup when `SERVER_MODE=production`. See
   [DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 - **Bulk operations are status-only.** Only `POST /leads|tickets|tasks/bulk/status` exist (see
   *Bulk operations* above); there is no bulk create, update or delete.

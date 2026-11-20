@@ -135,57 +135,74 @@ func requireTooManyRequestsEnvelope(t *testing.T, response *httptest.ResponseRec
 }
 
 func TestRateLimitCapacity(t *testing.T) {
-	t.Run("production RateLimit refuses unseen identities at capacity", func(t *testing.T) {
+	t.Run("production RateLimit admits unseen identities at capacity", func(t *testing.T) {
 		t.Setenv("GOPHERCRM_E2E_DISABLE_RATE_LIMIT", "")
 		// One token per hour: nothing refills or expires during the test.
-		router, _ := newRateLimitTestRouter(t, RateLimit(1.0/3600.0, 3), nil)
+		router, reached := newRateLimitTestRouter(t, RateLimit(1.0/3600.0, 3), nil)
 
 		for i := 0; i < rateLimitVisitorCapacity; i++ {
 			require.Equal(t, http.StatusNoContent,
 				sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(i), nil).Code, "visitor %d", i)
 		}
-		// Repeated overflow: every further unseen identity is throttled, not given a fresh bucket.
+		// Repeated arrivals at capacity: every further unseen identity is admitted.
 		for k := 0; k < 5; k++ {
-			requireTooManyRequestsEnvelope(t,
-				sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(rateLimitVisitorCapacity+k), nil))
+			require.Equal(t, http.StatusNoContent,
+				sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(rateLimitVisitorCapacity+k), nil).Code,
+				"unseen visitor %d at capacity", k)
 		}
-		// Existing clients are not evicted and spend only their own remaining tokens.
-		requireStatuses(t, router, rateLimitTestAddr(0), nil,
-			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
+		require.Equal(t, int64(rateLimitVisitorCapacity+5), reached.Load())
+		// Existing clients that were not evicted spend only their own remaining tokens.
 		requireStatuses(t, router, rateLimitTestAddr(rateLimitVisitorCapacity-1), nil,
+			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
+		requireStatuses(t, router, rateLimitTestAddr(rateLimitVisitorCapacity+4), nil,
 			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
 	})
 
-	t.Run("capacity holds until idle records are safely reclaimed", func(t *testing.T) {
+	t.Run("a full instance evicts the least recently active record", func(t *testing.T) {
+		clock := newRateLimitClock()
+		// Strict refill (one token per 6 s, burst 2) stays well inside the idle timeout.
+		rl := newRateLimiter(10.0/60.0, 2, 3, clock.Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
+		a, b, c, d, e := "192.0.2.1", "192.0.2.2", "192.0.2.3", "192.0.2.4", "192.0.2.5"
+
+		require.Equal(t, rateLimitAllowed, rl.admit(a))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, rl.admit(b))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, rl.admit(c))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, rl.admit(a)) // a has now spent its burst
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, rl.admit(d))
+
+		assert.False(t, isTracked(rl, b), "the least recently active record is evicted")
+		for _, key := range []string{a, c, d} {
+			assert.True(t, isTracked(rl, key), "expected %s to stay tracked", key)
+		}
+		require.Equal(t, 3, trackedVisitors(t, rl))
+
+		// The throttled, recently active client keeps its spent bucket.
+		requireTooManyRequestsEnvelope(t, sendRateLimitRequest(router, http.MethodGet, a+":1", nil))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, rl.admit(e))
+		assert.False(t, isTracked(rl, c))
+		assert.True(t, isTracked(rl, a), "a throttled client that was just active is not evicted")
+		require.Equal(t, 3, trackedVisitors(t, rl))
+		requireTooManyRequestsEnvelope(t, sendRateLimitRequest(router, http.MethodGet, a+":1", nil))
+	})
+
+	t.Run("idle records are reclaimed in bounded batches", func(t *testing.T) {
 		clock := newRateLimitClock()
 		rl := newRateLimiter(10.0/60.0, 5, rateLimitVisitorCapacity, clock.Now)
-		router, reached := newRateLimitTestRouter(t, rl.middleware(), nil)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
 
 		for i := 0; i < rateLimitVisitorCapacity; i++ {
 			require.Equal(t, rateLimitAllowed, rl.admit(rateLimitTestIP(i)))
 		}
 		require.Equal(t, rateLimitVisitorCapacity, trackedVisitors(t, rl))
 
-		for k := 0; k < 5; k++ {
-			ip := rateLimitTestIP(rateLimitVisitorCapacity + k)
-			requireTooManyRequestsEnvelope(t, sendRateLimitRequest(router, http.MethodGet, ip+":1", nil))
-			assert.False(t, isTracked(rl, ip), "rejected identity must not be tracked")
-		}
-		require.Equal(t, rateLimitVisitorCapacity, trackedVisitors(t, rl))
-		require.Zero(t, reached.Load(), "rejected requests must not reach the handler")
-
-		// The existing client keeps its remaining four tokens, then is throttled.
-		requireStatuses(t, router, rateLimitTestAddr(0), nil,
-			append(repeatStatus(http.StatusNoContent, 4), http.StatusTooManyRequests)...)
-
-		// Negative control: buckets have refilled, but nobody has been idle five minutes.
-		clock.Advance(rateLimitIdleTimeout - time.Second)
-		requireStatuses(t, router, rateLimitTestAddr(rateLimitVisitorCapacity+10), nil, http.StatusTooManyRequests)
-		require.Equal(t, rateLimitVisitorCapacity, trackedVisitors(t, rl))
-
-		// Positive control: once idle and full, a new identity is admitted after
-		// a bounded amount of reclamation.
-		clock.Advance(2 * time.Second)
+		// Once idle and full, a request reclaims at most rateLimitReclaimPerRequest records.
+		clock.Advance(rateLimitIdleTimeout + time.Second)
 		newcomer := rateLimitTestIP(rateLimitVisitorCapacity + 11)
 		requireStatuses(t, router, newcomer+":1", nil, http.StatusNoContent)
 		assert.True(t, isTracked(rl, newcomer))
@@ -225,39 +242,41 @@ func TestRateLimitExpiry(t *testing.T) {
 
 	t.Run("low-rate custom limiters are not reclaimed before their bucket refills", func(t *testing.T) {
 		clock := newRateLimitClock()
-		rl := newRateLimiter(1.0/3600.0, 2, 1, clock.Now)
+		rl := newRateLimiter(1.0/3600.0, 2, rateLimitVisitorCapacity, clock.Now)
 		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
-		first, second := "198.51.100.1", "198.51.100.2"
+		first, other := "198.51.100.1", "198.51.100.2"
 
 		requireStatuses(t, router, first+":1", nil,
 			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
 
 		clock.Advance(10 * time.Minute)
-		requireStatuses(t, router, second+":1", nil, http.StatusTooManyRequests)
+		requireStatuses(t, router, other+":1", nil, http.StatusNoContent)
+		assert.True(t, isTracked(rl, first), "idle but empty bucket must not be reclaimed")
 		requireStatuses(t, router, first+":1", nil, http.StatusTooManyRequests)
 
 		clock.Advance(51 * time.Minute) // one hourly token has refilled
 		requireStatuses(t, router, first+":1", nil, http.StatusNoContent, http.StatusTooManyRequests)
 
 		clock.Advance(90 * time.Minute) // idle, but only 1.5 of 2 tokens
-		requireStatuses(t, router, second+":1", nil, http.StatusTooManyRequests)
+		requireStatuses(t, router, other+":1", nil, http.StatusNoContent)
 		assert.True(t, isTracked(rl, first))
 
 		clock.Advance(35 * time.Minute) // bucket full
-		requireStatuses(t, router, second+":1", nil, http.StatusNoContent)
+		requireStatuses(t, router, other+":1", nil, http.StatusNoContent)
 		assert.False(t, isTracked(rl, first))
-		assert.True(t, isTracked(rl, second))
+		assert.True(t, isTracked(rl, other))
 		assert.Equal(t, 1, trackedVisitors(t, rl))
 	})
 
 	t.Run("a non-refilling bucket is never reclaimed", func(t *testing.T) {
 		clock := newRateLimitClock()
-		rl := newRateLimiter(0, 1, 1, clock.Now)
+		rl := newRateLimiter(0, 1, rateLimitVisitorCapacity, clock.Now)
 		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
 
 		requireStatuses(t, router, "198.51.100.3:1", nil, http.StatusNoContent, http.StatusTooManyRequests)
 		clock.Advance(24 * time.Hour)
-		requireStatuses(t, router, "198.51.100.4:1", nil, http.StatusTooManyRequests)
+		requireStatuses(t, router, "198.51.100.4:1", nil, http.StatusNoContent)
+		assert.True(t, isTracked(rl, "198.51.100.3"))
 		requireStatuses(t, router, "198.51.100.3:1", nil, http.StatusTooManyRequests)
 	})
 }
@@ -330,7 +349,7 @@ func TestRateLimitConcurrency(t *testing.T) {
 		assert.Equal(t, 1, trackedVisitors(t, rl))
 	})
 
-	t.Run("concurrent new-IP arrivals fill exactly the capacity", func(t *testing.T) {
+	t.Run("all 64 concurrent new-IP arrivals are admitted and fill exactly the capacity", func(t *testing.T) {
 		const capacity = 16
 		clock := newRateLimitClock()
 		rl := newRateLimiter(1, 5, capacity, clock.Now)
@@ -348,7 +367,7 @@ func TestRateLimitConcurrency(t *testing.T) {
 			}(g)
 		}
 		wg.Wait()
-		assert.Equal(t, int64(capacity), admitted.Load())
+		assert.Equal(t, int64(64), admitted.Load())
 		assert.Equal(t, capacity, trackedVisitors(t, rl))
 	})
 
@@ -384,6 +403,11 @@ func TestRateLimitConcurrency(t *testing.T) {
 			}
 		}()
 
+		// The churning clients use capacity-1 addresses, so together with the
+		// hot client they never exceed the capacity: records come and go only
+		// through clock-driven idle reclaim, never through eviction. Eviction
+		// hands an evicted client a fresh burst by design, so the token bound
+		// below holds only for a client that is never evicted.
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
@@ -406,7 +430,7 @@ func TestRateLimitConcurrency(t *testing.T) {
 			go func(g int) {
 				defer wg.Done()
 				for i := 0; i < 100; i++ {
-					sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(g*1000+i), nil)
+					sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr((g*100+i)%(capacity-1)), nil)
 				}
 			}(g)
 		}
@@ -420,13 +444,62 @@ func TestRateLimitConcurrency(t *testing.T) {
 		assert.LessOrEqual(t, trackedVisitors(t, rl), capacity)
 
 		// After the churn every record is idle and full, so cleanup admits newcomers
-		// until they alone fill the instance again.
+		// until they alone fill the instance again; a further newcomer evicts one.
 		clock.Advance(time.Hour)
 		for i := 0; i < capacity; i++ {
 			requireStatuses(t, router, rateLimitTestAddr(100000+i), nil, http.StatusNoContent)
 		}
 		assert.Equal(t, capacity, trackedVisitors(t, rl))
-		requireStatuses(t, router, rateLimitTestAddr(100000+capacity), nil, http.StatusTooManyRequests)
+		requireStatuses(t, router, rateLimitTestAddr(100000+capacity), nil, http.StatusNoContent)
+		assert.Equal(t, capacity, trackedVisitors(t, rl))
+	})
+
+	t.Run("churn of unseen addresses evicts under concurrency and stays bounded", func(t *testing.T) {
+		const capacity = 16
+		clock := newRateLimitClock()
+		rl := newRateLimiter(0.1, 3, capacity, clock.Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
+
+		var violations, refused atomic.Int64
+		var done atomic.Bool
+		var checker sync.WaitGroup
+		checker.Add(1)
+		go func() {
+			defer checker.Done()
+			for !done.Load() {
+				rl.mu.Lock()
+				if len(rl.visitors) > capacity || len(rl.visitors) != len(rl.queue) {
+					violations.Add(1)
+				}
+				rl.mu.Unlock()
+				runtime.Gosched()
+			}
+		}()
+
+		// Every request names an unseen address, so once the instance is full
+		// each admission evicts one record; every first request is admitted.
+		var wg sync.WaitGroup
+		for g := 0; g < 8; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				for i := 0; i < 100; i++ {
+					if i%10 == 0 {
+						clock.Advance(time.Second)
+					}
+					if sendRateLimitRequest(router, http.MethodGet, rateLimitTestAddr(g*1000+i), nil).Code != http.StatusNoContent {
+						refused.Add(1)
+					}
+				}
+			}(g)
+		}
+		wg.Wait()
+		done.Store(true)
+		checker.Wait()
+
+		assert.Zero(t, violations.Load(), "visitor state exceeded capacity or diverged from the queue")
+		assert.Zero(t, refused.Load(), "an unseen address was refused")
+		assert.Equal(t, capacity, trackedVisitors(t, rl))
 	})
 }
 
@@ -481,9 +554,9 @@ func TestRateLimitTrustedProxy(t *testing.T) {
 		assert.Equal(t, 1, trackedVisitors(t, rl))
 		assert.True(t, isTracked(rl, "192.0.2.40"))
 
-		// A direct IPv6 peer is keyed on its own address, not on its spoofed header.
+		// A direct IPv6 peer is keyed on its own /64 network, not on its spoofed header.
 		requireStatuses(t, router, "[2001:db8::99]:443", spoofs[0], http.StatusNoContent)
-		assert.True(t, isTracked(rl, "2001:db8::99"))
+		assert.True(t, isTracked(rl, "2001:db8::/64"))
 	})
 
 	t.Run("trusted proxies select the forwarded client, including IPv6", func(t *testing.T) {
@@ -496,13 +569,13 @@ func TestRateLimitTrustedProxy(t *testing.T) {
 		requireStatuses(t, router, "10.0.0.6:1", map[string]string{"X-Forwarded-For": "203.0.113.8"}, http.StatusNoContent)
 		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Real-IP": "203.0.113.9"}, http.StatusNoContent)
 
-		requireStatuses(t, router, "[fd00::1]:443", map[string]string{"X-Forwarded-For": "2001:db8::1"}, exhausted...)
-		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "2001:db8::2"}, http.StatusNoContent)
+		requireStatuses(t, router, "[fd00::1]:443", map[string]string{"X-Forwarded-For": "2001:db8:0:1::1"}, exhausted...)
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "2001:db8:0:2::1"}, http.StatusNoContent)
 		// The rightmost untrusted hop is the client; a forged leftmost entry is ignored.
-		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "198.51.100.200, 2001:db8::1"},
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "198.51.100.200, 2001:db8:0:1::1"},
 			http.StatusTooManyRequests)
 
-		for _, ip := range []string{"203.0.113.7", "203.0.113.8", "203.0.113.9", "2001:db8::1", "2001:db8::2"} {
+		for _, ip := range []string{"203.0.113.7", "203.0.113.8", "203.0.113.9", "2001:db8:0:1::/64", "2001:db8:0:2::/64"} {
 			assert.True(t, isTracked(rl, ip), "expected client identity %s", ip)
 		}
 		assert.False(t, isTracked(rl, "10.0.0.5"), "the proxy itself must not be the identity")
@@ -550,14 +623,94 @@ func TestRateLimitTierIsolation(t *testing.T) {
 		clock := newRateLimitClock()
 		full := newRateLimiter(1, 1, 2, clock.Now)
 		other := newRateLimiter(1, 1, 2, clock.Now)
-		require.Equal(t, rateLimitAllowed, full.admit("192.0.2.60"))
-		require.Equal(t, rateLimitAllowed, full.admit("192.0.2.61"))
-		require.Equal(t, rateLimitOverCapacity, full.admit("192.0.2.62"))
-
-		require.Equal(t, rateLimitAllowed, other.admit("192.0.2.62"))
 		require.Equal(t, rateLimitAllowed, other.admit("192.0.2.60"))
+		require.Equal(t, rateLimitAllowed, other.admit("192.0.2.61"))
+
+		require.Equal(t, rateLimitAllowed, full.admit("192.0.2.60"))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, full.admit("192.0.2.61"))
+		clock.Advance(time.Second)
+		require.Equal(t, rateLimitAllowed, full.admit("192.0.2.62")) // evicts 192.0.2.60 here only
+		assert.False(t, isTracked(full, "192.0.2.60"))
+
+		// The eviction in one instance leaves the other instance's records tracked.
+		assert.True(t, isTracked(other, "192.0.2.60"))
+		assert.True(t, isTracked(other, "192.0.2.61"))
 		assert.Equal(t, 2, trackedVisitors(t, full))
 		assert.Equal(t, 2, trackedVisitors(t, other))
+	})
+}
+
+func TestRateLimitClientKey(t *testing.T) {
+	t.Run("keys", func(t *testing.T) {
+		for input, want := range map[string]string{
+			"192.0.2.1":            "192.0.2.1",
+			" 192.0.2.1 ":          "192.0.2.1",
+			"::ffff:192.0.2.1":     "192.0.2.1",
+			"2001:db8:1:2::1":      "2001:db8:1:2::/64",
+			"2001:db8:1:2:ffff::9": "2001:db8:1:2::/64",
+			"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+			"fe80::1%eth0":         "fe80::/64",
+			"not-an-address":       "not-an-address",
+			"":                     "",
+			"2001:db8:1:2::1/64":   "2001:db8:1:2::1/64",
+			"203.0.113.300":        "203.0.113.300",
+			"2001:db8:1:2:1:1:1:1": "2001:db8:1:2::/64",
+		} {
+			assert.Equal(t, want, rateLimitClientKey(input), "key of %q", input)
+		}
+	})
+
+	t.Run("addresses in one IPv6 /64 share one bucket", func(t *testing.T) {
+		rl := newRateLimiter(1.0/3600.0, 2, rateLimitVisitorCapacity, newRateLimitClock().Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
+
+		requireStatuses(t, router, "[2001:db8:1:2::1]:1", nil, http.StatusNoContent)
+		requireStatuses(t, router, "[2001:db8:1:2:ffff::9]:1", nil, http.StatusNoContent)
+		requireStatuses(t, router, "[2001:db8:1:2::1]:1", nil, http.StatusTooManyRequests)
+		requireStatuses(t, router, "[2001:db8:1:2:ffff::9]:1", nil, http.StatusTooManyRequests)
+
+		// Another /64 has its own bucket.
+		requireStatuses(t, router, "[2001:db8:1:3::1]:1", nil,
+			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
+		assert.True(t, isTracked(rl, "2001:db8:1:2::/64"))
+		assert.True(t, isTracked(rl, "2001:db8:1:3::/64"))
+		assert.Equal(t, 2, trackedVisitors(t, rl))
+	})
+
+	t.Run("IPv4 clients count per address, IPv4-mapped IPv6 included", func(t *testing.T) {
+		rl := newRateLimiter(1.0/3600.0, 2, rateLimitVisitorCapacity, newRateLimitClock().Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), nil)
+
+		requireStatuses(t, router, "192.0.2.1:1", nil, http.StatusNoContent)
+		requireStatuses(t, router, "192.0.2.2:1", nil,
+			http.StatusNoContent, http.StatusNoContent, http.StatusTooManyRequests)
+		requireStatuses(t, router, "[::ffff:192.0.2.1]:1", nil, http.StatusNoContent, http.StatusTooManyRequests)
+		requireStatuses(t, router, "192.0.2.1:2", nil, http.StatusTooManyRequests)
+		assert.True(t, isTracked(rl, "192.0.2.1"))
+		assert.True(t, isTracked(rl, "192.0.2.2"))
+		assert.Equal(t, 2, trackedVisitors(t, rl))
+	})
+
+	t.Run("a forwarded IPv6 client behind a trusted proxy counts per /64", func(t *testing.T) {
+		rl := newRateLimiter(1.0/3600.0, 2, rateLimitVisitorCapacity, newRateLimitClock().Now)
+		router, _ := newRateLimitTestRouter(t, rl.middleware(), []string{"10.0.0.0/8"})
+
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "2001:db8:1:2::1"},
+			http.StatusNoContent)
+		requireStatuses(t, router, "10.0.0.6:1", map[string]string{"X-Forwarded-For": "2001:db8:1:2:ffff::9"},
+			http.StatusNoContent, http.StatusTooManyRequests)
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "2001:db8:1:3::1"},
+			http.StatusNoContent)
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "::ffff:192.0.2.1"},
+			http.StatusNoContent)
+		requireStatuses(t, router, "10.0.0.5:1", map[string]string{"X-Forwarded-For": "192.0.2.1"},
+			http.StatusNoContent, http.StatusTooManyRequests)
+		for _, key := range []string{"2001:db8:1:2::/64", "2001:db8:1:3::/64", "192.0.2.1"} {
+			assert.True(t, isTracked(rl, key), "expected client key %s", key)
+		}
+		assert.False(t, isTracked(rl, "10.0.0.5"), "the proxy itself must not be the identity")
+		assert.Equal(t, 3, trackedVisitors(t, rl))
 	})
 }
 

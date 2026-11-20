@@ -711,7 +711,8 @@ into a sign-out test.
 ### TC-XCUT-041 — DISABLE_RATE_LIMIT bypasses the auth tier only
 - **Priority:** P2
 - **Type:** regression
-- **Preconditions:** Backend started with `DISABLE_RATE_LIMIT=true`.
+- **Preconditions:** Backend started with `DISABLE_RATE_LIMIT=true` and a `SERVER_MODE` other than
+  `production` (in production mode the server refuses to start with the switch set).
 - **Steps:** Repeat TC-XCUT-039, then repeat TC-XCUT-040.
 - **Expected:** The login burst no longer produces a 429 — `RateLimitStrict()` returns a pass-through
   handler when the variable is set (the `DISABLE_RATE_LIMIT` check inside `middleware.RateLimitStrict`).
