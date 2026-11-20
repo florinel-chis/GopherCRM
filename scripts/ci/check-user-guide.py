@@ -27,7 +27,7 @@ d. Paths (`/settings/sso`): a token starting with / and the path after a
    or a path: entry of gocrm-ui/src/routes/index.tsx (leading / ignored).
 
 Tokens that match no class (`openid profile email`, `CRM.Admin`, lower-case
-reason codes) are not checked. The check fails when any of the five pages is
+reason codes) are not checked. The check fails when any of the six pages is
 missing and when any class resolved zero tokens, so an extractor broken by a
 rewrite of the guide cannot pass empty. It uses the standard library only.
 
@@ -47,6 +47,7 @@ PAGES = (
     'roles-and-permissions.md',
     'single-sign-on.md',
     'how-to-microsoft-entra-id.md',
+    'testing-single-sign-on.md',
     'faq.md',
 )
 DEFAULT_GUIDE_DIR = 'docs/user-guide/permissions-access'

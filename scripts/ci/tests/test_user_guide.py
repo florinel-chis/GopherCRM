@@ -62,6 +62,9 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertTrue(out.startswith('OK'), out)
 
+    def test_testing_page_is_checked(self):
+        self.assertIn('testing-single-sign-on.md', gate.PAGES)
+
     def test_fixture_with_known_names_passes(self):
         self.write_guide('\n`OIDC_GRAPH_MAX_PAGES`, `roles.audit_view`, `PUT /settings/sso`, '
                          '`POST /roles/{id}/clone`, `/settings/roles`.\n')
