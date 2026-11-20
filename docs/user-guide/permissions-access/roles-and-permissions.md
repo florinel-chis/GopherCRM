@@ -110,7 +110,12 @@ at the moment of each request. To give an integration only what it needs:
    [Create a role](#create-a-role)).
 2. Create a dedicated user for the integration, one user per integration, and give it that role.
 3. Sign in as that user and create the API key (Settings → API Keys, or `POST /api-keys`). A
-   key is always created for the user who is signed in.
+   key is always created for the user who is signed in, and only a signed-in session can create
+   one: a request authenticated with an API key cannot create another key.
+
+To replace a key, sign in as the integration user, create the new key, then revoke the old one.
+Revoking a key is final: the key records when it was revoked (`revoked_at`) and cannot be switched
+on again.
 
 To stop the integration, deactivate its user: Users → the user → **Deactivate**, or
 `POST /users/{id}/deactivate`. That stops every key of the user at its next request. An

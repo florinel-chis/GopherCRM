@@ -1072,7 +1072,8 @@ Represents API keys for programmatic access.
 | user_id | uint | Yes | - | FK to users | Key owner |
 | last_used_at | timestamp | No | - | - | Last usage timestamp |
 | expires_at | timestamp | No | - | - | Expiration timestamp |
-| is_active | boolean | Yes | true | - | Active status |
+| is_active | boolean | Yes | true | - | Active status; false once revoked, and a revoked key cannot be switched on again |
+| revoked_at | timestamp | No | - | datetime(3) NULL | When the key was revoked; NULL while it is live and on keys revoked before #525 |
 
 ## Configuration Model
 

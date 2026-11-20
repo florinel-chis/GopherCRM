@@ -308,6 +308,104 @@ func (suite *APIKeyIntegrationTestSuite) TestRevokeAPIKey() {
 			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
 		})
 	}
+
+	suite.Run("revoking twice keeps the first revoked_at", func() {
+		var first models.APIKey
+		suite.NoError(suite.db.First(&first, apiKey.ID).Error)
+		suite.Require().NotNil(first.RevokedAt)
+
+		req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/api-keys/%d", apiKey.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+suite.authToken)
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+
+		var second models.APIKey
+		suite.NoError(suite.db.First(&second, apiKey.ID).Error)
+		suite.Require().NotNil(second.RevokedAt)
+		assert.True(suite.T(), first.RevokedAt.Equal(*second.RevokedAt), "the first revocation time is kept")
+		assert.False(suite.T(), second.IsActive)
+	})
+}
+
+// Only a signed-in session creates a key or switches one on; a request
+// authenticated with an API key may still rename and revoke its owner's keys.
+func (suite *APIKeyIntegrationTestSuite) TestAPIKeySessionOnlyRules() {
+	key, own, err := suite.apiKeyService.Generate(suite.testUser.ID, "Session Rule Key", nil)
+	suite.Require().NoError(err)
+	_, other, err := suite.apiKeyService.Generate(suite.testUser.ID, "Session Rule Other Key", nil)
+	suite.Require().NoError(err)
+
+	count := func() int64 {
+		var n int64
+		suite.Require().NoError(suite.db.Model(&models.APIKey{}).Count(&n).Error)
+		return n
+	}
+	send := func(method, path, body, auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", auth)
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		return w
+	}
+	errorCode := func(w *httptest.ResponseRecorder) string {
+		var apiResp utils.APIResponse
+		suite.Require().NoError(json.Unmarshal(w.Body.Bytes(), &apiResp))
+		suite.Require().NotNil(apiResp.Error)
+		return apiResp.Error.Code
+	}
+
+	suite.Run("create with an API key is forbidden", func() {
+		before := count()
+		w := send(http.MethodPost, "/api/v1/api-keys", `{"name":"second key"}`, "ApiKey "+key)
+		assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+		assert.Equal(suite.T(), "FORBIDDEN", errorCode(w))
+		assert.Equal(suite.T(), before, count(), "nothing is written")
+
+		w = send(http.MethodPost, "/api/v1/api-keys", `{"name":"second key"}`, "Bearer "+suite.authToken)
+		assert.Equal(suite.T(), http.StatusCreated, w.Code, "a signed-in session still creates keys")
+		assert.Equal(suite.T(), before+1, count())
+	})
+
+	suite.Run("switch on with an API key is forbidden", func() {
+		var before models.APIKey
+		suite.Require().NoError(suite.db.First(&before, own.ID).Error)
+		w := send(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", own.ID), `{"is_active":true}`, "ApiKey "+key)
+		assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+		assert.Equal(suite.T(), "FORBIDDEN", errorCode(w))
+		var stored models.APIKey
+		suite.Require().NoError(suite.db.First(&stored, own.ID).Error)
+		// updated_at moves with last_used_at when the key authenticates, so
+		// the row is compared on the fields the request could have changed.
+		assert.Equal(suite.T(), before.Name, stored.Name)
+		assert.True(suite.T(), stored.IsActive)
+		assert.Nil(suite.T(), stored.RevokedAt)
+	})
+
+	suite.Run("rename and revoke with an API key still work", func() {
+		w := send(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", own.ID), `{"name":"Renamed key"}`, "ApiKey "+key)
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+		var stored models.APIKey
+		suite.Require().NoError(suite.db.First(&stored, own.ID).Error)
+		assert.Equal(suite.T(), "Renamed key", stored.Name)
+
+		w = send(http.MethodDelete, fmt.Sprintf("/api/v1/api-keys/%d", other.ID), "", "ApiKey "+key)
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+		var revoked models.APIKey
+		suite.Require().NoError(suite.db.First(&revoked, other.ID).Error)
+		assert.False(suite.T(), revoked.IsActive)
+		assert.NotNil(suite.T(), revoked.RevokedAt)
+	})
+
+	suite.Run("a revoked key is refused at authentication", func() {
+		w := send(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", other.ID), `{"is_active":true}`, "Bearer "+suite.authToken)
+		assert.Equal(suite.T(), http.StatusConflict, w.Code)
+
+		suite.Require().NoError(suite.apiKeyService.Revoke(own.ID, suite.testUser.ID))
+		w = send(http.MethodGet, "/api/v1/test-api-key", "", "ApiKey "+key)
+		assert.Equal(suite.T(), http.StatusUnauthorized, w.Code, "the key's next request is 401")
+	})
 }
 
 func (suite *APIKeyIntegrationTestSuite) TestAPIKeyAuthentication() {
@@ -499,23 +597,83 @@ func (suite *APIKeyIntegrationTestSuite) TestUpdateAPIKey() {
 		var stored models.APIKey
 		suite.NoError(suite.db.First(&stored, apiKey.ID).Error)
 		assert.False(suite.T(), stored.IsActive)
+		assert.NotNil(suite.T(), stored.RevokedAt, "revoking stamps revoked_at")
 		assert.Equal(suite.T(), "Renamed Key", stored.Name, "deactivating must not touch the name")
+
+		// GET returns revoked_at.
+		req = httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/api-keys/%d", apiKey.ID), nil)
+		req.Header.Set("Authorization", "Bearer "+suite.authToken)
+		w = httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		suite.Equal(http.StatusOK, w.Code)
+		var apiResp utils.APIResponse
+		suite.NoError(json.Unmarshal(w.Body.Bytes(), &apiResp))
+		assert.NotEmpty(suite.T(), apiResp.Data.(map[string]interface{})["revoked_at"])
 	})
 
-	suite.Run("reactivate", func() {
-		body, _ := json.Marshal(map[string]interface{}{"is_active": true})
-		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", apiKey.ID), bytes.NewBuffer(body))
+	suite.Run("a revoked key cannot be switched on again", func() {
+		var before models.APIKey
+		suite.NoError(suite.db.First(&before, apiKey.ID).Error)
+
+		for _, payload := range []string{`{"is_active":true}`, `{"name":"x-name","is_active":true}`} {
+			req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", apiKey.ID), bytes.NewBufferString(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+suite.authToken)
+
+			w := httptest.NewRecorder()
+			suite.router.ServeHTTP(w, req)
+
+			assert.Equal(suite.T(), http.StatusConflict, w.Code, payload)
+			var apiResp utils.APIResponse
+			suite.NoError(json.Unmarshal(w.Body.Bytes(), &apiResp))
+			suite.Require().NotNil(apiResp.Error)
+			assert.Equal(suite.T(), "CONFLICT", apiResp.Error.Code)
+
+			var stored models.APIKey
+			suite.NoError(suite.db.First(&stored, apiKey.ID).Error)
+			assert.Equal(suite.T(), before.Name, stored.Name)
+			assert.Equal(suite.T(), before.IsActive, stored.IsActive)
+			suite.Require().NotNil(stored.RevokedAt)
+			assert.True(suite.T(), before.RevokedAt.Equal(*stored.RevokedAt))
+			assert.True(suite.T(), before.UpdatedAt.Equal(stored.UpdatedAt))
+		}
+	})
+
+	suite.Run("switching on a live key changes nothing", func() {
+		_, live, err := suite.apiKeyService.Generate(suite.testUser.ID, "Live Switch Key", nil)
+		suite.Require().NoError(err)
+		var before models.APIKey
+		suite.NoError(suite.db.First(&before, live.ID).Error)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", live.ID), bytes.NewBufferString(`{"is_active":true}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+suite.authToken)
-
 		w := httptest.NewRecorder()
 		suite.router.ServeHTTP(w, req)
-
 		assert.Equal(suite.T(), http.StatusOK, w.Code)
 
 		var stored models.APIKey
-		suite.NoError(suite.db.First(&stored, apiKey.ID).Error)
+		suite.NoError(suite.db.First(&stored, live.ID).Error)
 		assert.True(suite.T(), stored.IsActive)
+		assert.Nil(suite.T(), stored.RevokedAt)
+		assert.True(suite.T(), before.UpdatedAt.Equal(stored.UpdatedAt))
+	})
+
+	suite.Run("a legacy inactive key cannot be switched on again", func() {
+		_, legacy, err := suite.apiKeyService.Generate(suite.testUser.ID, "Legacy Inactive Key", nil)
+		suite.Require().NoError(err)
+		suite.Require().NoError(suite.db.Model(&models.APIKey{}).Where("id = ?", legacy.ID).UpdateColumn("is_active", false).Error)
+
+		req := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/api-keys/%d", legacy.ID), bytes.NewBufferString(`{"is_active":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+suite.authToken)
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		assert.Equal(suite.T(), http.StatusConflict, w.Code)
+
+		var stored models.APIKey
+		suite.NoError(suite.db.First(&stored, legacy.ID).Error)
+		assert.False(suite.T(), stored.IsActive)
 	})
 
 	rejections := []struct {
@@ -557,7 +715,7 @@ func (suite *APIKeyIntegrationTestSuite) TestUpdateAPIKey() {
 
 // Expiry has to bite at authentication time, not merely be recorded. A key past
 // its expires_at must fail even though it is still flagged active, and a
-// reactivated-but-expired key must stay dead.
+// revoked key stays revoked.
 func (suite *APIKeyIntegrationTestSuite) TestExpiredAPIKeyIsRejectedAtAuth() {
 	past := time.Now().Add(-time.Hour)
 	expiredKey, expiredModel, err := suite.apiKeyService.Generate(suite.testUser.ID, "Expired Key", &past)
@@ -599,8 +757,7 @@ func (suite *APIKeyIntegrationTestSuite) TestExpiredAPIKeyIsRejectedAtAuth() {
 		})
 	}
 
-	// A deactivated key is refused too, and flipping is_active back on cannot
-	// resurrect an expired one.
+	// A deactivated key is refused too, and it cannot be switched on again.
 	suite.Run("deactivated key is rejected", func() {
 		suite.NoError(suite.apiKeyService.Revoke(expiredModel.ID, suite.testUser.ID))
 		_, err := suite.authService.ValidateAPIKey(expiredKey)
@@ -608,11 +765,10 @@ func (suite *APIKeyIntegrationTestSuite) TestExpiredAPIKeyIsRejectedAtAuth() {
 
 		active := true
 		_, err = suite.apiKeyService.Update(expiredModel.ID, suite.testUser.ID, nil, &active)
-		suite.NoError(err)
+		assert.ErrorIs(suite.T(), err, service.ErrAPIKeyRevoked, "a revoked key cannot be switched on again")
 
 		_, err = suite.authService.ValidateAPIKey(expiredKey)
-		assert.Error(suite.T(), err, "reactivation must not undo expiry")
-		assert.Contains(suite.T(), err.Error(), "expired")
+		assert.Error(suite.T(), err, "the key stays refused")
 	})
 }
 

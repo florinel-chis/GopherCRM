@@ -143,9 +143,14 @@ func (m *MockAPIKeyRepository) GetByUserID(userID uint) ([]models.APIKey, error)
 	return args.Get(0).([]models.APIKey), args.Error(1)
 }
 
-func (m *MockAPIKeyRepository) Update(apiKey *models.APIKey) error {
-	args := m.Called(apiKey)
-	return args.Error(0)
+func (m *MockAPIKeyRepository) Revoke(id, userID uint, at time.Time) (int64, error) {
+	args := m.Called(id, userID, at)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockAPIKeyRepository) Rename(id, userID uint, name string, liveOnly bool) (int64, error) {
+	args := m.Called(id, userID, name, liveOnly)
+	return args.Get(0).(int64), args.Error(1)
 }
 
 func (m *MockAPIKeyRepository) UpdateLastUsed(id uint) error {

@@ -969,10 +969,13 @@ authentication and live on the moderate tier:
 ### API Keys *(always scoped to the caller's own keys — no admin override)*
 - `GET /api/v1/api-keys` - List user's API keys
 - `POST /api/v1/api-keys` - Create new API key (optional RFC3339 `expires_at`; the plaintext key is
-  returned only in this response)
+  returned only in this response). Only a signed-in session (password or single sign-on) creates
+  keys: a request authenticated with an API key is 403
 - `GET /api/v1/api-keys/:id` - Get one key
-- `PUT /api/v1/api-keys/:id` - Rename, deactivate or reactivate a key
-- `DELETE /api/v1/api-keys/:id` - Revoke API key (marks inactive; the row is kept)
+- `PUT /api/v1/api-keys/:id` - Rename or revoke a key (`is_active: false`); `is_active: true` on a
+  revoked key is 409, and from a request authenticated with an API key 403
+- `DELETE /api/v1/api-keys/:id` - Revoke API key (marks inactive and stamps `revoked_at`; the row
+  is kept and revocation is final)
 
 Keys authenticate via `Authorization: ApiKey gcrm_xxx`. A key is rejected if it is inactive or
 expired, or if its owner has been deactivated or erased.

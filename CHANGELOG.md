@@ -1064,6 +1064,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **API keys are created and switched on only from a signed-in session, and revoking a key is
+  final (#525).** `POST /api-keys`, and `PUT /api-keys/{id}` with `is_active: true`, answer 403
+  `FORBIDDEN` to a request authenticated with an API key and write nothing; a signed-in session
+  (password or single sign-on) still gets 201. Renaming and revoking with a key still work.
+  Revoking a key (`DELETE /api-keys/{id}` or `PUT` with `is_active: false`) stamps the new
+  `revoked_at` field, returned by the API-key reads; revoking it again answers 200 and keeps the
+  first time. `PUT /api-keys/{id}` with `is_active: true` on a revoked key, including a key that
+  was inactive before this release, answers 409 `CONFLICT` and changes nothing, the name included;
+  on a live key it answers 200 and changes nothing. A rename writes only the name, so a rename sent
+  at the same time as a revocation cannot switch the key back on.
+  `migrations/20261129120002_api_key_revoked_at` adds the nullable `api_keys.revoked_at` column on
+  MySQL/MariaDB; existing rows keep it NULL. Tests on SQLite, MySQL 8 and MariaDB 10.11 cover a
+  rename or a switch-on request racing a revocation in each order.
+
 - **Single sign-on finishes only in the browser that started it (#528).** `POST /auth/oidc/start`
   now sets a short-lived sign-in cookie, `gophercrm_oidc_state` (`HttpOnly`, `SameSite=Lax`, ten
   minutes, `Path=<API_PREFIX>/auth/oidc`, sent only over HTTPS when `APP_BASE_URL` is https), tied to the

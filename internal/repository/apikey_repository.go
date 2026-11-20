@@ -21,7 +21,7 @@ func (r *apiKeyRepository) Create(apiKey *models.APIKey) error {
 
 func (r *apiKeyRepository) GetByID(id uint) (*models.APIKey, error) {
 	var apiKey models.APIKey
-	err := r.db.Preload("User").First(&apiKey, id).Error
+	err := r.db.First(&apiKey, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +43,28 @@ func (r *apiKeyRepository) GetByUserID(userID uint) ([]models.APIKey, error) {
 	return apiKeys, err
 }
 
-func (r *apiKeyRepository) Update(apiKey *models.APIKey) error {
-	return r.db.Save(apiKey).Error
+// Revoke switches off the key id of userID and stamps revoked_at in one
+// conditional statement. A key already revoked (revoked_at set) is left as it
+// is, so the first revocation time is kept; the count of changed rows is
+// returned (0 for a revoked, missing or foreign key).
+func (r *apiKeyRepository) Revoke(id, userID uint, at time.Time) (int64, error) {
+	result := r.db.Model(&models.APIKey{}).
+		Where("id = ? AND user_id = ? AND revoked_at IS NULL", id, userID).
+		Updates(map[string]interface{}{"is_active": false, "revoked_at": at})
+	return result.RowsAffected, result.Error
+}
+
+// Rename writes only name (and updated_at) of the key id of userID and
+// returns the count of changed rows. With liveOnly the statement also
+// requires is_active true and revoked_at NULL, so a key revoked in the
+// meantime is left unchanged and the count is 0.
+func (r *apiKeyRepository) Rename(id, userID uint, name string, liveOnly bool) (int64, error) {
+	query := r.db.Model(&models.APIKey{}).Where("id = ? AND user_id = ?", id, userID)
+	if liveOnly {
+		query = query.Where("is_active = ? AND revoked_at IS NULL", true)
+	}
+	result := query.Update("name", name)
+	return result.RowsAffected, result.Error
 }
 
 func (r *apiKeyRepository) UpdateLastUsed(id uint) error {

@@ -595,8 +595,9 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 		}
 	}
 
-	// Check if API key is active (not revoked)
-	if !apiKey.IsActive {
+	// Check if API key is active (not revoked). A stamped revoked_at is
+	// final whatever is_active says.
+	if !apiKey.IsActive || apiKey.RevokedAt != nil {
 		return nil, authRefusal(AuthAuditReasonKeyRevoked, apiKey.UserID, errors.New("API key has been revoked"))
 	}
 

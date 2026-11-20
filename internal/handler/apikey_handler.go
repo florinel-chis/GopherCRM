@@ -13,6 +13,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// sessionCaller reports whether the request was authenticated by a signed-in
+// session (a Bearer JWT, from a password or a single sign-on sign-in). An
+// unset auth method is not a session.
+func sessionCaller(c *gin.Context) bool {
+	return c.GetString(service.AuthMethodContextKey) == service.AuthMethodBearer
+}
+
 type APIKeyHandler struct {
 	apiKeyService service.APIKeyService
 }
@@ -51,14 +58,15 @@ type CreateAPIKeyResponse struct {
 type UpdateAPIKeyRequest struct {
 	// New label, 3 to 100 characters; omitted or null keeps the current one.
 	Name *string `json:"name" binding:"omitempty,min=3,max=100" minLength:"3" maxLength:"100" example:"CI pipeline (rotated)"`
-	// true reactivates a revoked key, false revokes it; omitted or null keeps
-	// the current state.
+	// false revokes the key; true is accepted only on a live key and changes
+	// nothing (a revoked key cannot be switched on again, 409). Omitted or null
+	// keeps the current state.
 	IsActive *bool `json:"is_active" example:"false"`
 }
 
 // Create godoc
 // @Summary Create an API key
-// @Description Any authenticated role, through a bearer token or an existing API key; the key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
+// @Description Any authenticated role, from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
 // @Description expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future; omitted or empty, the key never expires. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
 // @Tags api-keys
 // @Accept json
@@ -69,11 +77,19 @@ type UpdateAPIKeyRequest struct {
 // @Success 201 {object} utils.APIResponse{data=CreateAPIKeyResponse} "Key created; key holds the plaintext, shown only this once"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: name missing or not 3 to 100 characters (details maps Name to a message). BAD_REQUEST: malformed JSON (Invalid request format), expires_at must be an RFC3339 timestamp, or expires_at must be in the future"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: API keys can be created only from a signed-in session (the request was authenticated with an API key); nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the key could not be generated or stored"
 // @Router /api-keys [post]
 func (h *APIKeyHandler) Create(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "APIKeyHandler.Create")
+
+	if !sessionCaller(c) {
+		logger.WithField("user_id", c.GetUint("user_id")).WithField("error_code", "session_required").
+			Warn("API key not created: not a signed-in session")
+		utils.RespondForbidden(c, "API keys can be created only from a signed-in session")
+		return
+	}
 
 	var req CreateAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -202,8 +218,8 @@ func (h *APIKeyHandler) Get(c *gin.Context) {
 }
 
 // Update godoc
-// @Summary Rename, revoke or reactivate an API key
-// @Description Owner only (a key of another user is 403, with no admin override). Applies only the fields present: name and/or is_active. A body with neither is a 400 rather than a no-op. Setting is_active to true on a revoked key reactivates it: revocation is a flag the owner controls, not a tombstone, and the unchanged plaintext key works again. Expiry is not affected: an expired key stays unusable whatever is_active says.
+// @Summary Rename or revoke an API key
+// @Description Owner only (a key of another user is 403, with no admin override). Applies only the fields present: name and/or is_active, each written on its own so a rename never changes is_active. A body with neither is a 400 rather than a no-op. is_active false revokes the key as DELETE does and stamps revoked_at. Revocation is final: is_active true on a revoked key is 409 CONFLICT and changes nothing, the name included; on a live key it changes nothing. is_active true from a request authenticated with an API key is 403. Expiry is not affected: an expired key stays unusable whatever is_active says.
 // @Tags api-keys
 // @Accept json
 // @Produce json
@@ -214,8 +230,9 @@ func (h *APIKeyHandler) Get(c *gin.Context) {
 // @Success 200 {object} utils.APIResponse{data=models.APIKey} "The updated key"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "BAD_REQUEST: Invalid API key ID, malformed JSON (Invalid request format), or At least one of name or is_active must be provided. VALIDATION_ERROR: name not 3 to 100 characters (details maps Name to a message)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the key belongs to another user"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the key belongs to another user, or is_active true from a request authenticated with an API key (keys can be switched on only from a signed-in session)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: no key with this id"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "CONFLICT: is_active true on a revoked key; a revoked API key cannot be switched on again, and nothing is changed"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the key could not be updated"
 // @Router /api-keys/{id} [put]
@@ -242,8 +259,21 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 
 	userID := c.GetUint("user_id")
 
+	if req.IsActive != nil && *req.IsActive && !sessionCaller(c) {
+		logger.WithField("user_id", userID).WithField("error_code", "session_required").
+			Warn("API key not switched on: not a signed-in session")
+		utils.RespondForbidden(c, "API keys can be switched on only from a signed-in session")
+		return
+	}
+
 	apiKey, err := h.apiKeyService.Update(uint(id), userID, req.Name, req.IsActive)
 	if err != nil {
+		if errors.Is(err, service.ErrAPIKeyRevoked) {
+			logger.WithField("user_id", userID).WithField("error_code", "api_key_revoked").
+				Warn("Revoked API key not switched on")
+			utils.RespondConflict(c, "A revoked API key cannot be switched on again")
+			return
+		}
 		if errors.Is(err, apperrors.ErrForbidden) {
 			logger.Warn("Unauthorized attempt to update API key")
 			utils.RespondForbidden(c, "You are not authorized to update this API key")
@@ -266,7 +296,7 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 
 // Revoke godoc
 // @Summary Revoke an API key
-// @Description Owner only (a key of another user is 403, with no admin override). Marks the key inactive; the row is kept, not deleted, and the owner can reactivate it with PUT /api-keys/{id}. Idempotent: revoking a revoked key succeeds again. Requests already authenticated with the key are not affected; later ones are rejected.
+// @Description Owner only (a key of another user is 403, with no admin override). Marks the key inactive and stamps revoked_at; the row is kept, not deleted, and revocation is final: the key cannot be switched on again. Idempotent: revoking a revoked key succeeds again and keeps the first revoked_at. Requests already authenticated with the key are not affected; later ones are rejected.
 // @Tags api-keys
 // @Produce json
 // @Security BearerAuth

@@ -172,7 +172,7 @@ The rule is current behaviour only for lead conversion (`internal/service/lead_s
 login (`internal/service/auth_service.go:335`), the password-reset request
 (`internal/service/auth_service.go:1303`), the password-reset confirm
 (`internal/service/auth_service.go:1432`), API-key create
-(`internal/service/apikey_service.go:86`), the RBAC user-role and role writes
+(`internal/service/apikey_service.go:94`), the RBAC user-role and role writes
 (`internal/service/role_governance.go:162`) and, since #385, the three erasures
 (`runErasureUnit`, `internal/repository/erasure.go:431`).
 For company delete, bulk status and refresh rotation it is the #183
@@ -566,22 +566,22 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 ### API-key create
 
 - **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
-  `internal/service/apikey_service.go:94`, read by `lockLiveCredentialOwner`), then the inserted
-  `api_keys` row (`internal/service/apikey_service.go:105`, through `apiKeyRepo.WithTx(tx)`), whose
+  `internal/service/apikey_service.go:102`, read by `lockLiveCredentialOwner`), then the inserted
+  `api_keys` row (`internal/service/apikey_service.go:113`, through `apiKeyRepo.WithTx(tx)`), whose
   foreign-key check (`fk_api_keys_user`, `migrations/20250806120000_initial_schema.up.sql:135`)
   takes its shared lock on an owner row this transaction already holds.
-- **Order:** `apiKeyService.Generate` (`internal/service/apikey_service.go:64`): `FOR UPDATE` owner
+- **Order:** `apiKeyService.Generate` (`internal/service/apikey_service.go:72`): `FOR UPDATE` owner
   read by id → insert. Lock order users → api_keys. A missing, erased (soft-deleted) or inactive
   locked row is refused with an error matching `ErrAccountUnavailable` (`POST /api-keys` answers
   401), no row and no key. An erasure or deactivation that commits first refuses the create; one
   that commits after it hard-deletes the key (erasure) or leaves it unusable (`ValidateAPIKey`
   refuses an inactive owner).
 - **Transaction:** one `WithTransactionAndRetry` root per create
-  (`internal/service/apikey_service.go:86`) on `context.Background()`. A service built without the
+  (`internal/service/apikey_service.go:94`) on `context.Background()`. A service built without the
   user repository or the transaction manager returns `ErrAPIKeyIssuanceUnavailable` and writes
   nothing.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `apiKeyCreateMaxRetries` 3
-  (`internal/service/apikey_service.go:27`) replays the whole root on a deadlock, lock wait timeout
+  (`internal/service/apikey_service.go:31`) replays the whole root on a deadlock, lock wait timeout
   or SQLite busy/locked.
 - **Status:** implemented
 

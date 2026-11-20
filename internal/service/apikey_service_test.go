@@ -156,13 +156,29 @@ func TestAPIKeyService_Revoke(t *testing.T) {
 		}
 
 		mockAPIKeyRepo.On("GetByID", apiKeyID).Return(apiKey, nil)
-		mockAPIKeyRepo.On("Update", mock.MatchedBy(func(k *models.APIKey) bool {
-			return k.ID == apiKeyID && k.IsActive == false
-		})).Return(nil)
+		mockAPIKeyRepo.On("Revoke", apiKeyID, userID, mock.MatchedBy(func(at time.Time) bool {
+			return !at.IsZero() && at.Location() == time.UTC
+		})).Return(int64(1), nil)
 
 		err := apiKeyService.Revoke(apiKeyID, userID)
 
 		assert.NoError(t, err)
+		mockAPIKeyRepo.AssertExpectations(t)
+	})
+
+	// The conditional statement changes nothing on a key revoked before; the
+	// call still succeeds, so revoking is idempotent.
+	t.Run("revoking a revoked key succeeds", func(t *testing.T) {
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
+
+		revokedAt := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+		mockAPIKeyRepo.On("GetByID", uint(1)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 1}, UserID: 1, RevokedAt: &revokedAt,
+		}, nil)
+		mockAPIKeyRepo.On("Revoke", uint(1), uint(1), mock.Anything).Return(int64(0), nil)
+
+		assert.NoError(t, apiKeyService.Revoke(1, 1))
 		mockAPIKeyRepo.AssertExpectations(t)
 	})
 
@@ -305,20 +321,17 @@ func TestAPIKeyService_GetByID(t *testing.T) {
 }
 
 func TestAPIKeyService_Update(t *testing.T) {
-	t.Run("rename only leaves the active flag alone", func(t *testing.T) {
+	t.Run("rename only writes the name", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
 		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
-		stored := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 3},
-			Name:      "Old Name",
-			UserID:    7,
-			IsActive:  true,
-		}
-		mockAPIKeyRepo.On("GetByID", uint(3)).Return(stored, nil)
-		mockAPIKeyRepo.On("Update", mock.MatchedBy(func(k *models.APIKey) bool {
-			return k.ID == 3 && k.Name == "New Name" && k.IsActive
-		})).Return(nil)
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 3}, Name: "Old Name", UserID: 7, IsActive: true,
+		}, nil).Once()
+		mockAPIKeyRepo.On("Rename", uint(3), uint(7), "New Name", false).Return(int64(1), nil).Once()
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 3}, Name: "New Name", UserID: 7, IsActive: true,
+		}, nil).Once()
 
 		name := "New Name"
 		key, err := apiKeyService.Update(3, 7, &name, nil)
@@ -327,22 +340,21 @@ func TestAPIKeyService_Update(t *testing.T) {
 		assert.Equal(t, "New Name", key.Name)
 		assert.True(t, key.IsActive)
 		mockAPIKeyRepo.AssertExpectations(t)
+		mockAPIKeyRepo.AssertNotCalled(t, "Revoke", mock.Anything, mock.Anything, mock.Anything)
 	})
 
-	t.Run("deactivate only leaves the name alone", func(t *testing.T) {
+	t.Run("is_active false revokes and leaves the name alone", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
 		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
-		stored := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 3},
-			Name:      "Keep Me",
-			UserID:    7,
-			IsActive:  true,
-		}
-		mockAPIKeyRepo.On("GetByID", uint(3)).Return(stored, nil)
-		mockAPIKeyRepo.On("Update", mock.MatchedBy(func(k *models.APIKey) bool {
-			return k.ID == 3 && k.Name == "Keep Me" && !k.IsActive
-		})).Return(nil)
+		revokedAt := time.Now().UTC()
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 3}, Name: "Keep Me", UserID: 7, IsActive: true,
+		}, nil).Once()
+		mockAPIKeyRepo.On("Revoke", uint(3), uint(7), mock.Anything).Return(int64(1), nil).Once()
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 3}, Name: "Keep Me", UserID: 7, IsActive: false, RevokedAt: &revokedAt,
+		}, nil).Once()
 
 		active := false
 		key, err := apiKeyService.Update(3, 7, nil, &active)
@@ -350,25 +362,67 @@ func TestAPIKeyService_Update(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "Keep Me", key.Name)
 		assert.False(t, key.IsActive)
+		assert.NotNil(t, key.RevokedAt)
 		mockAPIKeyRepo.AssertExpectations(t)
+		mockAPIKeyRepo.AssertNotCalled(t, "Rename", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
-	// Reactivation is deliberate: revocation flips is_active, and the owner may
-	// flip it back. Expiry is the guard that cannot be undone this way.
-	t.Run("a revoked key can be reactivated by its owner", func(t *testing.T) {
+	// Revocation is final: is_active=true on a revoked key (stamped, or an
+	// inactive row from before revoked_at existed) writes nothing, the name
+	// included.
+	for _, tc := range []struct {
+		label  string
+		stored models.APIKey
+	}{
+		{"a revoked key cannot be switched on again", models.APIKey{IsActive: false, RevokedAt: func() *time.Time { at := time.Now().UTC(); return &at }()}},
+		{"an inactive key without revoked_at cannot be switched on again", models.APIKey{IsActive: false}},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			mockAPIKeyRepo := new(MockAPIKeyRepository)
+			apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
+
+			stored := tc.stored
+			stored.ID, stored.UserID, stored.Name = 3, 7, "Revoked Key"
+			mockAPIKeyRepo.On("GetByID", uint(3)).Return(&stored, nil).Once()
+
+			active := true
+			name := "Renamed"
+			key, err := apiKeyService.Update(3, 7, &name, &active)
+
+			assert.ErrorIs(t, err, ErrAPIKeyRevoked)
+			assert.Nil(t, key)
+			mockAPIKeyRepo.AssertExpectations(t)
+			mockAPIKeyRepo.AssertNotCalled(t, "Rename", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			mockAPIKeyRepo.AssertNotCalled(t, "Revoke", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+
+	t.Run("is_active true with a name renames only a live key", func(t *testing.T) {
 		mockAPIKeyRepo := new(MockAPIKeyRepository)
 		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
 
-		stored := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 3},
-			Name:      "Revoked Key",
-			UserID:    7,
-			IsActive:  false,
-		}
-		mockAPIKeyRepo.On("GetByID", uint(3)).Return(stored, nil)
-		mockAPIKeyRepo.On("Update", mock.MatchedBy(func(k *models.APIKey) bool {
-			return k.ID == 3 && k.IsActive
-		})).Return(nil)
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(&models.APIKey{
+			BaseModel: models.BaseModel{ID: 3}, Name: "Old", UserID: 7, IsActive: true,
+		}, nil).Once()
+		// Revoked between the read and the rename: the live-only rename
+		// changes nothing.
+		mockAPIKeyRepo.On("Rename", uint(3), uint(7), "Renamed", true).Return(int64(0), nil).Once()
+
+		active := true
+		name := "Renamed"
+		key, err := apiKeyService.Update(3, 7, &name, &active)
+
+		assert.ErrorIs(t, err, ErrAPIKeyRevoked)
+		assert.Nil(t, key)
+		mockAPIKeyRepo.AssertExpectations(t)
+	})
+
+	t.Run("is_active true on a live key writes nothing", func(t *testing.T) {
+		mockAPIKeyRepo := new(MockAPIKeyRepository)
+		apiKeyService := NewAPIKeyService(mockAPIKeyRepo, nil, nil, "test-api-key-secret")
+
+		live := &models.APIKey{BaseModel: models.BaseModel{ID: 3}, Name: "Live", UserID: 7, IsActive: true}
+		mockAPIKeyRepo.On("GetByID", uint(3)).Return(live, nil).Twice()
 
 		active := true
 		key, err := apiKeyService.Update(3, 7, nil, &active)
@@ -376,6 +430,8 @@ func TestAPIKeyService_Update(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, key.IsActive)
 		mockAPIKeyRepo.AssertExpectations(t)
+		mockAPIKeyRepo.AssertNotCalled(t, "Rename", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		mockAPIKeyRepo.AssertNotCalled(t, "Revoke", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("another user's key is forbidden", func(t *testing.T) {
@@ -395,7 +451,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, key)
 		assert.True(t, errors.Is(err, apperrors.ErrForbidden))
-		mockAPIKeyRepo.AssertNotCalled(t, "Update", mock.Anything)
+		mockAPIKeyRepo.AssertNotCalled(t, "Rename", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		mockAPIKeyRepo.AssertExpectations(t)
 	})
 
@@ -424,7 +480,7 @@ func TestAPIKeyService_Update(t *testing.T) {
 			IsActive:  true,
 		}
 		mockAPIKeyRepo.On("GetByID", uint(3)).Return(stored, nil)
-		mockAPIKeyRepo.On("Update", mock.Anything).Return(errors.New("connection refused"))
+		mockAPIKeyRepo.On("Rename", uint(3), uint(7), "New Name", false).Return(int64(0), errors.New("connection refused"))
 
 		name := "New Name"
 		key, err := apiKeyService.Update(3, 7, &name, nil)
