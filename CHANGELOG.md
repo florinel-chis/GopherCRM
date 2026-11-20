@@ -1373,6 +1373,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or the e2e credentials, so an empty variable can no longer run them against whatever server
   the machine happens to have.
 
+- **The `cmd/migrate` MySQL/MariaDB tests accept a `TEST_MYSQL_DSN` that carries query
+  parameters (#519).** They built each disposable database's DSN by appending the name and
+  `?multiStatements=true&parseTime=true` to the base, so a base such as
+  `user:pass@tcp(host:port)/?parseTime=true` failed every root with "invalid DSN". The tests now
+  parse the base with the driver and set the database name on it: their own `multiStatements` and
+  `parseTime` win, every other parameter (timeout, charset, TLS, ...) is kept. Every other
+  `TEST_MYSQL_DSN` reader already parsed the DSN with `ParseDSN`, so none needed a change.
+
 - **Drifted code citations in the fork and extension guides (#473, #474).** The line-number
   citations in `docs/FORKING.md` and `docs/EXTENDING.md`, several of which no longer pointed at
   the code they described, are replaced by citations of the file plus the declared symbol, or of a

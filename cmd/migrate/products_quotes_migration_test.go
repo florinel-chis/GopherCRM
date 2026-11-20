@@ -56,7 +56,7 @@ func openMigrationTestDB(t *testing.T, baseDSN, prefix string) *migrationTestDB 
 		_ = server.Close()
 	})
 
-	dsn := baseDSN + name + "?multiStatements=true&parseTime=true"
+	dsn := requireMySQLTestDSN(t, baseDSN, name)
 	db, err := sql.Open("mysql", dsn)
 	require.NoError(t, err)
 	driver, err := mysql.WithInstance(db, &mysql.Config{})

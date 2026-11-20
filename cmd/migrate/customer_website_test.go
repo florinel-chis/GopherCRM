@@ -27,7 +27,7 @@ func TestCustomerWebsiteMigration(t *testing.T) {
 			_, err = server.Exec("CREATE DATABASE " + name)
 			require.NoError(t, err)
 			defer server.Exec("DROP DATABASE " + name)
-			dsn := baseDSN + name + "?multiStatements=true&parseTime=true"
+			dsn := requireMySQLTestDSN(t, baseDSN, name)
 			db, err := sql.Open("mysql", dsn)
 			require.NoError(t, err)
 			defer db.Close()
