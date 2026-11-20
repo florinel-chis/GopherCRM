@@ -21,13 +21,24 @@ b. Dotted keys (`security.sso.allow_password`, `roles.audit_view`): a token
    them without backticks rather than the check guessing at them.
 c. Routes (`GET /roles/audit`): METHOD /path, METHOD one of GET, POST, PUT,
    PATCH, DELETE, with any /api/v1 prefix stripped and :x normalised to {x},
-   must exist with that method in api/swagger.json paths.
+   must exist with that method in api/swagger.json paths, or, with no prefix
+   stripped, be one of the SCIM routes (below).
 d. Paths (`/settings/sso`): a token starting with / and the path after a
-   leading constant name (`/auth/callback`) must be an api/swagger.json path
-   or a path: entry of gocrm-ui/src/routes/index.tsx (leading / ignored).
+   leading constant name (`/auth/callback`) must be an api/swagger.json path,
+   a path: entry of gocrm-ui/src/routes/index.tsx (leading / ignored), /scim/v2
+   itself or the path of a SCIM route.
+
+The SCIM 2.0 routes are served outside the API prefix and are not in
+api/swagger.json, so they are read from the code: the router.METHOD("<path>"
+calls in the body of func SetupSCIMRoutes in internal/handler/scim_routes.go
+(SetupSCIMTokenRoutes is not read: its routes sit under the API prefix and are
+in swagger), with :x normalised to {x} and the /scim/v2 prefix in front. The
+prefix is hard-coded and must appear as router.Group("/scim/v2") in
+cmd/main.go. A missing prefix, a missing SetupSCIMRoutes or a body with no
+route is reported as a problem, never treated as an empty set.
 
 Tokens that match no class (`openid profile email`, `CRM.Admin`, lower-case
-reason codes) are not checked. The check fails when any of the six pages is
+reason codes) are not checked. The check fails when any of the seven pages is
 missing and when any class resolved zero tokens, so an extractor broken by a
 rewrite of the guide cannot pass empty. It uses the standard library only.
 
@@ -49,6 +60,7 @@ PAGES = (
     'how-to-microsoft-entra-id.md',
     'testing-single-sign-on.md',
     'faq.md',
+    'scim-provisioning.md',
 )
 DEFAULT_GUIDE_DIR = 'docs/user-guide/permissions-access'
 CLASSES = ('constant', 'dotted key', 'route', 'path')
@@ -62,6 +74,11 @@ FENCED_ASSIGNMENT = re.compile(r'^([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)=')
 BACKTICK_SPAN = re.compile(r'`([^`\n]+)`')
 SPA_PATH = re.compile(r"""\bpath:\s*['"]([^'"]+)['"]""")
 API_PREFIX = '/api/v1'
+SCIM_PREFIX = '/scim/v2'
+SCIM_ROUTES_FILE = 'internal/handler/scim_routes.go'
+SCIM_PREFIX_FILE = 'cmd/main.go'
+SCIM_FUNC = re.compile(r'^func SetupSCIMRoutes\(.*?\{\n(.*?)^\}', re.M | re.S)
+SCIM_ROUTE_CALL = re.compile(r'\brouter\.(GET|POST|PUT|PATCH|DELETE)\("([^"]*)"')
 WALK_SKIP = {'docs', 'node_modules', 'gocrm-ui', '.git'}
 
 
@@ -116,10 +133,46 @@ def spa_paths(repo_root):
     return {match.lstrip('/') for match in SPA_PATH.findall(text)}
 
 
+def scim_routes(repo_root):
+    """(routes, problems): the (METHOD, path) pairs of SetupSCIMRoutes under /scim/v2.
+
+    Every way the routes cannot be read is a problem line; routes is then empty.
+    """
+    repo_root = Path(repo_root)
+    problems = []
+    try:
+        main_text = (repo_root / SCIM_PREFIX_FILE).read_text(encoding='utf-8')
+    except OSError:
+        main_text = ''
+    if 'router.Group("%s")' % SCIM_PREFIX not in main_text:
+        problems.append('%s: no router.Group("%s"); the SCIM prefix moved' % (SCIM_PREFIX_FILE, SCIM_PREFIX))
+    try:
+        routes_text = (repo_root / SCIM_ROUTES_FILE).read_text(encoding='utf-8')
+    except OSError:
+        routes_text = ''
+    body = SCIM_FUNC.search(routes_text)
+    routes = set()
+    if not body:
+        problems.append('%s: no func SetupSCIMRoutes; the SCIM routes cannot be read' % SCIM_ROUTES_FILE)
+    else:
+        for method, path in SCIM_ROUTE_CALL.findall(body.group(1)):
+            routes.add((method, SCIM_PREFIX + normalise_params(path)))
+        if not routes:
+            problems.append('%s: SetupSCIMRoutes registers no route the check can read' % SCIM_ROUTES_FILE)
+    if problems:
+        return set(), problems
+    return routes, problems
+
+
+def normalise_params(path):
+    """A :x path parameter becomes {x}."""
+    return re.sub(r':([A-Za-z_][A-Za-z0-9_]*)', r'{\1}', path)
+
+
 def normalise_api_path(path):
     if path.startswith(API_PREFIX + '/'):
         path = path[len(API_PREFIX):]
-    return re.sub(r':([A-Za-z_][A-Za-z0-9_]*)', r'{\1}', path)
+    return normalise_params(path)
 
 
 def extract_tokens(text):
@@ -159,15 +212,21 @@ class Resolver:
         self.literals = go_literals(repo_root)
         self.swagger = swagger_paths(repo_root)
         self.spa = spa_paths(repo_root)
+        self.scim, self.problems = scim_routes(repo_root)
+        self.scim_paths = {path for _, path in self.scim}
+        if self.scim:
+            self.scim_paths.add(SCIM_PREFIX)
 
     def resolves(self, kind, token):
         if kind in ('constant', 'dotted key'):
             return '"%s"' % token in self.literals
         if kind == 'route':
             method, path = ROUTE.match(token).groups()
+            if (method, normalise_params(path)) in self.scim:
+                return True
             return method.lower() in self.swagger.get(normalise_api_path(path), set())
         if kind == 'path':
-            if normalise_api_path(token) in self.swagger:
+            if normalise_params(token) in self.scim_paths or normalise_api_path(token) in self.swagger:
                 return True
             return token.lstrip('/') in self.spa
         raise ValueError(kind)
@@ -179,6 +238,7 @@ def check(guide_dir, repo_root):
     problems = []
     counts = {kind: 0 for kind in CLASSES}
     resolver = Resolver(repo_root)
+    problems.extend(resolver.problems)
     for page in PAGES:
         path = guide_dir / page
         if not path.is_file():

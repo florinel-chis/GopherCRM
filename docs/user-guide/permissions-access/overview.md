@@ -28,6 +28,9 @@ for local accounts. Single sign-on is set up in Settings → Single sign-on.
   settings, mixed password and single sign-on accounts, and troubleshooting.
 - [How to: Microsoft Entra ID](how-to-microsoft-entra-id.md): a step-by-step setup for Microsoft
   Entra ID.
+- [SCIM provisioning](scim-provisioning.md): how an identity provider creates, updates and
+  deactivates accounts through SCIM 2.0, the base URL, the tokens, what is and is not supported,
+  and a known limitation with Microsoft Entra ID.
 - [Testing single sign-on](testing-single-sign-on.md): how to test single sign-on against your own
   Entra ID tenant before rolling it out, what to check and where to read the result.
 - [Frequently asked questions](faq.md): short answers to common questions.

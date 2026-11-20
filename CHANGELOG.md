@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a git-ignored env file, quick API checks, a live test table, where to read the result (sign-in
   audit, the `oidc_sign_in` log lines), external `#EXT#` accounts and common errors. The overview
   and the single sign-on page link it, and `scripts/ci/check-user-guide.py` checks it.
+- **Administrator guide: SCIM provisioning (#491).** A seventh page,
+  `docs/user-guide/permissions-access/scim-provisioning.md`, documents the SCIM 2.0 provider as it
+  behaves today: the base URL (`PUBLIC_BASE_URL/scim/v2`), creating and revoking SCIM tokens, the
+  supported operations and their refusals, the role mapping, what is not served (user delete and
+  groups answer a plain 404), the audit rows, and the known limitation that an Entra ID
+  `externalId` (the `objectId`) never matches the pairwise `sub`, so the person's first single
+  sign-on is refused with `email_taken`. The overview and the single sign-on page link it, and
+  `scripts/ci/check-user-guide.py` now resolves `/scim/v2` routes and paths against the body of
+  `SetupSCIMRoutes` in `internal/handler/scim_routes.go`, reporting a missing prefix, function or
+  route set as a problem.
 
 - **SCIM 2.0 user patch (#471).** With a SCIM token, `PATCH /scim/v2/Users/{id}` applies an
   RFC 7644 PatchOp: `add`, `replace` and `remove` (op in any ASCII case, so Entra ID's `Replace`
