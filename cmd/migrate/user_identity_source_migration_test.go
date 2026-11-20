@@ -109,10 +109,7 @@ func assertSourceIdentityRowKept(t *testing.T, tdb *migrationTestDB, id int64, s
 }
 
 func TestUserIdentitySourceMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 

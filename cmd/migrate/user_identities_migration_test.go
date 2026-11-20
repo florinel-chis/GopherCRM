@@ -158,10 +158,7 @@ func insertIdentityFor(db *sql.DB, userID int64, issuer, subject string) error {
 }
 
 func TestUserIdentitiesMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 	tables := []string{userIdentitiesTable, oidcLoginAttemptsTable}

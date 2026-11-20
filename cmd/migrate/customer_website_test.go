@@ -17,10 +17,7 @@ import (
 )
 
 func TestCustomerWebsiteMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	for _, autoMigrateFirst := range []bool{false, true} {
 		t.Run(fmt.Sprintf("AutoMigrateFirst=%t", autoMigrateFirst), func(t *testing.T) {
 			server, err := sql.Open("mysql", migrationDSN(baseDSN))

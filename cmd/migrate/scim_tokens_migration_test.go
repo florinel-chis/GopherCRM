@@ -102,10 +102,7 @@ func TestSCIMTokensMigrationFiles(t *testing.T) {
 const scimTokensInsert = `INSERT INTO scim_tokens (name, token_hash, created_at) VALUES ('Entra', ?, UTC_TIMESTAMP(3))`
 
 func TestSCIMTokensMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 	tables := []string{scimTokensTable}

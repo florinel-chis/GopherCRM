@@ -140,10 +140,7 @@ func automationModels() []interface{} {
 }
 
 func TestMigrationAutomationSchema(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 

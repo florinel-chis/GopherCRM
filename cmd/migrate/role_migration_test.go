@@ -208,10 +208,7 @@ func assertSystemRoleRows(t *testing.T, tdb *migrationTestDB) {
 }
 
 func TestMigrationRolesSchema(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 
@@ -335,10 +332,7 @@ func readUserRoleStates(t *testing.T, tdb *migrationTestDB) map[string]userRoleS
 }
 
 func TestMigrationRolesDownDemotesCustomUsers(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 
 	tdb := openMigrationTestDB(t, baseDSN, "roles_down")
 	require.NoError(t, tdb.m.Migrate(rolesVersion))

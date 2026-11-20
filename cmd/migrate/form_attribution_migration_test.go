@@ -138,10 +138,7 @@ func assertFormAttributionRowsKept(t *testing.T, tdb *migrationTestDB, columns b
 }
 
 func TestFormAttributionMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 

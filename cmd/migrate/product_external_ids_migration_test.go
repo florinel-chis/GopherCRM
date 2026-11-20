@@ -149,10 +149,7 @@ func assertProductMappingsCaseSensitive(t *testing.T, db *sql.DB, productID int6
 }
 
 func TestProductExternalIDsMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 
