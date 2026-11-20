@@ -3478,6 +3478,25 @@ commits. Code: `internal/models/webhook.go`,
   `secret_unavailable` without network work; a service built without `WithWebhookPingClients`
   (wired with the egress guard in `cmd/main.go`) answers 500. One log line carries
   `operation=webhook_endpoint_test`, `endpoint_id`, `outcome`, `error_code` and `http_status` only.
+  `POST /webhooks/deliveries/:id/redeliver` (#502, `WebhookService.RedeliverDelivery`) reads the
+  delivery (a miss is 404), then its endpoint (missing or inactive: `ErrWebhookEndpointUnavailable`,
+  409), then calls `WebhookRepository.RequeueDelivery`: one `UPDATE webhook_deliveries … WHERE id = ?
+  AND status IN ('succeeded','failed')` that sets `pending`, `attempts` 0, `next_attempt_at` and
+  `updated_at` now (UTC), `lease_until` and `last_http_status` NULL and `error_code` ''; `event_id`
+  and `last_attempt_at` keep their values and no row is inserted. No locking read and no
+  transaction: the predicate in the statement keeps it apart from a claim (which needs `pending`)
+  and from a prune pass (whose `DELETE` re-checks `status IN (succeeded, failed) AND updated_at <
+  cutoff`). A zero-changed-row count is re-checked with the write's own predicate, as for the claim
+  (the write always changes `status`, so it is never identical); no match is
+  `ErrWebhookDeliveryNotRequeued`, which the service turns into 404 when the row is gone and
+  `ErrWebhookDeliveryNotRedeliverable` (409) otherwise. The endpoint check is a read before the
+  write, not part of its predicate: an endpoint deactivated in between still gets the row requeued,
+  and the runtime then fails it with `endpoint_inactive`. The record the event names is never read.
+  Log lines (Info on success, Warn per 409) carry `operation=webhook_delivery_redeliver`,
+  `delivery_id`, `endpoint_id` and `error_code` only. Tests: `TestWebhookRepository{SQLite,MySQL}`
+  (the requeue subtests), `internal/service/webhook_redeliver_test.go`
+  (`TestWebhookRedeliver{SQLite,MySQL}`, registered in the transaction profile of
+  `scripts/ci/check-go.py`), `TestWebhookRedeliverHandler`.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
   txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
   passes one `WebhookRepository` and the shared `txManager`. After the record insert,

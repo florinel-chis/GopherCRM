@@ -53,7 +53,13 @@ rows, then the endpoint. The delivery runtime (`internal/service/webhook_runtime
 locking read: it discovers due rows, expired leases and prunable rows with plain `SELECT`s and
 writes each row by primary key with a conditional `UPDATE` or `DELETE` that re-checks the
 discovered state, so it never locks through `idx_webhook_deliveries_status_next` or
-`idx_webhook_deliveries_updated_at`. The outbox rows a create path writes are inserts into its own
+`idx_webhook_deliveries_updated_at`. A manual redelivery (#502, `RequeueDelivery`) is one more
+such write: a conditional `UPDATE` by primary key fenced on `status IN ('succeeded','failed')`,
+with no locking read, so it cannot overlap a claim (which needs `pending`), and it moves
+`updated_at` forward, so a prune pass whose `DELETE` re-checks the finished state and the cutoff
+leaves the requeued row alone. Its endpoint check is a plain read before the write, not part of the
+predicate: an endpoint deactivated in between still gets the row requeued, and the runtime then
+fails it with `endpoint_inactive`. The outbox rows a create path writes are inserts into its own
 transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
 the chains above. The same holds for the updated events (#408): the lead update, the ticket update
 and the lead and ticket bulk status batches insert their rows after the record write, inside the

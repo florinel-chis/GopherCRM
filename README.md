@@ -552,7 +552,11 @@ ignored. The AEO egress allowlists do not apply to webhooks. The secret is store
 newest first, with its event type, record id, status, attempts, last attempt time and last
 response code, and filters by endpoint, status and event type. `GET /api/v1/webhooks/deliveries`
 returns the same rows (status `pending`, `sending`, `succeeded` or `failed`) and adds the error
-code and the next attempt. Finished rows are deleted 30 days after their last change. The routes are listed under
+code and the next attempt. Finished rows are deleted 30 days after their last change.
+`POST /api/v1/webhooks/deliveries/:id/redeliver` sends a `succeeded` or `failed` delivery again:
+the same row goes back to `pending` with 0 attempts, due at once, and keeps its event id
+(`webhook-id`), so a consumer that deduplicates sees a repeat; a `pending` or `sending` delivery,
+or one whose endpoint is deleted or inactive, is refused with 409. The routes are listed under
 [API Documentation](#webhooks-admin-only-sales-support-and-customer-get-403).
 
 ## Privacy: deleting a person erases their data
@@ -1076,6 +1080,9 @@ expired, or if its owner has been deactivated or erased.
   log and not retried
 - `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
   `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
+- `POST /api/v1/webhooks/deliveries/:id/redeliver` - Queue a `succeeded` or `failed` delivery
+  again (same row and event id, 0 attempts, due at once); 409 for a `pending` or `sending` delivery
+  or a deleted or inactive endpoint
 
 ### Bulk operations
 

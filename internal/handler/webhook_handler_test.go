@@ -39,6 +39,8 @@ type fakeWebhookService struct {
 	notFound bool
 	// pingFails makes TestEndpoint answer a failed outcome.
 	pingFails bool
+	// redeliverErr is what RedeliverDelivery returns.
+	redeliverErr error
 }
 
 func (f *fakeWebhookService) record(call string) {
@@ -120,6 +122,17 @@ func (f *fakeWebhookService) TestEndpoint(_ context.Context, id uint) (*models.W
 	return &models.WebhookPingResult{EventID: "evt_0123456789abcdef0123456789abcdef", Outcome: models.WebhookPingSucceeded, HTTPStatus: &status}, nil
 }
 
+func (f *fakeWebhookService) RedeliverDelivery(_ context.Context, id uint) (*models.WebhookDelivery, error) {
+	f.record("redeliver")
+	if f.redeliverErr != nil {
+		return nil, f.redeliverErr
+	}
+	now := time.Date(2026, 11, 20, 9, 30, 0, 0, time.UTC)
+	return &models.WebhookDelivery{ID: id, EndpointID: 1, EventID: "evt_0123456789abcdef0123456789abcdef",
+		EventType: models.WebhookEventLeadCreated, RecordID: 7, Status: models.WebhookDeliveryPending, NextAttemptAt: &now,
+		CreatedAt: now, UpdatedAt: now}, nil
+}
+
 // webhookAuth authenticates the token or key "<role>-credential" as a user of
 // that role; anything else is refused.
 type webhookAuth struct {
@@ -194,6 +207,7 @@ var webhookRoutes = []webhookRoute{
 	{http.MethodDelete, "/webhooks/endpoints/1", "", http.StatusNoContent},
 	{http.MethodGet, "/webhooks/deliveries", "", http.StatusOK},
 	{http.MethodPost, "/webhooks/endpoints/1/test", "", http.StatusOK},
+	{http.MethodPost, "/webhooks/deliveries/1/redeliver", "", http.StatusOK},
 }
 
 func TestWebhookRoutesAdminOnly(t *testing.T) {
@@ -276,6 +290,8 @@ func TestWebhookHandlerValidation(t *testing.T) {
 		{"bad id on DELETE", http.MethodDelete, "/webhooks/endpoints/" + canary, "", "id"},
 		{"bad id on test ping", http.MethodPost, "/webhooks/endpoints/abc/test", "", "id"},
 		{"zero id on test ping", http.MethodPost, "/webhooks/endpoints/0/test", "", "id"},
+		{"bad id on redeliver", http.MethodPost, "/webhooks/deliveries/abc/redeliver", "", "id"},
+		{"zero id on redeliver", http.MethodPost, "/webhooks/deliveries/0/redeliver", "", "id"},
 		{"subscribing to webhook.ping", http.MethodPost, "/webhooks/endpoints", `{"url":"https://hooks.example.com/x","event_types":["webhook.ping"]}`, "event_types"},
 		{"bad sort_by", http.MethodGet, "/webhooks/endpoints?sort_by=url" + canary, "", "sort_by"},
 		{"bad status filter", http.MethodGet, "/webhooks/deliveries?status=" + canary, "", "status"},
@@ -411,4 +427,50 @@ func TestWebhookHandlerValidation(t *testing.T) {
 		assert.Equal(t, utils.ErrCodeInternal, envelope.Error.Code)
 		assert.NotContains(t, rec.Body.String(), "not configured")
 	})
+}
+
+func TestWebhookRedeliverHandler(t *testing.T) {
+	const admin = "Bearer admin-credential"
+
+	t.Run("a requeued delivery is 200 with the row", func(t *testing.T) {
+		fake := &fakeWebhookService{}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/deliveries/12/redeliver", admin, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var data map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(envelope.Data, &data))
+		assert.JSONEq(t, `12`, string(data["id"]))
+		assert.JSONEq(t, `"pending"`, string(data["status"]))
+		assert.JSONEq(t, `"evt_0123456789abcdef0123456789abcdef"`, string(data["event_id"]))
+	})
+
+	cases := []struct {
+		name    string
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{"an unknown delivery is 404", fmt.Errorf("webhook delivery 9 not found: %w", apperrors.ErrNotFound), http.StatusNotFound, utils.ErrCodeNotFound, "Webhook delivery not found"},
+		{"a pending or sending delivery is 409", service.ErrWebhookDeliveryNotRedeliverable, http.StatusConflict, utils.ErrCodeConflict, "Webhook delivery is pending or being sent"},
+		{"a deleted or inactive endpoint is 409", service.ErrWebhookEndpointUnavailable, http.StatusConflict, utils.ErrCodeConflict, "Webhook endpoint is deleted or inactive"},
+		{"an unexpected error is 500 without the cause", errors.New("driver canary-cause"), http.StatusInternalServerError, utils.ErrCodeInternal, ""},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+			fake := &fakeWebhookService{redeliverErr: c.err}
+			router := newWebhookRouter(t, fake)
+			rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/deliveries/9/redeliver", admin, "")
+			assert.Equal(t, c.status, rec.Code, rec.Body.String())
+			require.NotNil(t, envelope.Error)
+			assert.Equal(t, c.code, envelope.Error.Code)
+			if c.message != "" {
+				assert.Equal(t, c.message, envelope.Error.Message)
+			}
+			assert.NotContains(t, rec.Body.String(), "canary-cause")
+			assert.Equal(t, 1, fake.callCount())
+		})
+	}
 }
