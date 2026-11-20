@@ -771,3 +771,17 @@ type WebhookService interface {
 	// ListDeliveries returns one page of the delivery log, newest first.
 	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
 }
+
+// SCIMUserService is the read of the SCIM 2.0 Users resource (#469). It
+// serves visible users only (live, not customer), judges a userName filter
+// with scim.UserNameMatches (ASCII-only case folding) on every candidate the
+// database returns, and sets externalId from the identity under the
+// configured single sign-on issuer, compared byte for byte.
+type SCIMUserService interface {
+	// Get returns the visible user rawID names; anything else, a malformed id
+	// included, is apperrors.ErrNotFound.
+	Get(ctx context.Context, rawID string) (*SCIMUserRecord, error)
+	// List returns one page, id ascending. userName nil lists every visible
+	// user; otherwise only the users whose email it matches.
+	List(ctx context.Context, userName *string, startIndex, count int) (*SCIMUserPage, error)
+}

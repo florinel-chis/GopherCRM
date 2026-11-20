@@ -1,7 +1,9 @@
 // Package scim holds the wire shapes of the SCIM 2.0 provider (#468): the
 // application/scim+json content type, the RFC 7644 §3.12 error body and the
 // three discovery documents of RFC 7643 (ServiceProviderConfig, Schemas and
-// ResourceTypes). It has no state and no database access.
+// ResourceTypes), and, for the Users read of #469, the User resource, the
+// userName filter grammar, the ASCII-only userName judge and the paging
+// rules. It has no state and no database access.
 package scim
 
 import (
@@ -28,21 +30,39 @@ const (
 // BasePath is where the provider is mounted, outside the API prefix.
 const BasePath = "/scim/v2"
 
-// MaxResults is the most resources one filtered list returns.
+// MaxResults is the most resources one list returns.
 const MaxResults = 100
 
-// errorBody is the RFC 7644 §3.12 error response. status is the HTTP status
-// code as a string.
+// errorBody is the RFC 7644 §3.12 error response. // status is the HTTP status code as a string; scimType is set only by
+// WriteErrorType.
 type errorBody struct {
-	Schemas []string `json:"schemas"`
-	Status  string   `json:"status"`
-	Detail  string   `json:"detail"`
+	Schemas  []string `json:"schemas"`
+	ScimType string   `json:"scimType,omitempty"`
+	Status   string   `json:"status"`
+	Detail   string   `json:"detail"`
 }
 
 // WriteError answers status with the SCIM error body and the SCIM content
 // type. It does not abort the chain; the caller does.
 func WriteError(c *gin.Context, status int, detail string) {
 	body, err := json.Marshal(errorBody{Schemas: []string{ErrorSchema}, Status: strconv.Itoa(status), Detail: detail})
+	if err != nil {
+		// A struct of strings always marshals.
+		body = []byte(`{"schemas":["` + ErrorSchema + `"],"status":"` + strconv.Itoa(status) + `"}`)
+	}
+	c.Data(status, ContentType, body)
+}
+
+// SCIM error types of RFC 7644 §3.12 this provider answers with.
+const (
+	ScimTypeInvalidFilter = "invalidFilter"
+	ScimTypeInvalidValue  = "invalidValue"
+)
+
+// WriteErrorType answers status with the SCIM error body carrying scimType,
+// and the SCIM content type. It does not abort the chain; the caller does.
+func WriteErrorType(c *gin.Context, status int, scimType, detail string) {
+	body, err := json.Marshal(errorBody{Schemas: []string{ErrorSchema}, ScimType: scimType, Status: strconv.Itoa(status), Detail: detail})
 	if err != nil {
 		// A struct of strings always marshals.
 		body = []byte(`{"schemas":["` + ErrorSchema + `"],"status":"` + strconv.Itoa(status) + `"}`)

@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; SCIM Users and Groups are later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; SCIM user writes (create, replace, patch, delete) and Groups are later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -454,8 +454,10 @@ outcome, reason, user and time range, so the SQL below is optional):
 
 Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RFC 7644) at
 `/scim/v2`, outside the API prefix, so an identity provider such as Entra ID or Okta can be
-pointed at `PUBLIC_BASE_URL/scim/v2`. This slice is authentication and discovery only: no user or
-group can be provisioned yet. `/Users`, `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
+pointed at `PUBLIC_BASE_URL/scim/v2`. #468 brought the tokens, the authentication and the
+discovery documents; #469 brought the read of the Users resource (see [Users read](#users-read-469)
+below). Nothing can be provisioned yet: creating, replacing, patching and deleting users
+(`POST`/`PUT`/`PATCH`/`DELETE /Users`), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
 SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets
 the router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
@@ -495,7 +497,8 @@ build switch lift it as they lift the `/auth` tier.
 **Errors.** Errors of the SCIM group use the RFC 7644 §3.12 shape with the content type
 `application/scim+json`, for example
 `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`;
-`status` is the HTTP status as a string. The 429 has `"status":"429"`.
+`status` is the HTTP status as a string. The 429 has `"status":"429"`. A 400 of the Users read
+also carries `scimType` (`invalidFilter` or `invalidValue`).
 
 **Discovery.** With a valid token, three documents answer 200 with `application/scim+json`;
 query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/scim/v2`:
@@ -512,13 +515,73 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
 - `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
   `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`.
 
-The advertised features describe what the Users slice will serve. These routes are outside the
-OpenAPI document (whose base path is the API prefix), like `GET /health`. The SPA's nginx does not
-proxy `/scim/v2`: SCIM clients talk to the backend origin directly. Regression roots:
-`TestSCIMRoutesWired` and `TestSCIMStrictTierWired` (`cmd`), `TestSCIMAuth` (`internal/middleware`),
-`TestSCIMTokenHandler` and `TestSCIMDiscoveryDocuments` (`internal/handler`),
-`TestSCIMTokenStore{SQLite,MySQL}` (`internal/service`), `TestSCIMTokenSchemaSQLite`
-(`internal/models`) and `TestSCIMTokensMigration{Files,}` (`cmd/migrate`).
+The advertised `patch` feature describes a later slice: today only the Users read below is
+served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
+`GET /health`. The SPA's nginx does not proxy `/scim/v2`: SCIM clients talk to the backend origin
+directly.
+
+### Users read (#469)
+
+Two routes, behind the same strict tier and token authentication, answer with
+`application/scim+json`:
+
+- `GET /scim/v2/Users/{id}` answers 200 with one User resource, or 404 with the SCIM error body
+  (`"detail":"User not found"`, the id is not echoed) when the id is not a positive decimal
+  integer, names no user, or names an erased or customer account.
+- `GET /scim/v2/Users` answers a `ListResponse` with `totalResults`, `itemsPerPage` (the number
+  of resources returned), `startIndex` and `Resources` (always an array, `[]` when empty), in
+  ascending id order.
+
+**Visibility.** A user is served when its row is live (erasure soft-deletes, so an erased
+account is never served) and its role is not `customer`: the staff roles and `custom`. A
+deactivated account is served with `"active":false`.
+
+**Resource.** `schemas` (the core User URN), `id` (the user id as a string), `externalId` (see
+below), `userName` (the email), `name.givenName`/`name.familyName` (first and last name), one
+`emails` entry (`value` the email, `type` `work`, `primary` true), `active` (`is_active`) and
+`meta` (`resourceType` `User`, `created` and `lastModified` in RFC 3339 UTC, `location`
+`PUBLIC_BASE_URL/scim/v2/Users/{id}`). No role, password or other attribute is served, and
+`attributes`/`excludedAttributes` are ignored.
+
+**externalId** is the subject of the user's `user_identities` row under the effective single
+sign-on issuer (Settings > Single sign-on, else `OIDC_ISSUER_URL`; whether sign-on is enabled does
+not matter), read once per request. The stored issuer must equal the configured one byte for
+byte, judged in Go on the returned row: `user_identities` is `utf8mb4_bin` PAD SPACE on
+MySQL/MariaDB, so an issuer differing only by a trailing space would otherwise match. With two
+rows under that issuer the lowest id wins. Without a configured issuer, or without such a row,
+`externalId` is omitted.
+
+**Paging** (RFC 7644 §3.4.2.4). `startIndex` is 1-based; absent or below 1 it is 1. `count`
+absent is 100; negative it is 0, above 100 it is 100, and 0 returns only `totalResults`. A
+`startIndex` or `count` that is not a base-10 integer is 400 with `"scimType":"invalidValue"`.
+
+**Filter.** The only filter is `userName eq "<value>"`: the attribute `userName`, optionally
+prefixed by `urn:ietf:params:scim:schemas:core:2.0:User:`, and the operator `eq`, both
+case-insensitive, then a JSON string literal (`\"` and `\u` escapes work), separated by one or
+more spaces. Both the Entra ID shape (`filter=userName+eq+"a@contoso.test"`) and the Okta shape
+(`filter=userName%20eq%20%22...%22&startIndex=1&count=100`) are accepted. Anything else is 400
+with `"scimType":"invalidFilter"` and nothing is read: an empty filter, another attribute
+(`externalId`, `emails.value`, `id`), another operator (`ne`, `co`, `sw`, `pr`), `and`/`or`/`not`,
+parentheses, an unquoted or non-string value, or trailing tokens.
+
+**userName matching.** The database is asked for candidates with
+`LOWER(email) = LOWER(?)`, and every returned row is then judged in Go with ASCII-only case
+folding: the same byte length, and every byte equal after mapping only `A`-`Z` to `a`-`z`. An
+ASCII letter-case variant (`JOSE@X.TEST`) matches, as the schema's "matched case-insensitively"
+says. `users.email` is `utf8mb4_unicode_ci` on MySQL/MariaDB (accent-insensitive, PAD SPACE), so
+the database also returns padded (`"jose@x.test "`), accented (`josé@x.test`) and Unicode-fold
+variants (`joſe@x.test` with U+017F LONG S, `Kate@x.test` with U+212A KELVIN SIGN); the judge
+refuses them all, deliberately not with Unicode case folding. Paging then applies to the judged
+rows. Errors of the read are logged without the filter value, an email, a name or a subject.
+
+Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` and `TestSCIMUsersWired`
+(`cmd`), `TestSCIMAuth` (`internal/middleware`), `TestSCIMTokenHandler`,
+`TestSCIMDiscoveryDocuments` and `TestSCIMUserHandler` (`internal/handler`),
+`TestSCIMTokenStore{SQLite,MySQL}` and `TestSCIMUsersSQLite`/`TestSCIMUsersMySQL`
+(`internal/service`; the MySQL root also runs on MariaDB and proves the collations return the
+variants the Go judges drop), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource` and
+`TestWriteErrorType` (`internal/scim`), `TestSCIMTokenSchemaSQLite` (`internal/models`) and
+`TestSCIMTokensMigration{Files,}` (`cmd/migrate`).
 
 ## Least-privilege integration user
 
@@ -640,7 +703,8 @@ on every sign-in. Since #436 the SPA offers the sign-in (see
 a `groups` claim has its groups read from the issuer's userinfo endpoint when the mapping uses
 groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider tokens and the
 `/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
-provisioning users and groups through SCIM is not implemented yet, that is later work. The rest of the note
+#469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`). Creating, replacing,
+patching and deprovisioning users through SCIM, and Groups, are later work. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)

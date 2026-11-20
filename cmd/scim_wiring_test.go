@@ -4,8 +4,10 @@ package main
 // /scim/v2 outside the API prefix, behind its own strict rate tier and the
 // SCIM token authentication, which records every refusal in the sign-in audit
 // log with method scim. A user's JWT or API key is not a SCIM token, and a
-// SCIM token is not a credential of the API. Over a SQLite file opened by the
-// real connector.
+// SCIM token is not a credential of the API. Issue #469 adds GET /Users and
+// /Users/:id, with externalId taken from the identities under the effective
+// single sign-on issuer (ssoSettings). Over a SQLite file opened by the real
+// connector.
 
 import (
 	"bytes"
@@ -14,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -23,6 +26,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -31,8 +35,18 @@ const scimWiredBody = `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"
 // scimWiredRouter builds the production router over a fresh SQLite file.
 func scimWiredRouter(t *testing.T) (*gin.Engine, *automationBoot) {
 	t.Helper()
+	return scimWiredRouterWith(t, nil)
+}
+
+// scimWiredRouterWith is scimWiredRouter with configure applied to the boot
+// configuration before setupRouter reads it.
+func scimWiredRouterWith(t *testing.T, configure func(*automationBoot)) (*gin.Engine, *automationBoot) {
+	t.Helper()
 	boot := bootAutomation(t, false)
 	boot.cfg.Forms.PublicBaseURL = "https://crm.example.test"
+	if configure != nil {
+		configure(boot)
+	}
 	backgroundCtx, stopBackground := context.WithCancel(context.Background())
 	t.Cleanup(stopBackground)
 	router, stop := setupRouter(backgroundCtx, boot.cfg)
@@ -212,4 +226,174 @@ func TestSCIMStrictTierWired(t *testing.T) {
 	assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"429","detail":"Too many requests. Please try again later."}`,
 		recorder.Body.String())
 	assert.EqualValues(t, 5, count(), "the 429 adds no audit row")
+}
+
+type scimWiredUser struct {
+	ID         string `json:"id"`
+	ExternalID string `json:"externalId"`
+	UserName   string `json:"userName"`
+	Name       struct {
+		GivenName  string `json:"givenName"`
+		FamilyName string `json:"familyName"`
+	} `json:"name"`
+	Emails []struct {
+		Value   string `json:"value"`
+		Type    string `json:"type"`
+		Primary bool   `json:"primary"`
+	} `json:"emails"`
+	Active bool `json:"active"`
+	Meta   struct {
+		Location string `json:"location"`
+	} `json:"meta"`
+}
+
+type scimWiredList struct {
+	Schemas      []string        `json:"schemas"`
+	TotalResults int             `json:"totalResults"`
+	ItemsPerPage int             `json:"itemsPerPage"`
+	StartIndex   int             `json:"startIndex"`
+	Resources    []scimWiredUser `json:"Resources"`
+}
+
+func TestSCIMUsersWired(t *testing.T) {
+	// The strict SCIM tier stays live: every request below comes from its own
+	// client address, so none is throttled.
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
+	})
+	prefix := boot.cfg.API.Prefix
+	addr := 0
+	nextRemote := func() string {
+		addr++
+		return fmt.Sprintf("198.51.100.%d:1234", addr)
+	}
+
+	const password = "Wired-Passw0rd!-0469"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	admin := &models.User{Email: "admin-0469@crm.example.test", Password: string(hash), FirstName: "Scim", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	staff := &models.User{Email: "staff-0469@crm.example.test", Password: string(hash), FirstName: "Stella", LastName: "Staff", Role: models.RoleSales, IsActive: true}
+	require.NoError(t, models.DB.Create(staff).Error)
+	require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: staff.ID, Issuer: "https://idp.example.test", Subject: "sub-469"}).Error)
+	customer := &models.User{Email: "customer-0469@crm.example.test", Password: string(hash), FirstName: "Cora", LastName: "Customer", Role: models.RoleCustomer, IsActive: true}
+	require.NoError(t, models.DB.Create(customer).Error)
+	erased := &models.User{Email: "erased-0469@crm.example.test", Password: string(hash), FirstName: "Ernie", LastName: "Erased", Role: models.RoleSupport, IsActive: true}
+	require.NoError(t, models.DB.Create(erased).Error)
+	erasedEmail := erased.Email
+	require.NoError(t, repository.NewUserRepository(models.DB).Delete(erased.ID), "erasure through the real path")
+
+	recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+admin.Email+`","password":"`+password+`"}`, nextRemote(), "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var login struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &login))
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"Entra"}`, nextRemote(), "Bearer "+login.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	token := "Bearer " + created.Data.Token
+	require.NotEqual(t, "Bearer ", token)
+
+	get := func(t *testing.T, path string, want int) []byte {
+		t.Helper()
+		recorder := scimWiredSend(router, http.MethodGet, path, "", nextRemote(), token)
+		require.Equal(t, want, recorder.Code, "%s: %s", path, recorder.Body.String())
+		assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"), path)
+		return recorder.Body.Bytes()
+	}
+	getList := func(t *testing.T, path string) scimWiredList {
+		t.Helper()
+		var list scimWiredList
+		body := get(t, path, http.StatusOK)
+		require.NoError(t, json.Unmarshal(body, &list))
+		assert.Equal(t, []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"}, list.Schemas)
+		assert.Contains(t, string(body), `"Resources":[`, "Resources is an array")
+		return list
+	}
+	staffID := fmt.Sprint(staff.ID)
+	assertStaff := func(t *testing.T, u scimWiredUser) {
+		t.Helper()
+		assert.Equal(t, staffID, u.ID)
+		assert.Equal(t, staff.Email, u.UserName)
+		assert.Equal(t, "Stella", u.Name.GivenName)
+		assert.Equal(t, "Staff", u.Name.FamilyName)
+		require.Len(t, u.Emails, 1)
+		assert.Equal(t, staff.Email, u.Emails[0].Value)
+		assert.Equal(t, "work", u.Emails[0].Type)
+		assert.True(t, u.Emails[0].Primary)
+		assert.True(t, u.Active)
+		assert.Equal(t, "sub-469", u.ExternalID, "externalId from the identity under the configured issuer")
+		assert.Equal(t, "https://crm.example.test/scim/v2/Users/"+staffID, u.Meta.Location)
+	}
+
+	t.Run("Entra filter shape", func(t *testing.T) {
+		list := getList(t, "/scim/v2/Users?filter=userName+eq+%22"+url.QueryEscape(staff.Email)+"%22")
+		assert.Equal(t, 1, list.TotalResults)
+		assert.Equal(t, 1, list.StartIndex)
+		assert.Equal(t, 1, list.ItemsPerPage)
+		require.Len(t, list.Resources, 1)
+		assertStaff(t, list.Resources[0])
+	})
+
+	t.Run("Okta filter shape", func(t *testing.T) {
+		list := getList(t, "/scim/v2/Users?filter=userName%20eq%20%22"+url.PathEscape(staff.Email)+"%22&startIndex=1&count=100")
+		assert.Equal(t, 1, list.TotalResults)
+		assert.Equal(t, 1, list.StartIndex)
+		assert.Equal(t, 1, list.ItemsPerPage)
+		require.Len(t, list.Resources, 1)
+		assertStaff(t, list.Resources[0])
+	})
+
+	t.Run("unknown, customer and erased userNames", func(t *testing.T) {
+		for _, email := range []string{"nobody-0469@crm.example.test", customer.Email, erasedEmail} {
+			list := getList(t, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+email+`"`))
+			assert.Equal(t, 0, list.TotalResults, email)
+			assert.Empty(t, list.Resources, email)
+		}
+	})
+
+	t.Run("unfiltered list", func(t *testing.T) {
+		list := getList(t, "/scim/v2/Users")
+		assert.Equal(t, 2, list.TotalResults, "the admin and the staff user")
+		ids := []string{}
+		for _, u := range list.Resources {
+			ids = append(ids, u.ID)
+		}
+		assert.Equal(t, []string{fmt.Sprint(admin.ID), staffID}, ids)
+		assert.NotContains(t, ids, fmt.Sprint(customer.ID))
+		assert.NotContains(t, ids, fmt.Sprint(erased.ID))
+	})
+
+	t.Run("get", func(t *testing.T) {
+		var u scimWiredUser
+		require.NoError(t, json.Unmarshal(get(t, "/scim/v2/Users/"+staffID, http.StatusOK), &u))
+		assertStaff(t, u)
+		for _, id := range []uint{erased.ID, customer.ID} {
+			body := get(t, fmt.Sprintf("/scim/v2/Users/%d", id), http.StatusNotFound)
+			assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, string(body))
+		}
+	})
+
+	t.Run("unsupported filter", func(t *testing.T) {
+		body := get(t, "/scim/v2/Users?filter="+url.QueryEscape(`externalId eq "sub-469"`), http.StatusBadRequest)
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(body, &doc))
+		assert.Equal(t, "invalidFilter", doc["scimType"])
+		assert.Equal(t, "400", doc["status"])
+	})
+
+	t.Run("no token", func(t *testing.T) {
+		recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/Users", "", nextRemote(), "")
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+		assert.Equal(t, scimWiredBody, recorder.Body.String())
+	})
 }

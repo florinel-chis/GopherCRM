@@ -375,6 +375,21 @@ required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
 
+**SCIM user read (#469)** — `GET /scim/v2/Users` and `/Users/:id` are mounted by the same
+`SetupSCIMRoutes` (`internal/handler/scim_user_handler.go`: query parsing, status mapping, the
+`application/scim+json` answer). `internal/service/scim_users.go` (`SCIMUserService`) applies the
+userName judge, pages a filtered set in Go and takes `externalId` from the identities under the
+effective issuer of the SSO settings service, compared byte for byte; the reads are in
+`internal/repository/scim_user_repository.go` (`SCIMUserRepository`: live, non-customer users;
+identities of a page in one `issuer = ? AND user_id IN ?` query). `internal/scim` holds the User
+resource, `ParseUserFilter`, `ParsePaging`, `WriteErrorType` and `UserNameMatches`, the
+ASCII-only judge: never replace it with `strings.EqualFold`, whose Unicode folding matches
+U+212A and U+017F the way `utf8mb4_unicode_ci` does. Regression roots: `TestSCIMUsersSQLite` and
+`TestSCIMUsersMySQL` (`internal/service`, discovered by the auth checker; run the MySQL root on
+MariaDB too), `TestSCIMUserHandler` (`internal/handler`), `TestParseUserFilter`,
+`TestUserNameMatches`, `TestParsePaging`, `TestUserResource`, `TestWriteErrorType`
+(`internal/scim`) and `TestSCIMUsersWired` (`cmd`).
+
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
 
@@ -2146,8 +2161,11 @@ covering MySQL and MariaDB behaviour of the handlers.
   administrator deactivating or deleting itself, an AEO call with no provider configured) the
   route's `note` says why; generation fails on a non-2xx admin `own` without a note.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
-  `routeMatrixPublic` list in the test: `/health`, the six unauthenticated `/auth` routes, the
-  six `/forms/public` routes and the two `/quotes/public/response` routes and `POST /quotes/public/render`. A new route in neither fails `TestRouteMatrixCoversEveryProtectedRoute`.
+  `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
+  OpenID Connect start and callback included), the six `/forms/public` routes, the two
+  `/quotes/public/response` routes and `POST /quotes/public/render`, and the five `/scim/v2` routes
+  (the discovery documents of #468 and the Users read of #469), 23 in all. A new route in neither
+  fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its
   own, because the authenticated rate tier is live in a normal build; a 401 or 429 in a cell is a
