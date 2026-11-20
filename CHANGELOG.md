@@ -1064,6 +1064,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Rate limiting keeps serving new clients when its client table is full, counts IPv6 clients
+  per /64 and refuses its test switch in production (#527).** When a rate-limit instance tracks
+  its maximum of 10,000 clients, a new client is now admitted and the least recently active entry
+  is dropped, instead of the new client receiving 429; the tracked count never exceeds the
+  maximum, and more recently active clients keep their remaining allowance (a dropped client
+  starts again with a fresh burst). IPv6 clients are counted per /64 network and IPv4 clients per
+  address (an IPv4-mapped IPv6 address counts as its IPv4 address), for direct peers and for
+  clients forwarded by a trusted proxy. The server refuses to start when `DISABLE_RATE_LIMIT=true`
+  (or, in the functional-test build, `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true`) is set together with
+  `SERVER_MODE=production`, from the environment or from `.env`; other modes are unaffected. The
+  container run of `scripts/e2e/quote-pdf-chain.sh` no longer sets the switch and paces its ten
+  sign-ins instead.
+
 - **Webhooks: deleted events go to every endpoint subscribed to them (#531).** `lead.deleted`,
   `customer.deleted` and `ticket.deleted` now go to every active endpoint subscribed to the event
   type, whether or not that endpoint received an earlier event for the record: an endpoint

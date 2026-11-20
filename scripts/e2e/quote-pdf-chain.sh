@@ -284,7 +284,6 @@ services:
       SMTP_HOST: ""
       APP_BASE_URL: http://ui
       CORS_ALLOWED_ORIGINS: http://ui,http://localhost:{port}
-      DISABLE_RATE_LIMIT: "true"
     volumes:
       - data:/data
     healthcheck:
@@ -341,15 +340,18 @@ PY
     > /dev/null 2>&1 || fail "create-admin failed in the container"
   wait_for_url "http://localhost:$ui_port/quote-render" 60 || fail "the web app did not answer within 60 s"
 
-  # One second between runs keeps ten runs (five authenticated requests each,
-  # all from the proxy's address) under the moderate rate-limit tier, which
-  # DISABLE_RATE_LIMIT does not lift. A pause, not a retry: any failure counts.
+  # Every request comes from the proxy's address and the production-mode
+  # backend runs with both rate-limit tiers on. Each run signs in once through
+  # the strict /auth tier (burst 5, then one request every 6 s) and makes five
+  # authenticated requests on the moderate tier (120 per minute, burst 30), so
+  # seven seconds between runs keeps all ten under both. A pause, not a retry:
+  # any failure counts.
   for i in $(seq 1 10); do
     BASE_URL="http://localhost:$ui_port/api/v1" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
       bash "$SMOKE" "$WORK/quote.pdf" > "$WORK/smoke.out" \
       || { compose logs --tail 20 backend >&2; fail "render $i of 10 failed (the smoke script's message is above)"; }
     say "render $i of 10: 200 application/pdf, $(wc -c < "$WORK/quote.pdf" | tr -d ' ') bytes"
-    sleep 1
+    sleep 7
   done
   cat "$WORK/smoke.out"
   check_pdf_text "$WORK/quote.pdf" "$WORK/smoke.out" fonts

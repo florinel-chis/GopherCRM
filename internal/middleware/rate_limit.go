@@ -2,9 +2,12 @@ package middleware
 
 import (
 	"container/heap"
+	"errors"
 	"math"
 	"net/http"
+	"net/netip"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,12 +19,22 @@ import (
 
 const (
 	// rateLimitVisitorCapacity is the maximum number of client identities one
-	// RateLimit instance tracks. Unseen identities are refused with 429 while
-	// the instance is full; existing clients are never evicted to make room.
+	// RateLimit instance tracks. When the instance is full and no record can be
+	// reclaimed, an unseen identity is still admitted: the record with the
+	// earliest reclaim time (the least recently active client) is evicted to
+	// make room, so the count never exceeds the capacity.
 	rateLimitVisitorCapacity = 10000
 	// rateLimitIdleTimeout is the minimum inactivity before a visitor record
-	// may be reclaimed. A record is also kept until its bucket has refilled to
-	// burst, so reclaiming it can never hand out a fresh burst early.
+	// may be reclaimed. Idle reclaim also waits until the bucket has refilled
+	// to burst, so it never hands out a fresh burst early. Eviction at capacity
+	// does not wait: an evicted record's bucket may not be full, and that
+	// client starts again with a fresh burst on its next request.
+	//
+	// A record's reclaim time is the later of last-seen + rateLimitIdleTimeout
+	// and the time its bucket refills to burst. Every live tier refills to
+	// burst well within this timeout (strict 30 s, moderate 15 s, generous
+	// 10 s), so the idle term dominates and the earliest reclaim time is the
+	// least recently active client. Eviction relies on that order.
 	rateLimitIdleTimeout = 5 * time.Minute
 	// rateLimitReclaimPerRequest bounds the cleanup work done by one request.
 	// Cleanup is opportunistic: there is no background goroutine to stop.
@@ -36,7 +49,6 @@ type rateLimitDecision int
 const (
 	rateLimitAllowed rateLimitDecision = iota
 	rateLimitThrottled
-	rateLimitOverCapacity
 )
 
 // visitor tracks rate limiting for one client identity.
@@ -97,7 +109,11 @@ func newRateLimiter(rps float64, burst, capacity int, now func() time.Time) *rat
 	}
 }
 
-// admit consumes one token for key, creating its visitor record if there is room.
+// admit consumes one token for key, creating its visitor record if needed.
+// When the instance is full, an unseen key evicts the record with the earliest
+// reclaim time (one record per admission) and is admitted in its place. The
+// eviction writes no log line: one line per request during a burst of new
+// clients would flood the log.
 func (rl *rateLimiter) admit(key string) rateLimitDecision {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
@@ -107,8 +123,9 @@ func (rl *rateLimiter) admit(key string) rateLimitDecision {
 
 	v, exists := rl.visitors[key]
 	if !exists {
-		if len(rl.visitors) >= rl.capacity {
-			return rateLimitOverCapacity
+		if len(rl.visitors) >= rl.capacity && len(rl.queue) > 0 {
+			evicted := heap.Pop(&rl.queue).(*visitor)
+			delete(rl.visitors, evicted.key)
 		}
 		v = &visitor{key: key, limiter: rate.NewLimiter(rl.limit, rl.burst)}
 	}
@@ -209,31 +226,65 @@ func (rl *rateLimiter) middlewareWith(respond rateLimitResponder) gin.HandlerFun
 		}
 
 		ip := c.ClientIP()
-		switch rl.admit(ip) {
-		case rateLimitAllowed:
+		if rl.admit(rateLimitClientKey(ip)) == rateLimitAllowed {
 			c.Next()
 			return
-		case rateLimitOverCapacity:
-			utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit visitor capacity reached")
-		default:
-			utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit exceeded")
 		}
+		utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit exceeded")
 
 		respond(c)
 		c.Abort()
 	}
 }
 
-// RateLimit returns a middleware that implements rate limiting per IP address.
-// Each call creates its own independent rate limiter so that different tiers
-// (strict, moderate, generous) do not share state. Each instance tracks at most
-// 10,000 client IPs; while full, unseen IPs receive 429. Idle records are
-// reclaimed by later requests, so no goroutine or shutdown is involved.
+// rateLimitClientKey is the identity one bucket counts: an IPv4 client
+// (including an IPv4-mapped IPv6 address) by its address, an IPv6 client by
+// its /64 network. A value that does not parse as an address is used as is.
+func rateLimitClientKey(ip string) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(ip))
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	prefix, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return prefix.String()
+}
+
+// RateLimit returns a middleware that implements rate limiting per client: an
+// IPv4 address or an IPv6 /64 network. Each call creates its own independent
+// rate limiter so that different tiers (strict, moderate, generous) do not
+// share state. Each instance tracks at most 10,000 clients; while full, an
+// unseen client is admitted and the least recently active record is evicted.
+// Idle records are reclaimed by later requests, so no goroutine or shutdown
+// is involved.
 func RateLimit(rps float64, burst int) gin.HandlerFunc {
 	if e2eRateLimitDisabled() {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return newRateLimiter(rps, burst, rateLimitVisitorCapacity, time.Now).middleware()
+}
+
+// CheckRateLimitSwitch refuses the switches that lift rate limiting when the
+// server runs in production mode: DISABLE_RATE_LIMIT=true, and in the
+// functional-test build GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true. Outside
+// production it returns nil and the switches behave as before.
+func CheckRateLimitSwitch(serverMode string) error {
+	if strings.ToLower(strings.TrimSpace(serverMode)) != "production" {
+		return nil
+	}
+	if os.Getenv("DISABLE_RATE_LIMIT") == "true" {
+		return errors.New("DISABLE_RATE_LIMIT=true is refused in production mode (SERVER_MODE=production): unset it")
+	}
+	if e2eRateLimitDisabled() {
+		return errors.New("GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true is refused in production mode (SERVER_MODE=production): unset it")
+	}
+	return nil
 }
 
 // RateLimitStrict returns a stricter rate limit middleware for sensitive endpoints.

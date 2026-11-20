@@ -336,7 +336,7 @@ startup.
 | `DB_PATH` | `gophercrm.db` | `Load` | SQLite only; no `?`; local filesystem (WAL) |
 | `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `Load` | MySQL only |
 | `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `Load` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `Load` | `production` switches Gin to release mode (`setupRouter` (`cmd/main.go`)) |
+| `SERVER_MODE` | `development` | `Load` | `production` switches Gin to release mode (`setupRouter` (`cmd/main.go`)) and refuses to start with `DISABLE_RATE_LIMIT=true` (`CheckRateLimitSwitch` (`internal/middleware/rate_limit.go`)) |
 | `TRUSTED_PROXIES` | trust none | `Load` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `Load` | every browser origin of your UI |
 | `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
@@ -373,12 +373,15 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   refused. Restoring a database backup needs the secrets it was written with; a backup also brings
 >   back older `token_version` values, so access tokens ended after it was taken pass again until
 >   they expire.
-> - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. The setting has no other
->   effect: the application issues no cookies, and authentication is header-only.
+> - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. With it the server refuses to
+>   start while `DISABLE_RATE_LIMIT=true` is set in production (environment or `.env`), so the
+>   test-only switch cannot lift the `/auth` tier of a deployment. The application issues no cookies, and
+>   authentication is header-only.
 > - **`TRUSTED_PROXIES`.** The rate limiter keys on `c.ClientIP()`
 >   (`rateLimiter.middlewareWith` (`internal/middleware/rate_limit.go`)). Behind a reverse proxy or CDN with no trusted
 >   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
->   noisy user locks out everyone on `/auth`.
+>   noisy user locks out everyone on `/auth`. An IPv6 client is counted per /64 network
+>   (`rateLimitClientKey`), so the addresses of one IPv6 /64 share a bucket.
 > - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
 > - **`PUBLIC_BASE_URL` versus `APP_BASE_URL`.** The first is the API's public origin, used in form
 >   confirmation links; the second is the UI's, used in password-reset links and in the client
