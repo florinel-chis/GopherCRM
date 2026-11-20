@@ -1287,6 +1287,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a prune waiting for a pooled connection or a lock ignored `Stop`, used up the whole shared drain
   deadline and made the later stops (webhook sender, AEO) report that they did not stop; this was
   the cause of the intermittent `TestAEORuntimeShutdown` failure.
+- **`TestAEORuntimeShutdown` admission precondition is exact (#494).** Its first subtest took any
+  rise of the pool's `WaitCount` as proof that the due tick was waiting in run admission, but the
+  boot passes of the stale bulk-operation sweep and the webhook sender could raise it first. The
+  subtest now settles both before it holds the connection (it seeds one expired sign-in audit row
+  and waits for the sweep's prune log line, and stops the webhook sender), so it proves that
+  cancelling the owner's context releases a waiting scheduled `StartRun`. Test-only.
 
 - **The `docs/FORKING.md` §7.3 citation of the AutoMigrate list points at the list again (#464).**
   The conflict hot-spot table cited `internal/models/database.go:114-156`, lines inside an

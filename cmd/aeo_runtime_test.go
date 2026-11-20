@@ -390,8 +390,35 @@ func TestAEORuntimeStartup(t *testing.T) {
 
 func TestAEORuntimeShutdown(t *testing.T) {
 	t.Run("stop cancels a scheduled admission waiting for the database", func(t *testing.T) {
-		boot := bootAEO(t, true)
+		var webhooks *service.WebhookRuntime
+		webhookRuntimeBuilt = func(rt *service.WebhookRuntime) { webhooks = rt }
+		t.Cleanup(func() { webhookRuntimeBuilt = nil })
+
+		// One sign-in audit row past the 90-day default retention, so the boot
+		// pass of the stale bulk-operation sweep logs its last statement.
+		boot := bootAEOAt(t, true, filepath.Join(t.TempDir(), "aeo-runtime.db"), func(t *testing.T) {
+			require.NoError(t, models.DB.Create(&models.AuthAuditLog{
+				CreatedAt: time.Now().UTC().AddDate(-1, 0, 0),
+				Method:    service.AuthAuditMethodPassword,
+				Outcome:   service.AuthAuditOutcomeRefused,
+				Reason:    service.AuthAuditReasonInvalidCredentials,
+				RequestID: "req-aeo-runtime-494",
+			}).Error)
+		})
 		fire := boot.clock.armed(t)
+
+		// Settle the boot passes that share the database before the connection
+		// is held. The sweep's sign-in audit prune is its last statement and
+		// the next sweep is 15 minutes away; stopping the webhook sender joins
+		// its boot pass and removes its 5 s poll tick.
+		require.Eventually(t, func() bool {
+			return boot.logs.count(`"msg":"pruned sign-in audit rows"`) == 1
+		}, aeoBootTimeout, time.Millisecond, "the boot sweep must finish its sign-in audit prune")
+		require.NotNil(t, webhooks, "setupDependencies builds the webhook runtime")
+		webhookCtx, cancelWebhooks := context.WithTimeout(context.Background(), aeoBootTimeout)
+		defer cancelWebhooks()
+		require.NoError(t, webhooks.Stop(webhookCtx))
+
 		seedAEOTracking(t)
 		boot.storeGeminiKey(t)
 
@@ -408,10 +435,10 @@ func TestAEORuntimeShutdown(t *testing.T) {
 
 		// Keep the connection held: only cancelling the owner's context can
 		// release StartRun and let the scheduler finish before the deadline.
-		// A boot pass of the stale bulk-operation sweep (its single sign-on
-		// attempt or sign-in audit prune) or of the webhook sender may also be
-		// among the waiters on the held connection; each is cancelled by its
-		// own Stop, so all of them leave within the one shared deadline (#485).
+		// The boot passes of the stale bulk-operation sweep and the webhook
+		// sender were settled before the hold (#485, #494), so the WaitCount
+		// rise above is the AEO run admission's GetProfile on the lifecycle
+		// context, the only waiter on the held connection.
 		require.NoError(t, boot.stopWithin(t, 5*time.Second))
 		assert.Equal(t, 1, boot.logs.count(`"msg":"AEO scheduler stopped"`))
 		assert.Empty(t, boot.stub.authorizations())
