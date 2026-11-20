@@ -106,10 +106,11 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 	f.newServiceWith = build
 	f.svc = build(repository.NewRefreshTokenRepository(db))
 
-	// seed creates an active account with a password and no audit rows.
+	// seed creates an active account linked under the issuer, with a
+	// password and no audit rows.
 	seed := func(t *testing.T, email string, role models.UserRole) *models.User {
 		t.Helper()
-		return f.seedUser(t, email, role, true, scimPatchPassword)
+		return f.seedLinked(t, email, role, true, scimPatchPassword)
 	}
 	// assertDeactivated checks a deactivation: inactive, the generation one
 	// up and no live refresh token, read before any refresh call.
@@ -369,6 +370,29 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.True(t, stored.IsActive)
 			assert.Zero(t, stored.TokenVersion)
 		}},
+		{"local account is not found", func(t *testing.T) {
+			local := f.seedLocalAdmin(t)
+			before := f.patchState(t, local.ID)
+			for name, body := range map[string]string{
+				"userName":     `{"Operations":[{"op":"replace","path":"userName","value":"renamed@x.test"}]}`,
+				"active false": `{"Operations":[{"op":"replace","path":"active","value":false}]}`,
+			} {
+				record, err := f.svc.Patch(ctx, uintString(local.ID), parsePatch(t, body))
+				assert.Nil(t, record, name)
+				assert.ErrorIs(t, err, apperrors.ErrNotFound, name)
+				assert.Equal(t, before, f.patchState(t, local.ID), "%s: the local account is unchanged", name)
+			}
+		}},
+		{"account linked under another issuer is not found", func(t *testing.T) {
+			lee := f.seedOtherIssuer(t, "lee@x.test", models.RoleSales, scimPatchPassword)
+			f.login(t, lee.Email, scimPatchPassword)
+			before := f.patchState(t, lee.ID)
+			require.Equal(t, int64(1), before.liveSessions)
+			record, err := f.svc.Patch(ctx, uintString(lee.ID), parsePatch(t, `{"Operations":[{"op":"replace","path":"active","value":false}]}`))
+			assert.Nil(t, record)
+			assert.ErrorIs(t, err, apperrors.ErrNotFound)
+			assert.Equal(t, before, f.patchState(t, lee.ID), "the account is unchanged")
+		}},
 		{"refusals write nothing", func(t *testing.T) {
 			hal := seed(t, "hal@x.test", models.RoleSales)
 			taken := seed(t, "taken@x.test", models.RoleSales)
@@ -430,7 +454,7 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			run  func(t *testing.T)
 		}{"last_admin_race/after_handover", func(t *testing.T) {
 			x := f.seedUser(t, "x@x.test", models.RoleAdmin, true, scimPatchPassword)
-			y := f.seedUser(t, "y@x.test", models.RoleSales, true, scimPatchPassword)
+			y := f.seedLinked(t, "y@x.test", models.RoleSales, true, scimPatchPassword)
 			f.login(t, y.Email, scimPatchPassword)
 			require.Equal(t, int64(1), f.liveRefreshTokens(t, y.ID))
 			versionBefore := f.user(t, y.ID).TokenVersion

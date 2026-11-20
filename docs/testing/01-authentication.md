@@ -1442,8 +1442,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   4. `GET /scim/v2/Users/<deactivated id>`.
 - **Expected:** Step 1: 404 with
   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`.
-  Step 2: `totalResults` counts only the live non-customer users and no resource carries either
-  id. Step 3: `totalResults` 0. Step 4: 200 with `"active":false`.
+  Step 2: `totalResults` counts only the managed accounts (live, not customer, linked under the
+  configured issuer; TC-AUTH-093) and no resource carries either id. Step 3: `totalResults` 0. Step 4: 200 with `"active":false`.
 - **Automation:** automated — Go: `TestSCIMUsersWired`, `TestSCIMUsers{SQLite,MySQL}`
 
 ### TC-AUTH-072 — Unsupported filters and malformed paging are SCIM 400s
@@ -1794,3 +1794,34 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   sign-in audit rows exist. Holds on SQLite, MySQL 8 and MariaDB 10.11.
 - **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`last_admin_race/a_first`,
   `last_admin_race/b_first`, `last_admin_race/concurrent`)
+
+### TC-AUTH-093 — SCIM serves and changes only accounts linked to the single sign-on issuer
+- **Priority:** P0
+- **Type:** rbac
+- **Preconditions:** A valid SCIM token; single sign-on issuer configured. L a local admin created in
+  GopherCRM (a password, no identity link, active, holding a refresh token) next to a second active
+  admin; O an account linked only under another issuer; P an account linked under the issuer plus a
+  trailing space; S an account a SCIM create linked; N an account an OIDC sign-in linked.
+- **Steps:**
+  1. `GET /scim/v2/Users`, and `GET /scim/v2/Users?filter=userName eq "<L's address>"`.
+  2. `GET /scim/v2/Users/<id>` for L, O, P, S and N.
+  3. `PUT` L with a mapped role and a new `userName`; `PATCH` L's `userName`; `PATCH` L with `active`
+     false; `DELETE` L; `PATCH` O with `active` false.
+  4. `POST /scim/v2/Users` with L's address as `userName`.
+  5. `PATCH` a group adding L, and replacing the members with a list that names L.
+  6. With a membership row of L stored before and L the only active admin, `PATCH` the group removing
+     L.
+  7. Clear the issuer in Settings → Single sign-on and repeat step 1.
+- **Expected:** Step 1: only S and N are listed and counted; the filter on L's address answers
+  `totalResults` 0. Step 2: 200 for S and N, 404 `User not found` for L, O and P. Step 3: each
+  answers 404 `User not found`; L's and O's email, names, role, `role_id`, `is_active` and
+  `token_version` are unchanged, their refresh tokens are not revoked, and no `role_audit_log` or
+  `auth_audit_log` row is written. Step 4: 409 `uniqueness`, L unchanged. Step 5: 400 `invalidValue`,
+  with `scim_group_members`, roles and both audit tables unchanged, and L is never listed as a group
+  member. Step 6: 200; the row is deleted, L stays admin, and no role or sign-in audit row names L.
+  Step 7: `totalResults` 0. Holds on SQLite, MySQL 8 and MariaDB 10.11.
+- **Automation:** automated (backend) — Go: `TestSCIMUsers{SQLite,MySQL}`,
+  `TestSCIMUserWrites{SQLite,MySQL}`, `TestSCIMUserPatch{SQLite,MySQL}`,
+  `TestSCIMUserDelete{SQLite,MySQL}`, `TestSCIMGroups{SQLite,MySQL}` (the local-account,
+  other-issuer and padded-issuer subtests), `TestSCIMUsersWired`, `TestSCIMUserPatchWired`,
+  `TestSCIMUserDeleteWired`, `TestSCIMGroupsWired`

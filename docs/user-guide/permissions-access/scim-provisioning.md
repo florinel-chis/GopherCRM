@@ -22,9 +22,14 @@ describes what GopherCRM does today. Single sign-on itself is described in
   the account and keeps its data. Erasure stays the delete in GopherCRM, done by an administrator.
 - **Groups.** The groups are the `groups` values of the single sign-on role mapping. The provider
   reads them and changes their members; a member change sets the member's role from its groups.
-- **Which accounts the provider sees.** Staff accounts, including deactivated ones (served with
-  `active` false). Customer accounts and erased accounts are never served: the provider gets a
-  404 for them, and they are never listed as group members.
+- **Which accounts the provider sees.** The provider sees and changes only the accounts SCIM
+  created and the accounts linked to the single sign-on issuer by a sign-in, including deactivated
+  ones (served with `active` false). An account created locally in GopherCRM, for example the
+  local administrator, is never listed, read or changed through SCIM: the Users routes answer 404
+  for it, and naming it as a group member is refused with 400 `invalidValue`. A POST whose user
+  name is such an account's address answers 409 `uniqueness` and changes nothing. Customer
+  accounts and erased accounts are never served either. Changing the issuer in Settings → Single
+  sign-on hides the accounts linked only under the old issuer.
 
 ## Base URL
 
@@ -60,7 +65,7 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 | `GET /scim/v2/ServiceProviderConfig` | Describes what the provider supports. |
 | `GET /scim/v2/Schemas` | The User and Group schemas. |
 | `GET /scim/v2/ResourceTypes` | The User and Group resource types. |
-| `GET /scim/v2/Users` | Lists staff accounts. |
+| `GET /scim/v2/Users` | Lists the accounts SCIM created or that are linked to the single sign-on issuer. |
 | `POST /scim/v2/Users` | Creates an account. |
 | `GET /scim/v2/Users/{id}` | Reads one account. |
 | `PUT /scim/v2/Users/{id}` | Replaces an account's attributes. |
@@ -99,9 +104,11 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   `displayName` or any attribute other than `members` is refused with 400 `invalidPath`. A group
   removed from the mapping answers 404. Listing accepts only the filter `displayName eq "<value>"`;
   any other filter is refused with 400 `invalidFilter`. Members are listed by their SCIM user id;
-  a member value that is not the id of an account the provider sees (an unknown, customer or
-  erased account) is refused with 400 `invalidValue` and nothing changes. A deactivated account
-  can be added.
+  a member value that is not the id of an account the provider sees (an unknown, customer, erased
+  or locally created account) is refused with 400 `invalidValue` and nothing changes. A deactivated
+  account can be added. A membership of a locally created account stored before is not listed; a
+  PATCH that removes it deletes only the membership and leaves the account and its role as they
+  are.
 - **Group membership and roles.** After a PATCH changes a group's members, each person added or
   removed gets the role of the first mapping row with claim `groups` whose value is one of the
   person's groups after the change, as single sign-on does with the `groups` claim. A person left
@@ -114,7 +121,7 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 - **Delete.** A DELETE answers 204 with no body and deactivates the account as `active` false
   does: every session ends, and the email address, name, role and single sign-on link stay. A
   DELETE of an account that is already deactivated answers 204 and changes nothing. An account the
-  provider does not see answers 404.
+  provider does not see, a locally created account included, answers 404 and is not changed.
 - **Duplicates.** An email address or an `externalId` that another account already holds is
   refused with 409 `uniqueness`.
 - **Rate limit.** SCIM requests share a strict limit of 10 a minute per client address, with a

@@ -358,8 +358,8 @@ func TestSCIMUsersWired(t *testing.T) {
 		assertStaff(t, list.Resources[0])
 	})
 
-	t.Run("unknown, customer and erased userNames", func(t *testing.T) {
-		for _, email := range []string{"nobody-0469@crm.example.test", customer.Email, erasedEmail} {
+	t.Run("unknown, customer, erased and local userNames", func(t *testing.T) {
+		for _, email := range []string{"nobody-0469@crm.example.test", customer.Email, erasedEmail, admin.Email} {
 			list := getList(t, "/scim/v2/Users?filter="+url.QueryEscape(`userName eq "`+email+`"`))
 			assert.Equal(t, 0, list.TotalResults, email)
 			assert.Empty(t, list.Resources, email)
@@ -368,12 +368,13 @@ func TestSCIMUsersWired(t *testing.T) {
 
 	t.Run("unfiltered list", func(t *testing.T) {
 		list := getList(t, "/scim/v2/Users")
-		assert.Equal(t, 2, list.TotalResults, "the admin and the staff user")
+		assert.Equal(t, 1, list.TotalResults, "only the staff user linked under the issuer")
 		ids := []string{}
 		for _, u := range list.Resources {
 			ids = append(ids, u.ID)
 		}
-		assert.Equal(t, []string{fmt.Sprint(admin.ID), staffID}, ids)
+		assert.Equal(t, []string{staffID}, ids)
+		assert.NotContains(t, ids, fmt.Sprint(admin.ID), "the local admin (no identity link) is not listed")
 		assert.NotContains(t, ids, fmt.Sprint(customer.ID))
 		assert.NotContains(t, ids, fmt.Sprint(erased.ID))
 	})
@@ -382,7 +383,7 @@ func TestSCIMUsersWired(t *testing.T) {
 		var u scimWiredUser
 		require.NoError(t, json.Unmarshal(get(t, "/scim/v2/Users/"+staffID, http.StatusOK), &u))
 		assertStaff(t, u)
-		for _, id := range []uint{erased.ID, customer.ID} {
+		for _, id := range []uint{erased.ID, customer.ID, admin.ID} {
 			body := get(t, fmt.Sprintf("/scim/v2/Users/%d", id), http.StatusNotFound)
 			assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, string(body))
 		}
@@ -500,6 +501,9 @@ func TestSCIMUserPatchWired(t *testing.T) {
 		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&role).Error)
 		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
 		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d}]`, role.ID)
+		// The managed account below holds password sessions, so a linked
+		// account may sign in with a password here.
+		boot.cfg.SSO.AllowPassword, boot.cfg.SSO.AllowPasswordSet = true, true
 	})
 	prefix := boot.cfg.API.Prefix
 	addr := 0
@@ -548,8 +552,27 @@ func TestSCIMUserPatchWired(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
 	scimToken := "Bearer " + created.Data.Token
 
-	// A sales account with a password and no identity, signed in twice.
+	// A local admin (a password, no identity link) is not changed through
+	// SCIM: 404, and its row stays as it was.
+	adminBefore := *admin
+	require.NoError(t, models.DB.First(&adminBefore, admin.ID).Error)
+	recorder = scimWiredSend(router, http.MethodPatch, fmt.Sprintf("/scim/v2/Users/%d", admin.ID), `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+		"Operations":[{"op":"replace","path":"userName","value":"renamed-0471@crm.example.test"},{"op":"replace","path":"active","value":false}]}`, nextRemote(), scimToken)
+	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, recorder.Body.String())
+	var adminAfter models.User
+	require.NoError(t, models.DB.First(&adminAfter, admin.ID).Error)
+	assert.Equal(t, adminBefore.Email, adminAfter.Email, "the local admin keeps its address")
+	assert.True(t, adminAfter.IsActive, "the local admin stays active")
+	assert.Equal(t, adminBefore.TokenVersion, adminAfter.TokenVersion)
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+adminSession.Data.Token)
+	assert.Equal(t, http.StatusOK, recorder.Code, "the local admin's session still works: %s", recorder.Body.String())
+
+	// A sales account with a password, linked under the issuer so SCIM
+	// manages it, signed in twice.
 	sales := createUser("sales-0471@crm.example.test", password, models.RoleSales)
+	require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: sales.ID, Issuer: "https://idp.example.test", Subject: "sub-0471",
+		Source: models.UserIdentitySourceSCIM}).Error)
 	first, second := signIn(sales.Email, password), signIn(sales.Email, password)
 	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+first.Data.Token)
 	require.Equal(t, http.StatusOK, recorder.Code, "the access token works before: %s", recorder.Body.String())
@@ -599,6 +622,9 @@ func TestSCIMUserDeleteWired(t *testing.T) {
 		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&role).Error)
 		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
 		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d}]`, role.ID)
+		// The managed account below holds password sessions, so a linked
+		// account may sign in with a password here.
+		boot.cfg.SSO.AllowPassword, boot.cfg.SSO.AllowPasswordSet = true, true
 	})
 	prefix := boot.cfg.API.Prefix
 	addr := 0
@@ -639,11 +665,25 @@ func TestSCIMUserDeleteWired(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
 	scimToken := "Bearer " + created.Data.Token
 
-	// A sales account with a password and no identity (an account with a
-	// linked identity cannot sign in with a password), as in
-	// TestSCIMUserPatchWired, so it holds a session.
+	// A local admin (a password, no identity link) is not deleted through
+	// SCIM: 404, and its row stays as it was.
+	recorder = scimWiredSend(router, http.MethodDelete, fmt.Sprintf("/scim/v2/Users/%d", admin.ID), "", nextRemote(), scimToken)
+	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, recorder.Body.String())
+	var adminAfter models.User
+	require.NoError(t, models.DB.First(&adminAfter, admin.ID).Error)
+	assert.True(t, adminAfter.IsActive, "the local admin stays active")
+	assert.Equal(t, admin.TokenVersion, adminAfter.TokenVersion, "token_version is unchanged")
+	assert.Equal(t, admin.Email, adminAfter.Email)
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+adminSession.Data.Token)
+	assert.Equal(t, http.StatusOK, recorder.Code, "the local admin's session still works: %s", recorder.Body.String())
+
+	// A sales account with a password, linked under the issuer so SCIM
+	// manages it, as in TestSCIMUserPatchWired, so it holds a session.
 	sales := &models.User{Email: "sales-0504@crm.example.test", Password: string(hash), FirstName: "Wired", LastName: "User", Role: models.RoleSales, IsActive: true}
 	require.NoError(t, models.DB.Create(sales).Error)
+	require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: sales.ID, Issuer: "https://idp.example.test", Subject: "sub-0504",
+		Source: models.UserIdentitySourceSCIM}).Error)
 	user := struct{ ID, UserName string }{fmt.Sprint(sales.ID), sales.Email}
 	hire := signIn(user.UserName)
 	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+hire.Data.Token)
@@ -745,6 +785,8 @@ func TestSCIMGroupsWired(t *testing.T) {
 
 	member := &models.User{Email: "member-0506@crm.example.test", Password: "x", FirstName: "Group", LastName: "Member", Role: models.RoleSales, IsActive: true}
 	require.NoError(t, models.DB.Create(member).Error)
+	require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: member.ID, Issuer: "https://idp.example.test", Subject: "sub-0506",
+		Source: models.UserIdentitySourceSCIM}).Error)
 	// base64url of "Admins" and of "Sales".
 	const adminsID, salesID = "QWRtaW5z", "U2FsZXM"
 	addBody := fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"value":"%d"}]}]}`, member.ID)
@@ -793,6 +835,21 @@ func TestSCIMGroupsWired(t *testing.T) {
 	require.Len(t, list.Resources, 2)
 	assert.Equal(t, []string{"Admins", "Sales"}, []string{list.Resources[0].DisplayName, list.Resources[1].DisplayName})
 	assert.Equal(t, []string{adminsID, salesID}, []string{list.Resources[0].ID, list.Resources[1].ID})
+
+	// The local admin (a password, no identity link) is refused as a member
+	// like an unknown id, and nothing is written.
+	var membersBefore int64
+	require.NoError(t, models.DB.Model(&models.SCIMGroupMember{}).Count(&membersBefore).Error)
+	recorder = scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/"+adminsID,
+		fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"value":"%d"}]}]}`, admin.ID),
+		nextRemote(), scimToken)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	var refusal map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &refusal))
+	assert.Equal(t, "invalidValue", refusal["scimType"])
+	var membersAfter int64
+	require.NoError(t, models.DB.Model(&models.SCIMGroupMember{}).Count(&membersAfter).Error)
+	assert.Equal(t, membersBefore, membersAfter, "no membership row is written")
 
 	recorder = scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/"+adminsID, addBody, nextRemote(), scimToken)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())

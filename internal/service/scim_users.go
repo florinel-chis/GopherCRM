@@ -17,7 +17,7 @@ type SCIMIssuerSource interface {
 	SSOConfig(ctx context.Context) (EffectiveSSOConfig, error)
 }
 
-// SCIMUserRecord is one visible user with its externalId ("" when none).
+// SCIMUserRecord is one managed account with its externalId ("" when none).
 type SCIMUserRecord struct {
 	User       models.User
 	ExternalID string
@@ -53,30 +53,45 @@ func NewSCIMUserService(repo repository.SCIMUserRepository, issuers SCIMIssuerSo
 	return s
 }
 
-// Get returns the visible user rawID names. An id that is not a positive
-// decimal integer fitting a uint, or names no visible user (none, erased or
-// a customer), is apperrors.ErrNotFound.
+// readIssuer returns the effective single sign-on issuer; SCIM manages only
+// the accounts linked under it (repository.SCIMUserRepository).
+func (s *scimUserService) readIssuer(ctx context.Context) (string, error) {
+	sso, err := s.issuers.SSOConfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read the single sign-on issuer: %w", err)
+	}
+	return sso.IssuerURL, nil
+}
+
+// Get returns the managed account rawID names. An id that is not a positive
+// decimal integer fitting a uint, or names no managed account (none, erased,
+// a customer, or an account not linked under the configured issuer), is
+// apperrors.ErrNotFound.
 func (s *scimUserService) Get(ctx context.Context, rawID string) (*SCIMUserRecord, error) {
 	id, err := strconv.ParseUint(rawID, 10, strconv.IntSize)
 	if err != nil || id == 0 {
 		return nil, fmt.Errorf("scim user not found: %w", apperrors.ErrNotFound)
 	}
-	user, err := s.repo.GetVisibleByID(uint(id))
+	issuer, err := s.readIssuer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.repo.GetManagedByID(issuer, uint(id))
 	if err != nil {
 		if apperrors.IsNotFound(err) {
 			return nil, fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
 		}
 		return nil, fmt.Errorf("read scim user: %w", err)
 	}
-	records, err := s.withExternalIDs(ctx, []models.User{*user})
+	records, err := s.withExternalIDs(issuer, []models.User{*user})
 	if err != nil {
 		return nil, err
 	}
 	return &records[0], nil
 }
 
-// List returns one page of visible users, id ascending. With userName nil it
-// pages every visible user in SQL. Otherwise it fetches the folded
+// List returns one page of managed accounts, id ascending; the issuer is read
+// once. With userName nil it pages every managed account in SQL. Otherwise it fetches the folded
 // candidates, keeps only those scim.UserNameMatches judges equal, and pages
 // that set in Go. startIndex is 1-based; count is 0..scim.MaxResults.
 func (s *scimUserService) List(ctx context.Context, userName *string, startIndex, count int) (*SCIMUserPage, error) {
@@ -90,19 +105,23 @@ func (s *scimUserService) List(ctx context.Context, userName *string, startIndex
 		count = scim.MaxResults
 	}
 	offset := startIndex - 1
+	issuer, err := s.readIssuer(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	var (
 		users []models.User
 		total int
 	)
 	if userName == nil {
-		page, n, err := s.repo.ListVisible(offset, count)
+		page, n, err := s.repo.ListManaged(issuer, offset, count)
 		if err != nil {
 			return nil, fmt.Errorf("list scim users: %w", err)
 		}
 		users, total = page, int(n)
 	} else {
-		candidates, err := s.repo.FindVisibleByEmailFolded(*userName)
+		candidates, err := s.repo.FindManagedByEmailFolded(issuer, *userName)
 		if err != nil {
 			return nil, fmt.Errorf("find scim users: %w", err)
 		}
@@ -122,7 +141,7 @@ func (s *scimUserService) List(ctx context.Context, userName *string, startIndex
 		}
 	}
 
-	records, err := s.withExternalIDs(ctx, users)
+	records, err := s.withExternalIDs(issuer, users)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +149,11 @@ func (s *scimUserService) List(ctx context.Context, userName *string, startIndex
 }
 
 // withExternalIDs pairs users with their externalId: the subject of the
-// lowest-id user_identities row whose issuer equals the configured issuer
-// byte for byte. The configured issuer is read once; when it is empty no
-// identity is read and every externalId is omitted. The returned slice is
-// never nil.
-func (s *scimUserService) withExternalIDs(ctx context.Context, users []models.User) ([]SCIMUserRecord, error) {
+// lowest-id user_identities row whose issuer equals issuer byte for byte.
+// The caller passes the issuer it already read, so one request judges and
+// pairs under the same value; when it is empty no identity is read and every
+// externalId is omitted. The returned slice is never nil.
+func (s *scimUserService) withExternalIDs(issuer string, users []models.User) ([]SCIMUserRecord, error) {
 	records := make([]SCIMUserRecord, len(users))
 	for i := range users {
 		records[i].User = users[i]
@@ -142,18 +161,14 @@ func (s *scimUserService) withExternalIDs(ctx context.Context, users []models.Us
 	if len(users) == 0 {
 		return records, nil
 	}
-	sso, err := s.issuers.SSOConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("read the single sign-on issuer: %w", err)
-	}
-	if sso.IssuerURL == "" {
+	if issuer == "" {
 		return records, nil
 	}
 	ids := make([]uint, len(users))
 	for i := range users {
 		ids[i] = users[i].ID
 	}
-	identities, err := s.repo.IdentitiesForUsers(sso.IssuerURL, ids)
+	identities, err := s.repo.IdentitiesForUsers(issuer, ids)
 	if err != nil {
 		return nil, fmt.Errorf("read scim user identities: %w", err)
 	}
@@ -162,7 +177,7 @@ func (s *scimUserService) withExternalIDs(ctx context.Context, users []models.Us
 	for _, identity := range identities {
 		// The column compares under utf8mb4_bin PAD SPACE on MySQL/MariaDB,
 		// so an issuer with a trailing space comes back too: judge it here.
-		if identity.Issuer != sso.IssuerURL {
+		if identity.Issuer != issuer {
 			continue
 		}
 		if seen, ok := lowest[identity.UserID]; ok && seen < identity.ID {

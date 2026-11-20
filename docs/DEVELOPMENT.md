@@ -383,8 +383,12 @@ required by the migrations workflow, `scripts/ci/check-go.py migration` and
 the query parsing, the status mapping and the `application/scim+json` answer. `internal/service/scim_users.go` (`SCIMUserService`) applies the
 userName judge, pages a filtered set in Go and takes `externalId` from the identities under the
 effective issuer of the SSO settings service, compared byte for byte; the reads are in
-`internal/repository/scim_user_repository.go` (`SCIMUserRepository`: live, non-customer users;
-identities of a page in one `issuer = ? AND user_id IN ?` query). `internal/scim` holds the User
+`internal/repository/scim_user_repository.go` (`SCIMUserRepository`: managed accounts only, that
+is live, non-customer users with a `user_identities` row whose issuer equals the effective issuer
+exactly, any `source`, applied in SQL by `whereManagedBy` with a `LENGTH` guard against the PAD SPACE
+collation, shared with `SCIMGroupMemberRepository` (#529); identities of a page in one
+`issuer = ? AND user_id IN ?` query). The replace, patch and delete and the group patch refuse an
+account that is not managed like an unknown id, judged right after the users lock. `internal/scim` holds the User
 resource, `ParseUserFilter`, `ParsePaging`, `WriteErrorType` and `UserNameMatches`, the
 ASCII-only judge: never replace it with `strings.EqualFold`, whose Unicode folding matches
 U+212A and U+017F the way `utf8mb4_unicode_ci` does. Regression roots: `TestSCIMUsersSQLite` and

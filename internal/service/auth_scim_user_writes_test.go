@@ -120,6 +120,38 @@ func (f *scimWritesFixture) reset(t *testing.T) {
 	f.source.mu.Unlock()
 }
 
+// seedLinked seeds an account and links it under the fixture's issuer with
+// source scim, so SCIM serves and changes it (#529).
+func (f *scimWritesFixture) seedLinked(t *testing.T, email string, role models.UserRole, active bool, password string) *models.User {
+	t.Helper()
+	user := f.seedUser(t, email, role, active, password)
+	f.linkSource(t, user.ID, "sub-"+email, models.UserIdentitySourceSCIM)
+	return user
+}
+
+const scimLocalPassword = "Local-Passw0rd!-529"
+
+// seedLocalAdmin seeds an active local admin (a password, no identity link)
+// holding one live refresh token, next to a second active admin so the
+// last-admin rule stays out of play (#529).
+func (f *scimWritesFixture) seedLocalAdmin(t *testing.T) *models.User {
+	t.Helper()
+	f.seedUser(t, "keeper@x.test", models.RoleAdmin, true, "")
+	local := f.seedUser(t, "local.admin@x.test", models.RoleAdmin, true, scimLocalPassword)
+	f.login(t, local.Email, scimLocalPassword)
+	require.Equal(t, int64(1), f.liveRefreshTokens(t, local.ID))
+	return local
+}
+
+// seedOtherIssuer seeds an active account linked only under another issuer.
+func (f *scimWritesFixture) seedOtherIssuer(t *testing.T, email string, role models.UserRole, password string) *models.User {
+	t.Helper()
+	user := f.seedUser(t, email, role, true, password)
+	require.NoError(t, f.db.Create(&models.UserIdentity{UserID: user.ID, Issuer: "https://other.example.test",
+		Subject: "sub-" + email, Source: models.UserIdentitySourceSCIM}).Error)
+	return user
+}
+
 // assertRefused checks the refusal kind and that nothing was written.
 func (f *scimWritesFixture) assertRefused(t *testing.T, want error, record *SCIMUserRecord, err error, before scimCounts) {
 	t.Helper()
@@ -346,10 +378,10 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Equal(t, int64(1), f.identities(t), "no identity is written")
 		}},
 		{"replace keeps role", func(t *testing.T) {
-			kim := f.seedUser(t, "kim@x.test", models.RoleSupport, true, "")
+			kim := f.seedLinked(t, "kim@x.test", models.RoleSupport, true, "")
 			record, err := f.svc.Replace(ctx, uintString(kim.ID), SCIMUserInput{UserName: "kim@x.test", Roles: []string{oidcAppRole}})
 			require.NoError(t, err)
-			assert.Equal(t, "", record.ExternalID)
+			assert.Equal(t, "sub-kim@x.test", record.ExternalID, "the link under the issuer")
 			stored := f.user(t, kim.ID)
 			assert.Equal(t, models.RoleSupport, stored.Role)
 			assert.Equal(t, "", stored.FirstName, "PUT replaces: an absent name is cleared")
@@ -360,7 +392,7 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 		}},
 		{"replace deactivates", func(t *testing.T) {
 			const password = "Dan-Passw0rd!-471"
-			dan := f.seedUser(t, "dan@x.test", models.RoleSales, true, password)
+			dan := f.seedLinked(t, "dan@x.test", models.RoleSales, true, password)
 			first, second := f.login(t, "dan@x.test", password), f.login(t, "dan@x.test", password)
 			require.Equal(t, int64(2), f.liveRefreshTokens(t, dan.ID))
 			version := f.user(t, dan.ID).TokenVersion
@@ -390,8 +422,8 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Error(t, err, "the old refresh token stays refused")
 		}},
 		{"replace not visible", func(t *testing.T) {
-			customer := f.seedUser(t, "cust@x.test", models.RoleCustomer, true, "")
-			erased := f.seedUser(t, "gone@x.test", models.RoleSales, true, "")
+			customer := f.seedLinked(t, "cust@x.test", models.RoleCustomer, true, "")
+			erased := f.seedLinked(t, "gone@x.test", models.RoleSales, true, "")
 			require.NoError(t, repository.NewUserRepository(f.db).Delete(erased.ID), "erasure through the real path")
 			before := f.counts(t)
 			for _, id := range []string{"999999", uintString(erased.ID), uintString(customer.ID), "abc", "0", "-1"} {
@@ -400,9 +432,31 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			}
 			assert.Equal(t, models.RoleCustomer, f.user(t, customer.ID).Role)
 		}},
+		{"replace of a local account is not found", func(t *testing.T) {
+			local := f.seedLocalAdmin(t)
+			before := f.patchState(t, local.ID)
+			inactive := false
+			for name, in := range map[string]SCIMUserInput{
+				"mapped role and new userName": {UserName: "renamed@x.test", GivenName: "New", FamilyName: "Name", Roles: []string{scimRoleSales}},
+				"active false":                 {UserName: local.Email, Active: &inactive, Roles: []string{scimRoleAdmin}},
+			} {
+				record, err := f.svc.Replace(ctx, uintString(local.ID), in)
+				assert.Nil(t, record, name)
+				assert.ErrorIs(t, err, apperrors.ErrNotFound, name)
+				assert.Equal(t, before, f.patchState(t, local.ID), "%s: the local account is unchanged", name)
+			}
+		}},
+		{"create with a local account's address", func(t *testing.T) {
+			local := f.seedLocalAdmin(t)
+			before := f.patchState(t, local.ID)
+			record, err := f.svc.Create(ctx, scimInput(local.Email, "sub-local", scimRoleSales))
+			assert.Nil(t, record)
+			assert.ErrorIs(t, err, ErrSCIMUniqueness)
+			assert.Equal(t, before, f.patchState(t, local.ID), "the local account is unchanged")
+		}},
 		{"replace email taken", func(t *testing.T) {
 			ann := f.seedUser(t, "ann@x.test", models.RoleSales, true, "")
-			bob := f.seedUser(t, "bob@x.test", models.RoleSales, true, "")
+			bob := f.seedLinked(t, "bob@x.test", models.RoleSales, true, "")
 			erased := f.seedUser(t, "old@x.test", models.RoleSales, true, "")
 			require.NoError(t, f.db.Delete(&models.User{}, erased.ID).Error)
 			before := f.counts(t)
@@ -422,7 +476,7 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Equal(t, "Bob@x.test", f.user(t, bob.ID).Email)
 		}},
 		{"last admin", func(t *testing.T) {
-			admin := f.seedUser(t, "admin@x.test", models.RoleAdmin, true, "")
+			admin := f.seedLinked(t, "admin@x.test", models.RoleAdmin, true, "")
 			before := f.counts(t)
 			record, err := f.svc.Replace(ctx, uintString(admin.ID), SCIMUserInput{UserName: "admin@x.test", Roles: []string{scimRoleSales}})
 			f.assertRefused(t, ErrSCIMLastAdmin, record, err, before)
@@ -468,7 +522,7 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			run  func(t *testing.T)
 		}{"last_admin_race/after_handover", func(t *testing.T) {
 			x := f.seedUser(t, "x@x.test", models.RoleAdmin, true, "")
-			y := f.seedUser(t, "y@x.test", models.RoleSales, true, "")
+			y := f.seedLinked(t, "y@x.test", models.RoleSales, true, "")
 
 			handover := holdAdminHandover(t, f.db, f.roleIDs, x.ID, y.ID)
 			done := make(chan error, 1)

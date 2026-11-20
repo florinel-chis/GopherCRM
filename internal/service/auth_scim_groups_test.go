@@ -8,7 +8,10 @@ package service
 // MySQL root skips without it). The file name starts with auth so that
 // scripts/ci/check-auth.py discovers both roots. Every refusal asserts that
 // scim_group_members, the users' role columns, role_audit_log and
-// auth_audit_log are unchanged.
+// auth_audit_log are unchanged. Issue #529: the seeded accounts are linked
+// under the test issuer, so SCIM manages them; a local account (no identity
+// link) is never listed, refused as a member an add or a replace names, and
+// only loses a leftover membership row on a remove, keeping its role.
 
 import (
 	"context"
@@ -34,6 +37,8 @@ const (
 	scimGroupSales    = "Sales"
 	scimGroupCustomer = "Customers"
 	scimGroupRoleOnly = "X"
+	// scimGroupsIssuer is the configured single sign-on issuer.
+	scimGroupsIssuer = "https://idp.example.test"
 )
 
 type scimGroupsFixture struct {
@@ -73,20 +78,31 @@ func (f *scimGroupsFixture) mapping() []SSORoleMapping {
 
 func (f *scimGroupsFixture) setMapping(mapping []SSORoleMapping) {
 	f.source.mu.Lock()
-	f.source.cfg = EffectiveSSOConfig{RoleMapping: mapping}
+	f.source.cfg = EffectiveSSOConfig{IssuerURL: scimGroupsIssuer, RoleMapping: mapping}
 	f.source.mu.Unlock()
 }
 
 func (f *scimGroupsFixture) reset(t *testing.T) {
 	t.Helper()
-	for _, table := range []string{"scim_group_members", "role_audit_log", "auth_audit_log", "refresh_tokens", "users"} {
+	for _, table := range []string{"scim_group_members", "role_audit_log", "auth_audit_log", "refresh_tokens", "user_identities", "users"} {
 		require.NoError(t, f.db.Exec("DELETE FROM "+table).Error, table)
 	}
 	f.setMapping(f.mapping())
 }
 
-// seed creates a user with role and active, and puts it in groups.
+// seed creates a user with role and active, links it under the issuer, and
+// puts it in groups.
 func (f *scimGroupsFixture) seed(t *testing.T, email string, role models.UserRole, active bool, groups ...string) *models.User {
+	t.Helper()
+	user := f.seedLocal(t, email, role, active, groups...)
+	require.NoError(t, f.db.Create(&models.UserIdentity{UserID: user.ID, Issuer: scimGroupsIssuer, Subject: "sub-" + email,
+		Source: models.UserIdentitySourceSCIM}).Error)
+	return user
+}
+
+// seedLocal creates a local account (a password, no identity link) with role
+// and active, and inserts its membership rows in groups directly.
+func (f *scimGroupsFixture) seedLocal(t *testing.T, email string, role models.UserRole, active bool, groups ...string) *models.User {
 	t.Helper()
 	user := &models.User{Email: email, Password: "x", FirstName: "Seed", LastName: "User", Role: role, IsActive: true}
 	require.NoError(t, f.db.Create(user).Error)
@@ -430,6 +446,60 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			require.NoError(t, err)
 			assert.Equal(t, models.RoleSales, f.user(t, w.ID).Role)
 			assert.False(t, f.user(t, w.ID).IsActive, "a group patch never activates")
+		}},
+		{"local account is not listed", func(t *testing.T) {
+			keeper := f.seed(t, "keeper@x.test", models.RoleAdmin, true, scimGroupAdmins)
+			local := f.seedLocal(t, "local.admin@x.test", models.RoleAdmin, true, scimGroupAdmins, scimGroupSales)
+			record, err := f.svc.Get(ctx, adminsID)
+			require.NoError(t, err)
+			assert.Equal(t, []uint{keeper.ID}, record.MemberIDs, "the local account is not listed")
+			page, err := f.svc.List(ctx, nil, 1, scim.MaxResults)
+			require.NoError(t, err)
+			assert.Equal(t, []SCIMGroupRecord{
+				{Value: scimGroupAdmins, MemberIDs: []uint{keeper.ID}},
+				{Value: scimGroupCustomer, MemberIDs: []uint{}},
+				{Value: scimGroupSales, MemberIDs: []uint{}},
+			}, page.Groups)
+			assert.Len(t, f.members(t), 3, "the rows stay stored")
+			_ = local
+		}},
+		{"add or replace naming a local account is refused", func(t *testing.T) {
+			keeper := f.seed(t, "keeper@x.test", models.RoleAdmin, true, scimGroupAdmins)
+			local := f.seedLocal(t, "local.admin@x.test", models.RoleAdmin, true, scimGroupSales)
+			sales := f.seed(t, "sales@x.test", models.RoleSales, true)
+			for name, body := range map[string]string{
+				"add":                  groupAdd(local.ID),
+				"add next to a linked": groupAdd(sales.ID, local.ID),
+				"replace":              groupReplace(keeper.ID, local.ID),
+			} {
+				before := f.state(t)
+				record, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, body))
+				f.assertRefused(t, ErrSCIMInvalidValue, record, err, before)
+				assert.False(t, errors.Is(err, ErrSCIMGroupLastAdmin), name)
+			}
+			assert.Equal(t, models.RoleAdmin, f.user(t, local.ID).Role)
+			assert.Empty(t, f.roleAudits(t, local.ID))
+			assert.Zero(t, f.count(t, "auth_audit_log", "user_id = ?", local.ID))
+		}},
+		{"remove of a local account's leftover row keeps its role", func(t *testing.T) {
+			// The local admin is the only active admin and holds a row in
+			// Admins from before; removing that row changes nothing else.
+			local := f.seedLocal(t, "local.admin@x.test", models.RoleAdmin, true, scimGroupAdmins)
+			u := f.seed(t, "u@x.test", models.RoleSales, true, scimGroupAdmins)
+			require.Equal(t, int64(1), f.activeAdmins(t))
+			_ = u
+			record, err := f.svc.Patch(ctx, adminsID, parseGroupPatch(t, groupRemove(local.ID)))
+			require.NoError(t, err)
+			assert.Equal(t, []uint{u.ID}, record.MemberIDs)
+			assert.Equal(t, []string{"Admins/" + uintString(u.ID)}, f.members(t), "the leftover row is deleted")
+			stored := f.user(t, local.ID)
+			assert.Equal(t, models.RoleAdmin, stored.Role, "the role stays admin")
+			assert.Nil(t, stored.RoleID)
+			assert.True(t, stored.IsActive)
+			assert.Empty(t, f.roleAudits(t, local.ID), "no role_audit_log row names it")
+			assert.Zero(t, f.count(t, "auth_audit_log", "user_id = ?", local.ID), "no auth_audit_log row names it")
+			assert.Zero(t, f.count(t, "role_audit_log", ""))
+			assert.Zero(t, f.count(t, "auth_audit_log", ""))
 		}},
 		{"invalid members", func(t *testing.T) {
 			keeper := f.seed(t, "keeper@x.test", models.RoleAdmin, true, scimGroupAdmins)

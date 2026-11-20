@@ -1064,6 +1064,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **SCIM reads and changes only the accounts it created or that are linked to the single sign-on
+  issuer (#529).** An account is served by the SCIM Users and Groups resources when it is live, not
+  a customer, and has an identity link whose issuer equals the configured single sign-on issuer
+  exactly, written by a SCIM create or an OpenID Connect sign-in. Accounts created in GopherCRM
+  itself, such as the local administrator, and accounts linked only under another issuer are no
+  longer listed or counted by `GET /scim/v2/Users`, and `GET`, `PUT`, `PATCH` and `DELETE
+  /scim/v2/Users/{id}` answer 404 `User not found` for them and change nothing; with no issuer
+  configured no account is served. Group reads list only such accounts as members, a group `add`
+  or `replace` naming another account is refused with 400 `invalidValue` like an unknown id, and a
+  `remove` of a membership row stored before deletes only the row, leaving that account's role and
+  audit rows alone. A `POST /scim/v2/Users` with such an account's address still answers 409
+  `uniqueness`. Changing the issuer hides the accounts linked only under the old one. The SCIM
+  provisioning guide states the rule.
 - **Single sign-on and SCIM settings are admin-only (#524).** The permissions
   `settings.sso_manage` and `settings.scim_manage` can be held only by the Admin system role.
   Creating or updating a custom role with either one is refused with 400 `INVALID_PERMISSION`
