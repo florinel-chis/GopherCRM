@@ -483,7 +483,9 @@ the system roles only admin holds it; a custom role may):
   404.
 
 A token's JSON is `id`, `name`, `created_at`, `last_used_at` and `revoked_at`: never the token
-and never its hash. There is no Settings screen for tokens yet.
+and never its hash. The SPA screen Settings > SCIM tokens (`/settings/scim-tokens`, #490) lists,
+creates and revokes them; its route and navigation entry need `settings.scim_manage`, and a new
+token is shown once, in a dialog, and kept nowhere else.
 
 **Authentication.** Every `/scim/v2` request needs `Authorization: Bearer <token>` with a SCIM
 token (the scheme word is case-insensitive, the token is not trimmed). A user's JWT or API key is

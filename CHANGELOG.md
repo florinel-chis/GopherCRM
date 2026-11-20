@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM provider tokens in Settings (#490).** The SPA screen Settings > SCIM tokens
+  (`/settings/scim-tokens`) lists the SCIM provider tokens with their created, last-used and
+  revoked dates (a revoked token stays listed, its revoke action disabled), creates a token and
+  shows it once in a dialog with a copy button and a shown-once warning (it is kept in component
+  state only and dropped on Done), and revokes a token behind a confirmation. The route and the
+  navigation entry under Settings need `settings.scim_manage`. No backend change: the screen uses
+  the `/settings/scim/tokens` API of #468.
 - **Documentation citation check (#487).** `scripts/ci/check-doc-citations.py` checks the code
   that `docs/FORKING.md` and `docs/EXTENDING.md` cite: every backticked repository path must be a
   tracked file or directory (a short allowlist covers the gitignored build outputs the guides

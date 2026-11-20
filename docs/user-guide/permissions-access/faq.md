@@ -64,4 +64,6 @@ lets them sign in again, but not with the old sessions. SCIM does not delete acc
 not manage groups: delete people in GopherCRM when their data must go. The provider's attribute
 mappings must send only the user name, active state, given and family name, work email and roles;
 an update that also sends, for example, `externalId` or `displayName` is refused, so remove those
-mappings at the provider. Without SCIM, accounts are created at the first sign-in.
+mappings at the provider. An administrator creates the provider's SCIM token under Settings →
+SCIM tokens, where the token is shown once, and revokes it there; the provider is refused at once.
+Without SCIM, accounts are created at the first sign-in.

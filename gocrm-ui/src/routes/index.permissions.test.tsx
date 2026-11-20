@@ -67,6 +67,7 @@ vi.mock('@/pages/settings/RoleEditor', () => ({ Component: () => <div>Role Edito
 vi.mock('@/pages/settings/Webhooks', () => ({ Component: () => <div>Webhooks Page</div> }));
 vi.mock('@/pages/settings/SSOSettings', () => ({ Component: () => <div>SSO Settings Page</div> }));
 vi.mock('@/pages/settings/SignInAudit', () => ({ Component: () => <div>Sign-in Audit Page</div> }));
+vi.mock('@/pages/settings/SCIMTokens', () => ({ Component: () => <div>SCIM Tokens Page</div> }));
 
 import { router } from './index';
 
@@ -197,5 +198,17 @@ describe('routes', () => {
     // The single sign-on settings key does not stand in for it.
     signedInWith(customPermissions('settings.sso_manage'));
     expect(await landOn('/settings/sign-in-audit', 'Access Denied')).toBe('/unauthorized');
+  }, 120000);
+
+  it('open the SCIM tokens screen only with settings.scim_manage', async () => {
+    signedInWith(customPermissions('settings.scim_manage'));
+    expect(await landOn('/settings/scim-tokens', 'SCIM Tokens Page')).toBe('/settings/scim-tokens');
+
+    // The single sign-on settings key does not stand in for it, nor does no key.
+    signedInWith(customPermissions('settings.sso_manage'));
+    expect(await landOn('/settings/scim-tokens', 'Access Denied')).toBe('/unauthorized');
+
+    signedInWith([]);
+    expect(await landOn('/settings/scim-tokens', 'Access Denied')).toBe('/unauthorized');
   }, 120000);
 });

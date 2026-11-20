@@ -648,6 +648,20 @@ export const router = createBrowserRouter([
           },
         ],
       },
+      {
+        // The SCIM provider tokens (#490).
+        element: (
+          <ProtectedRoute requiredPermission="settings.scim_manage">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/scim-tokens',
+            lazy: () => import('@/pages/settings/SCIMTokens'),
+          },
+        ],
+      },
       // The dashboard above, the profile and the caller's own API keys need no
       // key: every signed-in user reaches them.
       {
