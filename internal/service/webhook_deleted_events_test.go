@@ -19,10 +19,10 @@ import (
 
 // The deleted events (#437): lead.deleted, customer.deleted and
 // ticket.deleted are written inside the transaction that deletes (the ticket
-// delete) or erases (every erasure unit, cascades included), only for the
-// active endpoints subscribed to the deleted type that hold a created or
-// updated delivery row of the record, on SQLite and on a disposable
-// TEST_MYSQL_DSN schema (the MySQL roots skip without the variable and fail
+// delete) or erases (every erasure unit, cascades included), for every active
+// endpoint subscribed to the deleted type, whether or not that endpoint
+// received an earlier event for the record (#531), on SQLite and on a
+// disposable TEST_MYSQL_DSN schema (the MySQL roots skip without the variable and fail
 // when it is unreachable).
 
 func TestWebhookDeletedFanOutSQLite(t *testing.T) {
@@ -95,8 +95,9 @@ func (e *webhookEnv) customerLogin(customerID uint) *models.User {
 	return login
 }
 
-// announce writes a created or updated delivery row of the record for an
-// endpoint directly, in the shape the outbox writes (no runtime runs here).
+// announce writes a delivery row of the record for an endpoint directly, in
+// the shape the outbox writes (no runtime runs here). Earlier rows do not
+// decide who receives a deleted event; the subtests use them to show that.
 func (e *webhookEnv) announce(endpointID uint, eventType string, recordID uint) {
 	e.t.Helper()
 	eventID, err := newWebhookEventID()
@@ -129,9 +130,10 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	nine := models.WebhookEventTypeValues
 	require.Len(t, nine, 9)
 	announcing := append(append([]string{}, webhookCreatedTypes...), webhookUpdatedTypes...)
-	// a: everything. b: the deleted types only, so it never announces a
-	// record. c: announces but is not subscribed to a deleted type. d:
-	// inactive (its announcements are written directly).
+	// a: everything. b: the deleted types only, so it never receives a
+	// created or updated event, yet receives every deleted event. c: not
+	// subscribed to a deleted type. d: inactive (its earlier rows are written
+	// directly); it is the check that the outbox still filters on is_active.
 	a := env.endpoint("https://example.com/a", true, nine...)
 	b := env.endpoint("https://example.com/b", true, webhookDeletedTypes...)
 	c := env.endpoint("https://example.com/c", true, announcing...)
@@ -141,11 +143,11 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("lead erasure", func(t *testing.T) {
 		lead := env.announcedLead()
 		env.announce(d.ID, models.WebhookEventLeadCreated, lead.ID)
-		assert.Len(t, env.deliveries(models.WebhookEventLeadCreated, lead.ID), 3, "a, c and d announced the lead")
+		assert.Len(t, env.deliveries(models.WebhookEventLeadCreated, lead.ID), 3, "a, c and d hold lead.created")
 		before := env.deletedRows()
 		require.NoError(t, env.leads.Delete(lead.ID, admin))
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+1, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+2, env.deletedRows())
 	})
 
 	t.Run("customer erasure", func(t *testing.T) {
@@ -153,8 +155,8 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		env.announce(d.ID, models.WebhookEventCustomerCreated, customer.ID)
 		before := env.deletedRows()
 		require.NoError(t, env.customers.Delete(customer.ID))
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assert.Equal(t, before+1, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assert.Equal(t, before+2, env.deletedRows())
 	})
 
 	t.Run("ticket delete", func(t *testing.T) {
@@ -163,41 +165,53 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		before := env.deletedRows()
 		require.NoError(t, env.tickets.Delete(ticket.ID))
 		assert.True(t, storedTicket(t, db, ticket.ID).DeletedAt.Valid)
-		assertFanOut(t, env, models.WebhookEventTicketDeleted, ticket.ID, a.ID)
-		assert.Equal(t, before+1, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventTicketDeleted, ticket.ID, a.ID, b.ID)
+		assert.Equal(t, before+2, env.deletedRows())
 	})
 
-	t.Run("an updated delivery announces too", func(t *testing.T) {
+	t.Run("a record with an earlier updated delivery", func(t *testing.T) {
 		lead := env.seedLead()
 		env.announce(a.ID, models.WebhookEventLeadUpdated, lead.ID)
 		before := env.deletedRows()
 		require.NoError(t, env.leads.Delete(lead.ID, admin))
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+1, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+2, env.deletedRows())
 	})
 
-	t.Run("unannounced records get no deleted event", func(t *testing.T) {
+	t.Run("records no endpoint received an event for", func(t *testing.T) {
 		before := env.deletedRows()
 		lead := env.seedLead()
 		customer := env.seedCustomer()
 		ticket := env.seedTicket(models.TicketStatusOpen)
-		// Another entity's announcement of the same id does not count (ids
-		// of different tables may coincide, so only distinct ones are used),
-		// nor does an announcement by an endpoint not subscribed to deleted.
-		if customer.ID != lead.ID {
-			env.announce(a.ID, models.WebhookEventCustomerCreated, lead.ID)
-		}
-		if ticket.ID != customer.ID {
-			env.announce(a.ID, models.WebhookEventTicketUpdated, customer.ID)
-		}
-		if lead.ID != ticket.ID {
-			env.announce(a.ID, models.WebhookEventLeadCreated, ticket.ID)
-		}
-		env.announce(c.ID, models.WebhookEventLeadCreated, lead.ID)
+		assert.Empty(t, env.deliveries(models.WebhookEventLeadCreated, lead.ID))
+		assert.Empty(t, env.deliveries(models.WebhookEventCustomerCreated, customer.ID))
+		assert.Empty(t, env.deliveries(models.WebhookEventTicketCreated, ticket.ID))
 		require.NoError(t, env.leads.Delete(lead.ID, admin))
 		require.NoError(t, env.customers.Delete(customer.ID))
 		require.NoError(t, env.tickets.Delete(ticket.ID))
-		assert.Equal(t, before, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventTicketDeleted, ticket.ID, a.ID, b.ID)
+		assert.Equal(t, before+6, env.deletedRows())
+	})
+
+	t.Run("a record whose earlier deliveries were pruned", func(t *testing.T) {
+		lead := env.announcedLead()
+		created := env.deliveries(models.WebhookEventLeadCreated, lead.ID)
+		require.Len(t, created, 2, "a and c hold lead.created")
+		now := time.Now().UTC()
+		old := now.Add(-WebhookDeliveryRetention - time.Hour)
+		require.NoError(t, db.Model(&models.WebhookDelivery{}).
+			Where("event_type = ? AND record_id = ?", models.WebhookEventLeadCreated, lead.ID).
+			UpdateColumns(map[string]interface{}{"status": models.WebhookDeliverySucceeded, "updated_at": old}).Error)
+		pruned, err := env.repo.PruneFinished(ctx, now.Add(-WebhookDeliveryRetention))
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, pruned, int64(2))
+		require.Empty(t, env.deliveries(models.WebhookEventLeadCreated, lead.ID), "the lead.created rows were pruned")
+		before := env.deletedRows()
+		require.NoError(t, env.leads.Delete(lead.ID, admin))
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+2, env.deletedRows())
 	})
 
 	t.Run("erasure is indistinguishable from delete", func(t *testing.T) {
@@ -207,8 +221,8 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		require.NoError(t, env.tickets.Delete(ticket.ID))
 		erased := env.deliveries(models.WebhookEventLeadDeleted, lead.ID)
 		deleted := env.deliveries(models.WebhookEventTicketDeleted, ticket.ID)
-		require.Len(t, erased, 1)
-		require.Len(t, deleted, 1)
+		require.Len(t, erased, 2, "a and b")
+		require.Len(t, deleted, 2, "a and b")
 		for _, row := range []models.WebhookDelivery{erased[0], deleted[0]} {
 			assert.Equal(t, models.WebhookDeliveryPending, row.Status)
 			assert.Equal(t, 0, row.Attempts)
@@ -247,18 +261,18 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		lead, customer := env.convertedLead()
 		before := env.deletedRows()
 		require.NoError(t, env.customers.Delete(customer.ID))
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+2, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+4, env.deletedRows())
 	})
 
 	t.Run("cascade from the converted lead", func(t *testing.T) {
 		lead, customer := env.convertedLead()
 		before := env.deletedRows()
 		require.NoError(t, env.leads.Delete(lead.ID, admin))
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+2, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+4, env.deletedRows())
 	})
 
 	t.Run("cascade from the login, ungoverned", func(t *testing.T) {
@@ -266,9 +280,9 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		login := env.customerLogin(customer.ID)
 		before := env.deletedRows()
 		require.NoError(t, env.users.Delete(login.ID))
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+2, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+4, env.deletedRows())
 	})
 
 	t.Run("cascade from the login, governed", func(t *testing.T) {
@@ -277,9 +291,9 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		before := env.deletedRows()
 		require.NoError(t, env.governedUsers.DeleteAs(ctx, Actor{UserID: env.owner.ID, AuthMethod: AuthMethodBearer}, login.ID))
 		assert.True(t, storedCustomer(t, db, customer.ID).DeletedAt.Valid)
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+2, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+4, env.deletedRows())
 	})
 
 	t.Run("a customer soft-deleted earlier gets no deleted event", func(t *testing.T) {
@@ -288,9 +302,9 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Delete(&models.Customer{}, customer.ID).Error)
 		before := env.deletedRows()
 		require.NoError(t, env.leads.Delete(lead.ID, admin))
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
 		assert.Empty(t, env.deliveries(models.WebhookEventCustomerDeleted, customer.ID))
-		assert.Equal(t, before+1, env.deletedRows())
+		assert.Equal(t, before+2, env.deletedRows())
 		// The legacy row was still scrubbed.
 		assert.NotEqual(t, customer.Email, storedCustomer(t, db, customer.ID).Email)
 	})
@@ -323,9 +337,9 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		require.NoError(t, repository.NewLeadRepository(db, repository.WithLeadErasureListener(NewWebhookErasureListener(env.repo))).Delete(lead.ID))
 		require.NoError(t, repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(NewWebhookErasureListener(env.repo))).Delete(customer.ID))
 		assert.Equal(t, before, env.deletedRows())
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventTicketDeleted, ticket.ID, a.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventTicketDeleted, ticket.ID, a.ID, b.ID)
 	})
 
 	t.Run("a restarted erasure commits one row set", func(t *testing.T) {
@@ -350,12 +364,22 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		before := env.deletedRows()
 		require.NoError(t, env.customers.Delete(customer.ID))
 		assert.Equal(t, int32(2), calls.Load(), "the restart called the listener again")
-		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID)
-		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID)
-		assert.Equal(t, before+2, env.deletedRows())
+		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
+		assert.Equal(t, before+4, env.deletedRows())
 	})
 
-	assert.Empty(t, env.deliveriesOf(b.ID), "b never announced a record")
+	// b holds deleted rows only, and at least one of each deleted type.
+	bTypes := map[string]int{}
+	for _, row := range env.deliveriesOf(b.ID) {
+		bTypes[row.EventType]++
+	}
+	for eventType := range bTypes {
+		assert.Contains(t, webhookDeletedTypes, eventType, "b holds only deleted rows")
+	}
+	for _, eventType := range webhookDeletedTypes {
+		assert.Positive(t, bTypes[eventType], "b holds %s rows", eventType)
+	}
 	assert.Zero(t, env.count(&models.WebhookDelivery{}, "endpoint_id = ? AND event_type LIKE ?", c.ID, "%.deleted"))
 	assert.Zero(t, env.count(&models.WebhookDelivery{}, "endpoint_id = ? AND event_type LIKE ?", d.ID, "%.deleted"))
 }

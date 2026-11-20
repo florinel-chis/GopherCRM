@@ -483,11 +483,10 @@ customer, a ticket comment, a repeat form enquiry, an automation rule step and a
 that unlinks its records send no updated event. The event says that the record changed, not what
 changed: fetch the record to see its current state.
 
-A deleted event goes only to the endpoints that received a created or updated event for that
-record (an endpoint subscribed to `lead.deleted` alone hears of no lead), and only while that
-delivery is still in the log: finished deliveries are pruned after 30 days, and an endpoint that
-was deleted and registered again starts with an empty log, so either gets no deleted event for an
-older record. An erasure sends the same deleted event as a delete, with no reason and no personal
+A deleted event goes to every active endpoint subscribed to it, whether or not that endpoint
+received an earlier event for the record: an endpoint subscribed to `lead.deleted` alone hears of
+every deleted lead, and an endpoint registered after a record was created, or whose earlier
+deliveries of it were pruned, still gets the deleted event. An erasure sends the same deleted event as a delete, with no reason and no personal
 data: one event per lead or customer the erasure removed, cascades included, and none for a record
 that had already been deleted.
 

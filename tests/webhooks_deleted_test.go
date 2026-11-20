@@ -2,9 +2,9 @@ package tests
 
 // The deleted webhook events (#437) over HTTP on SQLite: the registry routes
 // accept lead.deleted, customer.deleted and ticket.deleted, and DELETE
-// /tickets/{id} and DELETE /leads/{id} of announced records write one deleted
-// row per announcing endpoint, behind the real middleware, with the
-// repositories and services wired as main wires them.
+// /tickets/{id} and DELETE /leads/{id} write one deleted row per active
+// endpoint subscribed to the deleted type (#531), behind the real middleware,
+// with the repositories and services wired as main wires them.
 
 import (
 	"bytes"
@@ -122,14 +122,14 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 		return uint(data["id"].(float64))
 	}
 
-	var endpointID uint
+	var endpointID, deletedOnly uint
 	t.Run("registry", func(t *testing.T) {
 		status, envelope, raw := do(http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
 			"url": "https://example.com/deleted", "event_types": []string{"lead.deleted", "customer.deleted", "ticket.deleted"}})
 		require.Equal(t, http.StatusCreated, status, raw)
 		data := envelope.Data.(map[string]interface{})
 		assert.Equal(t, []interface{}{"customer.deleted", "lead.deleted", "ticket.deleted"}, data["event_types"], "answered sorted")
-		deletedOnly := idOf(envelope)
+		deletedOnly = idOf(envelope)
 
 		status, envelope, raw = do(http.MethodPut, fmt.Sprintf("/webhooks/endpoints/%d", deletedOnly), map[string]interface{}{
 			"event_types": []string{"ticket.deleted"}})
@@ -148,35 +148,41 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 		require.True(t, ok, raw)
 		assert.Contains(t, details, "event_types")
 
-		// The endpoint the deletes below are announced to: every type.
+		// The endpoint the deletes below go to: every type.
 		status, envelope, raw = do(http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
 			"url": "https://example.com/all", "event_types": models.WebhookEventTypeValues})
 		require.Equal(t, http.StatusCreated, status, raw)
 		endpointID = idOf(envelope)
 	})
 	require.NotZero(t, endpointID)
+	require.NotZero(t, deletedOnly)
 
 	customer := &models.Customer{FirstName: "Hook", LastName: "Customer", Email: "customer@webhooks-deleted-api.test"}
 	require.NoError(t, db.Create(customer).Error)
 
-	t.Run("DELETE /tickets/{id} of an announced ticket", func(t *testing.T) {
+	t.Run("DELETE /tickets/{id} of a ticket", func(t *testing.T) {
 		status, envelope, raw := do(http.MethodPost, "/tickets", map[string]interface{}{
 			"title": "Hook ticket", "description": "d", "customer_id": customer.ID, "priority": "medium"})
 		require.Equal(t, http.StatusCreated, status, raw)
 		ticketID := idOf(envelope)
-		require.Len(t, rowsOf(models.WebhookEventTicketCreated, ticketID), 1, "announced")
+		require.Len(t, rowsOf(models.WebhookEventTicketCreated, ticketID), 1, "ticket.created was written")
 		before := deletedRows()
 
 		status, _, raw = do(http.MethodDelete, fmt.Sprintf("/tickets/%d", ticketID), nil)
 		require.Equal(t, http.StatusNoContent, status, raw)
 		rows := rowsOf(models.WebhookEventTicketDeleted, ticketID)
-		require.Len(t, rows, 1, "one ticket.deleted row, for the announcing endpoint only")
-		assert.Equal(t, endpointID, rows[0].EndpointID)
-		assert.Equal(t, models.WebhookDeliveryPending, rows[0].Status)
-		assert.Equal(t, before+1, deletedRows())
+		// Both endpoints subscribed to ticket.deleted get the event, also the
+		// one that never received ticket.created (#531).
+		require.Len(t, rows, 2, "one ticket.deleted row per subscribed endpoint")
+		assert.ElementsMatch(t, []uint{deletedOnly, endpointID}, []uint{rows[0].EndpointID, rows[1].EndpointID})
+		assert.Equal(t, rows[0].EventID, rows[1].EventID, "one event id")
+		for _, row := range rows {
+			assert.Equal(t, models.WebhookDeliveryPending, row.Status)
+		}
+		assert.Equal(t, before+2, deletedRows())
 	})
 
-	t.Run("DELETE /leads/{id} of an announced lead", func(t *testing.T) {
+	t.Run("DELETE /leads/{id} of a lead", func(t *testing.T) {
 		status, envelope, raw := do(http.MethodPost, "/leads", map[string]interface{}{
 			"first_name": "Hook", "last_name": "Lead", "email": "lead@webhooks-deleted-api.test", "owner_id": admin.ID})
 		require.Equal(t, http.StatusCreated, status, raw)
@@ -186,7 +192,7 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 		status, _, raw = do(http.MethodDelete, fmt.Sprintf("/leads/%d", leadID), nil)
 		require.Equal(t, http.StatusNoContent, status, raw)
 		rows := rowsOf(models.WebhookEventLeadDeleted, leadID)
-		require.Len(t, rows, 1)
+		require.Len(t, rows, 1, "the deleted-only endpoint is now subscribed to ticket.deleted alone")
 		assert.Equal(t, endpointID, rows[0].EndpointID)
 		assert.Equal(t, before+1, deletedRows())
 	})

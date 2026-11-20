@@ -430,12 +430,6 @@ type WebhookRepository interface {
 	// subscribed to eventType, in id order.
 	ListActiveEndpointsFor(ctx context.Context, eventType string) ([]models.WebhookEndpoint, error)
 
-	// ListAnnouncedRecords reads, without a lock, which of endpointIDs hold a
-	// delivery row of one of eventTypes for each of recordIDs, whatever its
-	// status: recordID -> endpoint ids in ascending order. A record no
-	// endpoint announced is absent. Empty input reads nothing.
-	ListAnnouncedRecords(ctx context.Context, endpointIDs []uint, eventTypes []string, recordIDs []uint) (map[uint][]uint, error)
-
 	// EnqueueDeliveries inserts outbox rows (the caller's transaction).
 	EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error
 	// ListDueDeliveryIDs is a plain SELECT of the ids whose status is pending
