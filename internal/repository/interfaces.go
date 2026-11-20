@@ -820,6 +820,10 @@ type OIDCLoginAttemptRepository interface {
 // inside a transaction.
 type AuthAuditRepository interface {
 	Create(entry *models.AuthAuditLog) error
+	// RecordAggregated inserts entry or, when a row with its aggregate_key
+	// exists, adds 1 to that row's attempts in the same statement (#466), and
+	// returns the row's id.
+	RecordAggregated(entry *models.AuthAuditLog) (uint, error)
 	// PruneCreatedBefore deletes at most limit rows created before before,
 	// oldest id first (a plain read of the ids, then a delete by primary key),
 	// and returns how many it deleted.

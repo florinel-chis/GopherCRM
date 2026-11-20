@@ -318,13 +318,18 @@ writes".
 
 ## Sign-in audit log
 
-Since #454 every sign-in outcome writes one row to `auth_audit_log`: each `POST /auth/login`
-that passes request validation, each `POST /auth/oidc/callback` that passes request validation,
-each `POST /auth/refresh` that passes request validation, and each request whose `ApiKey`
-credential is refused. A successful API-key request writes nothing, and neither does a refused
-Bearer token, a 400, `POST /auth/oidc/start` or a rate-limited request. The row is written after
-the sign-in's own transaction has ended, as one `INSERT` of its own; a failed insert is logged
-once (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
+Since #454 every sign-in outcome is recorded in `auth_audit_log`. Each `POST /auth/login`, each
+`POST /auth/oidc/callback` and each `POST /auth/refresh` that passes request validation writes
+one row of its own (`attempts` 1), after the sign-in's own transaction has ended, as one
+`INSERT`. A request whose `ApiKey` credential is refused is counted instead (#466): the
+refusals of one reason, one `user_id` (or none), one client network and one UTC minute share one
+row, whose `attempts` is how many there were. The first refusal of that bucket writes the row;
+every later one adds 1 to `attempts` in the same statement (`INSERT ... ON DUPLICATE KEY UPDATE`
+on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique internal
+`aggregate_key`), so the row keeps the first refusal's `request_id`, `user_agent_family` and
+`created_at`. A successful API-key request writes nothing, and neither does a refused Bearer
+token, a 400, `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
+(`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
 Answers, status codes and messages are the same as before.
 
 **Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
@@ -338,7 +343,10 @@ each; NULL when the callback did not get that far or the claim was malformed); `
 (the client address as Gin resolves it behind `TRUSTED_PROXIES`, cut to `a.b.c.0/24` for IPv4
 and to the `/48` prefix for IPv6, empty when it does not parse); `user_agent_family`
 (`<browser> on <OS>` from fixed lists: Edge, Opera, Firefox, Chrome, Safari, curl or Other, on
-iOS, Android, ChromeOS, Windows, macOS, Linux or Other; empty without a `User-Agent`). There is
+iOS, Android, ChromeOS, Windows, macOS, Linux or Other; empty without a `User-Agent`);
+`attempts` (1, or for an `api_key` row the number of refusals it counts); `aggregate_key`
+(internal and never returned or logged: `api_key|<reason>|<user id or 0>|<client network>|<UTC
+minute>` on an `api_key` row, NULL on every other row; unique, and NULLs never collide). There is
 no foreign key and no soft delete.
 
 **Never stored.** An email address, a name, a subject (`sub`), a password, an access, refresh,
@@ -379,9 +387,20 @@ secret changes every future reference.
 unset, empty, zero, negative or unparseable value keeps 90, at most 36500) are deleted by the
 stale bulk-operation sweep, at boot and every 15 minutes on every replica, in chunks of 500.
 Erasure of a user does not touch the rows: they hold only ids, a network prefix and a family
-string, and they age out. API-key failures are recorded by the authentication middleware, which
-runs before the per-client moderate rate limiter, so every request with a bogus `ApiKey` header
-costs one `INSERT`: the retention bounds the age of the rows, not their number.
+string, and they age out.
+
+**How many rows.** Since #466 the moderate tier (120 requests a minute, burst 30, per client
+address and per process) is charged before authentication on every protected route, so a
+throttled request gets a 429 without a key lookup or a write, and refused or missing credentials
+count against the same budget as authenticated traffic. The refusals that reach the key check
+add to one row per reason, account, client network and UTC minute, however many addresses of
+that `/24` or `/48` and however many replicas they reach: a burst of bogus keys from one network
+writes at most one `key_invalid` row a minute, and its `attempts` still counts every refusal.
+Password, refresh and single sign-on rows stay one per request; their number is bounded by the
+strict tier on `/auth` (10 requests a minute, burst 5, per client address, applied before the
+handler, so a 429 writes nothing). `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
+`gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
+test-only.
 
 **Reading the log.** Since #455 `GET /audit/sign-ins` returns the rows, guarded by
 `audit.sign_ins_view`; among the system roles only admin holds it, and a custom role may. The
@@ -395,8 +414,10 @@ that does not parse, or a `from` that is not before `to` is a 400 `VALIDATION_ER
 `error.details` keyed by the parameter (`to` for the range) and the value not echoed. Each row
 carries exactly the stored columns: `id`, `created_at`, `method`, `outcome`, `reason`, `user_id`,
 `attempt_id`, `request_id`, `subject_ref`, `claim_roles`, `claim_groups` (decoded to arrays),
-`client_network` and `user_agent_family`; the nullable ones are `null`, and nothing is joined (no
-email, no name). The SPA shows the same rows, with the same filters, under Settings > Sign-in
+`client_network`, `user_agent_family` and `attempts`; the nullable ones are `null`, `aggregate_key`
+is not returned, and nothing is joined (no email, no name). An `api_key` row with `attempts`
+above 1 holds the first refusal of its minute: a later refusal of that minute cannot be found by
+its request id, and `created_at` is when the bucket's first refusal came, not its last. The SPA shows the same rows, with the same filters, under Settings > Sign-in
 audit (`/settings/sign-in-audit`, shown and opened only with `audit.sign_ins_view`).
 
 **Debugging a refused sign-in.** A person reports "Single sign-on failed" (401). The response does

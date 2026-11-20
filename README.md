@@ -1214,7 +1214,9 @@ gophercrm/
   not apply. Any future cookie session must ship with session-bound CSRF protection (see #261).
 - **Rate limiting does not distinguish reads from writes on authenticated routes.**
   `RateLimitModerate` (120/min, burst 30) is applied once to the whole protected group in
-  `setupDependencies` (`cmd/main.go`) and covers reads and writes alike.
+  `setupDependencies` (`cmd/main.go`) and covers reads and writes alike. It is charged before
+  authentication (#466), so requests with refused or missing credentials on protected routes
+  are charged too.
   `RateLimitStrict` (10/min, burst 5) guards the `/auth`
   group and, via `SetupFormPublicRoutes`, the public form submit and confirm routes;
   `RateLimitGenerous` (240/min, burst 40) is applied only to the public form *reads*
@@ -1234,8 +1236,9 @@ gophercrm/
   backlog. Until a separate frontend task merges, the form-delete dialogs still say "Collected
   submissions are retained", which is wrong for those rows.
 - **Sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`.** Every password sign-in, single
-  sign-on callback, refresh and refused API key writes one `auth_audit_log` row, kept 90 days by
-  default (#454). The rows hold no email, name, subject or full IP address, and erasure leaves them
+  sign-on callback and refresh writes one `auth_audit_log` row, and refused API keys are counted
+  in one row per reason, account, client network and minute (`attempts`, #466); rows are kept 90
+  days by default (#454). The rows hold no email, name, subject or full IP address, and erasure leaves them
   to age out.
 - **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and
   search fields; shared helpers omit argument/result/response payloads, and HTTP logs omit query

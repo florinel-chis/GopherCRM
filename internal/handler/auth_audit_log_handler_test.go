@@ -106,7 +106,7 @@ func TestAuthAuditLogHandler(t *testing.T) {
 		assert.Nil(t, first["claim_groups"], "a value that does not decode is null")
 		assert.Equal(t, "abc123", first["subject_ref"])
 		wantKeys := []string{"id", "created_at", "method", "outcome", "reason", "user_id", "attempt_id", "request_id",
-			"subject_ref", "claim_roles", "claim_groups", "client_network", "user_agent_family"}
+			"subject_ref", "claim_roles", "claim_groups", "client_network", "user_agent_family", "attempts"}
 		for _, row := range body.Data {
 			keys := make([]string, 0, len(row))
 			for key := range row {

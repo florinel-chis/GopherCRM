@@ -129,6 +129,12 @@ func assertAuditRow(t *testing.T, row models.AuthAuditLog, method, outcome, reas
 	assert.Equal(t, authAuditTestFamily, row.UserAgentFamily)
 	assert.Nil(t, row.SubjectRef)
 	assert.Nil(t, row.AttemptID)
+	assert.EqualValues(t, 1, row.Attempts, "one outcome")
+	if method == AuthAuditMethodAPIKey {
+		assert.NotNil(t, row.AggregateKey, "an API-key refusal is counted in its bucket (#466)")
+	} else {
+		assert.Nil(t, row.AggregateKey, "a password, refresh or oidc row is not aggregated")
+	}
 	assert.WithinDuration(t, time.Now().UTC(), row.CreatedAt.UTC(), time.Minute, "created_at is now, in UTC")
 }
 
@@ -328,7 +334,17 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodAPIKey, AuthAuditOutcomeRefused, "account_erased", user.ID, "req-ak-erased")
 	})
 	t.Run("request_id_filtered", func(t *testing.T) {
+		// Three key_invalid refusals of one network would share the row of
+		// their minute (#466): each goes one minute later, so each writes a
+		// row of its own and the filter is seen on every one.
+		audit := e.audit.(*authAuditService)
+		previousNow := audit.now
+		t.Cleanup(func() { audit.now = previousNow })
+		at := time.Now().UTC().Add(time.Hour)
 		for _, bad := range []string{strings.Repeat("r", 100), "has space", "mail@example.test"} {
+			at = at.Add(time.Minute)
+			fixed := at
+			audit.now = func() time.Time { return fixed }
 			before := e.maxAuditID(t)
 			apiKey(t, e.auth, "gcrm_bogus0454", bad)
 			row := e.onlyNewRow(t, before)
@@ -448,6 +464,8 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 			assert.Equal(t, AuthAuditMethodOIDC, row.Method)
 			assert.Equal(t, AuthAuditOutcomeRefused, row.Outcome)
 			assert.Equal(t, code, row.Reason)
+			assert.EqualValues(t, 1, row.Attempts)
+			assert.Nil(t, row.AggregateKey)
 			require.NotNil(t, row.AttemptID)
 			assert.Equal(t, attemptID, *row.AttemptID)
 			line := lineFor(t, from, "Single sign-on refused")
@@ -644,15 +662,21 @@ func TestAuthAuditSubjectReference(t *testing.T) {
 	assert.NotEqual(t, first, refuse(t, "subject-ref-a-0454"), "another key gives another reference")
 }
 
-// failingAuditRepo fails every insert.
+// failingAuditRepo fails every insert and every aggregated write.
 type failingAuditRepo struct {
 	repository.AuthAuditRepository
-	creates int
+	creates    int
+	aggregates int
 }
 
 func (r *failingAuditRepo) Create(*models.AuthAuditLog) error {
 	r.creates++
 	return errors.New("audit table unavailable")
+}
+
+func (r *failingAuditRepo) RecordAggregated(*models.AuthAuditLog) (uint, error) {
+	r.aggregates++
+	return 0, errors.New("audit table unavailable")
 }
 
 // TestAuthAuditWriteFailure: a failed audit write is logged once and changes
@@ -711,6 +735,16 @@ func TestAuthAuditWriteFailure(t *testing.T) {
 	require.Contains(t, refused, "audit_id")
 	assert.Equal(t, float64(0), refused["audit_id"], "no row, audit_id 0")
 	assert.Equal(t, 4, failing.creates)
+
+	// #466: a refused API key's aggregated write fails the same way.
+	from = output.Len()
+	_, err = e.auth.ValidateAPIKey("gcrm_bogus0466")
+	require.Error(t, err)
+	assert.Zero(t, audit.RecordAPIKeyFailure(authAuditCtx("req-wf-ak"), err))
+	assert.Equal(t, "invalid API key", err.Error(), "the refusal is unchanged")
+	assert.Equal(t, 1, failedLines(from), "one audit_write_failed line")
+	assert.Equal(t, 1, failing.aggregates)
+	assert.Equal(t, 4, failing.creates, "no plain insert for an API key")
 	assert.Zero(t, f.count(t, "auth_audit_log", ""))
 }
 

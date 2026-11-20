@@ -1227,7 +1227,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   2. Refresh with a live refresh token, an unknown one, and one whose owner was deactivated or
      erased meanwhile.
   3. Call a protected route with `ApiKey` and an unknown, a revoked, an expired key and the key
-     of a deactivated or erased owner; then with a bad `Bearer` token.
+     of a deactivated or erased owner; then with a bad `Bearer` token. A repeat refusal of the
+     same reason, account and network in the same UTC minute adds 1 to that row's `attempts`
+     instead of a row (#466); run each key once, or a minute apart.
   4. Finish a single sign-on that succeeds, one with an unknown state and one whose groups match
      no mapping entry.
   5. Send one request with an `X-Request-ID` of 100 characters or with a space.
@@ -1282,3 +1284,26 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
 - **Expected:** Step 1: the boot sweep deletes the 91-day-old row and keeps the 1-day-old one; it
   runs again every 15 minutes. Step 2: the retention is 90, 90, 90, 30 and 36500 days.
 - **Automation:** automated — Go: `TestBulkOperationRecoveryProductionWiring`, `TestAuthAuditPrune{SQLite,MySQL}`, `TestBulkOperationRecoveryAuthAuditPruning`, `TestLoadAuthAuditRetentionDays`
+
+### TC-AUTH-064 — Refused API keys are throttled and counted, not written one row each
+- **Priority:** P1
+- **Type:** security
+- **Preconditions:** A fresh server (the moderate tier is per process); an admin with a valid API
+  key.
+- **Steps:**
+  1. From `192.0.2.1` send 200 `GET /api/v1/leads` with `Authorization: ApiKey gcrm_bogus0466`,
+     then 50 more from `192.0.2.77`.
+  2. Read the `api_key` rows of `auth_audit_log`.
+  3. From `203.0.113.9` send `GET /api/v1/leads` with the valid key.
+  4. In one UTC minute, refuse 500 keys from addresses of one `/24`, then one at the minute's last
+     millisecond and one at the next minute; refuse one from another `/24`, two from one IPv6
+     `/48`, and `key_revoked` for two accounts and `key_expired` for one.
+- **Expected:** Step 1: every answer is 401 "Invalid credentials" or 429, with 429s once the
+  moderate tier's burst of 30 is spent (the tier runs before authentication). Step 2: at most one
+  row per UTC minute the run spanned, all `key_invalid` with `client_network` `192.0.2.0/24`, and
+  their `attempts` add up to the number of 401s. Step 3: 200 and no new row. Step 4: one row with
+  `attempts` 500 and the first refusal's request id, 501 after the last millisecond, a new row
+  with `attempts` 1 in the next minute, and a row of its own for the other `/24`, for the `/48`
+  (`attempts` 2) and for each reason and account. Password, refresh and single sign-on outcomes
+  still write one row each with `attempts` 1.
+- **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`

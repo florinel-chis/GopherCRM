@@ -866,6 +866,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Sign-in audit: refused API keys are throttled and counted, not written one row each (#466).**
+  The protected routes now run the moderate rate limiter (120 requests a minute, burst 30, per
+  client address) before authentication, so a throttled request gets a 429 without a key lookup
+  or an audit write; requests with refused or missing credentials count against that budget too,
+  and a 429 can answer before a 401. Each refused `ApiKey` that reaches the key check adds to one
+  `auth_audit_log` row per reason, user id, client `/24` or `/48` network and UTC minute, through
+  one conditional upsert on a unique internal `aggregate_key`; the new `attempts` column counts the
+  refusals, and the row keeps the first refusal's request id, user-agent family and time.
+  Password, refresh and single sign-on outcomes keep one row each (`attempts` 1), bounded by the
+  strict `/auth` tier. `GET /audit/sign-ins` and Settings > Sign-in audit show `attempts`;
+  `aggregate_key` is never returned. Migration `20261125120000_auth_audit_log_attempts` adds the
+  two columns and the unique index, each only when missing; existing rows read `attempts` 1.
+
 - **Sign-in audit: a revoked API key is recorded as `key_revoked` (#465).** The API-key lookup
   now returns a key whatever its `is_active` flag says, so the existing revocation check refuses a
   revoked key and the `auth_audit_log` row reads `key_revoked` with the owner's user id instead of

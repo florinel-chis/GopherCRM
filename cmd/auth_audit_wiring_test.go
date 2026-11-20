@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -261,4 +262,86 @@ func TestSignInAuditRouteWired(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
 	assert.Equal(t, "FORBIDDEN", envelope.Error.Code)
+}
+
+// TestAuthAuditAPIKeyFailuresBounded is #466 through the production router:
+// the moderate tier answers before Auth, so a burst of refused API keys from
+// one address is cut off with 429s that look up no key and write no row, and
+// the refusals that reach the key check add to one row per network and UTC
+// minute. A valid key writes nothing. Its own router, so the limiter is fresh.
+func TestAuthAuditAPIKeyFailuresBounded(t *testing.T) {
+	boot := bootAutomation(t, false)
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	t.Cleanup(stopBackground)
+	router, stop := setupRouter(backgroundCtx, boot.cfg)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+		defer cancel()
+		_ = stop(ctx)
+	})
+
+	send := func(remoteAddr, authorization string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, boot.cfg.API.Prefix+"/leads", nil)
+		request.RemoteAddr = remoteAddr
+		request.Header.Set("Authorization", authorization)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		return recorder
+	}
+	apiKeyRows := func() []models.AuthAuditLog {
+		t.Helper()
+		var rows []models.AuthAuditLog
+		require.NoError(t, models.DB.Where("method = ?", "api_key").Order("id").Find(&rows).Error)
+		return rows
+	}
+	require.Empty(t, apiKeyRows())
+
+	firstMinute := time.Now().UTC().Truncate(time.Minute)
+	unauthorized, throttled := 0, 0
+	for i := 0; i < 250; i++ {
+		remote := "192.0.2.1:1234"
+		if i >= 200 {
+			remote = "192.0.2.77:1234"
+		}
+		recorder := send(remote, "ApiKey gcrm_bogus0466")
+		switch recorder.Code {
+		case http.StatusUnauthorized:
+			unauthorized++
+			assert.Contains(t, recorder.Body.String(), "Invalid credentials")
+		case http.StatusTooManyRequests:
+			throttled++
+		default:
+			t.Fatalf("request %d: unexpected status %d: %s", i, recorder.Code, recorder.Body.String())
+		}
+	}
+	lastMinute := time.Now().UTC().Truncate(time.Minute)
+	minutes := int(lastMinute.Sub(firstMinute)/time.Minute) + 1
+
+	assert.Positive(t, throttled, "the moderate tier answers before the key check")
+	assert.Positive(t, unauthorized)
+	rows := apiKeyRows()
+	require.NotEmpty(t, rows)
+	assert.LessOrEqual(t, len(rows), minutes, "at most one row per UTC minute the run spans")
+	var attempts uint
+	for _, row := range rows {
+		assert.Equal(t, "refused", row.Outcome)
+		assert.Equal(t, "key_invalid", row.Reason)
+		assert.Equal(t, "192.0.2.0/24", row.ClientNetwork)
+		attempts += row.Attempts
+	}
+	assert.EqualValues(t, unauthorized, attempts, "every 401 is counted, no 429 is")
+
+	// A valid key from another address writes nothing.
+	admin := &models.User{Email: "admin-0466@crm.example.test", Password: "x", FirstName: "Bounded", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	const raw = "gcrm_valid0466abcdef0123456789"
+	require.NoError(t, models.DB.Create(&models.APIKey{Name: "valid 0466", KeyHash: utils.HashAPIKeyHMAC(raw, boot.cfg.API.APIKeySecret),
+		Prefix: "0466abcd", UserID: admin.ID, IsActive: true}).Error)
+	var before, after int64
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Count(&before).Error)
+	recorder := send("203.0.113.9:1234", "ApiKey "+raw)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Count(&after).Error)
+	assert.Equal(t, before, after, "a valid API key writes no audit row")
 }

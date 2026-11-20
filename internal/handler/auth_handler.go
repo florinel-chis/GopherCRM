@@ -341,7 +341,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 // @Summary Log out (revoke refresh tokens)
 // @Description Revokes refresh tokens of the caller (any authenticated role, bearer or API-key). With no body, an empty body or no refresh_token, every refresh token of the caller is revoked; with a refresh_token only that token is revoked, and only when it belongs to the caller. Idempotent: an unknown, already revoked or foreign token still answers 200 and discloses nothing.
 // @Description Logout also ends every access token issued to the caller before it, with or without a refresh_token and for bearer and API-key callers alike: the account token_version is incremented in the same transaction as the revocation, and an older JWT is then refused with 401 Invalid credentials. A failure of either rolls both back and is a 500, as is a server whose session store is not wired. API keys are not affected.
-// @Description Rate limit: the authenticated tier, 120 requests per minute with a burst of 30 per client IP, shared by every authenticated route and checked after authentication.
+// @Description Rate limit: the authenticated tier, 120 requests per minute with a burst of 30 per client IP, shared by every authenticated route and checked before authentication, so a request with a missing or refused credential is charged too and a 429 can answer before a 401.
 // @Tags auth
 // @Accept json
 // @Produce json

@@ -62,6 +62,8 @@ type AuthAuditEntryResponse struct {
 	ClientNetwork string `json:"client_network" example:"203.0.113.0/24"`
 	// Browser and operating system family from a fixed vocabulary; empty without a user agent.
 	UserAgentFamily string `json:"user_agent_family" example:"Firefox on Linux"`
+	// How many outcomes the row counts: 1, or for an api_key refusal the number of refusals of that reason, account and network in that UTC minute. Such a row keeps the request id, user-agent family and created_at of the minute's first refusal.
+	Attempts uint `json:"attempts" example:"1"`
 }
 
 // decodeAuthAuditClaims decodes a stored JSON array; anything else is nil.
@@ -78,7 +80,7 @@ func decodeAuthAuditClaims(stored *string) []string {
 
 // ListSignIns godoc
 // @Summary List the sign-in audit log
-// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh or failed API-key authentication: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network and the user-agent family. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback or refresh, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
 // @Description Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
 // @Description Permission: audit.sign_ins_view (among the system roles, admin only).
 // @Tags users
@@ -182,5 +184,6 @@ func authAuditEntryResponse(entry models.AuthAuditLog) AuthAuditEntryResponse {
 		ClaimGroups:     decodeAuthAuditClaims(entry.ClaimGroups),
 		ClientNetwork:   entry.ClientNetwork,
 		UserAgentFamily: entry.UserAgentFamily,
+		Attempts:        entry.Attempts,
 	}
 }

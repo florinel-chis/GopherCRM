@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -27,9 +26,9 @@ const (
 
 // TestAuthAuditLogMigrationFiles needs no database: the pair exists with its
 // headers, creates the table only when missing with the model's columns and
-// index names, has no foreign key and alters nothing, drops only that table,
-// and is the newest migration of the directory, which latestMigrationVersion
-// names.
+// index names, has no foreign key and alters nothing, and drops only that
+// table. The newest-migration check moved to
+// TestAuthAuditLogAttemptsMigrationFiles (#466).
 func TestAuthAuditLogMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, authAuditLogMigrationName+".up.sql"))
@@ -98,22 +97,8 @@ func TestAuthAuditLogMigrationFiles(t *testing.T) {
 	}
 	assert.Equal(t, authAuditLogTable, models.AuthAuditLog{}.TableName())
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestUserIdentitiesMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, authAuditLogMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, authAuditLogVersion, version)
-	assert.Equal(t, authAuditLogVersion, latestMigrationVersion)
 	assert.Greater(t, authAuditLogVersion, authAuditLogPreviousVersion)
+	assert.Greater(t, latestMigrationVersion, authAuditLogVersion, "#466 added a later migration")
 
 	source, err := os.ReadFile("main_test.go")
 	require.NoError(t, err)
@@ -130,21 +115,29 @@ func TestAuthAuditLogMigration(t *testing.T) {
 	tables := []string{authAuditLogTable}
 
 	// The parity reference: the table as MigrateDatabase creates it on top of
-	// the previous SQL head.
+	// the previous SQL head (wantModel), and the same without what #466 added
+	// (want), which is what this migration creates at its version.
 	reference := openMigrationTestDB(t, baseDSN, "aal_ref")
 	require.NoError(t, reference.m.Migrate(authAuditLogPreviousVersion))
 	assert.NotContains(t, listTables(t, reference.sql, reference.name), authAuditLogTable)
 	runMigrateDatabase(t, reference.dsn)
-	want := snapshotTable(t, reference, authAuditLogTable)
+	wantModel := snapshotTable(t, reference, authAuditLogTable)
+	want := withoutAuthAuditAttempts(wantModel)
 	assert.Contains(t, want.Indexes, "idx_auth_audit_log_created_at (created_at) non_unique=1")
 	assert.Contains(t, want.Indexes, "idx_auth_audit_log_user_id (user_id) non_unique=1")
 	assert.Contains(t, want.Indexes, "idx_auth_audit_log_subject_ref (subject_ref) non_unique=1")
+	require.Len(t, want.Indexes, 4, "the primary key and the three indexes")
 	assert.Empty(t, want.ForeignKeys)
 	require.Len(t, want.Columns, 13)
+	require.Len(t, wantModel.Columns, 15)
 
 	assertShape := func(t *testing.T, tdb *migrationTestDB) {
 		t.Helper()
-		assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable), "auth_audit_log as MigrateDatabase creates it")
+		assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable), "auth_audit_log as this migration creates it")
+	}
+	assertModelShape := func(t *testing.T, tdb *migrationTestDB) {
+		t.Helper()
+		assert.Equal(t, wantModel, snapshotTable(t, tdb, authAuditLogTable), "auth_audit_log as MigrateDatabase creates it")
 	}
 
 	t.Run("Fresh", func(t *testing.T) {
@@ -188,7 +181,12 @@ func TestAuthAuditLogMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(authAuditLogVersion), version)
-			assertShape(t, tdb)
+			if autoMigrateFirst {
+				// The table AutoMigrate created is kept as it is.
+				assertModelShape(t, tdb)
+			} else {
+				assertShape(t, tdb)
+			}
 			if autoMigrateFirst {
 				var count int
 				require.NoError(t, tdb.sql.QueryRow("SELECT COUNT(*) FROM auth_audit_log").Scan(&count))
@@ -196,7 +194,7 @@ func TestAuthAuditLogMigration(t *testing.T) {
 			}
 
 			runMigrateDatabase(t, tdb.dsn)
-			assertShape(t, tdb)
+			assertModelShape(t, tdb)
 			require.ErrorIs(t, tdb.m.Migrate(authAuditLogVersion), migrate.ErrNoChange)
 
 			tablesBefore := listTables(t, tdb.sql, tdb.name)
@@ -212,4 +210,17 @@ func TestAuthAuditLogMigration(t *testing.T) {
 			assertShape(t, tdb)
 		})
 	}
+}
+
+// withoutAuthAuditAttempts drops what #466 added to auth_audit_log from a
+// snapshot: the attempts and aggregate_key columns and their unique index.
+func withoutAuthAuditAttempts(schema tableSchema) tableSchema {
+	out := withoutColumns(schema, authAuditLogAttemptsColumns)
+	out.Indexes = nil
+	for _, index := range schema.Indexes {
+		if !strings.HasPrefix(index, authAuditLogAggregateIndex+" ") {
+			out.Indexes = append(out.Indexes, index)
+		}
+	}
+	return out
 }

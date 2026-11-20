@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"errors"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type authAuditRepository struct {
@@ -20,6 +22,35 @@ func NewAuthAuditRepository(db *gorm.DB) AuthAuditRepository {
 // Create inserts one row. The caller sets created_at, in UTC.
 func (r *authAuditRepository) Create(entry *models.AuthAuditLog) error {
 	return r.db.Create(entry).Error
+}
+
+// RecordAggregated adds one outcome to the row of entry.AggregateKey (#466):
+// one INSERT ... ON CONFLICT(aggregate_key) DO UPDATE SET attempts = attempts
+// + 1 (ON DUPLICATE KEY UPDATE on MySQL and MariaDB), so the first outcome of
+// the bucket writes the row and every later one only counts, with no
+// read-then-write. It then reads the row's id by its key, because MySQL's
+// LastInsertId after a duplicate-key update is not that id. On the root
+// handle, outside any transaction, like Create.
+func (r *authAuditRepository) RecordAggregated(entry *models.AuthAuditLog) (uint, error) {
+	if entry.AggregateKey == nil || *entry.AggregateKey == "" {
+		return 0, errors.New("aggregated audit row without an aggregate key")
+	}
+	if err := r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "aggregate_key"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"attempts": gorm.Expr("attempts + 1")}),
+	}).Create(entry).Error; err != nil {
+		return 0, err
+	}
+	var ids []uint
+	if err := r.db.Model(&models.AuthAuditLog{}).
+		Where("aggregate_key = ?", *entry.AggregateKey).
+		Limit(1).Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, errors.New("aggregated audit row not found after its write")
+	}
+	return ids[0], nil
 }
 
 // PruneCreatedBefore deletes at most limit rows created before before, oldest
