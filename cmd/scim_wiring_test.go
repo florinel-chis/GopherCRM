@@ -9,7 +9,8 @@ package main
 // single sign-on issuer (ssoSettings). Issue #470 adds POST /Users and
 // PUT /Users/:id, whose role comes from the roles mapping and whose audit
 // rows carry method scim. Issue #471 adds PATCH /Users/:id, whose active
-// false ends the sessions of the account. Over a SQLite file opened by the
+// false ends the sessions of the account. Issue #504 adds DELETE /Users/:id,
+// the same deactivation, never an erasure. Over a SQLite file opened by the
 // real connector.
 
 import (
@@ -588,4 +589,111 @@ func TestSCIMUserPatchWired(t *testing.T) {
 	var successes int64
 	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", sales.ID).Count(&successes).Error)
 	assert.Equal(t, int64(2), successes, "one success row per patch")
+}
+
+func TestSCIMUserDeleteWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+		var role models.Role
+		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&role).Error)
+		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d}]`, role.ID)
+	})
+	prefix := boot.cfg.API.Prefix
+	addr := 0
+	nextRemote := func() string {
+		addr++
+		return fmt.Sprintf("203.0.113.%d:1234", 200+addr)
+	}
+	type session struct {
+		Data struct {
+			Token        string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"data"`
+	}
+	const password = "Wired-Passw0rd!-0504"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	signIn := func(email string) session {
+		t.Helper()
+		recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+email+`","password":"`+password+`"}`, nextRemote(), "")
+		require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		var s session
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &s))
+		require.NotEmpty(t, s.Data.Token)
+		require.NotEmpty(t, s.Data.RefreshToken)
+		return s
+	}
+
+	admin := &models.User{Email: "admin-0504@crm.example.test", Password: string(hash), FirstName: "Scim", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	adminSession := signIn(admin.Email)
+	recorder := scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"Entra"}`, nextRemote(), "Bearer "+adminSession.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	scimToken := "Bearer " + created.Data.Token
+
+	// A sales account with a password and no identity (an account with a
+	// linked identity cannot sign in with a password), as in
+	// TestSCIMUserPatchWired, so it holds a session.
+	sales := &models.User{Email: "sales-0504@crm.example.test", Password: string(hash), FirstName: "Wired", LastName: "User", Role: models.RoleSales, IsActive: true}
+	require.NoError(t, models.DB.Create(sales).Error)
+	user := struct{ ID, UserName string }{fmt.Sprint(sales.ID), sales.Email}
+	hire := signIn(user.UserName)
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+hire.Data.Token)
+	require.Equal(t, http.StatusOK, recorder.Code, "the access token works before: %s", recorder.Body.String())
+
+	stored := func() models.User {
+		t.Helper()
+		var u models.User
+		require.NoError(t, models.DB.Unscoped().Where("id = ?", user.ID).First(&u).Error)
+		return u
+	}
+	successes := func() int64 {
+		t.Helper()
+		var n int64
+		require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", user.ID).Count(&n).Error)
+		return n
+	}
+	before := stored()
+	require.True(t, before.IsActive)
+
+	path := "/scim/v2/Users/" + user.ID
+	for name, authorization := range map[string]string{"no header": "", "unknown token": "Bearer scim_unknown0504"} {
+		recorder = scimWiredSend(router, http.MethodDelete, path, "", nextRemote(), authorization)
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code, name)
+		assert.Equal(t, scimWiredBody, recorder.Body.String(), name)
+		after := stored()
+		assert.True(t, after.IsActive, "%s: the user stays active", name)
+		assert.Equal(t, before.TokenVersion, after.TokenVersion, "%s: token_version is unchanged", name)
+	}
+
+	recorder = scimWiredSend(router, http.MethodDelete, path, "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+	assert.Empty(t, recorder.Body.String())
+	after := stored()
+	assert.False(t, after.IsActive)
+	assert.False(t, after.DeletedAt.Valid, "a delete never erases")
+	assert.Equal(t, before.Email, after.Email)
+	assert.Equal(t, before.TokenVersion+1, after.TokenVersion)
+
+	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), "Bearer "+hire.Data.Token)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the earlier access token is refused at once")
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/auth/refresh", `{"refresh_token":"`+hire.Data.RefreshToken+`"}`, nextRemote(), "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, "the earlier refresh token is refused at once")
+
+	audits := successes()
+	recorder = scimWiredSend(router, http.MethodDelete, path, "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusNoContent, recorder.Code, "a repeat answers 204: %s", recorder.Body.String())
+	assert.Equal(t, audits, successes(), "a repeat writes no audit row")
+	assert.Equal(t, after.TokenVersion, stored().TokenVersion)
+
+	recorder = scimWiredSend(router, http.MethodDelete, "/scim/v2/Users/999999", "", nextRemote(), scimToken)
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"404","detail":"User not found"}`, recorder.Body.String())
 }

@@ -1308,14 +1308,15 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   still write one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
 
-## SCIM 2.0 provider (FEATURES 1.15 to 1.18)
+## SCIM 2.0 provider (FEATURES 1.15 to 1.19)
 
 `/scim/v2` is served outside the API prefix to identity providers. #468 covers the provider
 tokens, the SCIM authentication and the three discovery documents; #469 the read of the Users
 resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /scim/v2/Users/{id}`);
 #470 the create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`, TC-AUTH-075 to
 TC-AUTH-080); #471 the patch (`PATCH /scim/v2/Users/{id}`, TC-AUTH-081 to TC-AUTH-085), whose
-`active` false, like a PUT with `"active":false`, ends the account's sessions at once. Delete,
+`active` false, like a PUT with `"active":false`, ends the account's sessions at once; #504 the
+delete (`DELETE /scim/v2/Users/{id}`, TC-AUTH-086), the same deactivation, never an erasure.
 `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are
 later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
@@ -1647,3 +1648,28 @@ later slices. See the *SCIM provisioning* section of
   unchanged, and no `role_audit_log` or `auth_audit_log` row is written. With a second active
   admin the same deactivation succeeds.
 - **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`last admin`)
+
+### TC-AUTH-086 — A SCIM DELETE deactivates, never erases, and is idempotent
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A valid SCIM token; an active staff account signed in twice (two refresh
+  tokens); a second active admin exists for the admin step.
+- **Steps:**
+  1. `DELETE /scim/v2/Users/{id}` without an `Authorization` header, then with an unknown `scim_`
+     token.
+  2. `DELETE /scim/v2/Users/{id}` with the valid token.
+  3. `GET /api/v1/users/me` with an earlier access token and `POST /api/v1/auth/refresh` with an
+     earlier refresh token.
+  4. Repeat step 2.
+  5. `DELETE` the only active admin; `DELETE` `abc`, `0`, an unknown id, a customer and an erased
+     account.
+- **Expected:** Step 1 answers 401 with the SCIM error body and the account stays active. Step 2
+  answers 204 with an empty body: `is_active` false, `token_version` + 1, every refresh token
+  revoked before any refresh call; email, names, role, `role_id`, the `user_identities` row and a
+  NULL `deleted_at` are unchanged; one `auth_audit_log` row (method `scim`, outcome `success`) and
+  no `role_audit_log` row. Step 3 answers 401 twice. Step 4 answers 204 and writes nothing (no
+  audit row, same `token_version`). Step 5: the last admin is 400 `invalidValue` ("The last active
+  admin must stay an active admin") with nothing written; every other id is the SCIM 404 `User not
+  found` with nothing written.
+- **Automation:** automated — Go: `TestSCIMUserDelete{SQLite,MySQL}`, `TestSCIMUserDeleteHandler`,
+  `TestSCIMUserDeleteWired`

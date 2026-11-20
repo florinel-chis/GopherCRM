@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 user delete (#504).** `DELETE /scim/v2/Users/{id}` answers 204 with an empty body
+  and deactivates the account as `active` false does: in one governed transaction
+  (`admin set → users → refresh_tokens`) it sets `is_active` false, increments `token_version` and
+  revokes every refresh token, so every session ends at once. It never erases: the email, names,
+  role, `role_id` and single sign-on link stay, and erasure remains the administrator's
+  `DELETE /api/v1/users/{id}`. A repeat on the inactive account answers 204 and writes nothing.
+  The last active admin is 400 `invalidValue`, an id the provider does not see the SCIM 404 `User
+  not found`. A deactivation writes one `auth_audit_log` row with method `scim` and no role audit
+  row. No new setting, table or migration.
 - **Webhook signing-secret rotation (#503).** `POST /api/v1/webhooks/endpoints/{id}/rotate-secret`
   (`webhooks.manage`) generates a new `whsec_` secret and answers 200 with the endpoint, the new
   `secret` (shown this once) and `previous_secret_expires_at` (now + 24 h). The replaced secret is

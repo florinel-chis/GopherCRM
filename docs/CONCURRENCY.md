@@ -42,7 +42,9 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   The OIDC sign-in (#435) continues the chain: `admin set → users → roles → user_identities → refresh_tokens`.
   The SCIM user create and replace (#470) follow `admin set → users → roles → user_identities`; the
   SCIM user patch (#471) and a deactivating replace take the RBAC order and then revoke the
-  account's refresh tokens last, which keeps `users → refresh_tokens`.
+  account's refresh tokens last, which keeps `users → refresh_tokens`. The SCIM user delete
+  (#504) takes the admin set and the target's `users` row, no `roles`, then revokes the refresh
+  tokens: `admin set → users → refresh_tokens`, a prefix-compatible subsequence.
   The admin set is the `users` rows of the active admins, locked by primary key in id order; a
   role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
@@ -696,14 +698,21 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   locked value plus one, then every `refresh_tokens` row of the account is revoked
   (`RefreshTokenRepository.RevokeAllForUser`, only on `active` false), then, on a role change,
   the `role_audit_log` row is inserted. It touches no `user_identities` row.
-- **Order:** admin set → users → roles → refresh_tokens. The `users` row comes before its
+  `DELETE /scim/v2/Users/{id}` (`scimUserService.Delete`, #504) locks the admin set
+  (`LockActiveAdmins`) and the target's `users` row (`LockLiveByIDs`) and no `roles` row, since it
+  writes no role; on an active target it writes `is_active` false and `token_version` plus one in
+  one `UPDATE`, then revokes every `refresh_tokens` row of the account. On an already inactive
+  target it writes nothing and commits an empty transaction.
+- **Order:** admin set → users → roles → refresh_tokens (the delete: admin set → users →
+  refresh_tokens). The `users` row comes before its
   `refresh_tokens` rows, as in refresh rotation, logout and password change, so a competing
   refresh waits on the `users` row and then finds its token revoked.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
-  repositories; the `users` write, the revocation and the audit row commit together or not at
-  all, and a refusal (the last-admin rule, a taken address, an unmapped role, a failed
-  revocation) writes nothing. The successful `auth_audit_log` row is written after the commit, on
-  the root handle, as its own `INSERT`.
+  repositories, for the patch and the delete alike; the `users` write, the revocation and the
+  audit row commit together or not at all, and a refusal (the last-admin rule, a taken address,
+  an unmapped role, a failed revocation) writes nothing. The successful `auth_audit_log` row is
+  written after the commit, on the root handle, as its own `INSERT`; a delete of an already
+  inactive account writes none.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.
 - **Status:** implemented
 

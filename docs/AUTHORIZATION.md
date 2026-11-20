@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; SCIM user patch and delete, and Groups, are later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; Groups are later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -311,7 +311,7 @@ writes one `role_audit_log` row in the transaction of the change; a failed inser
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
 to its own account, #435, or `scim` for a SCIM 2.0 user create, replace or patch, #470 and
-#471, whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
+#471 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
 names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -335,8 +335,9 @@ on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique interna
 `created_at`. Since #468 each refused SCIM authentication on `/scim/v2` writes one row of its
 own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
 SCIM tier in front of the authentication bounds them. Since #470 a successful SCIM user create
-or replace, and since #471 a successful patch, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
-after its transaction; a refused one (400 or 409) writes none. Any other successful API-key or
+or replace, since #471 a successful patch and since #504 a delete that deactivates, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
+after its transaction; a refused one (400 or 409), and a delete of an already inactive account,
+writes none. Any other successful API-key or
 SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
@@ -461,7 +462,8 @@ pointed at `PUBLIC_BASE_URL/scim/v2`. #468 brought the tokens, the authenticatio
 discovery documents; #469 brought the read of the Users resource (see [Users read](#users-read-469)
 below) and #470 its create and replace (see
 [Users create and replace](#users-create-and-replace-470)) and #471 its patch, which also
-deprovisions (see [Users patch](#users-patch-471)). `DELETE /Users`, `/Groups`, `/Schemas/{id}`,
+deprovisions (see [Users patch](#users-patch-471)), and #504 its delete, a deactivation that never
+erases (see [Users delete](#users-delete-504)). `/Groups`, `/Schemas/{id}`,
 `/ResourceTypes/{id}` and a SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
 router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
@@ -659,7 +661,10 @@ are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserRe
 (`cmd/migrate`). The patch (#471) adds `TestSCIMUserPatchWired` (`cmd`),
 `TestSCIMUserPatchHandler` (`internal/handler`), `TestSCIMUserPatchSQLite`/`TestSCIMUserPatchMySQL`
 (`internal/service`, also run on MariaDB), `TestParsePatch` (`internal/scim`) and
-`TestConcurrencyDocSCIMUserPatch` (`internal/config`).
+`TestConcurrencyDocSCIMUserPatch` (`internal/config`). The delete (#504) adds
+`TestSCIMUserDeleteWired` (`cmd`), `TestSCIMUserDeleteHandler` (`internal/handler`) and
+`TestSCIMUserDeleteSQLite`/`TestSCIMUserDeleteMySQL` (`internal/service`, also run on MariaDB),
+and extends `TestConcurrencyDocSCIMUserPatch`.
 
 ### Users patch (#471)
 
@@ -731,6 +736,42 @@ whole with 400 `invalidPath`. Trim the provider's attribute mappings to `userNam
 `name.givenName`, `name.familyName`, the work email and `roles` before turning provisioning on.
 
 Regression roots: see the end of the previous section.
+
+### Users delete (#504)
+
+`DELETE /scim/v2/Users/{id}`, behind the same strict tier and token authentication, deactivates a
+visible user the way a patch with `active` false does, and never erases it. The request body is
+not read.
+
+**Answers.**
+
+| Condition | Answer |
+|---|---|
+| An active visible account, deactivated | 204, empty body |
+| An already inactive visible account | 204, empty body; nothing is written |
+| The last active admin | 400 `invalidValue` (`The last active admin must stay an active admin`) |
+| An id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+
+**What it writes.** On an active account one `users` write sets `is_active` false and
+`token_version` to the locked value plus one, so every access token issued before is refused with
+401, and every `refresh_tokens` row of the account is revoked in the same transaction. The email,
+names, role, `role_id`, the `user_identities` link and `deleted_at` (NULL) stay as they were: the
+erasure of `DELETE /users/{id}` is never called. A later PATCH or PUT with `active` true
+reactivates the account, without bringing back an earlier session.
+
+**Idempotence.** A repeat on the now inactive account answers 204 and commits nothing: no
+`token_version` increment, no revocation, no audit row. This differs on purpose from a PATCH with
+`active` false, which increments `token_version` again on an inactive row. Every refresh and
+bearer check already refuses an inactive owner.
+
+**Transaction and audit.** One governed transaction in the order
+`admin set → users → refresh_tokens`, a prefix-compatible subsequence of the patch order; no
+`roles` row is locked because no role is written (see [CONCURRENCY.md](CONCURRENCY.md), flow
+"SCIM user patch"). No `role_audit_log` row is written. After the commit of a deactivation one
+`auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
+nothing.
+
+Regression roots: see the end of [Users create and replace](#users-create-and-replace-470).
 
 ## Least-privilege integration user
 
@@ -854,8 +895,9 @@ groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider
 `/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
 #469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
 and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the patch
-(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions.
-Deleting users and Groups through SCIM are not implemented yet; that is later work. The rest of the note
+(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions;
+#504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases.
+Groups through SCIM are not implemented yet; that is later work. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)

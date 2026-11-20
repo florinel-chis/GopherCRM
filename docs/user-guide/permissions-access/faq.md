@@ -60,8 +60,8 @@ SAML: no. Single sign-on uses OpenID Connect only. SCIM 2.0: partly. An identity
 SCIM token can read, create, update and deactivate staff accounts, with the role taken from the
 single sign-on role mapping, so an account can exist before the person's first sign-in. When the
 provider deactivates an account, the person is signed out everywhere at once; reactivating it
-lets them sign in again, but not with the old sessions. SCIM does not delete accounts and does
-not manage groups: delete people in GopherCRM when their data must go. The provider's attribute
+lets them sign in again, but not with the old sessions. A SCIM DELETE deactivates the account the
+same way: SCIM never erases accounts and does not manage groups: delete people in GopherCRM when their data must go. The provider's attribute
 mappings must send only the user name, active state, given and family name, work email and roles;
 an update that also sends, for example, `externalId` or `displayName` is refused, so remove those
 mappings at the provider. An administrator creates the provider's SCIM token under Settings →

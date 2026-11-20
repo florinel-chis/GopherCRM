@@ -38,8 +38,9 @@ const scimUserBodyMaxBytes = 64 << 10
 // GET /scim/v2/Users/:id and GET /scim/v2/Users with startIndex/count paging
 // and the one filter userName eq "<value>" (attributes and
 // excludedAttributes are ignored), the create and replace (#470), POST
-// /scim/v2/Users and PUT /scim/v2/Users/:id, and the patch (#471), PATCH
-// /scim/v2/Users/:id. Not part of the OpenAPI document: /scim/v2 lies outside
+// /scim/v2/Users and PUT /scim/v2/Users/:id, the patch (#471), PATCH
+// /scim/v2/Users/:id, and the delete (#504), DELETE /scim/v2/Users/:id, which
+// deactivates and never erases. Not part of the OpenAPI document: /scim/v2 lies outside
 // the API base path.
 type SCIMUserHandler struct {
 	users         service.SCIMUserService
@@ -165,6 +166,17 @@ func (h *SCIMUserHandler) Patch(c *gin.Context) {
 	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
 }
 
+// Delete answers DELETE /scim/v2/Users/:id (#504): 204 with an empty body. It
+// deactivates the account and never erases it; a repeat answers 204 too. The
+// request body is not read.
+func (h *SCIMUserHandler) Delete(c *gin.Context) {
+	if err := h.users.Delete(scimWriteContext(c), c.Param("id")); err != nil {
+		h.failWrite(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // scimWriteContext carries the request id and the client facts the sign-in
 // audit row is written with, as middleware.SCIMAuth builds them.
 func scimWriteContext(c *gin.Context) context.Context {
@@ -264,8 +276,8 @@ func (h *SCIMUserHandler) writeStatus(c *gin.Context, status int, document any) 
 	c.Data(status, scim.ContentType, body)
 }
 
-// failWrite maps the refusals of a create, replace or patch; anything else goes to
-// fail. No answer echoes a request value.
+// failWrite maps the refusals of a create, replace, patch or delete; anything
+// else goes to fail. No answer echoes a request value.
 func (h *SCIMUserHandler) failWrite(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrSCIMLastAdmin):
