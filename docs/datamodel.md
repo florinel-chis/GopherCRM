@@ -133,7 +133,7 @@ blocks a role or user delete.
 
 ### Schema sources
 
-MySQL/MariaDB: `migrations/20261119120000_add_roles_and_permissions` (tables created only when
+MySQL/MariaDB: `migrations/20261119120000_add_roles_and_permissions.*.sql` (tables created only when
 missing, every `users` change behind an `INFORMATION_SCHEMA` probe, `idx_users_role_id` before the
 foreign key). Its down half first sets `role = 'support'` and `is_active = 0` on every live user
 whose role is `custom` (erased rows untouched), then drops the foreign key, both indexes, the
@@ -450,7 +450,7 @@ is refused and rolled back whole.
 and `subtotal_cents` and `discount_cents` stay net. The four tax columns are `NOT NULL DEFAULT 0`, a
 deliberate exception to the no-default rule of the other totals: SQLite cannot add a `NOT NULL`
 column without a default to a populated table, and the default is the zero value itself, so an
-explicit 0 still persists. MySQL/MariaDB get them from `migrations/20261117120000_add_quote_tax`
+explicit 0 still persists. MySQL/MariaDB get them from `migrations/20261117120000_add_quote_tax.up.sql`
 (each column only when missing, then one `UPDATE` setting `gross_total_cents = total_cents +
 tax_cents` where it differs); SQLite from `models.MigrateDatabase`, whose `backfillQuoteGrossTotals`
 step does the same backfill on every driver, soft-deleted quotes included, by primary key in chunks
@@ -459,7 +459,7 @@ and a tax of 0, existing quotes a tax of 0 and a gross total equal to their tota
 
 **Fractional quantities (#343).** `quote_lines.quantity_milli` (`bigint NOT NULL DEFAULT 0`)
 replaces the whole-unit `quantity bigint NOT NULL`. MySQL/MariaDB get it from
-`migrations/20261118120000_store_quote_line_quantity_milli`: the column is added when missing,
+`migrations/20261118120000_store_quote_line_quantity_milli.*.sql`: the column is added when missing,
 `quantity_milli = quantity × 1000` is copied where it is still 0 while `quantity` exists, and
 `quantity` is dropped when present, every step guarded by an `INFORMATION_SCHEMA` probe. The down
 half re-adds `quantity bigint NOT NULL` (no default), sets it to `GREATEST(1, (quantity_milli + 500)
@@ -955,7 +955,7 @@ before it stay NULL.
 ## OpenID Connect Sign-in
 
 Two tables back the OIDC sign-in (#435). Both are in AutoMigrate and in
-`migrations/20261123120000_add_oidc_sign_in` (each created only when missing; the down drops the
+`migrations/20261123120000_add_oidc_sign_in.*.sql` (each created only when missing; the down drops the
 two tables and nothing else).
 
 ### user_identities
@@ -1097,7 +1097,7 @@ Represents system configuration settings that control application behavior.
 - `deals.default_currency` - Currency a new deal, product or quote takes when none is sent (three upper-case letters; EUR as shipped; also served on `GET /configurations/ui`)
 - `quotes.pdf_available` - Not a stored row: a synthetic read-only boolean that `GET /configurations/ui` appends last (id 0, zero timestamps, category `ui`), `true` when the server can produce quote PDFs (`QUOTE_PDF_CHROME_PATH` names an executable browser and `APP_BASE_URL` is set), `false` otherwise; always present. The quote page shows its Download PDF button only when it is `true` (#384)
 
-`security.session_timeout_hours` and `tickets.auto_assign_support` were seeded by earlier releases and never read. They are retired (#224): startup deletes them on every driver (`models.RetiredConfigurationKeys`), and `migrations/20261031120000_retire_inert_configurations` does the same on MySQL and MariaDB. Session length comes from `JWT_EXPIRY_HOURS` (access token) and `REFRESH_TOKEN_EXPIRY_DAYS`. A ticket created without `assigned_to_id` is assigned to the user who created it (`internal/handler/ticket_handler.go:108-111`); nothing distributes tickets among support users.
+`security.session_timeout_hours` and `tickets.auto_assign_support` were seeded by earlier releases and never read. They are retired (#224): startup deletes them on every driver (`models.RetiredConfigurationKeys`), and `migrations/20261031120000_retire_inert_configurations.up.sql` does the same on MySQL and MariaDB. Session length comes from `JWT_EXPIRY_HOURS` (access token) and `REFRESH_TOKEN_EXPIRY_DAYS`. A ticket created without `assigned_to_id` is assigned to the user who created it (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)); nothing distributes tickets among support users.
 
 ## Bulk Operation Model
 

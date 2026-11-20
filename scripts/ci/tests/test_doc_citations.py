@@ -167,6 +167,18 @@ class DocCitationCheckTest(unittest.TestCase):
         self.assertIn('no path citation found', out)
         self.assertIn('no symbol citation found', out)
 
+    def test_converted_files_cover_every_converted_guide(self):
+        # #487 converted the fork and extension guides, #488 the rest of the
+        # guides that cited code by line; each must stay under rule c.
+        expected = {
+            'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
+            'docs/SERVER_PROVISIONING.md', 'README.md', 'docs/REFACTORING_GUIDE.md',
+            'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
+        }
+        self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
+        for name in expected:
+            self.assertTrue((ROOT / name).is_file(), name)
+
     def test_real_tree_passes(self):
         code, out = run(ROOT)
         self.assertEqual(code, 0, out)

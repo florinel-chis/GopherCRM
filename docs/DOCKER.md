@@ -10,7 +10,8 @@ The stack is three containers wired by `docker-compose.yml` at the repo root:
 
 The UI container's nginx proxies `/api/v1/` to the backend, so the browser only
 ever talks to `http://localhost:3000`. The browser still sends an `Origin`
-header, and nginx forwards `Host` without the port (`gocrm-ui/docker/nginx.conf:14`),
+header, and nginx forwards `Host` without the port (`proxy_set_header Host $host` in
+`gocrm-ui/docker/nginx.conf`),
 so the backend's CORS allowlist applies; the Compose files list the UI origin
 for you (`CORS_ALLOWED_ORIGINS`). The API is also reachable directly on
 `http://localhost:8080/api/v1` if you want to hit it with curl or an API key.
@@ -296,8 +297,8 @@ Set by the Compose files:
   password-reset links point at localhost. Browsers on an origin that is not
   listed get a bare 403 from the CORS check, except when the `Origin` equals
   `http://` or `https://` plus the `Host` the backend receives, which the
-  pinned `gin-contrib/cors` v1.7.5 (`go.mod:7`) lets through: a TLS proxy on
-  port 443 that forwards the host name to the UI nginx passes, a UI on any other
+  pinned `gin-contrib/cors` v1.7.5 (`github.com/gin-contrib/cors v1.7.5` in
+  `go.mod`) lets through: a TLS proxy on port 443 that forwards the host name to the UI nginx passes, a UI on any other
   origin than the API's does not. Set `CORS_ALLOWED_ORIGINS` to your real
   origin either way.
 - `SERVER_MODE=production`, `TRUSTED_PROXIES` for the fixed subnet,
@@ -321,7 +322,8 @@ Not set, so the backend falls back to its defaults (`internal/config/config.go`)
   `AEO_CUSTOM_*` engine and the provider key variables (keys can still be set
   in AEO > Settings).
 - `JWT_EXPIRY_HOURS` (access-token lifetime, default 24) and
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), `internal/config/config.go:301-306`.
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30), read into `JWTConfig.ExpiryHours` and
+  `JWTConfig.RefreshTokenDays` by `Load` (`internal/config/config.go`).
   `JWT_ACCESS_TOKEN_MINUTES` is read too but affects nothing the server
   issues.
 
@@ -330,7 +332,7 @@ file rather than editing the shipped files. The committed
 `docker-compose.production.example.yml` covers the common production set; see
 [Production override example](#production-override-example) below. In the
 SQLite stack the backend also loads `/data/.env` from its volume
-(`Dockerfile:73-75`); variables set in `environment` take precedence over it.
+(`WORKDIR /data` in `Dockerfile`); variables set in `environment` take precedence over it.
 
 ### Production override example
 
@@ -522,8 +524,8 @@ Restore with the backend stopped, and match the restore to the backup:
 - **Offline copy (option 1):** put back `gophercrm.db` together with the
   `gophercrm.db-wal` and `gophercrm.db-shm` copied with it, replacing all
   three. The WAL can hold committed transactions that are not yet in the main
-  file — the backend can exit without a final checkpoint (`cmd/main.go:205-215`)
-  — so deleting it, or mixing it with another backup's main file, loses data.
+  file — the backend can exit without a final checkpoint (`main` (`cmd/main.go`)
+  calls `models.CloseDatabase` only after a clean drain) — so deleting it, or mixing it with another backup's main file, loses data.
 - **`VACUUM INTO` snapshot (option 2):** it is one self-contained file. Put it
   back as `/data/gophercrm.db` and delete any `-wal`/`-shm` left in the
   volume, which belong to the database you are replacing.

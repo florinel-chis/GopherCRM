@@ -9,7 +9,7 @@ the first deploy.
 
 Every file shown here is an example with placeholders. Nothing in this guide ships as a file in
 the repository, and nothing under `scripts/deploy` reads this page. When a step and a script
-disagree, the script wins: re-check the line references below against your checkout.
+disagree, the script wins: re-check the functions and lines cited below against your checkout.
 
 ## Scope
 
@@ -19,13 +19,15 @@ disagree, the script wins: re-check the line references below against your check
   Installing and tuning the database server is outside this guide; it only creates the database
   and the account the backend uses.
 - **SQLite is not supported on this path.** Before every deploy `receive-release` backs the
-  database up with `mysqldump` (`scripts/deploy/receive-release.sh:206`) and aborts the deploy when
-  that backup fails, and `bootstrap.sh` refuses a server without `mysqldump` (line 63). This is a
+  database up with `mysqldump` (`backup_database` in `scripts/deploy/receive-release.sh`) and
+  aborts the deploy when that backup fails, and `bootstrap.sh` refuses a server without
+  `mysqldump` (its `for tool in flock rsync mysqldump gzip curl tar systemctl` check). This is a
   founder decision (13 Nov 2026, #305): receive-release keeps only its `mysqldump` backup, and
   there is no SQLite backup branch. For a SQLite deployment use the SQLite Compose stack described
   in [DOCKER.md](DOCKER.md).
-- **Names and paths.** The guide uses the defaults of `receive-release.sh` (lines 52-56). Change
-  them only together with the matching `GOPHERCRM_*` overrides on the server.
+- **Names and paths.** The guide uses the defaults of `receive-release.sh` (the block that starts
+  with `ROOT=${GOPHERCRM_ROOT:-/srv/gophercrm}`). Change them only together with the matching
+  `GOPHERCRM_*` overrides on the server.
 
 | Setting | Default | Used for |
 |---|---|---|
@@ -40,8 +42,8 @@ The public name in the examples is `crm.example.com`; replace it everywhere.
 ## Packages
 
 `bootstrap.sh` checks for these tools on the server before it installs anything
-(`scripts/deploy/bootstrap.sh:63`): `flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and
-`systemctl`. The proxy and the certificate need `nginx` and `certbot` as well.
+(`for tool in flock rsync mysqldump gzip curl tar systemctl` in `scripts/deploy/bootstrap.sh`):
+`flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and `systemctl`. The proxy and the certificate need `nginx` and `certbot` as well.
 
 On Debian or Ubuntu, for example:
 
@@ -92,9 +94,9 @@ install -d -o root -g root -m 700 /srv/gophercrm/env
 `receive-release` runs as root and trusts what it finds under `/srv/gophercrm`, so it refuses any
 directory it uses (`/srv/gophercrm`, `releases`, `deploy`, `bin`, `backups` and the web root) that
 is a symbolic link, is not owned by root, or is writable by group or others
-(`require_private`, `scripts/deploy/receive-release.sh:33-39`); a loosened mode stops the deploy
+(`require_private` in `scripts/deploy/receive-release.sh`); a loosened mode stops the deploy
 instead of being silently reset. `bootstrap.sh` re-owns `/srv/gophercrm` but does not create it
-(line 69); it creates `bin`, `deploy`, `releases`, `backups` (700) and the web root itself. Mode
+(`chown root:root /srv/gophercrm`); it creates `bin`, `deploy`, `releases`, `backups` (700) and the web root itself. Mode
 755 on `/srv/gophercrm` lets the service user reach `bin/`; `env/` stays root-only because systemd
 reads the environment file as root before it drops privileges.
 
@@ -145,19 +147,19 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
 ```
 
 - **The secrets.** `JWT_SECRET` must be at least 32 characters; any value starting with
-  `CHANGE_THIS` is refused and the backend does not start (`internal/config/config.go:269-279`).
+  `CHANGE_THIS` is refused and the backend does not start (`Load` (`internal/config/config.go`)).
   Use `openssl rand -base64 32`. For `DB_PASSWORD` pick a value without quotes, backslash, `$` or
   backtick (for example `openssl rand -hex 24`); `DB_PASSWORD` itself is not checked at startup,
   so a forgotten placeholder only shows up as a database login with a known password. The same
   password goes into the SQL block under *MySQL database*.
 - **One parser for two readers.** systemd reads the file through `EnvironmentFile=`, and
   `receive-release` reads `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT` and `DB_NAME` from it with
-  `sed` for the backup (`env_value`, `scripts/deploy/receive-release.sh:176-178`). That reader
+  `sed` for the backup (`env_value` in `scripts/deploy/receive-release.sh`). That reader
   takes the last `KEY=` line, strips one pair of quotes and decodes no escapes, so keep each key on
   one active line and the values plain. A wrong `DB_*` value fails the backup, which stops the
   deploy before anything changes.
 - **Why `EnvironmentFile=`.** The backend loads only a `.env` file in its working directory
-  (`config.Load`, `internal/config/config.go:263`); the unit's working directory holds none, so
+  (`config.Load` (`internal/config/config.go`)); the unit's working directory holds none, so
   every setting comes from this file through systemd. Do not add a `.env` to
   `/var/lib/gophercrm`: it would only fill keys the environment file leaves unset.
 - **`TRUSTED_PROXIES`.** The rate limiter keys on the client address. Behind nginx on the same
@@ -258,8 +260,8 @@ systemctl enable gophercrm
 ```
 
 Enable it, but do not start it: `/srv/gophercrm/bin/gophercrm` is a link that the first deploy
-creates (`scripts/deploy/receive-release.sh:137`), and that deploy restarts the service itself
-(line 161). Notes on the directives:
+creates (`link_binaries` in `scripts/deploy/receive-release.sh`), and that deploy restarts the
+service itself (`restart_and_check`). Notes on the directives:
 
 - `ExecStart` is the link into the active release, so a deploy or a rollback needs no unit change.
 - `EnvironmentFile=` has no leading `-`: a missing file stops the start instead of running the
@@ -301,7 +303,7 @@ nginx serves the UI from the web root, proxies the API and `/health` to the back
 webroot mode, which needs the plain-HTTP site first.
 
 Create the ACME directory. It sits outside the web root on purpose: every deploy syncs
-`/var/www/gophercrm` with `rsync --delete` (`scripts/deploy/receive-release.sh:151`), which would
+`/var/www/gophercrm` with `rsync --delete` (`activate` in `scripts/deploy/receive-release.sh`), which would
 remove challenge files placed there.
 
 ```bash
@@ -382,7 +384,7 @@ Enable it and run `nginx -t && systemctl reload nginx` again.
   (`/api/v1/...` matches `API_PREFIX`).
 - `/health` must be proxied: after `receive-release` has seen the new revision on
   `http://127.0.0.1:8080/health`, the Deploy workflow checks `<public URL>/health` as visitors
-  reach it (`.github/workflows/deploy.yml:113-129`).
+  reach it (the `Verify from outside` step of `.github/workflows/deploy.yml`).
 - `Host $host` keeps the UI and the API on one origin for the CORS check, and `X-Forwarded-For
   $remote_addr` is the single address the backend trusts through `TRUSTED_PROXIES=127.0.0.1`.
 - `try_files ... /index.html` serves the single-page UI for client-side routes.
@@ -418,11 +420,12 @@ first start with `journalctl -u gophercrm -f`.
 
 ## Schema migrations
 
-The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`cmd/main.go:151`),
+The backend runs `models.MigrateDatabase` (GORM auto-migration) at every start (`main` (`cmd/main.go`)),
 so the first start creates the tables and later starts add new columns and tables.
 
 The release tarball carries the SQL half as well: `bin/migrate` and the `migrations/` directory
-(`scripts/release/build.sh:8,15`), found on the server at `/srv/gophercrm/current/migrations` with
+(`for target in gophercrm create-admin migrate` and `cp -R migrations release/migrations` in
+`scripts/release/build.sh`), found on the server at `/srv/gophercrm/current/migrations` with
 the tool at `/srv/gophercrm/current/bin/migrate`. receive-release does not run them: no deploy
 step calls `bin/migrate` or reads `current/migrations`. On MySQL and MariaDB the SQL migrations are
 applied with golang-migrate as described in
@@ -473,9 +476,9 @@ systemd-run --pty --uid=gophercrm --gid=gophercrm -p EnvironmentFile=/srv/gopher
 ```
 
 It prompts for the email, the name and the password, and reads the password from the terminal
-without echo (`term.ReadPassword`, `cmd/create-admin/main.go:104-115`), which is why `--pty` is
+without echo (`term.ReadPassword` in `run` (`cmd/create-admin/main.go`)), which is why `--pty` is
 required. Type the password at the prompt. Do not use create-admin's flag mode
-(`cmd/create-admin/main.go:34-35`): it takes the password on the command line, where the process
+(the `-non-interactive` and `-password` flags of `run` (`cmd/create-admin/main.go`)): it takes the password on the command line, where the process
 list and the shell history can see it. The link `/srv/gophercrm/bin/create-admin` exists once the
 first deploy has run.
 
@@ -483,7 +486,7 @@ first deploy has run.
 
 Before every deploy `receive-release` writes
 `/srv/gophercrm/backups/<UTC timestamp>-<sha>.sql.gz` with `mysqldump` and the `DB_*` values of the
-environment file (`scripts/deploy/receive-release.sh:190-210`). The directory is root-only (700);
+environment file (`backup_database` in `scripts/deploy/receive-release.sh`). The directory is root-only (700);
 the newest 10 dumps are kept (`GOPHERCRM_KEEP_BACKUPS`). A failed dump aborts the deploy before
 anything changes.
 
