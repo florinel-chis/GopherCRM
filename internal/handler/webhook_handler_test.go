@@ -37,6 +37,8 @@ type fakeWebhookService struct {
 	filter   repository.WebhookDeliveryFilter
 	sortBy   string
 	notFound bool
+	// pingFails makes TestEndpoint answer a failed outcome.
+	pingFails bool
 }
 
 func (f *fakeWebhookService) record(call string) {
@@ -102,6 +104,20 @@ func (f *fakeWebhookService) ListDeliveries(_ context.Context, filter repository
 	f.record("deliveries")
 	f.filter = filter
 	return []models.WebhookDelivery{}, 0, nil
+}
+
+func (f *fakeWebhookService) TestEndpoint(_ context.Context, id uint) (*models.WebhookPingResult, error) {
+	f.record("test")
+	if err := f.missing(id); err != nil {
+		return nil, err
+	}
+	if f.pingFails {
+		status := http.StatusInternalServerError
+		code := models.WebhookErrorHTTPStatus
+		return &models.WebhookPingResult{EventID: "evt_0123456789abcdef0123456789abcdef", Outcome: models.WebhookPingFailed, HTTPStatus: &status, ErrorCode: &code}, nil
+	}
+	status := http.StatusOK
+	return &models.WebhookPingResult{EventID: "evt_0123456789abcdef0123456789abcdef", Outcome: models.WebhookPingSucceeded, HTTPStatus: &status}, nil
 }
 
 // webhookAuth authenticates the token or key "<role>-credential" as a user of
@@ -177,6 +193,7 @@ var webhookRoutes = []webhookRoute{
 	{http.MethodPut, "/webhooks/endpoints/1", `{"is_active":false}`, http.StatusOK},
 	{http.MethodDelete, "/webhooks/endpoints/1", "", http.StatusNoContent},
 	{http.MethodGet, "/webhooks/deliveries", "", http.StatusOK},
+	{http.MethodPost, "/webhooks/endpoints/1/test", "", http.StatusOK},
 }
 
 func TestWebhookRoutesAdminOnly(t *testing.T) {
@@ -218,7 +235,7 @@ func TestWebhookRoutesAdminOnly(t *testing.T) {
 			rec, _ := serveWebhook(t, router, route.method, route.path, "Bearer admin-credential", route.body)
 			assert.NotContains(t, rec.Body.String(), "sealed-canary", "%s %s", route.method, route.path)
 			assert.NotContains(t, rec.Body.String(), "secret_sealed")
-			if route.method == http.MethodPost {
+			if route.method == http.MethodPost && route.path == "/webhooks/endpoints" {
 				assert.Contains(t, rec.Body.String(), `"secret":"whsec_c2VjcmV0"`)
 			} else {
 				assert.NotContains(t, rec.Body.String(), "whsec_", "%s %s", route.method, route.path)
@@ -257,6 +274,9 @@ func TestWebhookHandlerValidation(t *testing.T) {
 		{"zero id on GET", http.MethodGet, "/webhooks/endpoints/0", "", "id"},
 		{"negative id on PUT", http.MethodPut, "/webhooks/endpoints/-3", `{"is_active":true}`, "id"},
 		{"bad id on DELETE", http.MethodDelete, "/webhooks/endpoints/" + canary, "", "id"},
+		{"bad id on test ping", http.MethodPost, "/webhooks/endpoints/abc/test", "", "id"},
+		{"zero id on test ping", http.MethodPost, "/webhooks/endpoints/0/test", "", "id"},
+		{"subscribing to webhook.ping", http.MethodPost, "/webhooks/endpoints", `{"url":"https://hooks.example.com/x","event_types":["webhook.ping"]}`, "event_types"},
 		{"bad sort_by", http.MethodGet, "/webhooks/endpoints?sort_by=url" + canary, "", "sort_by"},
 		{"bad status filter", http.MethodGet, "/webhooks/deliveries?status=" + canary, "", "status"},
 		{"bad event_type filter", http.MethodGet, "/webhooks/deliveries?event_type=" + canary, "", "event_type"},
@@ -300,6 +320,49 @@ func TestWebhookHandlerValidation(t *testing.T) {
 			require.NotNil(t, envelope.Error)
 			assert.Equal(t, utils.ErrCodeNotFound, envelope.Error.Code)
 		}
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/999/test", admin, "")
+		assert.Equal(t, http.StatusNotFound, rec.Code, "test ping")
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeNotFound, envelope.Error.Code)
+	})
+
+	t.Run("the test ping answers its outcome with nullable fields present", func(t *testing.T) {
+		fake := &fakeWebhookService{}
+		router := newWebhookRouter(t, fake)
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/4/test", admin, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var data map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(envelope.Data, &data))
+		assert.JSONEq(t, `"evt_0123456789abcdef0123456789abcdef"`, string(data["event_id"]))
+		assert.JSONEq(t, `"succeeded"`, string(data["outcome"]))
+		assert.JSONEq(t, `200`, string(data["http_status"]))
+		require.Contains(t, data, "error_code", "error_code is present on success")
+		assert.Equal(t, "null", string(data["error_code"]))
+		assert.Len(t, data, 4)
+
+		fake = &fakeWebhookService{pingFails: true}
+		router = newWebhookRouter(t, fake)
+		rec, envelope = serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/4/test", admin, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		data = nil
+		require.NoError(t, json.Unmarshal(envelope.Data, &data))
+		assert.JSONEq(t, `"failed"`, string(data["outcome"]))
+		assert.JSONEq(t, `500`, string(data["http_status"]))
+		assert.JSONEq(t, `"http_status"`, string(data["error_code"]))
+	})
+
+	t.Run("an unwired test ping is 500 without the cause", func(t *testing.T) {
+		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		protected := router.Group("/api/v1")
+		protected.Use(middleware.Auth(webhookAuth{}))
+		SetupWebhookRoutes(protected, NewWebhookHandler(service.NewWebhookService(nil, nil, nil)))
+		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/1/test", admin, "")
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeInternal, envelope.Error.Code)
+		assert.NotContains(t, rec.Body.String(), "not configured")
 	})
 
 	t.Run("valid input reaches the service as sent", func(t *testing.T) {

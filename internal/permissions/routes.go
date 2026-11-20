@@ -229,10 +229,11 @@ var RouteKeys = map[string]RouteKey{
 	"POST /notifications/:id/read":    key(NotificationsUse),
 
 	// webhooks
-	"GET /webhooks/endpoints":        key(WebhooksManage),
-	"POST /webhooks/endpoints":       key(WebhooksManage),
-	"GET /webhooks/endpoints/:id":    key(WebhooksManage),
-	"PUT /webhooks/endpoints/:id":    key(WebhooksManage),
-	"DELETE /webhooks/endpoints/:id": key(WebhooksManage),
-	"GET /webhooks/deliveries":       key(WebhooksManage),
+	"GET /webhooks/endpoints":           key(WebhooksManage),
+	"POST /webhooks/endpoints":          key(WebhooksManage),
+	"GET /webhooks/endpoints/:id":       key(WebhooksManage),
+	"PUT /webhooks/endpoints/:id":       key(WebhooksManage),
+	"DELETE /webhooks/endpoints/:id":    key(WebhooksManage),
+	"POST /webhooks/endpoints/:id/test": key(WebhooksManage),
+	"GET /webhooks/deliveries":          key(WebhooksManage),
 }

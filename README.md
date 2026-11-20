@@ -513,6 +513,16 @@ failure or a refused destination is retried after 1, 2, 4, … minutes (at most 
 10 attempts have been made (about 8.5 hours); the event is then marked failed. Delivery is at least
 once and unordered: deduplicate on `webhook-id`.
 
+**Test ping.** `POST /api/v1/webhooks/endpoints/:id/test` sends one signed request to the endpoint
+at once, active or not, and answers with the outcome: `{"event_id":"evt_…","outcome":"succeeded",
+"http_status":200,"error_code":null}`, or `outcome` `failed` with the error code of a delivery
+(`http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`) or
+`secret_unavailable`, and `http_status` null when no answer arrived. Its body is
+`{"id":"evt_<32 hex>","type":"webhook.ping","occurred_at":"…"}`, without `record_id`, signed like a
+delivery. It follows the same egress rules, 10-second timeout and no-redirect rule, is never
+retried, and is not written to the delivery log. `webhook.ping` is not an event type an endpoint
+can subscribe to.
+
 **Verifying the signature** (Standard Webhooks). Each request carries `webhook-id` (the event id),
 `webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`
 (`v1,<base64>`). Recompute it with the secret returned when the endpoint was created:
@@ -1061,6 +1071,9 @@ expired, or if its owner has been deactivated or erased.
 - `PUT /api/v1/webhooks/endpoints/:id` - Change `url`, `event_types` or `is_active` (the secret
   never changes)
 - `DELETE /api/v1/webhooks/endpoints/:id` - Delete the endpoint and its delivery log
+- `POST /api/v1/webhooks/endpoints/:id/test` - Send one signed `webhook.ping` to the endpoint (active
+  or not) and answer `{event_id, outcome, http_status, error_code}`; not written to the delivery
+  log and not retried
 - `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
   `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
 

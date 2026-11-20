@@ -497,7 +497,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	formPublicHandler := handler.NewFormPublicHandler(formService, cfg.Forms, cfg.API.Prefix)
 	automationHandler := handler.NewAutomationHandler(automationService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
-	webhookHandler := handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, webhookBox))
+	webhookHandler := handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, webhookBox,
+		service.WithWebhookPingClients(aeo.NewEgressGuard(config.AEOEgressPolicy{}))))
 
 	// Recover the automation runs whose lease went stale before the worker and
 	// the HTTP server start (#237). Each claim records this engine's instance

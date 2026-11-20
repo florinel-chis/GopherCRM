@@ -327,15 +327,27 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 	if r.clients == nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
 	}
-	client, err := r.clients.PublicHTTPClient(endpoint.URL)
+	return sendWebhook(ctx, r.clients, endpoint.URL, r.timeout, func(reqCtx context.Context) (*http.Request, error) {
+		return NewWebhookRequest(reqCtx, endpoint.URL, secret, delivery, r.now())
+	})
+}
+
+// sendWebhook is the send path shared by deliveries and the test ping: it
+// gets the public-only client of url from clients (never nil), POSTs the
+// request build returns once under a timeout bound (connection and TLS
+// included), drains at most webhookResponseDrainBytes of the answer and
+// classifies it. A redirect is never followed. The transport's own error,
+// which quotes the URL, is classified and never returned.
+func sendWebhook(ctx context.Context, clients WebhookClientFactory, url string, timeout time.Duration, build func(reqCtx context.Context) (*http.Request, error)) attemptOutcome {
+	client, err := clients.PublicHTTPClient(url)
 	if err != nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
 	}
 	defer client.CloseIdleConnections()
 
-	reqCtx, cancel := context.WithTimeout(ctx, r.timeout)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	req, err := NewWebhookRequest(reqCtx, endpoint.URL, secret, delivery, r.now())
+	req, err := build(reqCtx)
 	if err != nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
 	}

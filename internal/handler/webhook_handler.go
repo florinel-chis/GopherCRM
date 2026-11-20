@@ -217,6 +217,40 @@ func (h *WebhookHandler) GetEndpoint(c *gin.Context) {
 	utils.RespondSuccess(c, http.StatusOK, endpoint)
 }
 
+// TestEndpoint godoc
+// @Summary Send a test ping to a webhook endpoint
+// @Description Sends one signed webhook.ping request to the endpoint, synchronously, and answers with its outcome. The body is {id, type, occurred_at} with type webhook.ping and no record_id; the headers are the Standard Webhooks headers of a delivery (webhook-id equal to the body's id, webhook-timestamp, webhook-signature v1 under the endpoint's secret).
+// @Description The ping uses the same egress guard as deliveries (a host that resolves to a private, loopback, link-local or metadata address is refused: destination_refused), the same 10 s timeout, and never follows a redirect. It works on an inactive endpoint, is not written to the delivery log, is not retried and leaves the endpoint unchanged.
+// @Description A failed ping is still a 200 with outcome failed: error_code is http_status (a non-2xx answer), redirect, timeout, connection_failed, destination_refused or secret_unavailable (the stored secret cannot be opened; nothing is sent). http_status is null when no answer was received.
+// @Description Roles: admin.
+// @Tags webhooks
+// @Produce json
+// @Security BearerAuth
+// @Security ApiKeyAuth
+// @Param id path int true "Endpoint ID"
+// @Success 200 {object} utils.APIResponse{data=models.WebhookPingResult} "Ping sent (or refused); see outcome"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - the id is not a positive integer (error.details.id)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED - missing or malformed Authorization header, or an invalid or expired token or API key"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN - role is not admin"
+// @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND - no endpoint with that id"
+// @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS - moderate tier: 120 requests/min, burst 30, per client IP, shared by every authenticated route; error.details.retry_after is '60s'; no Retry-After header"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR - unexpected failure, or the ping is not wired; the cause is never echoed"
+// @Router /webhooks/endpoints/{id}/test [post]
+func (h *WebhookHandler) TestEndpoint(c *gin.Context) {
+	logger := webhookHandlerLog("webhook_endpoint_test")
+	id, ok := parseWebhookID(c.Param("id"))
+	if !ok {
+		utils.RespondValidationError(c, map[string]string{"id": webhookIDRule})
+		return
+	}
+	result, err := h.webhookService.TestEndpoint(c.Request.Context(), id)
+	if err != nil {
+		respondWebhookError(c, logger.WithField("endpoint_id", id), err)
+		return
+	}
+	utils.RespondSuccess(c, http.StatusOK, result)
+}
+
 // UpdateEndpoint godoc
 // @Summary Update a webhook endpoint
 // @Description Changes the URL, the subscribed event types or the active flag of an endpoint. An absent field keeps the stored value; a body with none of the three is refused. The signing secret never changes and is not returned.

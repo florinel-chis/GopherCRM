@@ -99,8 +99,32 @@ func NewWebhookRequest(ctx context.Context, url, secret string, delivery *models
 	if err != nil {
 		return nil, err
 	}
+	return newSignedWebhookRequest(ctx, url, secret, delivery.EventID, body, sentAt)
+}
+
+// webhookPingPayload is the body of a test ping: no record_id and no record
+// data. The field order is the wire order.
+type webhookPingPayload struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	OccurredAt string `json:"occurred_at"`
+}
+
+// webhookPingBody renders the exact body of a test ping:
+// {"id":"evt_…","type":"webhook.ping","occurred_at":"<RFC 3339 UTC, ms>"}.
+func webhookPingBody(eventID string, occurredAt time.Time) ([]byte, error) {
+	return json.Marshal(webhookPingPayload{
+		ID:         eventID,
+		Type:       models.WebhookEventPing,
+		OccurredAt: occurredAt.UTC().Format(webhookOccurredAtLayout),
+	})
+}
+
+// newSignedWebhookRequest builds one signed POST of body to url at sentAt
+// with the Standard Webhooks headers, eventID being the webhook-id.
+func newSignedWebhookRequest(ctx context.Context, url, secret, eventID string, body []byte, sentAt time.Time) (*http.Request, error) {
 	timestamp := sentAt.Unix()
-	signature, err := SignWebhook(secret, delivery.EventID, timestamp, body)
+	signature, err := SignWebhook(secret, eventID, timestamp, body)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +132,7 @@ func NewWebhookRequest(ctx context.Context, url, secret string, delivery *models
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set(WebhookHeaderID, delivery.EventID)
+	req.Header.Set(WebhookHeaderID, eventID)
 	req.Header.Set(WebhookHeaderTimestamp, strconv.FormatInt(timestamp, 10))
 	req.Header.Set(WebhookHeaderSignature, signature)
 	req.Header.Set("Content-Type", "application/json")

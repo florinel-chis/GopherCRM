@@ -759,7 +759,8 @@ type FormService interface {
 // WebhookService is the admin registry of outbound webhook endpoints and the
 // delivery log (#345). Invalid input is a *WebhookValidationError (it unwraps
 // to apperrors.ErrValidation), an unknown id apperrors.ErrNotFound, and a
-// service built without its repository or secret box ErrWebhooksUnavailable.
+// service built without its repository or secret box ErrWebhooksUnavailable
+// (TestEndpoint also without its ping client factory).
 type WebhookService interface {
 	// CreateEndpoint validates the URL and event types, generates the signing
 	// secret, stores it sealed and returns it this once.
@@ -774,6 +775,11 @@ type WebhookService interface {
 	DeleteEndpoint(ctx context.Context, id uint) error
 	// ListDeliveries returns one page of the delivery log, newest first.
 	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
+	// TestEndpoint sends one signed webhook.ping request to the endpoint,
+	// active or not, synchronously and without writing anything. A refused,
+	// failed or unsigned attempt is a failed result, not an error; a service
+	// built without WithWebhookPingClients returns ErrWebhooksUnavailable.
+	TestEndpoint(ctx context.Context, id uint) (*models.WebhookPingResult, error)
 }
 
 // SCIMUserService is the SCIM 2.0 Users resource: the read (#469) and the

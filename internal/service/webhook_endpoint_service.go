@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
@@ -21,7 +23,8 @@ import (
 // endpoint's signing secret is whsec_ plus the base64 of 32 random bytes,
 // stored sealed with utils.SecretBox under WebhookSecretContext and returned
 // once, in the create response. Log lines carry the operation and the
-// endpoint id only: never the URL, its host, the secret or the sealed value.
+// endpoint id (the test ping also its outcome, error code and HTTP status)
+// only: never the URL, its host, the secret or the sealed value.
 
 // WebhookSecretContext is the SecretBox context of endpoint secrets; the
 // master secret is API_KEY_SECRET (falling back to JWT_SECRET).
@@ -112,13 +115,32 @@ type webhookService struct {
 	repo      repository.WebhookRepository
 	txManager *utils.TransactionManager
 	box       *utils.SecretBox
+	// pingClients hands out the public-only client of a test ping; nil
+	// refuses the ping with ErrWebhooksUnavailable.
+	pingClients WebhookClientFactory
+	// pingTimeout bounds one ping (WebhookRequestTimeout).
+	pingTimeout time.Duration
+}
+
+// WebhookServiceOption configures NewWebhookService.
+type WebhookServiceOption func(*webhookService)
+
+// WithWebhookPingClients wires the test ping (TestEndpoint) to clients, the
+// same egress guard deliveries use ((*aeo.EgressGuard).PublicHTTPClient).
+// Without it TestEndpoint returns ErrWebhooksUnavailable.
+func WithWebhookPingClients(clients WebhookClientFactory) WebhookServiceOption {
+	return func(s *webhookService) { s.pingClients = clients }
 }
 
 // NewWebhookService builds the endpoint registry. box seals the secrets
 // (utils.NewSecretBox(API_KEY_SECRET, WebhookSecretContext)); txManager runs
 // the delete.
-func NewWebhookService(repo repository.WebhookRepository, txManager *utils.TransactionManager, box *utils.SecretBox) WebhookService {
-	return &webhookService{repo: repo, txManager: txManager, box: box}
+func NewWebhookService(repo repository.WebhookRepository, txManager *utils.TransactionManager, box *utils.SecretBox, opts ...WebhookServiceOption) WebhookService {
+	s := &webhookService{repo: repo, txManager: txManager, box: box, pingTimeout: WebhookRequestTimeout}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func webhookLog(operation string) *logrus.Entry {
@@ -279,4 +301,68 @@ func (s *webhookService) ListDeliveries(ctx context.Context, filter repository.W
 		return nil, 0, &WebhookValidationError{Field: "event_type", Message: "must be lead.created, lead.updated, customer.created, customer.updated, ticket.created or ticket.updated"}
 	}
 	return s.repo.ListDeliveries(ctx, filter, offset, limit)
+}
+
+// TestEndpoint sends one signed webhook.ping request to the endpoint,
+// synchronously, through the shared send path of deliveries (egress guard,
+// signing, WebhookRequestTimeout, no redirect followed). It works on an
+// inactive endpoint, is never retried and writes nothing: the endpoint read
+// is its only database statement. An unusable secret is a failed outcome
+// (secret_unavailable) without any network work. It logs one line carrying
+// the operation, the endpoint id, the outcome, the error code and the HTTP
+// status only.
+func (s *webhookService) TestEndpoint(ctx context.Context, id uint) (*models.WebhookPingResult, error) {
+	if err := s.available(); err != nil {
+		return nil, err
+	}
+	if s.pingClients == nil {
+		webhookLog("webhook_endpoint_test").WithField("error_code", "unavailable").Error("Webhook test ping is not wired")
+		return nil, ErrWebhooksUnavailable
+	}
+	endpoint, err := s.repo.GetEndpoint(ctx, id)
+	if err != nil {
+		return nil, s.notFound(id, err)
+	}
+	eventID, err := newWebhookEventID()
+	if err != nil {
+		return nil, err
+	}
+
+	var outcome attemptOutcome
+	secret, openErr := s.box.Open(endpoint.SecretSealed)
+	if openErr != nil || secret == "" {
+		outcome = attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable}
+	} else if _, keyErr := webhookKey(secret); keyErr != nil {
+		outcome = attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable}
+	} else {
+		outcome = sendWebhook(ctx, s.pingClients, endpoint.URL, s.pingTimeout, func(reqCtx context.Context) (*http.Request, error) {
+			sentAt := time.Now()
+			body, err := webhookPingBody(eventID, sentAt)
+			if err != nil {
+				return nil, err
+			}
+			return newSignedWebhookRequest(reqCtx, endpoint.URL, secret, eventID, body, sentAt)
+		})
+	}
+
+	result := &models.WebhookPingResult{EventID: eventID, Outcome: models.WebhookPingSucceeded, HTTPStatus: outcome.httpStatus}
+	if !outcome.succeeded {
+		result.Outcome = models.WebhookPingFailed
+		code := outcome.errorCode
+		result.ErrorCode = &code
+	}
+	fields := logrus.Fields{
+		"operation":   "webhook_endpoint_test",
+		"endpoint_id": endpoint.ID,
+		"outcome":     result.Outcome,
+		"error_code":  outcome.errorCode,
+	}
+	if outcome.succeeded {
+		fields["error_code"] = ""
+	}
+	if outcome.httpStatus != nil {
+		fields["http_status"] = *outcome.httpStatus
+	}
+	utils.Logger.WithFields(fields).Info("Webhook endpoint test ping sent")
+	return result, nil
 }

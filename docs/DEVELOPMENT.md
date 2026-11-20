@@ -3469,6 +3469,15 @@ commits. Code: `internal/models/webhook.go`,
   service writes true when the request omits it, and `UpdateEndpoint` writes the column
   explicitly. Delete is one `WithTransaction`: a locking read of the endpoint (`FOR UPDATE` on
   MySQL), `DELETE webhook_deliveries WHERE endpoint_id = ?`, then the endpoint.
+  `POST /webhooks/endpoints/:id/test` (#501, `WebhookService.TestEndpoint`) sends one signed
+  `webhook.ping` (body `{id, type, occurred_at}`, no `record_id`; `models.WebhookEventPing` is not
+  in `WebhookEventTypeValues`, so it cannot be subscribed to) synchronously through `sendWebhook`,
+  the send path `WebhookRuntime.attempt` uses (public-only client, `WebhookRequestTimeout`, drain,
+  no redirect followed, the same error codes). It works on an inactive endpoint, is not retried and
+  writes nothing: the endpoint read is its only statement. An unopenable secret answers 200
+  `secret_unavailable` without network work; a service built without `WithWebhookPingClients`
+  (wired with the egress guard in `cmd/main.go`) answers 500. One log line carries
+  `operation=webhook_endpoint_test`, `endpoint_id`, `outcome`, `error_code` and `http_status` only.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
   txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
   passes one `WebhookRepository` and the shared `txManager`. After the record insert,
