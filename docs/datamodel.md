@@ -123,8 +123,8 @@ blocks a role or user delete.
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
-| actor_user_id | bigint unsigned | Yes | NULL | |
-| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, or `oidc` for the role an OpenID Connect sign-in applied (#435) |
+| actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create or replace (#470) |
 | action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
@@ -962,7 +962,9 @@ two tables and nothing else).
 
 Links the exact `(iss, sub)` pair of an ID token to a user. No `deleted_at`, and erasure keeps the
 row linked to the erased user, so that person's next sign-in is refused instead of provisioning a
-new account. Holds the issuer URL and the opaque subject only.
+new account. Holds the issuer URL and the opaque subject only. Written by the first OIDC sign-in of
+a person and, since #470, by a SCIM user create (the effective issuer, with `externalId` as the
+subject), so a later sign-in with that pair uses the SCIM-created account.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
@@ -991,7 +993,8 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 ### auth_audit_log
 
 One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback,
-a refresh or a refused SCIM authentication (#468, one row each); refused API keys are counted in one row per reason, `user_id`, client network and UTC
+a refresh, a refused SCIM authentication (#468, one row each) or a successful SCIM user create or
+replace (#470, method `scim`, outcome `success`, the account's `user_id`); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and

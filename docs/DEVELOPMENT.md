@@ -390,6 +390,27 @@ MariaDB too), `TestSCIMUserHandler` (`internal/handler`), `TestParseUserFilter`,
 `TestUserNameMatches`, `TestParsePaging`, `TestUserResource`, `TestWriteErrorType`
 (`internal/scim`) and `TestSCIMUsersWired` (`cmd`).
 
+**SCIM user writes (#470)** — `POST /scim/v2/Users` and `PUT /scim/v2/Users/:id` are mounted by
+`SetupSCIMRoutes`; `internal/handler/scim_user_handler.go` reads the body itself
+(`http.MaxBytesReader` at 64 KiB, one JSON object, no trailing data, typed attributes, else 400
+`invalidSyntax` without calling the service) and maps `service.ErrSCIMInvalidValue` (400
+`invalidValue`, `ErrSCIMLastAdmin` among them), `service.ErrSCIMUniqueness` (409 `uniqueness`)
+and `apperrors.ErrNotFound` (404). `internal/service/scim_user_writes.go` holds `Create` and
+`Replace`, enabled by `service.WithSCIMUserWrites` on `NewSCIMUserService` (wired in
+`cmd/main.go` with the user, role, role-audit and identity repositories, the transaction manager
+and the sign-in audit writer; without the option both answer a wiring error, 500). Both run in
+`roleGovernance.run` with the lock order of the OIDC sign-in, take the role from the `roles`
+entries of the SSO mapping (`oidcMatchRole` with no groups), refuse a missing or `customer`
+mapped role, keep the last-admin rule, record `user_role_changed` with
+`Actor{AuthMethod: AuthMethodSCIM}` (actor id 0, stored as NULL by `governedTx.record`) and write
+one successful `auth_audit_log` row with method `scim` after the commit. Replace checks a changed
+address with `SCIMUserRepository.EmailTakenByOther` (live or erased, `LOWER` on both sides).
+Regression roots: `TestSCIMUserWritesSQLite` and `TestSCIMUserWritesMySQL` (`internal/service`,
+discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserWriteHandler`
+(`internal/handler`), `TestWriteErrorTypeWriteTypes` (`internal/scim`) and
+`TestSCIMUserWritesWired` (`cmd`). The rules are in
+[AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
+
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
 
@@ -849,8 +870,9 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
 - **Audit.** `role_audit_log` gets one row per role create, clone (`role_created`), update and
   delete, and per change of a user's `role` or `role_id` (`user_role_changed`, also for the role a
   new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value
-  (`bearer` or `api_key`), or `oidc` (`service.AuthMethodOIDC`) for the role an OpenID Connect
-  sign-in applied to its own account (#435). The log lines of these paths carry ids and action
+  (`bearer` or `api_key`), `oidc` (`service.AuthMethodOIDC`) for the role an OpenID Connect
+  sign-in applied to its own account (#435), or `scim` (`service.AuthMethodSCIM`) for a SCIM user
+  create or replace (#470), whose `actor_user_id` is NULL. The log lines of these paths carry ids and action
   names only.
 
 Regression roots (`internal/integration`, on the real Auth, routes, handlers and repositories):
@@ -2163,8 +2185,9 @@ covering MySQL and MariaDB behaviour of the handlers.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
   `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
   OpenID Connect start and callback included), the six `/forms/public` routes, the two
-  `/quotes/public/response` routes and `POST /quotes/public/render`, and the five `/scim/v2` routes
-  (the discovery documents of #468 and the Users read of #469), 23 in all. A new route in neither
+  `/quotes/public/response` routes and `POST /quotes/public/render`, and the seven `/scim/v2` routes
+  (the discovery documents of #468, the Users read of #469 and the Users create and replace of
+  #470), 25 in all. A new route in neither
   fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its

@@ -9,8 +9,8 @@ type scimUserRepository struct {
 	db *gorm.DB
 }
 
-// NewSCIMUserRepository returns the read side of the SCIM Users resource
-// (#469) over db.
+// NewSCIMUserRepository returns the SCIM Users resource repository (#469,
+// #470) over db.
 func NewSCIMUserRepository(db *gorm.DB) SCIMUserRepository {
 	return &scimUserRepository{db: db}
 }
@@ -74,4 +74,20 @@ func (r *scimUserRepository) IdentitiesForUsers(issuer string, userIDs []uint) (
 		return nil, err
 	}
 	return identities, nil
+}
+
+// EmailTakenByOther reports whether any user other than id, live or erased,
+// holds email under LOWER on both sides. On MySQL/MariaDB the collation also
+// equates padded and accented variants, which count as taken.
+func (r *scimUserRepository) EmailTakenByOther(email string, id uint) (bool, error) {
+	var count int64
+	if err := r.db.Unscoped().Model(&models.User{}).Where("LOWER(email) = LOWER(?) AND id <> ?", email, id).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// WithTx returns the repository bound to tx.
+func (r *scimUserRepository) WithTx(tx *gorm.DB) SCIMUserRepository {
+	return &scimUserRepository{db: tx}
 }

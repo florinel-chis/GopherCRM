@@ -15,8 +15,9 @@ const (
 )
 
 // AuthAuditLog is one sign-in outcome (#454): a password login, a single
-// sign-on callback, a refresh, a failed API-key authentication or a refused
-// SCIM authentication (#468). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
+// sign-on callback, a refresh, a failed API-key authentication, a refused
+// SCIM authentication (#468) or a successful SCIM user create or replace
+// (#470, method scim, outcome success, the account's user id). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
 // /48 (IPv6) network, a user-agent family from a fixed vocabulary and, for a
 // single sign-on refusal after the ID token verified, an HMAC of the issuer
 // and subject. It never holds an email, a name, a subject, a token, a code, a
@@ -24,7 +25,7 @@ const (
 // foreign key and no soft delete: erasure leaves the rows alone and the stale
 // bulk operation sweep deletes them after AUTH_AUDIT_RETENTION_DAYS.
 //
-// A password, single sign-on or refresh outcome is one row with Attempts 1
+// A password, single sign-on, refresh or SCIM outcome is one row with Attempts 1
 // and no AggregateKey. A refused API key (#466) adds to one row per reason,
 // user id, client network and UTC minute: the first refusal of that bucket
 // writes the row, every later one only adds 1 to Attempts, so the request id,

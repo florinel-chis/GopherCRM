@@ -80,7 +80,7 @@ func decodeAuthAuditClaims(stored *string) []string {
 
 // ListSignIns godoc
 // @Summary List the sign-in audit log
-// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh or refused SCIM authentication, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication or successful SCIM user create or replace, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
 // @Description Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
 // @Description Permission: audit.sign_ins_view (among the system roles, admin only).
 // @Tags users

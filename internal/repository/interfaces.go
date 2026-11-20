@@ -1467,8 +1467,8 @@ type FormSubmissionPurgeChunk struct {
 	Deliveries int64
 }
 
-// SCIMUserRepository is the read side of the SCIM 2.0 Users resource (#469).
-// A visible user is a live users row (not soft-deleted, so never an erased
+// SCIMUserRepository is the SCIM 2.0 Users resource (#469) and the email
+// check of its replace (#470). A visible user is a live users row (not soft-deleted, so never an erased
 // account) whose role is not customer. Lists are id ascending.
 type SCIMUserRepository interface {
 	// GetVisibleByID returns the visible user id, or gorm.ErrRecordNotFound.
@@ -1484,4 +1484,10 @@ type SCIMUserRepository interface {
 	// issuer matches under the column collation, in one query. The caller
 	// compares the issuer byte for byte.
 	IdentitiesForUsers(issuer string, userIDs []uint) ([]models.UserIdentity, error)
+	// EmailTakenByOther reports whether a user other than id, live or
+	// erased, holds email under LOWER(email) = LOWER(?) and the column
+	// collation (#470).
+	EmailTakenByOther(email string, id uint) (bool, error)
+	// WithTx binds the repository to a transaction.
+	WithTx(tx *gorm.DB) SCIMUserRepository
 }

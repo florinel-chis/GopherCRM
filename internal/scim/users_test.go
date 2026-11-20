@@ -152,3 +152,21 @@ func TestWriteErrorType(t *testing.T) {
 	assert.Equal(t, ContentType, w.Header().Get("Content-Type"))
 	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"scimType":"invalidFilter","status":"400","detail":"Only \"this\""}`, w.Body.String())
 }
+
+func TestWriteErrorTypeWriteTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		status   int
+		scimType string
+		want     string
+	}{
+		{http.StatusConflict, ScimTypeUniqueness, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"scimType":"uniqueness","status":"409","detail":"d"}`},
+		{http.StatusBadRequest, ScimTypeInvalidSyntax, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"scimType":"invalidSyntax","status":"400","detail":"d"}`},
+	} {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		WriteErrorType(c, tc.status, tc.scimType, "d")
+		assert.Equal(t, tc.status, w.Code)
+		assert.Equal(t, tc.want, w.Body.String())
+	}
+}

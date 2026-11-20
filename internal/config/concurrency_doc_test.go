@@ -46,6 +46,7 @@ var concurrencyDocFlowsInOrder = []string{
 	"API-key create",
 	"RBAC user-role and role writes",
 	"OIDC sign-in",
+	"SCIM user create and replace",
 }
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
@@ -68,6 +69,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"API-key create":                 "implemented",
 	"RBAC user-role and role writes": "implemented",
 	"OIDC sign-in":                   "implemented",
+	"SCIM user create and replace":   "implemented",
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
@@ -85,6 +87,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"RBAC user-role and role writes": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #435: the OIDC sign-in is a governed write.
 	"OIDC sign-in": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #470: the SCIM user create and replace are governed writes.
+	"SCIM user create and replace": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #385: every erasure root is one replayed transaction (a const block).
 	"User-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
 	"Customer-rooted erasure": {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
@@ -113,6 +117,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"API-key create":                 "C3",
 	"RBAC user-role and role writes": "#348",
 	"OIDC sign-in":                   "#435",
+	"SCIM user create and replace":   "#470",
 }
 
 type concurrencyDocSection struct {
@@ -1279,4 +1284,33 @@ func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 	apply := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) ApplyOIDCSignIn(")
 	inOrder(apply, "s.governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "identities.GetByIssuerSubject(",
 		"tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(", "in.issue(tx.handle")
+}
+
+// TestConcurrencyDocSCIMUserWrites pins the SCIM user create and replace flow
+// (#470) to the code: both take admin set → users → roles inside one governed
+// transaction, the create before it reads and writes the identity.
+func TestConcurrencyDocSCIMUserWrites(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user create and replace"]["Order"]),
+		"admin set → users → roles → user_identities")
+
+	inOrder := func(body string, statements ...string) {
+		t.Helper()
+		last := -1
+		for _, statement := range statements {
+			at := strings.Index(body, statement)
+			if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+				assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+				last = at
+			}
+		}
+	}
+	const file = "internal/service/scim_user_writes.go"
+	create := concurrencyDocFuncBody(t, file, "func (s *scimUserService) Create(")
+	inOrder(create, "governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockRoles(",
+		"tx.users.EmailExistsFoldedUnscoped(", "identities.GetByIssuerSubject(", "tx.users.Create(",
+		"identities.Create(", "tx.record(", "s.writes.recordSuccess(")
+	replace := concurrencyDocFuncBody(t, file, "func (s *scimUserService) Replace(")
+	inOrder(replace, "governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockUsers(",
+		"tx.lockRoles(", "EmailTakenByOther(", "tx.users.UpdateFields(", "tx.record(", "s.writes.recordSuccess(")
 }

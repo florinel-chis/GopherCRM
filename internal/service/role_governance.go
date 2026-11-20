@@ -34,8 +34,8 @@ const roleWriteMaxRetries = 3
 const roleWriteGraphMaxRestarts = 3
 
 // Actor is who performs a governed write and how its request authenticated.
-// AuthMethod is the request's AuthMethodContextKey value (AuthMethodBearer or
-// AuthMethodAPIKey) and is stored on the audit row as it is.
+// AuthMethod is the request's AuthMethodContextKey value, AuthMethodOIDC or
+// AuthMethodSCIM, stored on the audit row as it is (UserID 0 stores NULL).
 type Actor struct {
 	UserID     uint
 	AuthMethod string
@@ -251,15 +251,19 @@ func (a governedActor) requireKeys(keys ...string) error {
 }
 
 // record appends the audit row of a change, in the transaction of the change.
-// before and after are marshalled to JSON; nil is stored as NULL.
+// before and after are marshalled to JSON; nil is stored as NULL. An actor id
+// of 0 (a SCIM write, #470) stores actor_user_id NULL.
 func (tx *governedTx) record(actor Actor, action models.RoleAuditAction, roleID *uint, roleName string, targetUserID *uint, before, after interface{}) error {
 	entry := &models.RoleAuditEntry{
-		ActorUserID:  &actor.UserID,
 		AuthMethod:   actor.AuthMethod,
 		Action:       action,
 		RoleID:       roleID,
 		RoleName:     roleName,
 		TargetUserID: targetUserID,
+	}
+	if actor.UserID != 0 {
+		actorID := actor.UserID
+		entry.ActorUserID = &actorID
 	}
 	var err error
 	if entry.BeforeState, err = auditState(before); err != nil {
