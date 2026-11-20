@@ -60,8 +60,12 @@ SYMBOL = re.compile(r'^%s(\.%s)?(\(\))?$' % (IDENT, IDENT))
 RECEIVER = re.compile(r'^\(\*?((?:%s\.)?%s)\)\.(%s)(\(\))?$' % (IDENT, IDENT, IDENT))
 FILE_EXTENSION = re.compile(r'\.(go|ts|tsx|js|jsx|py|sh|sql|md|yml|yaml|json|mod|sum|txt|html|css|conf|toml|env|example)$')
 LINE_CITATION = re.compile(r'\.(go|ts|tsx|py|sh|sql):[0-9]+')
-PAIR_PATH_FIRST = re.compile(r'`([^`\n]+)` `([^`\n]+)`')
-PAIR_SYMBOL_FIRST = re.compile(r'`([^`\n]+)` \(`([^`\n]+)`')
+# The text between two neighbouring backtick spans that makes them a pair:
+# `P.go` `S` (path first) or `S` (`P.go` (symbol first). Every neighbouring
+# pair of spans is tested, so a span that also pairs with its other neighbour
+# (`x` (`S` (`P.go`) cannot hide a citation.
+GAP_PATH_FIRST = ' '
+GAP_SYMBOL_FIRST = ' ('
 
 
 def default_repo_root():
@@ -144,13 +148,19 @@ def citations(text):
     """(paths, pairs): (line, span) path candidates and (line, path span, symbol span) pairs."""
     paths, pairs = [], []
     for number, line in outside_fences(text):
-        for span in BACKTICK_SPAN.findall(line):
-            paths.append((number, span))
-        for pattern, path_first in ((PAIR_PATH_FIRST, True), (PAIR_SYMBOL_FIRST, False)):
-            for match in pattern.finditer(line):
-                path_span, symbol_span = match.groups() if path_first else match.groups()[::-1]
-                if normalize_path(path_span).endswith('.go') and normalize_symbol(symbol_span):
-                    pairs.append((number, path_span, symbol_span))
+        spans = list(BACKTICK_SPAN.finditer(line))
+        for match in spans:
+            paths.append((number, match.group(1)))
+        for left, right in zip(spans, spans[1:]):
+            gap = line[left.end():right.start()]
+            if gap == GAP_PATH_FIRST:
+                path_span, symbol_span = left.group(1), right.group(1)
+            elif gap == GAP_SYMBOL_FIRST:
+                path_span, symbol_span = right.group(1), left.group(1)
+            else:
+                continue
+            if normalize_path(path_span).endswith('.go') and normalize_symbol(symbol_span):
+                pairs.append((number, path_span, symbol_span))
     return paths, pairs
 
 

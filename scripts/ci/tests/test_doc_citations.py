@@ -106,6 +106,15 @@ class DocCitationCheckTest(unittest.TestCase):
         self.assert_fails_naming('Also `pkg/sample.go` `Elsewhere`.\n', 'Elsewhere',
                                  'unknown symbol Elsewhere in pkg/sample.go')
 
+    def test_symbol_first_pair_after_another_span_is_checked(self):
+        # `x` (`Widget.Stop` ... must not swallow the real pair `Widget.Stop` (`pkg/sample.go`).
+        self.assert_fails_naming('A `x` (`Widget.Stop` (`pkg/sample.go`) case.\n', 'Widget.Stop',
+                                 'unknown symbol Widget.Stop in pkg/sample.go')
+
+    def test_path_first_pair_after_another_span_is_checked(self):
+        self.assert_fails_naming('A `x` `pkg/sample.go` `Widget.Stop` case.\n', 'Widget.Stop',
+                                 'unknown symbol Widget.Stop in pkg/sample.go')
+
     def test_line_citation_in_converted_file_fails(self):
         self.assert_fails_naming('Old style: `pkg/sample.go:3`.\n', 'pkg/sample.go:3', 'line citation')
 
