@@ -11,6 +11,7 @@ const (
 	AuthAuditSubjectRefMaxLength    = 64
 	AuthAuditClientNetworkMaxLength = 64
 	AuthAuditUserAgentMaxLength     = 64
+	AuthAuditAggregateKeyMaxLength  = 191
 )
 
 // AuthAuditLog is one sign-in outcome (#454): a password login, a single
@@ -22,6 +23,12 @@ const (
 // state, a nonce, a password, a full IP address or a full user agent. No
 // foreign key and no soft delete: erasure leaves the rows alone and the stale
 // bulk operation sweep deletes them after AUTH_AUDIT_RETENTION_DAYS.
+//
+// A password, single sign-on or refresh outcome is one row with Attempts 1
+// and no AggregateKey. A refused API key (#466) adds to one row per reason,
+// user id, client network and UTC minute: the first refusal of that bucket
+// writes the row, every later one only adds 1 to Attempts, so the request id,
+// user-agent family and created_at stay those of the first refusal.
 type AuthAuditLog struct {
 	ID uint `gorm:"primarykey" json:"id"`
 	// Written explicitly in UTC.
@@ -47,6 +54,13 @@ type AuthAuditLog struct {
 	ClientNetwork string `gorm:"type:varchar(64);not null" json:"client_network"`
 	// "<Browser> on <OS>" from a fixed vocabulary; empty without a user agent.
 	UserAgentFamily string `gorm:"type:varchar(64);not null" json:"user_agent_family"`
+	// How many outcomes the row counts: 1, or for a refused API key the
+	// refusals of its reason, account and network in its UTC minute.
+	Attempts uint `gorm:"not null;default:1" json:"attempts"`
+	// "api_key|<reason>|<user id or 0>|<client network>|<UTC minute>" on an
+	// aggregated API-key row; NULL otherwise (NULLs never collide). Internal:
+	// never returned or logged.
+	AggregateKey *string `gorm:"type:varchar(191);uniqueIndex:idx_auth_audit_log_aggregate_key" json:"-"`
 }
 
 // TableName pins the table name.

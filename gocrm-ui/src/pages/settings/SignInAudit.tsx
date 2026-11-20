@@ -236,6 +236,7 @@ export const SignInAudit: React.FC = () => {
                     <TableCell>Method</TableCell>
                     <TableCell>Outcome</TableCell>
                     <TableCell>Reason</TableCell>
+                    <TableCell align="right">Attempts</TableCell>
                     <TableCell align="right">User id</TableCell>
                     <TableCell>Client network</TableCell>
                     <TableCell>Browser</TableCell>
@@ -246,7 +247,7 @@ export const SignInAudit: React.FC = () => {
                 <TableBody>
                   {rows.length === 0 && total === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
+                      <TableCell colSpan={10} align="center" sx={{ py: 4 }}>
                         <Typography variant="body2" color="text.secondary">
                           No sign-ins match these filters.
                         </Typography>
@@ -266,6 +267,7 @@ export const SignInAudit: React.FC = () => {
                           />
                         </TableCell>
                         <TableCell>{entry.reason || '-'}</TableCell>
+                        <TableCell align="right">{entry.attempts}</TableCell>
                         <TableCell align="right">{entry.user_id ?? '-'}</TableCell>
                         <TableCell>{entry.client_network || '-'}</TableCell>
                         <TableCell>{entry.user_agent_family || '-'}</TableCell>

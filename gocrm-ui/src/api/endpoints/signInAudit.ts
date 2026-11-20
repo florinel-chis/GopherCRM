@@ -70,6 +70,12 @@ export interface SignInAuditEntry {
   claim_groups: string[] | null;
   client_network: string;
   user_agent_family: string;
+  /**
+   * 1, or for an api_key refusal the refusals of that reason, account and
+   * network in that UTC minute; the row keeps the first refusal's request id
+   * and time.
+   */
+  attempts: number;
 }
 
 export interface SignInAuditListParams {

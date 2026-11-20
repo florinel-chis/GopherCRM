@@ -51,7 +51,8 @@ coverage matrix.
   Space auth requests ~6 s apart or run the backend with `DISABLE_RATE_LIMIT=true`, which bypasses
   **only** the strict tier. Every authenticated request additionally consumes the moderate tier —
   120 req/min, burst 30 (`middleware.RateLimitModerate`, applied once to the `protected` group in
-  `setupDependencies`) — which is *not* bypassable; a spec that loops over 30+ page loads without
+  `setupDependencies`, before authentication since #466, so requests with refused or missing
+  credentials on protected routes are charged too) — which is *not* bypassable; a spec that loops over 30+ page loads without
   pause will start seeing 429s. `/auth/logout` and `/auth/change-password` are authenticated and
   live in the `protectedAuth` subgroup, so they ride the moderate tier, not the strict one.
 - `playwright.config.ts` runs `workers: 1`, `fullyParallel: false`. Keep it that way: parallel

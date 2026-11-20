@@ -329,8 +329,9 @@ generic 401 (#453). Rows are deleted one day after their creation by the stale b
 sweep (`service.PruneOIDCLoginAttempts`), not by the sign-in. The same sweep deletes sign-in
 audit rows (`auth_audit_log`, #454) older than `AUTH_AUDIT_RETENTION_DAYS` (default 90,
 `service.PruneAuthAuditLog`, chunks of 500); `Callback` writes one such row per call after its
-transaction and logs `audit_id` with the outcome, as `POST /auth/login`, `POST /auth/refresh` and a
-refused `ApiKey` do (see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
+transaction and logs `audit_id` with the outcome, as `POST /auth/login` and `POST /auth/refresh`
+do; a refused `ApiKey` adds to its minute's aggregated row instead (`attempts`, one row per
+reason, account, client network and UTC minute, #466; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
 timeout, follows no redirect and ignores `HTTP(S)_PROXY`; tests trust their TLS issuer through
 `WithOIDCRootCAs`, and there is no option that replaces the client. After the code exchange
 (PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
@@ -1659,8 +1660,9 @@ key in chunks of 500, so a normalised database takes no write and no row lock on
 predicate `UPDATE` would lock every scanned record under InnoDB REPEATABLE READ on every boot. Roots:
 `TestCompanyDomainNormalization{SQLite,MySQL}` (`internal/repository/company_domain_normalization_test.go`).
 
-**Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler → Auth →
-RateLimit.
+**Middleware stack** (in order): CORS → RequestID → Logger → Recovery → ErrorHandler, then on the
+`protected` group RateLimit (moderate) → Auth: since #466 a request is charged before its
+credential is checked.
 
 **Pagination** — every list endpoint parses `offset`/`limit` through `utils.ParseOffsetLimit`
 (`internal/utils/response.go`). It defaults to `offset=0, limit=20`, caps `limit` at 100, ignores
@@ -1837,7 +1839,7 @@ migrations workflow is an operator follow-up.
 | Tier | Limit | Where it is applied |
 |------|-------|---------------------|
 | `RateLimitStrict()` | 10 req/min, burst 5 | the **public** `/auth` group (`register`, `login`, `refresh`, `password-reset`, `password-reset/confirm`) — the `authRoutes` group in `setupDependencies` — plus the public form `submit` and `confirm` routes via `SetupFormPublicRoutes` |
-| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the `protected` group in `setupDependencies`, which is where `/auth/logout` and `/auth/change-password` live too (the `protectedAuth` subgroup) |
+| `RateLimitModerate()` | 120 req/min, burst 30 | every authenticated route, reads and writes alike — applied once to the `protected` group in `setupDependencies`, which is where `/auth/logout` and `/auth/change-password` live too (the `protectedAuth` subgroup). Charged before authentication (#466), so requests with refused or missing credentials count too, and a 429 can answer before a 401 |
 | `RateLimitGenerous()` | 240 req/min, burst 40 | the three public form GETs — definition, `embed.js` and the hosted view — via `SetupFormPublicRoutes` |
 
 All three tiers are live, but the split is public-forms versus everything else, **not** reads versus
@@ -2452,7 +2454,7 @@ What the erasure touches, and what it keeps on purpose:
 | `form_submissions` with no `lead_id` whose `email` matches the erased lead, customer or user (#214; live and soft-deleted, rows of soft-deleted forms, every status) | `email` → the erased row's placeholder; `data` → `{}`; `ip_address`, `user_agent`, `referrer` and the six attribution columns → `''`; their `form_confirmation_tokens` and `form_mail_deliveries` hard-deleted. Matched on the `email` column only, `email IN (original, lower(original))`: exact or lower-cased on SQLite; on MySQL/MariaDB the `utf8mb4_unicode_ci` collation decides (case- and accent-insensitive, trailing spaces ignored), the rule form intake's lead linking uses. The `data` JSON is not searched. Every submission from that address is affected, a shared inbox's included; a blank or placeholder original matches nothing | `form_id`, `status`, `lead_id` (NULL), the row's own deletion state |
 | `api_keys`, `refresh_tokens`, `password_reset_tokens` of an erased user | hard-deleted | — |
 | `user_identities` of an erased user (#435) | not touched | The row (issuer URL, opaque subject, `user_id`) stays linked to the erased user, so the erased person's next OIDC sign-in is refused (401) instead of provisioning a new account. It holds no name or address |
-| `auth_audit_log` | not touched | Ids only (`user_id`, `attempt_id`), a reason code, the request id, an HMAC subject reference, claim values, a `/24` or `/48` network prefix and a user-agent family; no foreign key. Rows age out after `AUTH_AUDIT_RETENTION_DAYS` (default 90) through the stale bulk operation sweep (#454) |
+| `auth_audit_log` | not touched | Ids only (`user_id`, `attempt_id`), a reason code, the request id, an HMAC subject reference, claim values, a `/24` or `/48` network prefix, a user-agent family, a count (`attempts`) and, on an aggregated API-key row, an `aggregate_key` built from the method, reason, `user_id`, network and minute (#466); no foreign key. Rows age out after `AUTH_AUDIT_RETENTION_DAYS` (default 90) through the stale bulk operation sweep (#454) |
 | `oidc_login_attempts` | not touched | No user link: a state hash, a nonce and a PKCE verifier (both blanked once the row is used or found expired), the issuer and timestamps; the stale bulk operation sweep prunes rows a day after their creation |
 | `notifications` addressed to an erased user, whose entity is an erased lead, or whose entity is a deal reached below (#245) | hard-deleted | notifications about unreached deals and other leads |
 | `ticket_comments` written by an erased user (live and soft-deleted) | `body` → `[deleted]` | ticket, author id, `is_internal`, deletion state |

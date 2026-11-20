@@ -45,6 +45,7 @@ const entry = {
   claim_groups: null,
   client_network: '192.0.2.0/24',
   user_agent_family: 'Chrome on Linux',
+  attempts: 1,
 };
 
 describe('sign-in audit lists against the API specification', () => {

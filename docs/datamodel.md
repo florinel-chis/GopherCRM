@@ -990,8 +990,9 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 
 ### auth_audit_log
 
-One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback, a
-refresh, or a refused API key. Written after the sign-in's transaction, on the root handle. No
+One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback or
+a refresh; refused API keys are counted in one row per reason, `user_id`, client network and UTC
+minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
 every 15 minutes). Migration `20261124120000_add_auth_audit_log`. Never holds an email, a name, a
@@ -1012,6 +1013,8 @@ subject, a token, a code, a state, a nonce, a password, a full IP address or a f
 | claim_groups | text | Yes | NULL | JSON array of the `groups` values, after a Microsoft Graph or userinfo resolution |
 | client_network | varchar(64) | No | - | `a.b.c.0/24` (IPv4) or the IPv6 `/48` prefix; `''` when unknown |
 | user_agent_family | varchar(64) | No | - | `<browser> on <OS>` from a fixed vocabulary; `''` without a user agent |
+| attempts | bigint unsigned | No | 1 | How many outcomes the row counts: 1, or for an `api_key` row the refusals of its reason, account, network and minute (one upsert adds 1); the row keeps the first refusal's `request_id`, `user_agent_family` and `created_at` |
+| aggregate_key | varchar(191) | Yes | NULL | `api_key|<reason>|<user id or 0>|<client network>|<UTC minute>` on an aggregated API-key row, NULL otherwise; unique index `idx_auth_audit_log_aggregate_key` (NULLs never collide); internal, never returned or logged |
 
 ## APIKey Model
 

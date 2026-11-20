@@ -30,6 +30,7 @@ const entry = (overrides: Partial<SignInAuditEntry>): SignInAuditEntry => ({
   claim_groups: null,
   client_network: '192.0.2.0/24',
   user_agent_family: 'Chrome on Linux',
+  attempts: 1,
   ...overrides,
 });
 
@@ -44,6 +45,17 @@ const rows: SignInAuditEntry[] = [
     request_id: 'req-7f3a',
     subject_ref: '9b74c9897bac770ffc029102a200c5de',
     user_agent_family: 'Firefox on Linux',
+  }),
+  entry({
+    id: 6,
+    created_at: '2026-11-21T11:59:10Z',
+    method: 'api_key',
+    outcome: 'refused',
+    reason: 'key_invalid',
+    user_id: null,
+    request_id: 'req-first',
+    user_agent_family: '',
+    attempts: 37,
   }),
   entry({ id: 4 }),
 ];
@@ -76,6 +88,7 @@ describe('SignInAudit', () => {
         'oidc',
         'refused',
         'no_mapping_match',
+        '1',
         '-',
         '192.0.2.0/24',
         'Firefox on Linux',
@@ -83,10 +96,23 @@ describe('SignInAudit', () => {
         '9b74c9897bac770ffc029102a200c5de',
       ],
       [
+        formatDate('2026-11-21T11:59:10Z', 'PPpp'),
+        'api_key',
+        'refused',
+        'key_invalid',
+        '37',
+        '-',
+        '192.0.2.0/24',
+        '-',
+        'req-first',
+        '-',
+      ],
+      [
         formatDate('2026-11-20T09:30:00Z', 'PPpp'),
         'password',
         'success',
         '-',
+        '1',
         '1',
         '192.0.2.0/24',
         'Chrome on Linux',
@@ -94,6 +120,8 @@ describe('SignInAudit', () => {
         '-',
       ],
     ]);
+    const headers = screen.getAllByRole('columnheader').map((cell) => cell.textContent);
+    expect(headers.indexOf('Attempts')).toBe(headers.indexOf('Reason') + 1);
     expect(screen.getByText(/of 45/)).toBeInTheDocument();
     expect(lastParams()).toEqual({
       method: undefined,

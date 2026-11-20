@@ -17,9 +17,9 @@ type authOptions struct {
 	apiKeyAudit service.AuthAuditService
 }
 
-// WithAPIKeyAudit makes Auth record every failed ApiKey authentication in the
-// sign-in audit log (#454). Bearer failures are not recorded, and the answer
-// stays the same 401.
+// WithAPIKeyAudit makes Auth count every failed ApiKey authentication in the
+// sign-in audit log (#454), one row per reason, account, network and minute
+// (#466). Bearer failures are not recorded, and the answer stays the same 401.
 func WithAPIKeyAudit(audit service.AuthAuditService) AuthOption {
 	return func(o *authOptions) { o.apiKeyAudit = audit }
 }
