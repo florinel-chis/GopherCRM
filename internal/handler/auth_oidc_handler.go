@@ -68,7 +68,7 @@ type OIDCCallbackRequest struct {
 // Start godoc
 // @Summary Start an OpenID Connect sign-in
 // @Description Begins a sign-in with the issuer and client of the single sign-on settings (re-read on every call): discovers the issuer, stores a single-use attempt (the HMAC of a fresh state, a nonce and a PKCE verifier, valid ten minutes) and returns the issuer's authorization URL with redirect_uri APP_BASE_URL/auth/callback. The scope is the configured scopes; for an Entra ID issuer (host login.microsoftonline.com) whose role mapping has a groups entry it also carries https://graph.microsoft.com/GroupMember.Read.All, once. No body.
-// @Description On 200 only, sets the sign-in cookie gophercrm_oidc_state, holding the state of the returned URL: Path API_PREFIX/auth/oidc (so it reaches only start and callback), Max-Age=600 (the lifetime of the attempt), HttpOnly, SameSite=Lax, no Domain, and Secure when APP_BASE_URL is https. The callback needs it, so the SPA and the API must be served from the same site. A refused start sets no cookie.
+// @Description On 200 only, sets the sign-in cookie gophercrm_oidc_state, holding the state of the returned URL: Path API_PREFIX/auth/oidc (so it reaches only start and callback), Max-Age=600 (the lifetime of the attempt), HttpOnly, SameSite=Lax, no Domain, and sent only over HTTPS when APP_BASE_URL is https. The callback needs it, so the SPA and the API must be served from the same site. A refused start sets no cookie.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
 // @Tags auth
 // @Produce json

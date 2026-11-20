@@ -24,15 +24,15 @@ import (
 
 // fakeOIDCService answers with fixed values and records what reached it.
 type fakeOIDCService struct {
-	startURL     string
-	startState   string
-	secureCookie bool
-	startErr     error
-	tokens       *service.AuthTokens
-	err          error
-	calls        int
-	code         string
-	state        string
+	startURL   string
+	startState string
+	httpsOnly  bool
+	startErr   error
+	tokens     *service.AuthTokens
+	err        error
+	calls      int
+	code       string
+	state      string
 	// binding is the sign-in cookie value Callback received (#528).
 	binding string
 	// startRequestID and callbackRequestID are what
@@ -49,7 +49,7 @@ func (f *fakeOIDCService) Start(ctx context.Context) (*service.OIDCAuthorization
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
-	return &service.OIDCAuthorization{URL: f.startURL, State: f.startState, SecureCookie: f.secureCookie}, nil
+	return &service.OIDCAuthorization{URL: f.startURL, State: f.startState, SecureCookie: f.httpsOnly}, nil
 }
 
 func (f *fakeOIDCService) Callback(ctx context.Context, code, state, binding string) (*service.AuthTokens, error) {
@@ -112,9 +112,9 @@ func TestOIDCHandler(t *testing.T) {
 	}
 	const validBody = `{"code":"abc","state":"xyz"}`
 
-	for _, secure := range []bool{false, true} {
-		t.Run(fmt.Sprintf("start_ok_secure_%t", secure), func(t *testing.T) {
-			fake := &fakeOIDCService{startURL: "https://idp.example.test/authorize?state=st-528", startState: "st-528", secureCookie: secure}
+	for name, httpsOnly := range map[string]bool{"start_ok_http": false, "start_ok_https": true} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeOIDCService{startURL: "https://idp.example.test/authorize?state=st-528", startState: "st-528", httpsOnly: httpsOnly}
 			recorder, envelope := doWith(t, fake, "/auth/oidc/start", "", nil)
 			assert.Equal(t, http.StatusOK, recorder.Code)
 			assert.Equal(t, map[string]interface{}{"authorization_url": fake.startURL}, envelope.Data)
@@ -128,7 +128,7 @@ func TestOIDCHandler(t *testing.T) {
 			assert.Contains(t, header, "; HttpOnly")
 			assert.Contains(t, header, "; SameSite=Lax")
 			assert.NotContains(t, header, "Domain=")
-			assert.Equal(t, secure, strings.Contains(header, "; Secure"), header)
+			assert.Equal(t, httpsOnly, strings.Contains(header, "; Secure"), header)
 
 			cookies := oidcSetCookies(recorder)
 			require.Len(t, cookies, 1)

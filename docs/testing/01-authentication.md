@@ -1023,15 +1023,15 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   `code_challenge`, a `state` and a `nonce`, `redirect_uri=<APP_BASE_URL>/auth/callback` and the
   effective `scope`. One `oidc_login_attempts` row holds the HMAC of the state (never the state),
   expiring ten minutes later. `Set-Cookie: gophercrm_oidc_state=<the state of the URL>` with
-  `Path=/api/v1/auth/oidc`, `Max-Age=600`, `HttpOnly`, `SameSite=Lax`, and `Secure` only when
-  `APP_BASE_URL` is https (#528); a refused start (404, 500, 503) sets no cookie, and a successful
+  `Path=/api/v1/auth/oidc`, `Max-Age=600`, `HttpOnly`, `SameSite=Lax`, and sent only over HTTPS
+  when `APP_BASE_URL` is https (#528); a refused start (404, 500, 503) sets no cookie, and a successful
   callback clears it (`Max-Age=0`). After the callback, whether it signed in or was
   refused after the claim, the row is spent (`used_at` set) and its `nonce` and `code_verifier`
   are empty; a callback on an expired attempt answers the generic 401 and empties both without
   spending the row, also when that clearing fails. Rows created more than a day ago are deleted by
   the stale bulk-operation sweep (#453). Each `oidc_sign_in` log line carries `request_id` and
   `attempt_id` (#453).
-- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`, `/attempt_cleared_when_used`, `/attempt_cleared_when_expired`, `/attempt_claim_lost_after_read`, `/attempts_pruned_after_a_day`, `/log_correlation`, `/start_cookie_secure`, `TestOIDCClaimExpiredClearFails`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler` (incl. `start_ok_secure_false`, `start_ok_secure_true`, `callback_ok`, `request_id_reaches_service`); `cmd/bulk_recovery_runtime_test.go` `TestBulkOperationRecoveryProductionWiring`
+- **Automation:** automated — Go: `internal/service/auth_oidc_test.go` `TestOIDCSignIn{SQLite,MySQL}/start_authorization_url`, `/attempt_cleared_when_used`, `/attempt_cleared_when_expired`, `/attempt_claim_lost_after_read`, `/attempts_pruned_after_a_day`, `/log_correlation`, `/start_cookie_secure`, `TestOIDCClaimExpiredClearFails`; `internal/handler/auth_oidc_handler_test.go` `TestOIDCHandler` (incl. `start_ok_http`, `start_ok_https`, `callback_ok`, `request_id_reaches_service`); `cmd/bulk_recovery_runtime_test.go` `TestBulkOperationRecoveryProductionWiring`
 
 ### TC-AUTH-050 — A first sign-in provisions the user, a later one re-applies the mapping
 - **Priority:** P0

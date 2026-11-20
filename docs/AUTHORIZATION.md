@@ -1031,8 +1031,8 @@ failed", with the reason logged as an `error_code` only.
 **Sign-in cookie (#528).** A sign-in finishes only in the browser that started it. A 200 from
 `POST /auth/oidc/start` sets the cookie `gophercrm_oidc_state`, holding the state of the returned
 URL: `Path=<API_PREFIX>/auth/oidc` (it reaches only start and callback), `Max-Age=600` (the
-lifetime of the attempt), `HttpOnly`, `SameSite=Lax`, no `Domain`, and `Secure` when
-`APP_BASE_URL` is `https`. A refused start sets no cookie. The callback spends the attempt first
+lifetime of the attempt), `HttpOnly`, `SameSite=Lax`, no `Domain`, and sent only over HTTPS
+when `APP_BASE_URL` is `https`. A refused start sets no cookie. The callback spends the attempt first
 and then compares the cookie with the posted state: no cookie is refused as `binding_missing`,
 a different value (the cookie of another sign-in) as `binding_mismatch`, both with the same 401
 and an audit row naming the spent attempt. A later start in the same browser replaces the

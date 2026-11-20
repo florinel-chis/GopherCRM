@@ -99,7 +99,7 @@ type OIDCService interface {
 
 // OIDCAuthorization is what Start returns: the issuer's authorization URL,
 // the raw state it carries (the value of the sign-in cookie, #528) and
-// whether that cookie is Secure (APP_BASE_URL is https).
+// whether that cookie is sent only over HTTPS (APP_BASE_URL is https).
 type OIDCAuthorization struct {
 	URL          string
 	State        string
@@ -481,13 +481,13 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	return &OIDCAuthorization{
 		URL:          s.oauthConfig(provider, cfg).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)),
 		State:        state,
-		SecureCookie: s.secureCookie(),
+		SecureCookie: s.httpsOnlyCookie(),
 	}, nil
 }
 
-// secureCookie reports whether APP_BASE_URL is https (the scheme compared in
-// any letter case), which makes the sign-in cookie Secure.
-func (s *oidcService) secureCookie() bool {
+// httpsOnlyCookie reports whether APP_BASE_URL is https (the scheme compared
+// in any letter case), in which case the sign-in cookie is sent only over HTTPS.
+func (s *oidcService) httpsOnlyCookie() bool {
 	scheme, _, found := strings.Cut(s.appBaseURL, "://")
 	return found && strings.EqualFold(scheme, "https")
 }

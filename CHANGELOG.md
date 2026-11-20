@@ -1066,7 +1066,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Single sign-on finishes only in the browser that started it (#528).** `POST /auth/oidc/start`
   now sets a short-lived sign-in cookie, `gophercrm_oidc_state` (`HttpOnly`, `SameSite=Lax`, ten
-  minutes, `Path=<API_PREFIX>/auth/oidc`, `Secure` when `APP_BASE_URL` is https), tied to the
+  minutes, `Path=<API_PREFIX>/auth/oidc`, sent only over HTTPS when `APP_BASE_URL` is https), tied to the
   sign-in it stored; a refused start sets none. `POST /auth/oidc/callback` refuses a callback that
   arrives without that cookie or with a different value, after spending the attempt, with the
   usual 401 "Single sign-on failed", and records the new sign-in audit reasons `binding_missing`
