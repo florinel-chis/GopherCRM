@@ -9,6 +9,7 @@ import contextlib
 import importlib.util
 import io
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 
@@ -29,11 +30,23 @@ OIDC_ENABLED=true
 """
 
 
-def run(guide_dir):
+def run(guide_dir, repo_root=ROOT):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        code = gate.main(['--guide-dir', str(guide_dir), '--repo-root', str(ROOT)])
+        code = gate.main(['--guide-dir', str(guide_dir), '--repo-root', str(repo_root)])
     return code, out.getvalue()
+
+
+SCIM_ROUTES = {
+    ('GET', '/scim/v2/ServiceProviderConfig'),
+    ('GET', '/scim/v2/Schemas'),
+    ('GET', '/scim/v2/ResourceTypes'),
+    ('GET', '/scim/v2/Users'),
+    ('GET', '/scim/v2/Users/{id}'),
+    ('POST', '/scim/v2/Users'),
+    ('PUT', '/scim/v2/Users/{id}'),
+    ('PATCH', '/scim/v2/Users/{id}'),
+}
 
 
 class UserGuideCheckTest(unittest.TestCase):
@@ -112,6 +125,68 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         for page in gate.PAGES:
             self.assertIn('%s: missing page' % page, out)
+
+    def test_scim_page_is_checked(self):
+        self.assertIn('scim-provisioning.md', gate.PAGES)
+
+    def test_known_scim_names_pass(self):
+        self.write_guide('\n`GET /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `PUT /scim/v2/Users/:id`, '
+                         '`GET /scim/v2/ServiceProviderConfig`, `PUBLIC_BASE_URL/scim/v2`, `/scim/v2/Users`.\n')
+        code, out = run(self.dir)
+        self.assertEqual(code, 0, out)
+
+    def test_unserved_scim_delete_is_unknown_route(self):
+        self.assert_fails_naming('\n`DELETE /scim/v2/Users/{id}`\n', 'DELETE /scim/v2/Users/{id}', 'route')
+
+    def test_scim_groups_is_unknown_route(self):
+        self.assert_fails_naming('\n`GET /scim/v2/Groups`\n', 'GET /scim/v2/Groups', 'route')
+
+    def test_scim_groups_is_unknown_path(self):
+        self.assert_fails_naming('\n`/scim/v2/Groups`\n', '/scim/v2/Groups', 'path')
+
+    def test_scim_token_routes_are_not_scim_routes(self):
+        self.assert_fails_naming('\n`GET /scim/v2/settings/scim/tokens`\n',
+                                 'GET /scim/v2/settings/scim/tokens', 'route')
+
+    def test_scim_routes_under_api_prefix_do_not_resolve(self):
+        self.assert_fails_naming('\n`GET /api/v1/scim/v2/Users`\n', 'GET /api/v1/scim/v2/Users', 'route')
+
+    def test_parsed_scim_routes_are_exactly_setup_scim_routes(self):
+        routes, problems = gate.scim_routes(ROOT)
+        self.assertEqual(problems, [])
+        self.assertEqual(routes, SCIM_ROUTES)
+
+    def fake_root(self, scim_routes_go=None, main_go=None):
+        root = self.dir / 'root'
+        for rel in ('api/swagger.json', 'gocrm-ui/src/routes/index.tsx', gate.SCIM_ROUTES_FILE, gate.SCIM_PREFIX_FILE):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / rel, root / rel)
+        if scim_routes_go is not None:
+            (root / gate.SCIM_ROUTES_FILE).write_text(scim_routes_go, encoding='utf-8')
+        if main_go is not None:
+            (root / gate.SCIM_PREFIX_FILE).write_text(main_go, encoding='utf-8')
+        return root
+
+    def test_root_without_setup_scim_routes_fails(self):
+        root = self.fake_root(scim_routes_go='package handler\n\nfunc SetupSCIMTokenRoutes() {\n}\n')
+        self.write_guide()
+        code, out = run(self.dir, root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('no func SetupSCIMRoutes', out)
+
+    def test_setup_scim_routes_without_routes_fails(self):
+        root = self.fake_root(scim_routes_go='package handler\n\nfunc SetupSCIMRoutes() {\n}\n')
+        self.write_guide()
+        code, out = run(self.dir, root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('SetupSCIMRoutes registers no route', out)
+
+    def test_root_without_scim_prefix_fails(self):
+        root = self.fake_root(main_go='package main\n')
+        self.write_guide()
+        code, out = run(self.dir, root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('no router.Group("/scim/v2")', out)
 
     def test_class_with_no_tokens_fails(self):
         without_route = BASE_PAGE.replace('`GET /roles/audit`', 'the audit route')
