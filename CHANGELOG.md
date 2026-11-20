@@ -1348,6 +1348,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The `cmd/migrate` MySQL-backed tests read their server only from `TEST_MYSQL_DSN` (#514).**
+  They now skip when the variable is unset or empty and fail when it names a server that does
+  not answer. They no longer probe a local MySQL with the `.env` configuration, `$USER`, `root`
+  or the e2e credentials, so an empty variable can no longer run them against whatever server
+  the machine happens to have.
+
 - **Drifted code citations in the fork and extension guides (#473, #474).** The line-number
   citations in `docs/FORKING.md` and `docs/EXTENDING.md`, several of which no longer pointed at
   the code they described, are replaced by citations of the file plus the declared symbol, or of a

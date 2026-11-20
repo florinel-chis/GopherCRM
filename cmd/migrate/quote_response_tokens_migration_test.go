@@ -106,10 +106,7 @@ func insertMigrationQuoteResponseToken(t *testing.T, db *sql.DB, n int) {
 }
 
 func TestQuoteResponseTokensMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 	tables := []string{quoteResponseTokensTable}

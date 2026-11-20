@@ -197,63 +197,69 @@ func TestMigrationSequence_UpgradePathFromExistingMain(t *testing.T) {
 		"ticket comments migration should follow schema parity, got %s", pendingMigrations[1].name)
 }
 
-func resolveTestMySQLBaseDSN() string {
-	candidates := []string{
-		os.Getenv("TEST_MYSQL_DSN"),
+// testMySQLBaseDSN returns the server-level DSN (no database name, trailing
+// slash) the MySQL/MariaDB migration roots run against. It reads only
+// TEST_MYSQL_DSN: an unset or blank value skips the calling test, and a value
+// that names an unreachable server is returned as is so the test fails at its
+// first statement instead of falling back to another server.
+func testMySQLBaseDSN(t *testing.T) string {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN"))
+	if dsn == "" {
+		t.Skip("TEST_MYSQL_DSN is not set: skipping the MySQL/MariaDB migration test")
 	}
-	if cfg, err := config.Load(); err == nil && cfg.Database.Driver == config.DriverMySQL {
-		candidates = append(candidates, fmt.Sprintf("%s:%s@tcp(%s:%d)/",
-			cfg.Database.User, cfg.Database.Password, cfg.Database.Host, cfg.Database.Port))
+	if !strings.HasSuffix(dsn, "/") {
+		dsn += "/"
 	}
-	user := os.Getenv("USER")
-	if user != "" {
-		candidates = append(candidates,
-			fmt.Sprintf("%s@unix(/tmp/mysql.sock)/", user),
-			fmt.Sprintf("%s:@unix(/tmp/mysql.sock)/", user),
-			fmt.Sprintf("%s:@tcp(127.0.0.1:3306)/", user),
-			fmt.Sprintf("%s@tcp(127.0.0.1:3306)/", user),
-		)
-	}
-	candidates = append(candidates,
-		"root@unix(/tmp/mysql.sock)/",
-		"root:@unix(/tmp/mysql.sock)/",
-		"root:@tcp(127.0.0.1:3306)/",
-		"root:root@tcp(127.0.0.1:3306)/",
-		"root:e2e-root-password@tcp(127.0.0.1:3306)/",
-		"gophercrm:e2e-password@tcp(127.0.0.1:3306)/",
-	)
+	return dsn
+}
 
-	for _, dsn := range candidates {
-		if dsn == "" {
-			continue
-		}
-		cleanDSN := dsn
-		if !strings.HasSuffix(cleanDSN, "/") {
-			cleanDSN += "/"
-		}
-		connectDSN := migrationDSN(cleanDSN)
-		db, err := sql.Open("mysql", connectDSN)
-		if err != nil {
-			continue
-		}
-		if err := db.Ping(); err == nil {
-			probeDB := fmt.Sprintf("gocrm_probe_%d", time.Now().UnixNano()%1000000)
-			if _, execErr := db.Exec("CREATE DATABASE " + probeDB); execErr == nil {
-				_, _ = db.Exec("DROP DATABASE " + probeDB)
-				db.Close()
-				return cleanDSN
-			}
-		}
-		db.Close()
+func TestMySQLBaseDSNFromEnvironmentOnly(t *testing.T) {
+	run := func(t *testing.T, name string) (string, *testing.T) {
+		t.Helper()
+		var inner *testing.T
+		var got string
+		t.Run(name, func(t *testing.T) {
+			inner = t
+			got = testMySQLBaseDSN(t)
+		})
+		return got, inner
 	}
-	return ""
+
+	t.Run("unset skips", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", "")
+		require.NoError(t, os.Unsetenv("TEST_MYSQL_DSN"))
+		_, inner := run(t, "helper")
+		assert.True(t, inner.Skipped())
+	})
+	t.Run("empty skips", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", "")
+		_, inner := run(t, "helper")
+		assert.True(t, inner.Skipped())
+	})
+	t.Run("whitespace skips", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", " \t\n ")
+		_, inner := run(t, "helper")
+		assert.True(t, inner.Skipped())
+	})
+	t.Run("set value is returned without connecting", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)/")
+		start := time.Now()
+		got, inner := run(t, "helper")
+		assert.False(t, inner.Skipped())
+		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/", got)
+		assert.Less(t, time.Since(start), time.Second)
+	})
+	t.Run("missing trailing slash is appended", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)")
+		got, inner := run(t, "helper")
+		assert.False(t, inner.Skipped())
+		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/", got)
+	})
 }
 
 func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("skipping database upgrade test: no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 
 	serverDB, err := sql.Open("mysql", migrationDSN(baseDSN))
 	require.NoError(t, err)
@@ -361,10 +367,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 }
 
 func TestMigrationFresh_FullUpAndDown(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("skipping database fresh migration test: no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 
 	serverDB, err := sql.Open("mysql", migrationDSN(baseDSN))
 	require.NoError(t, err)

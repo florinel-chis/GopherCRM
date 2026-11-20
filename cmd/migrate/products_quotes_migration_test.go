@@ -169,10 +169,7 @@ func normaliseQuoteTables(tables map[string]tableSchema) map[string]tableSchema 
 }
 
 func TestProductsAndQuotesMigration(t *testing.T) {
-	baseDSN := resolveTestMySQLBaseDSN()
-	if baseDSN == "" {
-		t.Skip("no reachable MySQL/MariaDB server")
-	}
+	baseDSN := testMySQLBaseDSN(t)
 	previousDB := models.DB
 	t.Cleanup(func() { models.DB = previousDB })
 
