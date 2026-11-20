@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ID and Okta forms); a `displayName` or other path is 400 `invalidPath`, a remove without a path
   `noTarget`, and a member id that is no visible user 400 `invalidValue`. In one governed
   transaction it recomputes each added or removed member's role with the sign-in's first-match rule
-  on the groups claim (no match keeps the role), writes the `user_role_changed` audit rows with
+  on the groups claim (since #530 an active account left in no mapped group is deactivated instead),
+  writes the `user_role_changed` audit rows with
   `auth_method` `scim` and no actor, and after the commit one sign-in audit row with method `scim`
   per member whose membership changed. Only a result that leaves no active admin is refused, with
   400 `mutability`, so a handover to another active account passes; replacing the last admin with
@@ -1063,6 +1064,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submit and confirm answers are unchanged, and nothing retries automatically.
 
 ### Changed
+
+- **A SCIM group patch sets the account's state from the groups it is left in (#530).** An active
+  managed account that `PATCH /scim/v2/Groups/{id}` leaves in no mapped group is deactivated in the
+  patch's transaction: `is_active` false, its role kept, no `user_role_changed` row, and every
+  access token, refresh token and API key ends, as for a SCIM deactivation; an account that is
+  already deactivated gets no `users` write. A group patch that gives an account a role lacking a
+  permission the old one had ends its signed-in sessions at once (`token_version` + 1, every
+  refresh token revoked); its API keys keep working with the new role. A raised or unchanged role
+  ends nothing. The last-admin rule counts a deactivated account as no longer an active admin, so
+  removing the last active admin from its only mapped group is refused with 400 `mutability`,
+  while a handover to another active account still passes. A failed revocation rolls the whole
+  patch back.
 
 - **A password change, a password reset and a deactivation end every credential of the account in
   one step (#526).** `POST /auth/change-password`, `POST /auth/password-reset/confirm`, an

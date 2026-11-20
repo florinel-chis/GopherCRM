@@ -1752,19 +1752,26 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 - **Priority:** P0
 - **Type:** functional
 - **Preconditions:** A valid SCIM token; the mapping `[{groups, Admins → admin}, {groups, Sales →
-  sales}]`; a second active admin; a sales account U in Sales only.
+  sales}]`; a second active admin; a sales account U in Sales only, holding a signed-in session
+  (access and refresh token) and an API key.
 - **Steps:**
   1. `PATCH /scim/v2/Groups/{Admins}` with `add` path `members` value `[{"value":"<U>"}]`.
   2. `PATCH` the same group with `remove` path `members[value eq "<U>"]`.
   3. `PATCH /scim/v2/Groups/{Sales}` removing U.
 - **Expected:** Step 1 answers 200 with U as a member; U becomes admin, one `role_audit_log`
   `user_role_changed` row (`auth_method` `scim`, NULL `actor_user_id`) and, after the commit, one
-  `auth_audit_log` success row (method `scim`) for U. Step 2 makes U sales again with one more audit
-  row. Step 3 leaves U in no mapped group: U stays sales, no role audit row is written, one sign-in
-  audit row is.
+  `auth_audit_log` success row (method `scim`) for U; a raised role ends no session. Step 2 makes U
+  sales again with one more audit row; the sales role lacks permissions the admin role had, so U's
+  sessions end at once (`token_version` + 1, every refresh token revoked) while U's API key keeps
+  working with the sales role. Step 3 leaves U in no mapped group: U is deactivated (`is_active`
+  false, role kept), every access token, refresh token and API key of U ends, no role audit row is
+  written and one sign-in audit row is. The same removal of an already deactivated account writes no
+  `users` change and ends nothing.
 - **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`add makes admin`, `remove
-  recomputes from the remaining groups`, `removing the only group keeps the role`),
-  `TestSCIMGroupsWired`
+  recomputes from the remaining groups`, `removing the only group deactivates`, `removing an
+  inactive account's only group writes no users change`, `lowered role ends sessions`, `remove all
+  deactivates every member left in no mapped group`), `TestSCIMGroupsWired`,
+  `TestCredentialRevocationProductionWiring` (`scim_group_removal`, `scim_group_lowered_role`)
 
 ### TC-AUTH-090 — A group patch never leaves no active admin, but allows a handover
 - **Priority:** P0
@@ -1779,10 +1786,12 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 - **Expected:** Steps 1 and 2 answer 400 with `scimType` `mutability` and the detail "The last active
   admin must stay an active admin"; `scim_group_members`, X's role and `role_id`, `role_audit_log`
   and `auth_audit_log` are unchanged. Step 3 answers 200: Y becomes admin and X sales, with one role
-  audit row each, and exactly one active admin remains. The Users patch keeps answering its own
-  last-admin refusal with `invalidValue` (TC-AUTH-085).
-- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`last_admin`, `replace_to_inactive`,
-  `handover_replace`, `handover_add_remove`), `TestSCIMGroupHandler` (`last_admin_mutability`,
+  audit row each, and exactly one active admin remains. When X is in Admins only, step 1's remove
+  would deactivate X and is refused the same way, and step 3 deactivates X and ends its credentials
+  while Y becomes admin. The Users patch keeps answering its own last-admin refusal with
+  `invalidValue` (TC-AUTH-085).
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`last_admin`, `last_admin_deactivation`,
+  `replace_to_inactive`, `handover_replace`, `handover_deactivates_old_admin`, `handover_add_remove`), `TestSCIMGroupHandler` (`last_admin_mutability`,
   `last_admin_before_invalid_value`)
 
 ### TC-AUTH-091 — Group patches outside the members, and group creation or deletion, are refused

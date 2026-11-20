@@ -477,10 +477,13 @@ An account holds three kinds of credential: access tokens (JWTs, refused once th
 `token_version` moves past the value they carry), refresh tokens and API keys. Since #526 one
 service step, `revokeAllCredentials` (`internal/service/credential_revocation.go`), ends all
 three inside the transaction of a password change, a password reset, an administrator's
-deactivation and a SCIM deactivation: it increments `token_version`, revokes every refresh token
-and revokes every API key (`is_active` false, `revoked_at` stamped; a key revoked earlier keeps
-its first `revoked_at`). A failure of any step rolls the whole write back. Logout keeps its own,
-narrower revocation.
+deactivation, a SCIM deactivation and a SCIM group patch that leaves an active account in no
+mapped group (#530): it increments `token_version`, revokes every refresh token and revokes every
+API key (`is_active` false, `revoked_at` stamped; a key revoked earlier keeps its first
+`revoked_at`). Its first two steps are `endSessions`, which a SCIM group patch also runs alone
+when it gives an account a role that lacks a permission the old one had: `token_version` and
+every refresh token, API keys untouched. A failure of any step rolls the whole write back. Logout
+keeps its own, narrower revocation.
 
 | Event | Access tokens | Refresh tokens | API keys |
 |---|---|---|---|
@@ -490,13 +493,17 @@ narrower revocation.
 | Password reset (`POST /auth/password-reset/confirm`) | Every earlier one ends | Every one | Every one, for good |
 | Administrator deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active` false) | Every earlier one ends | Every one | Every one, for good |
 | SCIM `active` false (`PATCH`, `PUT`) or `DELETE /scim/v2/Users/{id}` | Every earlier one ends | Every one | Every one, for good |
+| SCIM group patch (`PATCH /scim/v2/Groups/{id}`) leaving an active account in no mapped group | Every earlier one ends | Every one | Every one, for good |
+| SCIM group patch that gives an account a role lacking a permission the old one had | Every earlier one ends | Every one | Not affected: each request re-reads the owner, so a key acts with the new role |
 | Reactivation (`POST /users/{id}/activate`, `is_active` or SCIM `active` true) | Nothing comes back | Nothing comes back | Nothing comes back |
 | Erasure (`DELETE /users/{id}`) | Refused with the erased account | Deleted | Deleted |
-| Role change | None yet: the new role applies from the next request | None yet | None yet |
+| Any other role change (an administrator's change, a SCIM Users write, a SCIM group patch that raises the role or changes it without losing a permission) | None yet: the new role applies from the next request | None yet | None yet |
 
 The writes take `users → refresh_tokens → api_keys` (see [CONCURRENCY.md](CONCURRENCY.md)). A
 server whose user service is not built with `WithUserCredentialRevocation`, or whose SCIM writes
-lack the API key repository, refuses a deactivation with 500 and writes nothing. A SCIM `DELETE`
+lack the API key repository, refuses a deactivation with 500 and writes nothing; a SCIM group
+patch without the refresh token or API key repository (`WithSCIMGroupWrites`) is refused with 500
+before it reads anything. A SCIM `DELETE`
 of an already inactive account writes nothing. Regression roots:
 `TestCredentialRevocation{SQLite,MySQL}` (`internal/service/auth_credential_revocation_test.go`),
 `TestCredentialRevocationProductionWiring` (`cmd/credential_revocation_wiring_test.go`) and
@@ -885,9 +892,18 @@ gets no role change, no `users` write and no audit row, and the last-admin rule 
 losing the admin role.
 
 **Roles.** Each added or removed managed account gets the role of the sign-in's first-match rule
-on the groups claim, over its groups after the change (`oidcMatchRole` with the groups only); no
-match keeps its role, and a mapping to a missing role row or to the customer role refuses the patch
-with `invalidValue`. A group patch maps the groups claim only and a Users write the roles claim
+on the groups claim, over its groups after the change (`oidcMatchRole` with the groups only); a
+mapping to a missing role row or to the customer role refuses the patch with `invalidValue`. Since
+#530 an active account left in no mapped group is deactivated instead: `is_active` false, its role
+and `role_id` kept, no `user_role_changed` row, and `revokeAllCredentials` ends every access token,
+refresh token and API key, as a SCIM deactivation does; an account already deactivated gets no
+`users` write, only its membership row and its `auth_audit_log` row. A role that lacks a
+permission the old one had (the old role's permission set holds a grant the new one does not
+cover, so a move between sales and support counts too) ends the account's sessions through
+`endSessions`, active or not: `token_version` + 1 and every refresh token revoked. Its API keys
+keep working, with the new role. A raised or unchanged role ends nothing. A later reactivation is
+an explicit administrator or SCIM `active` true write; the account's next group patch recomputes
+its role. A group patch maps the groups claim only and a Users write the roles claim
 only, so whichever writes last sets the role. Membership rows outlive mapping edits: removing,
 re-adding or remapping a group value recomputes no role until that account's next group patch.
 The sign-in does not read `scim_group_members`, and erasure leaves the rows in place.
@@ -896,15 +912,18 @@ The sign-in does not read `scim_group_members`, and erasure leaves the rows in p
 locked admins plus every touched account whose locked row is an active admin, so an admin that a
 concurrent handover created while the patch waited still counts), the
 patch is refused only when none is left after it (the locked admins the patch does not touch, the
-touched ones that stay admin, and the touched active accounts that become admin), with 400
+touched ones that stay admin and are not deactivated, and the touched active accounts that become
+admin; an account the patch deactivates is no longer an active admin), with 400
 `mutability` and `The last active admin must stay an active admin`. A handover to another active
-account passes, as a replace or as one patch that adds the new admin and removes the old one; a
-replace with a deactivated account is refused. The Users writes keep answering their last-admin
+account passes, as a replace or as one patch that adds the new admin and removes the old one, also
+when the old admin is left in no mapped group and so deactivated; removing the only active admin
+from its only mapped group, and a replace with a deactivated account, are refused. The Users writes keep answering their last-admin
 refusal with `invalidValue`.
 
 **Transaction and audit.** One governed transaction, `admin set → users → roles →
-scim_group_members → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md), flow "SCIM group
-patch"); each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
+scim_group_members → refresh_tokens → api_keys → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md),
+flow "SCIM group patch"); the membership writes, the `users` writes, the credential revocations
+and the role audit rows commit together or not at all; each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
 and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
 membership changed. A refusal, and a patch that changes nothing, write nothing.
 

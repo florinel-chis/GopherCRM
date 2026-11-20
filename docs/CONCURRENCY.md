@@ -792,13 +792,20 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   (`SCIMGroupMemberRepository.ManagedUserIDs`, #529; identities are never deleted), then the `roles` rows of their current custom roles and of the
   mapped roles (`RoleRepository.LockByIDs`), then reads those users' other memberships with the
   same locking read (`GroupsOfUsers`). It writes the membership rows (`Remove`, then `Add`), then,
-  per user whose role changes, the `users` row (`UpdateFields`) and its `role_audit_log` row.
-- **Order:** admin set → users → roles → scim_group_members → role_audit_log. The membership
-  inserts take the shared foreign-key lock on `users` rows the patch already holds.
+  per affected managed user: an active user left in no mapped group gets `is_active` false
+  (`UpdateFields`) and `revokeAllCredentials` (`token_version`, every `refresh_tokens` row, every
+  `api_keys` row; #530); a user whose role changes gets its `users` row (`UpdateFields`) and, when
+  the new role lacks a permission the old one had, `endSessions` (`token_version`, every
+  `refresh_tokens` row). The `role_audit_log` rows of the role changes are written last.
+- **Order:** admin set → users → roles → scim_group_members → refresh_tokens → api_keys →
+  role_audit_log. The membership, refresh-token and API-key writes take the shared foreign-key
+  lock on `users` rows the patch already holds.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
-  repositories; the membership rows, the role writes and their audit rows commit together or not
-  at all, and a refusal (an id that is no managed account, a mapping to a missing or customer role,
-  a result without an active admin) writes nothing. One successful `auth_audit_log` row per managed
+  repositories; the membership rows, the role writes, the deactivations, the credential
+  revocations and the audit rows commit together or not at all, and a refusal (an id that is no
+  managed account, a mapping to a missing or customer role, a result without an active admin, where
+  a deactivated account no longer counts as one, a failed revocation of the refresh tokens or the
+  API keys) writes nothing. One successful `auth_audit_log` row per managed
   account whose membership changed is written after the commit, on the root handle; a patch that changes
   nothing writes none.
 - **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write.

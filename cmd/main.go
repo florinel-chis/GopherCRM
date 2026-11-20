@@ -624,9 +624,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 			apiKeyRepo, txManager, authAudit))
 	// The Groups (#506) are the groups-claim values of the role mapping; a
 	// members patch recomputes the affected users' roles from the groups
-	// claim in one governed transaction, with the same audit rows.
+	// claim in one governed transaction, with the same audit rows. An active
+	// account the patch leaves in no mapped group is deactivated and every
+	// credential it holds ends (token_version, refresh tokens, API keys); a
+	// role that lacks a permission the old one had ends the account's
+	// sessions (token_version, refresh tokens).
 	scimGroupService := service.NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(models.DB), ssoSettings,
-		service.WithSCIMGroupWrites(userRepo, roleRepo, roleAuditRepo, txManager, authAudit))
+		service.WithSCIMGroupWrites(userRepo, roleRepo, roleAuditRepo, refreshTokenRepo, apiKeyRepo, txManager, authAudit))
 	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL),
 		handler.NewSCIMUserHandler(scimUserService, cfg.Forms.PublicBaseURL),
 		handler.NewSCIMGroupHandler(scimGroupService, cfg.Forms.PublicBaseURL))
