@@ -3,6 +3,8 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"path"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -15,6 +17,16 @@ const (
 	oidcCallbackCodeMaxBytes  = 4096
 	oidcCallbackStateMaxBytes = 256
 )
+
+// OIDCStateCookieName is the sign-in cookie POST /auth/oidc/start sets and
+// POST /auth/oidc/callback requires (#528). It holds the raw state of the
+// sign-in, is HttpOnly and SameSite=Lax, reaches only the two OIDC routes and
+// authenticates nothing on its own.
+const OIDCStateCookieName = "gophercrm_oidc_state"
+
+// oidcStateCookieMaxAge is the lifetime of the sign-in cookie in seconds: the
+// lifetime of the attempt it names.
+const oidcStateCookieMaxAge = int(service.OIDCAttemptTTL / time.Second)
 
 // ErrCodeSSOUnavailable is answered with 503 when single sign-on is switched
 // on but cannot be used: the issuer or client is not configured, the issuer
@@ -55,7 +67,8 @@ type OIDCCallbackRequest struct {
 
 // Start godoc
 // @Summary Start an OpenID Connect sign-in
-// @Description Begins a sign-in with the issuer and client of the single sign-on settings (re-read on every call): discovers the issuer, stores a single-use attempt (the HMAC of a fresh state, a nonce and a PKCE verifier, valid ten minutes) and returns the issuer's authorization URL with redirect_uri APP_BASE_URL/auth/callback. The scope is the configured scopes; for an Entra ID issuer (host login.microsoftonline.com) whose role mapping has a groups entry it also carries https://graph.microsoft.com/GroupMember.Read.All, once. No body. Sets no cookie.
+// @Description Begins a sign-in with the issuer and client of the single sign-on settings (re-read on every call): discovers the issuer, stores a single-use attempt (the HMAC of a fresh state, a nonce and a PKCE verifier, valid ten minutes) and returns the issuer's authorization URL with redirect_uri APP_BASE_URL/auth/callback. The scope is the configured scopes; for an Entra ID issuer (host login.microsoftonline.com) whose role mapping has a groups entry it also carries https://graph.microsoft.com/GroupMember.Read.All, once. No body.
+// @Description On 200 only, sets the sign-in cookie gophercrm_oidc_state, holding the state of the returned URL: Path API_PREFIX/auth/oidc (so it reaches only start and callback), Max-Age=600 (the lifetime of the attempt), HttpOnly, SameSite=Lax, no Domain, and Secure when APP_BASE_URL is https. The callback needs it, so the SPA and the API must be served from the same site. A refused start sets no cookie.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
 // @Tags auth
 // @Produce json
@@ -67,26 +80,42 @@ type OIDCCallbackRequest struct {
 // @Router /auth/oidc/start [post]
 func (h *AuthOIDCHandler) Start(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "AuthOIDCHandler.Start")
-	url, err := h.oidc.Start(utils.WithRequestID(c.Request.Context(), c.GetString("request_id")))
+	authz, err := h.oidc.Start(utils.WithRequestID(c.Request.Context(), c.GetString("request_id")))
 	if err != nil {
 		h.respondError(c, logger, err)
 		return
 	}
-	utils.RespondSuccess(c, http.StatusOK, OIDCStartResponse{AuthorizationURL: url})
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     OIDCStateCookieName,
+		Value:    authz.State,
+		Path:     oidcCookiePath(c),
+		MaxAge:   oidcStateCookieMaxAge,
+		HttpOnly: true,
+		Secure:   authz.SecureCookie,
+		SameSite: http.SameSiteLaxMode,
+	})
+	utils.RespondSuccess(c, http.StatusOK, OIDCStartResponse{AuthorizationURL: authz.URL})
+}
+
+// oidcCookiePath is the directory of the matched route: API_PREFIX/auth/oidc
+// for start and callback alike.
+func oidcCookiePath(c *gin.Context) string {
+	return path.Dir(c.FullPath())
 }
 
 // Callback godoc
 // @Summary Finish an OpenID Connect sign-in
 // @Description Spends the attempt the state names (single-use, ten minutes, started against the issuer still configured), exchanges the code with the PKCE verifier and redirect_uri APP_BASE_URL/auth/callback, and verifies the ID token: signature, iss, aud, exp and the nonce. The identity is the exact (iss, sub) pair; a sub with leading or trailing whitespace is refused. The role is the first role-mapping entry, in stored order, whose claim (groups or roles, each absent or an array of strings) holds its value exactly. When the ID token moves groups into _claim_names (an overflow of groups) and the mapping has a groups entry: for an Entra ID issuer (host login.microsoftonline.com) the group object ids come from Microsoft Graph POST /v1.0/me/getMemberObjects (security groups only) with the access token of the exchange, within one 5 s budget and at most OIDC_GRAPH_MAX_PAGES pages, and any Graph failure refuses; for any other issuer the sign-in is refused. With no groups entry in the mapping that overflow is ignored. When the mapping has a groups entry and the ID token has no groups claim (an empty groups array counts as present) and no Entra ID overflow is being resolved, the groups come from the issuer's userinfo endpoint (from discovery): one GET with the access token of the exchange, within 5 s, no redirects followed, a body of at most 1 MiB of application/json (signed application/jwt userinfo is not supported); the userinfo sub must equal the ID token's sub, only groups is read (absent means no groups), and any other userinfo failure refuses. email, preferred_username and name are never used to link an account. An unknown identity whose issuer is Entra ID (host login.microsoftonline.com), whose tid claim equals the tenant segment of the configured issuer (its first path segment, compared exactly) and whose oid claim equals the subject of the identity SCIM created under that issuer signs in as that account, which must be live and active or the sign-in is refused, and links its (iss, sub) pair to it; only after that does an unknown identity provision.
 // @Description A known identity signs in as its user, which must be live and active; the mapped role is re-applied through the governed role write (the last active admin cannot be demoted; a change is audited with auth_method oidc). An unknown identity provisions an active user with the mapped role, the email claim and given_name/family_name (or name split at the first space when both are absent), and no usable password. While allow_password in /settings/sso is off (the default), password reset and password sign-in are refused for a linked account (POST /auth/password-reset issues nothing, /auth/password-reset/confirm answers the generic 400 and POST /auth/login the generic 401); with it on, a linked account may set and use a password like a local one. The email_verified claim is not required or read and the email claim is stored as given: the email never links or authorizes an account. Provisioning is refused when the token has no email claim or any account, erased ones included, already holds that address in any letter case, and it is never linked to that account. last_login_at and the lockout counters are not touched.
-// @Description Success returns the same token, refresh_token and user as POST /auth/login. Every refusal is the same 401 Single sign-on failed. Sets no cookie. Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
+// @Description The callback needs the gophercrm_oidc_state cookie that POST /auth/oidc/start set, sent by the browser that called start: the attempt is spent first, then a missing cookie, or one naming another sign-in, is the same 401. A later start in the same browser replaces the cookie, so only the latest sign-in started there can finish. The cookie is never a credential on any other route.
+// @Description Success returns the same token, refresh_token and user as POST /auth/login and clears the cookie (Max-Age=0, same path). Every refusal is the same 401 Single sign-on failed and sets no cookie. Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
 // @Tags auth
 // @Accept json
 // @Produce json
 // @Param request body OIDCCallbackRequest true "The code and state from the issuer's redirect"
 // @Success 200 {object} utils.APIResponse{data=AuthResponse} "Signed in; token, refresh_token and user returned"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: code or state missing, or code longer than 4096 bytes or state longer than 256 bytes (details maps Code or State to a message). BAD_REQUEST: malformed JSON (Invalid request format)"
-// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: Single sign-on failed, whatever the reason (unknown, used or expired state, issuer changed, token or nonce invalid, claims malformed or unmapped, groups not readable from Microsoft Graph, groups not readable from the userinfo endpoint or a userinfo sub that differs, account deactivated, erased or already holding the address, last admin)"
+// @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: Single sign-on failed, whatever the reason (unknown, used or expired state, no sign-in cookie, or one from another sign-in, issuer changed, token or nonce invalid, claims malformed or unmapped, groups not readable from Microsoft Graph, groups not readable from the userinfo endpoint or a userinfo sub that differs, account deactivated, erased or already holding the address, last admin)"
 // @Failure 404 {object} utils.APIResponse{error=utils.APIError} "NOT_FOUND: single sign-on is disabled"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: strict /auth tier exceeded; details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: a database or signing failure"
@@ -112,11 +141,24 @@ func (h *AuthOIDCHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	tokens, err := h.oidc.Callback(auditContext(c), req.Code, req.State)
+	binding := ""
+	if cookie, err := c.Request.Cookie(OIDCStateCookieName); err == nil {
+		binding = cookie.Value
+	}
+	tokens, err := h.oidc.Callback(auditContext(c), req.Code, req.State, binding)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return
 	}
+	// The attempt is spent: clear the sign-in cookie. Refusals leave it, so
+	// the untouched callback of the same sign-in can still finish.
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     OIDCStateCookieName,
+		Path:     oidcCookiePath(c),
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 	utils.LogHandlerResponse(logger, http.StatusOK, "single sign-on succeeded")
 	utils.RespondSuccess(c, http.StatusOK, AuthResponse{
 		Token:        tokens.AccessToken,

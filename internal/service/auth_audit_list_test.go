@@ -139,7 +139,7 @@ var authAuditReasonConstant = regexp.MustCompile(`\b(AuthAuditReason[A-Za-z]+)\s
 
 func TestAuthAuditReasonVocabulary(t *testing.T) {
 	reasons := AuthAuditReasons()
-	assert.Len(t, reasons, 39)
+	assert.Len(t, reasons, 41)
 	assert.True(t, sort.StringsAreSorted(reasons))
 	for _, reason := range reasons {
 		assert.True(t, IsAuthAuditReason(reason), reason)

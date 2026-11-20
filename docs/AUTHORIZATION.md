@@ -396,7 +396,8 @@ or the full user agent. Neither are they logged.
   empty token), `token_invalid` (no SCIM token has that hash: an unknown token, a user's JWT or
   API key, a token altered in case or padding) and `token_revoked` (a revoked SCIM token). The
   row never names the token.
-- `oidc`: the `error_code` of the refusal (`state_invalid`, `issuer_changed`, `id_token_missing`,
+- `oidc`: the `error_code` of the refusal (`state_invalid`, `binding_missing`, `binding_mismatch`,
+  `issuer_changed`, `id_token_missing`,
   `id_token_invalid`, `nonce_mismatch`, `claims_invalid`, `group_overage`, `groups_malformed`,
   `roles_malformed`, `subject_invalid`, `issuer_invalid`, `groups_unavailable`,
   `userinfo_subject_mismatch`, `no_mapping_match`, `role_missing`, `identity_mismatch`,
@@ -1018,13 +1019,29 @@ valid ten minutes) and answers `{authorization_url}`. The SPA sends the browser 
 redirects back to the redirect URI `APP_BASE_URL/auth/callback`, which must be registered at the
 provider exactly. The SPA then posts the `code` and `state` to `POST /auth/oidc/callback`, which
 spends the attempt (its own committed statement: a state works once, even when the sign-in is
-then refused), refuses an attempt started against another issuer than the one configured now,
+then refused), refuses a callback without the sign-in cookie or with another one (below),
+refuses an attempt started against another issuer than the one configured now,
 exchanges the code with the verifier, and checks the ID token's signature, `iss`, `aud`, `exp`
-and nonce. Success answers the same `token`, `refresh_token` and `user` as `POST /auth/login`;
-no cookie is set. Single sign-on off is 404; on but unconfigured, undiscoverable (including a
+and nonce. Success answers the same `token`, `refresh_token` and `user` as `POST /auth/login`.
+Single sign-on off is 404; on but unconfigured, undiscoverable (including a
 redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S)_PROXY`) or with
 a failing token endpoint is 503 `SSO_UNAVAILABLE`; every refusal is the same 401 "Single sign-on
 failed", with the reason logged as an `error_code` only.
+
+**Sign-in cookie (#528).** A sign-in finishes only in the browser that started it. A 200 from
+`POST /auth/oidc/start` sets the cookie `gophercrm_oidc_state`, holding the state of the returned
+URL: `Path=<API_PREFIX>/auth/oidc` (it reaches only start and callback), `Max-Age=600` (the
+lifetime of the attempt), `HttpOnly`, `SameSite=Lax`, no `Domain`, and `Secure` when
+`APP_BASE_URL` is `https`. A refused start sets no cookie. The callback spends the attempt first
+and then compares the cookie with the posted state: no cookie is refused as `binding_missing`,
+a different value (the cookie of another sign-in) as `binding_mismatch`, both with the same 401
+and an audit row naming the spent attempt. A later start in the same browser replaces the
+cookie, so only the latest sign-in started there can finish. A successful callback clears the
+cookie (`Max-Age=0`); a refused one leaves it. The cookie authenticates nothing on its own and
+no other route reads it. Neither its value nor the state is logged. Because the browser must
+store and send it, the SPA and the API must be served from the same site (the same registrable
+domain and scheme), as the shipped nginx proxy serves them from one origin; the SPA sends
+credentials on these two calls only.
 
 **Attempt hygiene and logs (#453).** A used or expired attempt has its verifier and nonce
 cleared: the claim (a plain read by the state hash, then one conditional `UPDATE` by id) blanks
@@ -1251,6 +1268,8 @@ change to the matching `OIDC_*` variable has no effect on a saved field.
 The login page reads `sso_enabled` from the public `GET /auth/registration` probe it already
 makes, so no second request spends the strict `/auth` budget. Only when it is true does it show
 "Sign in with single sign-on" below the password form; the button calls `POST /auth/oidc/start`
+(with `withCredentials`, as the callback post does, so the browser keeps and returns the sign-in
+cookie when the SPA and the API run on different ports of one site, as in development; #528)
 and sends the browser to the returned authorization URL, and a failed start shows "Single sign-on
 is unavailable. Sign in with your password." The issuer redirects to the public `/auth/callback`
 page, which reads `code` and `state` once, removes them from the address bar with a replace

@@ -495,7 +495,7 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 		cfg.ClientID = ""
 		f.useSSO(stubSSO{f.defaultSSO, cfg})
 		from := output.Len()
-		_, err = f.svc.Callback(context.Background(), code, state)
+		_, err = f.svc.Callback(context.Background(), code, state, state)
 		require.ErrorIs(t, err, ErrSSOUnavailable)
 		assert.Equal(t, ErrSSOUnavailable.Error(), err.Error())
 		assertOutcome(t, from, "not_configured", "Single sign-on unavailable")
@@ -505,7 +505,7 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-cov-df", "cov-df@idp.example.test"))
 		f.issuer.setDiscoveryRedirect(true)
 		from := output.Len()
-		_, err := f.svc.Callback(context.Background(), code, state)
+		_, err := f.svc.Callback(context.Background(), code, state, state)
 		require.ErrorIs(t, err, ErrSSOUnavailable)
 		assertOutcome(t, from, "discovery_failed", "Single sign-on unavailable")
 	})
@@ -520,14 +520,14 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 	t.Run("sso_disabled", func(t *testing.T) {
 		f.reset(t)
 		f.useSSO(stubSSO{f.defaultSSO, EffectiveSSOConfig{Enabled: false}})
-		_, err := f.svc.Callback(context.Background(), "code-cov-disabled", "state-cov-disabled")
+		_, err := f.svc.Callback(context.Background(), "code-cov-disabled", "state-cov-disabled", "state-cov-disabled")
 		require.ErrorIs(t, err, ErrSSODisabled)
 		assertOutcome(t, 0, "sso_disabled", "")
 	})
 	t.Run("internal_error", func(t *testing.T) {
 		f.reset(t)
 		f.svc.attempts = failingClaim{f.svc.attempts}
-		_, err := f.svc.Callback(context.Background(), "code-cov-internal", "state-cov-internal")
+		_, err := f.svc.Callback(context.Background(), "code-cov-internal", "state-cov-internal", "state-cov-internal")
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, ErrSSOSignInFailed)
 		assertOutcome(t, 0, "internal_error", "")
@@ -550,13 +550,13 @@ func runAuthAuditPrivacy(t *testing.T, db, competitor *gorm.DB) {
 	)
 	var secrets []string
 	callback := func(spec oidcTokenSpec, requestID string) (*AuthTokens, error) {
-		authURL, err := f.svc.Start(authAuditCtx(requestID))
+		authURL, err := oidcStartURL(f.svc.Start(authAuditCtx(requestID)))
 		require.NoError(t, err)
 		code, state := f.issuer.authorize(t, authURL, spec)
 		var attempt models.OIDCLoginAttempt
 		require.NoError(t, f.db.Where("state_hash = ?", hashOpaqueToken(state, f.auth.sessionTokenSecret())).First(&attempt).Error)
 		secrets = append(secrets, code, state, attempt.Nonce, attempt.CodeVerifier)
-		tokens, err := f.svc.Callback(authAuditCtx(requestID), code, state)
+		tokens, err := f.svc.Callback(authAuditCtx(requestID), code, state, state)
 		secrets = append(secrets, f.issuer.lastIDToken(), f.issuer.lastAccessToken())
 		return tokens, err
 	}

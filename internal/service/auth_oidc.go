@@ -35,9 +35,13 @@ import (
 //
 // Start writes one single-use oidc_login_attempts row (the HMAC of the state,
 // the nonce, the PKCE verifier and the issuer) and returns the authorization
-// URL. Callback spends that row (a plain read by the state's HMAC, then one
-// conditional UPDATE by id committed on its own that also blanks the nonce
-// and the verifier, #453), exchanges the code, verifies the ID token (signature, iss, aud, exp and
+// URL together with the raw state, which the handler also sets as the
+// short-lived sign-in cookie of the browser that called it (#528). Callback
+// spends that row (a plain read by the state's HMAC, then one conditional
+// UPDATE by id committed on its own that also blanks the nonce and the
+// verifier, #453), then requires the sign-in cookie sent with the callback to
+// equal the posted state, so a sign-in finishes only in the browser that
+// started it (binding_missing / binding_mismatch, #528), exchanges the code, verifies the ID token (signature, iss, aud, exp and
 // the nonce), maps its groups or roles claim to a role (the first matching
 // entry, in stored order; an Entra ID group overage is read from Microsoft
 // Graph, #450; when a groups mapping meets an ID token without a groups claim
@@ -60,8 +64,8 @@ import (
 //
 // Every log line carries component oidc_sign_in, the request_id of the HTTP
 // request and the attempt_id of the row (0 before the row exists or is
-// claimed), and never a code, state, nonce, verifier, token, email, subject,
-// name or claim. Attempts older than OIDCLoginAttemptRetention are pruned by
+// claimed), and never a code, state, sign-in cookie value, nonce, verifier,
+// token, email, subject, name or claim. Attempts older than OIDCLoginAttemptRetention are pruned by
 // the stale bulk operation sweep (PruneOIDCLoginAttempts).
 
 // Errors of the OIDC sign-in, classified with errors.Is.
@@ -73,20 +77,38 @@ var (
 	// failed (503).
 	ErrSSOUnavailable = errors.New("single sign-on is unavailable")
 	// ErrSSOSignInFailed covers every refusal of a callback (401): an
-	// unknown, used or expired state, a token that does not verify, a claim
-	// that does not map, a refused account. The reason is logged as an
+	// unknown, used or expired state, a missing sign-in cookie or one that
+	// names another sign-in, a token that does not verify, a claim that does
+	// not map, a refused account. The reason is logged as an
 	// error_code and never disclosed.
 	ErrSSOSignInFailed = errors.New("single sign-on failed")
 )
 
 // OIDCService is the OpenID Connect sign-in.
 type OIDCService interface {
-	// Start begins a sign-in and returns the issuer's authorization URL.
-	Start(ctx context.Context) (string, error)
+	// Start begins a sign-in and returns the issuer's authorization URL and
+	// the state the browser must hold as its sign-in cookie.
+	Start(ctx context.Context) (*OIDCAuthorization, error)
 	// Callback finishes a sign-in with the code and state the issuer
-	// redirected back with and returns the session, as a password login does.
-	Callback(ctx context.Context, code, state string) (*AuthTokens, error)
+	// redirected back with and the value of the sign-in cookie the browser
+	// sent ("" when it sent none), and returns the session, as a password
+	// login does. The attempt is spent first; a binding that is empty or
+	// differs from the state is then refused.
+	Callback(ctx context.Context, code, state, binding string) (*AuthTokens, error)
 }
+
+// OIDCAuthorization is what Start returns: the issuer's authorization URL,
+// the raw state it carries (the value of the sign-in cookie, #528) and
+// whether that cookie is Secure (APP_BASE_URL is https).
+type OIDCAuthorization struct {
+	URL          string
+	State        string
+	SecureCookie bool
+}
+
+// OIDCAttemptTTL is how long a started sign-in can be finished; the sign-in
+// cookie lives as long.
+const OIDCAttemptTTL = oidcAttemptTTL
 
 // Limits and lifetimes of the OIDC sign-in.
 const (
@@ -420,27 +442,27 @@ func mappingUsesGroups(mapping []SSORoleMapping) bool {
 	return false
 }
 
-func (s *oidcService) Start(ctx context.Context) (string, error) {
+func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	cfg, err := s.usableConfig(ctx)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if !ssoConfigured(cfg) {
 		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return "", ssoUnavailable("not_configured")
+		return nil, ssoUnavailable("not_configured")
 	}
 	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, 0)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	state, err := generateOpaqueToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	nonce, err := generateOpaqueToken()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	verifier := oauth2.GenerateVerifier()
 
@@ -453,10 +475,21 @@ func (s *oidcService) Start(ctx context.Context) (string, error) {
 		ExpiresAt:    now.Add(oidcAttemptTTL),
 	}
 	if err := s.attempts.Create(attempt); err != nil {
-		return "", fmt.Errorf("store the single sign-on attempt: %w", err)
+		return nil, fmt.Errorf("store the single sign-on attempt: %w", err)
 	}
 	oidcLogger(ctx, attempt.ID).Info("Single sign-on started")
-	return s.oauthConfig(provider, cfg).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)), nil
+	return &OIDCAuthorization{
+		URL:          s.oauthConfig(provider, cfg).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)),
+		State:        state,
+		SecureCookie: s.secureCookie(),
+	}, nil
+}
+
+// secureCookie reports whether APP_BASE_URL is https (the scheme compared in
+// any letter case), which makes the sign-in cookie Secure.
+func (s *oidcService) secureCookie() bool {
+	scheme, _, found := strings.Cut(s.appBaseURL, "://")
+	return found && strings.EqualFold(scheme, "https")
 }
 
 // oidcClaims are the ID-token claims the sign-in reads. Groups and roles are
@@ -474,8 +507,8 @@ type oidcClaims struct {
 	TID json.RawMessage `json:"tid"`
 }
 
-func (s *oidcService) Callback(ctx context.Context, code, state string) (*AuthTokens, error) {
-	tokens, facts, err := s.callback(ctx, code, state)
+func (s *oidcService) Callback(ctx context.Context, code, state, binding string) (*AuthTokens, error) {
+	tokens, facts, err := s.callback(ctx, code, state, binding)
 	return s.finishCallback(ctx, tokens, facts, err)
 }
 
@@ -543,7 +576,7 @@ func (s *oidcService) recordCallback(ctx context.Context, tokens *AuthTokens, fa
 // callback finishes the sign-in and also returns what it learned: the id of
 // the attempt it claimed (0 when the claim did not succeed), for the log line
 // of Callback, and the verified identity and claim values, for the audit row.
-func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTokens, oidcCallbackFacts, error) {
+func (s *oidcService) callback(ctx context.Context, code, state, binding string) (*AuthTokens, oidcCallbackFacts, error) {
 	var facts oidcCallbackFacts
 	cfg, err := s.usableConfig(ctx)
 	if err != nil {
@@ -563,6 +596,16 @@ func (s *oidcService) callback(ctx context.Context, code, state string) (*AuthTo
 		return nil, facts, fmt.Errorf("claim the single sign-on attempt: %w", err)
 	}
 	facts.attemptID = attempt.ID
+	// The sign-in cookie set by Start holds the raw state, and the attempt
+	// was found by the state's HMAC: a cookie equal to the posted state is
+	// bound to this attempt. Checked after the claim, so a refused callback
+	// still spends its attempt and its audit row names it.
+	if binding == "" {
+		return nil, facts, oidcRefuse("binding_missing")
+	}
+	if subtle.ConstantTimeCompare([]byte(binding), []byte(state)) != 1 {
+		return nil, facts, oidcRefuse("binding_mismatch")
+	}
 	if attempt.Issuer != cfg.IssuerURL {
 		return nil, facts, oidcRefuse("issuer_changed")
 	}
