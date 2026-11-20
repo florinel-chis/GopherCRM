@@ -195,7 +195,9 @@ class ReleaseTests(unittest.TestCase):
                    'TestWebhookSecretRotationMigrationFiles',
                    'TestWebhookSecretRotationMigration',
                    'TestSCIMGroupMembersMigrationFiles',
-                   'TestSCIMGroupMembersMigration']]
+                   'TestSCIMGroupMembersMigration',
+                   'TestAdminOnlyPermissionsMigrationFiles',
+                   'TestAdminOnlyPermissionsMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})

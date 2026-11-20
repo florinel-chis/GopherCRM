@@ -32,6 +32,9 @@ const (
 	// create, replace or patch (#470, #471), with actor_user_id NULL: the
 	// provisioning client is no user.
 	AuthMethodSCIM = "scim"
+	// AuthMethodMigration is recorded on the role audit row of a startup or
+	// migration data step, with actor_user_id NULL.
+	AuthMethodMigration = models.RoleAuditAuthMethodMigration
 )
 
 type AuthService interface {

@@ -81,6 +81,10 @@ func MigrateDatabaseWith(db *gorm.DB) error {
 		if err := seedSystemRoles(tx); err != nil {
 			return err
 		}
+		// No custom role holds an admin-only key (#524).
+		if err := stripAdminOnlyRolePermissions(tx); err != nil {
+			return err
+		}
 		if err := migrateLegacyQuoteLineQuantity(tx); err != nil {
 			return err
 		}

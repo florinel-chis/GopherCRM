@@ -21,7 +21,7 @@ row, is the System-role matrix in [AUTHORIZATION.md](../../AUTHORIZATION.md#syst
 |---|---|---|---|---|
 | `users` | everything | - | - | - |
 | `roles` | everything | - | - | - |
-| `settings` | everything, including `settings.sso_manage` | - | - | - |
+| `settings` | everything, including `settings.sso_manage` and `settings.scim_manage` | - | - | - |
 | `audit` | everything (`audit.sign_ins_view`) | - | - | - |
 | `leads` | everything | `leads.view`, `leads.update`, `leads.delete`, `leads.convert`, `leads.export` own; `leads.create` all | - | - |
 | `customers` | everything | `customers.view`, `customers.create`, `customers.update`, `customers.assign` all | `customers.view` all | - |
@@ -42,7 +42,10 @@ row, is the System-role matrix in [AUTHORIZATION.md](../../AUTHORIZATION.md#syst
 
 "Everything" means every permission of the group, for all records. `tickets.view_own_customer`
 (the tickets of the customer record linked to a customer login) belongs to the Customer role only;
-no other role, and no custom role, can hold it. The `assignment` permissions say who can be picked:
+no other role, and no custom role, can hold it. Likewise `settings.sso_manage` (single sign-on
+settings) and `settings.scim_manage` (SCIM provider tokens) belong to the Admin role only: no
+custom role can hold them, the role editor does not offer them, and a clone of Admin leaves them
+out. The `assignment` permissions say who can be picked:
 only a user holding `assignment.ticket_assignee` can be assigned a ticket, for example.
 
 ## Custom roles
@@ -67,8 +70,9 @@ Cloning is the quickest way to start from a system role.
 
 1. In Settings → Roles, click **Clone** on the role's row (or open a system role and click
    **Clone**).
-2. Enter the **Name of the new role** and confirm. The copy holds the same permissions and opens
-   in the editor.
+2. Enter the **Name of the new role** and confirm. The copy holds the same permissions, except
+   those only a system role can hold (a clone of Admin leaves out `settings.sso_manage` and
+   `settings.scim_manage`), and opens in the editor.
 3. Change the permissions and click **Save**.
 
 A clone of Sales is a custom role: it behaves exactly as its ticked permissions say, so it can,
@@ -125,7 +129,9 @@ users on the Admin system role count; a custom role that holds every permission 
 themselves. They cannot create, edit or clone a role with permissions above their own, assign such
 a role, or edit, activate, deactivate or delete a user whose permissions are above their own. "Own"
 counts as less than "all". The refusal is 403 `ROLE_ESCALATION`, and the rule also applies to
-their own account.
+their own account. Because the Admin role holds two permissions no custom role can hold, an
+administrator's account is always above a user on a custom role: only an administrator can give
+someone the Admin role, or edit, deactivate or delete an administrator.
 
 ## Audit trail
 
@@ -142,6 +148,7 @@ was made:
 | `bearer` | A person signed in to the SPA (or a client using a sign-in token) made the change. |
 | `api_key` | The change was made with an API key. |
 | `oidc` | A single sign-on sign-in applied the role from the provider's mapping to the person's own account. |
+| `migration` | A data step of an upgrade changed a custom role (for example, removing the admin-only permissions); no person is recorded. |
 
 Changes to the single sign-on settings are not audited yet. Sign-in attempts are recorded
 separately, in Settings → Sign-in audit (`/settings/sign-in-audit`, needs

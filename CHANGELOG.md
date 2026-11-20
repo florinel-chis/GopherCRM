@@ -1064,6 +1064,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on and SCIM settings are admin-only (#524).** The permissions
+  `settings.sso_manage` and `settings.scim_manage` can be held only by the Admin system role.
+  Creating or updating a custom role with either one is refused with 400 `INVALID_PERMISSION`
+  naming the key and writes nothing; `GET /permissions/catalogue` marks both as not selectable, so
+  the role editor no longer offers them; a custom role's stored rows holding them are ignored when
+  its permissions are resolved; and a clone of the Admin role leaves them out. On every start, on
+  every driver, the application removes both keys from any custom role that holds them and writes
+  one `role_updated` row per changed role to the role audit log, with `auth_method` `migration`,
+  no actor and the role's name, description and stored permissions before and after;
+  `migrations/20261129120001_admin_only_sso_scim_permissions` does the same on MySQL/MariaDB, and
+  its rollback restores nothing. Because the Admin role now holds permissions no custom role can
+  hold, an admin account is always above a custom-role user: only an admin can assign the Admin
+  role or edit, deactivate or delete an admin. Admins keep full access to both settings screens.
+
 - **Rate limiting keeps serving new clients when its client table is full, counts IPv6 clients
   per /64 and refuses its test switch in production (#527).** When a rate-limit instance tracks
   its maximum of 10,000 clients, a new client is now admitted and the least recently active entry

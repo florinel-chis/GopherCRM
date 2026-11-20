@@ -59,11 +59,13 @@ func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 		env.roles, repository.NewRoleAuditRepository(env.db), utils.NewTransactionManager(env.db)))
 	ctx := context.Background()
 
-	// The actor passes every other rule: it holds the whole admin matrix on a
-	// custom role, so only the invariant can refuse it.
+	// A custom role holding every key a custom role can hold is still below
+	// an admin (#524): the admin matrix holds the admin-only keys. So the
+	// actor that passes every other rule is an admin: with one active admin,
+	// the admin itself, and with two, the other admin.
 	full := env.customUser("full", env.role("Full", adminMatrixGrants(t)...))
-	actor := service.Actor{UserID: full.ID, AuthMethod: service.AuthMethodBearer}
 	within := env.role("Within", "leads.view")
+	var actor service.Actor
 
 	demote := func(id uint) error {
 		_, err := users.UpdateAs(ctx, actor, id, map[string]interface{}{"role": models.RoleSales})
@@ -84,6 +86,18 @@ func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 	erase := func(id uint) error { return users.DeleteAs(ctx, actor, id) }
 
 	admin := env.user("admin", models.RoleAdmin)
+	actor = service.Actor{UserID: admin.ID, AuthMethod: service.AuthMethodBearer}
+
+	t.Run("a custom role is below the admin", func(t *testing.T) {
+		fullActor := service.Actor{UserID: full.ID, AuthMethod: service.AuthMethodBearer}
+		state, audits := env.userState(admin.ID), env.auditCount()
+		_, err := users.SetActiveAs(ctx, fullActor, admin.ID, false)
+		require.ErrorIs(t, err, apperrors.ErrRoleEscalation)
+		_, err = users.UpdateAs(ctx, fullActor, full.ID, map[string]interface{}{"role": models.RoleAdmin})
+		require.ErrorIs(t, err, apperrors.ErrRoleEscalation, "nor can it give itself the admin role")
+		assert.Equal(t, state, env.userState(admin.ID))
+		assert.Equal(t, audits, env.auditCount())
+	})
 
 	t.Run("one active admin", func(t *testing.T) {
 		// A deactivated and an erased admin do not count as active.
@@ -131,6 +145,7 @@ func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 		} {
 			second := env.user("second-admin", models.RoleAdmin)
 			require.EqualValues(t, 2, env.activeAdmins(), c.name)
+			actor = service.Actor{UserID: second.ID, AuthMethod: service.AuthMethodBearer}
 			audits := env.auditCount()
 			require.NoError(t, c.change(current.ID), c.name)
 			assert.Contains(t, env.userState(current.ID), c.want, c.name)
@@ -417,8 +432,8 @@ func TestLastAdminAPISQLite(t *testing.T) {
 	}{
 		{"the admin demotes itself", admin, http.MethodPut, target, map[string]interface{}{"role": "sales"}, http.StatusConflict, "LAST_ADMIN"},
 		{"the admin deactivates itself through the update", admin, http.MethodPut, target, map[string]interface{}{"is_active": false}, http.StatusConflict, "LAST_ADMIN"},
-		{"a full custom role deactivates the admin", full, http.MethodPost, target + "/deactivate", nil, http.StatusConflict, "LAST_ADMIN"},
-		{"a full custom role erases the admin", full, http.MethodDelete, target, nil, http.StatusConflict, "LAST_ADMIN"},
+		{"a custom role holding every key it can hold deactivates the admin", full, http.MethodPost, target + "/deactivate", nil, http.StatusForbidden, "ROLE_ESCALATION"},
+		{"a custom role holding every key it can hold erases the admin", full, http.MethodDelete, target, nil, http.StatusForbidden, "ROLE_ESCALATION"},
 		{"the admin deactivates itself", admin, http.MethodPost, target + "/deactivate", nil, http.StatusBadRequest, "BAD_REQUEST"},
 		{"the admin erases itself", admin, http.MethodDelete, target, nil, http.StatusBadRequest, "BAD_REQUEST"},
 		{"a role holding only users.activate deactivates the admin", activator, http.MethodPost, target + "/deactivate", nil, http.StatusForbidden, "ROLE_ESCALATION"},
@@ -441,11 +456,11 @@ func TestLastAdminAPISQLite(t *testing.T) {
 		assert.Equal(t, "sales", decodeUser(t, demoted).Role)
 
 		third := env.user("third", models.RoleAdmin)
-		deactivated := env.do(full, http.MethodPost, userRoutePath(second.ID)+"/deactivate", nil)
+		deactivated := env.do(third, http.MethodPost, userRoutePath(second.ID)+"/deactivate", nil)
 		requireAnswer(t, deactivated, http.StatusOK, "")
 
-		env.user("fourth", models.RoleAdmin)
-		erased := env.do(full, http.MethodDelete, userRoutePath(third.ID), nil)
+		fourth := env.user("fourth", models.RoleAdmin)
+		erased := env.do(fourth, http.MethodDelete, userRoutePath(third.ID), nil)
 		requireAnswer(t, erased, http.StatusNoContent, "")
 		assert.EqualValues(t, 1, env.activeAdmins())
 	})

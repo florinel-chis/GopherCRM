@@ -166,6 +166,9 @@ func TestAuthorizationGuideMatchesCatalogue(t *testing.T) {
 			if node.SystemOnly {
 				want += " (system-only)"
 			}
+			if node.AdminOnly {
+				want += " (admin-only)"
+			}
 			if cells[2] != want {
 				t.Errorf("catalogue row %s: scopes %q, want %q", node.Key, cells[2], want)
 			}

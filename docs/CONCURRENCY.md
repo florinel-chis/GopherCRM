@@ -621,7 +621,11 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   (`HasLinkedCustomerRecord`, a plain read of `customers` by `user_id` after the locks) takes no
   lock, so the lock order is unchanged. The role delete is the one place where `users` rows are
   not taken in ascending id: its holder reads lock by `role_id`, after the actor's row and, the
-  second time, after the roles; a deadlock that this causes is replayed.
+  second time, after the roles; a deadlock that this causes is replayed. The startup data step
+  that removes the admin-only keys from custom roles (#524, `stripAdminOnlyRolePermissions` in
+  `internal/models`) takes one transaction per role and locks only that `roles` row before it
+  deletes the role's `role_permissions` rows, so it holds no `users` lock and cannot invert the
+  users-then-roles order.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of

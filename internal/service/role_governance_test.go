@@ -106,6 +106,8 @@ func TestValidateRolePermissions(t *testing.T) {
 		{Key: permissions.LeadsView},
 		{Key: "leads.fly"},
 		{Key: permissions.TicketsViewOwnCustomer},
+		{Key: permissions.SettingsSSOManage},
+		{Key: permissions.SettingsSCIMManage, Scope: "all"},
 		{Key: permissions.RolesManage, Scope: "own"},
 		{Key: permissions.DealsView, Scope: "some"},
 		{Key: permissions.LeadsView, Scope: "own"},
@@ -115,7 +117,15 @@ func TestValidateRolePermissions(t *testing.T) {
 	var invalid *apperrors.InvalidPermissionError
 	require.True(t, errors.As(err, &invalid))
 	assert.Equal(t, []string{"", permissions.DealsView, "leads.fly", permissions.LeadsView, permissions.RolesManage,
-		permissions.TicketsViewOwnCustomer}, invalid.Keys, "every offending key, sorted")
+		permissions.SettingsSCIMManage, permissions.SettingsSSOManage, permissions.TicketsViewOwnCustomer},
+		invalid.Keys, "every offending key, sorted")
+
+	// Each admin-only key alone is refused and named.
+	for _, key := range []string{permissions.SettingsSSOManage, permissions.SettingsSCIMManage} {
+		_, err = validateRolePermissions([]RolePermissionInput{{Key: permissions.SettingsUpdate}, {Key: key}})
+		require.True(t, errors.As(err, &invalid), key)
+		assert.Equal(t, []string{key}, invalid.Keys)
+	}
 }
 
 func TestCheckRoleAssignment(t *testing.T) {

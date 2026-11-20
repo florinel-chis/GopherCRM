@@ -37455,7 +37455,7 @@
                     "example": "role_updated"
                 },
                 "actor_user_id": {
-                    "description": "Id of the acting user; null for a SCIM write, which no user performs.",
+                    "description": "Id of the acting user; null for a SCIM write or a data step, which no\nuser performs.",
                     "type": "integer",
                     "example": 1
                 },
@@ -37463,13 +37463,14 @@
                     "description": "State after the change, in the same shape. null on a role delete."
                 },
                 "auth_method": {
-                    "description": "How the acting request authenticated: bearer or api_key, oidc for the\nrole an OpenID Connect sign-in applied to its own account, or scim for\na SCIM 2.0 user create, replace or patch (actor null).",
+                    "description": "How the acting request authenticated: bearer or api_key, oidc for the\nrole an OpenID Connect sign-in applied to its own account, scim for a\nSCIM 2.0 user create, replace or patch (actor null), or migration for a\nstartup or migration data step (actor null).",
                     "type": "string",
                     "enum": [
                         "bearer",
                         "api_key",
                         "oidc",
-                        "scim"
+                        "scim",
+                        "migration"
                     ],
                     "example": "bearer"
                 },

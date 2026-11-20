@@ -28,10 +28,10 @@ const (
 	SettingsUpdate = "settings.update"
 	// SettingsSSOManage opens the single sign-on settings (/settings/sso).
 	// settings.view and settings.update do not: the SSO rows are reserved
-	// and hidden from the generic /configurations endpoints.
+	// and hidden from the generic /configurations endpoints. Admin-only.
 	SettingsSSOManage = "settings.sso_manage"
 	// SettingsSCIMManage opens the SCIM provider tokens
-	// (/settings/scim/tokens, #468).
+	// (/settings/scim/tokens, #468). Admin-only.
 	SettingsSCIMManage = "settings.scim_manage"
 
 	// AuditSignInsView opens the sign-in audit log (GET /audit/sign-ins).
@@ -129,11 +129,18 @@ type Node struct {
 	AllowsOwn bool
 	// SystemOnly marks a leaf only a system role can hold.
 	SystemOnly bool
-	Children   []Node
+	// AdminOnly marks a leaf the admin system role holds and no other role
+	// can: unlike a system-only leaf it is part of the admin matrix.
+	AdminOnly bool
+	Children  []Node
 }
 
 // IsLeaf reports whether the node is a permission rather than a group.
 func (n Node) IsLeaf() bool { return len(n.Children) == 0 }
+
+// CustomRoleMayHold reports whether a custom role can hold the leaf: neither
+// system-only nor admin-only.
+func (n Node) CustomRoleMayHold() bool { return !n.SystemOnly && !n.AdminOnly }
 
 func leaf(key, title string) Node    { return Node{Key: key, Title: title} }
 func ownLeaf(key, title string) Node { return Node{Key: key, Title: title, AllowsOwn: true} }
@@ -160,8 +167,8 @@ var catalogue = []Node{
 	group("settings", "Settings",
 		leaf(SettingsView, "View settings"),
 		leaf(SettingsUpdate, "Change settings"),
-		leaf(SettingsSSOManage, "View and change single sign-on settings"),
-		leaf(SettingsSCIMManage, "Create, list and revoke SCIM provider tokens"),
+		Node{Key: SettingsSSOManage, Title: "View and change single sign-on settings", AdminOnly: true},
+		Node{Key: SettingsSCIMManage, Title: "Create, list and revoke SCIM provider tokens", AdminOnly: true},
 	),
 	group("audit", "Audit",
 		leaf(AuditSignInsView, "View the sign-in audit log"),

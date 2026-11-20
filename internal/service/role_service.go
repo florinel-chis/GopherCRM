@@ -143,7 +143,7 @@ func (s *roleService) Get(id uint) (*RoleDetail, error) {
 }
 
 // validateRolePermissions turns a requested list into rows. A key outside the
-// catalogue, a system-only key, a key named twice, a scope other than all or
+// catalogue, a system-only or admin-only key, a key named twice, a scope other than all or
 // own, and own on a leaf that does not allow it are refused together: the
 // error carries every offending key, sorted.
 func validateRolePermissions(inputs []RolePermissionInput) ([]models.RolePermission, error) {
@@ -157,7 +157,7 @@ func validateRolePermissions(inputs []RolePermissionInput) ([]models.RolePermiss
 		}
 		leaf, known := permissions.Leaf(input.Key)
 		switch {
-		case !known, leaf.SystemOnly, seen[input.Key]:
+		case !known, !leaf.CustomRoleMayHold(), seen[input.Key]:
 			offending[input.Key] = true
 		case scope == models.PermissionScopeAll:
 		case scope == models.PermissionScopeOwn && leaf.AllowsOwn:

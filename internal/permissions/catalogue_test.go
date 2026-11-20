@@ -53,7 +53,7 @@ func TestCatalogueScopes(t *testing.T) {
 		AutomationRunsView,
 	}
 	sort.Strings(ownCapable)
-	var got, systemOnly []string
+	var got, systemOnly, adminOnly []string
 	for _, leaf := range Leaves() {
 		if leaf.AllowsOwn {
 			got = append(got, leaf.Key)
@@ -61,10 +61,18 @@ func TestCatalogueScopes(t *testing.T) {
 		if leaf.SystemOnly {
 			systemOnly = append(systemOnly, leaf.Key)
 		}
+		if leaf.AdminOnly {
+			adminOnly = append(adminOnly, leaf.Key)
+			assert.False(t, leaf.SystemOnly, "%s: an admin-only leaf is not system-only, or admin would lose it", leaf.Key)
+		}
+		assert.Equal(t, !leaf.SystemOnly && !leaf.AdminOnly, leaf.CustomRoleMayHold(), leaf.Key)
 	}
 	sort.Strings(got)
+	sort.Strings(adminOnly)
 	assert.Equal(t, ownCapable, got, "the leaves that allow scope own")
 	assert.Equal(t, []string{TicketsViewOwnCustomer}, systemOnly)
+	assert.Equal(t, []string{SettingsSCIMManage, SettingsSSOManage}, adminOnly, "the admin-only leaves")
+	assert.Equal(t, models.AdminOnlyPermissionKeys, adminOnly, "models.AdminOnlyPermissionKeys names the same leaves, sorted")
 
 	// A set holds only all and own, and own only where the leaf allows it.
 	set := NewSet(
@@ -123,6 +131,11 @@ func TestSystemRoleMatricesEqualGolden(t *testing.T) {
 	for _, leaf := range Leaves() {
 		assert.Equal(t, !leaf.SystemOnly, admin.HasAll(leaf.Key), "admin and %s", leaf.Key)
 	}
+	// The admin-only keys belong to the admin role alone.
+	for _, role := range roles {
+		assert.Equal(t, role == "admin", ForSystemRole(role).HasAll(SettingsSSOManage), role)
+		assert.Equal(t, role == "admin", ForSystemRole(role).HasAll(SettingsSCIMManage), role)
+	}
 	// The system-only key belongs to the customer role alone.
 	for _, role := range roles {
 		assert.Equal(t, role == "customer", ForSystemRole(role).Has(TicketsViewOwnCustomer), role)
@@ -144,6 +157,8 @@ func TestForUserResolution(t *testing.T) {
 			{RoleID: roleID, PermissionKey: LeadsView, Scope: models.PermissionScopeOwn},
 			{RoleID: roleID, PermissionKey: CustomersView, Scope: models.PermissionScopeAll},
 			{RoleID: roleID, PermissionKey: TicketsViewOwnCustomer, Scope: models.PermissionScopeAll}, // system-only
+			{RoleID: roleID, PermissionKey: SettingsSSOManage, Scope: models.PermissionScopeAll},      // admin-only
+			{RoleID: roleID, PermissionKey: SettingsSCIMManage, Scope: models.PermissionScopeAll},     // admin-only
 			{RoleID: roleID, PermissionKey: "leads.teleport", Scope: models.PermissionScopeAll},       // not in the catalogue
 			{RoleID: roleID, PermissionKey: CustomersExport, Scope: models.PermissionScopeOwn},        // own on an all-only leaf
 			{RoleID: roleID, PermissionKey: DealsView, Scope: "everything"},                           // not a scope

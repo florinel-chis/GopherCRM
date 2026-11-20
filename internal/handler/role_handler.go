@@ -155,12 +155,14 @@ type RoleAuditEntryResponse struct {
 	ID uint `json:"id" example:"42"`
 	// UTC time of the change (RFC 3339).
 	CreatedAt time.Time `json:"created_at" example:"2026-11-18T09:00:00Z"`
-	// Id of the acting user; null for a SCIM write, which no user performs.
+	// Id of the acting user; null for a SCIM write or a data step, which no
+	// user performs.
 	ActorUserID *uint `json:"actor_user_id" example:"1"`
 	// How the acting request authenticated: bearer or api_key, oidc for the
-	// role an OpenID Connect sign-in applied to its own account, or scim for
-	// a SCIM 2.0 user create, replace or patch (actor null).
-	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc,scim" example:"bearer"`
+	// role an OpenID Connect sign-in applied to its own account, scim for a
+	// SCIM 2.0 user create, replace or patch (actor null), or migration for a
+	// startup or migration data step (actor null).
+	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc,scim,migration" example:"bearer"`
 	// Kind of change.
 	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed" example:"role_updated"`
 	// The affected role, or the custom role a user received; null when a user
@@ -199,7 +201,7 @@ func roleResponse(detail *service.RoleDetail) RoleResponse {
 func catalogueNode(node permissions.Node) PermissionCatalogueNode {
 	out := PermissionCatalogueNode{Key: node.Key, Title: node.Title, Scopes: []string{}, Children: []PermissionCatalogueNode{}}
 	if node.IsLeaf() {
-		out.Selectable = !node.SystemOnly
+		out.Selectable = node.CustomRoleMayHold()
 		if node.AllowsOwn {
 			out.Scopes = []string{string(models.PermissionScopeAll), string(models.PermissionScopeOwn)}
 		}

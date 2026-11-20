@@ -237,7 +237,9 @@ func TestSCIMTokenHandler(t *testing.T) {
 		})
 	}
 
-	t.Run("a custom role holding only settings.scim_manage", func(t *testing.T) {
+	// The guard reads the injected set only: a published set holding the one
+	// key opens the three routes.
+	t.Run("a published permission set holding only the SCIM key", func(t *testing.T) {
 		repo := &scimTokenTestRepo{}
 		router := newSCIMTokenTestRouter(repo, func(c *gin.Context) {
 			c.Set("user_role", "custom")
