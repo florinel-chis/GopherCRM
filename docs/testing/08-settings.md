@@ -297,12 +297,16 @@ blocked until the page is built.
   2. As admin, deactivate that user (`is_active=false`) from the Users page.
   3. Retry the key.
 - **Expected:** **401** — `ValidateAPIKey` loads the owner through the scoped repository lookup and
-  refuses the key with "API key owner is not active". Deactivation is the reversible alternative to
-  erasure and touches no personal data; reactivating the user makes the key work again.
+  refuses the key with "API key owner is not active". The deactivation from the Users page also
+  revokes every key of the user in the same transaction (#526: `is_active` false, `revoked_at`
+  set). Deactivation is the reversible alternative to erasure and touches no personal data; the
+  key stays revoked after reactivation, so the user issues a new one.
 - **Automation:** blocked — no UI surface for API keys and no role-login helper; covered by
   `internal/service/auth_service_test.go` `TestAuthService_ValidateAPIKey` subtest "key of a
-  deactivated user is rejected" and `test/integration/erasure_test.go`
-  `TestAPIKeyOfADeactivatedUserCannotAuthenticate`
+  deactivated user is rejected", `test/integration/erasure_test.go`
+  `TestAPIKeyOfADeactivatedUserCannotAuthenticate`, `TestCredentialRevocation{SQLite,MySQL}`
+  (`set_active_false`, `set_active_true_after_a_deactivation_restores_nothing`) and
+  `TestCredentialRevocationProductionWiring` (`administrator_deactivation_then_activation`)
 
 ### TC-SET-014 — Reject a key whose owner has been erased
 - **Priority:** P0

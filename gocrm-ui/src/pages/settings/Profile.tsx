@@ -90,13 +90,13 @@ export const Profile: React.FC = () => {
     setSuccess(null);
     try {
       const { renewed } = await authApi.changePassword(data.current_password, data.new_password);
-      // The server revokes every other refresh session in the same
-      // transaction. It cannot revoke access tokens already issued (there is
-      // no blocklist), so other devices keep working until theirs expires —
-      // the copy must not promise an immediate sign-out.
+      // In the same transaction the server revokes every other refresh
+      // session and every API key of the account, and moves its access-token
+      // generation forward, so every access token issued before the change is
+      // refused from then on. Only the renewed session of this tab survives.
       const message = renewed
-        ? 'Password changed. You stay signed in here. Your other sessions can no longer renew themselves; access they already hold ends when it expires.'
-        : 'Password changed. Every session, including this one, will need to sign in again once its current access expires.';
+        ? 'Password changed. You stay signed in here. Your other sessions are signed out and your API keys are revoked.'
+        : 'Password changed. Every session, including this one, is signed out and your API keys are revoked.';
       setSuccess(message);
       showSuccess('Password changed successfully');
       reset();

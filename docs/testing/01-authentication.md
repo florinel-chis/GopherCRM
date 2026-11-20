@@ -763,12 +763,17 @@ file, not by trusting the coverage matrix.
   policy-compliant password, then log in with it.
 - **Expected:** The token is single-use with a 1 h expiry; confirming returns **200**, clears any
   lockout, increments `users.token_version` (every access token issued before the reset answers
-  **401**, #236) and revokes every refresh token of the account in the same transaction that writes
+  **401**, #236), revokes every refresh token and revokes every API key of the account for good
+  (#526; an API key issued before the reset answers **401**) in the same transaction that writes
   the password; the old password no longer authenticates and a replay of the link returns the
   generic **400**.
 - **Automation:** blocked — needs mail capture (with `SMTP_HOST` unset the mailer only writes a
   redacted log line) *and* the missing `/reset-password` SPA route. The API round trip is
-  covered in Go by `tests/auth_session_integration_test.go` `AuthSessionIntegrationTestSuite.TestPasswordResetRoundTrip`.
+  covered in Go by `tests/auth_session_integration_test.go` `AuthSessionIntegrationTestSuite.TestPasswordResetRoundTrip`;
+  the credential revocation by `TestCredentialRevocation{SQLite,MySQL}` (`reset_confirm`,
+  `reset_confirm_rolls_back_when_the_key_revocation_fails`) and
+  `tests/auth_access_token_revocation_test.go` `TestAccessTokenRevocationAPISQLite`
+  (`password-reset/confirm`).
 
 ### TC-AUTH-037a — Reset confirmation is atomic and single-use
 - **Priority:** P0
@@ -839,15 +844,19 @@ file, not by trusting the coverage matrix.
 - **Expected:** `POST /auth/change-password` carries the tab's current `refresh_token` and returns
   **200** with "Password changed successfully" plus a replacement `token`, `refresh_token` and
   `user`; the page stores the pair in the storage the session already used ("Remember me" →
-  `localStorage`) and says "You stay signed in here. Your other sessions can no longer renew
-  themselves; access they already hold ends when it expires." The pre-change refresh token and
-  every other session's refresh token answer **401** at `/auth/refresh`, and since #236 every
-  access token issued before the change, including the one that made the request, answers **401**
-  at once (the Profile copy quoted above predates this; the frontend text is a separate ticket),
-  while the renewed `token` works. A wrong current password returns **400** with "The
+  `localStorage`) and says "You stay signed in here. Your other sessions are signed out and your
+  API keys are revoked." The pre-change refresh token and every other session's refresh token
+  answer **401** at `/auth/refresh`, and since #236 every access token issued before the change,
+  including the one that made the request, answers **401** at once, while the renewed `token`
+  works. Since #526 every API key of the account is revoked in the same transaction, for good
+  (an API-key caller's own key included; the answer stays 200). A wrong current password returns **400** with "The
   current password is incorrect" (not 401 — the session presenting it is still authenticated).
 - **Automation:** automated — `gocrm-ui/e2e/tests/settings.spec.ts` "changes the password and the
-  new one works on the next login", "rejects a wrong current password with the server message"
+  new one works on the next login", "rejects a wrong current password with the server message";
+  the API-key revocation in Go by `TestCredentialRevocation{SQLite,MySQL}`
+  (`change_password_with_a_refresh_token`, `change_password_without_a_refresh_token`),
+  `TestAccessTokenRevocationAPISQLite` (`change-password`) and
+  `TestCredentialRevocationProductionWiring` (`password_change`).
 
 ### TC-AUTH-038a — Password change is atomic and renews only the presenting session
 - **Priority:** P0
@@ -1626,10 +1635,14 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
      token.
   4. `PATCH` `active` true; repeat step 3 with the first access token and the second refresh
      token; sign in again.
-- **Expected:** Step 2: every row is revoked and `token_version` is one higher. Step 3: both 401.
-  Step 4: the old access token and the unused refresh token stay 401 (the account is active, so
-  only the generation refuses the access token); the new sign-in succeeds and its tokens work.
-- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`sessions end`, `reactivate`), `TestSCIMUserWrites{SQLite,MySQL}` (`replace deactivates`), `TestSCIMUserPatchWired`
+- **Expected:** Step 2: every row is revoked, every API key of the account is revoked
+  (`is_active` false, `revoked_at` set; #526) and `token_version` is one higher. Step 3: both 401,
+  and so is an API key of the account. Step 4: the old access token, the unused refresh token and
+  the API key stay 401 (the account is active, so only the generation refuses the access token and
+  the revocation the key); the new sign-in succeeds and its tokens work.
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`sessions end`, `reactivate`), `TestSCIMUserWrites{SQLite,MySQL}` (`replace deactivates`), `TestSCIMUserPatchWired`;
+  the API keys by `TestCredentialRevocation{SQLite,MySQL}` (`scim_patch_active_false`,
+  `scim_replace_active_false`, `scim_patch_active_true_after_a_deactivation_restores_nothing`)
 
 ### TC-AUTH-084 — A SCIM patch outside the supported paths is refused and writes nothing
 - **Priority:** P1
@@ -1677,14 +1690,16 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
      account.
 - **Expected:** Step 1 answers 401 with the SCIM error body and the account stays active. Step 2
   answers 204 with an empty body: `is_active` false, `token_version` + 1, every refresh token
-  revoked before any refresh call; email, names, role, `role_id`, the `user_identities` row and a
+  revoked before any refresh call, every API key of the account revoked (#526); email, names, role, `role_id`, the `user_identities` row and a
   NULL `deleted_at` are unchanged; one `auth_audit_log` row (method `scim`, outcome `success`) and
   no `role_audit_log` row. Step 3 answers 401 twice. Step 4 answers 204 and writes nothing (no
   audit row, same `token_version`). Step 5: the last admin is 400 `invalidValue` ("The last active
   admin must stay an active admin") with nothing written; every other id is the SCIM 404 `User not
   found` with nothing written.
 - **Automation:** automated — Go: `TestSCIMUserDelete{SQLite,MySQL}`, `TestSCIMUserDeleteHandler`,
-  `TestSCIMUserDeleteWired`
+  `TestSCIMUserDeleteWired`; the API keys by `TestCredentialRevocation{SQLite,MySQL}`
+  (`scim_delete`, `scim_delete_on_an_inactive_account_writes_nothing`) and
+  `TestCredentialRevocationProductionWiring` (`scim_delete`)
 
 ### TC-AUTH-087 — An Entra ID first sign-in finds the SCIM-created account by oid and tid
 - **Priority:** P0

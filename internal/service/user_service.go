@@ -21,6 +21,9 @@ type userService struct {
 	// governance is set by WithUserRoleGovernance; nil leaves the actor-taking
 	// writes as plain as Register, Update and Delete.
 	governance *roleGovernance
+	// credentials is set by WithUserCredentialRevocation; a governed write
+	// that deactivates an account refuses without it.
+	credentials *userCredentialRevocation
 }
 
 // UserServiceOption configures NewUserService beyond the user repository.

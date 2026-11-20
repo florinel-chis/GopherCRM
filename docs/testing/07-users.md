@@ -586,7 +586,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   as a wrong password (deliberate anti-enumeration), and `POST /auth/refresh` for that account is
   refused. Live sessions are revoked immediately: `authService.ValidateToken` checks `user.IsActive`
   on every authenticated request, so previously-issued access tokens return 401 Unauthorized as soon as the
-  account is deactivated.
+  account is deactivated. Since #526 the same transaction also increments `token_version`, revokes
+  every refresh token and revokes every API key of the account.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ### TC-USER-028 — Reactivate a deactivated user
@@ -597,8 +598,10 @@ Expected field still describes it and a **Known issue** line records the defect.
   1. As the admin, open `/users/<id>/edit`, turn "Active Account" back on and submit.
   2. Log in as that user.
 - **Expected:** `PUT /users/<id>` with `is_active: true` returns 200, the chip returns to the green
-  "Active" state and the login succeeds with a 200 and a fresh token pair. Nothing about the account
-  was lost — the contrast with the irreversible delete in TC-USER-033 is the point of this case.
+  "Active" state and the login succeeds with a 200 and a fresh token pair. No personal or business
+  data of the account was lost — the contrast with the irreversible delete in TC-USER-033 is the
+  point of this case. The access tokens, refresh tokens and API keys from before the deactivation
+  stay refused (#526): the user signs in afresh and issues new API keys.
 - **Known issue:** Gap G20 — no E2E coverage of the activate/deactivate cycle today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 

@@ -471,6 +471,37 @@ outcome, reason, user and time range, so the SQL below is optional):
 4. To see whether the same person keeps failing, group by `subject_ref`:
    `SELECT subject_ref, reason, COUNT(*) FROM auth_audit_log WHERE method = 'oidc' AND outcome = 'refused' GROUP BY subject_ref, reason;`
 
+## Which events end which credentials
+
+An account holds three kinds of credential: access tokens (JWTs, refused once the account's
+`token_version` moves past the value they carry), refresh tokens and API keys. Since #526 one
+service step, `revokeAllCredentials` (`internal/service/credential_revocation.go`), ends all
+three inside the transaction of a password change, a password reset, an administrator's
+deactivation and a SCIM deactivation: it increments `token_version`, revokes every refresh token
+and revokes every API key (`is_active` false, `revoked_at` stamped; a key revoked earlier keeps
+its first `revoked_at`). A failure of any step rolls the whole write back. Logout keeps its own,
+narrower revocation.
+
+| Event | Access tokens | Refresh tokens | API keys |
+|---|---|---|---|
+| Logout (`POST /auth/logout`) | Every earlier one ends | The presented one, or every one without a `refresh_token` | Not affected |
+| Refresh rotation (`POST /auth/refresh`) | None end; the replaced one stays valid until it expires | The presented one is spent and replaced | Not affected |
+| Password change (`POST /auth/change-password`) | Every earlier one ends, the caller's included; the renewed session's new token works | Every one, except the renewed session's successor | Every one, for good, the key that made the request included |
+| Password reset (`POST /auth/password-reset/confirm`) | Every earlier one ends | Every one | Every one, for good |
+| Administrator deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active` false) | Every earlier one ends | Every one | Every one, for good |
+| SCIM `active` false (`PATCH`, `PUT`) or `DELETE /scim/v2/Users/{id}` | Every earlier one ends | Every one | Every one, for good |
+| Reactivation (`POST /users/{id}/activate`, `is_active` or SCIM `active` true) | Nothing comes back | Nothing comes back | Nothing comes back |
+| Erasure (`DELETE /users/{id}`) | Refused with the erased account | Deleted | Deleted |
+| Role change | None yet: the new role applies from the next request | None yet | None yet |
+
+The writes take `users → refresh_tokens → api_keys` (see [CONCURRENCY.md](CONCURRENCY.md)). A
+server whose user service is not built with `WithUserCredentialRevocation`, or whose SCIM writes
+lack the API key repository, refuses a deactivation with 500 and writes nothing. A SCIM `DELETE`
+of an already inactive account writes nothing. Regression roots:
+`TestCredentialRevocation{SQLite,MySQL}` (`internal/service/auth_credential_revocation_test.go`),
+`TestCredentialRevocationProductionWiring` (`cmd/credential_revocation_wiring_test.go`) and
+`TestAPIKeyRepository_RevokeAllForUser`.
+
 ## SCIM provisioning
 
 Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RFC 7644) at
@@ -664,7 +695,8 @@ bcrypt hash of random bytes that are discarded, so it cannot sign in with a pass
 an absent `name` or sub-attribute clears it (PUT replaces), and an absent `active` leaves
 `is_active` as it is. Since #471 `active: false` deprovisions as a patch does (see
 [Users patch](#users-patch-471)): in the same transaction it increments the account's
-`token_version` and revokes every refresh token of the account, so its sessions end at once.
+`token_version`, revokes every refresh token and, since #526, every API key of the account, so
+its sessions and keys end at once.
 
 **Answers.** Error details are fixed and never echo a submitted value.
 
@@ -764,18 +796,20 @@ locked in the transaction.
 | An id that is not a positive integer, names no user, or names an erased or customer account or an account not linked to the issuer | 404 `User not found` |
 
 **Session end.** A patch that sets `active` false (also on an already inactive account), like a
-PUT with `"active": false`, deprovisions at once: the same `users` write increments
-`token_version`, so every access token issued before is refused with 401, and every
-`refresh_tokens` row of the account is revoked in the same transaction. `active` true only sets
-`is_active`: the account can sign in again, but no earlier access or refresh token comes back.
-The administrator deactivation (`POST /users/{id}/deactivate`) is unchanged.
+PUT with `"active": false`, deprovisions at once: after the `users` write the same transaction
+increments `token_version`, so every access token issued before is refused with 401, and revokes
+every `refresh_tokens` row and every API key of the account (#526, see
+[Which events end which credentials](#which-events-end-which-credentials)). `active` true only
+sets `is_active`: the account can sign in again, but no earlier access token, refresh token or
+API key comes back. The administrator deactivation (`POST /users/{id}/deactivate`) ends the same
+credentials.
 
 **Transaction and audit.** One governed transaction in the order
-`admin set → users → roles → refresh_tokens` (see [CONCURRENCY.md](CONCURRENCY.md), flow "SCIM
-user patch"). A changed role or `role_id` writes one `role_audit_log` row (`user_role_changed`,
+`admin set → users → roles → refresh_tokens → api_keys` (see [CONCURRENCY.md](CONCURRENCY.md),
+flow "SCIM user patch"). A changed role or `role_id` writes one `role_audit_log` row (`user_role_changed`,
 `auth_method` `scim`, `actor_user_id` NULL). After the commit one `auth_audit_log` row (method
 `scim`, outcome `success`) names the account. A refusal writes nothing: no `users`,
-`refresh_tokens`, `role_audit_log` or `auth_audit_log` change.
+`refresh_tokens`, `api_keys`, `role_audit_log` or `auth_audit_log` change.
 
 **Provider mappings.** The default attribute mappings of Entra ID and Okta send more than this
 list, for example `externalId` or `displayName` on update, and every such operation is refused
@@ -799,12 +833,13 @@ not read.
 | The last active admin | 400 `invalidValue` (`The last active admin must stay an active admin`) |
 | An id that is not a positive integer, names no user, or names an erased or customer account or an account not linked to the issuer | 404 `User not found` |
 
-**What it writes.** On an active account one `users` write sets `is_active` false and
-`token_version` to the locked value plus one, so every access token issued before is refused with
-401, and every `refresh_tokens` row of the account is revoked in the same transaction. The email,
+**What it writes.** On an active account one `users` write sets `is_active` false; then, in the
+same transaction, `token_version` becomes the locked value plus one, so every access token issued
+before is refused with 401, and every `refresh_tokens` row and every API key of the account is
+revoked (#526). The email,
 names, role, `role_id`, the `user_identities` link and `deleted_at` (NULL) stay as they were: the
 erasure of `DELETE /users/{id}` is never called. A later PATCH or PUT with `active` true
-reactivates the account, without bringing back an earlier session.
+reactivates the account, without bringing back an earlier session or API key.
 
 **Idempotence.** A repeat on the now inactive account answers 204 and commits nothing: no
 `token_version` increment, no revocation, no audit row. This differs on purpose from a PATCH with
@@ -812,7 +847,7 @@ reactivates the account, without bringing back an earlier session.
 bearer check already refuses an inactive owner.
 
 **Transaction and audit.** One governed transaction in the order
-`admin set → users → refresh_tokens`, a prefix-compatible subsequence of the patch order; no
+`admin set → users → refresh_tokens → api_keys`, a prefix-compatible subsequence of the patch order; no
 `roles` row is locked because no role is written (see [CONCURRENCY.md](CONCURRENCY.md), flow
 "SCIM user patch"). No `role_audit_log` row is written. After the commit of a deactivation one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
@@ -963,9 +998,11 @@ revoked. `expires_at` at creation forces a rotation date; it cannot be changed a
 is final: `PUT /api-keys/{id}` with `is_active: true` answers 409 `CONFLICT` and changes nothing
 (403 `FORBIDDEN` from a request authenticated with an API key). An administrator cannot list, read
 or revoke another user's keys (403 `FORBIDDEN`); the administrator's switch is
-`POST /users/{id}/deactivate`, which stops every key of that user at its next request (401).
-After a suspected leak, deactivate the user, or revoke every key of the user and not only the
-leaked one, then issue a new key.
+`POST /users/{id}/deactivate`, which revokes every key of that user for good (its next request is
+401, and `POST /users/{id}/activate` brings none back, #526). Changing or resetting the
+integration user's password revokes every key of it too, so issue a new key afterwards. After a
+suspected leak, deactivate the user, or revoke every key of the user and not only the leaked one,
+then issue a new key.
 
 `TestLeastPrivilegeIntegrationUserSQLite` and `TestLeastPrivilegeIntegrationUserMySQL` in
 `internal/integration` build this setup through the three routes and prove each statement of
@@ -1003,7 +1040,7 @@ groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider
 `/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
 #469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
 and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the patch
-(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions;
+(`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions (and, since #526, its API keys);
 #504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases;
 #506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`), the groups-claim
 values of the role mapping, whose members patch recomputes the members' roles. SCIM bulk

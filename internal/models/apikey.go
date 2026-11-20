@@ -26,9 +26,11 @@ type APIKey struct {
 	// Expiry time (RFC 3339); requests with the key are rejected from this
 	// instant on. Absent when the key never expires. Set only at creation.
 	ExpiresAt *time.Time `json:"expires_at,omitempty" example:"2026-12-31T23:59:59Z"`
-	// False once the key is revoked (DELETE /api-keys/{id} or PUT with
-	// is_active=false). A revoked key cannot be switched on again. An inactive
-	// key is rejected at authentication.
+	// False once the key is revoked: DELETE /api-keys/{id}, PUT with
+	// is_active=false, or a password change, password reset or deactivation
+	// of the owning account, which revokes every key of it. A revoked key
+	// cannot be switched on again. An inactive key is rejected at
+	// authentication.
 	IsActive bool `gorm:"default:true" json:"is_active" example:"true"`
 	// Time the key was revoked (RFC 3339). Absent while the key is live, and
 	// on keys revoked before this field existed. Read-only.

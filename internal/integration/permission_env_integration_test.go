@@ -172,7 +172,8 @@ func newPermissionEnvWith(t *testing.T, useMySQL bool, wrap roleRepositoryWrap) 
 		roleRepo, auditRepo = wrap(roleRepo, auditRepo)
 	}
 	handler.SetupUserRoutes(api, handler.NewUserHandler(service.NewUserService(userRepo,
-		service.WithUserRoleGovernance(roleRepo, auditRepo, txManager))))
+		service.WithUserRoleGovernance(roleRepo, auditRepo, txManager),
+		service.WithUserCredentialRevocation(apiKeyRepo, repository.NewRefreshTokenRepository(db)))))
 	handler.SetupRoleRoutes(api, handler.NewRoleHandler(service.NewRoleService(roleRepo, auditRepo, userRepo, txManager)))
 	handler.SetupLeadRoutes(api, handler.NewLeadHandler(leadService))
 	handler.SetupCustomerRoutes(api, handler.NewCustomerHandler(customerService))

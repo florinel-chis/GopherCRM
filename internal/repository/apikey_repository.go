@@ -54,6 +54,17 @@ func (r *apiKeyRepository) Revoke(id, userID uint, at time.Time) (int64, error) 
 	return result.RowsAffected, result.Error
 }
 
+// RevokeAllForUser switches off every live (not soft-deleted) key of userID
+// whose revoked_at is NULL and stamps revoked_at with at, in one statement.
+// A key revoked before keeps its first revocation time, and an inactive key
+// without revoked_at is stamped. It returns the count of changed rows.
+func (r *apiKeyRepository) RevokeAllForUser(userID uint, at time.Time) (int64, error) {
+	result := r.db.Model(&models.APIKey{}).
+		Where("user_id = ? AND revoked_at IS NULL", userID).
+		Updates(map[string]interface{}{"is_active": false, "revoked_at": at})
+	return result.RowsAffected, result.Error
+}
+
 // Rename writes only name (and updated_at) of the key id of userID and
 // returns the count of changed rows. With liveOnly the statement also
 // requires is_active true and revoked_at NULL, so a key revoked in the

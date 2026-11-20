@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -20,8 +21,8 @@ import (
 // sign-in:
 //
 //	admin set → users → roles → user_identities (create and replace)
-//	admin set → users → roles → refresh_tokens  (patch, a deactivating replace)
-//	admin set → users → refresh_tokens          (delete)
+//	admin set → users → roles → refresh_tokens → api_keys  (patch, a deactivating replace)
+//	admin set → users → refresh_tokens → api_keys          (delete)
 //
 // The role always comes from the single sign-on role mapping: the first entry
 // with claim roles, in stored order, whose value equals one of the request's
@@ -31,9 +32,10 @@ import (
 // auth_method scim and actor_user_id NULL; after the commit one successful
 // auth_audit_log row with method scim names the account (create, replace or
 // patch). A write that sets active false deprovisions: in the same
-// transaction it increments users.token_version, which ends every access
-// token, and revokes every refresh token of the account. A refusal writes
-// nothing, audit rows included. Delete deactivates the same way and never
+// transaction it ends every credential of the account (revokeAllCredentials):
+// users.token_version is incremented, which ends every access token, and
+// every refresh token and every API key is revoked. A later active true
+// brings none of them back. A refusal writes nothing, audit rows included. Delete deactivates the same way and never
 // erases; on an already inactive account it writes nothing.
 //
 // Replace, Patch and Delete change managed accounts only: live, not customer,
@@ -53,8 +55,8 @@ var (
 )
 
 // errSCIMWritesNotWired is a wiring fault (500): NewSCIMUserService was built
-// without WithSCIMUserWrites, or without its refresh token repository for a
-// patch, a deactivating replace or a delete (#504).
+// without WithSCIMUserWrites, or without its refresh token or API key
+// repository for a patch, a deactivating replace or a delete (#504).
 var errSCIMWritesNotWired = errors.New("scim user writes need WithSCIMUserWrites")
 
 // Bounds of the SCIM user attributes.
@@ -88,34 +90,44 @@ type scimUserWrites struct {
 	users         *userService
 	identities    repository.UserIdentityRepository
 	refreshTokens repository.RefreshTokenRepository
+	apiKeys       repository.APIKeyRepository
 	audit         AuthAuditService
 }
 
 // WithSCIMUserWrites enables Create, Replace, Patch and Delete over the
-// governed user writes, the identity repository, the refresh tokens a
-// deactivation revokes and the sign-in audit log. A nil refreshTokens refuses
-// Patch, Delete and a deactivating Replace as a wiring fault.
+// governed user writes, the identity repository, the refresh tokens and API
+// keys a deactivation revokes and the sign-in audit log. A nil refreshTokens
+// or apiKeys refuses Patch, Delete and a deactivating Replace as a wiring
+// fault.
 func WithSCIMUserWrites(userRepo repository.UserRepository, roleRepo repository.RoleRepository, roleAuditRepo repository.RoleAuditRepository,
-	identities repository.UserIdentityRepository, refreshTokens repository.RefreshTokenRepository, txManager *utils.TransactionManager,
-	audit AuthAuditService) SCIMUserServiceOption {
+	identities repository.UserIdentityRepository, refreshTokens repository.RefreshTokenRepository, apiKeys repository.APIKeyRepository,
+	txManager *utils.TransactionManager, audit AuthAuditService) SCIMUserServiceOption {
 	return func(s *scimUserService) {
 		s.writes = &scimUserWrites{
 			users:         &userService{userRepo: userRepo, governance: &roleGovernance{users: userRepo, roles: roleRepo, audit: roleAuditRepo, txManager: txManager}},
 			identities:    identities,
 			refreshTokens: refreshTokens,
+			apiKeys:       apiKeys,
 			audit:         audit,
 		}
 	}
 }
 
-// deprovisionFields adds the session end of a deactivation to the users
-// write of a SCIM write: when the request sets active false (even on an
-// already inactive row), token_version becomes the locked row's value plus
-// one, which refuses every access token issued before. The caller revokes the
-// refresh tokens in the same transaction, after the users write.
-func deprovisionFields(fields map[string]interface{}, locked *models.User, deactivates bool) {
-	if deactivates {
-		fields["token_version"] = locked.TokenVersion + 1
+// credentialsWired reports whether the stores a deactivation revokes
+// through are wired.
+func (w *scimUserWrites) credentialsWired() bool {
+	return w.refreshTokens != nil && w.apiKeys != nil
+}
+
+// credentialStores binds the stores of revokeAllCredentials to the governed
+// transaction. A SCIM write that sets active false (even on an already
+// inactive row) ends every credential of the locked target through them,
+// after its users write.
+func (w *scimUserWrites) credentialStores(tx *governedTx) credentialStores {
+	return credentialStores{
+		users:         tx.users,
+		refreshTokens: w.refreshTokens.WithTx(tx.handle),
+		apiKeys:       w.apiKeys.WithTx(tx.handle),
 	}
 }
 
@@ -317,7 +329,7 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 // link set at creation never changes. Active false deprovisions (#471).
 func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUserInput) (*SCIMUserRecord, error) {
 	deactivates := in.Active != nil && !*in.Active
-	if s.writes == nil || (deactivates && s.writes.refreshTokens == nil) {
+	if s.writes == nil || (deactivates && !s.writes.credentialsWired()) {
 		return nil, errSCIMWritesNotWired
 	}
 	id, err := parseSCIMUserID(rawID)
@@ -391,7 +403,6 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		if in.Active != nil {
 			fields["is_active"] = *in.Active
 		}
-		deprovisionFields(fields, target, deactivates)
 		if err := tx.users.UpdateFields(id, fields); err != nil {
 			if errors.Is(err, apperrors.ErrDuplicateEmail) {
 				return fmt.Errorf("userName is taken: %w", ErrSCIMUniqueness)
@@ -402,8 +413,8 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 			return err
 		}
 		if deactivates {
-			if err := s.writes.refreshTokens.WithTx(tx.handle).RevokeAllForUser(id); err != nil {
-				return fmt.Errorf("revoke the sessions of scim user %d: %w", id, err)
+			if err := revokeAllCredentials(s.writes.credentialStores(tx), target, time.Now()); err != nil {
+				return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 			}
 		}
 		if role != target.Role || !sameRoleID(roleID, target.RoleID) {
@@ -438,7 +449,7 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 // to the row locked in the transaction. Untouched roles keep the stored role
 // and write no role audit row; active false deprovisions as in Replace.
 func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPatch) (*SCIMUserRecord, error) {
-	if s.writes == nil || s.writes.refreshTokens == nil {
+	if s.writes == nil || !s.writes.credentialsWired() {
 		return nil, errSCIMWritesNotWired
 	}
 	id, err := parseSCIMUserID(rawID)
@@ -541,7 +552,6 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		if p.Active != nil {
 			fields["is_active"] = *p.Active
 		}
-		deprovisionFields(fields, target, deactivates)
 		if len(fields) > 0 {
 			if err := tx.users.UpdateFields(id, fields); err != nil {
 				if errors.Is(err, apperrors.ErrDuplicateEmail) {
@@ -554,8 +564,8 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 			}
 		}
 		if deactivates {
-			if err := s.writes.refreshTokens.WithTx(tx.handle).RevokeAllForUser(id); err != nil {
-				return fmt.Errorf("revoke the sessions of scim user %d: %w", id, err)
+			if err := revokeAllCredentials(s.writes.credentialStores(tx), target, time.Now()); err != nil {
+				return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 			}
 		}
 		if role != target.Role || !sameRoleID(roleID, target.RoleID) {
@@ -586,14 +596,15 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 }
 
 // Delete deactivates the managed account rawID names (#504) the way active false
-// does: in one governed transaction it sets is_active false, increments
-// token_version and revokes every refresh token. It never erases: no
+// does: in one governed transaction it sets is_active false and ends every
+// credential (revokeAllCredentials: token_version incremented, every refresh
+// token and every API key revoked). It never erases: no
 // deleted_at, and email, names, role, role_id and the identity link stay. An
 // already inactive account is a success that writes nothing, audit rows
 // included (unlike Patch, which bumps token_version again). The last active
 // admin is ErrSCIMLastAdmin. No role is written, so no role row is locked.
 func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
-	if s.writes == nil || s.writes.refreshTokens == nil {
+	if s.writes == nil || !s.writes.credentialsWired() {
 		return errSCIMWritesNotWired
 	}
 	id, err := parseSCIMUserID(rawID)
@@ -629,16 +640,14 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 		if isLastActiveAdmin(admins, target) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
-		fields := map[string]interface{}{"is_active": false}
-		deprovisionFields(fields, target, true)
-		if err := tx.users.UpdateFields(id, fields); err != nil {
+		if err := tx.users.UpdateFields(id, map[string]interface{}{"is_active": false}); err != nil {
 			if isNotFound(err) {
 				return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
 			}
 			return err
 		}
-		if err := s.writes.refreshTokens.WithTx(tx.handle).RevokeAllForUser(id); err != nil {
-			return fmt.Errorf("revoke the sessions of scim user %d: %w", id, err)
+		if err := revokeAllCredentials(s.writes.credentialStores(tx), target, time.Now()); err != nil {
+			return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 		}
 		return nil
 	})

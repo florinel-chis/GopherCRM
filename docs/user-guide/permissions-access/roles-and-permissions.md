@@ -118,8 +118,9 @@ Revoking a key is final: the key records when it was revoked (`revoked_at`) and 
 on again.
 
 To stop the integration, deactivate its user: Users → the user → **Deactivate**, or
-`POST /users/{id}/deactivate`. That stops every key of the user at its next request. An
-administrator cannot list or revoke another user's keys. The worked example, including which
+`POST /users/{id}/deactivate`. That revokes every key of the user for good: activating the user
+again brings none back. Changing or resetting the user's password revokes every key of it too,
+so issue a new key afterwards. An administrator cannot list or revoke another user's keys. The worked example, including which
 permissions a ticket or lead integration needs, is "Least-privilege integration user" in
 [AUTHORIZATION.md](../../AUTHORIZATION.md#least-privilege-integration-user).
 

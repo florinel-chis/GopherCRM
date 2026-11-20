@@ -30,8 +30,9 @@ import (
 // GET /users/me on in-memory SQLite with the production one-connection pool.
 // After a logout, a password change or a password-reset confirmation, an
 // access token issued before it answers exactly what an expired token
-// answers, an API key of the same user still authenticates, and a token
-// issued afterwards (the renewed one, a fresh login) is accepted. The rate
+// answers, and a token issued afterwards (the renewed one, a fresh login) is
+// accepted. An API key of the same user still authenticates after a logout;
+// a password change or reset revokes it (#526), so it gets 401. The rate
 // limiters are left out: they are keyed on the client IP and would throttle
 // the many logins of one test, and they do not take part in the decision.
 
@@ -210,6 +211,20 @@ func (s *atvAPIStack) assertAccepted(t *testing.T, user *models.User, authorizat
 	assert.NotContains(t, data, "token_version", "the counter is never serialised")
 }
 
+// assertKeyRevoked checks that an API key revoked with its account's
+// credentials is refused with 401 UNAUTHORIZED "Invalid credentials".
+func (s *atvAPIStack) assertKeyRevoked(t *testing.T, authorization, what string) {
+	t.Helper()
+	rec := s.me(authorization)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "%s: %s", what, rec.Body.String())
+	var response utils.APIResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response), rec.Body.String())
+	if assert.NotNil(t, response.Error, what) {
+		assert.Equal(t, utils.ErrCodeUnauthorized, response.Error.Code, what)
+		assert.Equal(t, "Invalid credentials", response.Error.Message, what)
+	}
+}
+
 func TestAccessTokenRevocationAPISQLite(t *testing.T) {
 	s := newATVAPIStack(t)
 
@@ -274,7 +289,7 @@ func TestAccessTokenRevocationAPISQLite(t *testing.T) {
 		s.assertEnded(t, user, access)
 		s.assertEnded(t, user, otherAccess)
 		s.assertAccepted(t, user, "Bearer "+renewed, "the token renewed by the change")
-		s.assertAccepted(t, user, key, "the API key of the same user")
+		s.assertKeyRevoked(t, key, "the API key of the same user")
 		fresh, _ := s.login(t, user.Email, atvAPINew)
 		s.assertAccepted(t, user, "Bearer "+fresh, "a fresh login")
 	})
@@ -298,7 +313,7 @@ func TestAccessTokenRevocationAPISQLite(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 		s.assertEnded(t, user, access)
-		s.assertAccepted(t, user, key, "the API key of the same user")
+		s.assertKeyRevoked(t, key, "the API key of the same user")
 		fresh, _ := s.login(t, user.Email, atvAPINew)
 		s.assertAccepted(t, user, "Bearer "+fresh, "a fresh login")
 	})

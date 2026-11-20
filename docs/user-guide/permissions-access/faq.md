@@ -25,8 +25,8 @@ or group that the role mapping uses. Their next sign-in is refused.
 If **Allow password sign-in and password reset for accounts linked to single sign-on** is on, also
 deactivate the account in GopherCRM (Users → the user → **Deactivate**, or
 `POST /users/{id}/deactivate`), because a password they set keeps working after the provider
-removes them. Deactivating is a good idea in any case: it also ends the access of their API keys at
-once.
+removes them. Deactivating is a good idea in any case: it also revokes their API keys at once, for
+good.
 
 ## What protects us from losing the last administrator?
 
@@ -60,8 +60,8 @@ SAML: no. Single sign-on uses OpenID Connect only. SCIM 2.0: partly. An identity
 SCIM token can create accounts, and read, update and deactivate the accounts SCIM created or that
 are linked to the provider (never an account created locally in GopherCRM), with the role taken
 from the single sign-on role mapping, so an account can exist before the person's first sign-in. When the
-provider deactivates an account, the person is signed out everywhere at once; reactivating it
-lets them sign in again, but not with the old sessions. A SCIM DELETE deactivates the account the
+provider deactivates an account, the person is signed out everywhere at once and their API keys are
+revoked; reactivating it lets them sign in again, but not with the old sessions or keys. A SCIM DELETE deactivates the account the
 same way: SCIM never erases accounts: delete people in GopherCRM when their data must go. The
 provider can also read the groups of the role mapping and change their members; a member change
 sets the person's role from their groups, and a change that would leave no active administrator is

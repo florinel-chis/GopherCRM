@@ -1064,6 +1064,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A password change, a password reset and a deactivation end every credential of the account in
+  one step (#526).** `POST /auth/change-password`, `POST /auth/password-reset/confirm`, an
+  administrator's deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active`
+  false) and a SCIM deactivation (`PATCH` or `PUT` with `active` false, `DELETE
+  /scim/v2/Users/{id}`) now also revoke every API key of the account for good (`is_active` false,
+  `revoked_at` stamped; a key revoked earlier keeps its first time), the key that made a
+  password-change request included (the answer stays 200). The administrator's deactivation now
+  also revokes every refresh token and ends every access token issued before it, as the SCIM
+  deactivation already did. Reactivating an account brings none of these credentials back. Logout
+  is unchanged and leaves API keys alone. Each of these writes is one transaction: when any part of
+  the revocation fails, nothing changes, and the reset link stays usable. The Profile page says
+  that the other sessions are signed out and the API keys are revoked. docs/AUTHORIZATION.md lists
+  which events end which credentials. No migration, route or setting is added; response bodies and
+  status codes are unchanged.
+
 - **API keys are created and switched on only from a signed-in session, and revoking a key is
   final (#525).** `POST /api-keys`, and `PUT /api-keys/{id}` with `is_active: true`, answer 403
   `FORBIDDEN` to a request authenticated with an API key and write nothing; a signed-in session

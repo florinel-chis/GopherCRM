@@ -427,15 +427,15 @@ data) and parses it with `scim.ParseUserPatch` (`internal/scim/patch.go`, pure),
 detail that never echoes the path or value; service refusals go through `failWrite`. Paths and
 path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.EqualFold`).
 `scimUserService.Patch` (`internal/service/scim_user_writes.go`) runs in `roleGovernance.run`
-with `admin set → users → roles → refresh_tokens`, applies the patch to the locked row, checks
+with `admin set → users → roles → refresh_tokens → api_keys`, applies the patch to the locked row, checks
 only the touched attributes (Replace's sequence for a changed address), resolves `roles` through
 the mapping, keeps the last-admin rule and records `user_role_changed` only on a role change.
 A write that sets `active` false (Patch, and Replace since #471, and `scimUserService.Delete`
-since #504) adds `token_version = locked + 1` to its `users` write (`deprovisionFields`) and then
-calls `RefreshTokenRepository.WithTx(...).RevokeAllForUser` in the same transaction.
-`WithSCIMUserWrites` takes the refresh token repository (`cmd/main.go` passes
-`refreshTokenRepo`); without it Patch, Delete and a deactivating Replace answer a wiring error
-(500).
+since #504) calls `revokeAllCredentials` (`internal/service/credential_revocation.go`, #526)
+after its `users` write, in the same transaction: `token_version = locked + 1`, every refresh
+token and every API key revoked. `WithSCIMUserWrites` takes the refresh token and the API key
+repositories (`cmd/main.go` passes `refreshTokenRepo` and `apiKeyRepo`); without either, Patch,
+Delete and a deactivating Replace answer a wiring error (500) and write nothing.
 Regression roots: `TestSCIMUserPatchSQLite` and `TestSCIMUserPatchMySQL` (`internal/service`,
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserPatchHandler`
 (`internal/handler`), `TestParsePatch` (`internal/scim`), `TestSCIMUserPatchWired` (`cmd`) and
@@ -444,8 +444,8 @@ discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUse
 
 **SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (`SCIMUserHandler.Delete`, no body
 read, 204 on success, refusals through `failWrite`) calls `scimUserService.Delete`, which runs
-`admin set → users → refresh_tokens` in `roleGovernance.run` (no `roles` lock, no role write):
-an active visible target gets `is_active` false plus `deprovisionFields` and the revocation, an
+`admin set → users → refresh_tokens → api_keys` in `roleGovernance.run` (no `roles` lock, no role
+write): an active visible target gets `is_active` false and then `revokeAllCredentials`, an
 already inactive one commits nothing and records no audit row, the last active admin is
 `ErrSCIMLastAdmin`. It never calls the erasure path. Regression roots:
 `TestSCIMUserDeleteSQLite` and `TestSCIMUserDeleteMySQL` (`internal/service`, discovered by the
@@ -623,10 +623,11 @@ negative or above 2^53-1 is refused before any conversion to `uint`) and, after 
 signature, expiry, missing-user and `is_active` checks, refuses a claim that differs from the stored
 value with `service.ErrAccessTokenRevoked`; `middleware.Auth` answers it with the same 401 `Invalid
 credentials` an expired token gets. The sentinel and the claim helpers live in
-`internal/service/access_token_version.go`. Three operations increment the counter by exactly one
-through `UpdateFields` under the users-row lock, inside the transaction they already run: the
-password change and the reset confirmation in the same write as the password, and `Logout`, which is
-now one transaction of its own (locking owner read, then the refresh-token revocation — every token
+`internal/service/access_token_version.go`. The counter is incremented by exactly one through
+`UpdateFields` under the users-row lock, inside the transaction the operation already runs, by
+`Logout` and by the callers of `revokeAllCredentials` (#526, below): the password change, the
+reset confirmation, the governed deactivation and the SCIM deactivations. `Logout` is one
+transaction of its own (locking owner read, then the refresh-token revocation — every token
 without a body, otherwise only the caller's own presented token — then the increment; a failure of
 either rolls both back). The increment happens for Bearer and API-key callers alike, with or without
 a body. **`Logout` refuses with an error, answered 500 by the handler, and writes nothing when the
@@ -634,8 +635,8 @@ transaction manager or the refresh-token repository is not wired** (a service bu
 `NewAuthService` included); a caller the scoped locking read no longer finds (erased) gets nil and
 nothing is written. Refresh rotation and login never change the counter: the rotation and a wired
 login (#336) sign the value their locking read returned, and the access token it replaces stays valid until it expires. A
-role change does not increment it, API keys are not affected, and there is no per-token denylist.
-The log lines of the rejection and of the three increments carry `user_id` and `operation` only.
+role change does not increment it, logout does not affect API keys, and there is no per-token
+denylist. The log lines of the rejection and of the increments carry `user_id` and `operation` only.
 MySQL and MariaDB get the column from `20261109120000_add_user_token_version` (added only when
 missing), SQLite from `MigrateDatabase`; existing rows read 0, which is also what a token signed
 before the claim existed reads, so an upgrade ends no session. Roots, in
@@ -652,6 +653,29 @@ and forces a logout against a rotation of the same user in both orderings, each 
 (`cmd/migrate`); and, over HTTP, `TestAccessTokenRevocationAPISQLite`
 (`tests/auth_access_token_revocation_test.go`). Registering the migration roots in the Database
 migrations workflow is an operator follow-up.
+
+**One step ends every credential** (#526) — `revokeAllCredentials`
+(`internal/service/credential_revocation.go`) takes `credentialStores` (the users, refresh token
+and API key repositories, all bound to the caller's transaction; `users` is the handle the caller
+already writes the owner through) and the owner row the caller locked. In the documented order
+users → refresh_tokens → api_keys it writes `token_version` + 1 (and updates the in-memory owner,
+so a token signed afterwards carries the new value), calls `RefreshTokenRepository.RevokeAllForUser`
+and then `APIKeyRepository.RevokeAllForUser(userID, at)`, one `UPDATE` that sets `is_active` false
+and `revoked_at` on every live key whose `revoked_at` is NULL (an inactive legacy key included; a
+key revoked earlier keeps its first `revoked_at`). Every error is wrapped with `%w` and rolls the
+caller back; the helper logs nothing. Its callers, after their own `users` write: the password
+change (`changePasswordInTransaction`, which writes only `password` itself and issues the renewed
+successor after the helper), the reset confirmation (`confirmPasswordResetInTransaction`), the
+governed deactivation (`governedWrite` with `is_active` false, wired by
+`WithUserCredentialRevocation`) and the SCIM deactivations. `ChangePassword` and
+`ConfirmPasswordReset` refuse, writing nothing, on a service without the API key repository.
+`Logout` keeps its own revocation and never touches API keys; the refresh-rotation containment,
+the erasure credential purge and the plain `UserService.Update` are unchanged. Which event ends
+which credential is tabled in [AUTHORIZATION.md](AUTHORIZATION.md#which-events-end-which-credentials).
+Roots: `TestCredentialRevocation{SQLite,MySQL}` (`internal/service`, discovered by the auth
+checker; run the MySQL root on MariaDB too), `TestCredentialRevocationProductionWiring` (`cmd`),
+`TestAPIKeyRepository_RevokeAllForUser` (`internal/repository`) and, over HTTP,
+`TestAccessTokenRevocationAPISQLite`.
 
 **`PUT /users/me` refuses password fields** (#254) — `POST /auth/change-password` is the only
 authenticated way to change a password. `UpdateMeRequest` declares `password` and `new_password`
@@ -957,6 +981,13 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
   `Update` and `Delete` keep their behaviour for the non-HTTP writers (`cmd/create-admin`, public
   registration); a user service built without `service.WithUserRoleGovernance` runs the actor-taking
   methods as those plain writes, which is what the older suites rely on.
+- **Deactivation ends every credential** (#526). `service.WithUserCredentialRevocation(apiKeyRepo,
+  refreshTokenRepo)` (`cmd/main.go` passes both) lets a governed write with `is_active` false
+  (`SetActiveAs`, `UpdateAs`; also on an account already inactive) call `revokeAllCredentials`
+  after its `users` write and before the audit row. A governed service built without it refuses
+  such a write with an error (500 at the handler) after the refusals above and before any write.
+  The ungoverned fallback (a service without `WithUserRoleGovernance`) writes `is_active` only and
+  revokes nothing; production always wires governance.
 - **Audit.** `role_audit_log` gets one row per role create, clone (`role_created`), update and
   delete, and per change of a user's `role` or `role_id` (`user_role_changed`, also for the role a
   new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value

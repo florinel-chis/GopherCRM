@@ -148,6 +148,11 @@ func (m *MockAPIKeyRepository) Revoke(id, userID uint, at time.Time) (int64, err
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockAPIKeyRepository) RevokeAllForUser(userID uint, at time.Time) (int64, error) {
+	args := m.Called(userID, at)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockAPIKeyRepository) Rename(id, userID uint, name string, liveOnly bool) (int64, error) {
 	args := m.Called(id, userID, name, liveOnly)
 	return args.Get(0).(int64), args.Error(1)

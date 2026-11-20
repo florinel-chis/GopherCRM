@@ -514,7 +514,8 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	// #444, #457: both reset flows read user_identities (plain, no lock)
 	// after the owner lock and, while security.sso.allow_password is off,
 	// refuse an account linked to single sign-on.
-	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → (read) user_identities → refresh_tokens")
+	// #526: the confirm ends every credential, refresh tokens then API keys.
+	assert.Contains(t, flow("Password-reset confirm"), "password_reset_tokens → users → (read) user_identities → refresh_tokens → api_keys")
 	assert.Contains(t, flow("Password-reset request"), "users → (read) user_identities → password_reset_tokens")
 	assert.Contains(t, flow("Password-reset request"), "`ExistsForUser`")
 	assert.Contains(t, flow("Password-reset confirm"), "`ExistsForUser`")
@@ -576,6 +577,14 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	governed := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) governedWrite(")
 	inOrder(governed, "checkEscalation(", "apperrors.ErrCustomerLoginRole", "apperrors.ErrLastAdmin", "tx.users.Delete(id)",
 		"tx.users.UpdateFields(id, fields)", "tx.record(")
+	// #526: a deactivation ends every credential after the users write and
+	// before the role audit row.
+	inOrder(governed, "tx.users.UpdateFields(id, fields)", "revokeAllCredentials(", "tx.record(")
+	assert.Contains(t, rbac, "refresh_tokens → api_keys", "RBAC flow: the deactivation's credential tables")
+	// The helper writes in the documented order users → refresh_tokens →
+	// api_keys.
+	helper := concurrencyDocFuncBody(t, "internal/service/credential_revocation.go", "func revokeAllCredentials(")
+	inOrder(helper, "UpdateFields(", "refreshTokens.RevokeAllForUser(", "apiKeys.RevokeAllForUser(")
 	// The plain update stays plain: it is the non-HTTP writer.
 	update := concurrencyDocFuncBody(t, "internal/service/user_service.go", "func (s *userService) Update(")
 	assert.NotContains(t, update, "WithTransaction")
@@ -643,6 +652,8 @@ func TestConcurrencyDocGlobalOrder(t *testing.T) {
 	}
 	assert.Contains(t, lineWith("companies → leads → customers → deals"), "#182")
 	lineWith("users → refresh_tokens")
+	// #526: every credential-ending flow continues with the API keys.
+	lineWith("users → refresh_tokens → api_keys")
 	// #342: the credential-issuing edges of the users chain, and the reset
 	// confirm's inversion of the request's order.
 	lineWith("users → password_reset_tokens")
@@ -1332,12 +1343,12 @@ func TestConcurrencyDocSCIMUserWrites(t *testing.T) {
 func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Order"]),
-		"admin set → users → roles → refresh_tokens")
+		"admin set → users → roles → refresh_tokens → api_keys")
 
 	body := concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Patch(")
 	last := -1
 	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
-		"tx.users.UpdateFields(", "RevokeAllForUser(", "s.writes.recordSuccess("} {
+		"tx.users.UpdateFields(", "revokeAllCredentials(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
 			assert.Greater(t, at, last, "%q comes after the statement before it", statement)
@@ -1346,12 +1357,13 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 	}
 
 	// The SCIM delete (#504) is the same deactivation without a role write:
-	// admin set → users → refresh_tokens, a prefix-compatible subsequence.
+	// admin set → users → refresh_tokens → api_keys, a prefix-compatible
+	// subsequence.
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Rows locked"]), "scimUserService.Delete")
 	body = concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Delete(")
 	last = -1
 	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "isLastActiveAdmin(",
-		"tx.users.UpdateFields(", "RevokeAllForUser(", "s.writes.recordSuccess("} {
+		"tx.users.UpdateFields(", "revokeAllCredentials(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
 			assert.Greater(t, at, last, "%q comes after the statement before it", statement)

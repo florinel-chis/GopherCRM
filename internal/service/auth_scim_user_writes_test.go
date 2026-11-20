@@ -205,7 +205,7 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 	build := func(source SCIMIssuerSource, refreshTokens repository.RefreshTokenRepository) SCIMUserService {
 		return NewSCIMUserService(repository.NewSCIMUserRepository(db), source,
 			WithSCIMUserWrites(repository.NewUserRepository(db), repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db),
-				repository.NewUserIdentityRepository(db), refreshTokens, utils.NewTransactionManager(db), f.audit))
+				repository.NewUserIdentityRepository(db), refreshTokens, repository.NewAPIKeyRepository(db), utils.NewTransactionManager(db), f.audit))
 	}
 	f.newService = func(source SCIMIssuerSource) SCIMUserService {
 		return build(source, repository.NewRefreshTokenRepository(db))
