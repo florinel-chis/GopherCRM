@@ -6,8 +6,9 @@ package main
 // log with method scim. A user's JWT or API key is not a SCIM token, and a
 // SCIM token is not a credential of the API. Issue #469 adds GET /Users and
 // /Users/:id, with externalId taken from the identities under the effective
-// single sign-on issuer (ssoSettings). Over a SQLite file opened by the real
-// connector.
+// single sign-on issuer (ssoSettings). Issue #470 adds POST /Users and
+// PUT /Users/:id, whose role comes from the roles mapping and whose audit
+// rows carry method scim. Over a SQLite file opened by the real connector.
 
 import (
 	"bytes"
@@ -396,4 +397,87 @@ func TestSCIMUsersWired(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 		assert.Equal(t, scimWiredBody, recorder.Body.String())
 	})
+}
+
+// TestSCIMUserWritesWired: through setupRouter a SCIM create answers 201 and a
+// replace 200, and both leave their audit rows: a role_audit_log row with
+// auth_method scim and actor_user_id NULL, and a successful auth_audit_log
+// row with method scim. It fails when cmd/main.go leaves WithSCIMUserWrites
+// or the sign-in audit writer out.
+func TestSCIMUserWritesWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+		roleID := func(key string) uint {
+			var role models.Role
+			require.NoError(t, models.DB.Where("system_key = ?", key).First(&role).Error)
+			return role.ID
+		}
+		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"roles","value":"CRM.Sales","role_id":%d},{"claim":"roles","value":"CRM.Support","role_id":%d}]`,
+			roleID("sales"), roleID("support"))
+	})
+	prefix := boot.cfg.API.Prefix
+	addr := 0
+	nextRemote := func() string {
+		addr++
+		return fmt.Sprintf("203.0.113.%d:1234", 100+addr)
+	}
+
+	const password = "Wired-Passw0rd!-0470"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	require.NoError(t, err)
+	admin := &models.User{Email: "admin-0470@crm.example.test", Password: string(hash), FirstName: "Scim", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+	require.NoError(t, models.DB.Create(admin).Error)
+	recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+admin.Email+`","password":"`+password+`"}`, nextRemote(), "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var login struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &login))
+	recorder = scimWiredSend(router, http.MethodPost, prefix+"/settings/scim/tokens", `{"name":"Entra"}`, nextRemote(), "Bearer "+login.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	require.NotEmpty(t, created.Data.Token)
+	token := "Bearer " + created.Data.Token
+
+	recorder = scimWiredSend(router, http.MethodPost, "/scim/v2/Users", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],
+		"userName":"hire-0470@crm.example.test","externalId":"sub-0470","name":{"givenName":"New","familyName":"Hire"},
+		"roles":[{"value":"CRM.Sales"}],"password":"Ignored-Passw0rd!"}`, nextRemote(), token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+	var user scimWiredUser
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &user))
+	assert.Equal(t, "sub-0470", user.ExternalID)
+	assert.True(t, user.Active)
+	assert.Equal(t, "https://crm.example.test/scim/v2/Users/"+user.ID, recorder.Header().Get("Location"))
+	assert.Equal(t, user.Meta.Location, recorder.Header().Get("Location"))
+
+	recorder = scimWiredSend(router, http.MethodPut, "/scim/v2/Users/"+user.ID, `{"userName":"hire-0470@crm.example.test",
+		"name":{"givenName":"New","familyName":"Hire"},"roles":[{"value":"CRM.Support"}]}`, nextRemote(), token)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var replaced scimWiredUser
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &replaced))
+	assert.Equal(t, user.ID, replaced.ID)
+	assert.Equal(t, "sub-0470", replaced.ExternalID)
+
+	var stored models.User
+	require.NoError(t, models.DB.Where("email = ?", "hire-0470@crm.example.test").First(&stored).Error)
+	assert.Equal(t, models.RoleSupport, stored.Role)
+	var roleAudits []models.RoleAuditEntry
+	require.NoError(t, models.DB.Where("target_user_id = ?", stored.ID).Order("id").Find(&roleAudits).Error)
+	require.Len(t, roleAudits, 2, "the create and the role change")
+	for _, row := range roleAudits {
+		assert.Equal(t, "scim", row.AuthMethod)
+		assert.Nil(t, row.ActorUserID)
+	}
+	var authAudits []models.AuthAuditLog
+	require.NoError(t, models.DB.Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", stored.ID).Find(&authAudits).Error)
+	assert.Len(t, authAudits, 2, "one success row per write")
 }

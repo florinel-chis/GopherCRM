@@ -28,6 +28,10 @@ const (
 	// AuthMethodOIDC is recorded on the role audit row of an OpenID Connect
 	// sign-in (#435), whose mapped role is applied by the sign-in itself.
 	AuthMethodOIDC = "oidc"
+	// AuthMethodSCIM is recorded on the role audit row of a SCIM 2.0 user
+	// create or replace (#470), with actor_user_id NULL: the provisioning
+	// client is no user.
+	AuthMethodSCIM = "scim"
 )
 
 type AuthService interface {
@@ -772,7 +776,8 @@ type WebhookService interface {
 	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
 }
 
-// SCIMUserService is the read of the SCIM 2.0 Users resource (#469). It
+// SCIMUserService is the SCIM 2.0 Users resource: the read (#469) and the
+// create and replace (#470). The read
 // serves visible users only (live, not customer), judges a userName filter
 // with scim.UserNameMatches (ASCII-only case folding) on every candidate the
 // database returns, and sets externalId from the identity under the
@@ -784,4 +789,12 @@ type SCIMUserService interface {
 	// List returns one page, id ascending. userName nil lists every visible
 	// user; otherwise only the users whose email it matches.
 	List(ctx context.Context, userName *string, startIndex, count int) (*SCIMUserPage, error)
+	// Create provisions a staff or custom account linked by (issuer,
+	// externalId) with the role the roles mapping names (#470). Refusals are
+	// ErrSCIMInvalidValue or ErrSCIMUniqueness and write nothing.
+	Create(ctx context.Context, in SCIMUserInput) (*SCIMUserRecord, error)
+	// Replace overwrites the name, email, role and (when sent) active flag of
+	// the visible user rawID names (#470); an unknown id is
+	// apperrors.ErrNotFound.
+	Replace(ctx context.Context, rawID string, in SCIMUserInput) (*SCIMUserRecord, error)
 }

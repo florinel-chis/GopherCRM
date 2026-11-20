@@ -4,7 +4,7 @@
 > was not carried out as written. Repository interfaces still take no context
 > (`internal/repository/interfaces.go:19`), and the `*_v2.go` reference implementation it pointed to does
 > not exist in the repository. Request context now reaches selected paths through `...Context` methods
-> (for example `GetByIDContext` in `internal/service/interfaces.go:103`, added for lead conversion, form
+> (for example `GetByIDContext` in `internal/service/interfaces.go:121`, added for lead conversion, form
 > submission and bulk status in #194). For the current conventions read `docs/DEVELOPMENT.md` and
 > `docs/EXTENDING.md`.
 

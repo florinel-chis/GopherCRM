@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,11 +23,13 @@ import (
 // stubSCIMUsers records the calls of the handler and answers what it is set
 // to.
 type stubSCIMUsers struct {
-	getCalls  []string
-	listCalls []stubSCIMListCall
-	record    *service.SCIMUserRecord
-	page      *service.SCIMUserPage
-	err       error
+	getCalls     []string
+	listCalls    []stubSCIMListCall
+	createCalls  []service.SCIMUserInput
+	replaceCalls []stubSCIMReplaceCall
+	record       *service.SCIMUserRecord
+	page         *service.SCIMUserPage
+	err          error
 }
 
 type stubSCIMListCall struct {
@@ -37,6 +40,21 @@ type stubSCIMListCall struct {
 func (s *stubSCIMUsers) Get(_ context.Context, rawID string) (*service.SCIMUserRecord, error) {
 	s.getCalls = append(s.getCalls, rawID)
 	return s.record, s.err
+}
+
+func (s *stubSCIMUsers) Create(_ context.Context, in service.SCIMUserInput) (*service.SCIMUserRecord, error) {
+	s.createCalls = append(s.createCalls, in)
+	return s.record, s.err
+}
+
+func (s *stubSCIMUsers) Replace(_ context.Context, rawID string, in service.SCIMUserInput) (*service.SCIMUserRecord, error) {
+	s.replaceCalls = append(s.replaceCalls, stubSCIMReplaceCall{rawID, in})
+	return s.record, s.err
+}
+
+type stubSCIMReplaceCall struct {
+	rawID string
+	in    service.SCIMUserInput
 }
 
 func (s *stubSCIMUsers) List(_ context.Context, userName *string, startIndex, count int) (*service.SCIMUserPage, error) {
@@ -173,6 +191,135 @@ func TestSCIMUserHandler(t *testing.T) {
 			assert.Equal(t, http.StatusInternalServerError, w.Code, path)
 			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"), path)
 			assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"500","detail":"Internal server error"}`, w.Body.String(), path)
+		}
+	})
+}
+
+func TestSCIMUserWriteHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const base = "https://crm.example.test"
+	const secretName, secretSub = "secret-jane@x.test", "secret-sub-470"
+	setup := func(stub *stubSCIMUsers) *gin.Engine {
+		router := gin.New()
+		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		return router
+	}
+	send := func(router *gin.Engine, method, path, body, contentType string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		if contentType != "" {
+			request.Header.Set("Content-Type", contentType)
+		}
+		router.ServeHTTP(w, request)
+		return w
+	}
+	user := models.User{Email: secretName, FirstName: "Jane", LastName: "Doe", IsActive: true}
+	user.ID = 9
+	user.CreatedAt = time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	user.UpdatedAt = user.CreatedAt
+	valid := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"` + secretName + `","externalId":"` + secretSub + `",
+		"name":{"givenName":"Jane","familyName":"Doe"},"active":true,"password":"Ignored-Passw0rd!",
+		"emails":[{"value":"other@x.test"}],"roles":[{"value":"CRM.Sales","display":"Sales","type":"x","primary":true}]}`
+
+	t.Run("create answers 201 with Location", func(t *testing.T) {
+		stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user, ExternalID: secretSub}}
+		w := send(setup(stub), http.MethodPost, "/scim/v2/Users", valid, "application/scim+json")
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+		assert.Equal(t, "https://crm.example.test/scim/v2/Users/9", w.Header().Get("Location"))
+		var doc map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+		assert.Equal(t, "9", doc["id"])
+		assert.Equal(t, secretSub, doc["externalId"])
+		assert.Equal(t, w.Header().Get("Location"), doc["meta"].(map[string]any)["location"])
+		require.Len(t, stub.createCalls, 1)
+		active := true
+		assert.Equal(t, service.SCIMUserInput{UserName: secretName, ExternalID: secretSub, GivenName: "Jane", FamilyName: "Doe",
+			Active: &active, Roles: []string{"CRM.Sales"}}, stub.createCalls[0])
+	})
+
+	t.Run("replace answers 200", func(t *testing.T) {
+		stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+		w := send(setup(stub), http.MethodPut, "/scim/v2/Users/9", `{"userName":"a@x.test"}`, "application/json")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+		require.Len(t, stub.replaceCalls, 1)
+		assert.Equal(t, "9", stub.replaceCalls[0].rawID)
+		assert.Equal(t, service.SCIMUserInput{UserName: "a@x.test"}, stub.replaceCalls[0].in, "absent name, active and roles")
+	})
+
+	t.Run("invalidSyntax", func(t *testing.T) {
+		oversized := `{"userName":"` + secretName + `","x":"` + strings.Repeat("a", 64<<10) + `"}`
+		for name, body := range map[string]string{
+			"malformed":        `{"userName":"` + secretName + `",`,
+			"array":            `[` + valid + `]`,
+			"null":             `null`,
+			"empty":            ``,
+			"trailing data":    valid + ` {}`,
+			"trailing garbage": valid + `x`,
+			"over 64 KiB":      oversized,
+			"active string":    `{"userName":"` + secretName + `","externalId":"` + secretSub + `","active":"False"}`,
+			"userName number":  `{"userName":7}`,
+			"roles string":     `{"userName":"` + secretName + `","roles":"CRM.Sales"}`,
+			"role value int":   `{"userName":"` + secretName + `","roles":[{"value":1}]}`,
+			"role no value":    `{"userName":"` + secretName + `","roles":[{"display":"x"}]}`,
+			"name string":      `{"userName":"` + secretName + `","name":"Jane"}`,
+		} {
+			for _, method := range []string{http.MethodPost, http.MethodPut} {
+				stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+				path := "/scim/v2/Users"
+				if method == http.MethodPut {
+					path += "/9"
+				}
+				w := send(setup(stub), method, path, body, "application/scim+json")
+				require.Equal(t, http.StatusBadRequest, w.Code, "%s %s: %s", method, name, w.Body.String())
+				var doc map[string]any
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), name)
+				assert.Equal(t, "invalidSyntax", doc["scimType"], name)
+				assert.Empty(t, stub.createCalls, "%s: the service is not called", name)
+				assert.Empty(t, stub.replaceCalls, "%s: the service is not called", name)
+				assert.NotContains(t, w.Body.String(), secretName, name)
+				assert.NotContains(t, w.Body.String(), secretSub, name)
+			}
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			err      error
+			status   int
+			scimType string
+		}{
+			{"invalid value", fmt.Errorf("x: %w", service.ErrSCIMInvalidValue), http.StatusBadRequest, "invalidValue"},
+			{"last admin", fmt.Errorf("x: %w", service.ErrSCIMLastAdmin), http.StatusBadRequest, "invalidValue"},
+			{"uniqueness", fmt.Errorf("x: %w", service.ErrSCIMUniqueness), http.StatusConflict, "uniqueness"},
+			{"not found", fmt.Errorf("x: %w", apperrors.ErrNotFound), http.StatusNotFound, ""},
+			{"anything else", errors.New(secretName + " " + secretSub), http.StatusInternalServerError, ""},
+		} {
+			for _, method := range []string{http.MethodPost, http.MethodPut} {
+				stub := &stubSCIMUsers{err: tc.err}
+				path := "/scim/v2/Users"
+				if method == http.MethodPut {
+					path += "/9"
+				}
+				w := send(setup(stub), method, path, valid, "")
+				require.Equal(t, tc.status, w.Code, "%s %s: %s", method, tc.name, w.Body.String())
+				assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
+				var doc map[string]any
+				require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+				if tc.scimType == "" {
+					assert.NotContains(t, doc, "scimType", tc.name)
+				} else {
+					assert.Equal(t, tc.scimType, doc["scimType"], tc.name)
+				}
+				if tc.status == http.StatusNotFound {
+					assert.Equal(t, "User not found", doc["detail"])
+				}
+				assert.NotContains(t, w.Body.String(), secretName, tc.name)
+				assert.NotContains(t, w.Body.String(), secretSub, tc.name)
+				assert.Empty(t, w.Header().Get("Location"), tc.name)
+			}
 		}
 	})
 }

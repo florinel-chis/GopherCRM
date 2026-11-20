@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; SCIM user writes (create, replace, patch, delete) and Groups are later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; SCIM user patch and delete, and Groups, are later work |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -309,8 +309,9 @@ roles are answered as before. Covered by `TestLinkedCustomerLoginWrites{SQLite,M
 Every role create, clone, update and delete, and every change of a user's `role` or `role_id`,
 writes one `role_audit_log` row in the transaction of the change; a failed insert rolls the
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
-(`auth_method`: `bearer` or `api_key`, or `oidc` for the role an OpenID Connect sign-in applied
-to its own account, #435), the action and the state before and after, as ids, role
+(`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
+to its own account, #435, or `scim` for a SCIM 2.0 user create or replace, #470, whose
+`actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
 names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -333,8 +334,10 @@ on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique interna
 `aggregate_key`), so the row keeps the first refusal's `request_id`, `user_agent_family` and
 `created_at`. Since #468 each refused SCIM authentication on `/scim/v2` writes one row of its
 own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
-SCIM tier in front of the authentication bounds them. A successful API-key or SCIM request
-writes nothing, and neither does a refused Bearer token on the API, a 400,
+SCIM tier in front of the authentication bounds them. Since #470 a successful SCIM user create
+or replace writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
+after its transaction; a refused one (400 or 409) writes none. Any other successful API-key or
+SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
 Answers, status codes and messages are the same as before.
@@ -456,10 +459,11 @@ Since #468 GopherCRM serves the first slice of a SCIM 2.0 provider (RFC 7643, RF
 `/scim/v2`, outside the API prefix, so an identity provider such as Entra ID or Okta can be
 pointed at `PUBLIC_BASE_URL/scim/v2`. #468 brought the tokens, the authentication and the
 discovery documents; #469 brought the read of the Users resource (see [Users read](#users-read-469)
-below). Nothing can be provisioned yet: creating, replacing, patching and deleting users
-(`POST`/`PUT`/`PATCH`/`DELETE /Users`), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
-SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets
-the router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
+below) and #470 its create and replace (see
+[Users create and replace](#users-create-and-replace-470)). Patching and deleting users
+(`PATCH`/`DELETE /Users`), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped
+answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
+router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
 **Tokens.** A SCIM provider token belongs to the installation, not to a user. It is
 `scim_` followed by the hex of 32 random bytes, shown once when it is created; `scim_tokens`
@@ -498,7 +502,8 @@ build switch lift it as they lift the `/auth` tier.
 `application/scim+json`, for example
 `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`;
 `status` is the HTTP status as a string. The 429 has `"status":"429"`. A 400 of the Users read
-also carries `scimType` (`invalidFilter` or `invalidValue`).
+and writes also carries `scimType` (`invalidFilter`, `invalidValue` or `invalidSyntax`), and the
+409 of a write carries `uniqueness`.
 
 **Discovery.** With a valid token, three documents answer 200 with `application/scim+json`;
 query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/scim/v2`:
@@ -515,8 +520,8 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
 - `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
   `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`.
 
-The advertised `patch` feature describes a later slice: today only the Users read below is
-served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
+The advertised `patch` feature describes a later slice: today the Users read, create and
+replace below are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
 `GET /health`. The SPA's nginx does not proxy `/scim/v2`: SCIM clients talk to the backend origin
 directly.
 
@@ -574,14 +579,81 @@ variants (`joſe@x.test` with U+017F LONG S, `Kate@x.test` with U+212A KELVIN SI
 refuses them all, deliberately not with Unicode case folding. Paging then applies to the judged
 rows. Errors of the read are logged without the filter value, an email, a name or a subject.
 
-Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired` and `TestSCIMUsersWired`
-(`cmd`), `TestSCIMAuth` (`internal/middleware`), `TestSCIMTokenHandler`,
-`TestSCIMDiscoveryDocuments` and `TestSCIMUserHandler` (`internal/handler`),
-`TestSCIMTokenStore{SQLite,MySQL}` and `TestSCIMUsersSQLite`/`TestSCIMUsersMySQL`
-(`internal/service`; the MySQL root also runs on MariaDB and proves the collations return the
-variants the Go judges drop), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource` and
-`TestWriteErrorType` (`internal/scim`), `TestSCIMTokenSchemaSQLite` (`internal/models`) and
-`TestSCIMTokensMigration{Files,}` (`cmd/migrate`).
+Regression roots of the read: see the end of the next section.
+
+### Users create and replace (#470)
+
+Two more routes behind the same strict tier and token authentication:
+
+- `POST /scim/v2/Users` creates a staff or custom account linked to the identity provider and
+  answers 201 with the User resource, a `Location` header equal to its `meta.location`, and
+  `application/scim+json`.
+- `PUT /scim/v2/Users/{id}` replaces the name, email, role and (when sent) `active` of a visible
+  user and answers 200 with the resource.
+
+**Body.** Any request `Content-Type` is accepted (`application/scim+json` or
+`application/json`). The body is read up to 64 KiB and must be one JSON object. The attributes
+read are `userName` (string, stored as the email), `externalId` (string), `name.givenName` and
+`name.familyName` (strings), `active` (a JSON boolean only; the string form some providers send
+is not accepted yet) and `roles` (absent, or an array of objects whose `value` is a string;
+`display`, `type` and `primary` are ignored). Everything else is ignored, including `schemas`,
+`emails`, `password` and extension schemas: a sent password is never used. `roles` is accepted on
+write but neither served on the resource nor advertised in the discovery documents.
+
+**Linking.** The created account gets one `user_identities` row: the effective single sign-on
+issuer (whether sign-on is enabled does not matter) with `externalId` as the subject. The
+provider must therefore send as `externalId` the value its ID tokens carry as `sub`; a later
+OIDC sign-in with the same issuer and `sub` then uses this account instead of provisioning one.
+`externalId` must be 1 to 255 printable ASCII bytes without leading or trailing whitespace. On
+replace, `externalId` is ignored: the link set at creation never changes.
+
+**Role.** The role always comes from the single sign-on role mapping: the first entry with claim
+`roles`, in stored order, whose value equals one of the sent `roles` values exactly (letter case
+included). Entries with claim `groups` never match. A system role is stored by its key with
+`role_id` NULL, a custom role as `custom` with its id. A mapping that names no role row, or names
+the `customer` system role, is refused: the SCIM Users resource serves staff and custom accounts
+only, so a created customer could never be read back.
+
+**Account.** A created account is active unless `active` is `false`, and its password is the
+bcrypt hash of random bytes that are discarded, so it cannot sign in with a password. On replace
+an absent `name` or sub-attribute clears it (PUT replaces), and an absent `active` leaves
+`is_active` as it is. `active: false` writes the same column a governed deactivation does; it does
+not end the account's sessions yet (#471).
+
+**Answers.** Error details are fixed and never echo a submitted value.
+
+| Condition | Answer |
+|---|---|
+| Body over 64 KiB, not one JSON object, trailing data, or a read attribute of the wrong JSON type | 400 `invalidSyntax`, nothing is read |
+| `externalId` absent or invalid (create); `userName` empty or over 255 bytes; a name part over 100 characters; no issuer configured or one over 512 bytes (create); no `roles` mapping entry matches; the mapped role is missing or `customer`; `userName` not an email address | 400 `invalidValue` |
+| The last active admin would lose the admin role or be deactivated (replace) | 400 `invalidValue` |
+| `userName` held by another account, live or erased, in any letter case; on create also an `externalId` already linked under the issuer | 409 `uniqueness` |
+| Replace of an id that is not a positive integer, names no user, or names an erased or customer account | 404 `User not found` |
+
+The address format rule (the one `POST /users` applies) runs after the uniqueness checks, so on
+MySQL and MariaDB, whose collation equates padded and accented variants with a stored address,
+`"jose@x.test "` and `josé@x.test` answer 409 when `jose@x.test` exists; on SQLite a padded
+address fails the format rule with 400. Either way nothing is written.
+
+**Transaction and audit.** Each write is one governed transaction in the lock order of the OIDC
+sign-in (`admin set → users → roles → user_identities`, see [CONCURRENCY.md](CONCURRENCY.md),
+flow "SCIM user create and replace"). A create, and a replace that changes the role or
+`role_id`, writes one `role_audit_log` row (`user_role_changed`, `auth_method` `scim`,
+`actor_user_id` NULL); a replace that keeps the role writes none. After the commit one
+`auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
+nothing.
+
+Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired`, `TestSCIMUsersWired` and
+`TestSCIMUserWritesWired` (`cmd`), `TestSCIMAuth` (`internal/middleware`),
+`TestSCIMTokenHandler`, `TestSCIMDiscoveryDocuments`, `TestSCIMUserHandler` and
+`TestSCIMUserWriteHandler` (`internal/handler`), `TestSCIMTokenStore{SQLite,MySQL}`,
+`TestSCIMUsersSQLite`/`TestSCIMUsersMySQL` and `TestSCIMUserWritesSQLite`/`TestSCIMUserWritesMySQL`
+(`internal/service`; the MySQL roots also run on MariaDB and prove that the collations return
+the variants the Go judges drop, and that the padded and accented variants of a stored address
+are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource`,
+`TestWriteErrorType` and `TestWriteErrorTypeWriteTypes` (`internal/scim`),
+`TestSCIMTokenSchemaSQLite` (`internal/models`) and `TestSCIMTokensMigration{Files,}`
+(`cmd/migrate`).
 
 ## Least-privilege integration user
 
@@ -703,8 +775,9 @@ on every sign-in. Since #436 the SPA offers the sign-in (see
 a `groups` claim has its groups read from the issuer's userinfo endpoint when the mapping uses
 groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider tokens and the
 `/scim/v2` authentication and discovery documents (see [SCIM provisioning](#scim-provisioning));
-#469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`). Creating, replacing,
-patching and deprovisioning users through SCIM, and Groups, are later work. The rest of the note
+#469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
+and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`). Patching and deprovisioning users
+through SCIM, and Groups, are not implemented yet; that is later work. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)
@@ -1021,10 +1094,10 @@ session-bound CSRF protection in the same change.
 **Seams already in place.**
 
 - `role_audit_log.auth_method` records how the acting request authenticated. Its values today
-  are `bearer`, `api_key` and, since #435, `oidc` (`AuthMethodBearer`, `AuthMethodAPIKey`,
-  `AuthMethodOIDC` in `internal/service/interfaces.go`); a SCIM call would add `scim`, not a
-  column.
+  are `bearer`, `api_key`, since #435 `oidc` and since #470 `scim` (`AuthMethodBearer`,
+  `AuthMethodAPIKey`, `AuthMethodOIDC`, `AuthMethodSCIM` in `internal/service/interfaces.go`);
+  SCIM added a value, not a column.
 - `role_audit_log.actor_user_id` is nullable, so a change made by a provisioning client that is
-  not a user can be recorded without inventing an account.
+  not a user is recorded without inventing an account: a SCIM write stores NULL (#470).
 - Permissions are resolved per request from the user's role, so a role mapped at sign-in needs
   no new enforcement path.

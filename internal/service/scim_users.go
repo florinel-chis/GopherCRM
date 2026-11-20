@@ -34,12 +34,23 @@ type SCIMUserPage struct {
 type scimUserService struct {
 	repo    repository.SCIMUserRepository
 	issuers SCIMIssuerSource
+	// writes is the create and replace half (#470); nil without
+	// WithSCIMUserWrites.
+	writes *scimUserWrites
 }
 
+// SCIMUserServiceOption configures NewSCIMUserService.
+type SCIMUserServiceOption func(*scimUserService)
+
 // NewSCIMUserService builds the SCIM Users read (#469) over the repository
-// and the issuer source.
-func NewSCIMUserService(repo repository.SCIMUserRepository, issuers SCIMIssuerSource) SCIMUserService {
-	return &scimUserService{repo: repo, issuers: issuers}
+// and the issuer source. The create and replace (#470) need
+// WithSCIMUserWrites; without it they answer a wiring error.
+func NewSCIMUserService(repo repository.SCIMUserRepository, issuers SCIMIssuerSource, opts ...SCIMUserServiceOption) SCIMUserService {
+	s := &scimUserService{repo: repo, issuers: issuers}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Get returns the visible user rawID names. An id that is not a positive

@@ -98,14 +98,17 @@ var routeMatrixPublic = map[string]bool{
 	"GET /api/v1/quotes/public/response":         true,
 	"POST /api/v1/quotes/public/response":        true,
 	"POST /api/v1/quotes/public/render":          true,
-	// SCIM 2.0 routes, the discovery documents (#468) and the Users read
-	// (#469): outside the API prefix, behind the SCIM token authentication
-	// instead of Auth, and not permission-guarded.
+	// SCIM 2.0 routes, the discovery documents (#468), the Users read (#469)
+	// and the Users create and replace (#470): outside the API prefix, behind
+	// the SCIM token authentication instead of Auth, and not
+	// permission-guarded.
 	"GET /scim/v2/ServiceProviderConfig": true,
 	"GET /scim/v2/Schemas":               true,
 	"GET /scim/v2/ResourceTypes":         true,
 	"GET /scim/v2/Users":                 true,
 	"GET /scim/v2/Users/:id":             true,
+	"POST /scim/v2/Users":                true,
+	"PUT /scim/v2/Users/:id":             true,
 }
 
 // routeMatrixAfterFreeze is every protected route added after the golden was

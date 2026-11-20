@@ -40,6 +40,7 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   inversion of the reset request's order (see both flows).
 - `admin set → users (id ascending) → roles (id ascending)` (#259, implemented by #348) for every governed user write and, without the admin set, every role write.
   The OIDC sign-in (#435) continues the chain: `admin set → users → roles → user_identities → refresh_tokens`.
+  The SCIM user create and replace (#470) follow `admin set → users → roles → user_identities`.
   The admin set is the `users` rows of the active admins, locked by primary key in id order; a
   role's `role_permissions` rows come after its `roles` row (see the RBAC flow below).
 
@@ -641,6 +642,31 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   replayed attempt inserts fresh rows.
 - **Status:** implemented
 
+### SCIM user create and replace
+
+- **Rows locked:** `POST /scim/v2/Users` (`scimUserService.Create`,
+  `internal/service/scim_user_writes.go`) locks the `users` rows of the active admins
+  (`LockActiveAdmins`) and the `roles` row the `roles` mapping entry names
+  (`RoleRepository.LockByIDs`), then reads with plain reads whether any user, erased ones
+  included, holds the address (`EmailExistsFoldedUnscoped`) and whether the `user_identities` row
+  of `(issuer, externalId)` exists, and writes the `users` insert, the `user_identities` insert and
+  the `role_audit_log` row. `PUT /scim/v2/Users/{id}` (`scimUserService.Replace`) locks the admin
+  set, the target's `users` row (`LockLiveByIDs`) and the `roles` rows of the target's current
+  custom role and of the mapped role, reads whether another user holds a changed address
+  (`SCIMUserRepository.EmailTakenByOther`, plain), then writes the `users` columns and, on a role
+  change, the audit row. It touches no `user_identities` row.
+- **Order:** admin set → users → roles → user_identities, the OIDC sign-in's order without its
+  `refresh_tokens` step. A create locks no existing `users` row: its new row and its identity row
+  are inserts, and a competing create of the same address or identity, or a first OIDC sign-in,
+  loses on the unique index and rolls back whole (409).
+- **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`
+  repositories; the user, its identity and the audit row commit together or not at all. The
+  successful `auth_audit_log` row is written after the commit, on the root handle, as its own
+  `INSERT`.
+- **Retry:** `WithTransactionAndRetry` with `roleWriteMaxRetries` 3, as every governed write; a
+  replayed attempt inserts fresh rows.
+- **Status:** implemented
+
 ## How the #175 failure modes are avoided
 
 **Foreign-key-check lock inversion.** On InnoDB an insert or update of a child row whose foreign key
@@ -689,6 +715,7 @@ same on MySQL 8 and MariaDB 10.11.
 | API-key create | C3 | implemented |
 | RBAC user-role and role writes | #348 | implemented |
 | OIDC sign-in | #435 | implemented |
+| SCIM user create and replace | #470 | implemented |
 
 C2 and C3 are Paperclip ids with no GitHub issue yet; C2–C4 follow the family order of the
 #183 comment of 14 Nov 2026 (C2 session credentials, C3 reset and API-key issuance, C4 erasure

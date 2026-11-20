@@ -29,7 +29,9 @@ import (
 // authentication on /scim/v2 (#468) is one row of its own, method scim,
 // attempts 1 and user_id NULL, with reason token_missing, token_invalid or
 // token_revoked; they are not aggregated, because the strict rate tier in
-// front of the SCIM authentication bounds them. A row is pseudonymous: the method, the outcome, a
+// front of the SCIM authentication bounds them. A successful SCIM user create
+// or replace (#470) writes one row, method scim, outcome success, with the
+// account's user id. A row is pseudonymous: the method, the outcome, a
 // stable reason code, the user id when the account is known, the sign-in
 // attempt id, the request id (only when it matches
 // ^[A-Za-z0-9._:-]{1,64}$), an HMAC reference of a refused single sign-on

@@ -155,11 +155,12 @@ type RoleAuditEntryResponse struct {
 	ID uint `json:"id" example:"42"`
 	// UTC time of the change (RFC 3339).
 	CreatedAt time.Time `json:"created_at" example:"2026-11-18T09:00:00Z"`
-	// Id of the acting user.
+	// Id of the acting user; null for a SCIM write, which no user performs.
 	ActorUserID *uint `json:"actor_user_id" example:"1"`
-	// How the acting request authenticated: bearer or api_key, or oidc for
-	// the role an OpenID Connect sign-in applied to its own account.
-	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc" example:"bearer"`
+	// How the acting request authenticated: bearer or api_key, oidc for the
+	// role an OpenID Connect sign-in applied to its own account, or scim for
+	// a SCIM 2.0 user create or replace (actor null).
+	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc,scim" example:"bearer"`
 	// Kind of change.
 	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed" example:"role_updated"`
 	// The affected role, or the custom role a user received; null when a user

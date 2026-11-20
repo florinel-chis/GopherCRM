@@ -3,8 +3,9 @@
 Back to the [overview](overview.md).
 
 GopherCRM supports single sign-on through OpenID Connect, with one identity provider at a time
-(for example Microsoft Entra ID or Okta). SAML is not supported, and neither is SCIM provisioning:
-accounts are created at the first sign-in and are not pushed or removed by the provider.
+(for example Microsoft Entra ID or Okta). SAML is not supported. Accounts are created at the first
+sign-in, or in advance by a provider that provisions through SCIM 2.0 (create and update only; the
+provider cannot remove accounts yet).
 
 ## What happens at sign-in
 

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 user create and replace (#470).** With a SCIM token, `POST /scim/v2/Users` creates
+  a staff or custom account (201, `Location` equal to `meta.location`) and
+  `PUT /scim/v2/Users/{id}` replaces its name, email, role and, when sent, `active` (200). The
+  role always comes from the single sign-on role mapping: the first entry with claim `roles`
+  whose value equals a sent `roles[].value` exactly; no match, a missing role row or a mapping to
+  `customer` is 400 `invalidValue`. A create links the account to the effective SSO issuer with
+  `externalId` as the subject, so a later OIDC sign-in with that `sub` uses it, and stores an
+  unusable random password (a sent password is never used). An address another account holds,
+  live or erased, in any letter case (on MySQL/MariaDB also padded and accented variants), or an
+  already linked `externalId`, is 409 `uniqueness`; a missing or invalid `externalId`, an empty
+  or long `userName`, a name part over 100 characters, no configured issuer or a `userName` that
+  is not an address is 400 `invalidValue`; a body that is not one JSON object of at most 64 KiB
+  with correctly typed attributes is 400 `invalidSyntax`. Replace refuses to demote or deactivate
+  the last active admin (400 `invalidValue`) and answers 404 for unknown, erased and customer
+  accounts. Each write is one governed transaction; a create and a role change write a
+  `user_role_changed` audit row with `auth_method` `scim` and `actor_user_id` NULL, and every
+  success writes one sign-in audit row with method `scim` and outcome `success`. A refusal writes
+  nothing. Deactivation through PUT does not end sessions yet (#471). No new setting, table or
+  migration.
 - **SCIM 2.0 user read (#469).** With a SCIM token, `GET /scim/v2/Users/{id}` returns one core
   User resource and `GET /scim/v2/Users` a ListResponse in id order, paged by `startIndex`
   (1-based) and `count` (default and maximum 100, 0 for the total only), with the one filter

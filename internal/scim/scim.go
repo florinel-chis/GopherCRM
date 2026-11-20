@@ -57,6 +57,10 @@ func WriteError(c *gin.Context, status int, detail string) {
 const (
 	ScimTypeInvalidFilter = "invalidFilter"
 	ScimTypeInvalidValue  = "invalidValue"
+	// ScimTypeUniqueness and ScimTypeInvalidSyntax answer the Users create
+	// and replace (#470).
+	ScimTypeUniqueness    = "uniqueness"
+	ScimTypeInvalidSyntax = "invalidSyntax"
 )
 
 // WriteErrorType answers status with the SCIM error body carrying scimType,

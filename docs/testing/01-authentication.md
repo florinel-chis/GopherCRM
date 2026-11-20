@@ -8,7 +8,7 @@ file, not by trusting the coverage matrix.
 
 **Sources**
 
-- `docs/FEATURES.md` section 1 (rows 1.1–1.13), section 10b "Auth sessions", section 11.1, Gap
+- `docs/FEATURES.md` section 1 (rows 1.1–1.17), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route,
   access-token revocation beyond the session-ending events, concurrent-refresh stampede)
@@ -1308,13 +1308,14 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   still write one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
 
-## SCIM 2.0 provider (FEATURES 1.15)
+## SCIM 2.0 provider (FEATURES 1.15 to 1.17)
 
 `/scim/v2` is served outside the API prefix to identity providers. #468 covers the provider
 tokens, the SCIM authentication and the three discovery documents; #469 the read of the Users
-resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /scim/v2/Users/{id}`).
-User writes (create, replace, patch, delete), `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and
-a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
+resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /scim/v2/Users/{id}`);
+#470 the create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`, TC-AUTH-075 to
+TC-AUTH-080). Patch and delete, `/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a
+SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
 
 ### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
@@ -1480,3 +1481,94 @@ a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning
   MariaDB, where `utf8mb4_bin` is PAD SPACE) and the user without one. Step 2: no resource has
   `externalId`.
 - **Automation:** automated — Go: `TestSCIMUsers{SQLite,MySQL}`, `TestSCIMUsersWired`
+
+### TC-AUTH-075 — A SCIM create provisions a linked staff account with the mapped role
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A SCIM token; the single sign-on issuer configured; a role mapping whose
+  entries with claim `roles` map `CRM.Sales` to the sales system role and `CRM.Custom` to a custom
+  role.
+- **Steps:**
+  1. `POST /scim/v2/Users` with `userName`, `externalId` `sub-470`, `name`, `password` and
+     `"roles":[{"value":"CRM.Sales"}]`.
+  2. Repeat with another address and `externalId` and `"roles":[{"value":"CRM.Custom"}]`,
+     `"active":false`.
+- **Expected:** Step 1: 201 `application/scim+json` with a `Location` header equal to
+  `meta.location`; the resource has the new `id`, the `externalId`, the `userName` and
+  `"active":true`. The database holds one users row (role `sales`, `role_id` NULL, a password hash
+  the sent password does not verify), one `user_identities` row (the issuer, subject `sub-470`),
+  one `role_audit_log` row (`user_role_changed`, `auth_method` `scim`, `actor_user_id` NULL,
+  `before_state` NULL) and one `auth_audit_log` row (method `scim`, outcome `success`, `user_id`
+  the account). Step 2: role `custom` with the custom role's id, stored inactive.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`create`), `TestSCIMUserWritesWired`, `TestSCIMUserWriteHandler`
+
+### TC-AUTH-076 — A taken address or a linked externalId is a 409 uniqueness
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** A user `jose@x.test`; an erased user; a user linked to `sub-taken` under the
+  issuer.
+- **Steps:**
+  1. `POST /scim/v2/Users` with `userName` `JOSE@X.TEST`, then with the erased user's former
+     address.
+  2. On MySQL 8 or MariaDB 10.11: `"jose@x.test "` (trailing space) and `"josé@x.test"`.
+  3. A new address with `externalId` `sub-taken`.
+- **Expected:** Each answers 409 with `"scimType":"uniqueness"` and a fixed detail that echoes no
+  value; the users (erased rows included), `user_identities`, `role_audit_log` and
+  `auth_audit_log` row counts are unchanged. On SQLite the padded address of step 2 fails the
+  address format rule instead (400 `invalidValue`), also writing nothing.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`duplicate email`, `duplicate email variants` on MySQL/MariaDB, `identity taken`)
+
+### TC-AUTH-077 — Invalid SCIM user bodies are refused without a write
+- **Priority:** P0
+- **Type:** negative
+- **Preconditions:** A SCIM token and an otherwise valid body.
+- **Steps:**
+  1. Send `externalId` absent, `""` and `"sub "`.
+  2. Send no `roles`, a value only a `groups` entry carries, a value differing in letter case from a
+     `roles` entry, a value mapped to the customer role and one mapped to a role id with no row.
+  3. Send a malformed body, a JSON array, an object followed by more data, a body over 64 KiB and
+     `"active":"False"`.
+- **Expected:** Steps 1 and 2: 400 `"scimType":"invalidValue"`. Step 3: 400
+  `"scimType":"invalidSyntax"`, and the service is not called. No error body contains the
+  submitted `userName` or `externalId`, and the four tables are unchanged.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`missing externalId`, `unmapped role`), `TestSCIMUserWriteHandler`
+
+### TC-AUTH-078 — A SCIM replace overwrites name, email, role and active
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A sales account linked to `sub-sam`; a support account; another account
+  holding `ann@x.test`; a customer and an erased account.
+- **Steps:**
+  1. `PUT /scim/v2/Users/<sales id>` with a new name, a new email and roles mapped to support.
+  2. `PUT` the support account keeping its role, without `name`.
+  3. `PUT` with `"active":false`.
+  4. `PUT` to an unknown, the erased, the customer id and `abc`.
+  5. `PUT` with `userName` `ann@x.test`.
+- **Expected:** Step 1: 200; the row holds the new names, email and role `support`; one
+  `role_audit_log` row (`auth_method` `scim`, `actor_user_id` NULL, before `{role: sales}`, after
+  `{role: support}`) and one `auth_audit_log` success row; `externalId` stays `sub-sam` (an
+  `externalId` in the body is ignored). Step 2: no `role_audit_log` row, one `auth_audit_log` row, names cleared. Step 3:
+  `is_active` false. Step 4: 404 `User not found`. Step 5: 409 `uniqueness`, nothing written.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`replace changes role`, `replace keeps role`, `replace deactivates`, `replace not visible`, `replace email taken`), `TestSCIMUserWritesWired`
+
+### TC-AUTH-079 — SCIM cannot demote or deactivate the last active admin
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** Exactly one active admin.
+- **Steps:**
+  1. `PUT /scim/v2/Users/<admin id>` with roles mapped to sales.
+  2. `PUT` with roles mapped to admin and `"active":false`.
+- **Expected:** Both answer 400 `"scimType":"invalidValue"` with a fixed detail; the account is
+  still an active admin and no `role_audit_log` or `auth_audit_log` row is written.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`last admin`)
+
+### TC-AUTH-080 — An OIDC sign-in uses the account SCIM created
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** Single sign-on configured with the test issuer and a `roles` mapping entry.
+- **Steps:**
+  1. `POST /scim/v2/Users` with `externalId` X and a matching role value.
+  2. Sign in through OIDC with `sub` X and a matching `roles` claim.
+- **Expected:** The sign-in returns tokens for the SCIM-created user id; the users and
+  `user_identities` row counts are unchanged.
+- **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`sign-in reuses account`)
