@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// cmd/migrate's integration harness appends disposable schema names to its
-// base DSN. Check the actual workflow input against the driver's parser, so a
+// cmd/migrate's integration harness sets each disposable schema name on the
+// parsed base DSN. Check the actual workflow input against the driver's parser, so a
 // query on the base cannot silently turn real database coverage into skips.
 func TestWorkflowDSNSupportsDisposableMigrationSchemas(t *testing.T) {
 	workflow, err := os.ReadFile("../../.github/workflows/release.yml")

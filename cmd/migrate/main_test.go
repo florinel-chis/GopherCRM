@@ -11,7 +11,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	_ "github.com/go-sql-driver/mysql"
+	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/mysql"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -197,21 +197,105 @@ func TestMigrationSequence_UpgradePathFromExistingMain(t *testing.T) {
 		"ticket comments migration should follow schema parity, got %s", pendingMigrations[1].name)
 }
 
-// testMySQLBaseDSN returns the server-level DSN (no database name, trailing
-// slash) the MySQL/MariaDB migration roots run against. It reads only
-// TEST_MYSQL_DSN: an unset or blank value skips the calling test, and a value
-// that names an unreachable server is returned as is so the test fails at its
-// first statement instead of falling back to another server.
+// testMySQLBaseDSN returns the server-level DSN (no database name) the
+// MySQL/MariaDB migration roots run against. It reads only TEST_MYSQL_DSN: an
+// unset or blank value skips the calling test, and a value that names an
+// unreachable server is returned as is so the test fails at its first
+// statement instead of falling back to another server. A query string is
+// accepted and kept unchanged; a param-free DSN without a trailing slash gets
+// one appended.
 func testMySQLBaseDSN(t *testing.T) string {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN"))
 	if dsn == "" {
 		t.Skip("TEST_MYSQL_DSN is not set: skipping the MySQL/MariaDB migration test")
 	}
-	if !strings.HasSuffix(dsn, "/") {
+	if !strings.Contains(dsn, "?") && !strings.HasSuffix(dsn, "/") {
 		dsn += "/"
 	}
 	return dsn
+}
+
+// mysqlTestDSN builds the DSN of database dbName on the server named by base
+// (dbName "" gives the server-level form). It parses base with the driver, so
+// a base carrying a query string works. The root's own parameters
+// (multiStatements=true, parseTime=true) win over the caller's values for the
+// same keys; every other caller parameter (timeout, charset, loc, tls, ...) is
+// kept, and a database named in base is replaced. The error never carries the
+// DSN, which holds the password.
+func mysqlTestDSN(base, dbName string) (string, error) {
+	cfg, err := mysqldriver.ParseDSN(base)
+	if err != nil {
+		return "", fmt.Errorf("parse base MySQL DSN: %w", err)
+	}
+	cfg.DBName = dbName
+	cfg.MultiStatements = true
+	cfg.ParseTime = true
+	return cfg.FormatDSN(), nil
+}
+
+// requireMySQLTestDSN is mysqlTestDSN for a test: a parse error fails it.
+func requireMySQLTestDSN(t *testing.T, base, dbName string) string {
+	t.Helper()
+	dsn, err := mysqlTestDSN(base, dbName)
+	require.NoError(t, err)
+	return dsn
+}
+
+func TestMySQLTestDSN(t *testing.T) {
+	parse := func(t *testing.T, dsn string) *mysqldriver.Config {
+		t.Helper()
+		cfg, err := mysqldriver.ParseDSN(dsn)
+		require.NoError(t, err)
+		return cfg
+	}
+	const paramBase = "u:p@tcp(127.0.0.1:3306)/?parseTime=false&multiStatements=false&timeout=7s"
+
+	t.Run("param-free base", func(t *testing.T) {
+		got, err := mysqlTestDSN("u:p@tcp(127.0.0.1:3306)/", "gocrm_x")
+		require.NoError(t, err)
+		cfg := parse(t, got)
+		assert.Equal(t, "gocrm_x", cfg.DBName)
+		assert.True(t, cfg.MultiStatements)
+		assert.True(t, cfg.ParseTime)
+		assert.Equal(t, "127.0.0.1:3306", cfg.Addr)
+		assert.Equal(t, "tcp", cfg.Net)
+		assert.Equal(t, "u", cfg.User)
+		assert.Equal(t, "p", cfg.Passwd)
+		assert.Empty(t, cfg.Params)
+	})
+	t.Run("root parameters win and caller parameters are kept", func(t *testing.T) {
+		got, err := mysqlTestDSN(paramBase, "gocrm_x")
+		require.NoError(t, err)
+		cfg := parse(t, got)
+		assert.Equal(t, "gocrm_x", cfg.DBName)
+		assert.True(t, cfg.ParseTime)
+		assert.True(t, cfg.MultiStatements)
+		assert.Equal(t, 7*time.Second, cfg.Timeout)
+		assert.Equal(t, "127.0.0.1:3306", cfg.Addr)
+	})
+	t.Run("database named in base is replaced", func(t *testing.T) {
+		got, err := mysqlTestDSN("u:p@tcp(127.0.0.1:3306)/other?timeout=7s", "gocrm_x")
+		require.NoError(t, err)
+		cfg := parse(t, got)
+		assert.Equal(t, "gocrm_x", cfg.DBName)
+		assert.Equal(t, 7*time.Second, cfg.Timeout)
+	})
+	t.Run("server form has no database", func(t *testing.T) {
+		got, err := mysqlTestDSN(paramBase, "")
+		require.NoError(t, err)
+		cfg := parse(t, got)
+		assert.Equal(t, "", cfg.DBName)
+		assert.True(t, cfg.MultiStatements)
+		assert.True(t, cfg.ParseTime)
+		assert.Equal(t, 7*time.Second, cfg.Timeout)
+	})
+	t.Run("unparseable base returns an error", func(t *testing.T) {
+		got, err := mysqlTestDSN("u:p@tcp(127.0.0.1:3306)/?parseTime=true/", "gocrm_x")
+		require.Error(t, err)
+		assert.Empty(t, got)
+		assert.NotContains(t, err.Error(), "u:p@")
+	})
 }
 
 func TestMySQLBaseDSNFromEnvironmentOnly(t *testing.T) {
@@ -256,6 +340,12 @@ func TestMySQLBaseDSNFromEnvironmentOnly(t *testing.T) {
 		assert.False(t, inner.Skipped())
 		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/", got)
 	})
+	t.Run("query string is kept without appending a slash", func(t *testing.T) {
+		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)/?parseTime=true")
+		got, inner := run(t, "helper")
+		assert.False(t, inner.Skipped())
+		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/?parseTime=true", got)
+	})
 }
 
 func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
@@ -276,7 +366,7 @@ func TestMigrationUpgrade_FromMainAutoMigratedSchema(t *testing.T) {
 		}
 	})
 
-	testDSN := baseDSN + testDBName + "?multiStatements=true&parseTime=true"
+	testDSN := requireMySQLTestDSN(t, baseDSN, testDBName)
 	appDB, err := sql.Open("mysql", testDSN)
 	require.NoError(t, err)
 	defer appDB.Close()
@@ -384,7 +474,7 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 		}
 	})
 
-	testDSN := baseDSN + testDBName + "?multiStatements=true&parseTime=true"
+	testDSN := requireMySQLTestDSN(t, baseDSN, testDBName)
 	appDB, err := sql.Open("mysql", testDSN)
 	require.NoError(t, err)
 	defer appDB.Close()
