@@ -1065,6 +1065,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`migrate create` numbers a new migration as the newest existing version + 1 (#522).**
+  `go run ./cmd/migrate -command create -name <name>` now takes the highest version in the
+  migrations directory plus one (the next one is `20261129120001`), so a new migration always
+  sorts after every migration a database may already have applied. The clock is used only for an
+  empty directory. The command accepts only letters, digits and underscores in the name, never
+  overwrites a file, and refuses to write anything while the existing files break the layout. A new
+  `cmd/migrate` test requires every file in `migrations/` to follow
+  `<version>_<name>.{up,down}.sql`, each version to have exactly one up and one down file under one
+  name, and versions to increase strictly in file name order. Existing versions are unchanged.
+
 - **Sign-in audit: refused API keys are throttled and counted, not written one row each (#466).**
   The protected routes now run the moderate rate limiter (120 requests a minute, burst 30, per
   client address) before authentication, so a throttled request gets a 429 without a key lookup

@@ -427,3 +427,191 @@ func TestMigrationFresh_FullUpAndDown(t *testing.T) {
 	_, _, err = m.Version()
 	assert.ErrorIs(t, err, migrate.ErrNilVersion)
 }
+
+// writeMigrationFiles creates empty-bodied SQL files with the given names in dir.
+func writeMigrationFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("SELECT 1;\n"), 0644))
+	}
+}
+
+// writeMigrationPairs creates the up and down file for each <version>_<name> base.
+func writeMigrationPairs(t *testing.T, dir string, bases ...string) {
+	t.Helper()
+	for _, base := range bases {
+		writeMigrationFiles(t, dir, base+".up.sql", base+".down.sql")
+	}
+}
+
+// listDir returns the sorted file names in dir.
+func listDir(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func migrationProblems(t *testing.T, dir string) []string {
+	t.Helper()
+	_, problems, err := readMigrationVersions(dir)
+	require.NoError(t, err)
+	return problems
+}
+
+func TestCreateNewMigration(t *testing.T) {
+	t.Run("a_takes_newest_plus_one", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationPairs(t, dir, "20250101000000_old", "20261129120000_new")
+		before := listDir(t, dir)
+
+		upPath, downPath, err := createNewMigration("add_x", dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(dir, "20261129120001_add_x.up.sql"), upPath)
+		assert.Equal(t, filepath.Join(dir, "20261129120001_add_x.down.sql"), downPath)
+
+		after := listDir(t, dir)
+		expected := append(append([]string{}, before...), "20261129120001_add_x.down.sql", "20261129120001_add_x.up.sql")
+		assert.ElementsMatch(t, expected, after)
+		for _, name := range before {
+			data, err := os.ReadFile(filepath.Join(dir, name))
+			require.NoError(t, err)
+			assert.Equal(t, "SELECT 1;\n", string(data), "%s must be unchanged", name)
+		}
+		assert.Empty(t, migrationProblems(t, dir))
+	})
+
+	t.Run("b_second_call_takes_the_next", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationPairs(t, dir, "20250101000000_old", "20261129120000_new")
+		_, _, err := createNewMigration("add_x", dir)
+		require.NoError(t, err)
+
+		upPath, downPath, err := createNewMigration("add_y", dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(dir, "20261129120002_add_y.up.sql"), upPath)
+		assert.Equal(t, filepath.Join(dir, "20261129120002_add_y.down.sql"), downPath)
+		assert.Empty(t, migrationProblems(t, dir))
+	})
+
+	t.Run("c_newest_in_the_past_does_not_use_the_clock", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationPairs(t, dir, "20250101000000_old")
+
+		upPath, _, err := createNewMigration("add_x", dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(dir, "20250101000001_add_x.up.sql"), upPath)
+	})
+
+	t.Run("d_empty_directory_uses_a_clock_version", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			dir  func(t *testing.T) string
+		}{
+			{"empty", func(t *testing.T) string { return t.TempDir() }},
+			{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "migrations") }},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				dir := tc.dir(t)
+				upPath, downPath, err := createNewMigration("add_x", dir)
+				require.NoError(t, err)
+
+				base := strings.TrimSuffix(filepath.Base(upPath), ".up.sql")
+				assert.Regexp(t, `^[0-9]{14}_add_x$`, base)
+				assert.Equal(t, filepath.Join(dir, base+".down.sql"), downPath)
+				assert.Empty(t, migrationProblems(t, dir))
+			})
+		}
+	})
+
+	t.Run("e_invalid_directory_writes_nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationFiles(t, dir, "20250101000000_old.up.sql")
+		before := listDir(t, dir)
+
+		_, _, err := createNewMigration("add_x", dir)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "version 20250101000000 has no .down.sql file")
+		assert.Equal(t, before, listDir(t, dir))
+	})
+
+	t.Run("f_invalid_name_writes_nothing", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationPairs(t, dir, "20250101000000_old")
+		before := listDir(t, dir)
+
+		for _, name := range []string{"add-x", "add x", "../add_x", ""} {
+			_, _, err := createNewMigration(name, dir)
+			require.Error(t, err, "name %q", name)
+		}
+		assert.Equal(t, before, listDir(t, dir))
+	})
+}
+
+func TestMigrationFiles_VersionsUniquePairedIncreasing(t *testing.T) {
+	t.Run("repository", func(t *testing.T) {
+		dir := filepath.Join("..", "..", "migrations")
+		versions, problems, err := readMigrationVersions(dir)
+		require.NoError(t, err)
+		assert.Empty(t, problems)
+		assert.NotEmpty(t, versions, "the repository must hold migrations")
+	})
+
+	t.Run("valid", func(t *testing.T) {
+		dir := t.TempDir()
+		writeMigrationPairs(t, dir, "20250101000000_old", "20261129120000_new")
+		writeMigrationFiles(t, dir, "README.txt")
+		require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0755))
+		assert.Empty(t, migrationProblems(t, dir))
+	})
+
+	failures := []struct {
+		name  string
+		files []string
+		want  string
+	}{
+		{
+			name:  "duplicate_version",
+			files: []string{"5_a.up.sql", "5_a.down.sql", "5_b.up.sql", "5_b.down.sql"},
+			want:  "version 5 is used by more than one name",
+		},
+		{
+			name:  "missing_down",
+			files: []string{"5_a.up.sql", "6_b.up.sql", "6_b.down.sql"},
+			want:  "version 5 has no .down.sql file",
+		},
+		{
+			name:  "missing_up",
+			files: []string{"5_a.down.sql", "6_b.up.sql", "6_b.down.sql"},
+			want:  "version 5 has no .up.sql file",
+		},
+		{
+			name:  "up_down_name_mismatch",
+			files: []string{"5_a.up.sql", "5_b.down.sql"},
+			want:  "version 5 is used by more than one name: a, b",
+		},
+		{
+			name:  "not_increasing",
+			files: []string{"9_a.up.sql", "9_a.down.sql", "10_b.up.sql", "10_b.down.sql"},
+			want:  "version 9 is listed after version 10",
+		},
+		{
+			name:  "malformed_name",
+			files: []string{"add_x.up.sql", "5_a.up.sql", "5_a.down.sql"},
+			want:  "add_x.up.sql: name does not match",
+		},
+	}
+	for _, tc := range failures {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeMigrationFiles(t, dir, tc.files...)
+			problems := migrationProblems(t, dir)
+			require.NotEmpty(t, problems)
+			assert.Contains(t, strings.Join(problems, "\n"), tc.want)
+		})
+	}
+}
