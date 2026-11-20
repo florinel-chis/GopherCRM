@@ -1072,7 +1072,8 @@ expired, or if its owner has been deactivated or erased.
   never changes)
 - `DELETE /api/v1/webhooks/endpoints/:id` - Delete the endpoint and its delivery log
 - `POST /api/v1/webhooks/endpoints/:id/test` - Send one signed `webhook.ping` to the endpoint (active
-  or not) and answer `{event_id, outcome, http_status, error_code}`; nothing is logged or retried
+  or not) and answer `{event_id, outcome, http_status, error_code}`; not written to the delivery
+  log and not retried
 - `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
   `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
 
