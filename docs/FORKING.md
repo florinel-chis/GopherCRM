@@ -602,7 +602,7 @@ it from `go.mod` instead is #223.
 |---|---|
 | `setupDependencies` in `cmd/main.go:268` | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
-| the AutoMigrate list in `internal/models/database.go:114-156` | append your models at the end, in one block |
+| the AutoMigrate list in `internal/models/database.go:212-275` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
 | seeded settings in `internal/models/configuration.go` | a fork-specific key prefix, appended at the end |
 | `CHANGELOG.md` | a separate fork section, or a separate file |
