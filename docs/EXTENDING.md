@@ -30,7 +30,7 @@ Break one and a reviewer will flag it as **Important** under [REVIEW.md](../REVI
 | A task's deal link has one policy: admin sees all deals, sales its own, every other role none. A handler returning a task redacts it again on every read | `service.CanViewDeal`, `RedactTaskDeal(s)`, `checkDealLink` in `internal/service/deal_visibility.go` | code comments in that file |
 | Service logs carry ids, statuses and counts, never emails, names, titles, search terms or raw sort values; access logs omit query strings | `internal/service/logging_privacy_test.go`, `internal/handler/logging_privacy_test.go` | end of "Deleting personal data" |
 | Deleting a person overwrites every personal field, then soft-deletes, in one transaction | `internal/repository/erasure.go`, `erasure_cascade.go` | [Deleting personal data](DEVELOPMENT.md#deleting-personal-data) |
-| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go` `autoMigrateModels`, `migrations/` | [Database](DEVELOPMENT.md#database) |
+| A schema change ships both halves: GORM AutoMigrate and a `migrations/` up/down pair | `internal/models/database.go` `autoMigrateModels`, `migrations/`, `cmd/migrate/schema_parity_migration_test.go` | [Database](DEVELOPMENT.md#database) |
 | Duplicate keys become a sentinel, not a driver string | `internal/repository/duplicate_key.go` | "Duplicate email" |
 
 Two review rules apply to every recipe (`REVIEW.md`, "Tests"):

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Schema comparison of the two MySQL/MariaDB schema paths (#523).**
+  `cmd/migrate/schema_parity_migration_test.go` builds one fresh schema from every SQL migration and
+  one with the startup auto-migration (`models.MigrateDatabaseWith`) and compares their tables,
+  column types, nullability and indexes (uniqueness and ordered columns, whatever the index name)
+  from `INFORMATION_SCHEMA`. Any difference fails the test with one line per difference. The 18
+  differences that exist today (nullability of ten columns, the type of
+  `users.failed_login_attempts`, and the seven indexes only migration `20250806120001` creates) are
+  listed in an allow-list with a reason each; an entry that no longer matches fails too. It runs in
+  the Database migrations workflow on MySQL 8 and MariaDB 10.11 and skips without `TEST_MYSQL_DSN`.
 - **SCIM 2.0 Groups (#506).** With a SCIM token, `GET /scim/v2/Groups` (paged by `startIndex` and
   `count`, the one filter `displayName eq "<value>"`) and `GET /scim/v2/Groups/{id}` serve the
   distinct `groups`-claim values of the effective single sign-on role mapping as core Group

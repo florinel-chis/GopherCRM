@@ -199,7 +199,9 @@ class ReleaseTests(unittest.TestCase):
                    'TestAdminOnlyPermissionsMigrationFiles',
                    'TestAdminOnlyPermissionsMigration',
                    'TestAPIKeyRevokedAtMigrationFiles',
-                   'TestAPIKeyRevokedAtMigration']]
+                   'TestAPIKeyRevokedAtMigration',
+                   'TestSchemaParityAllowList',
+                   'TestSchemaParityMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}
                       for package in ['cmd/migrate', 'internal/integration'])
         events.append({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/internal/integration', 'Test': 'TestExampleMySQL'})
