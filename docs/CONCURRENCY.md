@@ -730,7 +730,11 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** `PATCH /scim/v2/Groups/{id}` (`scimGroupService.Patch`,
   `internal/service/scim_group_writes.go`) locks the `users` rows of the active admins
-  (`LockActiveAdmins`) first, so two group patches never interleave while an active admin exists.
+  (`LockActiveAdmins`) first, so two group patches that both reach the same admin wait for each
+  other. `LockActiveAdmins` discovers the admins with a consistent read, so on MySQL/MariaDB a
+  patch that waited for an admin a concurrent handover demoted no longer sees the new admin in
+  that set; the last-admin rule therefore also counts every affected user that the locking read
+  of `LockLiveByIDs` shows as an active admin, and refuses a result without one.
   It then reads the group's `scim_group_members` rows with a locking read
   (`SCIMGroupMemberRepository.ListMemberIDs` on a `FOR UPDATE` handle), so it sees what a group
   patch committed while it waited for the admin set rather than its REPEATABLE READ snapshot;

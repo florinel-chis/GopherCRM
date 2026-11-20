@@ -820,7 +820,9 @@ only, so whichever writes last sets the role. Membership rows outlive mapping ed
 re-adding or remapping a group value recomputes no role until that account's next group patch.
 The sign-in does not read `scim_group_members`, and erasure leaves the rows in place.
 
-**Last admin.** The rule judges the result: with at least one active admin before the patch, the
+**Last admin.** The rule judges the result: with at least one active admin before the patch (the
+locked admins plus every touched account whose locked row is an active admin, so an admin that a
+concurrent handover created while the patch waited still counts), the
 patch is refused only when none is left after it (the locked admins the patch does not touch, the
 touched ones that stay admin, and the touched active accounts that become admin), with 400
 `mutability` and `The last active admin must stay an active admin`. A handover to another active

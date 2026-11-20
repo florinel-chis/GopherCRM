@@ -16,6 +16,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -532,6 +533,80 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			_, err := unwired.Patch(ctx, adminsID, parseGroupPatch(t, groupAdd(1)))
 			assert.ErrorIs(t, err, errSCIMGroupWritesNotWired)
 		}},
+	}
+	if f.db.Dialector.Name() == "mysql" {
+		// A handover Admins [X] -> [Y] that commits while patch B (remove Y
+		// from Admins) waits for the admin set. B discovered the admins
+		// before the commit, so its admin set no longer holds anyone once X
+		// is re-checked; the locking read of Y must still count Y as the
+		// admin before the patch. Needs a second connection and InnoDB lock
+		// waits, so it runs only under the MySQL root.
+		cases = append(cases, struct {
+			name string
+			run  func(t *testing.T)
+		}{"last_admin_race/after_handover", func(t *testing.T) {
+			x := f.seed(t, "x@x.test", models.RoleAdmin, true, scimGroupAdmins, scimGroupSales)
+			y := f.seed(t, "y@x.test", models.RoleSales, true, scimGroupSales)
+
+			handover := f.db.Begin()
+			require.NoError(t, handover.Error)
+			defer handover.Rollback()
+			require.NoError(t, handover.Model(&models.User{}).Where("id = ?", x.ID).
+				Updates(map[string]interface{}{"role": models.RoleSales, "role_id": f.roleIDs[models.RoleSales]}).Error)
+			require.NoError(t, handover.Model(&models.User{}).Where("id = ?", y.ID).
+				Updates(map[string]interface{}{"role": models.RoleAdmin, "role_id": f.roleIDs[models.RoleAdmin]}).Error)
+			require.NoError(t, handover.Where("group_value = ? AND user_id = ?", scimGroupAdmins, x.ID).
+				Delete(&models.SCIMGroupMember{}).Error)
+			require.NoError(t, handover.Create(&models.SCIMGroupMember{GroupValue: scimGroupAdmins, UserID: y.ID}).Error)
+
+			patch := parseGroupPatch(t, groupRemove(y.ID))
+			done := make(chan error, 1)
+			go func() {
+				_, err := f.svc.Patch(ctx, adminsID, patch)
+				done <- err
+			}()
+
+			// Wait, bounded, until B is in a lock wait on X. B's first locking
+			// statement is the admin-set lock on X, which the handover holds,
+			// so once it shows in the process list (this schema, another
+			// connection) it is waiting. information_schema.innodb_trx is no
+			// signal here: MySQL 8 does not list B's transaction there while
+			// it waits, because B has only read until then.
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				var waiting int64
+				require.NoError(t, f.db.Raw("SELECT COUNT(*) FROM information_schema.processlist "+
+					"WHERE id <> CONNECTION_ID() AND db = DATABASE() AND info LIKE ?", "%FOR UPDATE%").
+					Scan(&waiting).Error)
+				if waiting > 0 {
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("the patch finished before the handover committed: %v", err)
+				default:
+				}
+				require.True(t, time.Now().Before(deadline), "the patch never waited for the handover's lock")
+				time.Sleep(10 * time.Millisecond)
+			}
+			require.NoError(t, handover.Commit().Error)
+
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(60 * time.Second):
+				t.Fatal("the patch did not finish after the handover committed")
+			}
+			require.ErrorIs(t, err, ErrSCIMGroupLastAdmin)
+			assert.Equal(t, int64(1), f.activeAdmins(t), "exactly one active admin remains")
+			assert.Equal(t, models.RoleAdmin, f.user(t, y.ID).Role, "Y stays admin")
+			assert.Equal(t, models.RoleSales, f.user(t, x.ID).Role)
+			assert.Zero(t, f.count(t, "role_audit_log", ""), "the refused patch wrote no role audit row")
+			assert.Zero(t, f.count(t, "auth_audit_log", ""), "the refused patch wrote no sign-in audit row")
+			want := []string{"Admins/" + uintString(y.ID), "Sales/" + uintString(x.ID), "Sales/" + uintString(y.ID)}
+			sort.Strings(want)
+			assert.Equal(t, want, f.members(t))
+		}})
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

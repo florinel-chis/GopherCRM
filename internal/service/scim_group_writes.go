@@ -271,7 +271,22 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 			results[id] = result
 		}
 
-		// The last-admin rule, judged on the result.
+		// The last-admin rule, judged on the result. The admin set before
+		// the patch is the locked admins plus every affected visible user
+		// that the locking read of lockUsers shows as an active admin:
+		// LockActiveAdmins discovers its ids with a consistent read, so on
+		// MySQL/MariaDB REPEATABLE READ a patch that committed while this
+		// one waited for the admin set (a handover X -> Y) leaves the new
+		// admin Y out of admins, and only the current read of Y counts it.
+		before := map[uint]bool{}
+		for _, admin := range admins {
+			before[admin.ID] = true
+		}
+		for _, id := range affectedVisible {
+			if u := users[id]; u.IsActive && u.Role == models.RoleAdmin {
+				before[id] = true
+			}
+		}
 		after := map[uint]bool{}
 		for _, admin := range admins {
 			if !affected[admin.ID] {
@@ -285,7 +300,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				after[id] = true
 			}
 		}
-		if len(admins) > 0 && len(after) == 0 {
+		if len(before) > 0 && len(after) == 0 {
 			return fmt.Errorf("group patch: %w", ErrSCIMGroupLastAdmin)
 		}
 
