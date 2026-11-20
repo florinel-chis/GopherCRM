@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -31,8 +30,7 @@ var userIdentitySourceColumns = []string{"source"}
 // TestUserIdentitySourceMigrationFiles needs no database: the pair exists
 // with its headers, the up half adds exactly source behind an
 // INFORMATION_SCHEMA probe, the down half drops only it, the model declares
-// the same, and it is the newest migration of the directory, which
-// latestMigrationVersion names.
+// the same, and it is older than the newest migration.
 func TestUserIdentitySourceMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, userIdentitySourceMigrationName+".up.sql"))
@@ -75,22 +73,9 @@ func TestUserIdentitySourceMigrationFiles(t *testing.T) {
 	assert.Equal(t, "oidc", models.UserIdentitySourceOIDC)
 	assert.Equal(t, "scim", models.UserIdentitySourceSCIM)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from
-	// TestWebhookSecretRotationMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, userIdentitySourceMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, userIdentitySourceVersion, version)
-	assert.Equal(t, userIdentitySourceVersion, latestMigrationVersion)
+	// Older than the newest migration (the newest-migration assertions moved
+	// to TestSCIMGroupMembersMigrationFiles, #506).
+	assert.Less(t, userIdentitySourceVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Greater(t, userIdentitySourceVersion, userIdentitySourcePreviousVersion)
 }
 

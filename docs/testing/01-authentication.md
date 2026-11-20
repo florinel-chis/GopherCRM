@@ -1308,7 +1308,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   still write one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
 
-## SCIM 2.0 provider (FEATURES 1.15 to 1.19)
+## SCIM 2.0 provider (FEATURES 1.15 to 1.20)
 
 `/scim/v2` is served outside the API prefix to identity providers. #468 covers the provider
 tokens, the SCIM authentication and the three discovery documents; #469 the read of the Users
@@ -1317,9 +1317,10 @@ resource (`GET /scim/v2/Users` with the `userName eq` filter and paging, `GET /s
 TC-AUTH-080); #471 the patch (`PATCH /scim/v2/Users/{id}`, TC-AUTH-081 to TC-AUTH-085), whose
 `active` false, like a PUT with `"active":false`, ends the account's sessions at once; #504 the
 delete (`DELETE /scim/v2/Users/{id}`, TC-AUTH-086), the same deactivation, never an erasure;
-#505 the Entra ID first sign-in that finds a SCIM-created account by `oid` and `tid` (TC-AUTH-087).
-`/Groups`, `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are
-later slices. See the *SCIM provisioning* section of
+#505 the Entra ID first sign-in that finds a SCIM-created account by `oid` and `tid` (TC-AUTH-087);
+#506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`, TC-AUTH-088 to
+TC-AUTH-092), whose members patch recomputes the members' roles from the groups claim.
+`/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
 
 ### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
@@ -1366,9 +1367,11 @@ later slices. See the *SCIM provisioning* section of
 - **Expected:** Each answers 200 with `application/scim+json`; query parameters change nothing.
   ServiceProviderConfig: `patch` supported, `filter` supported with `maxResults` 100, `bulk`,
   `sort`, `etag` and `changePassword` not supported, one `oauthbearertoken` scheme. Schemas and
-  ResourceTypes: ListResponses with `totalResults` 1 and `startIndex` 1; the User schema holds
-  `userName`, `name` (`givenName`, `familyName`), `emails` (`value`, `type`, `primary`) and
-  `active`, each with every §7 characteristic; the resource type is `User` at `/Users`.
+  ResourceTypes: ListResponses with `totalResults` 2 (User, then Group since #506) and
+  `startIndex` 1; the User schema holds `userName`, `name` (`givenName`, `familyName`), `emails`
+  (`value`, `type`, `primary`) and `active`, the Group schema `displayName` and `members`
+  (`value`), each with every §7 characteristic; the resource types are `User` at `/Users` and
+  `Group` at `/Groups`.
   `meta.location` starts with `PUBLIC_BASE_URL/scim/v2/`. Step 2: `last_used_at` is set.
 - **Automation:** automated — Go: `TestSCIMDiscoveryDocuments`, `TestSCIMRoutesWired`, `TestDiscoveryLocations`
 
@@ -1701,3 +1704,92 @@ later slices. See the *SCIM provisioning* section of
   with nothing written. Two concurrent first sign-ins of the same `sub` commit exactly one link.
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` (`scim_oid_*`),
   `TestOIDCEntraTenant`, `TestSCIMUserWrites{SQLite,MySQL}` (`create`)
+
+### TC-AUTH-088 — The SCIM Groups are the groups-claim values of the role mapping
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** A valid SCIM token; a role mapping `[{groups, Sales → sales}, {groups,
+  Admins → admin}, {roles, X → sales}]`; members of Sales: an active and a deactivated staff
+  account, a customer account and an erased account.
+- **Steps:**
+  1. `GET /scim/v2/Groups`.
+  2. `GET /scim/v2/Groups?filter=displayName eq "Sales"`, then with `"sales"`, then
+     `filter=userName eq "a"`.
+  3. `GET /scim/v2/Groups/{id of Sales}`.
+  4. Remove Sales from the mapping; repeat step 1, then `GET` and `PATCH` the Sales id.
+- **Expected:** Step 1 answers 200 `application/scim+json` with `totalResults` 2 and exactly
+  `Admins` then `Sales` (the roles entry is no group). Step 2 returns only Sales, then nothing, then
+  400 `invalidFilter`. Step 3 lists the active and the deactivated account by their SCIM ids,
+  never the customer or the erased account. Step 4 lists only Admins, and both requests answer the
+  SCIM 404 `Group not found`.
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`list`), `TestSCIMGroupHandler`,
+  `TestSCIMGroupsWired`, `TestSCIMParseGroupFilter`, `TestSCIMDiscoveryDocuments`
+
+### TC-AUTH-089 — A group patch recomputes the member's role from the groups claim
+- **Priority:** P0
+- **Type:** functional
+- **Preconditions:** A valid SCIM token; the mapping `[{groups, Admins → admin}, {groups, Sales →
+  sales}]`; a second active admin; a sales account U in Sales only.
+- **Steps:**
+  1. `PATCH /scim/v2/Groups/{Admins}` with `add` path `members` value `[{"value":"<U>"}]`.
+  2. `PATCH` the same group with `remove` path `members[value eq "<U>"]`.
+  3. `PATCH /scim/v2/Groups/{Sales}` removing U.
+- **Expected:** Step 1 answers 200 with U as a member; U becomes admin, one `role_audit_log`
+  `user_role_changed` row (`auth_method` `scim`, NULL `actor_user_id`) and, after the commit, one
+  `auth_audit_log` success row (method `scim`) for U. Step 2 makes U sales again with one more audit
+  row. Step 3 leaves U in no mapped group: U stays sales, no role audit row is written, one sign-in
+  audit row is.
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`add makes admin`, `remove
+  recomputes from the remaining groups`, `removing the only group keeps the role`),
+  `TestSCIMGroupsWired`
+
+### TC-AUTH-090 — A group patch never leaves no active admin, but allows a handover
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** A valid SCIM token; X the only active admin, in Admins and Sales; Y an active
+  sales account in no group; W a deactivated staff account.
+- **Steps:**
+  1. `PATCH` Admins removing X; then `replace` Admins' members with `[]`; then remove all members.
+  2. `PATCH` Admins with `replace` members `[W]`.
+  3. `PATCH` Admins with `replace` members `[Y]` (or, from the same start, one patch that adds Y and
+     removes X).
+- **Expected:** Steps 1 and 2 answer 400 with `scimType` `mutability` and the detail "The last active
+  admin must stay an active admin"; `scim_group_members`, X's role and `role_id`, `role_audit_log`
+  and `auth_audit_log` are unchanged. Step 3 answers 200: Y becomes admin and X sales, with one role
+  audit row each, and exactly one active admin remains. The Users patch keeps answering its own
+  last-admin refusal with `invalidValue` (TC-AUTH-085).
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`last_admin`, `replace_to_inactive`,
+  `handover_replace`, `handover_add_remove`), `TestSCIMGroupHandler` (`last_admin_mutability`,
+  `last_admin_before_invalid_value`)
+
+### TC-AUTH-091 — Group patches outside the members, and group creation or deletion, are refused
+- **Priority:** P1
+- **Type:** negative
+- **Preconditions:** A valid SCIM token; the mapping of TC-AUTH-089; a customer and an erased
+  account.
+- **Steps:**
+  1. `PATCH` Admins adding `"abc"`, an unknown id, the customer, the erased account, and a valid id
+     next to an unknown one.
+  2. `PATCH` Admins with path `displayName`, then `remove` without a path.
+  3. `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}`, `PUT /scim/v2/Groups/{id}`.
+- **Expected:** Step 1 answers 400 `invalidValue` each time and changes no table. Step 2 answers
+  400 `invalidPath`, then 400 `noTarget`, without reaching the service. Step 3: the POST answers 405
+  with the SCIM error body (`"status":"405"`) and `Allow: GET`, the DELETE 405 with `Allow: GET,
+  PATCH`, and the PUT the router's plain 404.
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`invalid members`,
+  `mapping to the customer role`), `TestSCIMGroupHandler`, `TestSCIMParseGroupPatch`,
+  `TestSCIMGroupsWired`
+
+### TC-AUTH-092 — Two group patches cannot remove the last two admins together
+- **Priority:** P0
+- **Type:** security
+- **Preconditions:** X and Y, the only two active admins, both in Admins and Sales.
+- **Steps:**
+  1. Patch A removes X from Admins, then patch B removes Y.
+  2. From the same start, B first, then A.
+  3. From the same start, A and B released together.
+- **Expected:** In each case exactly one patch commits, the other answers 400 `mutability`
+  (`ErrSCIMGroupLastAdmin`), exactly one active admin remains, and only the winner's role audit and
+  sign-in audit rows exist. Holds on SQLite, MySQL 8 and MariaDB 10.11.
+- **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`last_admin_race/a_first`,
+  `last_admin_race/b_first`, `last_admin_race/concurrent`)

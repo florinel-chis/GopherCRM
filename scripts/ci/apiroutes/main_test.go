@@ -281,8 +281,8 @@ func TestExtractRepositoryRouter(t *testing.T) {
 	}
 	// Outside the base path: the health probe and the SCIM 2.0 routes, the
 	// discovery documents (#468), the Users read (#469) and the Users writes
-	// (#470, #471, #504), which carry their own token authentication rather than
-	// middleware.Auth.
+	// (#470, #471, #504) and the Groups (#506), which carry their own token
+	// authentication rather than middleware.Auth.
 	outsideWant := map[string]bool{
 		"GET /health":                        true,
 		"GET /scim/v2/ServiceProviderConfig": true,
@@ -294,6 +294,11 @@ func TestExtractRepositoryRouter(t *testing.T) {
 		"PUT /scim/v2/Users/{id}":            true,
 		"PATCH /scim/v2/Users/{id}":          true,
 		"DELETE /scim/v2/Users/{id}":         true,
+		"GET /scim/v2/Groups":                true,
+		"GET /scim/v2/Groups/{id}":           true,
+		"PATCH /scim/v2/Groups/{id}":         true,
+		"POST /scim/v2/Groups":               true,
+		"DELETE /scim/v2/Groups/{id}":        true,
 	}
 	outside := 0
 	for _, r := range routes {

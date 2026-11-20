@@ -125,6 +125,7 @@ func TestMigrationFiles_PairsAndCompleteness(t *testing.T) {
 		"webhook_endpoints", "webhook_deliveries",
 		"quote_response_tokens",
 		"user_identities", "oidc_login_attempts", "auth_audit_log", "scim_tokens",
+		"scim_group_members",
 	}
 
 	combinedSQL := strings.ToLower(allSQL.String())

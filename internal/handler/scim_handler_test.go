@@ -72,16 +72,18 @@ func assertSCIMAttribute(t *testing.T, attr map[string]any, path string) []strin
 	return names
 }
 
-func assertSCIMListResponse(t *testing.T, doc map[string]any) map[string]any {
+// assertSCIMListResponse checks a discovery list of two resources (User,
+// then Group since #506) and returns them in order.
+func assertSCIMListResponse(t *testing.T, doc map[string]any) (map[string]any, map[string]any) {
 	t.Helper()
 	assert.Equal(t, []any{"urn:ietf:params:scim:api:messages:2.0:ListResponse"}, doc["schemas"])
-	assert.EqualValues(t, 1, doc["totalResults"])
-	assert.EqualValues(t, 1, doc["itemsPerPage"])
+	assert.EqualValues(t, 2, doc["totalResults"])
+	assert.EqualValues(t, 2, doc["itemsPerPage"])
 	assert.EqualValues(t, 1, doc["startIndex"])
 	resources, ok := doc["Resources"].([]any)
 	require.True(t, ok, "Resources")
-	require.Len(t, resources, 1)
-	return resources[0].(map[string]any)
+	require.Len(t, resources, 2)
+	return resources[0].(map[string]any), resources[1].(map[string]any)
 }
 
 func TestSCIMDiscoveryDocuments(t *testing.T) {
@@ -111,7 +113,7 @@ func TestSCIMDiscoveryDocuments(t *testing.T) {
 	})
 
 	t.Run("Schemas", func(t *testing.T) {
-		schema := assertSCIMListResponse(t, getSCIMDocument(t, router, "/scim/v2/Schemas?filter=x"))
+		schema, groupSchema := assertSCIMListResponse(t, getSCIMDocument(t, router, "/scim/v2/Schemas?filter=x"))
 		assert.Equal(t, []any{"urn:ietf:params:scim:schemas:core:2.0:Schema"}, schema["schemas"])
 		assert.Equal(t, "urn:ietf:params:scim:schemas:core:2.0:User", schema["id"])
 		assert.Equal(t, "User", schema["name"])
@@ -161,15 +163,60 @@ func TestSCIMDiscoveryDocuments(t *testing.T) {
 
 		assert.Equal(t, "boolean", attributes["active"]["type"])
 		assert.Equal(t, false, attributes["active"]["multiValued"])
+
+		// The core Group schema (#506).
+		assert.Equal(t, []any{"urn:ietf:params:scim:schemas:core:2.0:Schema"}, groupSchema["schemas"])
+		assert.Equal(t, "urn:ietf:params:scim:schemas:core:2.0:Group", groupSchema["id"])
+		assert.Equal(t, "Group", groupSchema["name"])
+		assert.NotEmpty(t, groupSchema["description"])
+		assert.Equal(t, map[string]any{"resourceType": "Schema", "location": base + "/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group"}, groupSchema["meta"])
+		groupAttributes := map[string]map[string]any{}
+		for _, raw := range groupSchema["attributes"].([]any) {
+			attr := raw.(map[string]any)
+			groupAttributes[attr["name"].(string)] = attr
+		}
+		require.Len(t, groupAttributes, 2)
+		groupSubs := map[string][]string{}
+		for name, attr := range groupAttributes {
+			groupSubs[name] = assertSCIMAttribute(t, attr, "Group."+name)
+		}
+		displayName := groupAttributes["displayName"]
+		assert.Equal(t, "string", displayName["type"])
+		assert.Equal(t, false, displayName["multiValued"])
+		assert.Equal(t, true, displayName["required"])
+		assert.Equal(t, true, displayName["caseExact"])
+		assert.Equal(t, "readOnly", displayName["mutability"])
+		assert.Equal(t, "default", displayName["returned"])
+		assert.Equal(t, "server", displayName["uniqueness"])
+		members := groupAttributes["members"]
+		assert.Equal(t, "complex", members["type"])
+		assert.Equal(t, true, members["multiValued"])
+		assert.Equal(t, false, members["required"])
+		assert.Equal(t, "readWrite", members["mutability"])
+		assert.Equal(t, "default", members["returned"])
+		assert.Equal(t, "none", members["uniqueness"])
+		assert.Equal(t, []string{"value"}, groupSubs["members"])
+		value := members["subAttributes"].([]any)[0].(map[string]any)
+		assert.Equal(t, "string", value["type"])
+		assert.Equal(t, true, value["caseExact"])
+		assert.Equal(t, "immutable", value["mutability"])
 	})
 
 	t.Run("ResourceTypes", func(t *testing.T) {
-		resourceType := assertSCIMListResponse(t, getSCIMDocument(t, router, "/scim/v2/ResourceTypes?count=0"))
+		resourceType, groupType := assertSCIMListResponse(t, getSCIMDocument(t, router, "/scim/v2/ResourceTypes?count=0"))
 		assert.Equal(t, []any{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"}, resourceType["schemas"])
 		assert.Equal(t, "User", resourceType["id"])
 		assert.Equal(t, "User", resourceType["name"])
 		assert.Equal(t, "/Users", resourceType["endpoint"])
 		assert.Equal(t, "urn:ietf:params:scim:schemas:core:2.0:User", resourceType["schema"])
 		assert.Equal(t, map[string]any{"resourceType": "ResourceType", "location": base + "/scim/v2/ResourceTypes/User"}, resourceType["meta"])
+
+		assert.Equal(t, []any{"urn:ietf:params:scim:schemas:core:2.0:ResourceType"}, groupType["schemas"])
+		assert.Equal(t, "Group", groupType["id"])
+		assert.Equal(t, "Group", groupType["name"])
+		assert.NotEmpty(t, groupType["description"])
+		assert.Equal(t, "/Groups", groupType["endpoint"])
+		assert.Equal(t, "urn:ietf:params:scim:schemas:core:2.0:Group", groupType["schema"])
+		assert.Equal(t, map[string]any{"resourceType": "ResourceType", "location": base + "/scim/v2/ResourceTypes/Group"}, groupType["meta"])
 	})
 }

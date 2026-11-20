@@ -71,6 +71,9 @@ func MigrateDatabaseWith(db *gorm.DB) error {
 		if err := ensureUserIdentityCollation(tx); err != nil {
 			return err
 		}
+		if err := ensureSCIMGroupMemberCollation(tx); err != nil {
+			return err
+		}
 		if err := normalizeCompanyDomains(tx); err != nil {
 			return err
 		}
@@ -235,6 +238,8 @@ func autoMigrateModels(tx *gorm.DB) error {
 		// OpenID Connect sign-in (#435): identities reference users; the
 		// login attempts hold a hash and no foreign key.
 		&UserIdentity{},
+		// SCIM group memberships (#506): reference users.
+		&SCIMGroupMember{},
 		&OIDCLoginAttempt{},
 		// Sign-in audit log (#454): ids only, no foreign key.
 		&AuthAuditLog{},

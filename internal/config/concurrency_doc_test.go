@@ -48,6 +48,7 @@ var concurrencyDocFlowsInOrder = []string{
 	"OIDC sign-in",
 	"SCIM user create and replace",
 	"SCIM user patch",
+	"SCIM group patch",
 }
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
@@ -72,6 +73,7 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"OIDC sign-in":                   "implemented",
 	"SCIM user create and replace":   "implemented",
 	"SCIM user patch":                "implemented",
+	"SCIM group patch":               "implemented",
 }
 
 // concurrencyDocRetryFlows are the flows whose Retry line names
@@ -93,6 +95,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"SCIM user create and replace": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #471: the SCIM user patch is a governed write.
 	"SCIM user patch": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #506: the SCIM group patch is a governed write.
+	"SCIM group patch": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #385: every erasure root is one replayed transaction (a const block).
 	"User-rooted erasure":     {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
 	"Customer-rooted erasure": {"erasureMaxRetries", concurrencyDocErasureFile, concurrencyDocErasureRetryDecl},
@@ -123,6 +127,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"OIDC sign-in":                   "#435",
 	"SCIM user create and replace":   "#470",
 	"SCIM user patch":                "#471",
+	"SCIM group patch":               "#506",
 }
 
 type concurrencyDocSection struct {
@@ -1347,6 +1352,28 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 	last = -1
 	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "isLastActiveAdmin(",
 		"tx.users.UpdateFields(", "RevokeAllForUser(", "s.writes.recordSuccess("} {
+		at := strings.Index(body, statement)
+		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+			assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+			last = at
+		}
+	}
+}
+
+// TestConcurrencyDocSCIMGroupPatch pins the SCIM group patch flow (#506): the
+// documented order and, in Patch, the admin set first, the users and roles
+// locks, the membership write, the role audit rows and the sign-in audit rows
+// after the commit.
+func TestConcurrencyDocSCIMGroupPatch(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM group patch"]["Order"]),
+		"admin set → users → roles → scim_group_members")
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM group patch"]["Rows locked"]), "scimGroupService.Patch")
+
+	body := concurrencyDocFuncBody(t, "internal/service/scim_group_writes.go", "func (s *scimGroupService) Patch(")
+	last := -1
+	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
+		"members.Remove(", "members.Add(", "tx.record(", "s.writes.audit.Record("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
 			assert.Greater(t, at, last, "%q comes after the statement before it", statement)

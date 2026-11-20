@@ -23,7 +23,7 @@ Phase 2 (#261) is single sign-on and provisioning.
 | S4 | #348 | The role API (`/roles`, `/permissions/catalogue`, `/roles/audit`), the last-admin invariant, the escalation rule and the audit trail | Merged as #372 |
 | S5 | #349 | This guide, with the phase 2 design note | This document |
 | S6 | #260 | The SPA: role and permission screens in Settings, permission-driven navigation and guards | Navigation, route guards and page buttons delivered by #380; the role list, the role editor and the role picker of the user form delivered by #381 |
-| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; Groups are later work |
+| Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; the SCIM Groups read and members patch (`GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/{id}`) delivered by #506 |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
 and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
@@ -311,7 +311,7 @@ writes one `role_audit_log` row in the transaction of the change; a failed inser
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
 to its own account, #435, or `scim` for a SCIM 2.0 user create, replace or patch, #470 and
-#471 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
+#471, or a SCIM group patch that changes a member's role, #506 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts), the action and the state before and after, as ids, role
 names, permission keys and scopes only. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
 
@@ -336,7 +336,8 @@ on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique interna
 own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
 SCIM tier in front of the authentication bounds them. Since #470 a successful SCIM user create
 or replace, since #471 a successful patch and since #504 a delete that deactivates, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
-after its transaction; a refused one (400 or 409), and a delete of an already inactive account,
+after its transaction; since #506 a successful group patch writes one such row per account added
+to or removed from the group; a refused one (400 or 409), and a delete of an already inactive account,
 writes none. Any other successful API-key or
 SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
@@ -463,7 +464,8 @@ discovery documents; #469 brought the read of the Users resource (see [Users rea
 below) and #470 its create and replace (see
 [Users create and replace](#users-create-and-replace-470)) and #471 its patch, which also
 deprovisions (see [Users patch](#users-patch-471)), and #504 its delete, a deactivation that never
-erases (see [Users delete](#users-delete-504)). `/Groups`, `/Schemas/{id}`,
+erases (see [Users delete](#users-delete-504)), and #506 the Groups read and members patch (see
+[Groups](#groups-506)). `/Schemas/{id}`,
 `/ResourceTypes/{id}` and a SCIM-shaped answer for unknown `/scim/v2` paths are later slices; until then an unknown path gets the
 router's default 404, and a panic under `/scim/v2` the API's 500 envelope.
 
@@ -507,7 +509,8 @@ build switch lift it as they lift the `/auth` tier.
 `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`;
 `status` is the HTTP status as a string. The 429 has `"status":"429"`. A 400 of the Users read
 and writes also carries `scimType` (`invalidFilter`, `invalidValue` or `invalidSyntax`), and the
-409 of a write carries `uniqueness`.
+409 of a write carries `uniqueness`. The Groups add `mutability` (see [Groups](#groups-506)) and
+a 405 without `scimType`.
 
 **Discovery.** With a valid token, three documents answer 200 with `application/scim+json`;
 query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/scim/v2`:
@@ -515,14 +518,20 @@ query parameters are ignored and `meta.location` starts with `PUBLIC_BASE_URL/sc
 - `GET /scim/v2/ServiceProviderConfig`: `patch` supported, `filter` supported with `maxResults`
   100, `bulk` (with `maxOperations` and `maxPayloadSize` 0), `changePassword`, `sort` and `etag`
   not supported, and one `oauthbearertoken` authentication scheme.
-- `GET /scim/v2/Schemas`: a `ListResponse` (`totalResults` 1, `startIndex` 1) with the core User
+- `GET /scim/v2/Schemas`: a `ListResponse` (`totalResults` 2, `startIndex` 1) with the core User
   schema (`urn:ietf:params:scim:schemas:core:2.0:User`): `userName` (required, not case-exact,
   unique on the server), `name` (`givenName`, `familyName`), `emails` (multi-valued: `value`,
   `type` with canonical values `work`, `home`, `other`, and `primary`) and `active`, each with
   every RFC 7643 §7 characteristic. Its `meta.location` is
-  `PUBLIC_BASE_URL/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User`.
+  `PUBLIC_BASE_URL/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User`. Since #506 the
+  core Group schema (`urn:ietf:params:scim:schemas:core:2.0:Group`) follows: `displayName`
+  (required, case-exact, read-only, unique on the server) and `members` (multi-valued, read-write,
+  one sub-attribute `value`, case-exact and immutable).
 - `GET /scim/v2/ResourceTypes`: a `ListResponse` with the `User` resource type, endpoint
-  `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`.
+  `/Users`, schema the User URN, `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/User`,
+  then (#506) the `Group` resource type, endpoint `/Groups`, schema the Group URN,
+  `meta.location` `PUBLIC_BASE_URL/scim/v2/ResourceTypes/Group`. The ServiceProviderConfig is
+  unchanged: RFC 7643 §5 lists no resources, and its `patch` and `filter` cover the Groups.
 
 The advertised `patch` feature is the Users patch below; the Users read, create, replace and
 patch are served. These routes are outside the OpenAPI document (whose base path is the API prefix), like
@@ -777,6 +786,61 @@ nothing.
 
 Regression roots: see the end of [Users create and replace](#users-create-and-replace-470).
 
+### Groups (#506)
+
+A SCIM Group is a distinct value of a role-mapping row with claim `groups` in the effective single
+sign-on settings, read on every request; roles rows are not groups. `displayName` is the value,
+compared byte for byte, and the `id` its unpadded base64url encoding. Groups come from the mapping
+and cannot be created, renamed or deleted through SCIM. Membership is stored in
+`scim_group_members` (`group_value` exact: `utf8mb4_bin` on MySQL/MariaDB, `BINARY` on SQLite;
+unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT`).
+
+| Route | Answer |
+|---|---|
+| `GET /scim/v2/Groups` | 200 `ListResponse`, ascending by value, paged by `startIndex`/`count`; the only filter is `displayName eq "<value>"`, anything else 400 `invalidFilter` |
+| `GET /scim/v2/Groups/{id}` | 200 Group with its visible members (live, not customer), id ascending; an id that does not decode or names no current group is 404 `Group not found` |
+| `PATCH /scim/v2/Groups/{id}` | 200 Group; see below |
+| `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}` | 405 SCIM error with `Allow: GET` or `Allow: GET, PATCH` |
+
+`PUT /scim/v2/Groups/{id}` is not routed (the router's 404).
+
+**Patch.** The operations (`add`, `remove`, `replace`, any ASCII case) apply in order to the member
+set: `add`/`replace` with path `members` or path-less with `{"members": [...]}`, `remove` with
+`members[value eq "<id>"]`, or path `members` with a list or without a value (every member). A
+`displayName` or any other path is 400 `invalidPath`, a remove without a path `noTarget`. Every id
+an `add` or `replace` names must be a visible account (a deactivated one may be added), otherwise
+the whole patch is 400 `invalidValue`; removing a non-member is a no-op, and a member row is
+removed even when its account is no longer visible.
+
+**Roles.** Each added or removed visible account gets the role of the sign-in's first-match rule
+on the groups claim, over its groups after the change (`oidcMatchRole` with the groups only); no
+match keeps its role, and a mapping to a missing role row or to the customer role refuses the patch
+with `invalidValue`. A group patch maps the groups claim only and a Users write the roles claim
+only, so whichever writes last sets the role. Membership rows outlive mapping edits: removing,
+re-adding or remapping a group value recomputes no role until that account's next group patch.
+The sign-in does not read `scim_group_members`, and erasure leaves the rows in place.
+
+**Last admin.** The rule judges the result: with at least one active admin before the patch, the
+patch is refused only when none is left after it (the locked admins the patch does not touch, the
+touched ones that stay admin, and the touched active accounts that become admin), with 400
+`mutability` and `The last active admin must stay an active admin`. A handover to another active
+account passes, as a replace or as one patch that adds the new admin and removes the old one; a
+replace with a deactivated account is refused. The Users writes keep answering their last-admin
+refusal with `invalidValue`.
+
+**Transaction and audit.** One governed transaction, `admin set → users → roles →
+scim_group_members → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md), flow "SCIM group
+patch"); each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
+and after the commit one `auth_audit_log` success row (method `scim`) names each account whose
+membership changed. A refusal, and a patch that changes nothing, write nothing.
+
+Regression roots: `TestSCIMGroupsWired` (`cmd`), `TestSCIMGroupHandler` and
+`TestSCIMDiscoveryDocuments` (`internal/handler`), `TestSCIMGroupsSQLite`/`TestSCIMGroupsMySQL`
+(`internal/service`, also run on MariaDB, with the `last_admin_race` subtests),
+`TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
+`TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
+(`internal/models`) and `TestSCIMGroupMembersMigration{Files,}` (`cmd/migrate`).
+
 ## Least-privilege integration user
 
 An API key has no scopes of its own. It acts with the permissions its owner holds at the moment
@@ -900,8 +964,11 @@ groups (see Mapping below). Since #468 the first SCIM 2.0 slice exists: provider
 #469 delivers the SCIM user read (`GET /scim/v2/Users` and `/Users/{id}`) and #470 the create
 and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`), and #471 the patch
 (`PATCH /scim/v2/Users/{id}`), whose `active` false deactivates the account and ends its sessions;
-#504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases.
-Groups through SCIM are not implemented yet; that is later work. The rest of the note
+#504 the delete (`DELETE /scim/v2/Users/{id}`), the same deactivation, which never erases;
+#506 the Groups (`GET /scim/v2/Groups`, `GET` and `PATCH /scim/v2/Groups/{id}`), the groups-claim
+values of the role mapping, whose members patch recomputes the members' roles. SCIM bulk
+operations, `/Schemas/{id}`, `/ResourceTypes/{id}` and creating, renaming or deleting a group
+through SCIM are not implemented. The rest of the note
 records the conditions phase 2 has to meet, which the sign-in below follows.
 
 ### OIDC sign-in (#435)

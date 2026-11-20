@@ -3,8 +3,10 @@
 // three discovery documents of RFC 7643 (ServiceProviderConfig, Schemas and
 // ResourceTypes), and, for the Users read of #469, the User resource, the
 // userName filter grammar, the ASCII-only userName judge and the paging
-// rules, and, for the Users patch of #471, the PatchOp parser. It has no
-// state and no database access.
+// rules, and, for the Users patch of #471, the PatchOp parser, and, for the
+// Groups of #506, the Group resource and schema, its id encoding, the
+// displayName filter and the Group PatchOp parser. It has no state and no
+// database access.
 package scim
 
 import (
@@ -26,6 +28,7 @@ const (
 	ResourceTypeSchema          = "urn:ietf:params:scim:schemas:core:2.0:ResourceType"
 	SchemaSchema                = "urn:ietf:params:scim:schemas:core:2.0:Schema"
 	UserSchema                  = "urn:ietf:params:scim:schemas:core:2.0:User"
+	GroupSchema                 = "urn:ietf:params:scim:schemas:core:2.0:Group"
 )
 
 // BasePath is where the provider is mounted, outside the API prefix.
@@ -66,6 +69,9 @@ const (
 	// (#471).
 	ScimTypeInvalidPath = "invalidPath"
 	ScimTypeNoTarget    = "noTarget"
+	// ScimTypeMutability answers the Groups patch whose result would leave
+	// no active admin (#506).
+	ScimTypeMutability = "mutability"
 )
 
 // WriteErrorType answers status with the SCIM error body carrying scimType,
@@ -256,27 +262,74 @@ func userAttributes() []Attribute {
 	}
 }
 
-// NewSchemas is the /Schemas list: the core User schema.
-func NewSchemas(baseURL string) ListResponse[Schema] {
-	return newListResponse(Schema{
-		Schemas:     []string{SchemaSchema},
-		ID:          UserSchema,
-		Name:        "User",
-		Description: "User account",
-		Attributes:  userAttributes(),
-		Meta:        Meta{ResourceType: "Schema", Location: location(baseURL, "/Schemas/"+UserSchema)},
-	})
+// groupAttributes are the core Group attributes this provider understands
+// (#506). displayName is the groups-claim value of the role mapping and
+// cannot be written; members holds the members' User ids.
+func groupAttributes() []Attribute {
+	return []Attribute{
+		{
+			Name: "displayName", Type: "string", Description: "The groups-claim value of the single sign-on role mapping, matched exactly.",
+			Required: true, CaseExact: boolPtr(true), Mutability: "readOnly", Returned: "default", Uniqueness: "server",
+		},
+		{
+			Name: "members", Type: "complex", MultiValued: true, Description: "The users in the group.",
+			Mutability: "readWrite", Returned: "default", Uniqueness: "none",
+			SubAttributes: []Attribute{
+				{
+					Name: "value", Type: "string", Description: "The id of a member User.",
+					CaseExact: boolPtr(true), Mutability: "immutable", Returned: "default", Uniqueness: "none",
+				},
+			},
+		},
+	}
 }
 
-// NewResourceTypes is the /ResourceTypes list: the User resource type.
+// NewSchemas is the /Schemas list: the core User schema, then the core Group
+// schema (#506).
+func NewSchemas(baseURL string) ListResponse[Schema] {
+	return newListResponse(
+		Schema{
+			Schemas:     []string{SchemaSchema},
+			ID:          UserSchema,
+			Name:        "User",
+			Description: "User account",
+			Attributes:  userAttributes(),
+			Meta:        Meta{ResourceType: "Schema", Location: location(baseURL, "/Schemas/"+UserSchema)},
+		},
+		Schema{
+			Schemas:     []string{SchemaSchema},
+			ID:          GroupSchema,
+			Name:        "Group",
+			Description: "Group",
+			Attributes:  groupAttributes(),
+			Meta:        Meta{ResourceType: "Schema", Location: location(baseURL, "/Schemas/"+GroupSchema)},
+		},
+	)
+}
+
+// NewResourceTypes is the /ResourceTypes list: the User resource type, then
+// the Group resource type (#506). The ServiceProviderConfig is unchanged by
+// Groups: RFC 7643 §5 lists no resources, and its patch and filter features
+// already cover them.
 func NewResourceTypes(baseURL string) ListResponse[ResourceType] {
-	return newListResponse(ResourceType{
-		Schemas:     []string{ResourceTypeSchema},
-		ID:          "User",
-		Name:        "User",
-		Description: "User account",
-		Endpoint:    "/Users",
-		Schema:      UserSchema,
-		Meta:        Meta{ResourceType: "ResourceType", Location: location(baseURL, "/ResourceTypes/User")},
-	})
+	return newListResponse(
+		ResourceType{
+			Schemas:     []string{ResourceTypeSchema},
+			ID:          "User",
+			Name:        "User",
+			Description: "User account",
+			Endpoint:    "/Users",
+			Schema:      UserSchema,
+			Meta:        Meta{ResourceType: "ResourceType", Location: location(baseURL, "/ResourceTypes/User")},
+		},
+		ResourceType{
+			Schemas:     []string{ResourceTypeSchema},
+			ID:          "Group",
+			Name:        "Group",
+			Description: "Group",
+			Endpoint:    "/Groups",
+			Schema:      GroupSchema,
+			Meta:        Meta{ResourceType: "ResourceType", Location: location(baseURL, "/ResourceTypes/Group")},
+		},
+	)
 }

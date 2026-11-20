@@ -36,6 +36,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMTokensMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookSecretRotationMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookSecretRotationMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMGroupMembersMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSCIMGroupMembersMigration'),
     }
     migration_roots = len(required)
     if migrations_only:

@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SCIM 2.0 Groups (#506).** With a SCIM token, `GET /scim/v2/Groups` (paged by `startIndex` and
+  `count`, the one filter `displayName eq "<value>"`) and `GET /scim/v2/Groups/{id}` serve the
+  distinct `groups`-claim values of the effective single sign-on role mapping as core Group
+  resources, ordered by bytes, with their visible members (never an erased or customer account);
+  the id is the unpadded base64url of the value, and a value the mapping no longer holds is the
+  SCIM 404 `Group not found`. `PATCH /scim/v2/Groups/{id}` adds, removes or replaces members (Entra
+  ID and Okta forms); a `displayName` or other path is 400 `invalidPath`, a remove without a path
+  `noTarget`, and a member id that is no visible user 400 `invalidValue`. In one governed
+  transaction it recomputes each added or removed member's role with the sign-in's first-match rule
+  on the groups claim (no match keeps the role), writes the `user_role_changed` audit rows with
+  `auth_method` `scim` and no actor, and after the commit one sign-in audit row with method `scim`
+  per member whose membership changed. Only a result that leaves no active admin is refused, with
+  400 `mutability`, so a handover to another active account passes; replacing the last admin with
+  a deactivated account is refused. `POST /scim/v2/Groups` and `DELETE /scim/v2/Groups/{id}` answer
+  a SCIM 405 with an `Allow` header; `PUT` is not routed. `/Schemas` and `/ResourceTypes` now list
+  User and Group. Membership is stored in the new `scim_group_members` table (AutoMigrate on
+  SQLite, `migrations/20261129120000_add_scim_group_members` for MySQL/MariaDB, `group_value`
+  `utf8mb4_bin`). A group patch maps the groups claim only and a Users write the roles claim only,
+  so the last write sets the role; editing the mapping recomputes no role until the person's next
+  group patch. The Users writes keep answering the last-admin refusal with `invalidValue`.
 - **Entra ID sign-in finds the SCIM-created account (#505).** Entra ID sends the `objectId` as
   SCIM `externalId`, but its ID tokens carry a pairwise `sub`, so the first single sign-on of a
   SCIM-provisioned person used to be refused as `email_taken`. Now an unknown `(iss, sub)` signs in
@@ -130,7 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without bringing the old sessions back. Demoting or deactivating the last active admin is 400
   `invalidValue`; a role change writes the `user_role_changed` audit row with `auth_method`
   `scim`, every success one sign-in audit row with method `scim`, and a refusal writes nothing.
-  `DELETE /scim/v2/Users/{id}` and `/Groups` are still not served. No new setting, table or
+  `DELETE /scim/v2/Users/{id}` (#504) and `/Groups` (#506) came later. No new setting, table or
   migration.
 - **SCIM 2.0 user create and replace (#470).** With a SCIM token, `POST /scim/v2/Users` creates
   a staff or custom account (201, `Location` equal to `meta.location`) and
