@@ -15,11 +15,13 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// SCIM 2.0 user create and replace (#470) and patch (#471). Each is one
-// governed transaction that keeps the lock order of the OIDC sign-in:
+// SCIM 2.0 user create and replace (#470), patch (#471) and delete (#504).
+// Each is one governed transaction that keeps the lock order of the OIDC
+// sign-in:
 //
 //	admin set → users → roles → user_identities (create and replace)
 //	admin set → users → roles → refresh_tokens  (patch, a deactivating replace)
+//	admin set → users → refresh_tokens          (delete)
 //
 // The role always comes from the single sign-on role mapping: the first entry
 // with claim roles, in stored order, whose value equals one of the request's
@@ -31,7 +33,8 @@ import (
 // patch). A write that sets active false deprovisions: in the same
 // transaction it increments users.token_version, which ends every access
 // token, and revokes every refresh token of the account. A refusal writes
-// nothing, audit rows included.
+// nothing, audit rows included. Delete deactivates the same way and never
+// erases; on an already inactive account it writes nothing.
 
 // Refusals of a SCIM user write. The handler answers ErrSCIMInvalidValue with
 // 400 invalidValue and ErrSCIMUniqueness with 409 uniqueness.
@@ -45,7 +48,7 @@ var (
 
 // errSCIMWritesNotWired is a wiring fault (500): NewSCIMUserService was built
 // without WithSCIMUserWrites, or without its refresh token repository for a
-// patch or a deactivating replace.
+// patch, a deactivating replace or a delete (#504).
 var errSCIMWritesNotWired = errors.New("scim user writes need WithSCIMUserWrites")
 
 // Bounds of the SCIM user attributes.
@@ -82,10 +85,10 @@ type scimUserWrites struct {
 	audit         AuthAuditService
 }
 
-// WithSCIMUserWrites enables Create, Replace and Patch over the governed user
-// writes, the identity repository, the refresh tokens a deactivation revokes
-// and the sign-in audit log. A nil refreshTokens refuses Patch and a
-// deactivating Replace as a wiring fault.
+// WithSCIMUserWrites enables Create, Replace, Patch and Delete over the
+// governed user writes, the identity repository, the refresh tokens a
+// deactivation revokes and the sign-in audit log. A nil refreshTokens refuses
+// Patch, Delete and a deactivating Replace as a wiring fault.
 func WithSCIMUserWrites(userRepo repository.UserRepository, roleRepo repository.RoleRepository, roleAuditRepo repository.RoleAuditRepository,
 	identities repository.UserIdentityRepository, refreshTokens repository.RefreshTokenRepository, txManager *utils.TransactionManager,
 	audit AuthAuditService) SCIMUserServiceOption {
@@ -541,4 +544,62 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		return nil, err
 	}
 	return &records[0], nil
+}
+
+// Delete deactivates the visible user rawID names (#504) the way active false
+// does: in one governed transaction it sets is_active false, increments
+// token_version and revokes every refresh token. It never erases: no
+// deleted_at, and email, names, role, role_id and the identity link stay. An
+// already inactive account is a success that writes nothing, audit rows
+// included (unlike Patch, which bumps token_version again). The last active
+// admin is ErrSCIMLastAdmin. No role is written, so no role row is locked.
+func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
+	if s.writes == nil || s.writes.refreshTokens == nil {
+		return errSCIMWritesNotWired
+	}
+	id, err := parseSCIMUserID(rawID)
+	if err != nil {
+		return err
+	}
+	changed := true
+	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
+		admins, err := tx.userRoles.LockActiveAdmins()
+		if err != nil {
+			return err
+		}
+		users, err := tx.lockUsers(id)
+		if err != nil {
+			return err
+		}
+		target := users[id]
+		if target == nil || target.Role == models.RoleCustomer {
+			return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
+		}
+		if !target.IsActive {
+			changed = false
+			return nil
+		}
+		if isLastActiveAdmin(admins, target.ID) {
+			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
+		}
+		fields := map[string]interface{}{"is_active": false}
+		deprovisionFields(fields, target, true)
+		if err := tx.users.UpdateFields(id, fields); err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)
+			}
+			return err
+		}
+		if err := s.writes.refreshTokens.WithTx(tx.handle).RevokeAllForUser(id); err != nil {
+			return fmt.Errorf("revoke the sessions of scim user %d: %w", id, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if changed {
+		s.writes.recordSuccess(ctx, id)
+	}
+	return nil
 }

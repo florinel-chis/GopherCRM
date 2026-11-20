@@ -46,6 +46,7 @@ SCIM_ROUTES = {
     ('POST', '/scim/v2/Users'),
     ('PUT', '/scim/v2/Users/{id}'),
     ('PATCH', '/scim/v2/Users/{id}'),
+    ('DELETE', '/scim/v2/Users/{id}'),
 }
 
 
@@ -131,12 +132,14 @@ class UserGuideCheckTest(unittest.TestCase):
 
     def test_known_scim_names_pass(self):
         self.write_guide('\n`GET /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `PUT /scim/v2/Users/:id`, '
+                         '`DELETE /scim/v2/Users/{id}`, '
                          '`GET /scim/v2/ServiceProviderConfig`, `PUBLIC_BASE_URL/scim/v2`, `/scim/v2/Users`.\n')
         code, out = run(self.dir)
         self.assertEqual(code, 0, out)
 
-    def test_unserved_scim_delete_is_unknown_route(self):
-        self.assert_fails_naming('\n`DELETE /scim/v2/Users/{id}`\n', 'DELETE /scim/v2/Users/{id}', 'route')
+    def test_unserved_scim_collection_delete_is_unknown_route(self):
+        # DELETE is served on a single user (#504), never on the collection.
+        self.assert_fails_naming('\n`DELETE /scim/v2/Users`\n', 'DELETE /scim/v2/Users', 'route')
 
     def test_scim_groups_is_unknown_route(self):
         self.assert_fails_naming('\n`GET /scim/v2/Groups`\n', 'GET /scim/v2/Groups', 'route')

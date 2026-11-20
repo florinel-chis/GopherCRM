@@ -28,6 +28,7 @@ type stubSCIMUsers struct {
 	createCalls  []service.SCIMUserInput
 	replaceCalls []stubSCIMReplaceCall
 	patchCalls   []stubSCIMPatchCall
+	deleteCalls  []string
 	record       *service.SCIMUserRecord
 	page         *service.SCIMUserPage
 	err          error
@@ -56,6 +57,11 @@ func (s *stubSCIMUsers) Replace(_ context.Context, rawID string, in service.SCIM
 func (s *stubSCIMUsers) Patch(_ context.Context, rawID string, p service.SCIMUserPatch) (*service.SCIMUserRecord, error) {
 	s.patchCalls = append(s.patchCalls, stubSCIMPatchCall{rawID, p})
 	return s.record, s.err
+}
+
+func (s *stubSCIMUsers) Delete(_ context.Context, rawID string) error {
+	s.deleteCalls = append(s.deleteCalls, rawID)
+	return s.err
 }
 
 type stubSCIMPatchCall struct {
@@ -453,6 +459,64 @@ func TestSCIMUserPatchHandler(t *testing.T) {
 			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"))
 			var doc map[string]any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc))
+			if tc.scimType == "" {
+				assert.NotContains(t, doc, "scimType", tc.name)
+			} else {
+				assert.Equal(t, tc.scimType, doc["scimType"], tc.name)
+			}
+			assert.Equal(t, tc.detail, doc["detail"], tc.name)
+			assert.NotContains(t, w.Body.String(), secret, tc.name)
+		}
+	})
+}
+
+// TestSCIMUserDeleteHandler covers DELETE /scim/v2/Users/:id (#504) through
+// SetupSCIMRoutes, so a missing registration is a 404 here: 204 with an empty
+// body on success, and the write refusals as the patch maps them.
+func TestSCIMUserDeleteHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const base = "https://crm.example.test"
+	const secret = "secret-504"
+	setup := func(stub *stubSCIMUsers) *gin.Engine {
+		router := gin.New()
+		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		return router
+	}
+	send := func(router *gin.Engine, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, path, strings.NewReader(`{"ignored":true}`)))
+		return w
+	}
+
+	t.Run("success answers 204 with an empty body", func(t *testing.T) {
+		stub := &stubSCIMUsers{}
+		w := send(setup(stub), "/scim/v2/Users/abc")
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+		assert.Empty(t, w.Body.String())
+		assert.Equal(t, []string{"abc"}, stub.deleteCalls, "the raw id reaches the service")
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		for _, tc := range []struct {
+			name     string
+			err      error
+			status   int
+			scimType string
+			detail   string
+		}{
+			{"not found", fmt.Errorf("x: %w", apperrors.ErrNotFound), http.StatusNotFound, "", "User not found"},
+			{"last admin", fmt.Errorf("x: %w", service.ErrSCIMLastAdmin), http.StatusBadRequest, "invalidValue", "The last active admin must stay an active admin"},
+			{"anything else", errors.New(secret), http.StatusInternalServerError, "", "Internal server error"},
+		} {
+			stub := &stubSCIMUsers{err: tc.err}
+			w := send(setup(stub), "/scim/v2/Users/9")
+			require.Equal(t, tc.status, w.Code, "%s: %s", tc.name, w.Body.String())
+			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"), tc.name)
+			assert.Equal(t, []string{"9"}, stub.deleteCalls, tc.name)
+			var doc map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &doc), tc.name)
+			assert.Equal(t, []any{"urn:ietf:params:scim:api:messages:2.0:Error"}, doc["schemas"], tc.name)
+			assert.Equal(t, fmt.Sprint(tc.status), doc["status"], tc.name)
 			if tc.scimType == "" {
 				assert.NotContains(t, doc, "scimType", tc.name)
 			} else {

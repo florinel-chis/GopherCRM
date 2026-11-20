@@ -599,7 +599,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
-	// SCIM 2.0 provider (#468, #469, #470, #471) on /scim/v2, outside the API prefix: the strict
+	// SCIM 2.0 provider (#468, #469, #470, #471, #504) on /scim/v2, outside the API prefix: the strict
 	// tier first, so a throttled request writes no audit row, then the SCIM
 	// token authentication, which records every refusal with method scim.
 	scimTokenService := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), cfg.API.APIKeySecret)
@@ -609,7 +609,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// effective single sign-on issuer. The create, replace and patch (#470,
 	// #471) are governed user writes with the role from the roles mapping;
 	// each success writes its audit rows with method scim. A write that sets
-	// active false revokes the account's refresh tokens in its transaction.
+	// active false revokes the account's refresh tokens in its transaction;
+	// the delete (#504) is that deactivation and never erases.
 	scimUserService := service.NewSCIMUserService(repository.NewSCIMUserRepository(models.DB), ssoSettings,
 		service.WithSCIMUserWrites(userRepo, roleRepo, roleAuditRepo, repository.NewUserIdentityRepository(models.DB), refreshTokenRepo,
 			txManager, authAudit))

@@ -13,12 +13,12 @@ describes what GopherCRM does today. Single sign-on itself is described in
   role the single sign-on role mapping gives it. The account has no usable password.
 - **Update.** The provider changes the user name (the email address), the given and family name,
   the role and the active state.
-- **Deactivate.** Setting `active` to false (through PATCH or PUT) deactivates the account and ends
-  its sessions at once: every access token is refused from that moment and every refresh token is
+- **Deactivate.** Setting `active` to false (through PATCH or PUT), or a DELETE of the user,
+  deactivates the account and ends its sessions at once: every access token is refused from that moment and every refresh token is
   revoked. Setting `active` to true again reactivates the account, but the old sessions do not come
   back; the person signs in again.
-- **Never delete.** SCIM never erases or deletes an account. Erasure stays the delete in GopherCRM,
-  done by an administrator.
+- **Never delete.** SCIM never erases or deletes an account. A DELETE from the provider deactivates
+  the account and keeps its data. Erasure stays the delete in GopherCRM, done by an administrator.
 - **Which accounts the provider sees.** Staff accounts, including deactivated ones (served with
   `active` false). Customer accounts and erased accounts are never served: the provider gets a
   404 for them.
@@ -62,6 +62,7 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 | `GET /scim/v2/Users/{id}` | Reads one account. |
 | `PUT /scim/v2/Users/{id}` | Replaces an account's attributes. |
 | `PATCH /scim/v2/Users/{id}` | Changes some of an account's attributes. |
+| `DELETE /scim/v2/Users/{id}` | Deactivates an account and never erases it. |
 
 - **Listing.** The only filter accepted is `userName eq "<value>"`, which providers use to look a
   person up before creating them. Any other filter is refused with 400 `invalidFilter`. Paging uses
@@ -77,7 +78,12 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   mapping row with claim `roles` whose value equals one of the `roles` values the provider sends,
   exactly. A create or PUT with no matching row, or one whose row maps to Customer, is refused with
   400 `invalidValue`. A PATCH that does not send `roles` keeps the account's role. A change that
-  would demote or deactivate the last active administrator is refused with 400 `invalidValue`.
+  would demote or deactivate the last active administrator, a DELETE included, is refused with 400
+  `invalidValue`.
+- **Delete.** A DELETE answers 204 with no body and deactivates the account as `active` false
+  does: every session ends, and the email address, name, role and single sign-on link stay. A
+  DELETE of an account that is already deactivated answers 204 and changes nothing. An account the
+  provider does not see answers 404.
 - **Duplicates.** An email address or an `externalId` that another account already holds is
   refused with 409 `uniqueness`.
 - **Rate limit.** SCIM requests share a strict limit of 10 a minute per client address, with a
@@ -85,19 +91,21 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 
 ## What is not served
 
-As of this version, GopherCRM does not serve DELETE /scim/v2/Users/{id} or /scim/v2/Groups. A
-request to either gets the router's plain-text answer `404 page not found`, not a SCIM error.
+As of this version, GopherCRM does not serve /scim/v2/Groups. A request to it gets the router's
+plain-text answer `404 page not found`, not a SCIM error.
 
 - Turn group provisioning off at the provider (provision users only). Roles come from the
   `roles` attribute and the role mapping, not from pushed groups.
-- To remove a person, have the provider deactivate them. Erase the account in GopherCRM if the
-  data must go.
+- To remove a person, have the provider deactivate them; a provider DELETE deactivates too. Erase
+  the account in GopherCRM if the data must go.
 
 ## Audit
 
 - A create, and a role change made through SCIM, write a role audit row `user_role_changed` with
   `auth_method` `scim` and no actor. See the [audit trail](roles-and-permissions.md#audit-trail).
-- Every successful SCIM write records a sign-in audit row with method `scim` and outcome `success`.
+- Every successful SCIM write records a sign-in audit row with method `scim` and outcome `success`,
+  except a DELETE of an account that is already deactivated, which changes nothing and records
+  nothing.
 - A request with a refused token records method `scim` with the reason `token_missing`,
   `token_invalid` or `token_revoked`.
 - A refused write (400 or 409) records nothing.

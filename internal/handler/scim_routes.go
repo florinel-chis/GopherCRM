@@ -7,9 +7,10 @@ import (
 )
 
 // SetupSCIMRoutes mounts the SCIM 2.0 discovery documents (#468), the read
-// of the Users resource (#469), its create and replace (#470) and its patch
-// (#471) on the /scim/v2 group, which carries its own strict rate tier and the SCIM token
-// authentication, outside the API prefix.
+// of the Users resource (#469), its create and replace (#470), its patch
+// (#471) and its delete, a deactivation (#504), on the /scim/v2 group, which
+// carries its own strict rate tier and the SCIM token authentication, outside
+// the API prefix.
 func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMUserHandler) {
 	router.GET("/ServiceProviderConfig", handler.ServiceProviderConfig)
 	router.GET("/Schemas", handler.Schemas)
@@ -19,6 +20,7 @@ func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMU
 	router.POST("/Users", users.Create)
 	router.PUT("/Users/:id", users.Replace)
 	router.PATCH("/Users/:id", users.Patch)
+	router.DELETE("/Users/:id", users.Delete)
 }
 
 // SetupSCIMTokenRoutes mounts the administration of the SCIM provider tokens

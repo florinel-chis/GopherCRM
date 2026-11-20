@@ -424,16 +424,28 @@ path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.E
 with `admin set → users → roles → refresh_tokens`, applies the patch to the locked row, checks
 only the touched attributes (Replace's sequence for a changed address), resolves `roles` through
 the mapping, keeps the last-admin rule and records `user_role_changed` only on a role change.
-A write that sets `active` false (Patch, and Replace since #471) adds
-`token_version = locked + 1` to its `users` write (`deprovisionFields`) and then calls
-`RefreshTokenRepository.WithTx(...).RevokeAllForUser` in the same transaction.
+A write that sets `active` false (Patch, and Replace since #471, and `scimUserService.Delete`
+since #504) adds `token_version = locked + 1` to its `users` write (`deprovisionFields`) and then
+calls `RefreshTokenRepository.WithTx(...).RevokeAllForUser` in the same transaction.
 `WithSCIMUserWrites` takes the refresh token repository (`cmd/main.go` passes
-`refreshTokenRepo`); without it Patch and a deactivating Replace answer a wiring error (500).
+`refreshTokenRepo`); without it Patch, Delete and a deactivating Replace answer a wiring error
+(500).
 Regression roots: `TestSCIMUserPatchSQLite` and `TestSCIMUserPatchMySQL` (`internal/service`,
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserPatchHandler`
 (`internal/handler`), `TestParsePatch` (`internal/scim`), `TestSCIMUserPatchWired` (`cmd`) and
 `TestConcurrencyDocSCIMUserPatch` (`internal/config`). The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
+
+**SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (`SCIMUserHandler.Delete`, no body
+read, 204 on success, refusals through `failWrite`) calls `scimUserService.Delete`, which runs
+`admin set → users → refresh_tokens` in `roleGovernance.run` (no `roles` lock, no role write):
+an active visible target gets `is_active` false plus `deprovisionFields` and the revocation, an
+already inactive one commits nothing and records no audit row, the last active admin is
+`ErrSCIMLastAdmin`. It never calls the erasure path. Regression roots:
+`TestSCIMUserDeleteSQLite` and `TestSCIMUserDeleteMySQL` (`internal/service`, discovered by the
+auth checker; run the MySQL root on MariaDB too), `TestSCIMUserDeleteHandler`
+(`internal/handler`), `TestSCIMUserDeleteWired` (`cmd`) and `TestConcurrencyDocSCIMUserPatch`
+(`internal/config`). The rules are in [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504).
 
 **Credential issuance under the owner lock (#342)** — a password-reset token and an API key are
 issued only to a live, active owner.
@@ -2246,9 +2258,9 @@ covering MySQL and MariaDB behaviour of the handlers.
 - **Public list.** Every route of `router.Routes()` is either in the golden or in the explicit
   `routeMatrixPublic` list in the test: `/health`, the eight unauthenticated `/auth` routes (the
   OpenID Connect start and callback included), the six `/forms/public` routes, the two
-  `/quotes/public/response` routes and `POST /quotes/public/render`, and the eight `/scim/v2` routes
+  `/quotes/public/response` routes and `POST /quotes/public/render`, and the nine `/scim/v2` routes
   (the discovery documents of #468, the Users read of #469, the Users create and replace of
-  #470 and the Users patch of #471), 26 in all. A new route in neither
+  #470, the Users patch of #471 and the Users delete of #504), 27 in all. A new route in neither
   fails `TestRouteMatrixCoversEveryProtectedRoute`.
 - **Isolation.** Every cell runs against the same seeded state: a cell that wrote anything is
   followed by a restore of every table from a snapshot. Each request has a client address of its

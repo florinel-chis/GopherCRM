@@ -817,4 +817,9 @@ type SCIMUserService interface {
 	// active false also ends every session of the account. Refusals are those
 	// of Replace and write nothing.
 	Patch(ctx context.Context, rawID string, p SCIMUserPatch) (*SCIMUserRecord, error)
+	// Delete deactivates the visible user rawID names (#504) as active false
+	// does and never erases it. An unknown or not visible id is
+	// apperrors.ErrNotFound; the last active admin is ErrSCIMLastAdmin; an
+	// already inactive account is nil and writes nothing.
+	Delete(ctx context.Context, rawID string) error
 }
