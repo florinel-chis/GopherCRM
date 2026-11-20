@@ -6,7 +6,9 @@ sign-in design at the end is a note for later work and says so.
 
 The work is tracked in #258 and specified in #259. The source of truth for every table below is
 `internal/permissions`; `go test -count=1 ./internal/permissions` fails when this guide and the
-package disagree (see the Testing section of [DEVELOPMENT.md](DEVELOPMENT.md)).
+package disagree (see the Testing section of [DEVELOPMENT.md](DEVELOPMENT.md)). The administrator
+guide, in plain language and task by task, is
+[user-guide/permissions-access/overview.md](user-guide/permissions-access/overview.md).
 
 ## Phased plan
 

@@ -561,7 +561,7 @@ start attempt. Requirements:
   has no trusted selector. Do not delete the planner import chain without replacing it.
 - **The hygiene hook.** It runs only after `git config core.hooksPath scripts/git-hooks`
   (`scripts/git-hooks/pre-commit:15`). It refuses new folders under `docs/` other than `img`,
-  `screenshots` and `testing` (line 19), and two reserved working-paper paths (lines 37-38); keep
+  `screenshots`, `testing` and `user-guide` (line 19), and two reserved working-paper paths (lines 37-38); keep
   or edit those rules as your own policy. The forbidden-terms sweep runs only when the untracked
   terms file named at line 52 exists, so on a fresh clone it is skipped. The size check is the
   same one `make verify-hygiene` runs.
