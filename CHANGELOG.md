@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documentation citation check (#487).** `scripts/ci/check-doc-citations.py` checks the code
+  that `docs/FORKING.md` and `docs/EXTENDING.md` cite: every backticked repository path must be a
+  tracked file or directory (a short allowlist covers the gitignored build outputs the guides
+  name), every Go symbol cited next to a `.go` path must be declared in that file (read by the new
+  go/parser helper `scripts/ci/docsymbols`), and the two guides may not cite code by line number.
+  Its unit test runs in `make verify-hygiene`.
 - **Administrator guide: testing single sign-on (#481).** A sixth page,
   `docs/user-guide/permissions-access/testing-single-sign-on.md`, tells an administrator how to
   test single sign-on against their own Entra ID tenant: the Entra ID setup by reference to the
@@ -1233,6 +1239,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Drifted code citations in the fork and extension guides (#473, #474).** The line-number
+  citations in `docs/FORKING.md` and `docs/EXTENDING.md`, several of which no longer pointed at
+  the code they described, are replaced by citations of the file plus the declared symbol, or of a
+  heading, job, step, key or quoted anchor for non-Go files. The six Compose and Dockerfile line
+  citations that tests recompute from the files are kept.
 - **Shutdown cancels a stale bulk-operation sweep prune that is waiting for the database (#485).**
   The stale bulk-operation sweep's single sign-on attempt prune and sign-in audit prune now run
   their statements on the sweep's context (`PruneCreatedBefore` takes a `context.Context`). Before,

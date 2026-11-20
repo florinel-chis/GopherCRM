@@ -19,13 +19,13 @@ moves faster than this page.
 
 ### 1.1 Modules
 
-Roles are `admin`, `sales`, `support` and `customer` (`internal/models/user.go`). Routing lives in
+Roles are `admin`, `sales`, `support` and `customer` (`UserRole` (`internal/models/user.go`)). Routing lives in
 `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go:269`).
+wiring is in `setupDependencies` (`cmd/main.go`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
-| Auth, sessions, API keys | public `/auth`; own keys for any authenticated user | rotating refresh tokens, single-use reset tokens claimed inside one transaction, lockout after 5 failures, one generic 401 when login or `POST /auth/refresh` rejects the credential (an operational refresh failure is a retryable 503 `SESSION_REFRESH_UNAVAILABLE` and a malformed body a 400, `internal/handler/auth_handler.go:302-328`; change-password answers 400 for a wrong current password and 409 `SESSION_STALE` for a stale session, `:434-439`) | `internal/service/auth_password_reset_regression_test.go`, `auth_refresh_rotation_regression_test.go`, `internal/handler/apikey_handler_test.go` |
+| Auth, sessions, API keys | public `/auth`; own keys for any authenticated user | rotating refresh tokens, single-use reset tokens claimed inside one transaction, lockout after 5 failures, one generic 401 when login or `POST /auth/refresh` rejects the credential (an operational refresh failure is a retryable 503 `SESSION_REFRESH_UNAVAILABLE` and a malformed body a 400, `internal/handler/auth_handler.go` `AuthHandler.Refresh`; change-password answers 400 for a wrong current password and 409 `SESSION_STALE` for a stale session, `AuthHandler.ChangePassword` (`internal/handler/auth_handler.go`)) | `internal/service/auth_password_reset_regression_test.go`, `auth_refresh_rotation_regression_test.go`, `internal/handler/apikey_handler_test.go` |
 | Registration | public, ships **off** | always creates a `customer`; fails closed on a settings read error | `internal/handler/auth_registration_test.go`, `internal/middleware/registration_test.go` |
 | Users | admin; self for get/update | deactivated users' bearer tokens are rejected; delete is erasure | `internal/handler/user_handler_test.go`, `internal/service/user_service_test.go` |
 | Leads | admin, sales (own leads only) | email or phone required; conversion rules from settings; one visibility policy; CSV export of the leads the caller may list in one totally ordered statement | `internal/service/lead_conversion_rules_test.go`, `lead_visibility_test.go`, `internal/integration/lead_visibility_integration_test.go`, `internal/repository/lead_export_traversal_test.go` |
@@ -38,7 +38,7 @@ wiring is in `setupDependencies` (`cmd/main.go:269`).
 | Forms | admin `/forms` read admin+sales+support; public `/forms/public/*` | spam layers in fixed order; double opt-in claim, lead write and submission update in one transaction | `internal/service/form_service_test.go`, `form_confirmation_regression_test.go`, `internal/handler/form_public_handler_test.go` |
 | Follow-up automation | rules admin; runs admin+sales (sales never sees ticket runs) | outbox event per lead/deal/ticket write (#242); conditional run advance after a locking read of the record; ticket delete cancels the ticket's open runs; lease-based claims with a stale sweep at boot and every tick (#237) | `internal/service/automation_runtime_test.go`, `internal/service/automation_run_lease*_test.go`, `cmd/automation_runtime_test.go`, `internal/service/ticket_automation_*_test.go` |
 | AEO (answer-engine tracking) | admin+sales+support; run and generate admin+sales | keys encrypted at rest; environment-only egress allowlist | `internal/service/aeo_service_test.go`, `aeo_egress_boundary_test.go`, `docs/AEO_SECURITY.md` |
-| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`internal/handler/lead_handler.go:754-758`) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245), and the unused response-link tokens of the quotes addressed to the erased customers are invalidated (#395). Ticket and task deletes are soft deletes that scrub no text (`internal/repository/ticket_repository.go`, `task_repository.go:53`; a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `erasure_quote_tokens_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
+| GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`LeadHandler.Delete` (`internal/handler/lead_handler.go`)) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245), and the unused response-link tokens of the quotes addressed to the erased customers are invalidated (#395). Ticket and task deletes are soft deletes that scrub no text (`ticketRepository.Delete` (`internal/repository/ticket_repository.go`), `taskRepository.Delete` (`internal/repository/task_repository.go`); a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `erasure_quote_tokens_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
 | Dashboard | admin+sales+support | activity lists scoped inside the query | `internal/repository/dashboard_queries_test.go` |
 | Configuration | `/configurations/ui` any user; the rest admin | seeding never overwrites a stored value; sensitive values encrypted and masked | `internal/repository/configuration_repository_test.go`, `internal/service/configuration_service_test.go` |
 
@@ -70,8 +70,8 @@ Checked by searching the tracked tree on `4dfe404`:
   rate per quote line only: no tax categories, reverse charge or
   per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
   #324, #233).
-- CSV export covers customers and leads only (`internal/handler/customer_handler.go:569`,
-  `lead_handler.go:941`, #234); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
+- CSV export covers customers and leads only (`CustomerHandler.Export` (`internal/handler/customer_handler.go`),
+  `LeadHandler.Export` (`internal/handler/lead_handler.go`), #234); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
   single quote is delivered, #384).
 - Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
   not apply and the server ships no CSRF protection (README "Known Limitations"). A cookie session
@@ -103,8 +103,8 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (`CHANGELOG.md:1721`). Everything under `[Unreleased]`
-(`CHANGELOG.md:8`, about 730 lines) is on `main` but in no tagged release: companies, deals,
+The latest release is 1.2.0 (the `[1.2.0]` heading of `CHANGELOG.md`). Everything under `[Unreleased]`
+(the first heading of `CHANGELOG.md`, about 2,500 lines on `9133805`) is on `main` but in no tagged release: companies, deals,
 products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
 A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
 
@@ -112,7 +112,7 @@ A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets
 
 ### 2.1 SQLite, from source
 
-No database server is needed. Requires Go 1.25 (`go.mod:3`), Node 20 or later, and `jq` for the
+No database server is needed. Requires Go 1.25 (the `go` directive of `go.mod`), Node 20 or later, and `jq` for the
 API example in section 2.4.
 
 ```bash
@@ -124,7 +124,7 @@ go run ./cmd                     # or: make run
 ```
 
 The backend listens on `http://localhost:8080` and creates `gophercrm.db` in the working
-directory (`DB_PATH`, `internal/config/config.go:284`). The schema is created by auto-migration at
+directory (`DB_PATH`, `Load` (`internal/config/config.go`)). The schema is created by auto-migration at
 startup. `cmd/main.go` takes no command-line flags: `go run ./cmd --help` starts the server.
 
 In a second terminal, create the first admin. Self-service registration only ever creates
@@ -146,7 +146,7 @@ npm run dev                      # Vite on http://localhost:5173
 ```
 
 The UI calls `http://localhost:8080/api/v1` unless `VITE_API_BASE_URL` says otherwise
-(`gocrm-ui/src/api/client.ts:26`, `gocrm-ui/.env.example:2`).
+(`API_BASE_URL` in `gocrm-ui/src/api/client.ts`, `VITE_API_BASE_URL=` in `gocrm-ui/.env.example`).
 
 ### 2.2 MySQL or MariaDB
 
@@ -154,7 +154,7 @@ The UI calls `http://localhost:8080/api/v1` unless `VITE_API_BASE_URL` says othe
 make create-db                   # mysql -u root < scripts/create_database.sql
 ```
 
-`scripts/create_database.sql` creates `gocrm`, the default `DB_NAME` (`internal/config/config.go`,
+`scripts/create_database.sql` creates `gocrm`, the default `DB_NAME` (read by `Load` (`internal/config/config.go`), and
 `.env.example`). A fork that renames the database changes both together; a hygiene test fails when
 they differ. Then set `DB_DRIVER=mysql` and the `DB_*` credentials and run `go run ./cmd`.
 
@@ -163,28 +163,28 @@ The Compose stack in `docker-compose.yml` brings up MySQL 8, the API and an ngin
 
 ### 2.3 Three traps on the first run
 
-1. **The example JWT secret stops the app.** `internal/config/config.go:269-279` rejects an empty
+1. **The example JWT secret stops the app.** `Load` (`internal/config/config.go`) rejects an empty
    value, the literal `default-secret-change-this`, any value starting with `CHANGE_THIS` (the
    placeholder in `.env.example` is one) and values shorter than 32 characters, so a copied
    `.env.example` does not start. Replace the secret with the output of
    `openssl rand -base64 32`.
 2. **CORS.** The backend accepts browser requests from `localhost`/`127.0.0.1` on 5173 and 3000,
-   and `localhost:8080` (`internal/middleware/cors.go:14-20`). Any other cross-origin UI needs
+   and `localhost:8080` (`defaultAllowedOrigins` (`internal/middleware/cors.go`)). Any other cross-origin UI needs
    `CORS_ALLOWED_ORIGINS`. An unlisted origin gets a bare 403, which the login page shows as a
-   failed sign-in. The one exception: the pinned `github.com/gin-contrib/cors` v1.7.5 (`go.mod:7`)
+   failed sign-in. The one exception: the pinned `github.com/gin-contrib/cors` v1.7.5 (the `require` block of `go.mod`)
    skips the allowlist when `Origin` is exactly `http://` or `https://` plus the request's `Host`,
    so a UI proxied to the API under the same origin passes without being listed. The shipped
-   nginx forwards `Host $host` (`gocrm-ui/docker/nginx.conf:14`), which drops a non-standard port,
+   nginx forwards `Host $host` (`proxy_set_header Host $host` in `gocrm-ui/docker/nginx.conf`), which drops a non-standard port,
    so the exception holds on ports 80 and 443 but not on `localhost:3000`. `curl` without an
    `Origin` header does not reproduce any of this; add
    `-H 'Origin: https://your-ui.example'` when you smoke-test.
-3. **Public registration ships off** (`internal/models/configuration.go:324-331`). Sign-up stays
+3. **Public registration ships off** (`DefaultConfigurations` (`internal/models/configuration.go`)). Sign-up stays
    hidden until an admin enables it under Settings.
 
 ### 2.4 Calling the API with a key
 
 API keys go in the `Authorization` header with the `ApiKey` scheme
-(`internal/middleware/auth.go:38-47`). A bare `ApiKey:` header is rejected with 401. The API
+(`Auth` (`internal/middleware/auth.go`)). A bare `ApiKey:` header is rejected with 401. The API
 reference (`api/index.html`, generated from `cmd/main.go`) documents the same
 `Authorization: ApiKey <key>` form.
 
@@ -240,13 +240,13 @@ conflict on each upstream sync.
 
 | What | Where |
 |---|---|
-| Browser title and meta description | `gocrm-ui/index.html:7-8` |
-| App name in the UI | one hook, `useProductName` (`gocrm-ui/src/hooks/useProductName.ts`), used by the layout, the printable quote and the sign-in and registration pages. The PDF render page (`/quote-render`, #384) has no session and does not use the hook: it takes the stored name from `POST /quotes/public/render` (`product_name`) and falls back to the build-time name (`buildTimeProductName`). Order: the stored `general.company_name` when a signed-in user's configuration holds a non-blank value, else `VITE_APP_NAME` (`gocrm-ui/.env.example:6`), else `GoCRM` (`FALLBACK_PRODUCT_NAME`). The sign-in and registration pages render before sign-in and always show the build-time name |
-| Settings fallback name | `DEFAULT_COMPANY_NAME` in `gocrm-ui/src/contexts/ConfigurationContext.tsx:26` |
+| Browser title and meta description | the `<meta name="description">` and `<title>` tags of `gocrm-ui/index.html` |
+| App name in the UI | one hook, `useProductName` (`gocrm-ui/src/hooks/useProductName.ts`), used by the layout, the printable quote and the sign-in and registration pages. The PDF render page (`/quote-render`, #384) has no session and does not use the hook: it takes the stored name from `POST /quotes/public/render` (`product_name`) and falls back to the build-time name (`buildTimeProductName`). Order: the stored `general.company_name` when a signed-in user's configuration holds a non-blank value, else `VITE_APP_NAME` (`VITE_APP_NAME=` in `gocrm-ui/.env.example`), else `GoCRM` (`FALLBACK_PRODUCT_NAME`). The sign-in and registration pages render before sign-in and always show the build-time name |
+| Settings fallback name | `DEFAULT_COMPANY_NAME` in `gocrm-ui/src/contexts/ConfigurationContext.tsx` |
 | Favicon (the only logo asset) | `gocrm-ui/public/favicon.svg` |
 | Colours | the MUI palette in `gocrm-ui/src/theme/index.ts` (`createAppTheme`); the light theme's primary colour follows the `ui.theme.primary_color` setting for signed-in users |
 | Mail subjects and body | the product name in the password reset subject and body, the quote subject and the ticket reply subject comes from `general.company_name` through `service.ResolveMailProductName` (`internal/service/product_name.go`), else `GopherCRM`, and is configurable in Settings; the templates stay in `internal/mailer/smtp.go` (`SendPasswordReset`, password reset), `internal/service/quote_email.go` (`QuoteEmailSubject`) and `internal/service/ticket_comment_email.go` (`TicketCommentEmailSubject`) |
-| API title | `// @title` in `cmd/main.go:24`, then `make swagger` |
+| API title | `// @title` in the general API block above `main` (`cmd/main.go`), then `make swagger` |
 | README images | `docs/img/gophercrm-*.png` |
 
 The **Settings** company name (`general.company_name`) and primary colour
@@ -264,16 +264,16 @@ one longer than 100 characters falls back to `GopherCRM` there.
 Things that look like rebrand controls and are not:
 
 - **A changed seed default does not reach an existing database.** Seeding refreshes metadata but
-  keeps the stored value (`internal/repository/configuration_repository.go:78-94`). Change existing
+  keeps the stored value (`configurationRepository.BulkUpsert` (`internal/repository/configuration_repository.go`)). Change existing
   installs through Settings or the configuration API.
 
 ### 3.2 Identity (defer)
 
 These are safe to keep. Renaming any of them costs a conflict on every upstream merge:
 
-- the Go module path `github.com/florinel-chis/gophercrm` (`go.mod:1`; section 7.2);
+- the Go module path `github.com/florinel-chis/gophercrm` (the `module` line of `go.mod`; section 7.2);
 - the binary `bin/gophercrm` (`Makefile`), the Docker user `gophercrm` (`Dockerfile`), the systemd
-  service and `/srv/gophercrm` paths (`scripts/deploy/receive-release.sh:44-60`, overridable by
+  service and `/srv/gophercrm` paths (the `ROOT=${GOPHERCRM_ROOT:-/srv/gophercrm}` block of `scripts/deploy/receive-release.sh`, overridable by
   environment);
 - the build tag `gophercrm_e2e` and the `GOPHERCRM_E2E_*` variables (`scripts/e2e/run.sh`,
   `internal/middleware`);
@@ -286,17 +286,17 @@ These are safe to keep. Renaming any of them costs a conflict on every upstream 
 |---|---|---|
 | `gophercrm_session` (the stored session record), `gophercrm_token`, `gophercrm_refresh_token` (its mirrors, which the browser specs read) | `gocrm-ui/src/api/sessionRecord.ts` | signs every user out once; renaming the mirrors also breaks the Playwright helpers that read or remove `gophercrm_token` |
 | Web Lock name `gophercrm-session` | `gocrm-ui/src/api/sessionLock.ts` | lets tabs running the old and the new build refresh one session at the same time until they reload |
-| API-key prefix `gcrm_` | `internal/service/apikey_service.go:123`, `internal/utils/crypto.go:14-29` | breaks keys already issued |
+| API-key prefix `gcrm_` | `apiKeyService.Generate` (`internal/service/apikey_service.go`), `HashAPIKey` and `HashAPIKeyHMAC` (`internal/utils/crypto.go`) | breaks keys already issued |
 | `.gcrm-form`, `gcrm-form-styles`, `--gcrm-*` | `internal/handler/assets/form_embed.js` | breaks CSS that host pages wrote against the embedded form |
 
 ### 3.3 Repository identity
 
 Change these before your first release or before running the tooling against your repository:
 
-- `REPO` in `scripts/release/release.py:15` — the release script creates, downloads and publishes
+- `REPO` (the `REPO =` assignment in `scripts/release/release.py`) — the release script creates, downloads and publishes
   releases on this repository.
-- `.github/CODEOWNERS:1`.
-- README badges and links (`README.md:6,8,31,46,110`) and the compare links at the end of
+- the `*` owner line of `.github/CODEOWNERS`.
+- README badges and links in `README.md` (the CI and latest-release badges, the two `git clone` commands and the Releases link) and the compare links at the end of
   `CHANGELOG.md`.
 - If you use the remediation runner: `repository`, `tracker` (issue 94 upstream), the issue lists
   and `completion_target` in your copy of `automation/langflow/gophercrm_runner/config.example.json`.
@@ -325,28 +325,31 @@ Configuration comes from three places:
 
 ### 4.1 Variables to decide before production
 
-| Variable | Default | Read at | Notes |
+`Load` in the "Read in" column is `internal/config/config.go` `Load`, which reads every variable once at
+startup.
+
+| Variable | Default | Read in | Notes |
 |---|---|---|---|
-| `JWT_SECRET` | none (required) | `config.go:270` | at least 32 characters; replace the example (section 2.3) |
-| `API_KEY_SECRET` | `JWT_SECRET` | `config.go:314`, `internal/service/form_service.go:347` | see the rotation callout below |
-| `DB_DRIVER` | `mysql` | `config.go:283` | `mysql` or `sqlite`; anything else stops startup |
-| `DB_PATH` | `gophercrm.db` | `config.go:284` | SQLite only; no `?`; local filesystem (WAL) |
-| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `config.go:285-289` | MySQL only |
-| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `config.go:293-294` | `127.0.0.1` behind a proxy on the same host |
-| `SERVER_MODE` | `development` | `config.go:295` | `production` switches Gin to release mode (`cmd/main.go:228-230`) |
-| `TRUSTED_PROXIES` | trust none | `config.go:296` | see below |
-| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `config.go:297` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `config.go:324` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
-| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `config.go:325` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `config.go:353` | this backend's public origin; form confirmation links |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `config.go:317-321` | empty host means log-only mail |
-| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `config.go:354-355` | both or the layer is skipped |
-| `FORM_RETENTION_DAYS` | off | `config.go:357` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
-| `AUTH_AUDIT_RETENTION_DAYS` | `90` | `config.go:367` | days a sign-in audit row (`auth_audit_log`, #454) is kept; unset, empty, zero, negative or unparseable keeps 90, 36500 ceiling. Pruned at boot and every 15 minutes by the stale bulk operation sweep; safe on every replica |
-| `AUTOMATION_ENABLED` | `true` | `config.go:360` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
-| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `config.go:347-348` | daily AEO run |
-| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `config.go:350` | environment only; see `docs/AEO_SECURITY.md` |
-| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `config.go:309-310` | SQL statements only at debug/trace |
+| `JWT_SECRET` | none (required) | `Load` | at least 32 characters; replace the example (section 2.3) |
+| `API_KEY_SECRET` | `JWT_SECRET` | `Load`, `formTokenSecret` (`internal/service/form_service.go`) | see the rotation callout below |
+| `DB_DRIVER` | `mysql` | `Load` | `mysql` or `sqlite`; anything else stops startup |
+| `DB_PATH` | `gophercrm.db` | `Load` | SQLite only; no `?`; local filesystem (WAL) |
+| `DB_HOST/PORT/NAME/USER/PASSWORD` | `localhost`/`3306`/`gocrm`/`root`/empty | `Load` | MySQL only |
+| `SERVER_HOST`, `SERVER_PORT` | every interface, `8080` | `Load` | `127.0.0.1` behind a proxy on the same host |
+| `SERVER_MODE` | `development` | `Load` | `production` switches Gin to release mode (`setupRouter` (`cmd/main.go`)) |
+| `TRUSTED_PROXIES` | trust none | `Load` | see below |
+| `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `Load` | every browser origin of your UI |
+| `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
+| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `Load` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | `Load` | this backend's public origin; form confirmation links |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `Load` | empty host means log-only mail |
+| `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `Load` | both or the layer is skipped |
+| `FORM_RETENTION_DAYS` | off | `Load` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
+| `AUTH_AUDIT_RETENTION_DAYS` | `90` | `Load` | days a sign-in audit row (`auth_audit_log`, #454) is kept; unset, empty, zero, negative or unparseable keeps 90, 36500 ceiling. Pruned at boot and every 15 minutes by the stale bulk operation sweep; safe on every replica |
+| `AUTOMATION_ENABLED` | `true` | `Load` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
+| `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `Load` | daily AEO run |
+| `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `Load` | environment only; see `docs/AEO_SECURITY.md` |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `Load` | SQL statements only at debug/trace |
 
 The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
 environment. `docs/AEO_SECURITY.md` explains why.
@@ -354,15 +357,16 @@ environment. `docs/AEO_SECURITY.md` explains why.
 ### 4.2 Choices that are irreversible or easy to get wrong
 
 > - **Secrets.** `API_KEY_SECRET` (or `JWT_SECRET` when it is unset) keys the HMAC of API keys
->   (`cmd/main.go:370`), refresh and password-reset tokens (`cmd/main.go:334`), form confirmation
->   tokens and time-trap signatures (`internal/service/form_service.go:341-352`), and the
->   encryption of sensitive settings (`cmd/main.go:317`, `internal/utils/secretbox.go`). Rotating
+>   (`setupDependencies` (`cmd/main.go`), passed to `NewAPIKeyService`), refresh and password-reset tokens (passed to
+>   the auth service in `setupDependencies`), form confirmation tokens and time-trap signatures
+>   (`formTokenSecret` (`internal/service/form_service.go`)), and the encryption of sensitive settings
+>   (the `configuration-secret` box built in `setupDependencies`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `internal/service/auth_service.go:675-680`) and the UI silently trades them for new access
->   tokens signed with the new secret (`gocrm-ui/src/api/client.ts:232-256`). To end every session,
+>   `authService.sessionTokenSecret` (`internal/service/auth_service.go`)) and the UI silently trades them for new access
+>   tokens signed with the new secret (the 401 handling in `setupInterceptors` and `refreshFor`, `gocrm-ui/src/api/client.ts`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
 >   change and a password reset revoke that user's refresh tokens and end the access tokens issued
 >   before them (they increment `users.token_version`, #236), and a deactivated user's refresh is
@@ -372,7 +376,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 > - **`SERVER_MODE=production`.** Without it Gin runs in debug mode. The setting has no other
 >   effect: the application issues no cookies, and authentication is header-only.
 > - **`TRUSTED_PROXIES`.** The rate limiter keys on `c.ClientIP()`
->   (`internal/middleware/rate_limit.go:211`). Behind a reverse proxy or CDN with no trusted
+>   (`rateLimiter.middlewareWith` (`internal/middleware/rate_limit.go`)). Behind a reverse proxy or CDN with no trusted
 >   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
 >   noisy user locks out everyone on `/auth`.
 > - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
@@ -393,21 +397,21 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
 
 - `tickets.auto_assign_support` — nothing distributes tickets among support users. A ticket
   created without `assigned_to_id` is assigned to its creator
-  (`internal/handler/ticket_handler.go:108-111`).
-- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `internal/config/config.go:301`, used at
-  `internal/service/auth_service.go:645`) and the refresh-token lifetime from
-  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `config.go:306`). `JWT_ACCESS_TOKEN_MINUTES` is read
-  (`config.go:302`) but used by nothing.
+  (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)).
+- `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `Load` (`internal/config/config.go`), used in
+  `authService.GenerateJWT` (`internal/service/auth_service.go`)) and the refresh-token lifetime from
+  `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `Load`). `JWT_ACCESS_TOKEN_MINUTES` is read
+  (`Load`) but used by nothing.
 
 The company name and colour settings are covered in
 section 3.1.
 
 ### 4.4 Module switches
 
-Only two exist: `AUTOMATION_ENABLED` (`config.go:360`) turns the automation worker off on an
-instance, and `AEO_SCHEDULE_ENABLED` (`config.go:347`) turns off the daily AEO run. Forms and AEO
+Only two exist: `AUTOMATION_ENABLED` (read in `Load`) turns the automation worker off on an
+instance, and `AEO_SCHEDULE_ENABLED` (read in `Load`) turns off the daily AEO run. Forms and AEO
 as a whole have no switch; removing a module is described in [EXTENDING.md](EXTENDING.md).
-`FORM_RETENTION_DAYS` (`config.go:357`) is the opposite kind of setting: the form retention purge
+`FORM_RETENTION_DAYS` (read in `Load`) is the opposite kind of setting: the form retention purge
 stays off until you set it.
 
 ## 5. Deployment shapes
@@ -462,27 +466,29 @@ The upstream pipeline builds a Linux AMD64 tarball and deploys it over SSH:
 
 The scripts install releases on a server you have already provisioned; they do not provision it.
 Before the first deploy you need, on the server: a working MySQL or MariaDB database; the
-directory `/srv/gophercrm` (bootstrap only re-owns it, `scripts/deploy/bootstrap.sh:69`); the
-tools `flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and `systemctl` (checked at line 63);
-a systemd unit for the service (`gophercrm` by default) that runs `/srv/gophercrm/bin/gophercrm`
-(a link into the current release, line 137) with the environment file
-`/srv/gophercrm/env/gophercrm.env` (`scripts/deploy/receive-release.sh:54-55`, restarted at
-line 161); and a TLS-terminating web server that serves the web root and proxies
+directory `/srv/gophercrm` (bootstrap only re-owns it: `chown root:root /srv/gophercrm` in
+`scripts/deploy/bootstrap.sh`); the tools `flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and
+`systemctl` (checked by its `for tool in` loop); a systemd unit for the service (`gophercrm` by
+default) that runs `/srv/gophercrm/bin/gophercrm` (a link into the current release, `link_binaries`
+in `scripts/deploy/receive-release.sh`) with the environment file `/srv/gophercrm/env/gophercrm.env`
+(the `ENV_FILE=` default there, restarted by `restart_and_check`); and a TLS-terminating web server that serves the web root and proxies
 `/api/v1` to the backend. [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) walks a fresh
 systemd/nginx host through each of them, with a sample unit, environment file and nginx sites
 (#231); no sample file ships under `scripts/deploy`. On
 your machine: root SSH access to the server, a `gh` login with admin rights on the repository,
-and `main` protected (bootstrap refuses otherwise, lines 2-4 and 45-46).
+and `main` protected (bootstrap refuses otherwise: its header comment and the
+`main is not a protected branch` check).
 
-1. Set `REPO` in `scripts/release/release.py:15` to your repository.
+1. Set `REPO` (the `REPO =` assignment in `scripts/release/release.py`) to your repository.
 2. Run `scripts/deploy/bootstrap.sh <user@host> <public URL> <web root>` once. It creates a deploy
    key pinned to `scripts/deploy/receive-release.sh` on the server, a GitHub `production`
    environment, and the four secrets `PRODUCTION_SSH_KEY`, `PRODUCTION_SSH_KNOWN_HOSTS`,
-   `PRODUCTION_HOST` and `PRODUCTION_SSH_USER` (`.github/workflows/deploy.yml:52-55`). It finds the
+   `PRODUCTION_HOST` and `PRODUCTION_SSH_USER` (the `Check that production is configured` step of
+   `.github/workflows/deploy.yml`). It finds the
    repository through `gh repo view`.
 3. On the server, `receive-release.sh` reads `GOPHERCRM_ROOT`, `GOPHERCRM_SERVICE`,
-   `GOPHERCRM_WEB_ROOT`, `GOPHERCRM_ENV_FILE` and other overrides (lines 44-60). Its pre-restart
-   backup runs `mysqldump` (line 206), so this path is not ready for SQLite as shipped.
+   `GOPHERCRM_WEB_ROOT`, `GOPHERCRM_ENV_FILE` and other overrides (the `ROOT=${GOPHERCRM_ROOT:-/srv/gophercrm}`
+   block). Its pre-restart backup runs `mysqldump` (`backup_database`), so this path is not ready for SQLite as shipped.
 4. Prepare a release with `python3 scripts/release/release.py prepare --version X.Y.Z`, merge it,
    run the **Release** workflow with `publish=false` (a full rehearsal that creates nothing), then
    with `publish=true`. **Deploy** runs after a successful published release.
@@ -492,7 +498,8 @@ and `main` protected (bootstrap refuses otherwise, lines 2-4 and 45-46).
 
 Use the Release workflow for the artifact only, or build it yourself (`make build` plus
 `npm run build` in `gocrm-ui/`). `deploy.yml` triggers on every successful Release run; it skips
-with a notice while its secrets are missing (`.github/workflows/deploy.yml:58`), but disable the
+with a notice while its secrets are missing (the `Check that production is configured` step of
+`.github/workflows/deploy.yml`), but disable the
 workflow if you never intend to use it.
 
 ### 5.4 Worker topology
@@ -528,21 +535,23 @@ start attempt. Requirements:
 ## 6. CI on a fork
 
 - **No secrets are needed for CI.** The workflows start throwaway databases in service containers
-  and generate `JWT_SECRET` at runtime (`.github/workflows/ci.yml:339`). Deploy secrets are needed
+  and generate `JWT_SECRET` at runtime (the `Generate a per-run JWT secret` step of the `e2e` job in
+  `.github/workflows/ci.yml`). Deploy secrets are needed
   only for section 5.2.
 - **Keep the `gophercrm_runner` Python package.** Ordinary CI imports it:
-  `scripts/ci/check-auth.py:16-19`, `scripts/ci/go_checks.py:10-13` (used by `check-go.py`),
-  `scripts/ci/check-go.py:7`, `scripts/ci/check-changed-go.py:23` (through `go_checks.py`),
-  `scripts/ci/plan-documentation.py:10`, and
-  `scripts/ci/plan-validation.py:96`, which reads `validation.py` from the base commit. You may
+  the `gophercrm_runner` imports at the top of `scripts/ci/check-auth.py`, `scripts/ci/go_checks.py`
+  (used by `check-go.py`), `scripts/ci/check-go.py`, `scripts/ci/check-changed-go.py` (through
+  `go_checks.py`) and `scripts/ci/plan-documentation.py`, and `main` in
+  `scripts/ci/plan-validation.py`, which reads `validation.py` from the base commit. You may
   drop the Langflow graphs (`automation/langflow/flows/`) and the runner runtime, but not
   `automation/langflow/gophercrm_runner/`. `.github/workflows/remediation-runner.yml` is also a
   reusable workflow that Release calls as its `runner-validation` job
-  (`.github/workflows/release.yml:54-56`), and the `build` job needs that job (line 108). Deleting
+  (`.github/workflows/release.yml`), and the `build` job lists that job in its `needs:`. Deleting
   the workflow means removing that job and its entry in `needs:` from `release.yml` in the same
   change, or Release stops working.
 - **Profile selection.** The `plan` job picks one of nine validation profiles from the changed
-  paths (`automation/langflow/gophercrm_runner/validation.py:584-586`). To see what CI will run for
+  paths (the `profile = (...)` expression of `plan` in
+  `automation/langflow/gophercrm_runner/validation.py`). To see what CI will run for
   your change, ask the selector instead of guessing:
 
   ```bash
@@ -557,13 +566,13 @@ start attempt. Requirements:
   `full: true`. A pull request that changes migration code runs the MySQL 8 migration leg alone.
   `docs/VALIDATION_RELEASE.md` has the profile table.
 - **Simplifying.** If you do not want contextual selection, make the `plan` job always emit
-  `profile=full`, which is what `scripts/ci/plan-validation.py:98-103` writes for a release when it
-  has no trusted selector. Do not delete the planner import chain without replacing it.
+  `profile=full`, which is what `main` in `scripts/ci/plan-validation.py` writes for a release when it
+  has no trusted selector (the `no trusted selector/change base` branch). Do not delete the planner import chain without replacing it.
 - **The hygiene hook.** It runs only after `git config core.hooksPath scripts/git-hooks`
-  (`scripts/git-hooks/pre-commit:15`). It refuses new folders under `docs/` other than `img`,
-  `screenshots`, `testing` and `user-guide` (line 19), and two reserved working-paper paths (lines 37-38); keep
-  or edit those rules as your own policy. The forbidden-terms sweep runs only when the untracked
-  terms file named at line 52 exists, so on a fresh clone it is skipped. The size check is the
+  (the `Activate with:` comment of `scripts/git-hooks/pre-commit`). It refuses new folders under `docs/` other than `img`,
+  `screenshots`, `testing` and `user-guide` (`ALLOWED_DOCS_DIRS`), and two reserved working-paper paths (the
+  case that refuses docs/specs and docs/plans); keep or edit those rules as your own policy. The forbidden-terms sweep runs only when the untracked
+  terms file named by `terms_file` exists, so on a fresh clone it is skipped. The size check is the
   same one `make verify-hygiene` runs.
 
 ## 7. Staying in sync with upstream
@@ -592,7 +601,8 @@ does not have to match your repository, and it appears in 323 tracked files, thi
 `f5ec601`). A rename touches every one of them on every sync.
 
 If you rename anyway, do it in one mechanical commit and redo it after each merge. Besides the Go
-imports, the path is hard-coded in `scripts/ci/check-go.py:61`, `scripts/release/check-sql-tests.py:11-32`,
+imports, the path is hard-coded in `scripts/ci/check-go.py` (`KNOWN_SKIPS`), `scripts/release/check-sql-tests.py` (the
+`required` set of `check`),
 `scripts/release/tests/test_release.py` and `scripts/release/tests/test_sql_coverage.py`. Deriving
 it from `go.mod` instead is #223.
 
@@ -600,9 +610,9 @@ it from `go.mod` instead is #223.
 
 | Hot spot | Seam |
 |---|---|
-| `setupDependencies` in `cmd/main.go:269` | call one fork function from it, in its own file under `cmd/` |
+| `setupDependencies` (`cmd/main.go`) | call one fork function from it, in its own file under `cmd/` |
 | `internal/handler/routes.go` | a `fork_routes.go`, the way `aeo_routes.go` and `form_routes.go` are split out |
-| the AutoMigrate list in `internal/models/database.go:212-277` | append your models at the end, in one block |
+| the AutoMigrate list in `internal/models/database.go` `autoMigrateModels` | append your models at the end, in one block |
 | `gocrm-ui/src/routes/index.tsx` and the navigation in `gocrm-ui/src/layouts/MainLayout.tsx` | group fork routes and nav items in one block each |
 | seeded settings in `internal/models/configuration.go` | a fork-specific key prefix, appended at the end |
 | `CHANGELOG.md` | a separate fork section, or a separate file |
@@ -613,7 +623,7 @@ it from `go.mod` instead is #223.
 
 ### 7.4 Migration versions
 
-`migrations/` is applied by golang-migrate (`cmd/migrate/main.go:102`) on MySQL and MariaDB.
+`migrations/` is applied by golang-migrate (`main` (`cmd/migrate/main.go`), through `migrate.NewWithDatabaseInstance`) on MySQL and MariaDB.
 Versions are numeric timestamps (`go run ./cmd/migrate -command create -name <name>` stamps
 `time.Now()` as `YYYYMMDDHHMMSS`). A plain `up` does not apply a migration numbered below the
 newest version the database has already applied, so an upstream migration older than your newest
@@ -629,7 +639,7 @@ fork migration would be silently skipped on an existing database. The procedure:
 
 New tables use `CREATE TABLE IF NOT EXISTS`, because a new binary may already have created them
 through AutoMigrate before the migration runs
-(`migrations/20261026120000_add_products_and_quotes.up.sql:6-8`). SQLite installs never run
+(the header comment of `migrations/20261026120000_add_products_and_quotes.up.sql`). SQLite installs never run
 `migrations/`; their schema comes from AutoMigrate at startup. Every schema change needs both
 halves, as [EXTENDING.md](EXTENDING.md) explains.
 
