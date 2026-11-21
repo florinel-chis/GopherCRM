@@ -93,6 +93,10 @@ type SSOSettingsUpdate struct {
 	ClientSecret  *string
 	Scopes        []string
 	RoleMapping   []SSORoleMapping
+	// ConfirmIssuerChange confirms a save that changes the effective issuer
+	// while user_identities rows exist under the current one. Without it such
+	// a save is refused with an *SSOIssuerChangeError.
+	ConfirmIssuerChange bool
 }
 
 var (
@@ -102,7 +106,30 @@ var (
 	// ErrSSOUnknownRole is a well-formed role mapping that names a role id no
 	// row has (400 INVALID_REFERENCE).
 	ErrSSOUnknownRole = errors.New("the role mapping names a role that does not exist")
+	// ErrSSOIssuerChangeUnconfirmed is a save that would change the effective
+	// issuer while identity links exist under the current one, sent without
+	// ConfirmIssuerChange (409 ISSUER_CHANGE_UNCONFIRMED).
+	ErrSSOIssuerChangeUnconfirmed = errors.New("changing the issuer needs confirmation while accounts are linked to the current issuer")
 )
+
+// SSOIssuerChangeError reports an unconfirmed issuer change: Links is the
+// number of user_identities rows under the current effective issuer, which
+// stop matching once the new issuer applies. It unwraps to
+// ErrSSOIssuerChangeUnconfirmed.
+type SSOIssuerChangeError struct {
+	Links int64
+}
+
+func (e *SSOIssuerChangeError) Error() string { return ErrSSOIssuerChangeUnconfirmed.Error() }
+func (e *SSOIssuerChangeError) Unwrap() error { return ErrSSOIssuerChangeUnconfirmed }
+
+// SSOIssuerLinks counts the identity links stored under an issuer.
+// repository.UserIdentityRepository satisfies it.
+type SSOIssuerLinks interface {
+	// CountByIssuer counts the user_identities rows of any source whose
+	// issuer equals the argument byte for byte; "" counts nothing.
+	CountByIssuer(issuer string) (int64, error)
+}
 
 // SSOSettingsError carries the refused fields of an update, keyed by path
 // (issuer_url, scopes[1], role_mapping[2].claim). The messages never carry a
@@ -123,8 +150,11 @@ type SSOSettingsService interface {
 	// role mapping is empty when its stored value cannot be read or parsed.
 	SSOConfig(ctx context.Context) (EffectiveSSOConfig, error)
 	// Update validates the whole update, checks the mapped role ids, and only
-	// then writes. When the result is enabled, security.sso.enabled is written
-	// last; otherwise first.
+	// then writes. When the save would change the effective issuer while
+	// identity links exist under the current one and ConfirmIssuerChange is
+	// false, it writes nothing and returns an *SSOIssuerChangeError with the
+	// number of those links. When the result is enabled,
+	// security.sso.enabled is written last; otherwise first.
 	Update(ctx context.Context, update SSOSettingsUpdate) error
 	SSOPasswordPolicy
 }
@@ -142,14 +172,16 @@ type SSOPasswordPolicy interface {
 type ssoSettingsService struct {
 	configs ConfigurationService
 	roles   repository.RoleRepository
+	links   SSOIssuerLinks
 	base    config.SSOConfig
 }
 
 // NewSSOSettingsService builds the service over the configuration service
 // (the only writer of the reserved security.sso.* rows, through SetSSO), the
-// role repository and the boot-time OIDC_* fallbacks.
-func NewSSOSettingsService(configs ConfigurationService, roles repository.RoleRepository, base config.SSOConfig) SSOSettingsService {
-	return &ssoSettingsService{configs: configs, roles: roles, base: base}
+// role repository, the identity links counted before an issuer change and
+// the boot-time OIDC_* fallbacks.
+func NewSSOSettingsService(configs ConfigurationService, roles repository.RoleRepository, links SSOIssuerLinks, base config.SSOConfig) SSOSettingsService {
+	return &ssoSettingsService{configs: configs, roles: roles, links: links, base: base}
 }
 
 func ssoLogger() *logrus.Entry {
@@ -431,7 +463,7 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 	if strings.TrimSpace(update.IssuerURL) != "" {
 		parsed, err := config.ParseOIDCIssuer(update.IssuerURL)
 		if err != nil {
-			fields["issuer_url"] = "must be an absolute https URL without credentials, query, fragment or zone identifier, at most 2048 bytes"
+			fields["issuer_url"] = "must be an absolute https URL without credentials, query, fragment or zone identifier, at most 512 bytes"
 		}
 		issuer = parsed
 	}
@@ -452,6 +484,12 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 	// Only a well-formed mapping reaches the database: each role id once.
 	if err := s.checkRoles(mapping); err != nil {
 		return err
+	}
+
+	if !update.ConfirmIssuerChange {
+		if err := s.checkIssuerChange(issuer); err != nil {
+			return err
+		}
 	}
 
 	mappingText := ""
@@ -509,6 +547,53 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 		}
 	}
 	return nil
+}
+
+// checkIssuerChange refuses a save whose effective issuer differs from the
+// current one while identity links exist under the current one. requested is
+// the parsed issuer of the update ("" when it clears the stored value, so
+// OIDC_ISSUER_URL applies again when it is valid).
+func (s *ssoSettingsService) checkIssuerChange(requested string) error {
+	env, _ := s.envIssuer()
+	current, err := s.currentIssuer(env)
+	if err != nil {
+		return err
+	}
+	next := requested
+	if next == "" {
+		next = env
+	}
+	if current == "" || current == next {
+		return nil
+	}
+	if s.links == nil {
+		return errors.New("single sign-on settings: no identity link counter")
+	}
+	count, err := s.links.CountByIssuer(current)
+	if err != nil {
+		return fmt.Errorf("count the identity links of the current issuer: %w", err)
+	}
+	if count > 0 {
+		return &SSOIssuerChangeError{Links: count}
+	}
+	return nil
+}
+
+// currentIssuer is the effective issuer as effectiveIssuer resolves it, except
+// that a stored value that cannot be read is an error rather than a fallback
+// to OIDC_ISSUER_URL, so the links are never counted under the wrong issuer.
+// A missing row is unset. env is the valid OIDC_ISSUER_URL, or "".
+func (s *ssoSettingsService) currentIssuer(env string) (string, error) {
+	stored, err := s.configs.GetString(models.ConfigKeySSOIssuerURL)
+	if err != nil && !apperrors.IsNotFound(err) {
+		return "", fmt.Errorf("read the stored single sign-on issuer: %w", err)
+	}
+	if err == nil && strings.TrimSpace(stored) != "" {
+		if issuer, err := config.ParseOIDCIssuer(stored); err == nil {
+			return issuer, nil
+		}
+	}
+	return env, nil
 }
 
 func (s *ssoSettingsService) checkRoles(mapping []SSORoleMapping) error {

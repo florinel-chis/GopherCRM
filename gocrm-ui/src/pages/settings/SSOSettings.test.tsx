@@ -254,4 +254,69 @@ describe('SSOSettings', () => {
       await screen.findByText('role_mapping[0].role_id: names a role that does not exist'),
     ).toBeInTheDocument();
   });
+  describe('changing the issuer while accounts are linked', () => {
+    const issuerChangeRefusal = (links: number) =>
+      Object.assign(new Error('409'), {
+        response: {
+          status: 409,
+          data: {
+            code: 'ISSUER_CHANGE_UNCONFIRMED',
+            message: 'Changing the issuer unlinks the accounts linked to the current issuer',
+            details: { affected_links: links },
+          },
+        },
+      });
+
+    const saveNewIssuer = async (links: number) => {
+      vi.mocked(ssoSettingsApi.update).mockRejectedValueOnce(issuerChangeRefusal(links));
+      await renderPage();
+      fireEvent.change(screen.getByLabelText('Issuer URL'), { target: { value: 'https://other.example/tenant' } });
+      await save();
+      return screen.findByRole('dialog', { name: 'Change the issuer?' });
+    };
+
+    it('opens the dialog with the count; the first PUT carries no confirmation', async () => {
+      const dialog = await saveNewIssuer(3);
+
+      expect(within(dialog).getByText(/3 account links use the current issuer\./)).toBeInTheDocument();
+      expect(within(dialog).getByText(/not recognised at their next sign-in/)).toBeInTheDocument();
+      expect(within(dialog).getByText(/provisioning no longer sees them/)).toBeInTheDocument();
+      expect(ssoSettingsApi.update).toHaveBeenCalledTimes(1);
+      expect(lastBody()).not.toHaveProperty('confirm_issuer_change');
+      expect(lastBody().issuer_url).toBe('https://other.example/tenant');
+      expect(screen.queryByText(/could not be saved/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Changing the issuer unlinks/)).not.toBeInTheDocument();
+    });
+
+    it('uses the singular for one link', async () => {
+      const dialog = await saveNewIssuer(1);
+      expect(within(dialog).getByText(/1 account link uses the current issuer\./)).toBeInTheDocument();
+    });
+
+    it('"Change issuer" resends the same body with confirm_issuer_change', async () => {
+      const dialog = await saveNewIssuer(2);
+      const first = lastBody();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Change issuer' }));
+
+      await waitFor(() => expect(ssoSettingsApi.update).toHaveBeenCalledTimes(2));
+      expect(lastBody()).toEqual({ ...first, confirm_issuer_change: true });
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Change the issuer?' })).not.toBeInTheDocument(),
+      );
+      await waitFor(() => expect(screen.getByLabelText('Issuer URL')).toHaveValue('https://other.example/tenant'));
+    });
+
+    it('Cancel sends nothing and keeps the form values', async () => {
+      const dialog = await saveNewIssuer(2);
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Change the issuer?' })).not.toBeInTheDocument(),
+      );
+      expect(ssoSettingsApi.update).toHaveBeenCalledTimes(1);
+      expect(screen.getByLabelText('Issuer URL')).toHaveValue('https://other.example/tenant');
+    });
+  });
 });

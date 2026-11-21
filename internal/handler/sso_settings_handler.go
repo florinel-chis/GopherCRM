@@ -88,7 +88,7 @@ type SSOSettingsRequest struct {
 	Enabled *bool `json:"enabled" example:"true"`
 	// true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset; null or absent clears it, so OIDC_ALLOW_PASSWORD (default false) applies.
 	AllowPassword *bool `json:"allow_password" example:"false"`
-	// An absolute https URL without credentials, query, fragment or zone identifier, at most 2048 bytes; a path is allowed. Empty clears it.
+	// An absolute https URL without credentials, query, fragment or zone identifier, at most 512 bytes; a path is allowed. Empty clears it.
 	IssuerURL string `json:"issuer_url" example:"https://login.microsoftonline.com/tenant-id/v2.0"`
 	// At most 255 bytes, trimmed. Empty clears it.
 	ClientID string `json:"client_id" example:"gophercrm"`
@@ -98,7 +98,13 @@ type SSOSettingsRequest struct {
 	Scopes []string `json:"scopes" example:"openid,profile,email"`
 	// At most 200 entries; claim groups or roles, a trimmed value of 1 to 256 bytes, an existing role id, no repeated claim and value. Empty or absent clears it; stored encrypted.
 	RoleMapping []SSORoleMappingEntry `json:"role_mapping"`
+	// true confirms a save that changes the effective issuer while accounts are linked under the current one; absent or false refuses such a save with 409 ISSUER_CHANGE_UNCONFIRMED.
+	ConfirmIssuerChange bool `json:"confirm_issuer_change" example:"false"`
 }
+
+// codeIssuerChangeUnconfirmed answers a save that changes the effective
+// issuer while links exist under the current one, without the confirmation.
+const codeIssuerChangeUnconfirmed = "ISSUER_CHANGE_UNCONFIRMED"
 
 func newSSOSettingsResponse(cfg service.EffectiveSSOConfig) SSOSettingsResponse {
 	mapping := make([]SSORoleMappingEntry, 0, len(cfg.RoleMapping))
@@ -158,7 +164,7 @@ func (h *SSOSettingsHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Replace the single sign-on settings (admin)
-// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; allow_password true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset, and null or absent clears it so OIDC_ALLOW_PASSWORD applies; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration; allow_password is written before the other settings. Sessions and refresh tokens issued before allow_password is turned off are not ended by it. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
+// @Description Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; allow_password true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset, and null or absent clears it so OIDC_ALLOW_PASSWORD applies; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, then the issuer change is checked, and nothing is written when any check fails. A save whose effective issuer (issuer_url, or OIDC_ISSUER_URL when issuer_url is empty) differs from the current effective issuer while user_identities rows exist under the current one is refused with 409 unless confirm_issuer_change is true: those links stop matching, so the people are not recognised at their next sign-in and provisioning no longer sees them. A save that keeps the issuer, sets the first one, or changes it while no link exists needs no confirmation. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration; allow_password is written before the other settings. Sessions and refresh tokens issued before allow_password is turned off are not ended by it. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.
 // @Tags configurations
 // @Accept json
 // @Produce json
@@ -169,8 +175,9 @@ func (h *SSOSettingsHandler) Get(c *gin.Context) {
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: the body is not valid JSON for the schema (details.body), or a field was refused (details maps a path such as issuer_url, scopes[0] or role_mapping[2].claim to a message). INVALID_REFERENCE: a well-formed role mapping names a role id no role has (details maps role_mapping[i].role_id)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold settings.sso_manage (Insufficient permissions)"
+// @Failure 409 {object} utils.APIResponse{error=utils.APIError} "ISSUER_CHANGE_UNCONFIRMED: the save changes the effective issuer while accounts are linked under the current one and confirm_issuer_change is not true; details.affected_links is the number of identity links under the current issuer. Nothing is stored"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
-// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: a role could not be looked up, a setting could not be stored or encrypted, or the settings could not be read back"
+// @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: a role could not be looked up, the stored issuer could not be read, the identity links could not be counted, a setting could not be stored or encrypted, or the settings could not be read back"
 // @Router /settings/sso [put]
 func (h *SSOSettingsHandler) Update(c *gin.Context) {
 	logger := utils.LogHandlerStart(c, "SSOSettingsHandler.Update")
@@ -192,6 +199,8 @@ func (h *SSOSettingsHandler) Update(c *gin.Context) {
 		ClientID:      req.ClientID,
 		ClientSecret:  req.ClientSecret,
 		Scopes:        req.Scopes,
+
+		ConfirmIssuerChange: req.ConfirmIssuerChange,
 	}
 	for _, entry := range req.RoleMapping {
 		update.RoleMapping = append(update.RoleMapping, service.SSORoleMapping{Claim: entry.Claim, Value: entry.Value, RoleID: entry.RoleID})
@@ -199,7 +208,12 @@ func (h *SSOSettingsHandler) Update(c *gin.Context) {
 
 	if err := h.sso.Update(c.Request.Context(), update); err != nil {
 		var settingsErr *service.SSOSettingsError
+		var issuerErr *service.SSOIssuerChangeError
 		switch {
+		case errors.As(err, &issuerErr):
+			utils.RespondError(c, http.StatusConflict, codeIssuerChangeUnconfirmed,
+				"Changing the issuer unlinks the accounts linked to the current issuer; resend with confirm_issuer_change true to save",
+				map[string]any{"affected_links": issuerErr.Links})
 		case errors.As(err, &settingsErr) && errors.Is(err, service.ErrSSOUnknownRole):
 			utils.RespondError(c, http.StatusBadRequest, apperrors.CodeInvalidReference, "The role mapping names a role that does not exist", settingsErr.Fields)
 		case errors.As(err, &settingsErr):

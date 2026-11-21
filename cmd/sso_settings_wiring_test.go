@@ -1,10 +1,12 @@
 package main
 
 // Issue #434 through the router production uses: setupDependencies builds the
-// single sign-on settings service from configService, the role repository and
-// cfg.SSO, and mounts GET and PUT /settings/sso. A boot-time issuer and secret
+// single sign-on settings service from configService, the role repository,
+// the identity repository and cfg.SSO, and mounts GET and PUT /settings/sso. A boot-time issuer and secret
 // reach the GET answer with source env; a {} PUT stores the shipped empty
-// state; the generic configuration route refuses a reserved row. Over a SQLite
+// state; a different issuer while an account is linked under the boot issuer
+// is refused until confirm_issuer_change is sent; the generic configuration
+// route refuses a reserved row. Over a SQLite
 // file opened by the real connector.
 
 import (
@@ -87,6 +89,25 @@ func TestSSOSettingsWiredFromEnvironment(t *testing.T) {
 	for key, value := range ssoRows() {
 		assert.Equal(t, "", value, "%s stays empty after a {} PUT", key)
 	}
+
+	// An account linked under the boot issuer: saving a different issuer
+	// needs confirm_issuer_change, and the refusal stores nothing.
+	require.NoError(t, models.DB.Create(&models.UserIdentity{UserID: admin.ID, Issuer: "https://env-idp.example.test",
+		Subject: "wiring-subject-0556", Source: models.UserIdentitySourceOIDC}).Error)
+	const otherIssuer = `{"issuer_url":"https://other-idp.example.test"}`
+	unchanged := ssoRows()
+	status, raw, envelope = do(http.MethodPut, "/settings/sso", otherIssuer)
+	require.Equal(t, http.StatusConflict, status, raw)
+	require.NotNil(t, envelope.Error)
+	assert.Equal(t, "ISSUER_CHANGE_UNCONFIRMED", envelope.Error.Code)
+	assert.Equal(t, map[string]interface{}{"affected_links": float64(1)}, envelope.Error.Details)
+	assert.Equal(t, unchanged, ssoRows(), "the refused save stored nothing")
+	assert.Equal(t, "", ssoRows()[models.ConfigKeySSOIssuerURL])
+
+	status, raw, envelope = do(http.MethodPut, "/settings/sso", `{"issuer_url":"https://other-idp.example.test","confirm_issuer_change":true}`)
+	require.Equal(t, http.StatusOK, status, raw)
+	assert.Equal(t, "https://other-idp.example.test", envelope.Data.(map[string]interface{})["issuer_url"])
+	assert.Equal(t, "https://other-idp.example.test", ssoRows()[models.ConfigKeySSOIssuerURL])
 
 	before := ssoRows()
 	status, raw, envelope = do(http.MethodPut, "/configurations/SECURITY.SSO.ROLE_MAPPING", `{"value":"[{\"claim\":\"groups\",\"value\":\"g\",\"role_id\":1}]"}`)

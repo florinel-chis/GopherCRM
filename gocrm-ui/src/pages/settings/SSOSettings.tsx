@@ -4,6 +4,11 @@ import {
   Alert,
   Box,
   Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   IconButton,
@@ -67,6 +72,22 @@ const sourceHelp = (source: SSOSettingSource | undefined): string | undefined =>
   return undefined;
 };
 
+// The answer to a save that changes the issuer in force while accounts are
+// linked to the current one; the page asks before resending it.
+const ISSUER_CHANGE_UNCONFIRMED = 'ISSUER_CHANGE_UNCONFIRMED';
+
+const unconfirmedIssuerLinks = (error: unknown): number | null => {
+  const apiError = getAPIError(error);
+  if (getHTTPStatus(error) !== 409 || apiError?.code !== ISSUER_CHANGE_UNCONFIRMED) return null;
+  const links = apiError.details?.affected_links;
+  return typeof links === 'number' ? links : 0;
+};
+
+const linksText = (links: number): string =>
+  links === 1
+    ? '1 account link uses the current issuer.'
+    : `${links} account links use the current issuer.`;
+
 const errorLines = (error: unknown): string[] => {
   const apiError = getAPIError(error);
   if (getHTTPStatus(error) === 400 && apiError?.details) {
@@ -100,6 +121,8 @@ export const SSOSettings: React.FC = () => {
   const [secret, setSecret] = useState('');
   const [clearSecret, setClearSecret] = useState(false);
   const [saveErrors, setSaveErrors] = useState<string[] | null>(null);
+  // A refused issuer change: the count and the body to resend on confirm.
+  const [issuerChange, setIssuerChange] = useState<{ links: number; body: SSOSettingsUpdate } | null>(null);
 
   useEffect(() => {
     if (settingsQuery.data) {
@@ -117,7 +140,12 @@ export const SSOSettings: React.FC = () => {
       setForm(toForm(updated));
       showSuccess('Single sign-on settings saved');
     },
-    onError: (error: unknown) => {
+    onError: (error: unknown, body: SSOSettingsUpdate) => {
+      const links = body.confirm_issuer_change ? null : unconfirmedIssuerLinks(error);
+      if (links !== null) {
+        setIssuerChange({ links, body });
+        return;
+      }
       setSaveErrors(errorLines(error));
     },
   });
@@ -373,6 +401,37 @@ export const SSOSettings: React.FC = () => {
           </Box>
         </Stack>
       </Paper>
+
+      <Dialog
+        open={issuerChange !== null}
+        onClose={() => setIssuerChange(null)}
+        aria-labelledby="sso-issuer-change-title"
+        aria-describedby="sso-issuer-change-text"
+      >
+        <DialogTitle id="sso-issuer-change-title">Change the issuer?</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="sso-issuer-change-text">
+            {issuerChange ? linksText(issuerChange.links) : ''} After the change these links stop
+            matching: those people are not recognised at their next sign-in, and provisioning no longer
+            sees them.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIssuerChange(null)}>Cancel</Button>
+          <Button
+            color="warning"
+            variant="contained"
+            onClick={() => {
+              if (!issuerChange) return;
+              const body = { ...issuerChange.body, confirm_issuer_change: true };
+              setIssuerChange(null);
+              mutation.mutate(body);
+            }}
+          >
+            Change issuer
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

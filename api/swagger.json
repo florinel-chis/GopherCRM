@@ -23874,7 +23874,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; allow_password true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset, and null or absent clears it so OIDC_ALLOW_PASSWORD applies; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, and nothing is written when any check fails. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration; allow_password is written before the other settings. Sessions and refresh tokens issued before allow_password is turned off are not ended by it. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.",
+                "description": "Requires settings.sso_manage (route guard, repeated in the handler). Replaces every stored setting except the client secret: an empty or absent field clears the stored value so the OIDC_* variable applies again; enabled null or absent clears the switch; allow_password true or false stores whether accounts linked to single sign-on may also use password sign-in and password reset, and null or absent clears it so OIDC_ALLOW_PASSWORD applies; client_secret absent or null keeps the stored secret and an empty string clears it. The client secret and the role mapping are stored encrypted. The whole body is validated first, then the role ids are looked up, then the issuer change is checked, and nothing is written when any check fails. A save whose effective issuer (issuer_url, or OIDC_ISSUER_URL when issuer_url is empty) differs from the current effective issuer while user_identities rows exist under the current one is refused with 409 unless confirm_issuer_change is true: those links stop matching, so the people are not recognised at their next sign-in and provisioning no longer sees them. A save that keeps the issuer, sets the first one, or changes it while no link exists needs no confirmation. When the result is enabled the switch is written last, otherwise first, so a failure part-way never leaves single sign-on enabled over a half-written configuration; allow_password is written before the other settings. Sessions and refresh tokens issued before allow_password is turned off are not ended by it. Answers with the effective settings, as GET does. POST /auth/oidc/start and POST /auth/oidc/callback sign in with these settings.",
                 "consumes": [
                     "application/json"
                 ],
@@ -23969,6 +23969,24 @@
                             ]
                         }
                     },
+                    "409": {
+                        "description": "ISSUER_CHANGE_UNCONFIRMED: the save changes the effective issuer while accounts are linked under the current one and confirm_issuer_change is not true; details.affected_links is the number of identity links under the current issuer. Nothing is stored",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "error": {
+                                            "$ref": "#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIError"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
                     "429": {
                         "description": "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent",
                         "schema": {
@@ -23988,7 +24006,7 @@
                         }
                     },
                     "500": {
-                        "description": "INTERNAL_ERROR: a role could not be looked up, a setting could not be stored or encrypted, or the settings could not be read back",
+                        "description": "INTERNAL_ERROR: a role could not be looked up, the stored issuer could not be read, the identity links could not be counted, a setting could not be stored or encrypted, or the settings could not be read back",
                         "schema": {
                             "allOf": [
                                 {
@@ -37800,13 +37818,18 @@
                     "type": "string",
                     "example": "not-a-real-secret"
                 },
+                "confirm_issuer_change": {
+                    "description": "true confirms a save that changes the effective issuer while accounts are linked under the current one; absent or false refuses such a save with 409 ISSUER_CHANGE_UNCONFIRMED.",
+                    "type": "boolean",
+                    "example": false
+                },
                 "enabled": {
                     "description": "true or false stores the switch; null or absent clears it, so OIDC_ENABLED applies.",
                     "type": "boolean",
                     "example": true
                 },
                 "issuer_url": {
-                    "description": "An absolute https URL without credentials, query, fragment or zone identifier, at most 2048 bytes; a path is allowed. Empty clears it.",
+                    "description": "An absolute https URL without credentials, query, fragment or zone identifier, at most 512 bytes; a path is allowed. Empty clears it.",
                     "type": "string",
                     "example": "https://login.microsoftonline.com/tenant-id/v2.0"
                 },

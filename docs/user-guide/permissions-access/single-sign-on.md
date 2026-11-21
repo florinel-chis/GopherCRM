@@ -78,6 +78,12 @@ first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-i
 5. Leave **Allow password sign-in and password reset for accounts linked to single sign-on** off
    unless you need it (see [Mixed accounts](#mixed-accounts)).
 6. Switch **Enabled** on and click **Save**.
+
+When the save changes the issuer in force while accounts are linked to the current issuer, the
+dialog **Change the issuer?** shows how many account links stop matching: those people are not
+recognised at their next sign-in, and provisioning no longer sees them. Click **Change issuer** to
+save anyway, or **Cancel** to keep the current issuer; nothing is saved until you confirm. Setting
+the first issuer, keeping it, or changing it while no account is linked needs no confirmation.
 7. Sign out and test with a person who should get each mapped role. Keep a local administrator
    account signed in elsewhere until the test passes.
    [Testing single sign-on](testing-single-sign-on.md) lists the checks and test cases.
@@ -131,7 +137,8 @@ method and read the reason column.
 | "Single sign-on failed"; reason `no_mapping_match`. | No role mapping row matches the person's `roles` or `groups` values. | Compare the values recorded in the sign-in audit row with the mapping. Assign the person the app role or group at the provider, or add a row. Values are case-sensitive. |
 | "Single sign-on failed" after the provider page; reason `token_exchange_failed` (the API answers 503 `SSO_UNAVAILABLE`). | The provider refused the client secret: it is wrong, expired, or belongs to another application. | Create a new secret at the provider, type it into **Client secret** and save. |
 | "Single sign-on is unavailable. Sign in with your password." on the sign-in page (503 `SSO_UNAVAILABLE`). | The issuer cannot be reached or discovered, or a required setting is empty. | Check **Issuer URL**, **Client ID** and **Client secret**, and that the server can reach the issuer over https. |
-| Saving the settings fails on **Issuer URL**. | The issuer is not an absolute `https` URL, or it carries credentials, a query or a fragment. | Enter the issuer exactly as the provider publishes it, starting with `https://`. An invalid `OIDC_ISSUER_URL` is ignored with a warning in the server log. |
+| Saving the settings fails on **Issuer URL**. | The issuer is not an absolute `https` URL of at most 512 bytes, or it carries credentials, a query or a fragment. | Enter the issuer exactly as the provider publishes it, starting with `https://`. An invalid `OIDC_ISSUER_URL` (one longer than 512 bytes included) is ignored with a warning in the server log. |
+| Saving opens **Change the issuer?** (the API answers 409 `ISSUER_CHANGE_UNCONFIRMED`). | The save changes the issuer in force while accounts are linked to the current issuer; the `affected_links` detail is the number of account links that stop matching. | Click **Change issuer** only if those people should be linked again under the new issuer; an API client resends the same body with `confirm_issuer_change` true. Otherwise click **Cancel**. |
 | "Single sign-on failed" for people in many groups; reason `groups_unavailable` or `group_overage`. | Group overage: above 200 groups Entra ID leaves the groups out of the token. GopherCRM then reads them from Microsoft Graph, which needs the delegated permission `GroupMember.Read.All` with admin consent, and reads at most `OIDC_GRAPH_MAX_PAGES` pages (default 10). An overage from a sovereign cloud (US Government, China) or from any other provider is refused with `group_overage`. | Prefer app roles (claim `roles`): they have no overage. Otherwise grant `GroupMember.Read.All` with admin consent, or raise `OIDC_GRAPH_MAX_PAGES` (at most 50). |
 | "Single sign-on failed"; reason `account_inactive` or `account_erased`. | The account was deactivated or deleted in GopherCRM. | Activate the account if the person should have access. A deleted account cannot be restored. |
 | "Single sign-on failed"; reason `last_admin`. | The mapping would move the last active administrator to another role. | Map that person to the Admin role, or make another user an administrator first. |

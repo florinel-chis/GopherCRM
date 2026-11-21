@@ -657,7 +657,8 @@ from a SCIM create, `oidc` from a sign-in). The repository applies this in SQL
 managed. Every other account, an account created locally (such as the local administrator) or
 linked only under another issuer included, is treated as an unknown id: absent from the list and
 from a `userName eq` filter, 404 on read, replace, patch and delete, and refused as a group member.
-Changing the issuer hides the accounts linked only under the old one. A deactivated managed account
+Changing the issuer hides the accounts linked only under the old one, so `PUT /settings/sso` asks
+for `confirm_issuer_change` first while links exist under the current issuer. A deactivated managed account
 is served with `"active":false`.
 
 **Resource.** `schemas` (the core User URN), `id` (the user id as a string), `externalId` (see
@@ -1086,7 +1087,13 @@ returns the effective values:
   sign-in and password reset (see "Passwords for linked accounts" under
   [OIDC sign-in](#oidc-sign-in-435) below). While it is on, a password keeps working after the identity provider removes the person
   or the mapped role, so offboarding must also deactivate the account in GopherCRM.
-- `security.sso.issuer_url` (`OIDC_ISSUER_URL`), an https issuer.
+- `security.sso.issuer_url` (`OIDC_ISSUER_URL`), an https issuer of at most 512 bytes, the width
+  of `user_identities.issuer`; a longer `OIDC_ISSUER_URL` is treated as unset. A save whose
+  effective issuer differs from the current one while `user_identities` rows (any source, erased
+  accounts included) exist under the current one answers 409 `ISSUER_CHANGE_UNCONFIRMED` with
+  `details.affected_links`, the number of those rows, and stores nothing unless the body carries
+  `"confirm_issuer_change": true`. Clearing the stored issuer so a different `OIDC_ISSUER_URL`
+  applies is a change too.
 - `security.sso.client_id` (`OIDC_CLIENT_ID`).
 - `security.sso.client_secret` (`OIDC_CLIENT_SECRET`), encrypted at rest and never returned.
 - `security.sso.scopes` (`OIDC_SCOPES`), default `openid profile email`.

@@ -852,6 +852,11 @@ type UserIdentityRepository interface {
 	// the users row is locked, and only while security.sso.allow_password is
 	// off, so it keeps the users → user_identities order.
 	ExistsForUser(userID uint) (bool, error)
+	// CountByIssuer counts the rows of any source whose issuer equals the
+	// argument byte for byte (a LENGTH guard next to the PAD SPACE equality
+	// on MySQL/MariaDB), rows of erased or deactivated users included: a
+	// plain, non-locking read. An empty issuer is 0 without a query.
+	CountByIssuer(issuer string) (int64, error)
 	WithTx(tx *gorm.DB) UserIdentityRepository
 }
 

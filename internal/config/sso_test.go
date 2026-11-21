@@ -98,8 +98,19 @@ func TestParseOIDCIssuer(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "https://idp.example.com/realms/crm", got, "only trimmed")
 
+	atLimit := "https://idp.example.com/" + strings.Repeat("a", 512-len("https://idp.example.com/"))
+	require.Len(t, atLimit, 512)
+	got, err = ParseOIDCIssuer(atLimit)
+	assert.NoError(t, err, "512 bytes is the width of user_identities.issuer")
+	assert.Equal(t, atLimit, got)
+
 	long := "https://idp.example.com/" + strings.Repeat("a", 2049-len("https://idp.example.com/"))
 	require.Len(t, long, 2049)
+	overLimit := atLimit + "a"
+	require.Len(t, overLimit, 513)
+	_, err = ParseOIDCIssuer(overLimit)
+	require.Error(t, err)
+	assert.Equal(t, "issuer URL is longer than 512 bytes", err.Error())
 	for _, raw := range []string{
 		"",
 		"http://idp.example.com",
@@ -111,6 +122,7 @@ func TestParseOIDCIssuer(t *testing.T) {
 		"https://idp.example.com:99999",
 		"https://[fe80::1%25en0]/",
 		long,
+		overLimit,
 	} {
 		_, err := ParseOIDCIssuer(raw)
 		if assert.Error(t, err, "%.60q", raw) {

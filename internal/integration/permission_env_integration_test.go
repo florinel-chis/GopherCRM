@@ -188,7 +188,7 @@ func newPermissionEnvWith(t *testing.T, useMySQL bool, wrap roleRepositoryWrap) 
 		WithScopedCounts(service.NewDashboardScopeService(repository.NewDashboardScopeRepository(db))))
 	handler.SetupAutomationRoutes(api, handler.NewAutomationHandler(automationService))
 	handler.SetupBulkStatusRoutes(api, handler.NewBulkHandler(bulkService))
-	handler.SetupSSOSettingsRoutes(api, handler.NewSSOSettingsHandler(service.NewSSOSettingsService(configService, roleRepo, config.SSOConfig{})))
+	handler.SetupSSOSettingsRoutes(api, handler.NewSSOSettingsHandler(service.NewSSOSettingsService(configService, roleRepo, repository.NewUserIdentityRepository(db), config.SSOConfig{})))
 	handler.SetupSCIMTokenRoutes(api, handler.NewSCIMTokenHandler(service.NewSCIMTokenService(repository.NewSCIMTokenRepository(db), permissionTestSecret)))
 
 	return &permissionEnv{
