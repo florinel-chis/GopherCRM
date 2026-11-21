@@ -19,7 +19,8 @@ import (
 // The sign-in audit writers (#549): every expression that becomes the method,
 // outcome or reason of an auth_audit_log row is a constant of the registry
 // in auth_audit_vocabulary.go, or a parameter or local variable whose own
-// source is such a site.
+// source is such a site. A variable forwarded into an AuthAuditEntry literal
+// has its single-value assignments in the same function body checked (#577).
 
 const (
 	authAuditVocabularyFile = "internal/service/auth_audit_vocabulary.go"
@@ -44,6 +45,7 @@ var authAuditSiteKinds = []string{
 	"service.AuthAuditEntry.Method", "service.AuthAuditEntry.Outcome", "service.AuthAuditEntry.Reason",
 	"authRefusalError.reason", "oidcRefusalError.code", "ssoUnavailableError.code",
 	"AuthAuditReason.return", "Authenticate.return", "ownerRejected",
+	"AuthAuditEntry.Reason.assigned", "service.AuthAuditEntry.Reason.assigned",
 }
 
 // authAuditSourceFile is one parsed file and the repository-relative
@@ -288,6 +290,123 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			}
 		}
 
+		// compositeType is the type name of a composite literal and "service."
+		// when it is qualified by this file's import of the service package.
+		compositeType := func(node *ast.CompositeLit) (typeName, prefix string) {
+			switch typ := node.Type.(type) {
+			case *ast.Ident:
+				typeName = typ.Name
+			case *ast.SelectorExpr:
+				if x, ok := typ.X.(*ast.Ident); ok && serviceAlias != "" && x.Name == serviceAlias {
+					typeName, prefix = typ.Sel.Name, "service."
+				}
+			}
+			return typeName, prefix
+		}
+		auditEntryFields := map[string]authAuditKind{"Method": authAuditKindMethod, "Outcome": authAuditKindOutcome, "Reason": authAuditKindReason}
+
+		// Forwarded variables (#577): in one function body (a FuncDecl's or a
+		// FuncLit's, without the FuncLits nested in it), an identifier passed as
+		// the Method, Outcome or Reason of an AuthAuditEntry literal has every
+		// single-value assignment (`=`, `:=`, `var x = ...`) in that body
+		// checked as a site of its own. A multi-value assignment from one call
+		// is skipped: the call's return is a site already. Not covered: a
+		// closure assigning a variable of its enclosing function, and a chain
+		// such as `x := "bogus"; reason = x`, whose identifier right-hand side
+		// is accepted like any other identifier.
+		walkBody := func(body *ast.BlockStmt, visit func(ast.Node)) {
+			ast.Inspect(body, func(n ast.Node) bool {
+				if n == nil {
+					return true
+				}
+				if _, nested := n.(*ast.FuncLit); nested {
+					return false
+				}
+				visit(n)
+				return true
+			})
+		}
+		type forwardedSite struct {
+			site string
+			kind authAuditKind
+		}
+		checkForwarded := func(body *ast.BlockStmt) {
+			if body == nil {
+				return
+			}
+			forwarded := map[string][]forwardedSite{}
+			walkBody(body, func(n ast.Node) {
+				node, ok := n.(*ast.CompositeLit)
+				if !ok {
+					return
+				}
+				typeName, prefix := compositeType(node)
+				if typeName != "AuthAuditEntry" {
+					return
+				}
+				for _, element := range node.Elts {
+					pair, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := pair.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					value, ok := pair.Value.(*ast.Ident)
+					kind, known := auditEntryFields[key.Name]
+					if !ok || !known {
+						continue
+					}
+					site := forwardedSite{prefix + typeName + "." + key.Name + ".assigned", kind}
+					seen := false
+					for _, existing := range forwarded[value.Name] {
+						seen = seen || existing == site
+					}
+					if !seen {
+						forwarded[value.Name] = append(forwarded[value.Name], site)
+					}
+				}
+			})
+			if len(forwarded) == 0 {
+				return
+			}
+			assigned := func(name *ast.Ident, value ast.Expr) {
+				for _, site := range forwarded[name.Name] {
+					check(site.site, site.kind, value, false)
+				}
+			}
+			walkBody(body, func(n ast.Node) {
+				switch node := n.(type) {
+				case *ast.AssignStmt:
+					if len(node.Lhs) != len(node.Rhs) {
+						return
+					}
+					for i, lhs := range node.Lhs {
+						if ident, ok := lhs.(*ast.Ident); ok {
+							assigned(ident, node.Rhs[i])
+						}
+					}
+				case *ast.ValueSpec:
+					if len(node.Names) != len(node.Values) {
+						return
+					}
+					for i, name := range node.Names {
+						assigned(name, node.Values[i])
+					}
+				}
+			})
+		}
+		ast.Inspect(f.file, func(n ast.Node) bool {
+			switch fn := n.(type) {
+			case *ast.FuncDecl:
+				checkForwarded(fn.Body)
+			case *ast.FuncLit:
+				checkForwarded(fn.Body)
+			}
+			return true
+		})
+
 		var stack []ast.Node
 		enclosingFunc := func() *ast.FuncDecl {
 			for i := len(stack) - 1; i >= 0; i-- {
@@ -347,19 +466,11 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 					}
 				}
 			case *ast.CompositeLit:
-				typeName, prefix := "", ""
-				switch typ := node.Type.(type) {
-				case *ast.Ident:
-					typeName = typ.Name
-				case *ast.SelectorExpr:
-					if x, ok := typ.X.(*ast.Ident); ok && serviceAlias != "" && x.Name == serviceAlias {
-						typeName, prefix = typ.Sel.Name, "service."
-					}
-				}
+				typeName, prefix := compositeType(node)
 				fields := map[string]authAuditKind{}
 				switch {
 				case typeName == "AuthAuditEntry":
-					fields = map[string]authAuditKind{"Method": authAuditKindMethod, "Outcome": authAuditKindOutcome, "Reason": authAuditKindReason}
+					fields = auditEntryFields
 				case prefix == "" && typeName == "authRefusalError":
 					fields = map[string]authAuditKind{"reason": authAuditKindReason}
 				case prefix == "" && (typeName == "oidcRefusalError" || typeName == "ssoUnavailableError"):
@@ -539,19 +650,38 @@ func TestAuthAuditWritersUseRegisteredValues(t *testing.T) {
 			dir      string
 			source   string
 			findings int
+			// check holds the further assertions of a snippet.
+			check func(t *testing.T, got authAuditScan)
 		}{
 			{"literal oidcRefuse", authAuditServiceDir,
-				"package service\nfunc f() error { return oidcRefuse(\"made_up\") }\n", 1},
+				"package service\nfunc f() error { return oidcRefuse(\"made_up\") }\n", 1, nil},
 			{"non-registry constant to authRefusal", authAuditServiceDir,
-				"package service\nconst localCode = \"x\"\nfunc f(err error) error { return authRefusal(localCode, 0, err) }\n", 1},
+				"package service\nconst localCode = \"x\"\nfunc f(err error) error { return authRefusal(localCode, 0, err) }\n", 1, nil},
 			{"literal Method of service.AuthAuditEntry", "internal/middleware",
-				"package middleware\nimport \"github.com/florinel-chis/gophercrm/internal/service\"\nvar e = service.AuthAuditEntry{Method: \"made_up\"}\n", 1},
+				"package middleware\nimport \"github.com/florinel-chis/gophercrm/internal/service\"\nvar e = service.AuthAuditEntry{Method: \"made_up\"}\n", 1, nil},
 			{"literal Reason of AuthAuditEntry", authAuditServiceDir,
-				"package service\nvar e = AuthAuditEntry{Reason: \"made_up\"}\n", 1},
+				"package service\nvar e = AuthAuditEntry{Reason: \"made_up\"}\n", 1, nil},
 			{"declared but unlisted reason constant", authAuditServiceDir,
-				"package service\nconst AuthAuditReasonMadeUp = \"made_up\"\n", 1},
+				"package service\nconst AuthAuditReasonMadeUp = \"made_up\"\n", 1, nil},
 			{"registered constant", authAuditServiceDir,
-				"package service\nfunc f() error { return oidcRefuse(AuthAuditReasonNoMappingMatch) }\n", 0},
+				"package service\nfunc f() error { return oidcRefuse(AuthAuditReasonNoMappingMatch) }\n", 0,
+				func(t *testing.T, got authAuditScan) {
+					assert.Equal(t, 1, got.sites["oidcRefuse"])
+					assert.True(t, got.used["AuthAuditReasonNoMappingMatch"])
+					assert.True(t, got.oidcCodes["no_mapping_match"])
+				}},
+			{"forwarded SCIM reason: literal fallback", "internal/middleware",
+				scimReasonSnippet("", `"token_bogus"`), 1, nil},
+			{"forwarded SCIM reason: non-registry constant fallback", "internal/middleware",
+				scimReasonSnippet(`const bogus = "token_bogus"`, "bogus"), 1, nil},
+			{"forwarded SCIM reason: registered constant fallback", "internal/middleware",
+				scimReasonSnippet("", "service.AuthAuditReasonTokenInvalid"), 0,
+				func(t *testing.T, got authAuditScan) {
+					assert.Equal(t, 1, got.sites["service.AuthAuditEntry.Reason.assigned"])
+					assert.True(t, got.used["AuthAuditReasonTokenInvalid"])
+				}},
+			{"forwarded reason defined from a literal", authAuditServiceDir,
+				"package service\nfunc f() { reason := \"made_up\"; _ = AuthAuditEntry{Reason: reason} }\n", 1, nil},
 		}
 		for _, snippet := range snippets {
 			t.Run(snippet.name, func(t *testing.T) {
@@ -565,12 +695,32 @@ func TestAuthAuditWritersUseRegisteredValues(t *testing.T) {
 					{path: snippet.dir + "/snippet.go", dir: snippet.dir, file: parsed},
 				}, registry)
 				assert.Len(t, got.findings, snippet.findings, "findings: %v", got.findings)
-				if snippet.findings == 0 {
-					assert.Equal(t, 1, got.sites["oidcRefuse"])
-					assert.True(t, got.used["AuthAuditReasonNoMappingMatch"])
-					assert.True(t, got.oidcCodes["no_mapping_match"])
+				if snippet.check != nil {
+					snippet.check(t, got)
 				}
 			})
 		}
 	})
+}
+
+// scimReasonSnippet is a middleware source in the shape of the SCIM refusal:
+// the reason of a call, replaced by fallback when empty, forwarded into a
+// service.AuthAuditEntry inside a func literal. decl is a package-level
+// declaration, or "".
+func scimReasonSnippet(decl, fallback string) string {
+	return "package middleware\n" +
+		"import \"github.com/florinel-chis/gophercrm/internal/service\"\n" +
+		decl + "\n" +
+		"func g() (*int, string) { return nil, \"\" }\n" +
+		"func h() func() {\n" +
+		"\treturn func() {\n" +
+		"\t\ttoken, reason := g()\n" +
+		"\t\tif token == nil {\n" +
+		"\t\t\tif reason == \"\" {\n" +
+		"\t\t\t\treason = " + fallback + "\n" +
+		"\t\t\t}\n" +
+		"\t\t\t_ = service.AuthAuditEntry{Reason: reason}\n" +
+		"\t\t}\n" +
+		"\t}\n" +
+		"}\n"
 }

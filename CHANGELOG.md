@@ -1145,6 +1145,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TestAuthAuditWritersUseRegisteredValues` fails when a writer passes a value that is not
   registered or a declared constant is missing from the registry. No behaviour change: stored
   values, answers and the documented filter values are the same.
+- **Sign-in audit writer check covers forwarded variables (#577).**
+  `TestAuthAuditWritersUseRegisteredValues` now also fails when a value assigned to a variable that
+  is forwarded into an audit entry (such as the reason fallback of the SCIM refusal) is not a
+  registry constant. Test-only: nothing stored or answered changes.
 - **Settings > Configuration (#565).** Edit and Reset show only to users who hold
   `settings.update`; a refused save or reset shows the server's message. JSON and free-form list
   values are typed as text and checked on Save (`Enter valid JSON`, `Enter a JSON array`), and a
