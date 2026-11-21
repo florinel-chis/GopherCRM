@@ -1547,8 +1547,8 @@ var oidcSignInCases = []struct {
 		f.entra(t)
 		f.configure(t, f.graphMapping())
 		got := scope()
-		assert.Equal(t, configured+" https://graph.microsoft.com/GroupMember.Read.All", got)
-		assert.Equal(t, 1, strings.Count(got, "GroupMember.Read.All"), "added exactly once")
+		assert.Equal(t, configured+" https://graph.microsoft.com/User.Read", got)
+		assert.Equal(t, 1, strings.Count(got, "https://graph.microsoft.com/User.Read"), "added exactly once")
 		cfg, err := f.sso.SSOConfig(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, []string{"openid", "profile", "email"}, cfg.Scopes, "the added scope is not stored")
@@ -2252,6 +2252,7 @@ func TestOIDCGraphDefaults(t *testing.T) {
 	assert.True(t, mappingUsesGroups(append(roles, groups...)))
 	assert.False(t, mappingUsesGroups(roles))
 	assert.False(t, mappingUsesGroups(nil))
+	assert.Equal(t, "https://graph.microsoft.com/User.Read", oidcGraphScope)
 	entra := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", oidcGraphScope}, RoleMapping: groups}
 	assert.Equal(t, []string{"openid", oidcGraphScope}, svc.requestScopes(entra), "not added when already configured")
 

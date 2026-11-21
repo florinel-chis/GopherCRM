@@ -41,10 +41,11 @@ the people one by one.
 
 1. Open **API permissions**. Make sure the Microsoft Graph delegated permissions `openid`,
    `profile` and `email` are listed (add them with **Add a permission** → Microsoft Graph →
-   Delegated permissions if not). `User.Read`, added by default, can stay.
-2. Only if you will map **groups** instead of app roles: also add the delegated permission
-   `GroupMember.Read.All`. GopherCRM uses it to read the groups of people who are in more than
-   200 groups.
+   Delegated permissions if not). `User.Read` is added by default.
+2. If you will map **groups** instead of app roles, `User.Read` must stay: GopherCRM uses it to
+   read the groups of people who are in more than 200 groups. No permission beyond `User.Read` is
+   needed for groups; a broader group permission added earlier for GopherCRM's group lookup can
+   be removed.
 3. Choose **Grant admin consent for** your organisation and confirm. Every permission should show
    "Granted".
 
@@ -188,8 +189,8 @@ GopherCRM does with each request.
 
 If you prefer groups, use the claim `groups` and the group's **Object ID** as the value, never its
 name. Add a groups claim to the token in **Token configuration** → **Add groups claim** (security
-groups), and grant `GroupMember.Read.All` with admin consent as in step 3. A person in more than 200
-groups has their groups read from Microsoft Graph; see group overage in the
+groups), and keep `User.Read` granted as in step 3. A person in more than 200 groups has their
+groups read from Microsoft Graph; see group overage in the
 [troubleshooting table](single-sign-on.md#troubleshooting). To provision the groups through SCIM,
 see step 8.5.
 

@@ -1156,6 +1156,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on: the Entra ID group overage lookup requests the delegated Microsoft Graph
+  permission `User.Read` instead of `GroupMember.Read.All` (#631).** For an Entra ID issuer whose
+  role mapping has a `groups` entry, `POST /auth/oidc/start` now adds the scope
+  `https://graph.microsoft.com/User.Read`, the least-privileged permission for
+  `POST /v1.0/me/getMemberObjects`. The Graph call, its paging and budget and the stored settings
+  are unchanged; a scope configured in `OIDC_SCOPES` or the settings is kept as it is. Admins who
+  granted `GroupMember.Read.All` to the app registration for this lookup can remove it.
+
 - **The default SCIM limit per provider token is 25 requests a second (#635).** A SCIM provider
   token may now make 1500 requests a minute (25 a second, up from 10 a second) with a burst of 150
   by default, the rate Microsoft Entra documents for provisioning. `SCIM_RATE_LIMIT_PER_MINUTE` and
