@@ -4,32 +4,21 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
-// setupCompanyDB gives each test a private schema on the shared in-memory
-// DSN, the same way the label and customer export tests do.
-func setupCompanyDB(t *testing.T) *gorm.DB {
+// migrateCompanyTables drops and recreates the company tables on db, a
+// private in-memory database with foreign keys on and the driver's default
+// pool, the same way the label and customer export tests do.
+func migrateCompanyTables(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-
 	require.NoError(t, db.Migrator().DropTable(&models.Deal{}, &models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}))
-
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
 	return db
 }
 
@@ -48,7 +37,7 @@ func createCompany(t *testing.T, db *gorm.DB, name, domain, industry, city strin
 }
 
 func TestCompanyRepository_GetByIDPreloadsOwnerAndCounts(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 	owner := createCompanyTestUser(t, db, "owner@example.com")
 
@@ -83,7 +72,7 @@ func TestCompanyRepository_GetByIDPreloadsOwnerAndCounts(t *testing.T) {
 }
 
 func TestCompanyRepository_ListSearchSortAndPaginate(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 
 	createCompany(t, db, "Zeta Works", "zeta.example", "Manufacturing", "Cluj")
@@ -127,7 +116,7 @@ func TestCompanyRepository_ListSearchSortAndPaginate(t *testing.T) {
 }
 
 func TestCompanyRepository_ListRejectsUnknownSortColumns(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 
 	for _, sortBy := range []string{"owner_id", "customer_count", "name; DROP TABLE companies", "phone"} {
@@ -141,7 +130,7 @@ func TestCompanyRepository_ListRejectsUnknownSortColumns(t *testing.T) {
 }
 
 func TestCompanyRepository_ExistsByDomainIsCaseInsensitiveAmongLiveRows(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 	company := createCompany(t, db, "Acme", "acme.example", "", "")
 
@@ -163,7 +152,7 @@ func TestCompanyRepository_ExistsByDomainIsCaseInsensitiveAmongLiveRows(t *testi
 }
 
 func TestCompanyRepository_UnlinkClearsLiveAndSoftDeletedRows(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 	owner := createCompanyTestUser(t, db, "owner@example.com")
 	company := createCompany(t, db, "Acme", "", "", "")
@@ -198,7 +187,7 @@ func TestCompanyRepository_UnlinkClearsLiveAndSoftDeletedRows(t *testing.T) {
 }
 
 func TestCompanyRepository_ListLeadsScopesByOwnerAndListCustomersPaginates(t *testing.T) {
-	db := setupCompanyDB(t)
+	db := migrateCompanyTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCompanyRepository(db)
 	alice := createCompanyTestUser(t, db, "alice@example.com")
 	bob := createCompanyTestUser(t, db, "bob@example.com")

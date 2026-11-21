@@ -2221,6 +2221,28 @@ The runner's local validation picks a profile from the changed paths; its bounde
 their `scripts/ci/check-auth.py` / `scripts/ci/check-go.py` race roots on SQLite and MySQL, named
 acceptance checks and health smoke; see [validation and releases](VALIDATION_RELEASE.md) for each scope.
 
+**Opening a test database (#613).** New Go tests open their database through the test-only
+package `internal/testsupport` instead of a setup helper of their own; only `_test.go` files
+import it, so it is never linked into the server.
+
+- `internal/testsupport/sqlite.go` `OpenSQLite` opens a SQLite database private to the call: by
+  default in memory under a unique name, with `foreign_keys(1)`, one connection and a discarding
+  logger, migrates the `Models` option and closes the pool when the test ends. Options select a
+  file under `t.TempDir()` (`File`, with the `BusyTimeout` and `WAL` pragmas), foreign keys off,
+  the open and idle pool sizes separately (or the driver default) and the `*gorm.Config`. A test
+  that cancels a transaction uses `File`, not the in-memory default (see the `:memory:` gotcha
+  under [Gotchas](#gotchas)).
+- `internal/testsupport/mysql.go` `MySQLFromEnv` returns the `TEST_MYSQL_DSN` server
+  configuration and skips the test without the variable; `OpenMySQL` creates a uniquely named
+  schema on it, fails (it does not skip) when the server is unreachable and drops the schema when
+  the test ends; `OpenMySQLSchema` opens another handle on a schema the test already has and drops
+  nothing.
+- `internal/testsupport/dialect.go` `Open` opens a `Dialect` (`SQLite` or `MySQL`), and
+  `ForEachDialect` runs one test body in the subtests `sqlite` and `mysql`, the second skipping
+  without `TEST_MYSQL_DSN`.
+
+The `internal/repository` tests use it; the other packages still have their own helpers.
+
 **CI outside a release runs targeted Go tests (#365).** For a pull request, a merge-queue group and a
 push to `main`, CI runs hygiene, backend, frontend and the database gates job:
 

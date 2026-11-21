@@ -9,11 +9,10 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/permissions"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // #524: every start removes settings.sso_manage and settings.scim_manage from
@@ -22,11 +21,11 @@ import (
 // system roles are left alone, and a rerun writes nothing.
 
 func TestAdminOnlyPermissionStripSQLite(t *testing.T) {
-	runAdminOnlyPermissionStrip(t, openRoleDB(t, "admin_only_strip", false), false)
+	runAdminOnlyPermissionStrip(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "admin_only_strip", roleDB)), false)
 }
 
 func TestAdminOnlyPermissionStripMySQL(t *testing.T) {
-	runAdminOnlyPermissionStrip(t, openRoleDB(t, "admin_only_strip", true), true)
+	runAdminOnlyPermissionStrip(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "admin_only_strip", roleDB)), true)
 }
 
 type stripAuditGrant struct {
@@ -206,16 +205,10 @@ func runAdminOnlyPermissionStrip(t *testing.T, db *gorm.DB, useMySQL bool) {
 		require.NoError(t, db.Exec("DELETE FROM role_audit_log").Error)
 		require.NoError(t, db.Exec("DELETE FROM role_permissions WHERE role_id IN ?", []uint{roleA.ID, roleB.ID, roleC.ID}).Error)
 		seed()
-		mysqlDialector, ok := db.Dialector.(*gormmysql.Dialector)
-		require.True(t, ok)
+		schema := db.Migrator().CurrentDatabase()
 		pools := make([]*gorm.DB, 2)
 		for i := range pools {
-			pool, err := gorm.Open(gormmysql.Open(mysqlDialector.DSN), &gorm.Config{Logger: logger.Discard})
-			require.NoError(t, err)
-			sqlDB, err := pool.DB()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = sqlDB.Close() })
-			pools[i] = pool
+			pools[i] = testsupport.OpenMySQLSchema(t, schema)
 		}
 
 		start := make(chan struct{})

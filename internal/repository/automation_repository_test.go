@@ -1,75 +1,38 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// openAutomationRepoDB opens a private SQLite database or a uniquely named
+// automationRepoDB opens a private SQLite database or a uniquely named
 // disposable schema on the TEST_MYSQL_DSN server, with the automation tables
 // and the records they refer to. The MySQL root skips without the variable
-// and fails when it names an unreachable server.
-func openAutomationRepoDB(t *testing.T, useMySQL bool, maxConns int) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	cfg.DisableForeignKeyConstraintWhenMigrating = true
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		db, err = gorm.Open(sqlite.Open(fmt.Sprintf("file:automation_repo_%d?mode=memory&cache=shared", time.Now().UnixNano())), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_automation_repo_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(maxConns)
-		sqlDB.SetMaxIdleConns(maxConns)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(
+// and fails when it names an unreachable server. The MySQL pool size is given
+// per root (automationRepoPool).
+var automationRepoDB = testsupport.Group(
+	testsupport.DisableForeignKeyConstraintWhenMigrating(),
+	testsupport.OnSQLite(testsupport.WithoutForeignKeys()),
+	testsupport.Models(
 		&models.User{}, &models.Company{}, &models.Customer{}, &models.Lead{}, &models.Deal{}, &models.DealStageChange{},
 		&models.Label{}, &models.Task{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{},
 		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}, &models.TicketComment{},
 		&models.AutomationRule{}, &models.AutomationStep{}, &models.AutomationEvent{}, &models.AutomationRun{},
 		&models.AutomationRunStep{}, &models.Notification{},
-	))
-	return db
+	),
+)
+
+// automationRepoPool gives the MySQL pool n open and n idle connections.
+// SQLite keeps its one connection.
+func automationRepoPool(n int) testsupport.Option {
+	return testsupport.OnMySQL(testsupport.MaxOpenConns(n), testsupport.MaxIdleConns(n))
 }
 
 func seedAutomationUser(t *testing.T, db *gorm.DB, label string, role models.UserRole) *models.User {
@@ -103,11 +66,11 @@ func seedAutomationRun(t *testing.T, db *gorm.DB, rule *models.AutomationRule, e
 // allowlist id, created_at, updated_at, status and resume_at.
 
 func TestAutomationRunListScopeSQLite(t *testing.T) {
-	runAutomationRunListScope(t, openAutomationRepoDB(t, false, 1))
+	runAutomationRunListScope(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB))
 }
 
 func TestAutomationRunListScopeMySQL(t *testing.T) {
-	runAutomationRunListScope(t, openAutomationRepoDB(t, true, 2))
+	runAutomationRunListScope(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(2)))
 }
 
 func runAutomationRunListScope(t *testing.T, db *gorm.DB) {
@@ -243,11 +206,11 @@ func runAutomationRunListScope(t *testing.T, db *gorm.DB) {
 // ids, whatever the scope, filter, sort and page.
 
 func TestAutomationRunRuleNamesSQLite(t *testing.T) {
-	runAutomationRunRuleNames(t, openAutomationRepoDB(t, false, 1))
+	runAutomationRunRuleNames(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB))
 }
 
 func TestAutomationRunRuleNamesMySQL(t *testing.T) {
-	runAutomationRunRuleNames(t, openAutomationRepoDB(t, true, 2))
+	runAutomationRunRuleNames(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(2)))
 }
 
 func runAutomationRunRuleNames(t *testing.T, db *gorm.DB) {
@@ -387,7 +350,7 @@ func runAutomationRunRuleNames(t *testing.T, db *gorm.DB) {
 }
 
 func TestAutomationRepositoryConditionalUpdates(t *testing.T) {
-	db := openAutomationRepoDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB)
 	repo := NewAutomationRepository(db)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 	now := time.Date(2026, time.October, 28, 12, 0, 0, 0, time.UTC)

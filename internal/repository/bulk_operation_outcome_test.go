@@ -11,8 +11,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,70 +19,30 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 var bulkOutcomeDBSeq atomic.Uint64
 
-// openBulkOutcomeDB opens the database with GORM's clock in UTC, as
-// production does, and migrates the tables the roots touch.
-func openBulkOutcomeDB(t *testing.T, useMySQL bool, maxConns int) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{
-		Logger:  logger.Discard,
-		NowFunc: func() time.Time { return time.Now().UTC() },
+// bulkOutcomeDB opens the database with GORM's clock in UTC, as production
+// does, and migrates the tables the roots touch. Lead is migrated without its
+// users/customers/companies relations. The MySQL pool size is given per root
+// (bulkOutcomePool).
+var bulkOutcomeDB = testsupport.Group(
+	testsupport.NowUTC(),
+	testsupport.DisableForeignKeyConstraintWhenMigrating(),
+	testsupport.OnSQLite(testsupport.File("bulk_outcome.db", testsupport.BusyTimeout, testsupport.WAL)),
+	testsupport.OnMySQL(testsupport.Timeouts(60*time.Second, 60*time.Second)),
+	testsupport.Models(&models.User{}, &models.Lead{}, &models.BulkOperation{}, &models.BulkOperationItem{}),
+)
 
-		// Lead is migrated without its users/customers/companies relations.
-		DisableForeignKeyConstraintWhenMigrating: true,
-	}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), fmt.Sprintf("bulk_outcome_%d.db", bulkOutcomeDBSeq.Add(1))) +
-			"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 60*time.Second, 60*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_bulk_outcome_%d_%d", time.Now().UnixNano(), bulkOutcomeDBSeq.Add(1))
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(maxConns)
-		sqlDB.SetMaxIdleConns(maxConns)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Lead{}, &models.BulkOperation{}, &models.BulkOperationItem{}))
-	require.True(t, db.Migrator().HasIndex(&models.BulkOperation{}, "idx_bulk_operations_status"))
-	return db
+// bulkOutcomePool gives the MySQL pool n open and n idle connections.
+func bulkOutcomePool(n int) testsupport.Option {
+	return testsupport.OnMySQL(testsupport.MaxOpenConns(n), testsupport.MaxIdleConns(n))
 }
 
 // bulkOutcomeFixture seeds history rows directly.
@@ -196,11 +154,15 @@ func (c *bulkSweepStatements) snapshot() (queries, updates []string) {
 }
 
 func TestBulkOperationRepositoryOutcomeSQLite(t *testing.T) {
-	runBulkOperationRepositoryOutcome(t, openBulkOutcomeDB(t, false, 1))
+	db := testsupport.Open(t, testsupport.SQLite, "bulk_outcome", bulkOutcomeDB)
+	require.True(t, db.Migrator().HasIndex(&models.BulkOperation{}, "idx_bulk_operations_status"))
+	runBulkOperationRepositoryOutcome(t, db)
 }
 
 func TestBulkOperationRepositoryOutcomeMySQL(t *testing.T) {
-	runBulkOperationRepositoryOutcome(t, openBulkOutcomeDB(t, true, 4))
+	db := testsupport.Open(t, testsupport.MySQL, "bulk_outcome", bulkOutcomeDB, bulkOutcomePool(4))
+	require.True(t, db.Migrator().HasIndex(&models.BulkOperation{}, "idx_bulk_operations_status"))
+	runBulkOperationRepositoryOutcome(t, db)
 }
 
 func runBulkOperationRepositoryOutcome(t *testing.T, db *gorm.DB) {
@@ -356,14 +318,16 @@ func runBulkOperationRepositoryOutcome(t *testing.T, db *gorm.DB) {
 }
 
 func TestBulkOperationSweepConcurrentSQLite(t *testing.T) {
-	db := openBulkOutcomeDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "bulk_outcome", bulkOutcomeDB)
+	require.True(t, db.Migrator().HasIndex(&models.BulkOperation{}, "idx_bulk_operations_status"))
 	runBulkOperationSweepSequential(t, db)
 }
 
 // TestBulkOperationSweepConcurrentMySQL runs the sweeps and the batches on
 // separate connections, so they really overlap.
 func TestBulkOperationSweepConcurrentMySQL(t *testing.T) {
-	db := openBulkOutcomeDB(t, true, 16)
+	db := testsupport.Open(t, testsupport.MySQL, "bulk_outcome", bulkOutcomeDB, bulkOutcomePool(16))
+	require.True(t, db.Migrator().HasIndex(&models.BulkOperation{}, "idx_bulk_operations_status"))
 	runBulkOperationSweepConcurrentMySQL(t, db)
 }
 

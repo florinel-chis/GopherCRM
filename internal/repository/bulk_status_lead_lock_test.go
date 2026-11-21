@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -48,7 +49,7 @@ func bulkLockLeadIDs(leads []models.Lead) []uint {
 }
 
 func TestBulkStatusLeadsLockingReadSQLite(t *testing.T) {
-	db := openLockOrderRepoDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "lock_order", lockOrderRepoDB)
 	live, deleted := seedBulkLockLeads(t, db)
 
 	recorder := newLockOrderRecorder()
@@ -69,7 +70,7 @@ func TestBulkStatusLeadsLockingReadSQLite(t *testing.T) {
 }
 
 func TestBulkStatusLeadsLockingReadMySQL(t *testing.T) {
-	db := openLockOrderRepoDB(t, true, 4)
+	db := testsupport.Open(t, testsupport.MySQL, "lock_order", lockOrderRepoDB, lockOrderRepoPool(4))
 	live, deleted := seedBulkLockLeads(t, db)
 
 	recorder := newLockOrderRecorder()

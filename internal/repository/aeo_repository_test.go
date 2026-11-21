@@ -9,42 +9,25 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupAEOTestDB gives each test its own in-memory schema.
-//
-// The connection pool is pinned to a single connection on purpose: with the
-// ":memory:" DSN every new connection gets its own empty database, so a second
-// pooled connection would see none of the seeded rows. The AEO tests open
-// transactions (CreateAnswerWithCitations), which is exactly the situation that
-// tempts the pool into a second connection.
-func setupAEOTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-
-	require.NoError(t, db.AutoMigrate(
+// aeoTestDB gives each test its own in-memory database, foreign keys off,
+// with the pool pinned to a single connection. The AEO tests open
+// transactions (CreateAnswerWithCitations).
+var aeoTestDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.Models(
 		&models.AEOProfile{},
 		&models.AEOPrompt{},
 		&models.AEORun{},
 		&models.AEOAnswer{},
 		&models.AEOCitation{},
-	))
-	return db
-}
+	),
+)
 
 // makeAEOPrompt seeds one prompt.
 //
@@ -78,7 +61,7 @@ func makeAEORun(t *testing.T, db *gorm.DB, status string, startedAt time.Time) m
 // --- profile -----------------------------------------------------------------
 
 func TestAEORepository_GetProfile_NotConfigured(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	profile, err := repo.GetProfile()
 
@@ -88,7 +71,7 @@ func TestAEORepository_GetProfile_NotConfigured(t *testing.T) {
 }
 
 func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	createdAt := time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)
 	now := createdAt
 	db.NowFunc = func() time.Time { return now }
@@ -160,7 +143,7 @@ func TestAEORepository_UpsertProfile_InsertsThenUpdatesTheSameRow(t *testing.T) 
 // --- prompts -----------------------------------------------------------------
 
 func TestAEORepository_PromptCRUD(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	prompt := &models.AEOPrompt{Text: "Which CRM should a small team pick?", IsActive: true}
@@ -186,7 +169,7 @@ func TestAEORepository_PromptCRUD(t *testing.T) {
 }
 
 func TestAEORepository_DeletePrompt_MissingRowIsNotFound(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	err := repo.DeletePrompt(4242)
 
@@ -195,7 +178,7 @@ func TestAEORepository_DeletePrompt_MissingRowIsNotFound(t *testing.T) {
 }
 
 func TestAEORepository_ListPrompts_FilterSortAndPaginate(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	alpha := makeAEOPrompt(t, db, "Alpha question", true)
@@ -234,7 +217,7 @@ func TestAEORepository_ListPrompts_FilterSortAndPaginate(t *testing.T) {
 }
 
 func TestAEORepository_ListPrompts_DefaultsToNewestFirst(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	older := makeAEOPrompt(t, db, "Older", true)
@@ -250,7 +233,7 @@ func TestAEORepository_ListPrompts_DefaultsToNewestFirst(t *testing.T) {
 }
 
 func TestAEORepository_ListPrompts_RejectsUnknownSortColumn(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	prompts, err := repo.ListPrompts(false, 0, 20, "text); DROP TABLE aeo_prompts;--", "asc")
 
@@ -261,7 +244,7 @@ func TestAEORepository_ListPrompts_RejectsUnknownSortColumn(t *testing.T) {
 }
 
 func TestAEORepository_ListRuns_RejectsUnknownSortColumn(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	runs, err := repo.ListRuns(0, 20, "started_at UNION SELECT", "asc")
 
@@ -305,7 +288,7 @@ func TestValidateAEOSort(t *testing.T) {
 }
 
 func TestAEORepository_ExistsByTextInsensitive(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	existing := makeAEOPrompt(t, db, "Which CRM is best for startups?", true)
@@ -329,7 +312,7 @@ func TestAEORepository_ExistsByTextInsensitive(t *testing.T) {
 }
 
 func TestAEORepository_ListActivePrompts(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	first := makeAEOPrompt(t, db, "First", true)
@@ -347,7 +330,7 @@ func TestAEORepository_ListActivePrompts(t *testing.T) {
 // --- runs --------------------------------------------------------------------
 
 func TestAEORepository_RunLifecycle(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	base := time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC)
 
@@ -381,7 +364,7 @@ func TestAEORepository_RunLifecycle(t *testing.T) {
 }
 
 func TestAEORepository_ListRunsAndLatest(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	base := time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC)
 
@@ -414,7 +397,7 @@ func TestAEORepository_ListRunsAndLatest(t *testing.T) {
 // ownership (#229) carry no heartbeat, so the sweep treats them as abandoned
 // whatever their age.
 func TestAEORepository_FailAbandonedRuns_LegacyRows(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	now := time.Now().UTC()
 
@@ -436,7 +419,7 @@ func TestAEORepository_FailAbandonedRuns_LegacyRows(t *testing.T) {
 }
 
 func TestAEORepository_FailAbandonedRuns_NothingToDo(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	now := time.Now().UTC()
 	swept, err := repo.FailAbandonedRuns(now.Add(-6*time.Hour), now.Add(-3*time.Minute))
@@ -451,7 +434,7 @@ func TestAEORepository_FailAbandonedRuns_NothingToDo(t *testing.T) {
 // SQLite accepts it happily. SQLite cannot reproduce the production failure, so
 // the assertion is on the generated clause as well as on the returned rows.
 func TestAEORepository_ListRuns_SortByTriggerIsQuoted(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	base := time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC)
 
@@ -486,7 +469,7 @@ func TestAEOOrderClause_AlwaysQuotesIdentifiers(t *testing.T) {
 }
 
 func TestAEORepository_GetLatestRun_NoRunsIsNotAnError(t *testing.T) {
-	repo := NewAEORepository(setupAEOTestDB(t))
+	repo := NewAEORepository(testsupport.OpenSQLite(t, aeoTestDB))
 
 	latest, err := repo.GetLatestRun()
 
@@ -497,7 +480,7 @@ func TestAEORepository_GetLatestRun_NoRunsIsNotAnError(t *testing.T) {
 // --- answers and citations ----------------------------------------------------
 
 func TestAEORepository_CreateAnswerWithCitations(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	prompt := makeAEOPrompt(t, db, "Which CRM?", true)
 	run := makeAEORun(t, db, models.AEORunStatusRunning, time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC))
@@ -534,7 +517,7 @@ func TestAEORepository_CreateAnswerWithCitations(t *testing.T) {
 }
 
 func TestAEORepository_CreateAnswerWithCitations_RollsBackTheAnswerWhenACitationFails(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	prompt := makeAEOPrompt(t, db, "Which CRM?", true)
 	run := makeAEORun(t, db, models.AEORunStatusRunning, time.Date(2026, 8, 1, 6, 0, 0, 0, time.UTC))
@@ -560,7 +543,7 @@ func TestAEORepository_CreateAnswerWithCitations_RollsBackTheAnswerWhenACitation
 }
 
 func TestAEORepository_ListAnswersByPromptAndRun(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 	prompt := makeAEOPrompt(t, db, "Which CRM?", true)
 	other := makeAEOPrompt(t, db, "Which helpdesk?", true)
@@ -632,7 +615,7 @@ type aeoMetricsFixture struct {
 
 func seedAEOMetrics(t *testing.T) aeoMetricsFixture {
 	t.Helper()
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	p1 := makeAEOPrompt(t, db, "Which CRM for a 10-person sales team?", true)
@@ -965,7 +948,7 @@ func TestAEORepository_MetricsIgnoreSoftDeletedRows(t *testing.T) {
 // --- transactions and portability ---------------------------------------------
 
 func TestAEORepository_WithTx(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	err := db.Transaction(func(tx *gorm.DB) error {
@@ -995,7 +978,7 @@ func TestAEORepository_WithTx(t *testing.T) {
 // shutdown releases a run's blocked write instead of letting it outlive the
 // process. A nil context keeps the receiver.
 func TestAEORepository_WithContext(t *testing.T) {
-	db := setupAEOTestDB(t)
+	db := testsupport.OpenSQLite(t, aeoTestDB)
 	repo := NewAEORepository(db)
 
 	live, cancelLive := context.WithCancel(context.Background())

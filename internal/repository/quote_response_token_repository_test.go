@@ -10,13 +10,13 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
-// setupQuoteResponseTokenDB is the quote repository database plus the token
-// table, dropped again afterwards because the database is shared in memory.
-func setupQuoteResponseTokenDB(t *testing.T) *gorm.DB {
+// migrateQuoteResponseTokenTable adds the token table to a quote database,
+// dropped again when the test ends.
+func migrateQuoteResponseTokenTable(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db := setupQuoteRepoDB(t)
 	require.NoError(t, db.Migrator().DropTable(&models.QuoteResponseToken{}))
 	require.NoError(t, db.AutoMigrate(&models.QuoteResponseToken{}))
 	t.Cleanup(func() { _ = db.Migrator().DropTable(&models.QuoteResponseToken{}) })
@@ -36,7 +36,7 @@ func readQuoteResponseToken(t *testing.T, db *gorm.DB, id uint) models.QuoteResp
 // claims finds nothing; an invalidation stamps used_at and leaves decision
 // NULL.
 func TestQuoteResponseTokenRepository(t *testing.T) {
-	db := setupQuoteResponseTokenDB(t)
+	db := migrateQuoteResponseTokenTable(t, migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns())))
 	quotes := NewQuoteRepository(db)
 	repo := NewQuoteResponseTokenRepository(db)
 	f := seedQuoteFixture(t, db, "qrt")

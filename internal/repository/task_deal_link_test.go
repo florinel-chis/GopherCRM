@@ -4,76 +4,33 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// openTaskDealRepoDB opens a real database WITH foreign keys, which is what the
+// taskDealRepoDB opens a real database WITH foreign keys, which is what the
 // link's refusal of a dangling id rests on: a file-backed SQLite database with
 // enforcement on, or a uniquely named disposable schema on the TEST_MYSQL_DSN
 // server. The MySQL root skips without the variable and fails when it names an
 // unreachable server.
-func openTaskDealRepoDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "task_deal.db") + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_task_deal_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(
+var taskDealRepoDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("task_deal.db", testsupport.BusyTimeout)),
+	testsupport.Models(
 		&models.User{}, &models.Company{}, &models.Customer{}, &models.Lead{}, &models.Deal{}, &models.DealStageChange{},
 		&models.Label{}, &models.Task{}, &models.Ticket{}, &models.TicketComment{},
 		&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{},
 		&models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{},
 		&models.AutomationRule{}, &models.AutomationStep{}, &models.AutomationEvent{}, &models.AutomationRun{},
 		&models.AutomationRunStep{}, &models.Notification{},
-	))
-	return db
-}
+	),
+)
 
 func seedTaskDealUser(t *testing.T, db *gorm.DB, label string) *models.User {
 	t.Helper()
@@ -110,11 +67,11 @@ func committedTaskDealID(t *testing.T, db *gorm.DB, taskID uint) *uint {
 }
 
 func TestTaskDealLinkRepositorySQLite(t *testing.T) {
-	runTaskDealLinkRepository(t, openTaskDealRepoDB(t, false))
+	runTaskDealLinkRepository(t, testsupport.Open(t, testsupport.SQLite, "task_deal", taskDealRepoDB))
 }
 
 func TestTaskDealLinkRepositoryMySQL(t *testing.T) {
-	runTaskDealLinkRepository(t, openTaskDealRepoDB(t, true))
+	runTaskDealLinkRepository(t, testsupport.Open(t, testsupport.MySQL, "task_deal", taskDealRepoDB))
 }
 
 func runTaskDealLinkRepository(t *testing.T, db *gorm.DB) {
@@ -279,7 +236,7 @@ func runTaskDealLinkRepository(t *testing.T, db *gorm.DB) {
 // scrubs the person as before. The task, its deal_id and the deal row are
 // business records and stay.
 func TestTaskDealLinkSurvivesErasure(t *testing.T) {
-	db := openTaskDealRepoDB(t, false)
+	db := testsupport.Open(t, testsupport.SQLite, "task_deal", taskDealRepoDB)
 	owner := seedTaskDealUser(t, db, "owner")
 
 	assertSurvives := func(t *testing.T, deal *models.Deal, task *models.Task) {

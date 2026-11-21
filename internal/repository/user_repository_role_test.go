@@ -7,6 +7,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -17,11 +18,11 @@ import (
 // the optional UserRoleMaintenance interface — on SQLite and MySQL.
 
 func TestUserRepositoryRoleColumnsSQLite(t *testing.T) {
-	runUserRepositoryRoleColumns(t, openRoleDB(t, "user_role_columns", false), false)
+	runUserRepositoryRoleColumns(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "user_role_columns", roleDB)), false)
 }
 
 func TestUserRepositoryRoleColumnsMySQL(t *testing.T) {
-	runUserRepositoryRoleColumns(t, openRoleDB(t, "user_role_columns", true), true)
+	runUserRepositoryRoleColumns(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "user_role_columns", roleDB)), true)
 }
 
 func storedRoleID(t *testing.T, db *gorm.DB, userID uint) *uint {

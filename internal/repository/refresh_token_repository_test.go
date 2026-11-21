@@ -6,25 +6,22 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func setupRefreshTokenDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.RefreshToken{}))
-	return db
-}
+// refreshTokenDB is a private in-memory database, foreign keys off, with the
+// driver's default pool.
+var refreshTokenDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.DriverDefaultMaxOpenConns(),
+	testsupport.Models(&models.User{}, &models.RefreshToken{}),
+)
 
 func TestRefreshTokenRepository_GetByTokenHash_ReturnsLiveToken(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	token := &models.RefreshToken{
@@ -40,7 +37,7 @@ func TestRefreshTokenRepository_GetByTokenHash_ReturnsLiveToken(t *testing.T) {
 }
 
 func TestRefreshTokenRepository_GetByTokenHash_ExcludesRevoked(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.RefreshToken{
@@ -57,7 +54,7 @@ func TestRefreshTokenRepository_GetByTokenHash_ExcludesRevoked(t *testing.T) {
 }
 
 func TestRefreshTokenRepository_GetByTokenHash_ExcludesExpired(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.RefreshToken{
@@ -77,7 +74,7 @@ func TestRefreshTokenRepository_GetByTokenHash_ExcludesExpired(t *testing.T) {
 // an already revoked one and of an unknown id are all not-found, and none of
 // them writes anything.
 func TestRefreshTokenRepository_ClaimForRotation_ClaimsOnlyLiveTokens(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	// Each read goes into a fresh struct: GORM adds a populated primary key
@@ -123,7 +120,7 @@ func TestRefreshTokenRepository_ClaimForRotation_ClaimsOnlyLiveTokens(t *testing
 // A claim rolled back with its transaction leaves the token live: the
 // revocation is part of the unit of work, not a separate write.
 func TestRefreshTokenRepository_ClaimForRotation_RollsBackWithTheTransaction(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	token := &models.RefreshToken{UserID: 1, TokenHash: "hash-live", ExpiresAt: time.Now().Add(time.Hour)}
@@ -149,7 +146,7 @@ func TestRefreshTokenRepository_ClaimForRotation_RollsBackWithTheTransaction(t *
 // revoked, an expired or an unknown token is a success, and it never claims
 // anything a rotation could later succeed on.
 func TestRefreshTokenRepository_RevokeByTokenHash_IsUnconditionalAndIdempotent(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	live := &models.RefreshToken{UserID: 1, TokenHash: "hash-live", ExpiresAt: time.Now().Add(time.Hour)}
@@ -170,7 +167,7 @@ func TestRefreshTokenRepository_RevokeByTokenHash_IsUnconditionalAndIdempotent(t
 }
 
 func TestRefreshTokenRepository_RevokeAllForUser_LeavesOtherUsersAlone(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.RefreshToken{
@@ -225,7 +222,7 @@ func isRevoked(t *testing.T, db *gorm.DB, hash string) bool {
 // The revoked-row lookup finds a revoked token whatever its expiry and never
 // a live or unknown one.
 func TestRefreshTokenRepository_GetRevokedByTokenHash_FindsOnlyRevokedRows(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	revoked := seedFamilyToken(t, repo, 1, "hash-revoked", "fam", time.Hour)
@@ -255,7 +252,7 @@ func TestRefreshTokenRepository_GetRevokedByTokenHash_FindsOnlyRevokedRows(t *te
 // A later row exists only for the same user and family and a greater id; an
 // empty family is never a family and is answered without a query.
 func TestRefreshTokenRepository_HasLaterInFamily_MatchesUserFamilyAndGreaterID(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	first := seedFamilyToken(t, repo, 1, "hash-first", "fam-a", time.Hour)
@@ -296,7 +293,7 @@ func TestRefreshTokenRepository_HasLaterInFamily_MatchesUserFamilyAndGreaterID(t
 // The family revocation touches only the user's live rows of that family; an
 // empty family id is refused without a statement.
 func TestRefreshTokenRepository_RevokeFamily_RevokesOnlyThatUsersFamily(t *testing.T) {
-	db := setupRefreshTokenDB(t)
+	db := testsupport.OpenSQLite(t, refreshTokenDB)
 	repo := NewRefreshTokenRepository(db)
 
 	seedFamilyToken(t, repo, 1, "hash-a1", "fam-a", time.Hour)

@@ -2,16 +2,13 @@ package repository
 
 import (
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // TestAPIKeyRepository_RevokeAllForUser checks the one-statement revocation
@@ -20,14 +17,8 @@ import (
 // soft-deleted keys and other users' keys are untouched, and the count of
 // changed rows is returned.
 func TestAPIKeyRepository_RevokeAllForUser(t *testing.T) {
-	dsn := filepath.Join(t.TempDir(), "apikey_revoke_all.db") + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.APIKey{}))
+	db := testsupport.OpenSQLite(t, testsupport.File("apikey_revoke_all.db", testsupport.BusyTimeout),
+		testsupport.Models(&models.User{}, &models.APIKey{}))
 
 	owner := models.User{Email: "owner@example.com", Password: "x", Role: models.RoleSales, IsActive: true}
 	other := models.User{Email: "other@example.com", Password: "x", Role: models.RoleSales, IsActive: true}

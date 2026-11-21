@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -90,7 +91,9 @@ func submissionKey(t *testing.T, db *gorm.DB, id uint) string {
 }
 
 func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
-	dbs := newErasureTestDBs(t, useMySQL, openFormTicketRepoDB)
+	dbs := newErasureTestDBs(t, useMySQL, func(t *testing.T, useMySQL bool) *gorm.DB {
+		return migrateFormTicketDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "form_ticket", formTicketRepoDB))
+	})
 	t.Run("customer root", func(t *testing.T) {
 		db := dbs.open(t)
 		f := newFormTicketErasureFixture(t, db)
@@ -198,7 +201,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 }
 
 func runTicketDeletePurgesFormTicketKeys(t *testing.T, useMySQL bool) {
-	db := openFormTicketRepoDB(t, useMySQL)
+	db := migrateFormTicketDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "form_ticket", formTicketRepoDB))
 	f := newFormTicketErasureFixture(t, db)
 	customer := createFormTicketCustomer(t, db, "delete@form-ticket.test")
 	formRepo := NewFormTicketRepository(db)

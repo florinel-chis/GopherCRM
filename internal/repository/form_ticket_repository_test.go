@@ -1,25 +1,18 @@
 package repository
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // #213: FormTicketRepository on the full production schema (models.MigrateDatabase,
@@ -29,47 +22,18 @@ import (
 
 var formTicketRepoSeq atomic.Uint64
 
-func openFormTicketRepoDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	var db *gorm.DB
-	if !useMySQL {
-		path := filepath.Join(t.TempDir(), fmt.Sprintf("form-ticket-%d.db", formTicketRepoSeq.Add(1)))
-		var err error
-		db, err = gorm.Open(sqlite.Open("file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_form_ticket_%d_%d", time.Now().UnixNano(), formTicketRepoSeq.Add(1))
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(4)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
+// formTicketRepoDB is a file-backed SQLite database with foreign keys on and
+// one connection, or a disposable MySQL schema in utf8mb4_unicode_ci with four
+// connections. migrateFormTicketDB gives it the production schema.
+var formTicketRepoDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("form-ticket.db", testsupport.BusyTimeout)),
+	testsupport.OnMySQL(testsupport.MaxOpenConns(4), testsupport.SchemaCharset("utf8mb4", "utf8mb4_unicode_ci")),
+)
 
+// migrateFormTicketDB runs models.MigrateDatabase on db, with the global
+// handle swapped for the call and restored straight away.
+func migrateFormTicketDB(t *testing.T, db *gorm.DB) *gorm.DB {
+	t.Helper()
 	previous := models.DB
 	models.DB = db
 	err := models.MigrateDatabase()
@@ -96,11 +60,11 @@ func formTicketFixture(customerID uint) *models.Ticket {
 }
 
 func TestFormTicketKeyRepositorySQLite(t *testing.T) {
-	runFormTicketKeyRepository(t, openFormTicketRepoDB(t, false))
+	runFormTicketKeyRepository(t, migrateFormTicketDB(t, testsupport.Open(t, testsupport.SQLite, "form_ticket", formTicketRepoDB)))
 }
 
 func TestFormTicketKeyRepositoryMySQL(t *testing.T) {
-	db := openFormTicketRepoDB(t, true)
+	db := migrateFormTicketDB(t, testsupport.Open(t, testsupport.MySQL, "form_ticket", formTicketRepoDB))
 	var collation string
 	require.NoError(t, db.Raw(`SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
 		AND TABLE_NAME = 'form_ticket_keys' AND COLUMN_NAME = 'idempotency_key'`).Scan(&collation).Error)
@@ -231,7 +195,7 @@ func captureFormTicketQueries(t *testing.T, db *gorm.DB) func() []string {
 }
 
 func TestFormTicketCustomerMatchSQLite(t *testing.T) {
-	db := openFormTicketRepoDB(t, false)
+	db := migrateFormTicketDB(t, testsupport.Open(t, testsupport.SQLite, "form_ticket", formTicketRepoDB))
 	repo := NewFormTicketRepository(db)
 
 	exact := createFormTicketCustomer(t, db, "Mixed.Case@Example.test")
@@ -273,7 +237,7 @@ func TestFormTicketCustomerMatchSQLite(t *testing.T) {
 }
 
 func TestFormTicketCustomerMatchMySQL(t *testing.T) {
-	db := openFormTicketRepoDB(t, true)
+	db := migrateFormTicketDB(t, testsupport.Open(t, testsupport.MySQL, "form_ticket", formTicketRepoDB))
 	repo := NewFormTicketRepository(db)
 
 	var collation string

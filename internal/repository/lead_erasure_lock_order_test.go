@@ -25,6 +25,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -149,7 +150,7 @@ func seedLeadForErasure(t *testing.T, db *gorm.DB, owner *models.User, rule *mod
 }
 
 func TestLeadErasureLockOrderSQLite(t *testing.T) {
-	db := openAutomationRepoDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB)
 	owner := seedAutomationUser(t, db, "lock-order-owner", models.RoleSales)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 
@@ -272,7 +273,7 @@ func countMatches(statements []string, re *regexp.Regexp) int {
 }
 
 func TestLeadErasureDiscoveryReadsLockMySQL(t *testing.T) {
-	db := openAutomationRepoDB(t, true, 2)
+	db := testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(2))
 	owner := seedAutomationUser(t, db, "discovery-owner", models.RoleSales)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 	seed := seedLeadForErasure(t, db, owner, rule, true)
@@ -344,7 +345,7 @@ func isDeadlockError(err error) bool {
 // step then updates its run row the step, not the erasure, is the deadlock
 // victim, and the erasure commits.
 func TestLeadErasureSurvivesAutomationStepMySQL(t *testing.T) {
-	db := openAutomationRepoDB(t, true, 4)
+	db := testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(4))
 	repo := NewAutomationRepository(db)
 	owner := seedAutomationUser(t, db, "survivor-owner", models.RoleSales)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
@@ -410,7 +411,7 @@ func TestLeadErasureSurvivesAutomationStepMySQL(t *testing.T) {
 // repository built with it carries them, its WithTx copies share them, and
 // they run for that instance's erasures only.
 func TestLeadErasureHooksDefaultUnset(t *testing.T) {
-	db := openAutomationRepoDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB)
 	owner := seedAutomationUser(t, db, "hooks-owner", models.RoleSales)
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 

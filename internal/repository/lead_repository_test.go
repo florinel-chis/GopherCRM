@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -26,7 +27,7 @@ func makeLead(t *testing.T, db *gorm.DB, firstName, email string, ownerID uint) 
 // The same address can legitimately appear on several leads, and the form
 // module has to attach to one of them: the most recent.
 func TestLeadRepository_GetLatestByEmail_ReturnsNewest(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 
@@ -43,7 +44,7 @@ func TestLeadRepository_GetLatestByEmail_ReturnsNewest(t *testing.T) {
 }
 
 func TestLeadRepository_GetLatestByEmail_MissIsRecordNotFound(t *testing.T) {
-	repo := NewLeadRepository(setupAnalyticsTestDB(t))
+	repo := NewLeadRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	_, err := repo.GetLatestByEmail("nobody@example.com")
 
@@ -53,7 +54,7 @@ func TestLeadRepository_GetLatestByEmail_MissIsRecordNotFound(t *testing.T) {
 // An erased lead must stay erased: resurrecting a soft-deleted row here would
 // re-attach form submissions to a person who asked to be forgotten.
 func TestLeadRepository_GetLatestByEmail_SkipsSoftDeleted(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 
@@ -73,7 +74,7 @@ func TestLeadRepository_GetLatestByEmail_SkipsSoftDeleted(t *testing.T) {
 }
 
 func TestLeadRepository_GetLatestByEmail_UsesTheTransaction(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 
@@ -91,7 +92,7 @@ func TestLeadRepository_GetLatestByEmail_UsesTheTransaction(t *testing.T) {
 // external_id is not unique: the lookup returns every live lead carrying the
 // value, lowest id first, capped at limit, with the owner loaded.
 func TestLeadRepository_ListByExternalID(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 

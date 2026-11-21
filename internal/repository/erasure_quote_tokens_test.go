@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ import (
 // a quote that only shares the erased customer's deal are not touched.
 //
 // The fixtures run on the full production schema with foreign keys on
-// (openIdentityErasureDB); token rows are inserted directly. The MySQL roots
+// (migrateIdentityErasureDB); token rows are inserted directly. The MySQL roots
 // use a disposable schema on TEST_MYSQL_DSN, skip without it and fail when
 // the server is unreachable.
 
@@ -86,7 +87,7 @@ func TestErasureInvalidatesQuoteResponseTokensMySQL(t *testing.T) {
 }
 
 func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	future := time.Now().UTC().Add(72 * time.Hour).Truncate(time.Second)
 
 	t.Run("customer root stamps the unused tokens and leaves the quote sent", func(t *testing.T) {
@@ -229,7 +230,7 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 // go through at once.
 func TestErasureQuoteTokenWritesLeaveGapsFreeMySQL(t *testing.T) {
 	skipBusinessTextWithoutMySQL(t)
-	db := openIdentityErasureDB(t, true)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	customer := f.customer(t, "c", nil)
 	other := f.customer(t, "o", nil)

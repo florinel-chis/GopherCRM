@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // The staff-typed text of deals and quotes linked to an erased person (#245).
@@ -29,14 +26,12 @@ import (
 // graph does not reach, stays.
 //
 // The fixtures run on the full production schema with foreign keys on
-// (openIdentityErasureDB). The MySQL roots use a disposable schema on
+// (migrateIdentityErasureDB). The MySQL roots use a disposable schema on
 // TEST_MYSQL_DSN, skip without it and fail when the server is unreachable.
 
 func skipBusinessTextWithoutMySQL(t *testing.T) {
 	t.Helper()
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 }
 
 type businessTextFixture struct {
@@ -277,7 +272,7 @@ func TestCustomerErasureScrubsDealTextMySQL(t *testing.T) {
 }
 
 func runCustomerErasureScrubsDealText(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	customer := f.customer(t, "c", nil)
 	lead := f.lead(t, "l", nil)
@@ -315,7 +310,7 @@ func TestCustomerErasureScrubsQuoteTextMySQL(t *testing.T) {
 }
 
 func runCustomerErasureScrubsQuoteText(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	customer := f.customer(t, "c", nil)
 	other := f.customer(t, "o", nil)
@@ -363,7 +358,9 @@ func TestLeadErasureScrubsDealAndQuoteTextMySQL(t *testing.T) {
 }
 
 func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
-	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
+	dbs := newErasureTestDBs(t, useMySQL, func(t *testing.T, useMySQL bool) *gorm.DB {
+		return migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
+	})
 	unconverted := func(t *testing.T, erase func(db *gorm.DB, leadID uint) error) {
 		db := dbs.open(t)
 		f := newBusinessTextFixture(t, db)
@@ -494,7 +491,7 @@ func TestBusinessTextErasureLeavesUnrelatedRecordsMySQL(t *testing.T) {
 }
 
 func runBusinessTextErasureLeavesUnrelatedRecords(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	product := f.product(t, "p", false)
 
@@ -558,7 +555,7 @@ func TestBusinessTextErasureAtomicMySQL(t *testing.T) {
 }
 
 func runBusinessTextErasureAtomic(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	customer := f.customer(t, "c", nil)
 	product := f.product(t, "p", false)
@@ -612,20 +609,15 @@ func runBusinessTextErasureAtomic(t *testing.T, useMySQL bool) {
 
 // --- AC: schemas without the deal tables ------------------------------------
 
-func openBusinessTextSubsetDB(t *testing.T, extra ...interface{}) *gorm.DB {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "subset.db")
-	db, err := gorm.Open(sqlite.Open("file:"+path+"?_pragma=busy_timeout(5000)"), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	migrate := []interface{}{&models.User{}, &models.Customer{}, &models.Lead{}, &models.FormSubmission{},
-		&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}}
-	require.NoError(t, db.AutoMigrate(append(migrate, extra...)...))
-	return db
-}
+// businessTextSubsetDB is a file-backed SQLite database (busy_timeout, foreign
+// keys off, one connection) with a subset of the schema; a root adds the
+// further tables it needs with testsupport.Models.
+var businessTextSubsetDB = testsupport.Group(
+	testsupport.File("subset.db", testsupport.BusyTimeout),
+	testsupport.WithoutForeignKeys(),
+	testsupport.Models(&models.User{}, &models.Customer{}, &models.Lead{}, &models.FormSubmission{},
+		&models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}),
+)
 
 func TestBusinessTextErasureWithoutDealTables(t *testing.T) {
 	absent := func(t *testing.T, db *gorm.DB, tables ...interface{}) {
@@ -658,7 +650,7 @@ func TestBusinessTextErasureWithoutDealTables(t *testing.T) {
 	}
 
 	t.Run("no_deal_quote_product_or_notification_tables", func(t *testing.T) {
-		db := openBusinessTextSubsetDB(t)
+		db := testsupport.OpenSQLite(t, businessTextSubsetDB)
 		absent(t, db, &models.Deal{}, &models.Quote{}, &models.QuoteLine{}, &models.Product{}, &models.Notification{})
 		_, customer, lead := seed(t, db, nextIdentityTag())
 		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
@@ -667,7 +659,7 @@ func TestBusinessTextErasureWithoutDealTables(t *testing.T) {
 	})
 
 	t.Run("deals_without_quote_product_or_notification_tables", func(t *testing.T) {
-		db := openBusinessTextSubsetDB(t, &models.Deal{})
+		db := testsupport.OpenSQLite(t, businessTextSubsetDB, testsupport.Models(&models.Deal{}))
 		require.True(t, db.Migrator().HasTable(&models.Deal{}))
 		absent(t, db, &models.Quote{}, &models.QuoteLine{}, &models.Product{}, &models.Notification{})
 		owner, customer, lead := seed(t, db, nextIdentityTag())
@@ -705,7 +697,7 @@ func TestBusinessTextErasurePurgesDealNotificationsMySQL(t *testing.T) {
 }
 
 func runBusinessTextErasurePurgesDealNotifications(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newBusinessTextFixture(t, db)
 	customer := f.customer(t, "c", nil)
 	lead := f.lead(t, "l", nil)

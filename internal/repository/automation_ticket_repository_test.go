@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestAutomationTicketRepositorySQLite(t *testing.T) {
-	runAutomationTicketRepository(t, openIdentityErasureDB(t, false))
+	runAutomationTicketRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestAutomationTicketRepositoryMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runAutomationTicketRepository(t, openIdentityErasureDB(t, true))
+	runAutomationTicketRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 // repoStatementLog records the SQL of every query, update, delete and create

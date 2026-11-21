@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -15,14 +13,11 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // The identity erasure graph (#108).
@@ -44,60 +39,26 @@ func TestIdentityErasureSQLite(t *testing.T) {
 }
 
 func TestIdentityErasureMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runIdentityErasure(t, true)
 }
 
-// openIdentityErasureDB returns a fresh database with the full production
-// schema and foreign keys on.
-func openIdentityErasureDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	return openIdentityErasureDBWith(t, useMySQL, false)
-}
+// identityErasureDB is the database the erasure roots open before
+// migrateIdentityErasureDB gives it the full production schema: a file-backed
+// SQLite database with foreign keys on and one connection, as the production
+// SQLite pool has, or a uniquely named disposable schema with four.
+// testsupport.PrepareStmt turns on GORM's PrepareStmt, under which a
+// transaction's connection pool is a *gorm.PreparedStmtTX and MySQL refuses to
+// prepare SAVEPOINT statements.
+var identityErasureDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("identity.db", testsupport.BusyTimeout)),
+	testsupport.OnMySQL(testsupport.MaxOpenConns(4)),
+)
 
-// openIdentityErasureDBWith optionally turns on GORM's PrepareStmt, under which
-// a transaction's connection pool is a *gorm.PreparedStmtTX and MySQL refuses
-// to prepare SAVEPOINT statements.
-func openIdentityErasureDBWith(t *testing.T, useMySQL, prepareStmt bool) *gorm.DB {
+// migrateIdentityErasureDB gives db the full production schema, foreign keys
+// on.
+func migrateIdentityErasureDB(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard, PrepareStmt: prepareStmt}
-	var db *gorm.DB
-	if !useMySQL {
-		path := filepath.Join(t.TempDir(), "identity.db")
-		var err error
-		db, err = gorm.Open(sqlite.Open("file:"+path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		// One connection, as the production SQLite pool has.
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		dsnCfg, err := mysqldriver.ParseDSN(os.Getenv("TEST_MYSQL_DSN"))
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_identity_erasure_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(4)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-
 	// models.MigrateDatabase works off the package-level handle; it is swapped
 	// for the call and restored straight away. No test in this package runs in
 	// parallel.
@@ -107,7 +68,7 @@ func openIdentityErasureDBWith(t *testing.T, useMySQL, prepareStmt bool) *gorm.D
 	models.DB = previous
 	require.NoError(t, err)
 
-	if useMySQL {
+	if db.Dialector.Name() == "mysql" {
 		// The fixture is only production-equivalent if the constraints exist.
 		var constraints int64
 		require.NoError(t, db.Raw("SELECT COUNT(*) FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA = DATABASE()").Scan(&constraints).Error)
@@ -141,9 +102,7 @@ func newErasureTestDBs(t *testing.T, useMySQL bool, fresh func(t *testing.T, use
 	if !useMySQL {
 		return dbs
 	}
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	dbs.shared = newSharedErasureSchema(t, fresh(t, true))
 	return dbs
 }
@@ -158,12 +117,11 @@ func (d *erasureTestDBs) open(t *testing.T) *gorm.DB {
 	return d.shared.handle(t, false)
 }
 
-// openPrepared is open with GORM's PrepareStmt on (see
-// openIdentityErasureDBWith).
+// openPrepared is open with GORM's PrepareStmt on (see identityErasureDB).
 func (d *erasureTestDBs) openPrepared(t *testing.T) *gorm.DB {
 	t.Helper()
 	if d.shared == nil {
-		return openIdentityErasureDBWith(t, false, true)
+		return migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB, testsupport.PrepareStmt()))
 	}
 	return d.shared.handle(t, true)
 }
@@ -181,7 +139,8 @@ type sharedErasureSchema struct {
 	// admin is the handle the schema was migrated through. It runs the reset
 	// and the snapshots and is never handed to a subtest.
 	admin *gorm.DB
-	dsn   string
+	// schema is the name of the migrated schema the handles open.
+	schema string
 	// baseline is snapshotIdentityDB right after the migration; its keys are
 	// the schema's tables.
 	baseline map[string][]string
@@ -204,13 +163,8 @@ func newSharedErasureSchema(t *testing.T, admin *gorm.DB) *sharedErasureSchema {
 	var name string
 	require.NoError(t, admin.Raw("SELECT DATABASE()").Scan(&name).Error)
 	require.NotEmpty(t, name)
-	dsnCfg, err := mysqldriver.ParseDSN(os.Getenv("TEST_MYSQL_DSN"))
-	require.NoError(t, err)
-	dsnCfg.DBName = name
-	dsnCfg.ParseTime = true
-	dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
 
-	s := &sharedErasureSchema{admin: admin, dsn: dsnCfg.FormatDSN(), seeded: map[string][]uint64{}}
+	s := &sharedErasureSchema{admin: admin, schema: name, seeded: map[string][]uint64{}}
 	s.baseline = snapshotIdentityDB(t, admin)
 	for table, rows := range s.baseline {
 		s.tables = append(s.tables, table)
@@ -342,12 +296,10 @@ func (s *sharedErasureSchema) handle(t *testing.T, prepareStmt bool) *gorm.DB {
 		s.issued = nil
 	}
 	s.reset(t)
-	db, err := gorm.Open(gormmysql.Open(s.dsn), &gorm.Config{Logger: logger.Discard, PrepareStmt: prepareStmt})
-	require.NoError(t, err)
+	db := testsupport.OpenMySQLSchema(t, s.schema, testsupport.MaxOpenConns(4),
+		testsupport.GormConfig(func(cfg *gorm.Config) { cfg.PrepareStmt = prepareStmt }))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(4)
-	t.Cleanup(func() { _ = sqlDB.Close() })
 	s.issued = sqlDB
 	return db
 }
@@ -832,7 +784,9 @@ func failSoftDeletesOn(t *testing.T, db *gorm.DB, table string) (sentinel error,
 }
 
 func runIdentityErasure(t *testing.T, useMySQL bool) {
-	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
+	dbs := newErasureTestDBs(t, useMySQL, func(t *testing.T, useMySQL bool) *gorm.DB {
+		return migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
+	})
 	for _, root := range identityRoots() {
 		root := root
 		t.Run(root.name+"_root_erases_the_whole_graph", func(t *testing.T) {

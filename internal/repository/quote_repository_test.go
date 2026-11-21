@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // quoteFixture is one owner, one customer, one deal and one product the quote
@@ -65,7 +66,7 @@ func statusPtr(s models.QuoteStatus) *models.QuoteStatus { return &s }
 // ClaimStatus matches only while the stored status is still `from`: the second
 // of two identical claims finds nothing, and the stamps are written as given.
 func TestQuoteRepository_ClaimStatusIsConditional(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "claim")
 	quote := f.quote(t, repo, models.QuoteStatusDraft, "Claim")
@@ -108,7 +109,7 @@ func TestQuoteRepository_ClaimStatusIsConditional(t *testing.T) {
 // UpdateDraft and UpdateTotals write only while the status is draft, and
 // neither touches the status, the totals of the other, or the stamps.
 func TestQuoteRepository_DraftWritesAreConditional(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "draft")
 	quote := f.quote(t, repo, models.QuoteStatusDraft, "Draft")
@@ -157,7 +158,7 @@ func TestQuoteRepository_DraftWritesAreConditional(t *testing.T) {
 // moved it to draft after the marker the sender read; a revision followed by a
 // fresh send still refuses the stale marker.
 func TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "stamp")
 	quote := f.quote(t, repo, models.QuoteStatusSent, "Stamp")
@@ -216,7 +217,7 @@ func TestQuoteRepository_StampEmailedRefusesANewerRevisionToDraft(t *testing.T) 
 // read and on delete, lines list in position order and the next position is
 // max+1.
 func TestQuoteRepository_LinesBelongToTheirQuote(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "lines")
 	first := f.quote(t, repo, models.QuoteStatusDraft, "First")
@@ -282,7 +283,7 @@ func TestQuoteRepository_LinesBelongToTheirQuote(t *testing.T) {
 // The history lists oldest first with the acting user, and the latest id is
 // the marker the email stamp compares against.
 func TestQuoteRepository_StatusChangesOldestFirstAndLatestID(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "history")
 	quote := f.quote(t, repo, models.QuoteStatusSent, "History")
@@ -323,7 +324,7 @@ func TestQuoteRepository_StatusChangesOldestFirstAndLatestID(t *testing.T) {
 // column is allowlisted; a deleted quote vanishes from reads while its lines
 // and history stay in their tables.
 func TestQuoteRepository_ListScopesOwnerBeforePaginationAndDeleteIsSoft(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewQuoteRepository(db)
 	f := seedQuoteFixture(t, db, "list")
 	otherOwner := createDealTestUser(t, db, "quote-other-list@example.com")

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -19,11 +20,11 @@ import (
 // whatever server TEST_MYSQL_DSN names, MySQL or MariaDB.
 
 func TestAutomationRunDedupeSQLite(t *testing.T) {
-	runAutomationRunDedupe(t, openAutomationRepoDB(t, false, 1))
+	runAutomationRunDedupe(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB))
 }
 
 func TestAutomationRunDedupeMySQL(t *testing.T) {
-	runAutomationRunDedupe(t, openAutomationRepoDB(t, true, 2))
+	runAutomationRunDedupe(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(2)))
 }
 
 func runAutomationRunDedupe(t *testing.T, db *gorm.DB) {

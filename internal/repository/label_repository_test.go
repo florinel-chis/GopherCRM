@@ -5,31 +5,19 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupLabelDB gives each test a private schema on the shared in-memory DSN,
-// the same way the customer export tests do.
-func setupLabelDB(t *testing.T) *gorm.DB {
+// migrateLabelTables drops and recreates the label tables on db, a private
+// in-memory database with foreign keys on and the driver's default pool, the
+// same way the customer export tests do.
+func migrateLabelTables(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-
 	require.NoError(t, db.Migrator().DropTable("task_labels", &models.Task{}, &models.Label{}, &models.User{}))
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Label{}, &models.Task{}))
-
-	t.Cleanup(func() {
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
-	})
 	return db
 }
 
@@ -64,7 +52,7 @@ func createLabelTestTask(t *testing.T, db *gorm.DB, title string, assigneeID uin
 // carry it. Both directions are checked so a join-table misconfiguration
 // cannot hide behind a one-way read.
 func TestLabelRoundTripsThroughTheJoinTable(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 
 	urgent := models.Label{Name: "Urgent", Color: "#FF0000"}
@@ -91,7 +79,7 @@ func TestLabelRoundTripsThroughTheJoinTable(t *testing.T) {
 // while its task_labels rows survived would leave every task carrying it with
 // a dangling reference, and the tasks themselves must be left alone.
 func TestDeleteLabelIsHardAndClearsTheJoinRows(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	repo := NewLabelRepository(db)
 
@@ -118,7 +106,7 @@ func TestDeleteLabelIsHardAndClearsTheJoinRows(t *testing.T) {
 }
 
 func TestDeleteLabelReportsAMissingRowAsNotFound(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewLabelRepository(db)
 
 	err := repo.Delete(4242)
@@ -130,7 +118,7 @@ func TestDeleteLabelReportsAMissingRowAsNotFound(t *testing.T) {
 // that slips past the pre-check must still surface as the sentinel rather than
 // as a raw driver message.
 func TestCreateLabelRejectsADuplicateNameWithTheSentinel(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewLabelRepository(db)
 
 	require.NoError(t, repo.Create(&models.Label{Name: "Unique", Color: "#ABCDEF"}))
@@ -142,7 +130,7 @@ func TestCreateLabelRejectsADuplicateNameWithTheSentinel(t *testing.T) {
 }
 
 func TestListLabelsIsOrderedByNameAndCountsLiveTasks(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	repo := NewLabelRepository(db)
 
@@ -171,7 +159,7 @@ func TestListLabelsIsOrderedByNameAndCountsLiveTasks(t *testing.T) {
 }
 
 func TestGetByIDCarriesTheTaskCount(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	repo := NewLabelRepository(db)
 
@@ -189,7 +177,7 @@ func TestGetByIDCarriesTheTaskCount(t *testing.T) {
 // not. The repository's LOWER() on both sides is what makes the two agree, so
 // this test is the SQLite half of that contract.
 func TestExistsByNameInsensitiveIgnoresCaseAndTheExcludedRow(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewLabelRepository(db)
 
 	label := &models.Label{Name: "Urgent", Color: "#FF0000"}
@@ -209,7 +197,7 @@ func TestExistsByNameInsensitiveIgnoresCaseAndTheExcludedRow(t *testing.T) {
 }
 
 func TestFindByIDsReturnsOnlyTheLabelsThatExist(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewLabelRepository(db)
 
 	first := &models.Label{Name: "First", Color: "#010101"}
@@ -230,7 +218,7 @@ func TestFindByIDsReturnsOnlyTheLabelsThatExist(t *testing.T) {
 // narrow correctly, respect the assignee scoping, and sort through a join
 // without tripping over an ambiguous column name.
 func TestListByLabelFiltersSortsAndScopes(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	owner := createLabelTestUser(t, db)
 	other := &models.User{Email: "other@example.com", FirstName: "Oth", LastName: "Er", Role: models.RoleSupport, IsActive: true}
 	require.NoError(t, db.Create(other).Error)
@@ -274,7 +262,7 @@ func TestListByLabelFiltersSortsAndScopes(t *testing.T) {
 }
 
 func TestListByLabelExcludesSoftDeletedTasks(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	labelRepo := NewLabelRepository(db)
 
@@ -300,7 +288,7 @@ func TestListByLabelExcludesSoftDeletedTasks(t *testing.T) {
 // Update replaces the set outright, which is the semantic the PUT endpoint
 // promises, and clearing it must remove the join rows rather than orphan them.
 func TestCreateAndUpdateReplaceTheWholeLabelSet(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	labelRepo := NewLabelRepository(db)
 
@@ -352,7 +340,7 @@ func TestCreateAndUpdateReplaceTheWholeLabelSet(t *testing.T) {
 // through GetByAssignedToID; a task there without its labels renders without
 // its chips.
 func TestGetByAssignedToIDPreloadsLabels(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
 	labelRepo := NewLabelRepository(db)
 
@@ -371,7 +359,7 @@ func TestGetByAssignedToIDPreloadsLabels(t *testing.T) {
 // A hard delete frees the name for reuse. That is the whole reason labels do
 // not soft-delete, so it is worth pinning down.
 func TestDeletedLabelNameCanBeReused(t *testing.T) {
-	db := setupLabelDB(t)
+	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewLabelRepository(db)
 
 	first := &models.Label{Name: "Recycled", Color: "#121212"}

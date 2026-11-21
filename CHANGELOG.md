@@ -1156,6 +1156,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Tests open their databases through a shared test-support package (#613).** The new
+  test-only package `internal/testsupport` opens a private SQLite database (`OpenSQLite`), reads
+  the `TEST_MYSQL_DSN` server and skips without it (`MySQLFromEnv`), creates and drops a
+  disposable MySQL/MariaDB schema (`OpenMySQL`), opens a second handle on an existing schema
+  (`OpenMySQLSchema`), and switches or loops over the two dialects (`Open`, `ForEachDialect`).
+  The `internal/repository` tests use it instead of their own setup helpers; test names and
+  results are unchanged, and the other packages follow later. Only tests import the package, so
+  nothing in the shipped server changes.
+
 - **Single sign-on: the Entra ID group overage lookup requests the delegated Microsoft Graph
   permission `User.Read` instead of `GroupMember.Read.All` (#631).** For an Entra ID issuer whose
   role mapping has a `groups` entry, `POST /auth/oidc/start` now adds the scope

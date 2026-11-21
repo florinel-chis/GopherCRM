@@ -5,39 +5,27 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
-// setupQuoteRepoDB gives each test a private schema on its own shared
-// in-memory DSN (separate from the deal tests' one), with foreign keys on.
-// The four quote tables are dropped and recreated per test; the tables they
-// reference are migrated in place.
-func setupQuoteRepoDB(t *testing.T) *gorm.DB {
+// migrateQuoteTables gives db, a private in-memory database with foreign keys
+// on and the driver's default pool, the quote schema: the four quote tables
+// are dropped and recreated, the tables they reference are migrated in place,
+// and the quote tables are dropped again when the test ends.
+func migrateQuoteTables(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:quotes_repo?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-
 	quoteTables := []interface{}{&models.QuoteStatusChange{}, &models.QuoteLine{}, &models.Quote{}, &models.Product{}}
 	require.NoError(t, db.Migrator().DropTable(quoteTables...))
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{},
 		&models.Product{}, &models.Quote{}, &models.QuoteLine{}, &models.QuoteStatusChange{},
 	))
-
-	t.Cleanup(func() {
-		_ = db.Migrator().DropTable(quoteTables...)
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
+	t.Cleanup(func() { _ = db.Migrator().DropTable(quoteTables...) })
 	return db
 }
 
@@ -59,7 +47,7 @@ func productNames(products []models.Product) []string {
 }
 
 func TestProductRepository_ListFiltersSortsAndHidesDeleted(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewProductRepository(db)
 
 	createTestProduct(t, db, &models.Product{Name: "Widget", SKU: "SKU-1", UnitPriceCents: 1000, IsActive: true})
@@ -116,7 +104,7 @@ func TestProductRepository_ListFiltersSortsAndHidesDeleted(t *testing.T) {
 }
 
 func TestProductRepository_ListRejectsUnknownSortColumns(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewProductRepository(db)
 	for _, column := range []string{"deleted_at", "description", "name; DROP TABLE products;--", "owner_id"} {
 		_, _, err := repo.List(0, 10, ProductListFilter{SortBy: column})
@@ -127,7 +115,7 @@ func TestProductRepository_ListRejectsUnknownSortColumns(t *testing.T) {
 // Save writes every column, so a price of 0 and an inactive flag survive an
 // update; a GORM default would have replaced them on create.
 func TestProductRepository_UpdateKeepsZeroValues(t *testing.T) {
-	db := setupQuoteRepoDB(t)
+	db := migrateQuoteTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewProductRepository(db)
 	product := createTestProduct(t, db, &models.Product{Name: "Widget", UnitPriceCents: 0, IsActive: false})
 

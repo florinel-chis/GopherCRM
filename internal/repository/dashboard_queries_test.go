@@ -5,33 +5,28 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupAnalyticsTestDB gives each test its own in-memory schema. Production is
-// MySQL 8; everything exercised here is deliberately driver-neutral SQL, which
-// is the whole reason the time bucketing lives in Go rather than in a
-// DATE_FORMAT/strftime expression that only one of the two would understand.
-func setupAnalyticsTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
+// analyticsTestDB gives each test its own in-memory database (foreign keys
+// off, the driver's default pool). Production is MySQL 8; everything exercised
+// here is deliberately driver-neutral SQL, which is the whole reason the time
+// bucketing lives in Go rather than in a DATE_FORMAT/strftime expression that
+// only one of the two would understand.
+var analyticsTestDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.DriverDefaultMaxOpenConns(),
+	testsupport.Models(
 		&models.User{},
 		&models.Company{}, &models.Customer{},
 		&models.Lead{},
 		&models.Ticket{},
 		&models.Task{},
-	))
-	return db
-}
+	),
+)
 
 // stampTimes forces created_at/updated_at to fixed values. GORM owns those
 // columns on write, so a test that needs a specific event time has to set them
@@ -54,7 +49,7 @@ func makeUser(t *testing.T, db *gorm.DB, email string) models.User {
 // --- leads -------------------------------------------------------------------
 
 func TestLeadRepository_CountByStatus(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 
@@ -75,7 +70,7 @@ func TestLeadRepository_CountByStatus(t *testing.T) {
 
 // Erased leads are soft-deleted; they must not keep inflating the chart.
 func TestLeadRepository_CountByStatus_ExcludesSoftDeleted(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 
@@ -92,7 +87,7 @@ func TestLeadRepository_CountByStatus_ExcludesSoftDeleted(t *testing.T) {
 }
 
 func TestLeadRepository_CountByStatus_EmptyTable(t *testing.T) {
-	repo := NewLeadRepository(setupAnalyticsTestDB(t))
+	repo := NewLeadRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	counts, err := repo.CountByStatus()
 
@@ -102,7 +97,7 @@ func TestLeadRepository_CountByStatus_EmptyTable(t *testing.T) {
 }
 
 func TestLeadRepository_ListRecent_NewestFirstAndLimited(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -124,7 +119,7 @@ func TestLeadRepository_ListRecent_NewestFirstAndLimited(t *testing.T) {
 }
 
 func TestLeadRepository_ListRecent_ScopedToOwner(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -140,7 +135,7 @@ func TestLeadRepository_ListRecent_ScopedToOwner(t *testing.T) {
 }
 
 func TestLeadRepository_ListRecent_EmptyTableReturnsEmptySlice(t *testing.T) {
-	repo := NewLeadRepository(setupAnalyticsTestDB(t))
+	repo := NewLeadRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	leads, err := repo.ListRecent(nil, 5)
 
@@ -150,7 +145,7 @@ func TestLeadRepository_ListRecent_EmptyTableReturnsEmptySlice(t *testing.T) {
 }
 
 func TestLeadRepository_ListRecentlyConverted(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -175,7 +170,7 @@ func TestLeadRepository_ListRecentlyConverted(t *testing.T) {
 // The owner filter is applied before the limit: a newer conversion of another
 // owner must not take the only slot of an older one the caller owns.
 func TestLeadRepository_ListRecentlyConverted_ScopedToOwnerBeforeLimit(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -196,7 +191,7 @@ func TestLeadRepository_ListRecentlyConverted_ScopedToOwnerBeforeLimit(t *testin
 }
 
 func TestLeadRepository_ConversionTimestampsSince(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewLeadRepository(db)
 	owner := makeUser(t, db, "owner@example.com")
 	cutoff := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -222,7 +217,7 @@ func TestLeadRepository_ConversionTimestampsSince(t *testing.T) {
 }
 
 func TestLeadRepository_ConversionTimestampsSince_NoRows(t *testing.T) {
-	repo := NewLeadRepository(setupAnalyticsTestDB(t))
+	repo := NewLeadRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	timestamps, err := repo.ConversionTimestampsSince(time.Now().AddDate(-1, 0, 0))
 
@@ -234,7 +229,7 @@ func TestLeadRepository_ConversionTimestampsSince_NoRows(t *testing.T) {
 // --- tickets -----------------------------------------------------------------
 
 func TestTicketRepository_CountByPriority(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTicketRepository(db)
 
 	for _, priority := range []models.TicketPriority{
@@ -252,7 +247,7 @@ func TestTicketRepository_CountByPriority(t *testing.T) {
 }
 
 func TestTicketRepository_CountByPriority_EmptyTable(t *testing.T) {
-	repo := NewTicketRepository(setupAnalyticsTestDB(t))
+	repo := NewTicketRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	counts, err := repo.CountByPriority()
 
@@ -261,7 +256,7 @@ func TestTicketRepository_CountByPriority_EmptyTable(t *testing.T) {
 }
 
 func TestTicketRepository_ListRecent_NewestFirst(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTicketRepository(db)
 	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
 
@@ -283,7 +278,7 @@ func TestTicketRepository_ListRecent_NewestFirst(t *testing.T) {
 // The assignee filter excludes other assignees and unassigned tickets, and is
 // applied before the limit.
 func TestTicketRepository_ListRecent_ScopedToAssigneeBeforeLimit(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTicketRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -309,7 +304,7 @@ func TestTicketRepository_ListRecent_ScopedToAssigneeBeforeLimit(t *testing.T) {
 // Both resolved and closed are resolutions, mirroring CountOpen's split; open
 // and in_progress are not.
 func TestTicketRepository_ListRecentlyResolved(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTicketRepository(db)
 	base := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
 
@@ -334,7 +329,7 @@ func TestTicketRepository_ListRecentlyResolved(t *testing.T) {
 }
 
 func TestTicketRepository_ListRecentlyResolved_ScopedToAssigneeBeforeLimit(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTicketRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -357,7 +352,7 @@ func TestTicketRepository_ListRecentlyResolved_ScopedToAssigneeBeforeLimit(t *te
 // --- tasks -------------------------------------------------------------------
 
 func TestTaskRepository_CountByStatus(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 
@@ -376,7 +371,7 @@ func TestTaskRepository_CountByStatus(t *testing.T) {
 }
 
 func TestTaskRepository_CountByStatus_EmptyTable(t *testing.T) {
-	repo := NewTaskRepository(setupAnalyticsTestDB(t))
+	repo := NewTaskRepository(testsupport.OpenSQLite(t, analyticsTestDB))
 
 	counts, err := repo.CountByStatus()
 
@@ -385,7 +380,7 @@ func TestTaskRepository_CountByStatus_EmptyTable(t *testing.T) {
 }
 
 func TestTaskRepository_ListUpcoming_OrdersByDueDateAndSkipsClosedWork(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 	base := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
@@ -410,7 +405,7 @@ func TestTaskRepository_ListUpcoming_OrdersByDueDateAndSkipsClosedWork(t *testin
 // Overdue tasks are the ones that most need attention, so the due-soonest list
 // keeps them rather than starting the window at now.
 func TestTaskRepository_ListUpcoming_KeepsOverdueTasks(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 
@@ -425,7 +420,7 @@ func TestTaskRepository_ListUpcoming_KeepsOverdueTasks(t *testing.T) {
 }
 
 func TestTaskRepository_ListUpcoming_ScopedToAssignee(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -442,7 +437,7 @@ func TestTaskRepository_ListUpcoming_ScopedToAssignee(t *testing.T) {
 }
 
 func TestTaskRepository_ListUpcoming_HonoursLimit(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 
@@ -458,7 +453,7 @@ func TestTaskRepository_ListUpcoming_HonoursLimit(t *testing.T) {
 }
 
 func TestTaskRepository_ListDueBetween_WindowIsInclusiveOnBothEnds(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 
@@ -480,7 +475,7 @@ func TestTaskRepository_ListDueBetween_WindowIsInclusiveOnBothEnds(t *testing.T)
 }
 
 func TestTaskRepository_ListDueBetween_ScopedToAssignee(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")
@@ -500,7 +495,7 @@ func TestTaskRepository_ListDueBetween_ScopedToAssignee(t *testing.T) {
 }
 
 func TestTaskRepository_ListDueBetween_ExcludesClosedWork(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 
@@ -519,7 +514,7 @@ func TestTaskRepository_ListDueBetween_ExcludesClosedWork(t *testing.T) {
 }
 
 func TestTaskRepository_ListRecentlyCompleted(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	user := makeUser(t, db, "assignee@example.com")
 	base := time.Date(2026, 7, 1, 9, 0, 0, 0, time.UTC)
@@ -544,7 +539,7 @@ func TestTaskRepository_ListRecentlyCompleted(t *testing.T) {
 }
 
 func TestTaskRepository_ListRecentlyCompleted_ScopedToAssigneeBeforeLimit(t *testing.T) {
-	db := setupAnalyticsTestDB(t)
+	db := testsupport.OpenSQLite(t, analyticsTestDB)
 	repo := NewTaskRepository(db)
 	mine := makeUser(t, db, "mine@example.com")
 	theirs := makeUser(t, db, "theirs@example.com")

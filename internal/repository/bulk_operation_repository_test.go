@@ -5,32 +5,26 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 )
 
-func setupBulkOperationRepoDB(t *testing.T) (*gorm.DB, BulkOperationRepository) {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: gormlogger.Discard,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, db.AutoMigrate(
+// bulkOperationRepoDB is a private in-memory database, foreign keys off, with
+// the driver's default pool.
+var bulkOperationRepoDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.DriverDefaultMaxOpenConns(),
+	testsupport.Models(
 		&models.User{},
 		&models.BulkOperation{},
 		&models.BulkOperationItem{},
-	))
-
-	repo := NewBulkOperationRepository(db)
-	return db, repo
-}
+	),
+)
 
 func TestBulkOperationRepository_CreateAndUpdateStatus(t *testing.T) {
-	db, repo := setupBulkOperationRepoDB(t)
+	db := testsupport.OpenSQLite(t, bulkOperationRepoDB)
+	repo := NewBulkOperationRepository(db)
 
 	user := &models.User{
 		Email:     "bulk-admin@example.com",
