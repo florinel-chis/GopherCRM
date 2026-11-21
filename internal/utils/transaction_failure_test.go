@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/glebarez/sqlite"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -202,7 +203,7 @@ func openFailingSQLite(t *testing.T) (*failingPool, *gorm.DB) {
 func TestTransactionFinalizationFailures(t *testing.T) {
 	pool, db := openFailingSQLite(t)
 	tm := NewTransactionManager(db)
-	retryable := errors.New("Deadlock found when trying to get lock; try restarting transaction")
+	retryable := &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 
 	scenario := func(name string, run func(t *testing.T)) {
 		t.Run(name, func(t *testing.T) {

@@ -144,8 +144,10 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
   joined to the callback's error so both stay inspectable with `errors.Is`. A failed commit is
   ambiguous from the client's side and is never reported as success, and a failed rollback is
   never followed by a commit.
-- **Retries.** `WithTransactionAndRetry` replays deadlocks, lock waits and SQLite busy/locked
-  errors in a fresh root transaction, at most `maxRetries` times, and only when the failed attempt
+- **Retries.** `WithTransactionAndRetry` replays deadlocks (error 1213), lock wait timeouts
+  (1205), MariaDB "record has changed since last read" (1020) and SQLite busy/locked errors in a
+  fresh root transaction, classified from the typed driver error by `utils.RetryReasonOf`
+  (`internal/utils/retryable.go`), never from the message text, at most `maxRetries` times, and only when the failed attempt
   rolled back cleanly: an attempt that failed at commit or rollback is returned without replay,
   and the loop stops as soon as the context is done. A negative count returns
   `ErrInvalidRetryCount` without running the callback. Inside an active transaction the callback
@@ -158,7 +160,10 @@ multi-step operations. Repositories expose `WithTx()` to participate in transact
 Regression roots: `TestTransactionPanic{SQLite,MySQL}`, `TestTransactionNested{SQLite,MySQL}`,
 `TestTransactionCancellationRetry{SQLite,MySQL}` (one-connection pools, persisted-row assertions,
 every wait bounded by a context; the MySQL roots create and drop a uniquely named schema on the
-`TEST_MYSQL_DSN` server), `TestTransactionFinalizationFailures` (a connection-pool wrapper that
+`TEST_MYSQL_DSN` server), `TestRetryReasonOf` and `TestTransactionRetryableError{SQLite,MySQL}`
+(the classification against real SQLite busy and UNIQUE errors and real MySQL/MariaDB deadlock,
+lock wait timeout and duplicate-key errors, and on MariaDB a real 1020 that is replayed),
+`TestTransactionFinalizationFailures` (a connection-pool wrapper that
 injects begin/commit/rollback/savepoint failures deterministically, including poisoned commits
 across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCommitFailedRollback`
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
@@ -3122,18 +3127,20 @@ one MySQL/MariaDB database.
   when the claim names a slot that a row already holds. Lock contention on the claim (#371) gets
   the same answers, for scheduled and slot-less (manual, single-prompt) claims alike: concurrent
   claimants of the same unique keys can make MySQL/MariaDB answer error 1213 (deadlock) or 1205
-  (lock wait timeout) instead of a duplicate key. A slot claim then looks the slot up first and
+  (lock wait timeout), or MariaDB error 1020 (record changed since it was read), instead of a
+  duplicate key; `utils.RetryReasonOf` classifies the typed driver error, and 1020 is handled
+  like a deadlock. A slot claim then looks the slot up first and
   answers `ErrAEOScheduleSlotTaken` when a row holds it; otherwise the INSERT is replayed, at
   most 3 attempts in total per claim, without sleep or backoff, and every attempt goes through
   the duplicate-key classification (after a deadlock the winner may not have committed yet, so
-  the replay waits for it and ends as a duplicate key). A deadlock on all three attempts is
-  `ErrRunInProgress`, never the raw driver error; for a scheduled claim that is the scheduler's
+  the replay waits for it and ends as a duplicate key). A deadlock or a 1020 on all three
+  attempts is `ErrRunInProgress`, never the raw driver error; for a scheduled claim that is the scheduler's
   "a run is already in progress" skip, so the slot is not retried. A lock wait timeout is
   replayed once and a second one on the same claim is returned unchanged as the driver error:
   each arrives only after `innodb_lock_wait_timeout` (50 s by default) and `startMu` is held
   across the claim, so the worst case is two lock waits during which this process starts no other
   run. The replay is safe because a failed attempt left nothing behind: GORM runs the INSERT in
-  its own short transaction, which the server rolls back on a deadlock and GORM rolls back after
+  its own short transaction, which the server rolls back on a deadlock or a 1020 and GORM rolls back after
   a lock wait timeout, and `ClaimRun` is never called on a transaction handle.
 - **The daily slot.** The scheduler calls `StartScheduledRun(ctx, slot)` with the instant it
   computed with `aeo.NextRunAt`, never the wake-up time; the slot is stored as
@@ -3170,7 +3177,7 @@ MySQL/MariaDB; see [datamodel.md](datamodel.md#aeo-run-ownership). Regression ro
 `TestAEORunOwnershipMigrationFiles` (the newest-migration assertion has since moved to
 `TestAutomationRunLeaseMigrationFiles`, #237) and
 `TestAEORunOwnershipMigration` (`cmd/migrate`); `TestAEORun{Claim,Finish,Heartbeat,AbandonedSweep}{SQLite,MySQL}`
-and `TestAEORunClaimContention{SQLite,MySQL}` (#371, injected deadlock and lock wait timeout)
+and `TestAEORunClaimContention{SQLite,MySQL}` (#371, injected deadlock, lock wait timeout and 1020)
 (`internal/repository`); `TestAEOReplica{BootSparesLiveRun,Admission,ScheduleSlot,DeadOwnerRecovered,FinalizeAfterTakeover}{SQLite,MySQL}`,
 `TestAEORunHeartbeatLifecycle` and `TestAEOReplicaLogsOmitPersonalData` (`internal/service`,
 two service instances with separate pools on one SQLite file or one disposable `TEST_MYSQL_DSN`

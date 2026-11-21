@@ -26,6 +26,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -382,7 +383,7 @@ func runFormSubmissionPurgeChunkAtomic(t *testing.T, db *gorm.DB) {
 		var failed atomic.Bool
 		hooks.onDelete(func(table string) error {
 			if table == "form_submissions" && failed.CompareAndSwap(false, true) {
-				return errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+				return &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 			}
 			return nil
 		})
@@ -818,7 +819,7 @@ func (r *resubmissionFaultRepo) InvalidatePendingTokens(formID uint, email strin
 	first := r.state.invalidate == 1
 	r.state.mu.Unlock()
 	if first {
-		return errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+		return &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 	}
 	return r.FormRepository.InvalidatePendingTokens(formID, email)
 }

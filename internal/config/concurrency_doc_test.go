@@ -789,7 +789,7 @@ func TestConcurrencyDocRetryRule(t *testing.T) {
 	assert.Contains(t, tx, "ErrNestedRetryDeferred = errors.New(")
 	retry := concurrencyDocFuncBody(t, "internal/utils/transaction.go", "func (tm *TransactionManager) WithTransactionAndRetry(")
 	assert.Contains(t, retry, "tm.runRoot(ctx, fn)")
-	assert.Contains(t, retry, "!replayable || !isRetryableError(err)")
+	assert.Contains(t, retry, "!replayable || !IsRetryable(err)")
 	assert.Contains(t, retry, "attempts > maxRetries")
 }
 
