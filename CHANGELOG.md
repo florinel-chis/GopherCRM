@@ -1156,6 +1156,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **SCIM Groups accept Microsoft Entra ID's group requests (#630).** `POST /scim/v2/Groups` no
+  longer answers 405: when the body's `externalId` or, failing that, its `displayName` equals a
+  `groups` value of the single sign-on role mapping byte for byte, it answers 201 with that
+  existing group, its `Location` and `id`, and writes nothing, so a repeat gives the same answer.
+  Any other value, a non-string value or a body with neither is refused with 400 `invalidValue`,
+  a body that lists members with 400 `invalidValue` (add them with PATCH), and a malformed body
+  with 400 `invalidSyntax`. `GET /scim/v2/Groups` (including `filter=displayName eq "..."`) and
+  `GET /scim/v2/Groups/{id}` honour `excludedAttributes=members`. A successful
+  `PATCH /scim/v2/Groups/{id}` answers 204 with no body instead of 200 with the group; its
+  refusals are unchanged. `DELETE` still answers 405, now with `Allow: GET, PATCH` only. The
+  Entra ID guide keeps `objectId` → `displayName` as the group mapping: under Entra ID's default
+  group mapping the group is created, but Entra ID's later `displayName` update is refused with
+  400 `invalidPath`.
+
 - **SCIM user patch accepts both Microsoft Entra ID PATCH formats (#629).** A role can arrive as a
   JSON object serialised into the role's `value` string (Entra ID's default PATCH format) or as a
   plain string (the standard form); the inner `value` is used. Add, replace and remove operations

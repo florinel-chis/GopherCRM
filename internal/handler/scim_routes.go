@@ -9,8 +9,9 @@ import (
 // SetupSCIMRoutes mounts the SCIM 2.0 discovery documents (#468), the read
 // of the Users resource (#469), its create and replace (#470), its patch
 // (#471) and its delete, a deactivation (#504), and the Groups resource
-// (#506): its read, its members patch and a 405 for POST and DELETE (the
-// groups are the role mapping's values; PUT is not routed), on the /scim/v2
+// (#506): its read, its members patch, a create that resolves a role mapping
+// value to its existing group (#630) and a 405 for DELETE (the groups are the
+// role mapping's values; PUT is not routed), on the /scim/v2
 // group, which carries the SCIM token authentication with its two limits
 // (the SCIM token limit per token, the SCIM refusal limit per client address),
 // outside the API prefix. groups is optional so the Users
@@ -33,7 +34,7 @@ func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMU
 	router.GET("/Groups", group.List)
 	router.GET("/Groups/:id", group.Get)
 	router.PATCH("/Groups/:id", group.Patch)
-	router.POST("/Groups", group.MethodNotAllowed)
+	router.POST("/Groups", group.Create)
 	router.DELETE("/Groups/:id", group.MethodNotAllowed)
 }
 

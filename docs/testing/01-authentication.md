@@ -1822,13 +1822,20 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
      `filter=userName eq "a"`.
   3. `GET /scim/v2/Groups/{id of Sales}`.
   4. Remove Sales from the mapping; repeat step 1, then `GET` and `PATCH` the Sales id.
+  5. Repeat steps 1 to 3 with `excludedAttributes=members` (also as
+     `urn:ietf:params:scim:schemas:core:2.0:Group:members`, any ASCII case), including
+     `GET /scim/v2/Groups?excludedAttributes=members&filter=displayName eq "<a name the mapping
+     does not hold>"`.
 - **Expected:** Step 1 answers 200 `application/scim+json` with `totalResults` 2 and exactly
   `Admins` then `Sales` (the roles entry is no group). Step 2 returns only Sales, then nothing, then
   400 `invalidFilter`. Step 3 lists the active and the deactivated account by their SCIM ids,
   never the customer or the erased account. Step 4 lists only Admins, and both requests answer the
-  SCIM 404 `Group not found`.
+  SCIM 404 `Group not found`. Step 5 answers the same groups without a `members` key; the unknown
+  name gives 200 with `totalResults` 0 and `"Resources":[]`. Without the parameter `members` is
+  always present, `"members":[]` for an empty group; another excluded name changes nothing.
 - **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`list`), `TestSCIMGroupHandler`,
-  `TestSCIMGroupsWired`, `TestSCIMParseGroupFilter`, `TestSCIMDiscoveryDocuments`
+  `TestSCIMGroupsWired`, `TestSCIMParseGroupFilter`, `TestSCIMExcludesMembers`,
+  `TestSCIMDiscoveryDocuments`
 
 ### TC-AUTH-089 — A group patch recomputes the member's role from the groups claim
 - **Priority:** P0
@@ -1840,7 +1847,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   1. `PATCH /scim/v2/Groups/{Admins}` with `add` path `members` value `[{"value":"<U>"}]`.
   2. `PATCH` the same group with `remove` path `members[value eq "<U>"]`.
   3. `PATCH /scim/v2/Groups/{Sales}` removing U.
-- **Expected:** Step 1 answers 200 with U as a member; U becomes admin, one `role_audit_log`
+- **Expected:** Step 1 answers 204 with no body, and a following `GET` of Admins lists U as a
+  member; U becomes admin, one `role_audit_log`
   `user_role_changed` row (`auth_method` `scim`, NULL `actor_user_id`) and, after the commit, one
   `auth_audit_log` success row (method `scim`) for U; a raised role ends no session. Step 2 makes U
   sales again with one more audit row; the sales role lacks permissions the admin role had, so U's
@@ -1867,7 +1875,7 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
      removes X).
 - **Expected:** Steps 1 and 2 answer 400 with `scimType` `mutability` and the detail "The last active
   admin must stay an active admin"; `scim_group_members`, X's role and `role_id`, `role_audit_log`
-  and `auth_audit_log` are unchanged. Step 3 answers 200: Y becomes admin and X sales, with one role
+  and `auth_audit_log` are unchanged. Step 3 answers 204: Y becomes admin and X sales, with one role
   audit row each, and exactly one active admin remains. When X is in Admins only, step 1's remove
   would deactivate X and is refused the same way, and step 3 deactivates X and ends its credentials
   while Y becomes admin. The Users patch keeps answering its own last-admin refusal with
@@ -1876,7 +1884,7 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   `replace_to_inactive`, `handover_replace`, `handover_deactivates_old_admin`, `handover_add_remove`), `TestSCIMGroupHandler` (`last_admin_mutability`,
   `last_admin_before_invalid_value`)
 
-### TC-AUTH-091 — Group patches outside the members, and group creation or deletion, are refused
+### TC-AUTH-091 — Group patches outside the members, group deletion and a create outside the mapping are refused
 - **Priority:** P1
 - **Type:** negative
 - **Preconditions:** A valid SCIM token; the mapping of TC-AUTH-089; a customer and an erased
@@ -1885,14 +1893,23 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   1. `PATCH` Admins adding `"abc"`, an unknown id, the customer, the erased account, and a valid id
      next to an unknown one.
   2. `PATCH` Admins with path `displayName`, then `remove` without a path.
-  3. `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}`, `PUT /scim/v2/Groups/{id}`.
+  3. `POST /scim/v2/Groups` with `{"displayName":"New"}` (no mapping value), then
+     `DELETE /scim/v2/Groups/{id}`, `PUT /scim/v2/Groups/{id}`, and finally a `POST` whose
+     `externalId` is `Admins` (Microsoft Entra ID's body: both schemas, `displayName` any other
+     text, `meta`), sent twice.
 - **Expected:** Step 1 answers 400 `invalidValue` each time and changes no table. Step 2 answers
-  400 `invalidPath`, then 400 `noTarget`, without reaching the service. Step 3: the POST answers 405
-  with the SCIM error body (`"status":"405"`) and `Allow: GET`, the DELETE 405 with `Allow: GET,
-  PATCH`, and the PUT the router's plain 404.
+  400 `invalidPath`, then 400 `noTarget`, without reaching the service. Step 3: the first POST
+  answers 400 `invalidValue` with the detail "A Group can be created only for a groups value of
+  the single sign-on role mapping" (as do case or trailing-space variants of a value and a value
+  removed from the mapping), a POST listing members 400 `invalidValue`, a body that is not one JSON
+  object or repeats a key 400 `invalidSyntax`; the DELETE answers 405 with the SCIM error body
+  (`"status":"405"`) and `Allow: GET, PATCH`, and the PUT the router's plain 404. The POST of
+  `Admins` answers 201 both times with the same Admins group, a `Location` equal to its
+  `meta.location`, and writes nothing (`scim_group_members` keeps its row count); `externalId`
+  wins over `displayName` when both are values.
 - **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`invalid members`,
-  `mapping to the customer role`), `TestSCIMGroupHandler`, `TestSCIMParseGroupPatch`,
-  `TestSCIMGroupsWired`
+  `mapping to the customer role`, `create`), `TestSCIMGroupHandler`, `TestSCIMParseGroupPatch`,
+  `TestSCIMParseGroupCreate`, `TestSCIMGroupsWired`
 
 ### TC-AUTH-092 — Two group patches cannot remove the last two admins together
 - **Priority:** P0

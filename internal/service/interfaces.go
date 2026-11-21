@@ -822,6 +822,11 @@ type SCIMGroupService interface {
 	// Get returns the group rawID names; an id that does not decode or names
 	// no current group is apperrors.ErrNotFound.
 	Get(ctx context.Context, rawID string) (*SCIMGroupRecord, error)
+	// Create resolves a Group create to the existing group whose value
+	// equals externalID byte for byte or, failing that, displayName, with
+	// its managed members. It writes nothing; no match is
+	// ErrSCIMInvalidValue.
+	Create(ctx context.Context, externalID, displayName *string) (*SCIMGroupRecord, error)
 	// Patch changes the group's members and, in the same governed
 	// transaction, recomputes each affected user's role from the groups
 	// claim. A member an add or a replace names must be a managed account.

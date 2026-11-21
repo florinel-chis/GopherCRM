@@ -974,7 +974,8 @@ Regression roots: see the end of [Users create and replace](#users-create-and-re
 A SCIM Group is a distinct value of a role-mapping row with claim `groups` in the effective single
 sign-on settings, read on every request; roles rows are not groups. `displayName` is the value,
 compared byte for byte, and the `id` its unpadded base64url encoding. Groups come from the mapping
-and cannot be created, renamed or deleted through SCIM. Membership is stored in
+and cannot be renamed or deleted through SCIM; a POST only resolves an existing value (#630).
+Membership is stored in
 `scim_group_members` (`group_value` exact: `utf8mb4_bin` on MySQL/MariaDB, `BINARY` on SQLite;
 unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT`).
 
@@ -982,10 +983,13 @@ unique per group and user; `user_id` references `users` with `ON DELETE RESTRICT
 |---|---|
 | `GET /scim/v2/Groups` | 200 `ListResponse`, ascending by value, paged by `startIndex`/`count`; the only filter is `displayName eq "<value>"`, anything else 400 `invalidFilter` |
 | `GET /scim/v2/Groups/{id}` | 200 Group with its managed members (live, not customer, linked to the issuer), id ascending; an id that does not decode or names no current group is 404 `Group not found` |
-| `PATCH /scim/v2/Groups/{id}` | 200 Group; see below |
-| `POST /scim/v2/Groups`, `DELETE /scim/v2/Groups/{id}` | 405 SCIM error with `Allow: GET` or `Allow: GET, PATCH` |
+| `PATCH /scim/v2/Groups/{id}` | 204 with no body; see below |
+| `POST /scim/v2/Groups` | 201 with the existing group, its `Location` and the scim content type, when the body's `externalId` or, failing that, its `displayName` equals a current `groups` value byte for byte; it writes nothing, so a repeat gives the same answer. Otherwise 400 `invalidValue` `A Group can be created only for a groups value of the single sign-on role mapping` (also a non-string `externalId`/`displayName` or neither present); a non-empty `members` is 400 `invalidValue` `Add the members of a Group with PATCH`; a body that is not one JSON object or repeats a key is 400 `invalidSyntax` (#630) |
+| `DELETE /scim/v2/Groups/{id}` | 405 SCIM error with `Allow: GET, PATCH` |
 
-`PUT /scim/v2/Groups/{id}` is not routed (the router's 404).
+`PUT /scim/v2/Groups/{id}` is not routed (the router's 404). Both GETs (and the POST) honour
+`excludedAttributes=members` (or its Group-URN form, ASCII case-insensitive), which omits the
+`members` attribute; every other name is ignored, and without it `members` is always present.
 
 **Patch.** The operations (`add`, `remove`, `replace`, any ASCII case) apply in order to the member
 set: `add`/`replace` with path `members` or path-less with `{"members": [...]}`, `remove` with

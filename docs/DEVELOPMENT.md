@@ -494,13 +494,16 @@ auth checker; run the MySQL root on MariaDB too), `TestSCIMUserDeleteHandler`
 (`internal/handler`), `TestSCIMUserDeleteWired` (`cmd`) and `TestConcurrencyDocSCIMUserPatch`
 (`internal/config`). The rules are in [AUTHORIZATION.md](AUTHORIZATION.md#users-delete-504).
 
-**SCIM groups (#506)** — `GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/:id` and the 405 of
-`POST /Groups` and `DELETE /Groups/:id` are mounted by `SetupSCIMRoutes` from the
+**SCIM groups (#506)** — `GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/:id` (204 on success),
+the create `POST /Groups` that resolves a mapping value to its existing group (#630) and the
+DELETE 405 are mounted by `SetupSCIMRoutes` from the
 `SCIMGroupHandler` (`internal/handler/scim_group_handler.go`; its patch error switch tests
 `ErrSCIMGroupLastAdmin`, answered 400 `mutability`, before `ErrSCIMInvalidValue`). The groups are
 the distinct `groups`-claim values of the effective role mapping (`internal/service/scim_groups.go`,
 `SCIMGroupService`); the id is `scim.GroupID` (unpadded base64url), and `internal/scim/groups.go`
-and `group_patch.go` hold the Group resource, `ParseGroupFilter` and `ParseGroupPatch`. Membership
+and `group_patch.go` hold the Group resource, `ParseGroupFilter`, `ParseGroupCreate`,
+`ExcludesMembers` (`excludedAttributes=members`) and `ParseGroupPatch`; `scimGroupService.Create`
+resolves `externalId`, then `displayName`, to a current value and writes nothing. Membership
 is the `scim_group_members` table (`models.SCIMGroupMember`, `ensureSCIMGroupMemberCollation`,
 `internal/repository/scim_group_member_repository.go`; migration
 `20261129120000_add_scim_group_members`). `scimGroupService.Patch`

@@ -70,7 +70,7 @@ provider can also read the groups of the role mapping and change their members; 
 sets the person's role from their groups. A person left in no mapped group is deactivated and
 signed out everywhere, with their API keys revoked; a person moved to a role that lacks a
 permission the old one had is signed out at once. A change that would leave no active
-administrator is refused. Groups cannot be created, renamed or deleted through SCIM. GopherCRM keeps the user
+administrator is refused. Groups cannot be renamed or deleted through SCIM; a create only answers with the existing group of a role mapping value. GopherCRM keeps the user
 name, active state, given and family name, work email and roles from the provider's updates; other
 attributes the provider sends, for example `externalId`, `displayName` or a job title, are accepted
 and not stored, so the provider's default attribute mappings can stay. An administrator creates the provider's SCIM token under Settings →

@@ -12,8 +12,11 @@ package main
 // rows carry method scim. Issue #471 adds PATCH /Users/:id, whose active
 // false ends the sessions of the account. Issue #504 adds DELETE /Users/:id,
 // the same deactivation, never an erasure. Issue #506 adds the Groups:
-// GET /Groups and /Groups/:id, PATCH /Groups/:id and the 405 of POST and
-// DELETE. Over a SQLite file opened by the real connector.
+// GET /Groups and /Groups/:id, PATCH /Groups/:id and a 405 for DELETE.
+// Issue #630 adds the group create of a mapping value and runs the group
+// sequence of Microsoft Entra ID: lookup by displayName with
+// excludedAttributes=members, create, repeated create, member add (204) and
+// read. Over a SQLite file opened by the real connector.
 
 import (
 	"bytes"
@@ -34,6 +37,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/scim"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -842,7 +846,9 @@ func TestSCIMUserDeleteWired(t *testing.T) {
 // /Groups and PATCH /Groups/:id sit behind the SCIM token authentication
 // (each refusal writes one scim audit row); with a valid token the list is
 // exactly the groups-claim values of the role mapping, a members add changes
-// the role, and POST and DELETE answer a SCIM 405.
+// the role (204), DELETE answers a SCIM 405, and (#630) Microsoft Entra ID's
+// group sequence of lookup, create, repeated create, member add and reads
+// runs end to end.
 func TestSCIMGroupsWired(t *testing.T) {
 	t.Setenv("DISABLE_RATE_LIMIT", "")
 	var adminRole, salesRole models.Role
@@ -850,8 +856,8 @@ func TestSCIMGroupsWired(t *testing.T) {
 		require.NoError(t, models.DB.Where("system_key = ?", "admin").First(&adminRole).Error)
 		require.NoError(t, models.DB.Where("system_key = ?", "sales").First(&salesRole).Error)
 		boot.cfg.SSO.IssuerURL = "https://idp.example.test"
-		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"groups","value":"Admins","role_id":%d},{"claim":"groups","value":"Sales","role_id":%d},{"claim":"roles","value":"CRM.Sales","role_id":%d}]`,
-			adminRole.ID, salesRole.ID, salesRole.ID)
+		boot.cfg.SSO.RoleMapping = fmt.Sprintf(`[{"claim":"groups","value":"Admins","role_id":%d},{"claim":"groups","value":"Sales","role_id":%d},{"claim":"roles","value":"CRM.Sales","role_id":%d},{"claim":"groups","value":"%s","role_id":%d}]`,
+			adminRole.ID, salesRole.ID, salesRole.ID, entraGroupObjectID, salesRole.ID)
 	})
 	prefix := boot.cfg.API.Prefix
 	addr := 0
@@ -925,10 +931,11 @@ func TestSCIMGroupsWired(t *testing.T) {
 		} `json:"Resources"`
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &list))
-	assert.Equal(t, 2, list.TotalResults)
-	require.Len(t, list.Resources, 2)
-	assert.Equal(t, []string{"Admins", "Sales"}, []string{list.Resources[0].DisplayName, list.Resources[1].DisplayName})
-	assert.Equal(t, []string{adminsID, salesID}, []string{list.Resources[0].ID, list.Resources[1].ID})
+	assert.Equal(t, 3, list.TotalResults)
+	require.Len(t, list.Resources, 3)
+	assert.Equal(t, []string{entraGroupObjectID, "Admins", "Sales"},
+		[]string{list.Resources[0].DisplayName, list.Resources[1].DisplayName, list.Resources[2].DisplayName})
+	assert.Equal(t, []string{scim.GroupID(entraGroupObjectID), adminsID, salesID}, []string{list.Resources[0].ID, list.Resources[1].ID, list.Resources[2].ID})
 
 	// The local admin (a password, no identity link) is refused as a member
 	// like an unknown id, and nothing is written.
@@ -946,6 +953,9 @@ func TestSCIMGroupsWired(t *testing.T) {
 	assert.Equal(t, membersBefore, membersAfter, "no membership row is written")
 
 	recorder = scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/"+adminsID, addBody, nextRemote(), scimToken)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+	assert.Equal(t, 0, recorder.Body.Len())
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/Groups/"+adminsID, "", nextRemote(), scimToken)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"members":[{"value":"%d"}]`, member.ID))
 	require.NoError(t, models.DB.First(&stored, member.ID).Error)
@@ -959,16 +969,69 @@ func TestSCIMGroupsWired(t *testing.T) {
 	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", member.ID).Count(&successes).Error)
 	assert.Equal(t, int64(1), successes)
 
-	for _, tc := range []struct{ method, path, allow string }{
-		{http.MethodPost, "/scim/v2/Groups", "GET"},
-		{http.MethodDelete, "/scim/v2/Groups/" + adminsID, "GET, PATCH"},
-	} {
-		recorder = scimWiredSend(router, tc.method, tc.path, `{"displayName":"New"}`, nextRemote(), scimToken)
-		assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code, tc.method)
-		assert.Equal(t, tc.allow, recorder.Header().Get("Allow"), tc.method)
-		assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"), tc.method)
-		assert.Contains(t, recorder.Body.String(), `"status":"405"`, tc.method)
-	}
+	recorder = scimWiredSend(router, http.MethodDelete, "/scim/v2/Groups/"+adminsID, `{"displayName":"New"}`, nextRemote(), scimToken)
+	assert.Equal(t, http.StatusMethodNotAllowed, recorder.Code)
+	assert.Equal(t, "GET, PATCH", recorder.Header().Get("Allow"))
+	assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+	assert.Contains(t, recorder.Body.String(), `"status":"405"`)
 	recorder = scimWiredSend(router, http.MethodPut, "/scim/v2/Groups/"+adminsID, `{}`, nextRemote(), scimToken)
 	assert.Equal(t, http.StatusNotFound, recorder.Code, "PUT /Groups/:id is not routed")
+	recorder = scimWiredSend(router, http.MethodPost, "/scim/v2/Groups", `{"displayName":"New"}`, nextRemote(), scimToken)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code, "a create of a value outside the mapping")
+	assert.Contains(t, recorder.Body.String(), `"scimType":"invalidValue"`)
+
+	// Microsoft Entra ID's group sequence under the mapping of the guide:
+	// the group's Object ID is the groups value.
+	entraID := scim.GroupID(entraGroupObjectID)
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/Groups?excludedAttributes=members&filter=displayName%20eq%20%22CRM%20Sales%22", "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &list))
+	assert.Equal(t, 0, list.TotalResults, "Entra's display name is not a groups value")
+	assert.Contains(t, recorder.Body.String(), `"Resources":[]`)
+
+	createBody := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group","http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group"],` +
+		`"externalId":"` + entraGroupObjectID + `","displayName":"CRM Sales","meta":{"resourceType":"Group"}}`
+	var groupMembers int64
+	require.NoError(t, models.DB.Model(&models.SCIMGroupMember{}).Count(&groupMembers).Error)
+	for attempt := 1; attempt <= 2; attempt++ {
+		recorder = scimWiredSend(router, http.MethodPost, "/scim/v2/Groups", createBody, nextRemote(), scimToken)
+		require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+		assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+		var group struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"displayName"`
+			Meta        struct {
+				Location string `json:"location"`
+			} `json:"meta"`
+		}
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &group))
+		assert.Equal(t, entraID, group.ID, "attempt %d", attempt)
+		assert.Equal(t, entraGroupObjectID, group.DisplayName, "attempt %d", attempt)
+		assert.NotEmpty(t, recorder.Header().Get("Location"), "attempt %d", attempt)
+		assert.Equal(t, group.Meta.Location, recorder.Header().Get("Location"), "attempt %d", attempt)
+		var after int64
+		require.NoError(t, models.DB.Model(&models.SCIMGroupMember{}).Count(&after).Error)
+		assert.Equal(t, groupMembers, after, "attempt %d writes no membership row", attempt)
+	}
+
+	recorder = scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/"+entraID,
+		fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"$ref":null,"value":"%d"}]}]}`, member.ID),
+		nextRemote(), scimToken)
+	require.Equal(t, http.StatusNoContent, recorder.Code, recorder.Body.String())
+	assert.Equal(t, 0, recorder.Body.Len())
+
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/Groups/"+entraID+"?excludedAttributes=members", "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var excluded map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &excluded))
+	assert.NotContains(t, excluded, "members")
+	assert.Equal(t, entraID, excluded["id"])
+
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/Groups/"+entraID, "", nextRemote(), scimToken)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), fmt.Sprintf(`"members":[{"value":"%d"}]`, member.ID))
 }
+
+// entraGroupObjectID is the Object ID of a Microsoft Entra ID group, used as
+// a groups value of the role mapping.
+const entraGroupObjectID = "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159"

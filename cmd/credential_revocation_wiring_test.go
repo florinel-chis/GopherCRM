@@ -199,7 +199,7 @@ func TestCredentialRevocationProductionWiring(t *testing.T) {
 		key := issueKey(s)
 
 		recorder := scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/U2FsZXM", groupRemoveBody(user.ID), nextRemote(), scimToken)
-		require.Equal(t, http.StatusOK, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
+		require.Equal(t, http.StatusNoContent, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
 		assertKeyRevoked(key, user.ID, "after the group removal")
 		assertSessionEnded(s, "after the group removal")
 		var stored models.User
@@ -216,7 +216,7 @@ func TestCredentialRevocationProductionWiring(t *testing.T) {
 		key := issueKey(s)
 
 		recorder := scimWiredSend(router, http.MethodPatch, "/scim/v2/Groups/QWRtaW5z", groupRemoveBody(user.ID), nextRemote(), scimToken)
-		require.Equal(t, http.StatusOK, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
+		require.Equal(t, http.StatusNoContent, recorder.Code, "an unwired service would answer 500: %s", recorder.Body.String())
 		assertSessionEnded(s, "after the lowered role")
 		recorder = scimWiredSend(router, http.MethodGet, prefix+"/users/me", "", nextRemote(), key)
 		require.Equal(t, http.StatusOK, recorder.Code, "the key keeps working: %s", recorder.Body.String())
