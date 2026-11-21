@@ -178,6 +178,13 @@ func (t WebhookEventTypes) MarshalJSON() ([]byte, error) {
 // PreviousSecretExpiresAt, and every request signed in that window carries a
 // signature under each secret.
 //
+// ConsecutiveFailures and PausedUntil are the endpoint's circuit (#569),
+// written only by the delivery runtime: every sent attempt that fails adds one
+// to ConsecutiveFailures, and from the third consecutive failure PausedUntil
+// holds the end of a pause (1 min doubling up to 1 h) during which the runtime
+// skips the endpoint's due deliveries. A 2xx answer resets both. No admin
+// write path sets them; a PUT on the endpoint does not clear a pause.
+//
 // @Description A registered outbound webhook endpoint (admin only). Never carries the signing secret; it is returned once, by POST /webhooks/endpoints and by POST /webhooks/endpoints/{id}/rotate-secret.
 type WebhookEndpoint struct {
 	// Unique identifier, assigned by the server. Read-only.
@@ -198,6 +205,10 @@ type WebhookEndpoint struct {
 	PreviousSecretExpiresAt *time.Time `json:"previous_secret_expires_at" extensions:"x-nullable" example:"2026-11-21T09:30:00Z" readonly:"true"`
 	// Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.
 	IsActive bool `gorm:"not null" json:"is_active" example:"true"`
+	// Consecutive failed sends since the last success; reset to 0 by a 2xx answer. Read-only.
+	ConsecutiveFailures int `gorm:"size:32;not null;default:0" json:"consecutive_failures" example:"0" readonly:"true"`
+	// Until this time (RFC 3339) the sender skips the endpoint's due deliveries. Set from the 3rd consecutive failed send, growing 1 min x 2^(n-3) up to 1 h; null when not paused; a past value means the pause is over and the next attempt decides. Cleared by a success. Read-only.
+	PausedUntil *time.Time `json:"paused_until" extensions:"x-nullable" example:"2026-11-20T09:31:00Z" readonly:"true"`
 }
 
 // TableName pins the table name.

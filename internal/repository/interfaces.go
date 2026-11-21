@@ -433,6 +433,18 @@ type WebhookRepository interface {
 	// now, fenced in the statement; it does not touch updated_at. Matching
 	// nothing is not an error.
 	ClearExpiredPreviousSecret(ctx context.Context, id uint, now time.Time) error
+	// RecordEndpointFailure counts one failed send of the endpoint circuit
+	// (#569): consecutive_failures + 1 and paused_until = pausedUntil (NULL
+	// when nil), in one UPDATE by primary key fenced on consecutive_failures =
+	// failuresBefore. Matching nothing (a concurrent reset or failure, a
+	// deleted endpoint) is not an error. It does not touch updated_at and
+	// opens no transaction.
+	RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) error
+	// RecordEndpointSuccess resets the endpoint circuit (#569):
+	// consecutive_failures = 0 and paused_until = NULL, in one UPDATE by
+	// primary key that matches only an endpoint not already reset. It does not
+	// touch updated_at and opens no transaction.
+	RecordEndpointSuccess(ctx context.Context, id uint) error
 	// DeleteEndpoint locks the endpoint row (FOR UPDATE on MySQL), deletes its
 	// delivery rows and then the endpoint, in one transaction (a savepoint
 	// under WithTx). A missing endpoint is gorm.ErrRecordNotFound.
@@ -446,7 +458,9 @@ type WebhookRepository interface {
 	// ListDueDeliveries is a plain SELECT (no locking clause) of the id and
 	// endpoint_id of the rows whose status is pending and next_attempt_at <=
 	// now, ordered by next_attempt_at then id, at most limit. That order is
-	// not id order: the runtime sorts each endpoint's rows by id itself.
+	// not id order: the runtime sorts each endpoint's rows by id itself. The
+	// rows of an endpoint whose paused_until is after now are left out in the
+	// statement (#569); at paused_until == now the endpoint is due again.
 	ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error)
 	// ClaimDelivery moves one due pending row to sending (attempts + 1,
 	// last_attempt_at, lease_until) by primary key and returns it, or

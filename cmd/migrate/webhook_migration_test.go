@@ -141,8 +141,8 @@ func TestWebhookMigration(t *testing.T) {
 	t.Cleanup(func() { models.DB = previousDB })
 
 	// The parity reference: the tables as MigrateDatabase creates them on top
-	// of the previous SQL head (wantModel), and the same without the two
-	// columns #503 added to webhook_endpoints (want), which is what this
+	// of the previous SQL head (wantModel), and the same without the columns
+	// #503 and #569 added to webhook_endpoints (want), which is what this
 	// migration creates at its version.
 	reference := openMigrationTestDB(t, baseDSN, "whk_ref")
 	require.NoError(t, reference.m.Migrate(webhooksPreviousVersion))
@@ -152,10 +152,10 @@ func TestWebhookMigration(t *testing.T) {
 	runMigrateDatabase(t, reference.dsn)
 	wantModel := snapshotWebhookTables(t, reference)
 	want := map[string]tableSchema{
-		"webhook_endpoints":  withoutColumns(wantModel["webhook_endpoints"], webhookSecretRotationColumns),
+		"webhook_endpoints":  withoutColumns(withoutColumns(wantModel["webhook_endpoints"], webhookSecretRotationColumns), webhookEndpointPauseColumns),
 		"webhook_deliveries": wantModel["webhook_deliveries"],
 	}
-	require.Len(t, wantModel["webhook_endpoints"].Columns, len(want["webhook_endpoints"].Columns)+2)
+	require.Len(t, wantModel["webhook_endpoints"].Columns, len(want["webhook_endpoints"].Columns)+len(webhookSecretRotationColumns)+len(webhookEndpointPauseColumns))
 	require.NotEmpty(t, want["webhook_endpoints"].Columns)
 	require.NotEmpty(t, want["webhook_deliveries"].Columns)
 	assert.Contains(t, want["webhook_deliveries"].Indexes, "idx_webhook_deliveries_endpoint_event (endpoint_id,event_id) non_unique=0")

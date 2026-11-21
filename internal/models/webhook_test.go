@@ -64,8 +64,8 @@ func assertWebhookSchemaSQLite(t *testing.T) {
 	require.True(t, DB.Migrator().HasTable("webhook_deliveries"))
 
 	names, endpoint := webhookColumns(t, "webhook_endpoints")
-	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "previous_secret_expires_at", "previous_secret_sealed",
-		"secret_sealed", "updated_at", "url"}, names, "exactly these columns, no deleted_at")
+	assert.Equal(t, []string{"consecutive_failures", "created_at", "event_types", "id", "is_active", "paused_until", "previous_secret_expires_at",
+		"previous_secret_sealed", "secret_sealed", "updated_at", "url"}, names, "exactly these columns, no deleted_at")
 	assert.Equal(t, 1, endpoint["id"].PK)
 	for _, name := range []string{"url", "event_types", "secret_sealed", "is_active"} {
 		assert.Equal(t, 1, endpoint[name].NotNull, "%s is NOT NULL", name)
@@ -80,6 +80,13 @@ func assertWebhookSchemaSQLite(t *testing.T) {
 		assert.Nil(t, endpoint[name].Dflt, "%s has no default", name)
 	}
 	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["previous_secret_sealed"].Type))
+	// The pause columns (#569): the counter is NOT NULL with default 0, the
+	// pause end nullable with no default.
+	assert.Equal(t, 1, endpoint["consecutive_failures"].NotNull, "consecutive_failures is NOT NULL")
+	require.NotNil(t, endpoint["consecutive_failures"].Dflt)
+	assert.Equal(t, "0", strings.Trim(*endpoint["consecutive_failures"].Dflt, `'"`))
+	assert.Equal(t, 0, endpoint["paused_until"].NotNull, "paused_until is nullable")
+	assert.Nil(t, endpoint["paused_until"].Dflt, "paused_until has no default")
 	assert.Empty(t, webhookIndexes(t, "webhook_endpoints"), "the endpoint table has only its primary key")
 
 	names, delivery := webhookColumns(t, "webhook_deliveries")
@@ -189,9 +196,11 @@ func TestWebhookJSON(t *testing.T) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "previous_secret_expires_at", "updated_at", "url"}, keys)
+	assert.Equal(t, []string{"consecutive_failures", "created_at", "event_types", "id", "is_active", "paused_until", "previous_secret_expires_at", "updated_at", "url"}, keys)
 	assert.Equal(t, []interface{}{"lead.created"}, decoded["event_types"], "event_types is an array")
 	assert.Nil(t, decoded["previous_secret_expires_at"], "null without a rotation")
+	assert.Equal(t, float64(0), decoded["consecutive_failures"], "0 on a healthy endpoint")
+	assert.Nil(t, decoded["paused_until"], "null when not paused")
 
 	// After a rotation (#503) the expiry is serialised, the previous sealed
 	// secret never.
@@ -211,6 +220,16 @@ func TestWebhookJSON(t *testing.T) {
 	assert.Contains(t, string(rotatedRaw), `"secret":"whsec_bmV3"`)
 	assert.Contains(t, string(rotatedRaw), `"previous_secret_expires_at":"2026-11-21T09:30:00Z"`)
 	assert.NotContains(t, string(rotatedRaw), "sealed")
+
+	// A paused endpoint (#569) serialises its counter and the pause end.
+	pausedEndpoint := endpoint
+	pausedEndpoint.ConsecutiveFailures = 4
+	pausedUntil := created.Add(2 * time.Minute)
+	pausedEndpoint.PausedUntil = &pausedUntil
+	raw, err = json.Marshal(pausedEndpoint)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"consecutive_failures":4`)
+	assert.Contains(t, string(raw), `"paused_until":"2026-11-20T09:32:00Z"`)
 
 	raw, err = json.Marshal(WebhookEndpoint{})
 	require.NoError(t, err)

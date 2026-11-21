@@ -46,6 +46,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyLifetimeMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestRefreshTokenSessionMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestRefreshTokenSessionMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookEndpointPauseMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookEndpointPauseMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityAllowList'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityMigration'),
     }
@@ -60,6 +62,7 @@ def check(output, root, *, migrations_only=False):
             'TestRoleSQLiteUpgradeFromV120',
             'TestQuoteHistorySourceSQLiteUpgrade',
             'TestWebhookSecretRotationSQLiteUpgrade',
+            'TestWebhookEndpointPauseSQLiteUpgrade',
         ))
         required.update(('github.com/florinel-chis/gophercrm/internal/repository', name) for name in (
             'TestLookupIndexesServeLookupsSQLite',

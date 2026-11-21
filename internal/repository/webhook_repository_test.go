@@ -521,4 +521,97 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 				Updates(map[string]interface{}{"status": models.WebhookDeliveryFailed, "lease_until": nil, "next_attempt_at": nil}).Error)
 		})
 	})
+
+	// The endpoint circuit (#569).
+	t.Run("discovery leaves out a paused endpoint's rows until paused_until", func(t *testing.T) {
+		now := time.Now().UTC().Truncate(time.Millisecond)
+		paused := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		healthy := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		pausedRow := seedWebhookDelivery(t, db, paused.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(now.Add(-time.Minute))})
+		healthyRow := seedWebhookDelivery(t, db, healthy.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(now.Add(-time.Minute))})
+		until := now.Add(time.Minute)
+		require.NoError(t, repo.RecordEndpointFailure(ctx, paused.ID, 0, &until))
+
+		discoveredIDs := func(at time.Time) []uint {
+			statements, stop := captureWebhookStatements(t, db, fmt.Sprintf("webhook_repo_pause_%d", at.UnixNano()))
+			due, err := repo.ListDueDeliveries(ctx, at, 100000)
+			require.NoError(t, err)
+			stop()
+			for _, statement := range statements() {
+				assertNoLockingClause(t, statement)
+			}
+			ids := []uint{}
+			for _, row := range due {
+				ids = append(ids, row.ID)
+			}
+			return ids
+		}
+		ids := discoveredIDs(until.Add(-time.Second))
+		assert.NotContains(t, ids, pausedRow.ID, "a paused endpoint's row is not discovered before paused_until")
+		assert.Contains(t, ids, healthyRow.ID, "another endpoint's row is discovered")
+		ids = discoveredIDs(until)
+		assert.Contains(t, ids, pausedRow.ID, "at paused_until the endpoint is due again")
+		assert.Contains(t, ids, healthyRow.ID)
+		require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("id IN ?", []uint{pausedRow.ID, healthyRow.ID}).
+			Updates(map[string]interface{}{"status": models.WebhookDeliveryFailed, "next_attempt_at": nil}).Error)
+	})
+
+	readEndpoint := func(t *testing.T, id uint) models.WebhookEndpoint {
+		t.Helper()
+		var endpoint models.WebhookEndpoint
+		require.NoError(t, db.Where("id = ?", id).Take(&endpoint).Error)
+		return endpoint
+	}
+	stampUpdatedAt := func(t *testing.T, id uint) time.Time {
+		t.Helper()
+		stamp := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+		require.NoError(t, db.Exec("UPDATE webhook_endpoints SET updated_at = ? WHERE id = ?", stamp, id).Error)
+		return stamp
+	}
+
+	t.Run("RecordEndpointFailure is fenced on the count and leaves updated_at", func(t *testing.T) {
+		endpoint := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		stamp := stampUpdatedAt(t, endpoint.ID)
+
+		require.NoError(t, repo.RecordEndpointFailure(ctx, endpoint.ID, 0, nil))
+		stored := readEndpoint(t, endpoint.ID)
+		assert.Equal(t, 1, stored.ConsecutiveFailures)
+		assert.Nil(t, stored.PausedUntil, "below the threshold the caller passes no pause")
+
+		before := stored
+		require.NoError(t, repo.RecordEndpointFailure(ctx, endpoint.ID, 0, timePtr(time.Now().Add(time.Hour))),
+			"a mismatched count is a lost race, not an error")
+		assert.Equal(t, before, readEndpoint(t, endpoint.ID), "a mismatched count changes nothing")
+
+		until := time.Now().UTC().Truncate(time.Millisecond).Add(time.Minute)
+		require.NoError(t, repo.RecordEndpointFailure(ctx, endpoint.ID, 1, &until))
+		stored = readEndpoint(t, endpoint.ID)
+		assert.Equal(t, 2, stored.ConsecutiveFailures)
+		require.NotNil(t, stored.PausedUntil)
+		assert.WithinDuration(t, until, *stored.PausedUntil, time.Millisecond)
+		assert.True(t, stored.UpdatedAt.Equal(stamp), "updated_at is unchanged")
+
+		assert.NoError(t, repo.RecordEndpointFailure(ctx, 99999999, 0, nil), "a missing endpoint is not an error")
+	})
+
+	t.Run("RecordEndpointSuccess resets both columns and leaves updated_at", func(t *testing.T) {
+		endpoint := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		until := time.Now().UTC().Truncate(time.Millisecond).Add(time.Minute)
+		require.NoError(t, repo.RecordEndpointFailure(ctx, endpoint.ID, 0, &until))
+		stamp := stampUpdatedAt(t, endpoint.ID)
+
+		require.NoError(t, repo.RecordEndpointSuccess(ctx, endpoint.ID))
+		stored := readEndpoint(t, endpoint.ID)
+		assert.Equal(t, 0, stored.ConsecutiveFailures)
+		assert.Nil(t, stored.PausedUntil)
+		assert.True(t, stored.UpdatedAt.Equal(stamp), "updated_at is unchanged")
+
+		var nulls int64
+		require.NoError(t, db.Raw("SELECT COUNT(*) FROM webhook_endpoints WHERE id = ? AND consecutive_failures = 0 AND paused_until IS NULL",
+			endpoint.ID).Scan(&nulls).Error)
+		assert.EqualValues(t, 1, nulls)
+		require.NoError(t, repo.RecordEndpointSuccess(ctx, endpoint.ID), "a healthy endpoint is not an error")
+		assert.Equal(t, stored, readEndpoint(t, endpoint.ID))
+		assert.NoError(t, repo.RecordEndpointSuccess(ctx, 99999999), "a missing endpoint is not an error")
+	})
 }

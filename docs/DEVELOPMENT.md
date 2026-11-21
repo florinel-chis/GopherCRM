@@ -3758,6 +3758,37 @@ commits. Code: `internal/models/webhook.go`,
   write. Re-checking against the written values instead would let a second claimer with the same
   clock reading count the first claimer's row as its own. The constants are package constants, not
   settings.
+- **Endpoint pause (#569).** Each endpoint has a circuit in `webhook_endpoints.consecutive_failures`
+  and `paused_until`, written only by the runtime. An attempt counts only when its request went
+  through `sendWebhook` (the endpoint was read, active and its secret opened; `attemptOutcome.sent`):
+  a 2xx is a success, and `http_status`, `redirect`, `timeout`, `connection_failed` and
+  `destination_refused` are failures. `destination_refused` covers both an egress refusal (the
+  guard refused the host or the dial) and a request-build error, so an endpoint the policy refuses
+  is paused after 3 attempts too: not only real HTTP answers count. A database failure reading the
+  endpoint, `endpoint_inactive`, `secret_unavailable` and a runtime without a client factory send
+  nothing and leave the circuit alone. After `finish` stored a status (a lost fence records
+  nothing), `deliver` calls `RecordEndpointSuccess` (one `UPDATE … SET consecutive_failures = 0,
+  paused_until = NULL WHERE id = ? AND (consecutive_failures <> 0 OR paused_until IS NOT NULL)`) or
+  `RecordEndpointFailure` (one `UPDATE … SET consecutive_failures = consecutive_failures + 1,
+  paused_until = ? WHERE id = ? AND consecutive_failures = ?`, fenced on the count `attempt` read
+  with the endpoint; zero rows is a lost race and not an error). Neither touches `updated_at`, opens
+  a transaction or takes a locking read; a write error is one Warn
+  (`operation=webhook_endpoint_health`) that never fails the pass. From the
+  `WebhookEndpointPauseAfter` (3rd) consecutive failure `paused_until` = the finish time +
+  `WebhookEndpointPause(f)` = `WebhookBackoff(f − 2, WebhookEndpointPauseBase 1 min,
+  WebhookEndpointPauseMax 1 h)`: 1, 2, 4, 8, 16, 32 minutes, then 1 hour; below 3 it stays NULL.
+  For one row alone the pause is always shorter than the row's own retry delay (2^(n−3) against
+  2^(n−1) minutes), so a single delivery keeps its schedule. Discovery adds `AND endpoint_id NOT IN
+  (SELECT id FROM webhook_endpoints WHERE paused_until IS NOT NULL AND paused_until > ?)` bound to
+  the same `now`, in SQL so a paused endpoint's rows never fill the batch of 100 (at `paused_until
+  == now` the endpoint is due again), and a worker stops its group as soon as an attempt pauses the
+  endpoint past `r.now()`: the rest of the group is neither claimed nor touched and keeps its
+  `attempts` and `next_attempt_at`. A pause logs one Info "Webhook endpoint paused" with
+  `operation=webhook_endpoint_pause`, `endpoint_id`, `consecutive_failures` and `paused_until`
+  only. The test ping neither reads nor writes the circuit, a redelivered row of a paused endpoint
+  (`RequeueDelivery`) waits for the pause, and a `PUT` on the endpoint (a URL change or a
+  reactivation) does not clear it, deliberately; `webhookEndpointColumns` stays `url`,
+  `event_types`, `is_active`.
 - **Signing.** `service.SignWebhook(secret, eventID, unixSeconds, body)` returns `v1,` +
   base64(HMAC-SHA256(base64decode(secret minus whsec_), id + "." + timestamp + "." + body)). Each
   attempt is re-signed with its own `webhook-timestamp`. `NewWebhookRequest` takes the secrets as
@@ -3794,14 +3825,18 @@ commits. Code: `internal/models/webhook.go`,
 - **Privacy.** Rows hold ids, the event type, a status and timestamps; erasure and ticket delete
   leave them (a non-goal). Log lines of the registry, the outbox, the runtime and the handler carry
   `operation`, `endpoint_id`, `delivery_id`, `event_type`, `record_id`, `attempts`, `status`,
-  `http_status` and `error_code` only (plus a sanitised database error); never the URL, host,
+  `http_status`, `error_code`, `consecutive_failures` and `paused_until` only (plus a sanitised
+  database error); never the URL, host,
   secret, sealed value, signature or a body. Transport errors, which quote the URL, are classified
   and never logged.
 - **Schema.** `webhook_endpoints` and `webhook_deliveries` (see
   [datamodel.md](datamodel.md#outbound-webhooks)) from `MigrateDatabase` on SQLite and
   `migrations/20261120120000_add_outbound_webhooks.up.sql` (created only when missing) on MySQL/MariaDB.
   The two rotation columns (#503) come from AutoMigrate and
-  `migrations/20261127120000_webhook_secret_rotation.up.sql` (each added only when missing).
+  `migrations/20261127120000_webhook_secret_rotation.up.sql` (each added only when missing), the two
+  pause columns (#569, `consecutive_failures int NOT NULL DEFAULT 0`, `paused_until datetime(3)
+  NULL`) from AutoMigrate and `migrations/20261129120005_webhook_endpoint_pause.up.sql` (each added
+  only when missing, no backfill, no index).
 
 Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`);
 `TestEgressPublicClient` (`internal/aeo`); `TestWebhookRepository{SQLite,MySQL}`
@@ -3834,6 +3869,15 @@ two-secret subtest), `TestWebhookRotateSecretHandler` (`internal/handler`),
 `TestWebhookSecretRotationMigration` (`cmd/migrate`); the migration and SQLite-upgrade roots are
 required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`.
+Endpoint pause (#569): `TestWebhookEndpointPause{SQLite,MySQL}`
+(`internal/service/webhook_endpoint_pause_test.go`, registered in the transaction profile through
+`TRANSACTION_SOURCES` and asserted by `scripts/ci/tests/test_go_checks.py`), the three circuit
+subtests of `TestWebhookRepository{SQLite,MySQL}`, `TestWebhookSchemaSQLite` and `TestWebhookJSON`
+(the new columns and keys), `TestWebhookEndpointPauseSQLiteUpgrade` (`internal/models`), and
+`TestWebhookEndpointPauseMigrationFiles` (it holds the newest-migration assertion since #569, moved
+from `TestRefreshTokenSessionMigrationFiles`) and `TestWebhookEndpointPauseMigration`
+(`cmd/migrate`); the migration and SQLite-upgrade roots are required by the migrations workflow,
+`scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`.
 
 ### Form retention purge
 

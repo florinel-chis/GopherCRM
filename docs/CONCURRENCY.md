@@ -77,7 +77,13 @@ rotations serialise on the endpoint row and each keeps the other's secret as the
 runtime's clear of an expired previous secret (`ClearExpiredPreviousSecret`) is a conditional
 `UPDATE` by primary key fenced on `previous_secret_expires_at <= now` in the statement, so a
 rotation committed after the runtime read the endpoint is never cleared; it leaves `updated_at`
-alone. Neither adds a lock edge. The outbox rows a create path writes are inserts into its own
+alone. Neither adds a lock edge. The endpoint pause (#569) adds two more conditional `UPDATE`s
+of `webhook_endpoints` by primary key, outside any transaction and after no locking read:
+`RecordEndpointFailure` (`consecutive_failures + 1` and `paused_until`, fenced on the
+`consecutive_failures` the runtime read with the endpoint) and `RecordEndpointSuccess` (reset to 0
+and NULL, fenced on the endpoint not being reset already); both leave `updated_at` alone. Discovery
+leaves out paused endpoints with a plain subselect of `webhook_endpoints` inside its non-locking
+`SELECT`. None of the three adds a lock edge. The outbox rows a create path writes are inserts into its own
 transaction after the record insert, behind a plain read of the endpoints; they add no lock edge to
 the chains above. The same holds for the updated events (#408): the lead update, the ticket update
 and the lead and ticket bulk status batches insert their rows after the record write, inside the

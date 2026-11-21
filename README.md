@@ -513,6 +513,10 @@ failure or a refused destination is retried after 1, 2, 4, … minutes (at most 
 once. A sender works on several endpoints at a time but sends one endpoint's events one at a time,
 oldest first, so a slow endpoint does not hold up the others. A retry or a second replica can still
 deliver an endpoint's events out of order: deduplicate on `webhook-id` and do not rely on order.
+An endpoint whose sent requests fail 3 times in a row is paused: the sender skips all its events
+for 1 minute, then 2, 4, … up to 1 hour after each further failure, and the first 2xx answer ends
+the pause. The endpoint shows `consecutive_failures` and `paused_until`. Neither a redelivery nor
+a change to the endpoint ends a pause early, and the test ping ignores it.
 
 **Test ping.** `POST /api/v1/webhooks/endpoints/:id/test` sends one signed request to the endpoint
 at once, active or not, and answers with the outcome: `{"event_id":"evt_…","outcome":"succeeded",

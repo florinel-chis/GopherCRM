@@ -1256,6 +1256,8 @@ pruned 30 days after their last change.
 | is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
 | previous_secret_sealed | string | No | NULL | `varchar(255)` | the sealed secret the last rotation replaced (#503), same box and context; `json:"-"` |
 | previous_secret_expires_at | datetime | No | NULL | `datetime(3)` | end of the rotation overlap window (rotation + 24 h): until then every request carries a signature under each secret; cleared by the runtime's next send after it; serialised, null without a rotation |
+| consecutive_failures | int | Yes | 0 | `int` | failed sends since the last success (#569); written only by the runtime with a conditional UPDATE by primary key, reset to 0 by a 2xx; serialised, read-only |
+| paused_until | datetime | No | NULL | `datetime(3)` | end of the endpoint's pause (#569): set from the 3rd consecutive failed send to the finish + 1 min, doubling up to 1 h; until then discovery skips the endpoint's due deliveries; cleared by a success, not by a PUT; serialised, null when not paused |
 
 ### webhook_deliveries
 
@@ -1280,7 +1282,9 @@ The status index serves only plain (non-locking) discovery reads; every write is
 MySQL and MariaDB get both tables from `20261120120000_add_outbound_webhooks` (created only when
 missing; the down drops both); SQLite from `MigrateDatabase`. The two rotation columns of
 `webhook_endpoints` come from `20261127120000_webhook_secret_rotation` (each added only when
-missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite.
+missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite. The
+two pause columns come from `20261129120005_webhook_endpoint_pause` the same way (each added only
+when missing, no backfill and no index; the down drops only them) and from AutoMigrate on SQLite.
 
 ## API Request/Response Format
 
