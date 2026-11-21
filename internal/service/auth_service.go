@@ -912,6 +912,12 @@ func (s *authService) refreshedAccessTokenFor(user *models.User) (string, error)
 // containment and the caller receives the generic ErrInvalidRefreshToken.
 var errRefreshOwnerRejected = fmt.Errorf("refresh token owner rejected: %w", ErrInvalidRefreshToken)
 
+// errRefreshTokenReuse marks a refresh token presented again after a
+// committed rotation had already exchanged it for a successor. It is internal
+// to RefreshAccessToken: the revocation of the token's whole family is
+// committed and the caller receives the generic ErrInvalidRefreshToken.
+var errRefreshTokenReuse = fmt.Errorf("refresh token reused: %w", ErrInvalidRefreshToken)
+
 // RefreshAccessToken validates the presented refresh token and rotates it:
 // the presented token is revoked and a fresh JWT + refresh token are issued.
 // Every rejection maps to ErrInvalidRefreshToken so callers cannot learn
@@ -931,6 +937,15 @@ var errRefreshOwnerRejected = fmt.Errorf("refresh token owner rejected: %w", Err
 // commits: the claim stands as the containment revocation of a token whose
 // account is dead, no successor is inserted, and the public error is the same
 // generic one.
+//
+// A token that a committed rotation already exchanged for a successor is the
+// other rejection that commits: when the live lookup misses, the revoked row
+// is read in the same transaction, and when a later row of its family exists
+// the owner is locked and every live token of the family is revoked. The
+// public error is again the generic one; the audit reason is token_reuse with
+// the owner's id. A request that loses the claim to a concurrent rotation is
+// not a reuse: it passed the live lookup, so it is refused as before and ends
+// nothing.
 func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, error) {
 	// Every dependency of the transactional flow is required. Running the old
 	// sequence of independent writes when one is missing would reintroduce
@@ -944,6 +959,7 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 	var (
 		tokens        *AuthTokens
 		ownerRejected bool
+		tokenReused   bool
 		ownerReason   string
 		tokenOwnerID  uint
 	)
@@ -962,6 +978,12 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
 			hash)
 		tokenOwnerID = ownerID
+		if errors.Is(err, errRefreshTokenReuse) {
+			// Commit the family revocation: the refusal stands, and so must
+			// the end of every token of the reused session.
+			tokenReused = true
+			return nil
+		}
 		if errors.Is(err, errRefreshOwnerRejected) {
 			ownerReason, _ = AuthAuditReason(err)
 			// Commit the containment: the claim has revoked a token whose
@@ -976,6 +998,19 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 		tokens = rotated
 		return nil
 	})
+	if tokenReused {
+		if err != nil {
+			// The family revocation did not commit; the next presentation of
+			// the token will try again. The caller still learns only that the
+			// token was rejected.
+			utils.Logger.WithError(utils.LogError(err)).WithField("user_id", tokenOwnerID).
+				Warn("Failed to commit revocation of a reused refresh token's session")
+		} else {
+			utils.Logger.WithField("user_id", tokenOwnerID).
+				Warn("Refresh token presented again after rotation; its session was revoked")
+		}
+		return nil, authRefusal(AuthAuditReasonTokenReuse, tokenOwnerID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken))
+	}
 	if ownerRejected {
 		if err != nil {
 			// The containment did not commit; the token is still live and the
@@ -1011,7 +1046,7 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	stored, err := refreshRepo.GetByTokenHash(hash)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, 0, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+			return s.refuseRevokedRefreshToken(refreshRepo, userRepo, hash)
 		}
 		return nil, 0, fmt.Errorf("refresh token lookup failed: %w", err)
 	}
@@ -1083,6 +1118,49 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	}
 
 	return &AuthTokens{AccessToken: accessToken, RefreshToken: newRefreshToken, User: user}, stored.UserID, nil
+}
+
+// refuseRevokedRefreshToken handles a presented token that is not live. It
+// reads the revoked row in the rotation's transaction (on MySQL the same
+// snapshot as the live lookup). An unknown token, a token without a family,
+// or the newest token of its family (revoked by logout, a password change,
+// deactivation or containment) is the generic refusal and writes nothing. A
+// revoked token with a later row in its family was already rotated: the owner
+// is locked first (users before refresh_tokens, the order of every session
+// transaction), every live token of the family is revoked, and
+// errRefreshTokenReuse tells the caller to commit. A missing owner does not
+// stop the revocation; any other failure aborts with nothing written.
+func (s *authService) refuseRevokedRefreshToken(
+	refreshRepo repository.RefreshTokenRepository,
+	userRepo repository.UserRepository,
+	hash string,
+) (*AuthTokens, uint, error) {
+	rejected := fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+	stored, err := refreshRepo.GetRevokedByTokenHash(hash)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil, 0, rejected
+		}
+		return nil, 0, fmt.Errorf("refresh token lookup failed: %w", err)
+	}
+	if stored.FamilyID == "" {
+		return nil, 0, rejected
+	}
+	rotated, err := refreshRepo.HasLaterInFamily(stored)
+	if err != nil {
+		return nil, 0, fmt.Errorf("refresh token family lookup failed: %w", err)
+	}
+	if !rotated {
+		return nil, 0, rejected
+	}
+
+	if _, err := userRepo.GetByID(stored.UserID); err != nil && !apperrors.IsNotFound(err) {
+		return nil, stored.UserID, fmt.Errorf("refresh token owner lookup failed: %w", err)
+	}
+	if err := refreshRepo.RevokeFamily(stored.UserID, stored.FamilyID); err != nil {
+		return nil, stored.UserID, fmt.Errorf("failed to revoke reused refresh token session: %w", err)
+	}
+	return nil, stored.UserID, authRefusal(AuthAuditReasonTokenReuse, stored.UserID, errRefreshTokenReuse)
 }
 
 // InvalidateRefreshToken revokes the presented token unconditionally.

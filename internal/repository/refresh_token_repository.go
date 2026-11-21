@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -32,6 +33,50 @@ func (r *refreshTokenRepository) GetByTokenHash(tokenHash string) (*models.Refre
 		return nil, err
 	}
 	return &token, nil
+}
+
+// GetRevokedByTokenHash returns the token with that hash only while it is
+// revoked, whatever its expiry; a live or unknown token is a not-found. The
+// rotation uses it after GetByTokenHash missed, to tell a token that was
+// already exchanged for a successor from one that never existed.
+func (r *refreshTokenRepository) GetRevokedByTokenHash(tokenHash string) (*models.RefreshToken, error) {
+	var token models.RefreshToken
+	err := r.db.Where("token_hash = ? AND is_revoked = ?", tokenHash, true).First(&token).Error
+	if err != nil {
+		return nil, err
+	}
+	return &token, nil
+}
+
+// HasLaterInFamily reports whether another row of the token's user and
+// family has a greater id. Only a rotation adds a row to an existing family
+// and a chain is linear, so a revoked token with a later row is one that was
+// already rotated. A token without a family is never part of one and returns
+// false without a query.
+func (r *refreshTokenRepository) HasLaterInFamily(token *models.RefreshToken) (bool, error) {
+	if token == nil || token.FamilyID == "" {
+		return false, nil
+	}
+	var count int64
+	err := r.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND family_id = ? AND id > ?", token.UserID, token.FamilyID, token.ID).
+		Limit(1).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+// RevokeFamily revokes every live token of the user's family. An empty
+// family id is refused without a statement: it would match every legacy row
+// that carries no family.
+func (r *refreshTokenRepository) RevokeFamily(userID uint, familyID string) error {
+	if familyID == "" {
+		return errors.New("refresh token family id is empty")
+	}
+	return r.db.Model(&models.RefreshToken{}).
+		Where("user_id = ? AND family_id = ? AND is_revoked = ?", userID, familyID, false).
+		Update("is_revoked", true).Error
 }
 
 // ClaimForRotation spends a refresh token for rotation: it revokes the row

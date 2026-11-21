@@ -57,6 +57,10 @@ const (
 	AuthAuditReasonSessionStale = "session_stale"
 	// A password reset requested for an email with no account (#550).
 	AuthAuditReasonAccountUnknown = "account_unknown"
+	// A refresh token already exchanged for a successor, presented again
+	// (#547): every refresh token of its family is revoked and the row
+	// carries the owner's user id.
+	AuthAuditReasonTokenReuse = "token_reuse"
 )
 
 // Single sign-on refusal codes (oidcRefuse, oidcRefuseWith). They are also
@@ -133,6 +137,7 @@ var authAuditReasonList = []string{
 	AuthAuditReasonTokenRevoked,
 	AuthAuditReasonSessionStale,
 	AuthAuditReasonAccountUnknown,
+	AuthAuditReasonTokenReuse,
 	AuthAuditReasonBindingMismatch,
 	AuthAuditReasonBindingMissing,
 	AuthAuditReasonClaimsInvalid,

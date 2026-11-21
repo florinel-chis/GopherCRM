@@ -488,25 +488,33 @@ confirm and the gaps of the re-check.
 
 ### Refresh rotation
 
-- **Rows locked:** the owner's `users` row (`FOR UPDATE`, `internal/service/auth_service.go:856`,
-  read at `internal/service/auth_service.go:931`), the presented `refresh_tokens` row (the
-  conditional claim `ClaimForRotation`, `internal/service/auth_service.go:947`), and the inserted
-  successor (`internal/service/auth_service.go:964`).
-- **Order:** a plain lookup of the token by hash (`internal/service/auth_service.go:905`) →
+- **Rows locked:** the owner's `users` row (`FOR UPDATE`, `internal/service/auth_service.go:978`,
+  read at `internal/service/auth_service.go:1072`), the presented `refresh_tokens` row (the
+  conditional claim `ClaimForRotation`, `internal/service/auth_service.go:1088`), and the inserted
+  successor (`internal/service/auth_service.go:1110`). On the reuse path (#547) the owner's `users`
+  row (`internal/service/auth_service.go:1157`) and every live `refresh_tokens` row of the
+  presented token's family (`RevokeFamily`, `internal/service/auth_service.go:1160`).
+- **Order:** a plain lookup of the token by hash (`internal/service/auth_service.go:1046`) →
   users → refresh_tokens (the claim, then the successor). The owner is locked before the claim
-  (`internal/service/auth_service.go:918`). Every owner decision (active, live) is taken on the
-  locked row; the token itself is re-checked by the conditional claim.
+  (`internal/service/auth_service.go:1059`). Every owner decision (active, live) is taken on the
+  locked row; the token itself is re-checked by the conditional claim. When the live lookup
+  misses, the reuse path is: plain lookups of the revoked row
+  (`internal/service/auth_service.go:1139`) and of a later row of its family
+  (`internal/service/auth_service.go:1149`) → users (`FOR UPDATE`) → refresh_tokens
+  (`RevokeFamily`), still users → refresh_tokens. A request that lost the claim to a concurrent
+  rotation never takes this path: it passed the live lookup and is refused at the claim.
 - **Transaction:** the sign-in audit row (#454) is one `auth_audit_log` `INSERT` on the root
   handle that the handler writes after the rotation returned, outside its transaction.
-  `WithTransaction` (`internal/service/auth_service.go:844`).
+  `WithTransaction` (`internal/service/auth_service.go:966`); the reuse path commits its family
+  revocation in the same transaction and returns the generic refusal.
 - **Retry:** none today. Target (C2): the #183 retry rule.
 - **Status:** implemented
 
-Logout (`internal/service/auth_service.go:1015`) and password change
-(`internal/service/auth_service.go:1155`) follow the same users → refresh_tokens order in one
+Logout (`internal/service/auth_service.go:1193`) and password change
+(`internal/service/auth_service.go:1313`) follow the same users → refresh_tokens order in one
 `WithTransaction` each, and decide on the locked owner row (the password change re-checks the
 verified hash and the active flag under the lock). The password change continues with the
-account's `api_keys` rows (`revokeAllCredentials`, `internal/service/auth_service.go:1248`, #526):
+account's `api_keys` rows (`revokeAllCredentials`, `internal/service/auth_service.go:1436`, #526):
 users → refresh_tokens → api_keys, and the successor `refresh_tokens` row is inserted after that.
 Logout never touches `api_keys`.
 

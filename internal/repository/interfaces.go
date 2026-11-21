@@ -910,6 +910,16 @@ type RefreshTokenRepository interface {
 	// GetByTokenHash returns the token only while it is still live: not
 	// revoked and unexpired. Anything else is a not-found.
 	GetByTokenHash(tokenHash string) (*models.RefreshToken, error)
+	// GetRevokedByTokenHash returns the token only while it is revoked,
+	// whatever its expiry. A live or unknown token is a not-found.
+	GetRevokedByTokenHash(tokenHash string) (*models.RefreshToken, error)
+	// HasLaterInFamily reports whether a row of the token's user and family
+	// has a greater id, which marks the token as already rotated. A token
+	// with an empty family id returns false without a query.
+	HasLaterInFamily(token *models.RefreshToken) (bool, error)
+	// RevokeFamily revokes every live token of the user's family. An empty
+	// family id is an error and runs no statement.
+	RevokeFamily(userID uint, familyID string) error
 	// ClaimForRotation revokes the token only while it is still not revoked
 	// and strictly unexpired, and succeeds only when exactly one row was
 	// affected; otherwise it reports gorm.ErrRecordNotFound. It is the

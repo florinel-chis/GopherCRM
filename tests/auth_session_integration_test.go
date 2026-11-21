@@ -175,15 +175,19 @@ func (suite *AuthSessionIntegrationTestSuite) TestSessionLifecycle() {
 	suite.NotEmpty(newRefresh)
 	suite.NotEqual(refreshToken, newRefresh)
 
-	// Replaying the consumed token must fail: rotation revoked it.
+	// Replaying the consumed token must fail: rotation revoked it, and the
+	// replay ends the whole session, the rotated refresh token included. The
+	// access token already issued keeps working until it expires.
 	w = suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": refreshToken})
+	suite.Equal(http.StatusUnauthorized, w.Code)
+	w = suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": newRefresh})
 	suite.Equal(http.StatusUnauthorized, w.Code)
 
 	// Logout with no body revokes every session of the user.
 	w = suite.postJSON("/api/v1/auth/logout", newAccess, nil)
 	suite.Equal(http.StatusOK, w.Code)
 
-	// The rotated refresh token is now dead too.
+	// The rotated refresh token stays dead.
 	w = suite.postJSON("/api/v1/auth/refresh", "", map[string]string{"refresh_token": newRefresh})
 	suite.Equal(http.StatusUnauthorized, w.Code)
 }

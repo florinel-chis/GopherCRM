@@ -329,6 +329,37 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodRefresh, AuthAuditOutcomeRefused, "account_erased", user.ID, "req-rf-erased")
 	})
 
+	t.Run("refresh_token_reuse", func(t *testing.T) {
+		user := e.seedUser(t, "rf-reuse-0547@crm.example.test")
+		tokens, err := e.auth.LoginWithTokens(user.Email, authAuditTestPassword)
+		require.NoError(t, err)
+		rotated, err := e.auth.RefreshAccessToken(tokens.RefreshToken)
+		require.NoError(t, err)
+		secret := e.auth.sessionTokenSecret()
+		firstHash := hashOpaqueToken(tokens.RefreshToken, secret)
+		successorHash := hashOpaqueToken(rotated.RefreshToken, secret)
+		var familyID string
+		require.NoError(t, e.db.Raw("SELECT family_id FROM refresh_tokens WHERE token_hash = ?", firstHash).Scan(&familyID).Error)
+		require.NotEmpty(t, familyID)
+
+		output := captureAuthAuditLogs(t)
+		before := e.maxAuditID(t)
+		_, err = refresh(t, tokens.RefreshToken, "req-rf-reuse")
+		require.ErrorIs(t, err, ErrInvalidRefreshToken)
+		assert.Equal(t, "refresh token rejected: invalid refresh token", err.Error(), "the message is unchanged")
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodRefresh, AuthAuditOutcomeRefused, AuthAuditReasonTokenReuse, user.ID, "req-rf-reuse")
+		logged := output.String()
+		assert.Contains(t, logged, "Refresh token presented again after rotation", "the reuse is logged")
+		for _, secretValue := range []string{tokens.RefreshToken, rotated.RefreshToken, firstHash, successorHash, familyID} {
+			assert.NotContains(t, logged, secretValue, "the log carries no token, hash or family id")
+		}
+
+		before = e.maxAuditID(t)
+		_, err = refresh(t, rotated.RefreshToken, "req-rf-reuse-successor")
+		require.ErrorIs(t, err, ErrInvalidRefreshToken)
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodRefresh, AuthAuditOutcomeRefused, AuthAuditReasonTokenInvalid, 0, "req-rf-reuse-successor")
+	})
+
 	t.Run("api_key_key_invalid", func(t *testing.T) {
 		before := e.maxAuditID(t)
 		err := apiKey(t, e.auth, "gcrm_bogus0454", "req-ak-invalid")

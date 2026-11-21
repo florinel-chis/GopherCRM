@@ -588,8 +588,13 @@ file, not by trusting the coverage matrix.
   is committed as the containment revocation of that token: reactivating the account does not
   bring it back, while the owner's other sessions are untouched. Competing refreshes presenting
   one token commit exactly one successor: the winner receives a working access token and the
-  only live successor, every loser gets the generic 401 and no credentials, and a later replay
-  neither adds a row nor invalidates the winner. Logout stays idempotent around a rotation: logging
+  only live successor, every loser gets the generic 401 and no credentials; a loser that lost the
+  claim while the winner's rotation was still running ends nothing. A token presented again after
+  its rotation committed (#547) gets the same 401, adds no row and revokes every refresh token of
+  its family, the successors included (also when it has expired meanwhile, and also when the
+  successor was rotated on another connection while the request ran), so the successor is then
+  refused too; the owner's other sessions and other accounts stay live. A revoked token that is the
+  newest of its family (logout, containment) or has no family is refused and changes nothing. Logout stays idempotent around a rotation: logging
   out with the spent token, an unknown token or someone else's token revokes no refresh token and
   succeeds, logging out with the successor revokes exactly that session and a second logout still
   succeeds (every logout also ends the caller's earlier access tokens, #236).
@@ -597,7 +602,10 @@ file, not by trusting the coverage matrix.
   change or a reset ends it, #236). The web client serialises the refreshes of tabs sharing a
   remembered session through the Web Lock `gophercrm-session` (#184); on plain HTTP, where browsers
   offer no Web Locks, two tabs can still present one token at once, and the loser adopts the
-  winner's successor only if the winner stored it before the loser's 401 arrived.
+  winner's successor only if the winner stored it before the loser's 401 arrived. A loser that
+  presented the token after the winner's refresh committed is a reuse (#547) and also ends the
+  winner's successor, so both tabs are signed out at their next refresh. A reuse ends refresh
+  tokens only: access tokens already issued stay valid until they expire.
 - **Automation:** `internal/service/auth_refresh_rotation_regression_test.go` runs every scenario
   on in-memory SQLite with the production one-connection pool and on a disposable MySQL schema
   created from `TEST_MYSQL_DSN` (a configured but unreachable server fails; an absent variable
@@ -616,12 +624,20 @@ file, not by trusting the coverage matrix.
   untouched; an inactive owner's token is contained and stays revoked after reactivation.
   `TestRefreshRotationConcurrent{SQLite,MySQL}`: three competitors presenting one token — held
   after the lookup on MySQL's multi-connection pool, serialised by the single connection on
-  SQLite — produce one success, one committed successor, two generic rejections without
-  credentials, a rejected replay that leaves the winner live, and a winner that rotates again,
-  under the race detector with every wait bounded. The conditional claim itself is pinned by
+  SQLite — produce one success, one committed successor and two rejections without credentials:
+  on MySQL the losers lost the claim (`token_invalid`) and the winner stays live and rotates again
+  before a replay of the original token ends the chain; on SQLite the losers ran after the commit
+  (`token_reuse`) and the winner's successor ends with them. On MySQL a reuse held after its
+  lookups while the successor rotates on another connection still ends the newest token (#547).
+  `TestRefreshRotationValidation{SQLite,MySQL}` also covers the reuse, the reuse of an expired
+  token, of an inactive owner's token and the refused successor afterwards, and the
+  logout-revoked, contained and family-less tokens that end nothing. All of it runs under the race
+  detector with every wait bounded. The conditional claim itself is pinned by
   `internal/repository/refresh_token_repository_test.go`
   (`TestRefreshTokenRepository_ClaimForRotation_ClaimsOnlyLiveTokens`,
-  `_RollsBackWithTheTransaction`, `TestRefreshTokenRepository_RevokeByTokenHash_IsUnconditionalAndIdempotent`);
+  `_RollsBackWithTheTransaction`, `TestRefreshTokenRepository_RevokeByTokenHash_IsUnconditionalAndIdempotent`;
+  the reuse lookups and the family revocation by `TestRefreshTokenRepository_GetRevokedByTokenHash_FindsOnlyRevokedRows`,
+  `_HasLaterInFamily_MatchesUserFamilyAndGreaterID` and `_RevokeFamily_RevokesOnlyThatUsersFamily`);
   the call sequence, the lost claim, the post-claim failures and the refusal without a
   transaction manager by `internal/service/auth_session_test.go`
   `TestAuthService_RefreshAccessToken_*`.
@@ -1245,7 +1261,8 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   1. Sign in with the right password, a wrong password, an unknown email, and as each of the
      locked, deactivated and linked accounts.
   2. Refresh with a live refresh token, an unknown one, and one whose owner was deactivated or
-     erased meanwhile.
+     erased meanwhile; then present the first, already exchanged token again, and after it the
+     successor it was exchanged for (#547).
   3. Call a protected route with `ApiKey` and an unknown, a revoked, an expired key and the key
      of a deactivated or erased owner; then with a bad `Bearer` token. A repeat refusal of the
      same reason, account and network in the same UTC minute adds 1 to that row's `attempts`
@@ -1265,7 +1282,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   step 1–4, 6 and 7 request that reaches the service adds exactly one `auth_audit_log` row: `password`
   `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
   account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
-  `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`; `api_key`
+  `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`, `token_reuse` with the
+  owner's id for the reused token of step 2 and then `token_invalid` with `user_id` NULL for its
+  successor (#547); `api_key`
   `key_invalid`, `key_revoked`, `key_expired`, `account_inactive`, `account_erased`,
   `customer_login_role` (a key of a customer account, #532) (the account's `user_id` when the key
   was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`;
@@ -1277,7 +1296,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   step-6 400s and the bad Bearer token add no row. Every row carries the request id and the client's `/24`; the
   request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
   `audit_id`.
-- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}` (incl. the #550 `password_change_*`, `reset_request_*`, `reset_confirm_*` and `logout_success` subtests), `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuthHandlerAudit`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
+- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}` (incl. the #547 `refresh_token_reuse` and the #550 `password_change_*`, `reset_request_*`, `reset_confirm_*` and `logout_success` subtests), `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuthHandlerAudit`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
 
 ### TC-AUTH-061 — The audit log and its log lines hold no personal or secret values
 - **Priority:** P0

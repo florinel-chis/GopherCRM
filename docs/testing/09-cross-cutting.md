@@ -352,10 +352,10 @@ into a sign-out test.
 - **Expected:** `POST /auth/refresh` returns **401** because rotation is strict and the presented
   token is already dead; since the record still holds the token that was presented, the client
   removes the record and mirrors from both storages and hard-redirects to `/login`. The
-  replay neither adds a refresh token row nor touches the successor issued by the earlier
-  refresh: the rotation claims the presented token by a conditional update inside the transaction
-  that inserts the successor, so a spent token can never produce a second one (#103; backend
-  coverage in `docs/testing/01-authentication.md` TC-AUTH-033a).
+  replay adds no refresh token row, and it also revokes the successor issued by the earlier
+  refresh, with every other refresh token of that session (#547, audited as `token_reuse`): a
+  spent token can never produce a second successor (#103), and presenting it again ends the
+  session it belonged to (backend coverage in `docs/testing/01-authentication.md` TC-AUTH-033a).
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new)
 
 ### TC-XCUT-019 — A 401 from /auth/login does not trigger the refresh path
@@ -385,7 +385,11 @@ into a sign-out test.
   bundled plain-HTTP nginx), both tabs may present the same token: the backend commits one successor
   and answers the other 401 (#103), and the losing tab, finding a record of the same session whose
   refresh token differs from the one it presented, adopts the stored access token instead of signing
-  out. A 401 that finds another session's record clears nothing.
+  out. When the second tab's request lost the exchange while the first tab's was still running, the
+  session goes on. When it presented the token after the first tab's refresh had committed, it is a
+  reuse (#547): the backend also revokes the successor the first tab stored, so both tabs keep the
+  adopted access token until it expires and are signed out at their next refresh. A 401 that finds
+  another session's record clears nothing.
 - **Automation:** planned — `gocrm-ui/e2e/tests/session.spec.ts` (new). Vitest:
   `gocrm-ui/src/api/client.refresh.test.ts` (single tab), `client.crossTab.test.ts` (two clients
   sharing storage and a lock, both response orders).

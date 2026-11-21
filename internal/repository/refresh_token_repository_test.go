@@ -194,3 +194,133 @@ func TestRefreshTokenRepository_RevokeAllForUser_LeavesOtherUsersAlone(t *testin
 	assert.NoError(t, err)
 	assert.Equal(t, uint(2), got.UserID)
 }
+
+// countRefreshTokenStatements counts every query, row, raw and update
+// statement the handle runs from now on.
+func countRefreshTokenStatements(t *testing.T, db *gorm.DB) *int {
+	t.Helper()
+	count := 0
+	inc := func(*gorm.DB) { count++ }
+	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_query", inc))
+	require.NoError(t, db.Callback().Row().Before("gorm:row").Register("test:count_row", inc))
+	require.NoError(t, db.Callback().Raw().Before("gorm:raw").Register("test:count_raw", inc))
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:count_update", inc))
+	return &count
+}
+
+func seedFamilyToken(t *testing.T, repo RefreshTokenRepository, userID uint, hash, family string, expiresIn time.Duration) *models.RefreshToken {
+	t.Helper()
+	token := &models.RefreshToken{UserID: userID, TokenHash: hash, FamilyID: family, ExpiresAt: time.Now().Add(expiresIn)}
+	require.NoError(t, repo.Create(token))
+	return token
+}
+
+func isRevoked(t *testing.T, db *gorm.DB, hash string) bool {
+	t.Helper()
+	var token models.RefreshToken
+	require.NoError(t, db.Where("token_hash = ?", hash).First(&token).Error)
+	return token.Revoked
+}
+
+// The revoked-row lookup finds a revoked token whatever its expiry and never
+// a live or unknown one.
+func TestRefreshTokenRepository_GetRevokedByTokenHash_FindsOnlyRevokedRows(t *testing.T) {
+	db := setupRefreshTokenDB(t)
+	repo := NewRefreshTokenRepository(db)
+
+	revoked := seedFamilyToken(t, repo, 1, "hash-revoked", "fam", time.Hour)
+	require.NoError(t, repo.RevokeByTokenHash("hash-revoked"))
+	expired := seedFamilyToken(t, repo, 1, "hash-revoked-expired", "fam", -time.Hour)
+	require.NoError(t, repo.RevokeByTokenHash("hash-revoked-expired"))
+	seedFamilyToken(t, repo, 1, "hash-live", "fam", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-live-expired", "fam", -time.Hour)
+
+	got, err := repo.GetRevokedByTokenHash("hash-revoked")
+	require.NoError(t, err)
+	assert.Equal(t, revoked.ID, got.ID)
+	assert.True(t, got.Revoked)
+	assert.Equal(t, "fam", got.FamilyID)
+
+	got, err = repo.GetRevokedByTokenHash("hash-revoked-expired")
+	require.NoError(t, err, "a revoked token is found after its expiry")
+	assert.Equal(t, expired.ID, got.ID)
+
+	for _, hash := range []string{"hash-live", "hash-live-expired", "hash-unknown"} {
+		got, err := repo.GetRevokedByTokenHash(hash)
+		assert.Nil(t, got, hash)
+		assert.ErrorIs(t, err, gorm.ErrRecordNotFound, hash)
+	}
+}
+
+// A later row exists only for the same user and family and a greater id; an
+// empty family is never a family and is answered without a query.
+func TestRefreshTokenRepository_HasLaterInFamily_MatchesUserFamilyAndGreaterID(t *testing.T) {
+	db := setupRefreshTokenDB(t)
+	repo := NewRefreshTokenRepository(db)
+
+	first := seedFamilyToken(t, repo, 1, "hash-first", "fam-a", time.Hour)
+	seedFamilyToken(t, repo, 2, "hash-other-user", "fam-a", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-other-family", "fam-b", time.Hour)
+
+	later, err := repo.HasLaterInFamily(first)
+	require.NoError(t, err)
+	assert.False(t, later, "rows of another user or another family do not count")
+
+	second := seedFamilyToken(t, repo, 1, "hash-second", "fam-a", time.Hour)
+	later, err = repo.HasLaterInFamily(first)
+	require.NoError(t, err)
+	assert.True(t, later, "a greater id of the same user and family counts")
+
+	later, err = repo.HasLaterInFamily(second)
+	require.NoError(t, err)
+	assert.False(t, later, "the newest row of a family has no later row")
+
+	// An expired or revoked later row still marks the earlier one rotated.
+	require.NoError(t, repo.RevokeByTokenHash("hash-second"))
+	later, err = repo.HasLaterInFamily(first)
+	require.NoError(t, err)
+	assert.True(t, later)
+
+	unfamilied := seedFamilyToken(t, repo, 1, "hash-empty", "", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-empty-later", "", time.Hour)
+	statements := countRefreshTokenStatements(t, db)
+	later, err = repo.HasLaterInFamily(unfamilied)
+	require.NoError(t, err)
+	assert.False(t, later, "a row without a family is never part of one")
+	assert.Zero(t, *statements, "no query runs for an empty family")
+	_, err = repo.HasLaterInFamily(first)
+	require.NoError(t, err)
+	assert.Positive(t, *statements, "the counter sees the query of a real family")
+}
+
+// The family revocation touches only the user's live rows of that family; an
+// empty family id is refused without a statement.
+func TestRefreshTokenRepository_RevokeFamily_RevokesOnlyThatUsersFamily(t *testing.T) {
+	db := setupRefreshTokenDB(t)
+	repo := NewRefreshTokenRepository(db)
+
+	seedFamilyToken(t, repo, 1, "hash-a1", "fam-a", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-a2", "fam-a", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-a-expired", "fam-a", -time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-b", "fam-b", time.Hour)
+	seedFamilyToken(t, repo, 2, "hash-other-user", "fam-a", time.Hour)
+	seedFamilyToken(t, repo, 1, "hash-empty", "", time.Hour)
+
+	statements := countRefreshTokenStatements(t, db)
+	err := repo.RevokeFamily(1, "")
+	require.Error(t, err, "an empty family id is refused")
+	assert.Zero(t, *statements, "no statement runs for an empty family id")
+	for _, hash := range []string{"hash-a1", "hash-a2", "hash-a-expired", "hash-b", "hash-other-user", "hash-empty"} {
+		assert.False(t, isRevoked(t, db, hash), "%s is unchanged", hash)
+	}
+
+	require.NoError(t, repo.RevokeFamily(1, "fam-a"))
+	assert.Positive(t, *statements, "the counter sees the revocation of a real family")
+	for _, hash := range []string{"hash-a1", "hash-a2", "hash-a-expired"} {
+		assert.True(t, isRevoked(t, db, hash), "%s belongs to the family", hash)
+	}
+	for _, hash := range []string{"hash-b", "hash-other-user", "hash-empty"} {
+		assert.False(t, isRevoked(t, db, hash), "%s is outside the family", hash)
+	}
+	require.NoError(t, repo.RevokeFamily(1, "fam-a"), "revoking an ended family again is not an error")
+}

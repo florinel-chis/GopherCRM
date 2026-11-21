@@ -99,6 +99,82 @@ func (_m *RefreshTokenRepository) GetByTokenHash(tokenHash string) (*models.Refr
 	return r0, r1
 }
 
+// GetRevokedByTokenHash provides a mock function with given fields: tokenHash
+func (_m *RefreshTokenRepository) GetRevokedByTokenHash(tokenHash string) (*models.RefreshToken, error) {
+	ret := _m.Called(tokenHash)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetRevokedByTokenHash")
+	}
+
+	var r0 *models.RefreshToken
+	var r1 error
+	if rf, ok := ret.Get(0).(func(string) (*models.RefreshToken, error)); ok {
+		return rf(tokenHash)
+	}
+	if rf, ok := ret.Get(0).(func(string) *models.RefreshToken); ok {
+		r0 = rf(tokenHash)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*models.RefreshToken)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(string) error); ok {
+		r1 = rf(tokenHash)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// HasLaterInFamily provides a mock function with given fields: token
+func (_m *RefreshTokenRepository) HasLaterInFamily(token *models.RefreshToken) (bool, error) {
+	ret := _m.Called(token)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasLaterInFamily")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func(*models.RefreshToken) (bool, error)); ok {
+		return rf(token)
+	}
+	if rf, ok := ret.Get(0).(func(*models.RefreshToken) bool); ok {
+		r0 = rf(token)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func(*models.RefreshToken) error); ok {
+		r1 = rf(token)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// RevokeFamily provides a mock function with given fields: userID, familyID
+func (_m *RefreshTokenRepository) RevokeFamily(userID uint, familyID string) error {
+	ret := _m.Called(userID, familyID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RevokeFamily")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(uint, string) error); ok {
+		r0 = rf(userID, familyID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // RevokeAllForUser provides a mock function with given fields: userID
 func (_m *RefreshTokenRepository) RevokeAllForUser(userID uint) error {
 	ret := _m.Called(userID)
