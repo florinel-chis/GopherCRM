@@ -66,13 +66,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       publishUser(userData);
     } catch (error) {
-      // Only clear tokens on auth errors (401). Other errors (429 rate limit,
-      // network issues) should not log the user out. A late failure of an
-      // earlier session must not clear the one that replaced it.
+      // A refused session (401 or 403) ends here, user included: on mount no
+      // user is published yet, on a refreshUser call one is, and it must not
+      // stay published without a token. Other errors (429 rate limit, network
+      // issues) keep what is published. A late failure of an earlier session
+      // must not clear the one that replaced it.
       const status = getHTTPStatus(error);
       if ((status === 401 || status === 403) && apiClient.isCurrentSession(session)) {
         apiClient.clearTokens();
         queryClient?.clear();
+        publishUser(null);
       }
     } finally {
       setIsLoading(false);
