@@ -129,8 +129,13 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   provider does not see, a locally created account included, answers 404 and is not changed.
 - **Duplicates.** An email address or an `externalId` that another account already holds is
   refused with 409 `uniqueness`.
-- **Rate limit.** SCIM requests share a strict limit of 10 a minute per client address, with a
-  burst of 5. Above it the provider gets 429 and retries later.
+- **Rate limit.** Two limits apply. The SCIM token limit counts the requests of each SCIM
+  provider token, whatever address they come from: by default 600 a minute with a burst of 60.
+  `SCIM_RATE_LIMIT_PER_MINUTE` sets the requests a minute (maximum 6000) and
+  `SCIM_RATE_LIMIT_BURST` the burst (maximum 1000).
+  The SCIM refusal limit counts requests without a valid token per client address: 10 a minute
+  with a burst of 5. Above either limit the provider gets 429 and retries later; a refusal over
+  the SCIM refusal limit writes no sign-in audit row.
 
 ## What is not served
 

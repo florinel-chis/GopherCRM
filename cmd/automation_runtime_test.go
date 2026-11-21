@@ -238,5 +238,6 @@ func cfgForBoot(t *testing.T, enabled bool) *config.Config {
 			Enabled:             enabled,
 			PollIntervalSeconds: 1,
 		},
+		SCIM: config.SCIMConfig{RateLimitPerMinute: config.DefaultSCIMRateLimitPerMinute, RateLimitBurst: config.DefaultSCIMRateLimitBurst},
 	}
 }

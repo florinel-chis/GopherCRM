@@ -46,6 +46,8 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"QUOTE_PDF_CHROME_PATH",
 		// Single sign-on fallbacks.
 		"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING",
+		// SCIM token limit (#555).
+		"SCIM_RATE_LIMIT_PER_MINUTE", "SCIM_RATE_LIMIT_BURST",
 	}
 
 	// Save originals.
@@ -814,4 +816,75 @@ func TestLoad_AEOBaseURLs(t *testing.T) {
 		assert.Equal(t, "https://kimi.example.test/v1", cfg.AEO.KimiBaseURL)
 		assert.Equal(t, "https://perplexity.example.test", cfg.AEO.PerplexityBaseURL)
 	})
+}
+
+// SCIM_RATE_LIMIT_PER_MINUTE and SCIM_RATE_LIMIT_BURST (#555) default to
+// 600/60 for every value that is not a positive number, are trimmed, and are
+// capped at 6000/1000. Load never fails on them.
+func TestLoad_SCIMRateLimit(t *testing.T) {
+	t.Run("unset", func(t *testing.T) {
+		withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Equal(t, SCIMConfig{RateLimitPerMinute: 600, RateLimitBurst: 60}, cfg.SCIM)
+		})
+	})
+	for _, tc := range []struct {
+		perMinute, burst         string
+		wantPerMinute, wantBurst int
+	}{
+		{"1200", "100", 1200, 100},
+		{" 30 ", " 30 ", 30, 30},
+		{"0", "0", 600, 60},
+		{"-5", "-5", 600, 60},
+		{"abc", "abc", 600, 60},
+		{"", "", 600, 60},
+		{"999999", "999999", 6000, 1000},
+		{"6000", "5000", 6000, 1000},
+		{"1", "1", 1, 1},
+	} {
+		t.Run("values "+tc.perMinute+"/"+tc.burst, func(t *testing.T) {
+			withCleanEnv(t, map[string]string{
+				"JWT_SECRET":                 validSecret(),
+				"SCIM_RATE_LIMIT_PER_MINUTE": tc.perMinute,
+				"SCIM_RATE_LIMIT_BURST":      tc.burst,
+			}, func() {
+				cfg, err := Load()
+				require.NoError(t, err)
+				assert.Equalf(t, tc.wantPerMinute, cfg.SCIM.RateLimitPerMinute, "SCIM_RATE_LIMIT_PER_MINUTE=%q", tc.perMinute)
+				assert.Equalf(t, tc.wantBurst, cfg.SCIM.RateLimitBurst, "SCIM_RATE_LIMIT_BURST=%q", tc.burst)
+			})
+		})
+	}
+}
+
+func TestNormalizeSCIMRateLimits(t *testing.T) {
+	for _, tc := range []struct{ perMinute, burst, wantPerMinute, wantBurst int }{
+		{0, 0, 600, 60},
+		{-3, -3, 600, 60},
+		{6001, 1001, 6000, 1000},
+		{6000, 1000, 6000, 1000},
+		{1, 1, 1, 1},
+	} {
+		perMinute, burst := NormalizeSCIMRateLimits(tc.perMinute, tc.burst)
+		assert.Equalf(t, tc.wantPerMinute, perMinute, "per minute %d", tc.perMinute)
+		assert.Equalf(t, tc.wantBurst, burst, "burst %d", tc.burst)
+	}
+}
+
+// The commented SCIM entries of .env.example state that the limit is per
+// token, the defaults and the maximums.
+func TestEnvExample_SCIMRateLimitDocumented(t *testing.T) {
+	text := readRepositoryFile(t, ".env.example")
+	entry := "\n# SCIM_RATE_LIMIT_PER_MINUTE=600\n# SCIM_RATE_LIMIT_BURST=60\n"
+	require.Equal(t, 1, strings.Count(text, entry), "one commented pair of entries")
+	assert.NotContains(t, text, "\nSCIM_RATE_LIMIT_PER_MINUTE=", "the entry stays commented")
+	assert.NotContains(t, text, "\nSCIM_RATE_LIMIT_BURST=", "the entry stays commented")
+	end := strings.Index(text, entry)
+	start := strings.LastIndex(text[:end], "\n\n")
+	require.GreaterOrEqual(t, start, 0, "the entries have a comment block")
+	block := text[start:end]
+	for _, needle := range []string{"per token", "default 600", "maximum 6000", "default 60", "maximum 1000"} {
+		assert.Contains(t, block, needle, "the comment block mentions %s", needle)
+	}
 }

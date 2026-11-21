@@ -29,6 +29,8 @@ type Config struct {
 	SSO SSOConfig
 	// AuthAudit holds the sign-in audit log retention (#454).
 	AuthAudit AuthAuditConfig
+	// SCIM holds the SCIM token limit of /scim/v2 (#555); see scim.go.
+	SCIM SCIMConfig
 }
 
 // AutomationConfig configures the follow-up automation worker: whether it is
@@ -365,6 +367,7 @@ func Load() (*Config, error) {
 		},
 		SSO:       loadSSOConfig(),
 		AuthAudit: AuthAuditConfig{RetentionDays: parseAuthAuditRetentionDays(os.Getenv("AUTH_AUDIT_RETENTION_DAYS"))},
+		SCIM:      loadSCIMConfig(),
 	}
 
 	switch config.Database.Driver {
