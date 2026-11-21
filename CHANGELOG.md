@@ -1142,6 +1142,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Browser tests started by `make e2e` and the release workflow run against the production build
+  of the web app (#563).** `scripts/e2e/run.sh` builds the web app with
+  `VITE_API_BASE_URL=/api/v1 npm run build`, the relative API base of the release artifact and the
+  Docker image, into the run's temporary directory (`gocrm-ui/dist` is left alone; the build log is
+  copied to `gocrm-ui/test-results/e2e-ui-build.log`), and Playwright serves it with
+  `vite preview`, which forwards `/api/v1` to the run's backend on the web app's own origin. The
+  runner needs `npm`, and its plan prints `ui_server=preview ui_api_base_url=/api/v1`. A new
+  health-smoke test checks that the browser loaded the built `/assets/*.js` bundle, no dev-server
+  module, and reached the API on the web app's origin. Manual Playwright runs without the runner
+  still use the dev server.
 - **SCIM requests with a valid provider token are limited per token (#555).** Requests on
   `/scim/v2` whose SCIM provider token is accepted are counted per token instead of per client
   address: by default 600 a minute with a burst of 60, set by `SCIM_RATE_LIMIT_PER_MINUTE`

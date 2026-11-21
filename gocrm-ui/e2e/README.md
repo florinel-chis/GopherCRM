@@ -37,9 +37,11 @@ published; that local scope is separate from CI.
 3. Starts the OpenID Connect test issuer (`scripts/e2e/oidc-issuer`, built to a binary) on
    `https://127.0.0.1:<E2E_OIDC_PORT>` and waits for its discovery document; see "Single sign-on
    against a local test issuer" below. Its log goes to `test-results/e2e-oidc-issuer.log`.
-4. Starts its own Vite server on a free port (from 15173) through `E2E_UI_PORT`, pointed at that
-   backend, and runs Playwright with **no retries**, traces kept for failures, and the `line` + `html`
-   reporters.
+4. Builds the web app the way the release artifact does (`VITE_API_BASE_URL=/api/v1 npm run build`)
+   into the run's temporary directory, never `gocrm-ui/dist` (log in `test-results/e2e-ui-build.log`),
+   and serves that build with `vite preview` on a free port (from 15173) through `E2E_UI_PORT`;
+   `vite preview` forwards `/api/v1` to that backend on the web app's own origin. It then runs
+   Playwright with **no retries**, traces kept for failures, and the `line` + `html` reporters.
 5. Always stops the issuer and the backend and exits with Playwright's result.
 
 The run pins the backend's environment: the chosen driver, the default API prefix, no SMTP (the

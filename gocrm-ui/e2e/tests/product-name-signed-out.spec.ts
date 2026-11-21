@@ -2,19 +2,21 @@ import { test, expect } from '@playwright/test';
 import { loadEnv } from 'vite';
 
 // The signed-out pages show the build-time product name (#303): VITE_APP_NAME
-// inlined by Vite, else 'GoCRM'. The dev server the suite runs against resolves
-// VITE_APP_NAME the way loadEnv does in development mode (the process
-// environment over gocrm-ui/.env*), so the expected name is derived the same
-// way instead of being hard-coded: a developer whose local .env brands the app
-// still gets a passing run, and `VITE_APP_NAME='Fork CRM' npx playwright test`
-// on a fresh dev server exercises a branded name.
+// inlined by Vite, else 'GoCRM'. `make e2e` serves a production build
+// (E2E_UI_DIST is set) and manual runs the dev server; either resolves
+// VITE_APP_NAME the way loadEnv does in its mode, production or development
+// (the process environment over gocrm-ui/.env*), so the expected name is
+// derived the same way instead of being hard-coded: a developer whose local
+// .env brands the app still gets a passing run, and
+// `VITE_APP_NAME='Fork CRM' make e2e` exercises a branded name.
 //
 // Public registration is opened for the whole suite by e2e/global-setup.ts and
 // restored by global-teardown.ts; this spec does not toggle it.
 const FALLBACK_PRODUCT_NAME = 'GoCRM';
 
 function expectedProductName(): string {
-  const value = loadEnv('development', process.cwd(), 'VITE_').VITE_APP_NAME;
+  const mode = process.env.E2E_UI_DIST ? 'production' : 'development';
+  const value = loadEnv(mode, process.cwd(), 'VITE_').VITE_APP_NAME;
   return typeof value === 'string' && value.trim() !== '' ? value : FALLBACK_PRODUCT_NAME;
 }
 

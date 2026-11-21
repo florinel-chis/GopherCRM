@@ -8,10 +8,12 @@
 #    only; the plan (E2E_PLAN_ONLY=1, printed before any tool, database or
 #    server is used) shows the sqlite mode on a new '?'-free file, with no
 #    database reset, no mysql client and no database name, and the mysql mode
-#    unchanged.
+#    unchanged. Both plans serve the web app from a production build with
+#    `vite preview` and the release artifact's API base /api/v1, and both need
+#    npm for that build.
 # 3. The reset step itself, not just its announcement: the runner is started
 #    for real (E2E_PLAN_ONLY unset or 0, which must not take the plan-only
-#    path) with mysql, go, npx and curl replaced by shims that record each
+#    path) with mysql, go, npx, curl and npm replaced by shims that record each
 #    call and fail. In sqlite mode the run reaches `go build` without a single
 #    mysql call; in mysql mode the first call is the mysql reset of gocrm_e2e
 #    and the build is never reached. Either way nothing is built or started.
@@ -83,7 +85,8 @@ db_path=$(sed -n 's/^e2e plan: db_path=//p' <<<"$output")
 if [ "$code" -ne 0 ] ||
   [[ $output != *"e2e plan: driver=sqlite"* ]] ||
   [[ $output != *"e2e plan: db_reset=none"* ]] ||
-  [[ $output != *"e2e plan: tools=go npx curl"* ]] ||
+  ! printf '%s\n' "$output" | grep -qx 'e2e plan: tools=go npx curl npm' ||
+  ! printf '%s\n' "$output" | grep -qx 'e2e plan: ui_server=preview ui_api_base_url=/api/v1' ||
   [[ $output == *mysql* ]] || [[ $output == *production* ]] || [[ $output == *db_name* ]]; then
   fail "sqlite plan is wrong (exit $code): $output"
 fi
@@ -104,7 +107,8 @@ for driver_env in "E2E_DB_DRIVER=mysql" "E2E_DB_DRIVER="; do
     [[ $output != *"e2e plan: driver=mysql"* ]] ||
     [[ $output != *"e2e plan: db_name=gocrm_e2e db_host=192.0.2.1:3306"* ]] ||
     [[ $output != *"e2e plan: db_reset=drop-create"* ]] ||
-    [[ $output != *"e2e plan: tools=mysql go npx curl"* ]] ||
+    ! printf '%s\n' "$output" | grep -qx 'e2e plan: tools=mysql go npx curl npm' ||
+    ! printf '%s\n' "$output" | grep -qx 'e2e plan: ui_server=preview ui_api_base_url=/api/v1' ||
     [[ $output == *db_path* ]]; then
     fail "mysql plan ($driver_env) is wrong (exit $code): $output"
   fi
@@ -158,7 +162,7 @@ done
 shims="$tmp/bin"
 calls="$tmp/calls"
 mkdir -p "$shims"
-for tool in mysql go npx curl; do
+for tool in mysql go npx curl npm; do
   cat >"$shims/$tool" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "$tool \$*" >>"$calls"
@@ -240,4 +244,4 @@ printf '%s' 'JWT_SECRET=abc==' >>"$envfile" # last line without a newline
 if [ "$failures" -gt 0 ]; then
   exit 1
 fi
-echo "e2e runner self-test passed: guard refuses non-test databases and accepts _e2e; E2E_DB_DRIVER takes mysql (default, unchanged) or sqlite (new file, no reset, no mysql); the test issuer port is validated and its origin planned; only E2E_PLAN_ONLY=1 is plan-only; a sqlite run reaches the build without calling mysql and a mysql run resets gocrm_e2e first; .env reader handles export, '=', quotes, comments and CRLF."
+echo "e2e runner self-test passed: guard refuses non-test databases and accepts _e2e; E2E_DB_DRIVER takes mysql (default, unchanged) or sqlite (new file, no reset, no mysql); both plans serve the production web app build with vite preview on the API base /api/v1 and need npm; the test issuer port is validated and its origin planned; only E2E_PLAN_ONLY=1 is plan-only; a sqlite run reaches the build without calling mysql and a mysql run resets gocrm_e2e first; .env reader handles export, '=', quotes, comments and CRLF."

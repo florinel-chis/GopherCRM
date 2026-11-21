@@ -14,7 +14,7 @@
 #   E2E_DB_NAME    database to reset and use (mysql only; default gocrm_e2e; must
 #                  end in _e2e)
 #   E2E_API_PORT   backend port (default: first free port from 18091)
-#   E2E_UI_PORT    Vite port    (default: first free port from 15173)
+#   E2E_UI_PORT    web app port (default: first free port from 15173)
 #   E2E_AEO_PORT   TLS provider fixture port (default: first free port from 18191)
 #   E2E_OIDC_PORT  OpenID Connect test issuer port (default: first free port
 #                  from 18291); the issuer (scripts/e2e/oidc-issuer) serves
@@ -27,6 +27,12 @@
 # DB_* credentials are ignored: the backend and create-admin (Playwright's global
 # setup) share a new, empty file in the run's temporary directory, copied to
 # gocrm-ui/test-results/e2e-sqlite.db on exit next to the backend log.
+#
+# The web app is built the way the release artifact and the Docker image build
+# it (VITE_API_BASE_URL=/api/v1, a relative API base), into the run's temporary
+# directory rather than gocrm-ui/dist, and Playwright serves that build with
+# `vite preview`, which forwards /api/v1 to the run's backend on the web app's
+# own origin. The build log is copied to gocrm-ui/test-results/e2e-ui-build.log.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -72,7 +78,7 @@ if [ -z "${JWT_SECRET:-}" ]; then
 fi
 export JWT_SECRET
 
-tools="go npx curl"
+tools="go npx curl npm"
 [ "$db_driver" = mysql ] && tools="mysql $tools"
 
 port_in_use() {
@@ -107,6 +113,8 @@ backend_log="$work_dir/e2e-backend.log"
 backend_pid=""
 oidc_pid=""
 oidc_log="$work_dir/e2e-oidc-issuer.log"
+ui_dist="$work_dir/ui-dist"
+ui_build_log="$work_dir/e2e-ui-build.log"
 
 sqlite_path="$work_dir/e2e-sqlite.db"
 
@@ -126,6 +134,10 @@ cleanup() {
   if [ -f "$oidc_log" ]; then
     mkdir -p "$results_dir"
     cp "$oidc_log" "$results_dir/e2e-oidc-issuer.log"
+  fi
+  if [ -f "$ui_build_log" ]; then
+    mkdir -p "$results_dir"
+    cp "$ui_build_log" "$results_dir/e2e-ui-build.log"
   fi
   # The SQLite file (with any write-ahead log left behind) is kept as evidence
   # next to the log; the next run starts from a new file regardless.
@@ -202,6 +214,7 @@ if [ "${E2E_PLAN_ONLY:-}" = 1 ]; then
   echo "e2e plan: aeo_allowed_origins=$AEO_EGRESS_ALLOWED_ORIGINS"
   echo "e2e plan: aeo_local_origins=$AEO_EGRESS_LOCAL_ORIGINS"
   echo "e2e plan: oidc_issuer_url=$E2E_OIDC_ISSUER_URL"
+  echo "e2e plan: ui_server=preview ui_api_base_url=/api/v1"
   exit 0
 fi
 
@@ -222,6 +235,18 @@ fi
 # process that outlives a kill of the parent.
 echo "e2e: building backend"
 (cd "$repo_root" && go build -tags=gophercrm_e2e -o "$work_dir/gophercrm-e2e" ./cmd)
+
+# The web app as it ships: the relative API base of scripts/release/build.sh
+# and the Dockerfile (the process environment wins over gocrm-ui/.env), built
+# into the run's temporary directory so gocrm-ui/dist is never touched. npm
+# passes the arguments after -- on to `vite build`.
+echo "e2e: building the web app (log copied to gocrm-ui/test-results/e2e-ui-build.log on exit)"
+if ! (cd "$repo_root/gocrm-ui" && VITE_API_BASE_URL=/api/v1 npm run build -- --outDir "$ui_dist" --emptyOutDir) \
+  >"$ui_build_log" 2>&1; then
+  echo "e2e: the web app build failed; last log lines:" >&2
+  tail -n 30 "$ui_build_log" >&2
+  exit 1
+fi
 
 # Browser provider fixtures use real HTTPS and a per-run certificate. The
 # disposable build alone can install these fallback roots. The pure Go
@@ -293,7 +318,12 @@ status=0
   # and so writes into the e2e database or file the backend uses.
   # Global AEO settings may be changed only after this runner created a fresh
   # database and disabled live credentials and scheduling above.
+  # E2E_UI_DIST makes playwright.config.ts serve the build with `vite preview`;
+  # E2E_API_ORIGIN is where vite.config.ts forwards /api/v1 for it. Specs and
+  # helpers call the backend directly from Node through the absolute
+  # VITE_API_BASE_URL; the bundle itself was built with /api/v1.
   export E2E_UI_PORT=$ui_port E2E_AEO_STUBS=1 PLAYWRIGHT_HTML_OPEN=never \
+    E2E_UI_DIST="$ui_dist" E2E_API_ORIGIN="http://127.0.0.1:$api_port" \
     VITE_API_BASE_URL="http://localhost:$api_port/api/v1" \
     E2E_OIDC_ISSUER_URL E2E_OIDC_CLIENT_ID E2E_OIDC_CLIENT_SECRET \
     E2E_BACKEND_LOG="$backend_log"
