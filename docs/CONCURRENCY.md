@@ -179,7 +179,7 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
   root may replay the whole unit.
 
 The rule is current behaviour only for lead conversion (`internal/service/lead_service.go:1092`),
-login (`internal/service/auth_service.go:335`), the password-reset request
+login (`internal/service/auth_service.go:398`), the password-reset request
 (`internal/service/auth_service.go:1373`), the password-reset confirm
 (`internal/service/auth_service.go:1503`), API-key create
 (`internal/service/apikey_service.go:116`), the RBAC user-role and role writes
@@ -445,29 +445,33 @@ confirm and the gaps of the re-check.
 ### Login
 
 - **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
-  `internal/service/auth_service.go:347`, read at `internal/service/auth_service.go:443`) and
+  `internal/service/auth_service.go:410`, read at `internal/service/auth_service.go:510`) and
   written by `UpdateFields` (`last_login_at` and the lockout clear,
-  `internal/service/auth_service.go:481`); between the owner read and that write, only while
+  `internal/service/auth_service.go:548`); between the owner read and that write, only while
   `security.sso.allow_password` is off (#457) and the service is built with `WithAuthIdentities`,
   a plain (non-locking) read of the owner's `user_identities` rows (`ExistsForUser`,
-  `internal/service/auth_service.go:466`); then the inserted `refresh_tokens` row
-  (`issueRefreshToken`, `internal/service/auth_service.go:503`), whose foreign-key check
+  `internal/service/auth_service.go:533`); then the inserted `refresh_tokens` row
+  (`issueRefreshToken`, `internal/service/auth_service.go:574`), whose foreign-key check
   (`fk_refresh_tokens_user`, `migrations/20250806120000_initial_schema.up.sql:172`) takes its
   shared lock on an owner row this transaction already holds.
-- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:256`) →
+- **Order:** plain `GetByEmail` outside the transaction (`internal/service/auth_service.go:298`) →
   bcrypt → the single sign-on password policy, read once outside the transaction
-  (`checkSSOIdentity`, `internal/service/auth_service.go:333`) → `FOR UPDATE` owner read by id →
+  (`checkSSOIdentity`, `internal/service/auth_service.go:396`) → `FOR UPDATE` owner read by id →
   plain `user_identities` read (setting off only) → `UpdateFields` → refresh token insert in a
-  savepoint (`internal/service/auth_service.go:498`) → signing of the access JWT from the locked
-  `token_version` (`internal/service/auth_service.go:528`). Lock order users → (read)
+  savepoint (`internal/service/auth_service.go:565`) → signing of the access JWT from the locked
+  `token_version` (`internal/service/auth_service.go:599`). Lock order users → (read)
   user_identities → refresh_tokens while the setting is off; with it on the read is skipped and the
   order is users → refresh_tokens. The locked row must still carry the hash bcrypt verified, be
   active, be live (not erased) and not be locked, and while the setting is off the owner must have
   no linked OpenID Connect identity, else the login is refused with the generic error and nothing
-  is written. The failure bookkeeping of a wrong
-  password stays a single statement outside the transaction.
+  is written. A wrong password (#545) runs
+  its own `WithTransactionAndRetry` root (`loginMaxRetries`,
+  `internal/service/auth_service.go:340`) after bcrypt: it locks the owner `users` row by primary
+  key (`FOR UPDATE`) and writes `failed_login_attempts`/`locked_until` from that row
+  (`recordLoginFailureInTransaction`, `internal/service/auth_service.go:213`), users only, so
+  parallel failed attempts each count (`TestLoginFailedAttemptsConcurrent{SQLite,MySQL}`).
 - **Transaction:** one issuing transaction per attempt (`loginInTransaction`,
-  `internal/service/auth_service.go:429`) on a service built by `NewAuthServiceWithSessions`; a
+  `internal/service/auth_service.go:496`) on a service built by `NewAuthServiceWithSessions`; a
   service without a transaction manager (`NewAuthService`) keeps the legacy unlocked statements. A
   non-retryable failure of the refresh insert rolls back to its savepoint and the login answers an
   access token only; a signing failure rolls the whole transaction back. The sign-in audit row
@@ -475,7 +479,7 @@ confirm and the gaps of the re-check.
   that reaches `LoginWithTokens`, as its own `INSERT` on the root handle after the transaction
   has committed or rolled back (never one per replay), and a failed audit insert changes nothing.
 - **Retry:** `WithTransactionAndRetry` with `loginMaxRetries` 3
-  (`internal/service/auth_service.go:335`, `:180` in the same file) replays the whole root on a
+  (`internal/service/auth_service.go:398`, `:250` in the same file) replays the whole root on a
   deadlock, lock wait timeout or SQLite busy/locked, including one raised by the refresh insert
   (returned tagged `ErrNestedRetryDeferred` from its savepoint).
 - **Status:** implemented

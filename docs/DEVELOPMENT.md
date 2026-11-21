@@ -564,9 +564,14 @@ outside the interleaved request/confirm case ends in error 1213. The acceptance 
 
 **Login issuing transaction (#336)** — on a service built by `NewAuthServiceWithSessions`,
 `LoginWithTokens` and `Login` keep the plain `GetByEmail` and bcrypt (against a dummy hash for an
-unknown address) before any transaction, so the timing, the generic errors and the failure
-bookkeeping of a wrong password (one `UpdateFields` outside the transaction) are unchanged. A
-verified password then starts one `WithTransactionAndRetry` transaction (`loginMaxRetries` 3) that
+unknown address) before any transaction, so the timing and the generic errors are unchanged. A
+wrong password (#545) then runs its own `WithTransactionAndRetry` root (`loginMaxRetries` 3) that
+locks the owner `users` row by primary key and writes `failed_login_attempts`/`locked_until` from
+that row only (`recordLoginFailureInTransaction`): an erased row or an active lock set by a
+parallel attempt writes nothing, an expired lock starts a fresh window, and the fifth counted
+failure sets the 15-minute lock, so parallel failed attempts each count. A failure to record it
+is logged with `error_code=login_failure_record_failed` and the login still answers
+`invalid credentials`. A verified password then starts one `WithTransactionAndRetry` transaction (`loginMaxRetries` 3) that
 locks the owner row by primary key (`FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite) and
 decides on that row only: a hash other than the one bcrypt verified, `is_active` false or an
 erased (soft-deleted) row is the generic `invalid credentials`, and a `locked_until` after the
@@ -595,7 +600,10 @@ with 401 `Invalid email or password`. Roots: `TestLoginOwnerLockDecisions{SQLite
 (rotation against a reset, a deactivation and an erasure, in both orderings),
 `TestLoginOwnerLockLogsOmitPersonalData` and `TestLoginUnwiredServiceUnchanged` in
 `internal/service/auth_login_owner_lock_test.go`, and, over HTTP, `TestLoginOwnerLockAPISQLite`
-(`tests/auth_login_owner_lock_test.go`). On SQLite the competing write runs through the
+(`tests/auth_login_owner_lock_test.go`), and for the failure count
+`TestLoginFailedAttemptsConcurrent{SQLite,MySQL}`, `TestLoginFailedAttemptsRecordFailureLogSQLite`
+and `TestLoginWrongPasswordErasedDuringRecordSQLite`
+(`internal/service/auth_login_failed_attempts_test.go`). On SQLite the competing write runs through the
 instance-local `loginBeforeLock` seam, between the lookup and the transaction; the MySQL roots run
 on a disposable `TEST_MYSQL_DSN` schema built by the real migrations, see each wait in
 `information_schema.PROCESSLIST` on two consecutive polls and assert that no ordering ends in
