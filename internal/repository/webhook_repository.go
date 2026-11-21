@@ -241,17 +241,36 @@ type WebhookDueDelivery struct {
 	EndpointID uint
 }
 
-func (r *webhookRepository) ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error) {
+func (r *webhookRepository) ListDueDeliveries(ctx context.Context, now time.Time, limit int, skipEndpoints []uint) ([]WebhookDueDelivery, error) {
 	var due []WebhookDueDelivery
 	now = now.UTC()
-	// The paused endpoints are left out in SQL, before the limit, so the rows
-	// of one paused endpoint never fill the batch and starve the others.
-	err := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).Select("id", "endpoint_id").
+	// The paused and the skipped endpoints are left out in SQL, before the
+	// limit, so the rows of one such endpoint never fill the batch and starve
+	// the others.
+	query := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).Select("id", "endpoint_id").
 		Where("status = ? AND next_attempt_at <= ?", models.WebhookDeliveryPending, now).
-		Where("endpoint_id NOT IN (SELECT id FROM webhook_endpoints WHERE paused_until IS NOT NULL AND paused_until > ?)", now).
-		Order("next_attempt_at").Order("id").Limit(limit).
-		Scan(&due).Error
+		Where("endpoint_id NOT IN (SELECT id FROM webhook_endpoints WHERE paused_until IS NOT NULL AND paused_until > ?)", now)
+	if len(skipEndpoints) > 0 {
+		// Only a non-empty list: an empty one would render NOT IN (NULL),
+		// which matches no row.
+		query = query.Where("endpoint_id NOT IN ?", skipEndpoints)
+	}
+	err := query.Order("next_attempt_at").Order("id").Limit(limit).Scan(&due).Error
 	return due, err
+}
+
+// WebhookEndpointSecret is the id and the sealed current secret of one
+// endpoint.
+type WebhookEndpointSecret struct {
+	ID           uint
+	SecretSealed string
+}
+
+func (r *webhookRepository) ListActiveEndpointSecrets(ctx context.Context) ([]WebhookEndpointSecret, error) {
+	var secrets []WebhookEndpointSecret
+	err := r.db.WithContext(ctx).Model(&models.WebhookEndpoint{}).Select("id", "secret_sealed").
+		Where("is_active = ?", true).Order("id").Scan(&secrets).Error
+	return secrets, err
 }
 
 // matchesAfterZero re-checks a conditional write that reported zero changed

@@ -119,12 +119,21 @@ import (
 // report it, so a deploy is only done once the new build actually serves.
 var revision = "dev"
 
-// healthPayload is the body of GET /health.
-func healthPayload(now time.Time) gin.H {
+// healthPayload is the body of GET /health. status stays "healthy" whatever
+// the webhook sender reports: the deploy checks read it, and a held sender
+// must never fail or roll back a deploy. webhooks is {"state": "running"}, or
+// {"state": "paused", "reason": "secret_unavailable"} while the sender holds
+// the deliveries of an endpoint whose signing secret cannot be opened (#559).
+func healthPayload(now time.Time, webhooks service.WebhookSenderStatus) gin.H {
+	sender := gin.H{"state": "running"}
+	if webhooks.Paused {
+		sender = gin.H{"state": "paused", "reason": models.WebhookErrorSecretUnavailable}
+	}
 	return gin.H{
 		"status":   "healthy",
 		"time":     now.UTC(),
 		"revision": revision,
+		"webhooks": sender,
 	}
 }
 
@@ -258,13 +267,15 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 	router.Use(middleware.Recovery())
 	router.Use(middleware.ErrorHandler())
 
-	router.GET("/health", func(c *gin.Context) {
-		utils.RespondSuccess(c, http.StatusOK, healthPayload(time.Now()))
-	})
-
 	api := router.Group(cfg.API.Prefix)
 	scimGroup := router.Group("/scim/v2")
-	stopAEO := setupDependencies(backgroundCtx, api, scimGroup, cfg)
+	stopAEO, webhookStatus := setupDependencies(backgroundCtx, api, scimGroup, cfg)
+
+	// Registered after setupDependencies so it reads the status of the
+	// webhook runtime that call built and started.
+	router.GET("/health", func(c *gin.Context) {
+		utils.RespondSuccess(c, http.StatusOK, healthPayload(time.Now(), webhookStatus()))
+	})
 
 	return router, stopAEO
 }
@@ -272,8 +283,9 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 // setupDependencies wires every repository, service and handler onto the API
 // group and returns the function that drains the automation worker, the form
 // retention purge, the bulk operation sweep, the webhook sender and the AEO
-// runtime at shutdown, in that order, before main closes the database.
-func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) func(context.Context) error {
+// runtime at shutdown, in that order, before main closes the database, and the
+// status accessor of the webhook sender it started (GET /health reads it).
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) (func(context.Context) error, func() service.WebhookSenderStatus) {
 	// Outbound webhooks (#345): one repository is the outbox of every create,
 	// update and delete path (lead, customer, ticket, form) and the store of
 	// the registry and the delivery log. It is built before the user, lead and
@@ -698,5 +710,5 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// rolls back), then the bulk operation sweep, then the webhook sender (the
 	// attempts in flight finish, each bounded by its request timeout), then the AEO
 	// runs.
-	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)
+	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop), webhooks.runtime.SenderStatus
 }

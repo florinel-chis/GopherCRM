@@ -269,29 +269,46 @@ func TestWebhookUndeliverableEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, env.db.Model(&models.WebhookEndpoint{}).Where("id = ?", foreign.ID).Update("secret_sealed", sealedElsewhere).Error)
 
+	before := map[uint]models.WebhookDelivery{}
+	for _, row := range rows {
+		before[row.EndpointID] = row
+	}
+
 	result, err := rt.RunOnce(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, 4, result.Attempted)
-	assert.Equal(t, 4, result.Failed)
+	assert.Equal(t, 2, result.Attempted, "only the inactive and the deleted endpoint's rows are attempted")
+	assert.Equal(t, 2, result.Failed)
+	assert.Equal(t, 2, result.HeldEndpoints, "the unreadable and the foreign endpoint are held (#559)")
 	assert.Empty(t, consumer.received(), "nothing is sent")
 	assert.Zero(t, consumer.dials.Load(), "nothing is dialled")
 
-	want := map[uint]string{
-		inactive.ID:   models.WebhookErrorEndpointInactive,
-		deleted.ID:    models.WebhookErrorEndpointInactive,
-		unreadable.ID: models.WebhookErrorSecretUnavailable,
-		foreign.ID:    models.WebhookErrorSecretUnavailable,
-	}
 	for _, row := range env.deliveries(models.WebhookEventLeadCreated, lead.ID) {
-		assert.Equal(t, models.WebhookDeliveryFailed, row.Status, "endpoint %d", row.EndpointID)
-		assert.Equal(t, want[row.EndpointID], row.ErrorCode, "endpoint %d", row.EndpointID)
-		assert.Equal(t, 1, row.Attempts)
-		assert.Nil(t, row.NextAttemptAt, "never retried")
+		switch row.EndpointID {
+		case inactive.ID, deleted.ID:
+			assert.Equal(t, models.WebhookDeliveryFailed, row.Status, "endpoint %d", row.EndpointID)
+			assert.Equal(t, models.WebhookErrorEndpointInactive, row.ErrorCode, "endpoint %d", row.EndpointID)
+			assert.Equal(t, 1, row.Attempts)
+			assert.Nil(t, row.NextAttemptAt, "never retried")
+		case unreadable.ID, foreign.ID:
+			// Held: never claimed, so the row is exactly as it was enqueued.
+			was := before[row.EndpointID]
+			assert.Equal(t, models.WebhookDeliveryPending, row.Status, "endpoint %d", row.EndpointID)
+			assert.Equal(t, 0, row.Attempts, "endpoint %d", row.EndpointID)
+			assert.Empty(t, row.ErrorCode, "endpoint %d", row.EndpointID)
+			assert.Nil(t, row.LastAttemptAt, "endpoint %d", row.EndpointID)
+			require.NotNil(t, row.NextAttemptAt)
+			require.NotNil(t, was.NextAttemptAt)
+			assert.True(t, row.NextAttemptAt.Equal(*was.NextAttemptAt), "endpoint %d", row.EndpointID)
+		default:
+			t.Fatalf("unexpected endpoint %d", row.EndpointID)
+		}
 		assert.Nil(t, row.LastHTTPStatus)
 	}
 	result, err = rt.RunOnce(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, result.Attempted)
+	assert.Equal(t, 2, result.HeldEndpoints)
+	assert.True(t, rt.SenderStatus().Paused)
 }
 
 func TestWebhookRuntimeLifecycle(t *testing.T) {

@@ -3752,8 +3752,9 @@ commits. Code: `internal/models/webhook.go`,
   `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
 - **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
-  with `lease_expired` at the cap), a plain `SELECT id, endpoint_id … WHERE status = 'pending' AND
-  next_attempt_at <= now ORDER BY next_attempt_at, id` (`ListDueDeliveries`), then the rows are
+  with `lease_expired` at the cap), the secret check, a plain `SELECT id, endpoint_id … WHERE
+  status = 'pending' AND next_attempt_at <= now ORDER BY next_attempt_at, id` (`ListDueDeliveries`)
+  without the held endpoints' rows, then the rows are
   grouped per endpoint and each group is sorted by ascending id (the discovery order is not id
   order: a retried row comes back after newer ones). The groups go to a pool of
   `WebhookWorkers` (4) goroutines, set with `WithWebhookWorkers` in `cmd/main.go` (a runtime built
@@ -3765,8 +3766,8 @@ commits. Code: `internal/models/webhook.go`,
   for every worker before the prune. Per row: a conditional claim by primary key (`pending → sending`,
   `attempts + 1`, `last_attempt_at`, `lease_until = now + WebhookSendLease` 2 min), one POST, and a
   finish fenced on `status = 'sending' AND attempts = <claimed>`. A missing or inactive endpoint
-  fails the row with `endpoint_inactive`, an unopenable secret with `secret_unavailable`; neither
-  sends. 2xx: `succeeded`, `last_http_status`, `next_attempt_at` NULL, `error_code` ''. Otherwise
+  fails the row with `endpoint_inactive` and sends nothing. 2xx: `succeeded`, `last_http_status`,
+  `next_attempt_at` NULL, `error_code` ''. Otherwise
   (`http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`) the row goes back
   to `pending` at `now + min(WebhookRetryBase 1 min × 2^(attempts−1), WebhookRetryMax 6 h)`, or
   `failed` when `attempts` reached `models.WebhookMaxAttempts` (10). Finished rows whose
@@ -3778,6 +3779,29 @@ commits. Code: `internal/models/webhook.go`,
   write. Re-checking against the written values instead would let a second claimer with the same
   clock reading count the first claimer's row as its own. The constants are package constants, not
   settings.
+- **Secret check (#559).** After the lease recovery every pass reads the id and `secret_sealed` of
+  every active endpoint (`ListActiveEndpointSecrets`, a plain SELECT in id order, no locking read)
+  and opens each current secret with the runtime's box through `webhookOpenCurrentSecret`, the
+  same helper `webhookSigningSecrets` uses (opens, not empty, a `whsec_` key). The endpoints that
+  fail form the held set, kept on the runtime and judged again on every pass; `ListDueDeliveries`
+  takes their ids as `skipEndpoints` and adds `AND endpoint_id NOT IN ?` (no predicate for an empty
+  list), so a held backlog never fills the batch of 100. Held rows are never claimed or written
+  (`status`, `attempts`, `next_attempt_at`, `error_code`, `last_attempt_at` stay) and the circuit
+  is not touched; lease recovery and the prune keep running, and inactive endpoints are not
+  checked (their rows still fail `endpoint_inactive`). The rows go out on the first pass after a
+  restart with the right key or a rotation. `WebhookPassResult.HeldEndpoints` counts the held set;
+  `SenderStatus()` (mutex-guarded, read by `GET /health` as `webhooks.state` `paused` with
+  `reason` `secret_unavailable`, else `running`; the top-level `status` stays `healthy`) reports
+  paused while the last completed check held an endpoint, false before the first. The set and its
+  log lines change under one lock: entering logs one Error "Webhook deliveries held: endpoint
+  signing secret cannot be opened" (`operation=webhook_secret_check`, `endpoint_id`,
+  `error_code=secret_unavailable` only), leaving one Info "Webhook deliveries resumed"
+  (`operation`, `endpoint_id`), never repeated while nothing changes. A read error is logged like a
+  discovery error (`operation=webhook_secret_check`) and fails the pass with the set unchanged.
+  An endpoint whose secret stops opening between the check and its attempt is retried on the
+  normal schedule with `secret_unavailable` (nothing sent, circuit untouched); the next check
+  holds it. Tests: `internal/service/webhook_secret_hold_test.go`
+  (`TestWebhookSecretHold{SQLite,MySQL}`), `cmd/webhook_secret_hold_wiring_test.go`.
 - **Endpoint pause (#569).** Each endpoint has a circuit in `webhook_endpoints.consecutive_failures`
   and `paused_until`, written only by the runtime. An attempt counts only when its request went
   through `sendWebhook` (the endpoint was read, active and its secret opened; `attemptOutcome.sent`):
@@ -3818,7 +3842,9 @@ commits. Code: `internal/models/webhook.go`,
   a list and joins one signature per secret with a space; `webhookSigningSecrets` picks them (#503):
   the opened current secret first, then the previous secret while `now` is strictly before
   `previous_secret_expires_at` (at the expiry instant the window is over). An unopenable current
-  secret is `secret_unavailable` (terminal) as before; an unopenable previous secret is dropped
+  secret sends nothing: the per-pass secret check holds the endpoint's rows before they are
+  claimed, and an attempt that still meets one is retried with `secret_unavailable` (#559); an
+  unopenable previous secret is dropped
   with one Warn (`operation`, `endpoint_id`, `error_code=previous_secret_unavailable`) and the
   request carries the current signature. `WebhookRuntime.attempt` takes ONE `r.now()` reading for
   the window decision and the request timestamp, and when the previous secret has expired calls
