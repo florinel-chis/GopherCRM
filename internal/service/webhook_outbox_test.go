@@ -75,7 +75,7 @@ func runWebhookOutboxAtomicity(t *testing.T, db *gorm.DB) {
 
 	t.Run("CustomerService.Create", func(t *testing.T) {
 		customer := env.newCustomer()
-		err := env.customers.Create(customer)
+		err := env.customers.Create(context.Background(), customer)
 		require.ErrorIs(t, err, injectedFailure)
 		assert.Zero(t, customer.ID)
 		assert.Zero(t, env.count(&models.Customer{}, "email = ?", customer.Email))
@@ -140,7 +140,7 @@ func runWebhookOutboxAtomicity(t *testing.T, db *gorm.DB) {
 		lead := env.newLead()
 		require.NoError(t, env.leads.Create(lead))
 		customer := env.newCustomer()
-		require.NoError(t, env.customers.Create(customer))
+		require.NoError(t, env.customers.Create(context.Background(), customer))
 		assert.NotZero(t, customer.ID)
 		converted, err := env.leads.ConvertToCustomer(ctx, env.seedLead().ID, &models.Customer{})
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func runWebhookOutboxFanOut(t *testing.T, db *gorm.DB) {
 
 	t.Run("CustomerService.Create", func(t *testing.T) {
 		customer := env.newCustomer()
-		require.NoError(t, env.customers.Create(customer))
+		require.NoError(t, env.customers.Create(context.Background(), customer))
 		assertFanOut(t, env, models.WebhookEventCustomerCreated, customer.ID, a.ID)
 	})
 

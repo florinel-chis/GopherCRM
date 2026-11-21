@@ -430,7 +430,7 @@ func TestTicketSLAFieldsOnEveryReadPathSQLite(t *testing.T) {
 	customerRepo := repository.NewCustomerRepository(e.db)
 	companyRepo := repository.NewCompanyRepository(e.db)
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, utils.NewTransactionManager(e.db))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, utils.NewTransactionManager(e.db))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(e.db), customerRepo, userRepo)
 	taskService := service.NewTaskService(repository.NewTaskRepository(e.db), userRepo, leadRepo, customerRepo,
 		repository.NewLabelRepository(e.db), repository.NewDealRepository(e.db))

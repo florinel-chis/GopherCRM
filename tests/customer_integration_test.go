@@ -2,6 +2,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -75,7 +76,7 @@ func (suite *CustomerIntegrationTestSuite) SetupSuite() {
 	}
 	suite.authService = service.NewAuthService(userRepo, apiKeyRepo, jwtConfig)
 	suite.userService = service.NewUserService(userRepo)
-	suite.customerService = service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	suite.customerService = service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(suite.authService, suite.userService)
@@ -295,7 +296,7 @@ func (suite *CustomerIntegrationTestSuite) TestCreateCustomer_DuplicateEmail() {
 		Email:     "duplicate@example.com",
 		Company:   "Acme Corp",
 	}
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	// Try to create another with same email
@@ -345,9 +346,9 @@ func (suite *CustomerIntegrationTestSuite) TestListCustomers_AdminSeesAll() {
 		Company:   "Company2",
 	}
 
-	err := suite.customerService.Create(customer1)
+	err := suite.customerService.Create(context.Background(), customer1)
 	suite.NoError(err)
-	err = suite.customerService.Create(customer2)
+	err = suite.customerService.Create(context.Background(), customer2)
 	suite.NoError(err)
 
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, suite.adminToken)
@@ -374,7 +375,7 @@ func (suite *CustomerIntegrationTestSuite) TestListCustomers_SalesCanSee() {
 		Company:   "Sales Company",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	rec := suite.makeRequestWithAuth("GET", "/api/v1/customers", nil, suite.salesToken)
@@ -405,7 +406,7 @@ func (suite *CustomerIntegrationTestSuite) TestGetCustomer_Success() {
 		Company:   "Test Company",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	rec := suite.makeRequestWithAuth("GET", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.adminToken)
@@ -435,7 +436,7 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_AdminSuccess() {
 		Company:   "Original Company",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	company := "Updated Company"
@@ -474,9 +475,9 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_DuplicateEmail() {
 		Email:     "customer2@example.com",
 	}
 
-	err := suite.customerService.Create(customer1)
+	err := suite.customerService.Create(context.Background(), customer1)
 	suite.NoError(err)
-	err = suite.customerService.Create(customer2)
+	err = suite.customerService.Create(context.Background(), customer2)
 	suite.NoError(err)
 
 	// Try to update customer2 with customer1's email
@@ -503,7 +504,7 @@ func (suite *CustomerIntegrationTestSuite) TestUpdateCustomer_SupportUserForbidd
 		Email:     "test@example.com",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	payload := handler.UpdateCustomerRequest{
@@ -522,7 +523,7 @@ func (suite *CustomerIntegrationTestSuite) TestDeleteCustomer_AdminSuccess() {
 		Email:     "delete@example.com",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.adminToken)
@@ -541,7 +542,7 @@ func (suite *CustomerIntegrationTestSuite) TestDeleteCustomer_SalesUserForbidden
 		Email:     "test@example.com",
 	}
 
-	err := suite.customerService.Create(customer)
+	err := suite.customerService.Create(context.Background(), customer)
 	suite.NoError(err)
 
 	rec := suite.makeRequestWithAuth("DELETE", fmt.Sprintf("/api/v1/customers/%d", customer.ID), nil, suite.salesToken)
@@ -566,7 +567,7 @@ func (suite *CustomerIntegrationTestSuite) TestPagination() {
 			Email:     fmt.Sprintf("customer%d@example.com", i+1),
 			Company:   fmt.Sprintf("Company%d", i+1),
 		}
-		err := suite.customerService.Create(customer)
+		err := suite.customerService.Create(context.Background(), customer)
 		suite.NoError(err)
 	}
 

@@ -64,7 +64,7 @@ func TestTicketRedactionProcedureSQLite(t *testing.T) {
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: ticketRedactionSecret, ExpiryHours: 1})
 	userService := service.NewUserService(userRepo)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
 
 	gin.SetMode(gin.TestMode)

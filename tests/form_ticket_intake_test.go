@@ -111,7 +111,7 @@ func TestFormTicketIntakeAPISQLite(t *testing.T) {
 		txManager, formsCfg, "/api/v1", service.WithFormAutomationEvents(automationRepo),
 		service.WithFormTicketIntake(repository.NewFormTicketRepository(db), txManager))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), txManager)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

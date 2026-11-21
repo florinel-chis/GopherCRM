@@ -10,6 +10,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -38,7 +39,10 @@ func (suite *CustomerServiceTestSuite) SetupTest() {
 	suite.mockRepo = new(mocks.CustomerRepository)
 	suite.mockUserRepo = new(mocks.UserRepository)
 	suite.mockCompany = new(mocks.CompanyRepository)
-	suite.service = NewCustomerService(suite.mockRepo, suite.mockUserRepo, suite.mockCompany)
+	// Create and Update run in a transaction; the repositories are mocks,
+	// so the transaction is opened on an empty private database.
+	txManager := utils.NewTransactionManager(testsupport.OpenSQLite(suite.T()))
+	suite.service = NewCustomerService(suite.mockRepo, suite.mockUserRepo, suite.mockCompany, txManager)
 }
 
 func (suite *CustomerServiceTestSuite) TearDownTest() {
@@ -57,13 +61,14 @@ func (suite *CustomerServiceTestSuite) TestCreate_Success() {
 
 	// Mock GetByEmailUnscoped to return not found (no duplicate)
 	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("WithTx", mock.Anything)
 	suite.mockRepo.On("Create", customer).Return(nil).Run(func(args mock.Arguments) {
 		// Simulate DB setting the ID
 		c := args.Get(0).(*models.Customer)
 		c.ID = 1
 	})
 
-	err := suite.service.Create(customer)
+	err := suite.service.Create(context.Background(), customer)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), uint(1), customer.ID)
 }
@@ -83,7 +88,7 @@ func (suite *CustomerServiceTestSuite) TestCreate_DuplicateEmail() {
 	// Mock GetByEmailUnscoped to return existing customer
 	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
 
-	err := suite.service.Create(customer)
+	err := suite.service.Create(context.Background(), customer)
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 }
@@ -105,7 +110,7 @@ func (suite *CustomerServiceTestSuite) TestCreate_SoftDeletedCustomerExists() {
 
 	suite.mockRepo.On("GetByEmailUnscoped", "deleted@example.com").Return(softDeleted, nil)
 
-	err := suite.service.Create(&models.Customer{
+	err := suite.service.Create(context.Background(), &models.Customer{
 		FirstName: "New",
 		LastName:  "Customer",
 		Email:     "deleted@example.com",
@@ -124,9 +129,10 @@ func (suite *CustomerServiceTestSuite) TestCreate_RepoError() {
 	}
 
 	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("WithTx", mock.Anything)
 	suite.mockRepo.On("Create", customer).Return(errors.New("database error"))
 
-	err := suite.service.Create(customer)
+	err := suite.service.Create(context.Background(), customer)
 	assert.Error(suite.T(), err)
 	assert.Equal(suite.T(), "database error", err.Error())
 }
@@ -185,9 +191,12 @@ func (suite *CustomerServiceTestSuite) TestUpdate_Success() {
 
 	// Mock GetByEmailUnscoped to check for duplicates
 	suite.mockRepo.On("GetByEmailUnscoped", "john.doe@example.com").Return(nil, gorm.ErrRecordNotFound)
+	suite.mockRepo.On("WithTx", mock.Anything)
+	// The locked read of the stored row inside the transaction.
+	suite.mockRepo.On("GetByID", uint(1)).Return(&models.Customer{BaseModel: models.BaseModel{ID: 1}}, nil)
 	suite.mockRepo.On("Update", customer).Return(nil)
 
-	err := suite.service.Update(customer)
+	err := suite.service.Update(context.Background(), customer)
 	assert.NoError(suite.T(), err)
 }
 
@@ -207,7 +216,7 @@ func (suite *CustomerServiceTestSuite) TestUpdate_DuplicateEmail() {
 	// Mock GetByEmailUnscoped to return existing customer with different ID
 	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
 
-	err := suite.service.Update(customer)
+	err := suite.service.Update(context.Background(), customer)
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrDuplicateEmail))
 }
@@ -227,9 +236,12 @@ func (suite *CustomerServiceTestSuite) TestUpdate_SameEmail() {
 
 	// Mock GetByEmailUnscoped to return existing customer with same ID (self)
 	suite.mockRepo.On("GetByEmailUnscoped", "john@example.com").Return(existingCustomer, nil)
+	suite.mockRepo.On("WithTx", mock.Anything)
+	// The locked read of the stored row inside the transaction.
+	suite.mockRepo.On("GetByID", uint(1)).Return(existingCustomer, nil)
 	suite.mockRepo.On("Update", customer).Return(nil)
 
-	err := suite.service.Update(customer)
+	err := suite.service.Update(context.Background(), customer)
 	assert.NoError(suite.T(), err)
 }
 

@@ -63,7 +63,7 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "webhooks-updated-api-jwt-secret-0123456789", ExpiryHours: 1})
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookEmitter))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhookEmitter, txManager))
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager, service.WithCustomerWebhooks(webhookEmitter))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
 		service.WithTicketWebhooks(webhookEmitter, txManager))
 	bulkService := service.NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),

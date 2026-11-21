@@ -71,7 +71,7 @@ func serveUserLookup(t *testing.T, tc userLookupCase, lookupErr error) (*httptes
 	}, nil).Maybe()
 
 	userHandler := NewUserHandler(service.NewUserService(userRepo))
-	customerHandler := NewCustomerHandler(service.NewCustomerService(customerRepo, userRepo, companyRepo))
+	customerHandler := NewCustomerHandler(service.NewCustomerService(customerRepo, userRepo, companyRepo, utils.NewTransactionManager(nil)))
 
 	router := gin.New()
 	router.Use(middleware.ErrorHandler())

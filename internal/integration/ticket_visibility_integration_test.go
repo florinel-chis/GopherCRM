@@ -134,7 +134,7 @@ func newTicketVisibilityEnv(t *testing.T, useMySQL bool) *ticketVisibilityEnv {
 	userRepo := repository.NewUserRepository(db)
 	customerRepo := repository.NewCustomerRepository(db)
 	ticketRepo := repository.NewTicketRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	ticketService := service.NewTicketService(ticketRepo, customerRepo, userRepo)
 	bulkService := service.NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
 		utils.NewTransactionManager(db), utils.Logger)

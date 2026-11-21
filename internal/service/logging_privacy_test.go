@@ -2,7 +2,9 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -76,7 +78,7 @@ func TestServiceLoggingPrivacy_SuccessAndSearch(t *testing.T) {
 		repo.On("Search", email, 0, 10, text, text, []string(nil)).Return(customers, nil)
 		repo.On("CountSearch", email).Return(int64(1), nil)
 		repo.On("ListAllForExport", email, text, text).Return(customers, nil)
-		svc := NewCustomerService(repo, nil, nil)
+		svc := NewCustomerService(repo, nil, nil, utils.NewTransactionManager(nil))
 		_, total, err := svc.Search(email, 0, 10, text, text)
 		require.NoError(t, err)
 		assert.Equal(t, int64(1), total)
@@ -99,8 +101,10 @@ func TestServiceLoggingPrivacy_ErrorsPreserveReturnedDetails(t *testing.T) {
 		customer := &models.Customer{Email: canary}
 		dbError := &mysql.MySQLError{Number: 1062, Message: "Duplicate entry '" + canary + "' for key 'customers.email'"}
 		repo.On("GetByEmailUnscoped", canary).Return(nil, gorm.ErrRecordNotFound)
+		repo.On("WithTx", mock.Anything)
 		repo.On("Create", customer).Return(dbError)
-		err := NewCustomerService(repo, nil, nil).Create(customer)
+		txManager := utils.NewTransactionManager(testsupport.OpenSQLite(t))
+		err := NewCustomerService(repo, nil, nil, txManager).Create(context.Background(), customer)
 		assert.Same(t, dbError, err)
 		assert.Contains(t, err.Error(), canary)
 		assert.NotContains(t, output.String(), canary)

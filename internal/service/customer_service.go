@@ -11,8 +11,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type customerService struct {
@@ -20,43 +18,39 @@ type customerService struct {
 	userRepo     repository.UserRepository
 	companyRepo  repository.CompanyRepository
 
-	// webhooks and txManager, set together by WithCustomerWebhooks (#345)
-	// only when both are non-nil, make Create one transaction that inserts
-	// the customer and emits customer.created, and Update one transaction
-	// with a locking read that emits customer.updated when a stored value
-	// changed (#408). A non-nil txManager is what selects those paths.
-	// Without the option webhooks is webhook.Nop, txManager is nil, and
-	// Create and Update take the plain path.
-	webhooks  webhook.Emitter
-	txManager *utils.TransactionManager
+	// tx runs Create and Update as one transaction each: Create inserts the
+	// customer and emits customer.created (#345), Update takes a locking
+	// read, writes the customer and emits customer.updated when a stored
+	// value changed (#408). Its emitter is webhook.Nop unless
+	// WithCustomerWebhooks sets one.
+	tx txDeps
 }
 
 // CustomerServiceOption configures NewCustomerService.
 type CustomerServiceOption func(*customerService)
 
-// WithCustomerWebhooks makes Create insert the customer and emit
-// customer.created through e in one transaction run by txManager (#345), and
-// Update lock the customer, write it and emit customer.updated when a stored
-// value changed, in one transaction (#408). Both must be non-nil; when either
-// is nil the option changes nothing, and Create and Update behave as without
-// it.
-func WithCustomerWebhooks(e webhook.Emitter, txManager *utils.TransactionManager) CustomerServiceOption {
+// WithCustomerWebhooks makes Create emit customer.created and Update emit
+// customer.updated through e, in the transaction that writes the customer.
+// A nil e means webhook.Nop.
+func WithCustomerWebhooks(e webhook.Emitter) CustomerServiceOption {
 	return func(s *customerService) {
-		if e == nil || txManager == nil {
-			return
+		if e == nil {
+			e = webhook.Nop
 		}
-		s.webhooks = e
-		s.txManager = txManager
+		s.tx.webhooks = e
 	}
 }
 
-func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository, companyRepo repository.CompanyRepository, opts ...CustomerServiceOption) CustomerService {
+// NewCustomerService builds the customer service. txManager is required and
+// must run over the same handle as the repositories; a nil one panics.
+func NewCustomerService(customerRepo repository.CustomerRepository, userRepo repository.UserRepository, companyRepo repository.CompanyRepository, txManager *utils.TransactionManager, opts ...CustomerServiceOption) CustomerService {
 	s := &customerService{
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
 		companyRepo:  companyRepo,
-		webhooks:     webhook.Nop,
+		tx:           newTxDeps(txManager),
 	}
+	s.tx.customers = customerRepo
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -79,7 +73,7 @@ func (s *customerService) checkCompanyLink(companyID *uint) error {
 	return nil
 }
 
-func (s *customerService) Create(customer *models.Customer) error {
+func (s *customerService) Create(ctx context.Context, customer *models.Customer) error {
 	if err := normalizeCustomerWebsite(customer); err != nil {
 		return err
 	}
@@ -100,29 +94,16 @@ func (s *customerService) Create(customer *models.Customer) error {
 		return err
 	}
 
-	if s.txManager != nil {
-		// The customer and its customer.created outbox rows commit together
-		// or not at all (#345).
-		err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
-			tx, ok := utils.GetTxFromContext(ctx)
-			if !ok {
-				return utils.ErrNoTransaction
-			}
-			if err := s.customerRepo.WithTx(tx).Create(customer); err != nil {
-				return err
-			}
-			return s.webhooks.Bind(tx).Created(ctx, webhook.Customer, customer.ID)
-		})
-		if err != nil {
-			customer.ID = 0
-			logger.WithError(utils.LogError(err)).Error("Failed to create customer")
+	// The customer and its customer.created outbox rows commit together or
+	// not at all (#345).
+	err = s.tx.Run(ctx, func(ctx context.Context, u txUnit) error {
+		if err := u.Customers.Create(customer); err != nil {
 			return err
 		}
-		logger.WithField("customer_id", customer.ID).Info("Customer created successfully")
-		return nil
-	}
-
-	if err := s.customerRepo.Create(customer); err != nil {
+		return u.Webhooks.Created(ctx, webhook.Customer, customer.ID)
+	})
+	if err != nil {
+		customer.ID = 0
 		logger.WithError(utils.LogError(err)).Error("Failed to create customer")
 		return err
 	}
@@ -166,7 +147,7 @@ func (s *customerService) GetByUserID(userID uint) (*models.Customer, error) {
 	return customer, nil
 }
 
-func (s *customerService) Update(customer *models.Customer) error {
+func (s *customerService) Update(ctx context.Context, customer *models.Customer) error {
 	if err := normalizeCustomerWebsite(customer); err != nil {
 		return err
 	}
@@ -188,59 +169,39 @@ func (s *customerService) Update(customer *models.Customer) error {
 		return err
 	}
 
-	if s.txManager != nil {
-		return s.updateWithWebhooks(customer, logger)
-	}
-
-	if err := s.customerRepo.Update(customer); err != nil {
-		// The row was read live and is gone now: the write lost to an erasure
-		// and wrote nothing. That is the request's answer, not a failure.
-		if isNotFound(err) {
-			logger.WithError(utils.LogError(err)).Warn("Customer update lost: no live customer")
-			return fmt.Errorf("customer %d not found: %w", customer.ID, apperrors.ErrNotFound)
-		}
-		logger.WithError(utils.LogError(err)).Error("Failed to update customer")
-		return err
-	}
-
-	logger.Info("Customer updated successfully")
-	return nil
+	return s.updateLocked(ctx, customer, logger)
 }
 
-// updateWithWebhooks is the write of Update with webhooks wired (#408): one
-// transaction that reads the live customer with a row lock, writes the
-// fifteen columns customerRepository.Update owns and, when at least one of
-// them differs from the locked row, emits customer.updated. A customer
-// that is no longer live at the locking read is the same not-found answer as
-// a write that lost to an erasure. A failed write or outbox insert rolls
-// everything back.
+// updateLocked is the write of Update (#408): one transaction that reads the
+// live customer with a row lock, writes the fifteen columns
+// customerRepository.Update owns and, when at least one of them differs from
+// the locked row, emits customer.updated. A customer that is no longer live
+// at the locking read is the same not-found answer as a write that lost to an
+// erasure. A failed write or outbox insert rolls everything back.
 //
 // Lock order (docs/CONCURRENCY.md: companies -> leads -> customers -> deals):
 // the one customers row is the only row lock this transaction takes. The
 // duplicate-email and company checks ran before it, as plain reads; nothing
 // here may take a locking read on companies or leads, which would invert the
 // order against a company delete (UnlinkCustomers).
-func (s *customerService) updateWithWebhooks(customer *models.Customer, logger *logrus.Entry) error {
-	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
-		tx, ok := utils.GetTxFromContext(ctx)
-		if !ok {
-			return utils.ErrNoTransaction
-		}
-		// The fresh Session keeps FOR UPDATE off every later statement on tx;
-		// the repository's preloads of this read are plain reads.
-		locked, err := s.customerRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})).GetByID(customer.ID)
+func (s *customerService) updateLocked(ctx context.Context, customer *models.Customer, logger *logrus.Entry) error {
+	err := s.tx.Run(ctx, func(ctx context.Context, u txUnit) error {
+		// The repository's preloads of this read are plain reads.
+		locked, err := s.customerRepo.WithTx(u.LockingRead()).GetByID(customer.ID)
 		if err != nil {
 			return err
 		}
-		if err := s.customerRepo.WithTx(tx).Update(customer); err != nil {
+		if err := u.Customers.Update(customer); err != nil {
 			return err
 		}
 		if !customerStoredValuesChanged(locked, customer) {
 			return nil
 		}
-		return s.webhooks.Bind(tx).Updated(ctx, webhook.Customer, customer.ID)
+		return u.Webhooks.Updated(ctx, webhook.Customer, customer.ID)
 	})
 	if err != nil {
+		// The row is gone: the write lost to an erasure and wrote nothing.
+		// That is the request's answer, not a failure.
 		if isNotFound(err) {
 			logger.WithError(utils.LogError(err)).Warn("Customer update lost: no live customer")
 			return fmt.Errorf("customer %d not found: %w", customer.ID, apperrors.ErrNotFound)

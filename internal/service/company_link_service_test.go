@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 
 	"github.com/stretchr/testify/assert"
@@ -88,7 +89,7 @@ func (suite *CustomerServiceTestSuite) TestCreate_UnknownCompanyIsRejectedBefore
 	suite.mockRepo.On("GetByEmailUnscoped", "j@example.com").Return(nil, gorm.ErrRecordNotFound)
 	suite.mockCompany.On("GetByID", uint(9)).Return(nil, gorm.ErrRecordNotFound)
 
-	err := suite.service.Create(customer)
+	err := suite.service.Create(context.Background(), customer)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrCompanyNotFound), "got %v", err)
 	suite.mockRepo.AssertNotCalled(suite.T(), "Create", mock.Anything)
 }
@@ -99,16 +100,19 @@ func (suite *CustomerServiceTestSuite) TestUpdate_CompanyLinkIsCheckedAndNilIsNo
 	suite.mockRepo.On("GetByEmailUnscoped", "j@example.com").Return(nil, gorm.ErrRecordNotFound)
 
 	suite.mockCompany.On("GetByID", uint(9)).Return(nil, gorm.ErrRecordNotFound).Once()
-	err := suite.service.Update(customer)
+	err := suite.service.Update(context.Background(), customer)
 	assert.True(suite.T(), errors.Is(err, apperrors.ErrCompanyNotFound), "got %v", err)
 	suite.mockRepo.AssertNotCalled(suite.T(), "Update", mock.Anything)
 
 	suite.mockCompany.On("GetByID", uint(9)).Return(&models.Company{BaseModel: models.BaseModel{ID: 9}}, nil).Once()
+	suite.mockRepo.On("WithTx", mock.Anything)
+	// The locked read of the stored row inside each update's transaction.
+	suite.mockRepo.On("GetByID", uint(1)).Return(&models.Customer{BaseModel: models.BaseModel{ID: 1}}, nil).Twice()
 	suite.mockRepo.On("Update", customer).Return(nil).Once()
-	assert.NoError(suite.T(), suite.service.Update(customer))
+	assert.NoError(suite.T(), suite.service.Update(context.Background(), customer))
 
 	customer.CompanyID = nil
 	suite.mockRepo.On("Update", customer).Return(nil).Once()
-	assert.NoError(suite.T(), suite.service.Update(customer))
+	assert.NoError(suite.T(), suite.service.Update(context.Background(), customer))
 	suite.mockCompany.AssertNumberOfCalls(suite.T(), "GetByID", 2)
 }

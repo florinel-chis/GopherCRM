@@ -72,7 +72,7 @@ func newTicketAutomationAPI(t *testing.T) *ticketAutomationAPI {
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(db), txManager, nil),
 		service.WithTicketAutomationEvents(automationRepo, txManager))
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), txManager)
 	engine := service.NewAutomationEngine(automationRepo, notificationRepo, repository.NewTaskRepository(db), userRepo, nil, txManager)
 	automationService := service.NewAutomationService(automationRepo, userRepo, engine, txManager)
 

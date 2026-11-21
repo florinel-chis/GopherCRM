@@ -64,7 +64,7 @@ func (e *webhookEnv) announcedLead() *models.Lead {
 func (e *webhookEnv) announcedCustomer() *models.Customer {
 	e.t.Helper()
 	customer := e.newCustomer()
-	require.NoError(e.t, e.customers.Create(customer))
+	require.NoError(e.t, e.customers.Create(context.Background(), customer))
 	return customer
 }
 

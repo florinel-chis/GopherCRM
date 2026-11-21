@@ -51,8 +51,8 @@ func runClearFieldsUpdate(t *testing.T, body string) *models.Customer {
 	svc := new(mocks.CustomerService)
 	svc.On("GetByID", uint(7)).Return(clearFieldsStoredCustomer(), nil).Once()
 	var passed *models.Customer
-	svc.On("Update", mock.AnythingOfType("*models.Customer")).Run(func(args mock.Arguments) {
-		passed = args.Get(0).(*models.Customer)
+	svc.On("Update", mock.Anything, mock.AnythingOfType("*models.Customer")).Run(func(args mock.Arguments) {
+		passed = args.Get(1).(*models.Customer)
 	}).Return(nil).Once()
 
 	h := NewCustomerHandler(svc)

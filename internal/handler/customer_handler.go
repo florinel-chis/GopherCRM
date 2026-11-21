@@ -196,7 +196,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 		customer.CompanyID = req.CompanyID
 	}
 
-	if err := h.customerService.Create(customer); err != nil {
+	if err := h.customerService.Create(c.Request.Context(), customer); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to create customer")
 		switch {
 		case errors.Is(err, apperrors.ErrValidation):
@@ -449,7 +449,7 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 		customer.CompanyRecord = nil
 	}
 
-	if err := h.customerService.Update(customer); err != nil {
+	if err := h.customerService.Update(c.Request.Context(), customer); err != nil {
 		// The customer was live at the read above and is not any more: the
 		// write lost to an erasure and wrote nothing. Only this sentinel means
 		// that; any other failure stays a 500.

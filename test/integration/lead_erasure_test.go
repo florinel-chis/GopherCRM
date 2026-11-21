@@ -276,6 +276,7 @@ func TestCustomerServiceErasureFollowsTheConversionLink(t *testing.T) {
 		repository.NewCustomerRepository(db),
 		repository.NewUserRepository(db),
 		repository.NewCompanyRepository(db),
+		utils.NewTransactionManager(db),
 	)
 
 	owner := seedLeadOwner(t, db)

@@ -76,7 +76,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_Success() {
 		Notes:      "Important customer",
 	}
 
-	suite.mockService.On("Create", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Create", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.FirstName == "John" &&
 			c.LastName == "Doe" &&
 			c.Email == "john@example.com" &&
@@ -90,7 +90,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_Success() {
 			c.PostalCode == "10001" &&
 			c.Notes == "Important customer"
 	})).Return(nil).Run(func(args mock.Arguments) {
-		customer := args.Get(0).(*models.Customer)
+		customer := args.Get(1).(*models.Customer)
 		customer.ID = 1
 	})
 
@@ -119,7 +119,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmail() {
 		Email:     "john@example.com",
 	}
 
-	suite.mockService.On("Create", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
+	suite.mockService.On("Create", mock.Anything, mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
@@ -341,7 +341,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_Success() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
-	suite.mockService.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Update", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.ID == 1 &&
 			c.FirstName == "Jane" &&
 			c.LastName == "Smith" &&
@@ -379,7 +379,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmail() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
-	suite.mockService.On("Update", mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
+	suite.mockService.On("Update", mock.Anything, mock.Anything).Return(fmt.Errorf("customer with this email already exists: %w", apperrors.ErrDuplicateEmail))
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
@@ -421,7 +421,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_NotFound() {
 	assert.Equal(suite.T(), "Customer not found", response.Error.Message)
 
 	// The pre-check failed, so nothing may be written.
-	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything)
 }
 
 // TestUpdate_LookupFailureIsInternalError covers the same swallow on Update's
@@ -452,7 +452,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_LookupFailureIsInternalError()
 	assert.NotContains(suite.T(), body2, "connection refused")
 	assert.NotContains(suite.T(), body2, "not found")
 
-	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "Update", mock.Anything, mock.Anything)
 }
 
 func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
@@ -654,7 +654,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_DuplicateEmailDoesNotLeakDrive
 	}
 
 	driverErr := fmt.Errorf("Error 1062 (23000): Duplicate entry 'john@example.com' for key 'idx_customers_email': %w", apperrors.ErrDuplicateEmail)
-	suite.mockService.On("Create", mock.Anything).Return(driverErr)
+	suite.mockService.On("Create", mock.Anything, mock.Anything).Return(driverErr)
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
@@ -691,7 +691,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_DuplicateEmailDoesNotLeakDrive
 
 	driverErr := fmt.Errorf("UNIQUE constraint failed: customers.email (idx_customers_email): %w", apperrors.ErrDuplicateEmail)
 	suite.mockService.On("GetByID", uint(1)).Return(existingCustomer, nil)
-	suite.mockService.On("Update", mock.Anything).Return(driverErr)
+	suite.mockService.On("Update", mock.Anything, mock.Anything).Return(driverErr)
 
 	body, _ := json.Marshal(payload)
 	req := httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
@@ -1020,4 +1020,42 @@ func (suite *CustomerHandlerTestSuite) TestAssign_ForbiddenForSupportUser() {
 	suite.handler.Assign(ctx)
 
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+}
+
+// requestContextMarker marks the request context so a mock can recognise it.
+type requestContextMarker struct{}
+
+func (suite *CustomerHandlerTestSuite) TestCreateAndUpdate_HandTheServiceTheRequestContext() {
+	suite.router.Use(func(c *gin.Context) {
+		c.Request = c.Request.WithContext(context.WithValue(c.Request.Context(), requestContextMarker{}, "this-request"))
+		c.Next()
+	})
+	suite.router.POST("/customers", suite.handler.Create)
+	suite.router.PUT("/customers/:id", suite.handler.Update)
+	isRequestContext := mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx.Value(requestContextMarker{}) == "this-request"
+	})
+
+	suite.mockService.On("Create", isRequestContext, mock.AnythingOfType("*models.Customer")).Return(nil).Once()
+	suite.mockService.On("GetByID", uint(1)).Return(&models.Customer{
+		BaseModel: models.BaseModel{ID: 1},
+		FirstName: "John",
+		LastName:  "Doe",
+		Email:     "john@example.com",
+	}, nil).Once()
+	suite.mockService.On("Update", isRequestContext, mock.AnythingOfType("*models.Customer")).Return(nil).Once()
+
+	body, _ := json.Marshal(CreateCustomerRequest{FirstName: "John", LastName: "Doe", Email: "john@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/customers", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
+
+	body, _ = json.Marshal(UpdateCustomerRequest{FirstName: "Jane"})
+	req = httptest.NewRequest(http.MethodPut, "/customers/1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
 }

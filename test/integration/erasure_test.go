@@ -455,6 +455,7 @@ func TestErasingACustomerThatDoesNotExistReportsNotFound(t *testing.T) {
 		repository.NewCustomerRepository(db),
 		repository.NewUserRepository(db),
 		repository.NewCompanyRepository(db),
+		utils.NewTransactionManager(db),
 	)
 
 	err := customerService.Delete(context.Background(), 99999)
@@ -779,14 +780,14 @@ func TestErasedCustomerEmailCanBeUsedAgain(t *testing.T) {
 	db := setupErasureDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 
 	original := &models.Customer{FirstName: "First", LastName: "Tenant", Email: "reusable-customer@example.com"}
-	require.NoError(t, customerService.Create(original))
+	require.NoError(t, customerService.Create(context.Background(), original))
 	require.NoError(t, customerRepo.Delete(context.Background(), original.ID))
 
 	replacement := &models.Customer{FirstName: "Second", LastName: "Tenant", Email: "reusable-customer@example.com"}
-	require.NoError(t, customerService.Create(replacement),
+	require.NoError(t, customerService.Create(context.Background(), replacement),
 		"the erased address must be free for re-use")
 	assert.NotZero(t, replacement.ID)
 	assert.NotEqual(t, original.ID, replacement.ID)

@@ -104,7 +104,7 @@ func TestCustomerHandlerUpdateMapsServiceErrors(t *testing.T) {
 				LastName:  "Customer",
 				Email:     "stored@example.com",
 			}, nil)
-			customerService.On("Update", mock.AnythingOfType("*models.Customer")).Return(tc.err)
+			customerService.On("Update", mock.Anything, mock.AnythingOfType("*models.Customer")).Return(tc.err)
 
 			router := gin.New()
 			router.Use(func(c *gin.Context) {

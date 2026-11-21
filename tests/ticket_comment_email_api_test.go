@@ -107,7 +107,7 @@ func newTicketMailAPIFixture(t *testing.T) *ticketMailAPIFixture {
 	f := &ticketMailAPIFixture{db: db, mailer: &ticketMailAPIMailer{}, tokens: map[string]string{}, users: map[string]*models.User{}}
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(db), utils.NewTransactionManager(db), f.mailer))
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	ticketHandler := handler.NewTicketHandler(ticketService, customerService)
 
 	gin.SetMode(gin.TestMode)

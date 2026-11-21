@@ -317,12 +317,12 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	emitter := webhook.NewEmitter(hooks)
 	if hooks != nil {
 		leadOpts = append(leadOpts, WithLeadWebhooks(emitter))
-		customerOpts = append(customerOpts, WithCustomerWebhooks(emitter, e.txManager))
+		customerOpts = append(customerOpts, WithCustomerWebhooks(emitter))
 		ticketOpts = append(ticketOpts, WithTicketWebhooks(emitter, e.txManager))
 		formOpts = append(formOpts, WithFormWebhooks(emitter))
 	}
 	e.leads = NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, e.txManager, leadOpts...)
-	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, customerOpts...)
+	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, e.txManager, customerOpts...)
 	e.tickets = NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo, ticketOpts...)
 	e.users = NewUserService(userRepo)
 	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),

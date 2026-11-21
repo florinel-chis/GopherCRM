@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"strings"
 	"testing"
 
@@ -23,9 +24,9 @@ func TestCustomerWebsiteValidation(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			customer := &models.Customer{Website: value}
 			// Invalid values must be rejected before any repository write, including conversion.
-			s := NewCustomerService(nil, nil, nil)
-			assert.ErrorIs(t, s.Create(customer), apperrors.ErrValidation)
-			assert.ErrorIs(t, s.Update(customer), apperrors.ErrValidation)
+			s := NewCustomerService(nil, nil, nil, utils.NewTransactionManager(nil))
+			assert.ErrorIs(t, s.Create(context.Background(), customer), apperrors.ErrValidation)
+			assert.ErrorIs(t, s.Update(context.Background(), customer), apperrors.ErrValidation)
 			leadService := NewLeadService(nil, nil, nil, nil, nil)
 			_, err := leadService.ConvertToCustomer(context.Background(), 1, customer)
 			assert.ErrorIs(t, err, apperrors.ErrValidation)

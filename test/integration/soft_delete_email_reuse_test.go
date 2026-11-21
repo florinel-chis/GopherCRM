@@ -2,8 +2,10 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -287,10 +289,10 @@ func TestCustomerCreateRejectsEmailOfSoftDeletedCustomer(t *testing.T) {
 	db := setupEmailReuseDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 
 	original := &models.Customer{FirstName: "Bob", LastName: "Original", Email: "bob@example.com"}
-	require.NoError(t, customerService.Create(original))
+	require.NoError(t, customerService.Create(context.Background(), original))
 	require.NotZero(t, original.ID)
 
 	legacySoftDelete(t, db, &models.Customer{}, original.ID)
@@ -300,7 +302,7 @@ func TestCustomerCreateRejectsEmailOfSoftDeletedCustomer(t *testing.T) {
 	require.True(t, errors.Is(err, gorm.ErrRecordNotFound))
 
 	replacement := &models.Customer{FirstName: "Bob", LastName: "Again", Email: "bob@example.com"}
-	err = customerService.Create(replacement)
+	err = customerService.Create(context.Background(), replacement)
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, apperrors.ErrDuplicateEmail),
@@ -313,13 +315,13 @@ func TestCustomerCreateStillRejectsLiveDuplicateEmail(t *testing.T) {
 	db := setupEmailReuseDB(t)
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 
-	require.NoError(t, customerService.Create(&models.Customer{
+	require.NoError(t, customerService.Create(context.Background(), &models.Customer{
 		FirstName: "Live", LastName: "One", Email: "live-customer@example.com",
 	}))
 
-	err := customerService.Create(&models.Customer{
+	err := customerService.Create(context.Background(), &models.Customer{
 		FirstName: "Live", LastName: "Two", Email: "live-customer@example.com",
 	})
 	require.Error(t, err)
@@ -357,7 +359,7 @@ func TestCreateCustomerHandlerDoesNotLeakDriverErrorForSoftDeletedEmail(t *testi
 
 	customerRepo := repository.NewCustomerRepository(db)
 	userRepo := repository.NewUserRepository(db)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	customerHandler := handler.NewCustomerHandler(customerService)
 
 	gin.SetMode(gin.TestMode)

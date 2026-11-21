@@ -83,7 +83,7 @@ func TestBusinessTextErasureAPISQLite(t *testing.T) {
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: businessTextSecret, ExpiryHours: 1})
 	userService := service.NewUserService(userRepo)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), txManager)
 	dealService := service.NewDealService(dealRepo, repository.NewCompanyRepository(db), customerRepo,
 		repository.NewLeadRepository(db), userRepo, nil, txManager)
 	quoteService := service.NewQuoteService(repository.NewQuoteRepository(db), repository.NewProductRepository(db), dealRepo,
