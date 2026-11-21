@@ -273,22 +273,8 @@ func TestWebhookJSON(t *testing.T) {
 		value, err := WebhookEventTypes{"ticket.created", "lead.created", "ticket.created"}.Value()
 		require.NoError(t, err)
 		assert.Equal(t, "lead.created,ticket.created", value)
-		assert.True(t, IsWebhookEventType("customer.created"))
-		assert.False(t, IsWebhookEventType("Customer.Created"))
-		assert.False(t, IsWebhookEventType("lead.archived"))
-		// The test ping's type is not subscribable.
+		// The type list, the event type check and the 255-byte fit are pinned
+		// against the catalogue in internal/webhook (TestCatalogue).
 		assert.Equal(t, "webhook.ping", WebhookEventPing)
-		assert.False(t, IsWebhookEventType(WebhookEventPing))
-		assert.NotContains(t, WebhookEventTypeValues, WebhookEventPing)
-		// The deleted types (#437): nine in all, and every one subscribed fits
-		// varchar(255) without a migration.
-		assert.Equal(t, []string{"customer.created", "customer.deleted", "customer.updated", "lead.created", "lead.deleted",
-			"lead.updated", "ticket.created", "ticket.deleted", "ticket.updated"}, WebhookEventTypeValues)
-		for _, deleted := range []string{"lead.deleted", "customer.deleted", "ticket.deleted"} {
-			assert.True(t, IsWebhookEventType(deleted), deleted)
-		}
-		all, err := WebhookEventTypes(WebhookEventTypeValues).Value()
-		require.NoError(t, err)
-		assert.Len(t, all, 134)
 	})
 }

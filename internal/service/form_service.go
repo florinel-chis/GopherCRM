@@ -22,6 +22,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -301,22 +302,29 @@ type formService struct {
 	// it returns rolls the confirmation back. Nil in production.
 	ticketIntakeSeam func(stage string) error
 
-	// webhooks is the outbound webhook outbox (#345): a submission that
-	// creates a new lead enqueues lead.created, and a confirmation whose
-	// ticket intake outcome is created enqueues ticket.created, each in the
-	// submission's own transaction. Nil means no webhooks.
-	webhooks repository.WebhookRepository
+	// webhooks is the outbound webhook emitter (#345): a submission that
+	// creates a new lead emits lead.created, and a confirmation whose ticket
+	// intake outcome is created emits ticket.created, each in the
+	// submission's own transaction. NewFormService sets it to webhook.Nop,
+	// so it is never nil.
+	webhooks webhook.Emitter
 }
 
 // FormServiceOption configures NewFormService beyond its required
 // dependencies.
 type FormServiceOption func(*formService)
 
-// WithFormWebhooks makes the form paths enqueue lead.created for a new lead
-// (never for a repeat enquiry) and ticket.created for a ticket intake outcome
-// created (never for a duplicate), in the submission's transaction (#345).
-func WithFormWebhooks(repo repository.WebhookRepository) FormServiceOption {
-	return func(s *formService) { s.webhooks = repo }
+// WithFormWebhooks makes the form paths emit lead.created through e for a new
+// lead (never for a repeat enquiry) and ticket.created for a ticket intake
+// outcome created (never for a duplicate), in the submission's transaction
+// (#345). A nil e means webhook.Nop: no webhooks.
+func WithFormWebhooks(e webhook.Emitter) FormServiceOption {
+	return func(s *formService) {
+		if e == nil {
+			e = webhook.Nop
+		}
+		s.webhooks = e
+	}
 }
 
 // WithFormAutomationEvents makes the submission paths record lead_created or
@@ -344,6 +352,7 @@ func NewFormService(
 		userRepo:  userRepo,
 		mailer:    m,
 		txManager: txManager,
+		webhooks:  webhook.Nop,
 		cfg:       cfg,
 		confirmURL: strings.TrimRight(cfg.PublicBaseURL, "/") +
 			"/" + strings.Trim(apiPrefix, "/") + "/forms/public/confirm",
@@ -973,7 +982,7 @@ func (s *formService) storeReceivedSubmission(ctx context.Context, form *models.
 			return err
 		}
 		if form.CreateLead {
-			if err := s.applySubmissionLead(ctx, s.leadRepo.WithTx(tx), automationTx(s.automation, tx), webhooksTx(s.webhooks, tx), form, submission); err != nil {
+			if err := s.applySubmissionLead(ctx, s.leadRepo.WithTx(tx), automationTx(s.automation, tx), s.webhooks.Bind(tx), form, submission); err != nil {
 				return err
 			}
 			if err := txFormRepo.UpdateSubmission(submission); err != nil {
@@ -1090,7 +1099,7 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 			return utils.ErrNoTransaction
 		}
 		var err error
-		form, submission, err = s.confirmInTransaction(ctx, logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), s.ticketRepoFor(ctx), webhooksTx(s.webhooks, tx), hash)
+		form, submission, err = s.confirmInTransaction(ctx, logger, s.repo.WithTx(tx), s.leadRepo.WithTx(tx), automationTx(s.automation, tx), s.ticketRepoFor(ctx), s.webhooks.Bind(tx), hash)
 		if err != nil {
 			return err
 		}
@@ -1131,7 +1140,7 @@ func (s *formService) ConfirmSubmission(ctx context.Context, rawToken string) er
 // For a create_ticket form (#213) ticketRepo (nil when ticket intake is not
 // wired) opens the ticket after the claim and before the submission update:
 // the lock order is token, customer, ticket, key, submission.
-func (s *formService) confirmInTransaction(ctx context.Context, logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, events repository.AutomationRepository, ticketRepo repository.FormTicketRepository, hooks repository.WebhookRepository, hash string) (*models.Form, *models.FormSubmission, error) {
+func (s *formService) confirmInTransaction(ctx context.Context, logger *logrus.Entry, formRepo repository.FormRepository, leadRepo repository.LeadRepository, events repository.AutomationRepository, ticketRepo repository.FormTicketRepository, hooks webhook.TxEmitter, hash string) (*models.Form, *models.FormSubmission, error) {
 	// The lookup already excludes spent and expired tokens; the claim below
 	// re-applies both predicates as part of its own UPDATE.
 	stored, err := formRepo.GetConfirmationTokenByHash(hash)
@@ -1223,9 +1232,9 @@ func (s *formService) confirmInTransaction(ctx context.Context, logger *logrus.E
 // transaction-scoped by the caller; events (nil without automation) records
 // the lead's outbox event in the same transaction, origin form, followed by
 // one lead_form_submitted event carrying the form and submission ids (#220).
-// hooks (nil without webhooks) enqueues lead.created for a new lead only, never
-// for a repeat enquiry (#345).
-func (s *formService) applySubmissionLead(ctx context.Context, leadRepo repository.LeadRepository, events repository.AutomationRepository, hooks repository.WebhookRepository, form *models.Form, submission *models.FormSubmission) error {
+// hooks (webhook.NopTx without webhooks) emits lead.created for a new lead
+// only, never for a repeat enquiry (#345).
+func (s *formService) applySubmissionLead(ctx context.Context, leadRepo repository.LeadRepository, events repository.AutomationRepository, hooks webhook.TxEmitter, form *models.Form, submission *models.FormSubmission) error {
 	notes := submissionNotes(form, submission)
 
 	existing, err := leadRepo.GetLatestByEmail(submission.Email)
@@ -1290,7 +1299,7 @@ func (s *formService) applySubmissionLead(ctx context.Context, leadRepo reposito
 	if err := automationLeadFormSubmitted(events, lead.ID, form.ID, submission.ID); err != nil {
 		return err
 	}
-	if err := enqueueWebhookEvent(ctx, hooks, models.WebhookEventLeadCreated, lead.ID); err != nil {
+	if err := hooks.Created(ctx, webhook.Lead, lead.ID); err != nil {
 		return err
 	}
 

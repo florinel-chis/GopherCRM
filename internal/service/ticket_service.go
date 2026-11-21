@@ -11,6 +11,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -38,32 +39,46 @@ type ticketService struct {
 	// and no event.
 	automation repository.AutomationRepository
 
-	// webhooks is the outbound webhook outbox (#345), set with the
-	// transaction manager by WithTicketWebhooks: Create then enqueues
-	// ticket.created and Update ticket.updated (#408) in the ticket's
-	// transaction. Nil means no webhooks.
-	webhooks repository.WebhookRepository
+	// webhooks is the outbound webhook emitter (#345), set by
+	// WithTicketWebhooks: Create emits ticket.created, Update ticket.updated
+	// (#408) and Delete ticket.deleted (#437) in the ticket's transaction.
+	// NewTicketService sets it to webhook.Nop, so it is never nil.
+	webhooks webhook.Emitter
+
+	// writesInTx is set by WithTicketWebhooks only when it gets both an
+	// emitter and a transaction manager. It routes Create, Update and Delete
+	// onto their transactional paths (Update with a locking read), whether or
+	// not automation events are wired. A transaction manager supplied only by
+	// another option (WithTicketCommentMail, WithTicketAutomationEvents) does
+	// not set it.
+	writesInTx bool
 }
 
-// WithTicketWebhooks makes Create insert the ticket and enqueue
-// ticket.created in one transaction run by txManager (#345), and Update run
-// as one transaction with a locking read that enqueues ticket.updated when a
-// stored value changed (#408), also without automation events. Delete then
-// soft-deletes the ticket and enqueues ticket.deleted for the active endpoints
-// subscribed to ticket.deleted in one transaction (#437, #531).
-func WithTicketWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) TicketServiceOption {
+// WithTicketWebhooks makes Create insert the ticket and emit ticket.created
+// through e in one transaction run by txManager (#345), and Update run as one
+// transaction with a locking read that emits ticket.updated when a stored
+// value changed (#408), also without automation events. Delete then
+// soft-deletes the ticket and emits ticket.deleted for the active endpoints
+// subscribed to ticket.deleted in one transaction (#437, #531). A non-nil
+// txManager is stored as the service's transaction manager either way; the
+// emitter and those transactional paths are set only when both e and
+// txManager are non-nil, whatever manager another option supplies.
+func WithTicketWebhooks(e webhook.Emitter, txManager *utils.TransactionManager) TicketServiceOption {
 	return func(s *ticketService) {
-		s.webhooks = repo
 		if txManager != nil {
 			s.txManager = txManager
+		}
+		if e != nil && txManager != nil {
+			s.webhooks = e
+			s.writesInTx = true
 		}
 	}
 }
 
-// ticketWebhooksWired reports whether Create enqueues ticket.created and
-// Update ticket.updated, and Delete ticket.deleted.
-func (s *ticketService) ticketWebhooksWired() bool {
-	return s.webhooks != nil && s.txManager != nil
+// ticketWritesInTx reports whether Create, Update and Delete run in one
+// transaction that emits their webhook events.
+func (s *ticketService) ticketWritesInTx() bool {
+	return s.writesInTx && s.txManager != nil
 }
 
 // WithTicketAutomationEvents makes Create and Update record their automation
@@ -117,6 +132,7 @@ func NewTicketService(ticketRepo repository.TicketRepository, customerRepo repos
 		ticketRepo:   ticketRepo,
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
+		webhooks:     webhook.Nop,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -156,7 +172,7 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		}
 	}
 
-	if !s.ticketEventsWired() && !s.ticketWebhooksWired() {
+	if !s.ticketEventsWired() && !s.ticketWritesInTx() {
 		if err := s.ticketRepo.Create(ticket); err != nil {
 			logger.WithError(utils.LogError(err)).Error("Failed to create ticket")
 			return err
@@ -178,7 +194,7 @@ func (s *ticketService) Create(ticket *models.Ticket) error {
 		if err := automationTicketCreated(automationTx(s.automation, tx), ticket.ID, ticket.Status, models.AutomationOriginUser, nil); err != nil {
 			return err
 		}
-		return enqueueWebhookEvent(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketCreated, ticket.ID)
+		return s.webhooks.Bind(tx).Created(ctx, webhook.Ticket, ticket.ID)
 	})
 	if err != nil {
 		ticket.ID = 0
@@ -256,7 +272,7 @@ func (s *ticketService) GetByAssignee(assigneeID uint, offset, limit int) ([]mod
 func (s *ticketService) Update(ticket *models.Ticket) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("ticket_id", ticket.ID), "TicketService", "Update")
 
-	if s.ticketEventsWired() || s.ticketWebhooksWired() {
+	if s.ticketEventsWired() || s.ticketWritesInTx() {
 		return s.updateWithEvents(ticket, logger)
 	}
 
@@ -284,7 +300,7 @@ func (s *ticketService) Update(ticket *models.Ticket) error {
 }
 
 // updateWithEvents is Update with automation events (#242) or webhooks
-// (#408) wired; with webhooks it also enqueues ticket.updated, in the same
+// (#408) wired; with webhooks it also emits ticket.updated, in the same
 // transaction, when a stored value differs from the locked row's. It is one
 // transaction that locks the ticket row first (GetByIDForUpdate), runs the
 // closed-reopen and assignee checks against the row that locking read
@@ -328,7 +344,7 @@ func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.E
 		if !ticketStoredValuesChanged(locked, ticket) {
 			return nil
 		}
-		return enqueueWebhookEvent(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketUpdated, ticket.ID)
+		return s.webhooks.Bind(tx).Updated(ctx, webhook.Ticket, ticket.ID)
 	})
 	if err != nil {
 		return err
@@ -424,7 +440,7 @@ func (s *ticketService) Delete(id uint) error {
 	// The repository locks the ticket, purges its mail deliveries, cancels its
 	// open automation runs (record_deleted) and purges its notifications in the
 	// transaction that soft-deletes it (#242). With webhooks wired (#437) that
-	// transaction is a savepoint of one run by txManager, which then enqueues
+	// transaction is a savepoint of one run by txManager, which then emits
 	// ticket.deleted for the active endpoints subscribed to ticket.deleted: the
 	// delete and its outbox rows commit together or not at all.
 	if err := s.deleteTicket(id); err != nil {
@@ -440,10 +456,10 @@ func (s *ticketService) Delete(id uint) error {
 	return nil
 }
 
-// deleteTicket soft-deletes the ticket, and with webhooks wired enqueues
+// deleteTicket soft-deletes the ticket, and with webhooks wired emits
 // ticket.deleted in the same transaction, after the delete succeeded.
 func (s *ticketService) deleteTicket(id uint) error {
-	if !s.ticketWebhooksWired() {
+	if !s.ticketWritesInTx() {
 		return s.ticketRepo.Delete(id)
 	}
 	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
@@ -454,7 +470,7 @@ func (s *ticketService) deleteTicket(id uint) error {
 		if err := s.ticketRepo.WithTx(tx).Delete(id); err != nil {
 			return err
 		}
-		return enqueueDeletedWebhookEvents(ctx, webhooksTx(s.webhooks, tx), models.WebhookEventTicketDeleted, []uint{id})
+		return s.webhooks.Bind(tx).Deleted(ctx, webhook.Ticket, id)
 	})
 }
 

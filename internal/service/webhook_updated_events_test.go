@@ -8,6 +8,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -87,7 +88,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
 	env.wire(env.repo)
 	ctx := context.Background()
-	six := models.WebhookEventTypeValues
+	six := webhook.AllEventTypes()
 	a := env.endpoint("https://example.com/a", true, six...)
 	b := env.endpoint("https://example.com/b", true, webhookUpdatedTypes...)
 	c := env.endpoint("https://example.com/c", true, webhookCreatedTypes...)
@@ -120,7 +121,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		// No automation option at all: the transactional path must not touch
 		// the absent automation repository.
 		tickets := NewTicketService(repository.NewTicketRepository(db), repository.NewCustomerRepository(db),
-			repository.NewUserRepository(db), WithTicketWebhooks(env.repo, env.txManager))
+			repository.NewUserRepository(db), WithTicketWebhooks(webhook.NewEmitter(env.repo), env.txManager))
 		ticket := env.seedTicket(models.TicketStatusOpen)
 		require.NoError(t, updateTicket(t, env, tickets, ticket.ID, func(tk *models.Ticket) { tk.Status = models.TicketStatusInProgress }))
 		assert.Equal(t, models.TicketStatusInProgress, storedTicket(t, db, ticket.ID).Status)
@@ -324,7 +325,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 
 func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
-	six := models.WebhookEventTypeValues
+	six := webhook.AllEventTypes()
 	env.endpoint("https://example.com/hook", true, six...)
 	env.endpoint("https://example.com/hook/second", true, six...)
 	ctx := context.Background()

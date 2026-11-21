@@ -36,6 +36,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -143,10 +144,10 @@ func TestWebhookAPISQLite(t *testing.T) {
 
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "webhooks-api-test-jwt-secret-0123456789", ExpiryHours: 1})
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookRepo))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(failing, txManager))
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhook.NewEmitter(webhookRepo)))
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhook.NewEmitter(failing), txManager))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
-		service.WithTicketWebhooks(webhookRepo, txManager))
+		service.WithTicketWebhooks(webhook.NewEmitter(webhookRepo), txManager))
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

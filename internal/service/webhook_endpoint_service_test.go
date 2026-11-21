@@ -13,6 +13,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -120,6 +121,16 @@ func TestWebhookEndpointService(t *testing.T) {
 		unwired := NewWebhookService(nil, nil, nil)
 		_, err = unwired.CreateEndpoint(ctx, WebhookEndpointInput{URL: "https://example.com/x", EventTypes: []string{models.WebhookEventLeadCreated}})
 		assert.ErrorIs(t, err, ErrWebhooksUnavailable)
+	})
+
+	t.Run("the delivery log refuses an unknown event_type with the catalogue's message", func(t *testing.T) {
+		_, _, err := env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{EventType: "lead.archived"}, 0, 20)
+		var validation *WebhookValidationError
+		require.ErrorAs(t, err, &validation)
+		assert.ErrorIs(t, err, apperrors.ErrValidation)
+		assert.Equal(t, "event_type", validation.Field)
+		assert.Equal(t, webhook.FilterRule(), validation.Message)
+		assert.Contains(t, validation.Message, "ticket.deleted")
 	})
 
 	t.Run("delete removes the endpoint and its deliveries in one transaction, endpoint locked first", func(t *testing.T) {

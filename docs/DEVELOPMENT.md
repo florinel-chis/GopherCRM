@@ -3744,7 +3744,7 @@ commits. Code: `internal/models/webhook.go`,
   `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
   characters, and refuses a non-public IP literal (`aeo.CheckPublicURL`); a host name is judged at
   every connection. `event_types` takes any non-empty subset of the nine types
-  (`models.WebhookEventTypeValues`); the raw array may hold at most 20 entries before deduplication
+  (`webhook.AllEventTypes`); the raw array may hold at most 20 entries before deduplication
   (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all nine
   are 134 bytes in the `varchar(255)` column) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
   and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
@@ -3755,7 +3755,7 @@ commits. Code: `internal/models/webhook.go`,
   MySQL), `DELETE webhook_deliveries WHERE endpoint_id = ?`, then the endpoint.
   `POST /webhooks/endpoints/:id/test` (#501, `WebhookService.TestEndpoint`) sends one signed
   `webhook.ping` (body `{id, type, occurred_at}`, no `record_id`; `models.WebhookEventPing` is not
-  in `WebhookEventTypeValues`, so it cannot be subscribed to) synchronously through `sendWebhook`,
+  in `webhook.AllEventTypes`, so it cannot be subscribed to) synchronously through `sendWebhook`,
   the send path `WebhookRuntime.attempt` uses (public-only client, `WebhookRequestTimeout`, drain,
   no redirect followed, the same error codes). It works on an inactive endpoint, is not retried and
   writes nothing: the endpoint read is its only statement. An unopenable secret answers 200
@@ -3794,10 +3794,26 @@ commits. Code: `internal/models/webhook.go`,
   answers 200 with `models.WebhookEndpointSecretRotated` (the endpoint plus `secret`, shown once)
   and logs `operation=webhook_endpoint_rotate_secret` and `endpoint_id` only. `UpdateEndpoint`
   still writes only `url`, `event_types` and `is_active`.
-- **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
-  txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
-  passes one `WebhookRepository` and the shared `txManager`. After the record insert,
-  `enqueueWebhookEvent` reads the active endpoints subscribed to the type (a plain read) and writes
+- **Catalogue and emitter.** `internal/webhook/catalog.go` is the one registry of the entities
+  that emit events: `NewCatalogue` and the default catalogue (`Lead`, `Customer`, `Ticket`, in
+  that order) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
+  ping's type is never one), and the two refusal messages (`SubscribeRule`, behind
+  `service.WebhookEventTypesRule`, and `FilterRule`, used by the handler and by
+  `WebhookService.ListDeliveries`). `TestCatalogueSwaggerEnums` keeps the seven event type `enum`
+  lists of `api/swagger.json` equal to it. `internal/webhook/emitter.go` holds the outbox writer:
+  `NewEmitter` returns an `Emitter` (the no-op `Nop` for a nil repository), whose `Bind(tx)` gives a
+  `TxEmitter` with `Created`, `Updated` and `Deleted(ctx, entity, ids...)`; an entity the catalogue
+  does not register is refused before any read. `internal/webhook` imports, from this module, only
+  `internal/errors`, `internal/models`, `internal/repository` and `internal/utils`. A new entity
+  needs one catalogue entry and one emitter call per write path; the event types, the check and
+  the messages follow.
+- **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e,
+  txManager)`, `WithTicketWebhooks(e, txManager)` and `WithFormWebhooks(e)` take a `webhook.Emitter`;
+  `cmd/main.go` builds one `webhook.NewEmitter(webhookRepo)` and passes it with the shared
+  `txManager`. Each service holds `webhook.Nop` without the option (a nil emitter means `Nop`;
+  `WithCustomerWebhooks` and `WithTicketWebhooks` set the emitter and their transactional paths only
+  when both arguments are non-nil). After the record insert,
+  the bound emitter reads the active endpoints subscribed to the type (a plain read) and writes
   one `pending` row per endpoint in one batched INSERT in that transaction (pinned by
   `TestWebhookOutboxBatchInsert{SQLite,MySQL}`), all with one `evt_<32 hex>` id, `attempts` 0
   and `next_attempt_at = occurred_at` (UTC, ms), so the row is due at once. Paths: `LeadService.Create`, the form
@@ -3806,14 +3822,14 @@ commits. Code: `internal/models/webhook.go`,
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
   `duplicate`). A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
-- **Updated events (#408).** The same options and `WithBulkWebhooks(repo)` (passed to the one
+- **Updated events (#408).** The same options and `WithBulkWebhooks(e)` (passed to the one
   `NewBulkStatusService` call in `cmd/main.go`) make five update paths write `*.updated` rows in
   the transaction of the write: `LeadService.Update` (`applyUpdate`, `lead.updated`; without a
   transaction manager the update stays non-transactional and writes none),
   `CustomerService.Update` (`updateWithWebhooks`, `customer.updated`), `TicketService.Update`
   (`updateWithEvents`, `ticket.updated`), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
   with its own event id, per record whose locked status differed from the requested one;
-  `enqueueWebhookEvents` reads the endpoints once per batch and inserts every row in one statement).
+  one `Updated` call with every changed id reads the endpoints once per batch and inserts every row in one statement).
   **The rule:** an event is written iff the committed write changed at least one stored column of
   the record, comparing the row read under lock inside the writing transaction with the row written,
   `updated_at` excluded (`leadStoredValuesChanged`: first_name, last_name, email, phone, company,
@@ -3831,9 +3847,8 @@ commits. Code: `internal/models/webhook.go`,
   `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
   ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
   `company_id`, and bulk task status.
-- **Deleted events (#437, #531).** `enqueueDeletedWebhookEvents` (`internal/service/webhook_outbox.go`)
-  refuses a type that is not one of the three deleted types, de-duplicates the record ids and
-  hands them to `enqueueWebhookEvents`: one plain read of the active endpoints subscribed to the
+- **Deleted events (#437, #531).** `TxEmitter.Deleted` (`internal/webhook/emitter.go`)
+  de-duplicates the record ids and writes them as `Created` and `Updated` do: one plain read of the active endpoints subscribed to the
   deleted type (`ListActiveEndpointsFor`), then one insert of one `pending` row per (endpoint,
   record), one event id per record, in the shape of the created rows; no subscribed endpoint means
   no insert. It does not read `webhook_deliveries`, so a deleted event goes to every active
@@ -3841,12 +3856,13 @@ commits. Code: `internal/models/webhook.go`,
   (an endpoint subscribed to the deleted types only, a record created before the endpoint existed,
   a record whose earlier deliveries were pruned). `TicketService.Delete` with `WithTicketWebhooks` runs
   `ticketRepo.WithTx(tx).Delete` (its own transaction becomes a savepoint) and then the
-  `ticket.deleted` enqueue in one `txManager` transaction; the 404 pre-read stays outside it.
+  `ticket.deleted` emit in one `txManager` transaction; the 404 pre-read stays outside it.
   Erasure writes `lead.deleted` and `customer.deleted` through a production listener option on
   the three repositories (`repository.WithLeadErasureListener`, `WithCustomerErasureListener`,
   `WithUserErasureListener`, `ErasureListener`/`ErasedRecords` in
   `internal/repository/erasure_listener.go`), which `cmd/main.go` sets to
-  `service.NewWebhookErasureListener(webhookRepo)` and every `WithTx` copies (the governed user
+  `webhook.NewErasureListener(webhookEmitter)` (nil, so no call, for the no-op emitter; lead ids
+  first, then customer ids) and every `WithTx` copies (the governed user
   erasure included). `erasureCascade.erase` calls it last, after `scrubBusinessText`, inside the
   unit and with its tx, for the leads and customers whose locked row existed and was live
   (`deleted_at` read by the existing locking reads of `lockGraph`, no extra statement): a legacy

@@ -12,6 +12,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 )
@@ -55,12 +56,15 @@ func NewWebhookHandler(webhookService service.WebhookService) *WebhookHandler {
 }
 
 const (
-	webhookIDRule        = "must be a positive integer"
-	webhookBodyRule      = "must carry url, event_types or is_active"
-	webhookSortByRule    = "must be id, created_at or updated_at"
-	webhookStatusRule    = "must be pending, sending, succeeded or failed"
-	webhookEventTypeRule = "must be lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated or ticket.deleted"
+	webhookIDRule     = "must be a positive integer"
+	webhookBodyRule   = "must carry url, event_types or is_active"
+	webhookSortByRule = "must be id, created_at or updated_at"
+	webhookStatusRule = "must be pending, sending, succeeded or failed"
 )
+
+// webhookEventTypeRule is the refusal message of the event_type filter, built
+// from the webhook catalogue.
+var webhookEventTypeRule = webhook.FilterRule()
 
 // parseWebhookID reads a positive integer path or query value.
 func parseWebhookID(raw string) (uint, bool) {
@@ -426,7 +430,7 @@ func (h *WebhookHandler) ListDeliveries(c *gin.Context) {
 	if filter.Status != "" && !models.IsWebhookDeliveryStatus(filter.Status) {
 		details["status"] = webhookStatusRule
 	}
-	if filter.EventType != "" && !models.IsWebhookEventType(filter.EventType) {
+	if filter.EventType != "" && !webhook.IsEventType(filter.EventType) {
 		details["event_type"] = webhookEventTypeRule
 	}
 	if len(details) > 0 {

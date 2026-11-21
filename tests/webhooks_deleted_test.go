@@ -23,6 +23,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -52,7 +53,8 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 
 	txManager := utils.NewTransactionManager(db)
 	webhookRepo := repository.NewWebhookRepository(db)
-	erasureListener := service.NewWebhookErasureListener(webhookRepo)
+	webhookEmitter := webhook.NewEmitter(webhookRepo)
+	erasureListener := webhook.NewErasureListener(webhookEmitter)
 	userRepo := repository.NewUserRepository(db, repository.WithUserErasureListener(erasureListener))
 	customerRepo := repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(erasureListener))
 	leadRepo := repository.NewLeadRepository(db, repository.WithLeadErasureListener(erasureListener))
@@ -61,10 +63,10 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "webhooks-deleted-api-jwt-secret-0123456789", ExpiryHours: 1})
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookRepo))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhookRepo, txManager))
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookEmitter))
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhookEmitter, txManager))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
-		service.WithTicketWebhooks(webhookRepo, txManager))
+		service.WithTicketWebhooks(webhookEmitter, txManager))
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -150,7 +152,7 @@ func TestWebhookDeletedAPISQLite(t *testing.T) {
 
 		// The endpoint the deletes below go to: every type.
 		status, envelope, raw = do(http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
-			"url": "https://example.com/all", "event_types": models.WebhookEventTypeValues})
+			"url": "https://example.com/all", "event_types": webhook.AllEventTypes()})
 		require.Equal(t, http.StatusCreated, status, raw)
 		endpointID = idOf(envelope)
 	})

@@ -18,6 +18,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
 )
 
@@ -290,11 +291,13 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) (func(context.Context) error, func() service.WebhookSenderStatus) {
 	// Outbound webhooks (#345): one repository is the outbox of every create,
 	// update and delete path (lead, customer, ticket, form) and the store of
-	// the registry and the delivery log. It is built before the user, lead and
+	// the registry and the delivery log, and one emitter over it writes the
+	// events of every such path. Both are built before the user, lead and
 	// customer repositories because their erasure units write the
-	// lead.deleted and customer.deleted events through it (#437).
+	// lead.deleted and customer.deleted events through the emitter (#437).
 	webhookRepo := repository.NewWebhookRepository(models.DB)
-	erasureListener := service.NewWebhookErasureListener(webhookRepo)
+	webhookEmitter := webhook.NewEmitter(webhookRepo)
+	erasureListener := webhook.NewErasureListener(webhookEmitter)
 
 	// The user, customer and lead repositories erase a whole person on Delete
 	// (the lead it was converted from, the customer it became, the customer's
@@ -368,11 +371,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager,
 		service.WithLeadAutomationEvents(automationRepo),
 		service.WithLeadConversionRules(configService),
-		service.WithLeadWebhooks(webhookRepo))
+		service.WithLeadWebhooks(webhookEmitter))
 	// Customer create and update are each one transaction with their
 	// customer.created / customer.updated outbox rows (#345, #408).
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo,
-		service.WithCustomerWebhooks(webhookRepo, txManager))
+		service.WithCustomerWebhooks(webhookEmitter, txManager))
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail
@@ -383,7 +386,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(models.DB), txManager, appMailer),
 		service.WithTicketProductName(configService),
 		service.WithTicketAutomationEvents(automationRepo, txManager),
-		service.WithTicketWebhooks(webhookRepo, txManager))
+		service.WithTicketWebhooks(webhookEmitter, txManager))
 	// A task update locks its task row in one transaction before the
 	// completed-task re-check and the write, the row the bulk task status
 	// batch locks too (#558).
@@ -427,7 +430,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	}
 	bulkService := service.NewBulkStatusService(
 		bulkOperationRepo, bulkStatusRepo, txManager, utils.Logger,
-		service.WithBulkAutomationEvents(automationRepo), service.WithBulkWebhooks(webhookRepo),
+		service.WithBulkAutomationEvents(automationRepo), service.WithBulkWebhooks(webhookEmitter),
 	)
 
 	// AEO. Only engines with credentials are loaded, so a deployment that sets
@@ -463,7 +466,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	formService := service.NewFormService(formRepo, leadRepo, userRepo, appMailer,
 		txManager, cfg.Forms, cfg.API.Prefix, service.WithFormAutomationEvents(automationRepo),
 		service.WithFormTicketIntake(formTicketRepo, txManager),
-		service.WithFormWebhooks(webhookRepo))
+		service.WithFormWebhooks(webhookEmitter))
 
 	// Follow-up automation. The engine executes rules behind locking reads
 	// and conditional advances; the runtime owns the worker goroutine and is

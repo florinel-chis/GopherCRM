@@ -20,7 +20,7 @@ type ErasedRecords struct {
 // writes (ErrConvertedLeadNeedsAdmin, ErrErasureGraphChanged).
 //
 // It is a production option: cmd/main.go wires the outbound webhook listener
-// (service.NewWebhookErasureListener) on the user, customer and lead
+// (webhook.NewErasureListener) on the user, customer and lead
 // repositories, and WithTx copies it, so every erasure root reaches it.
 type ErasureListener func(tx *gorm.DB, erased ErasedRecords) error
 

@@ -1156,6 +1156,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Webhook events come from one catalogue and one emitter (#614).** The webhook entities (lead,
+  customer, ticket) are registered once in the new `internal/webhook` package. Every create,
+  update, bulk-status, form, delete and erasure path writes its delivery rows through an emitter
+  bound to its transaction, which does nothing when webhooks are not configured. The list of
+  event types, the event type check and the validation messages are derived from the catalogue,
+  and a test keeps the event type lists of the API description equal to it. The delivery rows,
+  the API and the database schema are unchanged, except that the service-level refusal of an
+  unknown delivery-log `event_type` now names all nine types (it named the six created and
+  updated types). A later entity needs one catalogue entry and one emitter call per write path.
+
 - **Single sign-on keeps the issuer's discovery document and signing keys for 24 hours (#632).**
   A sign-in no longer fetches the discovery document and the signing keys every time: they are
   kept per issuer for up to 24 hours and fetched again when an ID token names a key id the kept
