@@ -16,6 +16,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -68,9 +69,12 @@ func (e *WebhookValidationError) Details() map[string]string {
 
 // Messages of the refusals; none quotes the value.
 const (
-	WebhookURLRule        = "must be an https URL of at most 2048 characters, without credentials, query string or fragment, whose host is not a private, loopback, link-local or metadata address"
-	WebhookEventTypesRule = "must list 1 to 9 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated and ticket.deleted"
+	WebhookURLRule = "must be an https URL of at most 2048 characters, without credentials, query string or fragment, whose host is not a private, loopback, link-local or metadata address"
 )
+
+// WebhookEventTypesRule is the refusal message of event_types, built from the
+// webhook catalogue.
+var WebhookEventTypesRule = webhook.SubscribeRule()
 
 // ValidateWebhookURL checks an endpoint URL before anything is stored: https,
 // a host, no userinfo, query or fragment, at most 2048 characters, and an IP
@@ -92,7 +96,7 @@ func ValidateWebhookEventTypes(values []string) (models.WebhookEventTypes, error
 		return nil, &WebhookValidationError{Field: "event_types", Message: WebhookEventTypesRule}
 	}
 	for _, value := range values {
-		if !models.IsWebhookEventType(value) {
+		if !webhook.IsEventType(value) {
 			return nil, &WebhookValidationError{Field: "event_types", Message: WebhookEventTypesRule}
 		}
 	}
@@ -305,8 +309,8 @@ func (s *webhookService) ListDeliveries(ctx context.Context, filter repository.W
 	if filter.Status != "" && !models.IsWebhookDeliveryStatus(filter.Status) {
 		return nil, 0, &WebhookValidationError{Field: "status", Message: "must be pending, sending, succeeded or failed"}
 	}
-	if filter.EventType != "" && !models.IsWebhookEventType(filter.EventType) {
-		return nil, 0, &WebhookValidationError{Field: "event_type", Message: "must be lead.created, lead.updated, customer.created, customer.updated, ticket.created or ticket.updated"}
+	if filter.EventType != "" && !webhook.IsEventType(filter.EventType) {
+		return nil, 0, &WebhookValidationError{Field: "event_type", Message: webhook.FilterRule()}
 	}
 	return s.repo.ListDeliveries(ctx, filter, offset, limit)
 }
@@ -476,3 +480,7 @@ func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*model
 	}
 	return requeued, nil
 }
+
+// newWebhookEventID returns evt_ followed by 32 lowercase hex characters from
+// crypto/rand (webhook.NewEventID).
+func newWebhookEventID() (string, error) { return webhook.NewEventID() }

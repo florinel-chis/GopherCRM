@@ -31,8 +31,11 @@ func TestWebhookDeletedProductionWiring(t *testing.T) {
 	require.NoError(t, err)
 	text := string(source)
 
-	assert.Contains(t, text, "erasureListener := service.NewWebhookErasureListener(webhookRepo)",
-		"the erasure listener writes through the shared webhook repository")
+	assert.Contains(t, text, "webhookEmitter := webhook.NewEmitter(webhookRepo)",
+		"the emitter writes through the shared webhook repository")
+	assert.Equal(t, 1, strings.Count(text, "webhook.NewEmitter("), "exactly one webhook emitter")
+	assert.Contains(t, text, "erasureListener := webhook.NewErasureListener(webhookEmitter)",
+		"the erasure listener writes through the shared emitter")
 	for constructor, option := range map[string]string{
 		"repository.NewUserRepository(models.DB":     "repository.WithUserErasureListener(erasureListener)",
 		"repository.NewLeadRepository(models.DB":     "repository.WithLeadErasureListener(erasureListener)",
@@ -41,7 +44,10 @@ func TestWebhookDeletedProductionWiring(t *testing.T) {
 		assert.Contains(t, constructorCall(t, text, constructor), option, "%s carries the erasure listener", constructor)
 	}
 	assert.Less(t, strings.Index(text, "webhookRepo := repository.NewWebhookRepository(models.DB)"),
-		strings.Index(text, "erasureListener := service.NewWebhookErasureListener(webhookRepo)"),
-		"the webhook repository is built before the listener")
-	assert.Contains(t, text, "service.WithTicketWebhooks(webhookRepo, txManager)", "ticket delete enqueues ticket.deleted")
+		strings.Index(text, "webhookEmitter := webhook.NewEmitter(webhookRepo)"),
+		"the webhook repository is built before the emitter")
+	assert.Less(t, strings.Index(text, "webhookEmitter := webhook.NewEmitter(webhookRepo)"),
+		strings.Index(text, "erasureListener := webhook.NewErasureListener(webhookEmitter)"),
+		"the emitter is built before the listener")
+	assert.Contains(t, text, "service.WithTicketWebhooks(webhookEmitter, txManager)", "ticket delete emits ticket.deleted")
 }

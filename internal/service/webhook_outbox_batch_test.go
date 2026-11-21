@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -96,7 +97,7 @@ func runWebhookOutboxBatchInsert(t *testing.T, db *gorm.DB) {
 		statements, stop := captureWebhookDeliveryInserts(t, db)
 		recordID := env.seedLead().ID
 		err := db.Transaction(func(tx *gorm.DB) error {
-			if err := enqueueWebhookEvent(ctx, env.repo.WithTx(tx), models.WebhookEventLeadCreated, recordID); err != nil {
+			if err := webhook.NewEmitter(env.repo).Bind(tx).Created(ctx, webhook.Lead, recordID); err != nil {
 				return err
 			}
 			var rows []models.WebhookDelivery
@@ -140,7 +141,7 @@ func runWebhookOutboxBatchInsert(t *testing.T, db *gorm.DB) {
 		statements, stop := captureWebhookDeliveryInserts(t, db)
 		first, second := env.seedLead().ID, env.seedLead().ID
 		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-			return enqueueWebhookEvents(ctx, env.repo.WithTx(tx), models.WebhookEventLeadCreated, []uint{first, second})
+			return webhook.NewEmitter(env.repo).Bind(tx).Created(ctx, webhook.Lead, first, second)
 		}))
 		assert.EqualValues(t, 6, env.allDeliveries())
 		eventIDs := map[uint]string{}

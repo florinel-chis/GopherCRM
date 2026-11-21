@@ -10,6 +10,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -140,7 +141,7 @@ func isValidTaskStatus(status models.TaskStatus) bool {
 // committed on their own, which an enclosing transaction could not roll back,
 // so a ctx that already carries a transaction is refused with
 // utils.ErrTransactionRootRequired before anything is written.
-func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uint, resourceType string, ids []uint, apply func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uint, resourceType string, ids []uint, apply func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks webhook.TxEmitter) error) (*models.BulkStatusUpdateResult, error) {
 	if utils.InTransaction(ctx) {
 		return nil, utils.ErrTransactionRootRequired
 	}
@@ -154,7 +155,7 @@ func (s *bulkStatusService) runBulkStatusUpdate(ctx context.Context, actorID uin
 		if !ok || tx == nil {
 			return fmt.Errorf("transaction not found in context")
 		}
-		if err := apply(ctx, s.statusRepo.WithTx(tx), automationTx(s.automation, tx), webhooksTx(s.webhooks, tx)); err != nil {
+		if err := apply(ctx, s.statusRepo.WithTx(tx), automationTx(s.automation, tx), s.webhooks.Bind(tx)); err != nil {
 			return err
 		}
 		return s.bulkOperationRepo.WithTx(tx).CompletePending(ctx, operation.ID)
@@ -211,7 +212,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 		return nil, bulkStatusForbidden("Only sales and admin users can update leads", nil)
 	}
 
-	return s.runBulkStatusUpdate(ctx, actorID, "leads", unique, func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "leads", unique, func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks webhook.TxEmitter) error {
 		// A locking read in id order (#182). Bulk lead status takes no
 		// company lock: SetLeadStatus never writes company_id. It locks only
 		// its leads, in the "leads by id ascending" step of the shared order
@@ -261,7 +262,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 		// One lead.updated webhook event per lead whose locked status
 		// differed (#408), in the batch transaction; the subscribed
 		// endpoints are read once.
-		return enqueueWebhookEvents(ctx, hooks, models.WebhookEventLeadUpdated, changed)
+		return hooks.Updated(ctx, webhook.Lead, changed...)
 	})
 }
 
@@ -290,7 +291,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 		return nil, bulkStatusForbidden("Your role cannot update tickets", nil)
 	}
 
-	return s.runBulkStatusUpdate(ctx, actorID, "tickets", unique, func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks repository.WebhookRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tickets", unique, func(ctx context.Context, txRepo repository.BulkStatusRepository, events repository.AutomationRepository, hooks webhook.TxEmitter) error {
 		// A locking read in id order (#242): the rows are locked before the
 		// checks, and the events below carry the status this read returned.
 		tickets, err := txRepo.GetTicketsByIDs(unique)
@@ -342,7 +343,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 		}
 		// One ticket.updated webhook event per ticket whose locked status
 		// differed (#408), in the batch transaction.
-		return enqueueWebhookEvents(ctx, hooks, models.WebhookEventTicketUpdated, changed)
+		return hooks.Updated(ctx, webhook.Ticket, changed...)
 	})
 }
 
@@ -363,7 +364,7 @@ func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint,
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid task status: %s", status))
 	}
 
-	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(_ context.Context, txRepo repository.BulkStatusRepository, _ repository.AutomationRepository, _ repository.WebhookRepository) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(_ context.Context, txRepo repository.BulkStatusRepository, _ repository.AutomationRepository, _ webhook.TxEmitter) error {
 		tasks, err := txRepo.GetTasksByIDs(unique)
 		if err != nil {
 			return err
@@ -409,11 +410,12 @@ type bulkStatusService struct {
 	// every ticket (#242) a bulk status update changes, inside the bulk
 	// transaction, origin bulk. Nil means no automation.
 	automation repository.AutomationRepository
-	// webhooks is the outbound webhook outbox (#408), set by
-	// WithBulkWebhooks: the lead and ticket batches enqueue lead.updated /
+	// webhooks is the outbound webhook emitter (#408), set by
+	// WithBulkWebhooks: the lead and ticket batches emit lead.updated /
 	// ticket.updated for every record whose status changed, inside the batch
-	// transaction. Nil means no webhooks.
-	webhooks repository.WebhookRepository
+	// transaction. NewBulkStatusService sets it to webhook.Nop, so it is
+	// never nil.
+	webhooks webhook.Emitter
 	// afterLeadLock is an instance-local test seam (#182), nil in production:
 	// it runs inside the lead batch right after the locking read of the leads.
 	afterLeadLock func(ids []uint)
@@ -434,12 +436,18 @@ func WithBulkAutomationEvents(repo repository.AutomationRepository) BulkStatusSe
 	return func(s *bulkStatusService) { s.automation = repo }
 }
 
-// WithBulkWebhooks makes the bulk lead and ticket status updates enqueue one
-// lead.updated / ticket.updated webhook event for every record whose locked
-// status differed from the requested one, inside the batch transaction
-// (#408). Bulk task status emits nothing.
-func WithBulkWebhooks(repo repository.WebhookRepository) BulkStatusServiceOption {
-	return func(s *bulkStatusService) { s.webhooks = repo }
+// WithBulkWebhooks makes the bulk lead and ticket status updates emit one
+// lead.updated / ticket.updated webhook event through e for every record
+// whose locked status differed from the requested one, inside the batch
+// transaction (#408). Bulk task status emits nothing. A nil e means
+// webhook.Nop: no webhooks.
+func WithBulkWebhooks(e webhook.Emitter) BulkStatusServiceOption {
+	return func(s *bulkStatusService) {
+		if e == nil {
+			e = webhook.Nop
+		}
+		s.webhooks = e
+	}
 }
 
 func NewBulkStatusService(
@@ -454,6 +462,7 @@ func NewBulkStatusService(
 		statusRepo:        statusRepo,
 		transactionMgr:    transactionMgr,
 		logger:            logger,
+		webhooks:          webhook.Nop,
 	}
 	for _, opt := range opts {
 		opt(s)

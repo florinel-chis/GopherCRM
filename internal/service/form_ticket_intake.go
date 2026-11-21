@@ -40,6 +40,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -122,10 +123,10 @@ func formTicketDescription(form *models.Form, submission *models.FormSubmission)
 // applySubmissionTicket decides and records the ticket outcome of a confirmed
 // submission of a create_ticket form on submission (TicketOutcome, TicketID);
 // the caller's UpdateSubmission persists it. Any error rolls the whole
-// confirmation back, token claim included. hooks (nil without webhooks)
-// enqueues ticket.created for the outcome created only, never for a duplicate
-// (#345).
-func (s *formService) applySubmissionTicket(ctx context.Context, ticketRepo repository.FormTicketRepository, events repository.AutomationRepository, hooks repository.WebhookRepository, form *models.Form, submission *models.FormSubmission) error {
+// confirmation back, token claim included. hooks (webhook.NopTx without
+// webhooks) emits ticket.created for the outcome created only, never for a
+// duplicate (#345).
+func (s *formService) applySubmissionTicket(ctx context.Context, ticketRepo repository.FormTicketRepository, events repository.AutomationRepository, hooks webhook.TxEmitter, form *models.Form, submission *models.FormSubmission) error {
 	submission.TicketID = nil
 	if ticketRepo == nil {
 		submission.TicketOutcome = models.FormTicketOutcomeUnavailable
@@ -184,7 +185,7 @@ func (s *formService) applySubmissionTicket(ctx context.Context, ticketRepo repo
 	if err := s.ticketSeam(formTicketStageAfterEvent); err != nil {
 		return err
 	}
-	if err := enqueueWebhookEvent(ctx, hooks, models.WebhookEventTicketCreated, ticket.ID); err != nil {
+	if err := hooks.Created(ctx, webhook.Ticket, ticket.ID); err != nil {
 		return err
 	}
 

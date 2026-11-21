@@ -7,6 +7,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,7 +287,7 @@ func TestWebhookLeadCreateWithoutTransactionManager(t *testing.T) {
 	env.endpoint("https://example.com/hook", true, models.WebhookEventLeadCreated)
 	failing := newFailingWebhookRepository(env.repo, injectedFailure, 0)
 	leads := NewLeadService(repository.NewLeadRepository(db), repository.NewCustomerRepository(db),
-		repository.NewCompanyRepository(db), repository.NewUserRepository(db), nil, WithLeadWebhooks(failing))
+		repository.NewCompanyRepository(db), repository.NewUserRepository(db), nil, WithLeadWebhooks(webhook.NewEmitter(failing)))
 
 	lead := env.newLead()
 	require.NoError(t, leads.Create(lead))

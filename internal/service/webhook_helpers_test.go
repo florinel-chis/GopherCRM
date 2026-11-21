@@ -32,6 +32,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -301,7 +302,7 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	// through the listener (#437), as cmd/main.go wires them.
 	listener := e.erasureListener
 	if listener == nil {
-		listener = NewWebhookErasureListener(hooks)
+		listener = webhook.NewErasureListener(webhook.NewEmitter(hooks))
 	}
 	leadRepo := repository.NewLeadRepository(db, repository.WithLeadErasureListener(listener))
 	customerRepo := repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(listener))
@@ -313,11 +314,12 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	ticketOpts := []TicketServiceOption{WithTicketAutomationEvents(automation, e.txManager)}
 	formOpts := []FormServiceOption{WithFormAutomationEvents(automation),
 		WithFormTicketIntake(repository.NewFormTicketRepository(db), e.txManager)}
+	emitter := webhook.NewEmitter(hooks)
 	if hooks != nil {
-		leadOpts = append(leadOpts, WithLeadWebhooks(hooks))
-		customerOpts = append(customerOpts, WithCustomerWebhooks(hooks, e.txManager))
-		ticketOpts = append(ticketOpts, WithTicketWebhooks(hooks, e.txManager))
-		formOpts = append(formOpts, WithFormWebhooks(hooks))
+		leadOpts = append(leadOpts, WithLeadWebhooks(emitter))
+		customerOpts = append(customerOpts, WithCustomerWebhooks(emitter, e.txManager))
+		ticketOpts = append(ticketOpts, WithTicketWebhooks(emitter, e.txManager))
+		formOpts = append(formOpts, WithFormWebhooks(emitter))
 	}
 	e.leads = NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, e.txManager, leadOpts...)
 	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, customerOpts...)
@@ -327,7 +329,7 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 		repository.NewRoleAuditRepository(db), e.txManager))
 	bulkOpts := []BulkStatusServiceOption{WithBulkAutomationEvents(automation)}
 	if hooks != nil {
-		bulkOpts = append(bulkOpts, WithBulkWebhooks(hooks))
+		bulkOpts = append(bulkOpts, WithBulkWebhooks(emitter))
 	}
 	e.bulk = NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
 		e.txManager, utils.Logger, bulkOpts...)

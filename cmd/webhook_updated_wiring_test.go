@@ -26,6 +26,6 @@ func TestWebhookUpdatedProductionWiring(t *testing.T) {
 	require.Positive(t, end, "the end of the NewBulkStatusService call")
 	call = call[:end]
 
-	assert.Contains(t, call, "service.WithBulkWebhooks(webhookRepo)", "the bulk status service enqueues lead.updated and ticket.updated")
+	assert.Contains(t, call, "service.WithBulkWebhooks(webhookEmitter)", "the bulk status service enqueues lead.updated and ticket.updated")
 	assert.Contains(t, text, "handler.NewBulkHandler(bulkService)", "the routes get that service")
 }

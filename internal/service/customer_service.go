@@ -9,6 +9,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -19,26 +20,32 @@ type customerService struct {
 	userRepo     repository.UserRepository
 	companyRepo  repository.CompanyRepository
 
-	// webhooks and txManager, set together by WithCustomerWebhooks (#345),
-	// make Create one transaction that inserts the customer and its
-	// customer.created outbox rows, and Update one transaction with a locking
-	// read that writes customer.updated when a stored value changed (#408).
-	// Without them Create and Update are unchanged.
-	webhooks  repository.WebhookRepository
+	// webhooks and txManager, set together by WithCustomerWebhooks (#345)
+	// only when both are non-nil, make Create one transaction that inserts
+	// the customer and emits customer.created, and Update one transaction
+	// with a locking read that emits customer.updated when a stored value
+	// changed (#408). A non-nil txManager is what selects those paths.
+	// Without the option webhooks is webhook.Nop, txManager is nil, and
+	// Create and Update take the plain path.
+	webhooks  webhook.Emitter
 	txManager *utils.TransactionManager
 }
 
 // CustomerServiceOption configures NewCustomerService.
 type CustomerServiceOption func(*customerService)
 
-// WithCustomerWebhooks makes Create insert the customer and enqueue
-// customer.created in one transaction run by txManager (#345), and Update
-// lock the customer, write it and enqueue customer.updated when a stored
-// value changed, in one transaction (#408). Both must be non-nil; otherwise
-// Create and Update behave as without the option.
-func WithCustomerWebhooks(repo repository.WebhookRepository, txManager *utils.TransactionManager) CustomerServiceOption {
+// WithCustomerWebhooks makes Create insert the customer and emit
+// customer.created through e in one transaction run by txManager (#345), and
+// Update lock the customer, write it and emit customer.updated when a stored
+// value changed, in one transaction (#408). Both must be non-nil; when either
+// is nil the option changes nothing, and Create and Update behave as without
+// it.
+func WithCustomerWebhooks(e webhook.Emitter, txManager *utils.TransactionManager) CustomerServiceOption {
 	return func(s *customerService) {
-		s.webhooks = repo
+		if e == nil || txManager == nil {
+			return
+		}
+		s.webhooks = e
 		s.txManager = txManager
 	}
 }
@@ -48,6 +55,7 @@ func NewCustomerService(customerRepo repository.CustomerRepository, userRepo rep
 		customerRepo: customerRepo,
 		userRepo:     userRepo,
 		companyRepo:  companyRepo,
+		webhooks:     webhook.Nop,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -92,7 +100,7 @@ func (s *customerService) Create(customer *models.Customer) error {
 		return err
 	}
 
-	if s.webhooks != nil && s.txManager != nil {
+	if s.txManager != nil {
 		// The customer and its customer.created outbox rows commit together
 		// or not at all (#345).
 		err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
@@ -103,7 +111,7 @@ func (s *customerService) Create(customer *models.Customer) error {
 			if err := s.customerRepo.WithTx(tx).Create(customer); err != nil {
 				return err
 			}
-			return enqueueWebhookEvent(ctx, s.webhooks.WithTx(tx), models.WebhookEventCustomerCreated, customer.ID)
+			return s.webhooks.Bind(tx).Created(ctx, webhook.Customer, customer.ID)
 		})
 		if err != nil {
 			customer.ID = 0
@@ -180,7 +188,7 @@ func (s *customerService) Update(customer *models.Customer) error {
 		return err
 	}
 
-	if s.webhooks != nil && s.txManager != nil {
+	if s.txManager != nil {
 		return s.updateWithWebhooks(customer, logger)
 	}
 
@@ -202,7 +210,7 @@ func (s *customerService) Update(customer *models.Customer) error {
 // updateWithWebhooks is the write of Update with webhooks wired (#408): one
 // transaction that reads the live customer with a row lock, writes the
 // fifteen columns customerRepository.Update owns and, when at least one of
-// them differs from the locked row, enqueues customer.updated. A customer
+// them differs from the locked row, emits customer.updated. A customer
 // that is no longer live at the locking read is the same not-found answer as
 // a write that lost to an erasure. A failed write or outbox insert rolls
 // everything back.
@@ -230,7 +238,7 @@ func (s *customerService) updateWithWebhooks(customer *models.Customer, logger *
 		if !customerStoredValuesChanged(locked, customer) {
 			return nil
 		}
-		return enqueueWebhookEvent(ctx, s.webhooks.WithTx(tx), models.WebhookEventCustomerUpdated, customer.ID)
+		return s.webhooks.Bind(tx).Updated(ctx, webhook.Customer, customer.ID)
 	})
 	if err != nil {
 		if isNotFound(err) {

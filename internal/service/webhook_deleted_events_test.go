@@ -12,6 +12,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -127,7 +128,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
 	env.wire(env.repo)
 	ctx := context.Background()
-	nine := models.WebhookEventTypeValues
+	nine := webhook.AllEventTypes()
 	require.Len(t, nine, 9)
 	announcing := append(append([]string{}, webhookCreatedTypes...), webhookUpdatedTypes...)
 	// a: everything. b: the deleted types only, so it never receives a
@@ -334,8 +335,8 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, before, env.deletedRows())
 		// Erasing the soft-deleted rows again at the repository (a repeated
 		// erasure re-scrubs them) writes no event either.
-		require.NoError(t, repository.NewLeadRepository(db, repository.WithLeadErasureListener(NewWebhookErasureListener(env.repo))).Delete(context.Background(), lead.ID))
-		require.NoError(t, repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(NewWebhookErasureListener(env.repo))).Delete(context.Background(), customer.ID))
+		require.NoError(t, repository.NewLeadRepository(db, repository.WithLeadErasureListener(webhook.NewErasureListener(webhook.NewEmitter(env.repo)))).Delete(context.Background(), lead.ID))
+		require.NoError(t, repository.NewCustomerRepository(db, repository.WithCustomerErasureListener(webhook.NewErasureListener(webhook.NewEmitter(env.repo)))).Delete(context.Background(), customer.ID))
 		assert.Equal(t, before, env.deletedRows())
 		assertFanOut(t, env, models.WebhookEventLeadDeleted, lead.ID, a.ID, b.ID)
 		assertFanOut(t, env, models.WebhookEventCustomerDeleted, customer.ID, a.ID, b.ID)
@@ -344,7 +345,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 
 	t.Run("a restarted erasure commits one row set", func(t *testing.T) {
 		lead, customer := env.convertedLead()
-		real := NewWebhookErasureListener(env.repo)
+		real := webhook.NewErasureListener(webhook.NewEmitter(env.repo))
 		var calls atomic.Int32
 		env.erasureListener = func(tx *gorm.DB, erased repository.ErasedRecords) error {
 			if err := real(tx, erased); err != nil {
@@ -396,7 +397,7 @@ func runWebhookDeletedAtomicity(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
 	env.wire(env.repo)
 	ctx := context.Background()
-	env.endpoint("https://example.com/all", true, models.WebhookEventTypeValues...)
+	env.endpoint("https://example.com/all", true, webhook.AllEventTypes()...)
 	admin := models.RoleAdmin
 
 	// withFailingOutbox runs fn with an outbox whose insert writes the rows
@@ -410,7 +411,7 @@ func runWebhookDeletedAtomicity(t *testing.T, db *gorm.DB) {
 	// through the real outbox and then fails inside the same unit.
 	afterEnqueue := errors.New("injected failure after the enqueue")
 	withFailingListener := func(fn func()) {
-		real := NewWebhookErasureListener(env.repo)
+		real := webhook.NewErasureListener(webhook.NewEmitter(env.repo))
 		env.erasureListener = func(tx *gorm.DB, erased repository.ErasedRecords) error {
 			if err := real(tx, erased); err != nil {
 				return err

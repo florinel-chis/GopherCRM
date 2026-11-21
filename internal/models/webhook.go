@@ -21,7 +21,13 @@ import (
 // consumer fetches the record through the API, where erasure and visibility
 // apply at fetch time.
 
-// The event types an endpoint may subscribe to. They are untyped strings.
+// The event types an endpoint may subscribe to, as untyped strings. The
+// webhook catalogue (internal/webhook, catalog.go) is the registry: the list
+// of event types, the event type check and the validation messages are
+// derived from it, and production code outside this package emits through the
+// webhook emitter rather than these names. They stay for the tests of
+// packages that cannot import internal/webhook; a new entity needs only a
+// catalogue entry and no constant here.
 const (
 	WebhookEventLeadCreated     = "lead.created"
 	WebhookEventLeadUpdated     = "lead.updated"
@@ -37,26 +43,8 @@ const (
 // WebhookEventPing is the type of the test ping an admin sends to one
 // endpoint (POST /webhooks/endpoints/:id/test). It is not an event type: an
 // endpoint cannot subscribe to it, the delivery log never holds it, and it is
-// deliberately absent from WebhookEventTypeValues.
+// deliberately absent from the webhook catalogue's event types.
 const WebhookEventPing = "webhook.ping"
-
-// WebhookEventTypeValues lists every event type in canonical (sorted) order.
-var WebhookEventTypeValues = []string{
-	WebhookEventCustomerCreated, WebhookEventCustomerDeleted, WebhookEventCustomerUpdated,
-	WebhookEventLeadCreated, WebhookEventLeadDeleted, WebhookEventLeadUpdated,
-	WebhookEventTicketCreated, WebhookEventTicketDeleted, WebhookEventTicketUpdated,
-}
-
-// IsWebhookEventType reports whether value is one of the nine event types,
-// compared exactly.
-func IsWebhookEventType(value string) bool {
-	for _, known := range WebhookEventTypeValues {
-		if value == known {
-			return true
-		}
-	}
-	return false
-}
 
 // The states of a delivery row.
 const (

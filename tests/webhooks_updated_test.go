@@ -23,6 +23,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -56,16 +57,17 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 	leadRepo := repository.NewLeadRepository(db)
 	companyRepo := repository.NewCompanyRepository(db)
 	webhookRepo := repository.NewWebhookRepository(db)
+	webhookEmitter := webhook.NewEmitter(webhookRepo)
 	box := utils.NewSecretBox("webhooks-updated-api-master-secret-0123456789", service.WebhookSecretContext)
 
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "webhooks-updated-api-jwt-secret-0123456789", ExpiryHours: 1})
-	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookRepo))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhookRepo, txManager))
+	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager, service.WithLeadWebhooks(webhookEmitter))
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, service.WithCustomerWebhooks(webhookEmitter, txManager))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
-		service.WithTicketWebhooks(webhookRepo, txManager))
+		service.WithTicketWebhooks(webhookEmitter, txManager))
 	bulkService := service.NewBulkStatusService(repository.NewBulkOperationRepository(db), repository.NewBulkStatusRepository(db),
-		txManager, utils.Logger, service.WithBulkWebhooks(webhookRepo))
+		txManager, utils.Logger, service.WithBulkWebhooks(webhookEmitter))
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
