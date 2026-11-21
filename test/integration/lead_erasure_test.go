@@ -134,7 +134,7 @@ func TestLeadErasureRemovesPersonalDataFromTheTable(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "ingrid@example.com")
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	// Nothing anywhere in the leads table may still carry any of it, including
 	// the soft-deleted rows an ordinary query would hide.
@@ -148,7 +148,7 @@ func TestLeadErasureKeepsTheRowSoftDeletedWithAPlaceholderEmail(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "placeholder@example.com")
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	// The row survives so that tasks and the conversion history keep resolving.
 	erased := fetchErasedLead(t, db, lead.ID)
@@ -183,7 +183,7 @@ func TestLeadErasureKeepsTheNonPersonalBusinessFields(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "business-fields@example.com")
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	erased := fetchErasedLead(t, db, lead.ID)
 	assert.Equal(t, "trade show", erased.Source)
@@ -204,7 +204,7 @@ func TestErasedLeadCannotBeMatchedByAnyOfItsFormerSearchTerms(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "searchable@example.com")
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	for _, needle := range []string{"Ingrid", "Vasilescu", "searchable@example.com", "+40 722 333 444", "Bucharest expo"} {
 		found, err := leadRepo.Search(needle, 0, 10, "", "")
@@ -231,7 +231,7 @@ func TestErasingAConvertedLeadAlsoErasesTheCustomerItBecame(t *testing.T) {
 	lead := seedLead(t, db, owner.ID, "converted-lead@example.com")
 	customer := convertLead(t, db, lead)
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	// Both halves of the same person, or the erasure was cosmetic.
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
@@ -257,7 +257,7 @@ func TestErasingAConvertedCustomerAlsoErasesTheOriginatingLead(t *testing.T) {
 	lead := seedLead(t, db, owner.ID, "converted-customer@example.com")
 	customer := convertLead(t, db, lead)
 
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	assertColumnsFreeOf(t, db, "customers", leadPersonalData(lead)...)
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
@@ -282,7 +282,7 @@ func TestCustomerServiceErasureFollowsTheConversionLink(t *testing.T) {
 	lead := seedLead(t, db, owner.ID, "service-path@example.com")
 	customer := convertLead(t, db, lead)
 
-	require.NoError(t, customerService.Delete(customer.ID))
+	require.NoError(t, customerService.Delete(context.Background(), customer.ID))
 
 	assertColumnsFreeOf(t, db, "customers", leadPersonalData(lead)...)
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
@@ -303,7 +303,7 @@ func TestErasingACustomerErasesEveryLeadConvertedIntoIt(t *testing.T) {
 	second := seedLead(t, db, owner.ID, "duplicate-enquiry-2@example.com")
 	require.NoError(t, leadRepo.ConvertToCustomer(second.ID, customer.ID))
 
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	assertColumnsFreeOf(t, db, "leads",
 		append(leadPersonalData(first), second.Email)...)
@@ -324,7 +324,7 @@ func TestErasureDoesNotReachPeopleWhoAreNotLinked(t *testing.T) {
 	bystander := seedCustomer(t, db, "bystander@example.com")
 	otherLead := seedLead(t, db, owner.ID, "other-lead@example.com")
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	survivingCustomer, err := customerRepo.GetByID(bystander.ID)
 	require.NoError(t, err, "an unrelated customer must not be erased")
@@ -335,7 +335,7 @@ func TestErasureDoesNotReachPeopleWhoAreNotLinked(t *testing.T) {
 	assert.Equal(t, "other-lead@example.com", survivingLead.Email)
 
 	// ...and the other way round.
-	require.NoError(t, customerRepo.Delete(bystander.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), bystander.ID))
 	survivingLead, err = leadRepo.GetByID(otherLead.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "other-lead@example.com", survivingLead.Email)
@@ -356,7 +356,7 @@ func TestConvertedPairErasureRollsBackWithTheCallersTransaction(t *testing.T) {
 
 	abort := errors.New("caller aborted the unit of work")
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := leadRepo.WithTx(tx).Delete(lead.ID); err != nil {
+		if err := leadRepo.WithTx(tx).Delete(context.Background(), lead.ID); err != nil {
 			return err
 		}
 		return abort
@@ -386,7 +386,7 @@ func TestCustomerFirstPairErasureRollsBackWithTheCallersTransaction(t *testing.T
 
 	abort := errors.New("caller aborted the unit of work")
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := customerRepo.WithTx(tx).Delete(customer.ID); err != nil {
+		if err := customerRepo.WithTx(tx).Delete(context.Background(), customer.ID); err != nil {
 			return err
 		}
 		return abort
@@ -414,7 +414,7 @@ func TestLeadErasureRunsInsideACallerSuppliedTransaction(t *testing.T) {
 	customer := convertLead(t, db, lead)
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := leadRepo.WithTx(tx).Delete(lead.ID); err != nil {
+		if err := leadRepo.WithTx(tx).Delete(context.Background(), lead.ID); err != nil {
 			return err
 		}
 		return tx.Create(&models.Task{
@@ -445,7 +445,7 @@ func TestLeadServiceErasureOfAMissingLeadIsNotFound(t *testing.T) {
 		utils.NewTransactionManager(db),
 	)
 
-	err := leadService.Delete(4242, models.RoleAdmin)
+	err := leadService.Delete(context.Background(), 4242, models.RoleAdmin)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, apperrors.ErrNotFound)
 }
@@ -466,8 +466,8 @@ func TestLeadServiceErasureIsNotRepeatable(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "twice@example.com")
 
-	require.NoError(t, leadService.Delete(lead.ID, models.RoleAdmin))
-	assert.ErrorIs(t, leadService.Delete(lead.ID, models.RoleAdmin), apperrors.ErrNotFound)
+	require.NoError(t, leadService.Delete(context.Background(), lead.ID, models.RoleAdmin))
+	assert.ErrorIs(t, leadService.Delete(context.Background(), lead.ID, models.RoleAdmin), apperrors.ErrNotFound)
 
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
 }

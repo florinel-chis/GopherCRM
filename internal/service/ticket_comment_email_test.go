@@ -325,7 +325,7 @@ func TestTicketCommentEmailSkipReasons(t *testing.T) {
 		code    string
 	}{
 		{"erased customer", func(t *testing.T, e *ticketMailEnv) {
-			require.NoError(t, repository.NewCustomerRepository(e.db).Delete(e.customer.ID))
+			require.NoError(t, repository.NewCustomerRepository(e.db).Delete(context.Background(), e.customer.ID))
 		}, false, models.TicketMailErrorCustomerUnavailable},
 		{"soft-deleted customer", func(t *testing.T, e *ticketMailEnv) {
 			require.NoError(t, e.db.Delete(&models.Customer{}, e.customer.ID).Error)

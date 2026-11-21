@@ -7,6 +7,7 @@ package service
 // carry ids only.
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -137,7 +138,7 @@ func TestQuoteEmailDelivery(t *testing.T) {
 		erased := &models.Customer{FirstName: "Era", LastName: "Sed", Email: fmt.Sprintf("erased-%d@example.com", noCustomer.ID)}
 		require.NoError(t, db.Create(erased).Error)
 		erasedQuote := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) { q.DealID = nil; q.CustomerID = &erased.ID })
-		require.NoError(t, repository.NewCustomerRepository(db).Delete(erased.ID))
+		require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), erased.ID))
 		_, err = env.svc.Email(erasedQuote.ID)
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, apperrors.ErrQuoteNoRecipient), "%v", err)

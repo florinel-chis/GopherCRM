@@ -117,7 +117,7 @@ func TestCustomerExternalIDCreateRacesErasureSQLite(t *testing.T) {
 		mapping, err := svc.AddExternalID(ctx, customer.ID, "race", "", "create-first")
 		require.NoError(t, err)
 		require.NotZero(t, mapping.ID)
-		require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 		assertCustomerErased(t, db, customer.ID)
 		assert.Zero(t, externalIDMappings(t, db, customer.ID), "the erasure removed the mapping")
 		assertNoMappingOnErasedCustomer(t, db)
@@ -125,7 +125,7 @@ func TestCustomerExternalIDCreateRacesErasureSQLite(t *testing.T) {
 
 	t.Run("erasure_commits_first", func(t *testing.T) {
 		customer := seedExternalIDServiceCustomer(t, db, "race-erase-first")
-		require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 		mapping, err := svc.AddExternalID(ctx, customer.ID, "race", "", "erase-first")
 		assert.Nil(t, mapping)
 		require.ErrorIs(t, err, apperrors.ErrNotFound)
@@ -145,7 +145,7 @@ func TestCustomerExternalIDCreateRacesErasureSQLite(t *testing.T) {
 			}()
 			go func() {
 				defer wg.Done()
-				eraseErr = repository.NewCustomerRepository(db).Delete(customer.ID)
+				eraseErr = repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID)
 			}()
 			wg.Wait()
 			require.NoError(t, eraseErr)
@@ -284,7 +284,7 @@ func TestCustomerExternalIDCreateRacesErasureMySQL(t *testing.T) {
 		gate.awaitReached(t)
 
 		eraseDone := make(chan error, 1)
-		go func() { eraseDone <- eraser.Delete(customer.ID) }()
+		go func() { eraseDone <- eraser.Delete(context.Background(), customer.ID) }()
 		// The erasure's lock of the customer row waits for that lock.
 		awaitExternalIDLockWait(t, probeDB, externalIDErasureScrub)
 		close(gate.release)
@@ -323,7 +323,7 @@ func TestCustomerExternalIDCreateRacesErasureMySQL(t *testing.T) {
 		})
 
 		eraseDone := make(chan error, 1)
-		go func() { eraseDone <- eraser.Delete(customer.ID) }()
+		go func() { eraseDone <- eraser.Delete(context.Background(), customer.ID) }()
 		// The erasure has scrubbed (locked) the customer and deleted its
 		// mappings, and is parked before its commit.
 		gate.awaitReached(t)

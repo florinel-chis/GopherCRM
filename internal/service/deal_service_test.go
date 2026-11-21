@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -591,9 +592,9 @@ func TestDealService_UpdateSurvivesTheErasureOfItsLinks(t *testing.T) {
 	deal := &models.Deal{Title: "Outlives its links", OwnerID: owner.ID, CustomerID: &customer.ID, LeadID: &lead.ID}
 	require.NoError(t, svc.Create(deal, nil, actor.ID))
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
-	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
-	require.NoError(t, repository.NewUserRepository(db).Delete(owner.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(context.Background(), lead.ID))
+	require.NoError(t, repository.NewUserRepository(db).Delete(context.Background(), owner.ID))
 
 	// The handler hands over the stored deal with the body applied; a link
 	// absent from the body is exactly as stored.

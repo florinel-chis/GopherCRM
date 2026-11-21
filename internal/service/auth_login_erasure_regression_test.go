@@ -15,6 +15,7 @@ package service
 // set) and asserts committed rows read outside any transaction.
 
 import (
+	"context"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -87,7 +88,7 @@ func runLoginErasedDuringAuthentication(t *testing.T, db *gorm.DB) {
 			repo := &erasingUserRepository{UserRepository: realRepo, erase: func(id uint) {
 				if !erased {
 					erased = true
-					require.NoError(t, realRepo.Delete(id))
+					require.NoError(t, realRepo.Delete(context.Background(), id))
 				}
 			}}
 			svc := NewAuthServiceWithSessions(repo, repository.NewAPIKeyRepository(db),

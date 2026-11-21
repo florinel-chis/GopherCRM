@@ -1122,7 +1122,7 @@ func runFormMailDeliveryErasedWithLead(t *testing.T, db *gorm.DB) {
 	require.NotNil(t, kept.LeadID)
 	require.NotEqual(t, *erased.LeadID, *kept.LeadID)
 
-	require.NoError(t, f.leadRepo.Delete(*erased.LeadID))
+	require.NoError(t, f.leadRepo.Delete(context.Background(), *erased.LeadID))
 
 	assert.Zero(t, countDeliveries(t, db, "submission_id = ?", erased.ID), "hard-deleted in the erasure")
 	for _, row := range erasedRows {

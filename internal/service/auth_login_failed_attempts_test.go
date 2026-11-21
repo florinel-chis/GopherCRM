@@ -15,6 +15,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -320,7 +321,7 @@ func TestLoginWrongPasswordErasedDuringRecordSQLite(t *testing.T) {
 	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
 	user := lfaSeed(t, db, 0, nil)
 	base := repository.NewUserRepository(db)
-	barrier := &lfaBarrier{afterAll: func() { _ = base.Delete(user.ID) }}
+	barrier := &lfaBarrier{afterAll: func() { _ = base.Delete(context.Background(), user.ID) }}
 	repo := &lfaUserRepository{UserRepository: base, barrier: barrier, errs: make(chan error, 1)}
 	s := lfaService(db, repo, now)
 	output := lfaCaptureLog(t)

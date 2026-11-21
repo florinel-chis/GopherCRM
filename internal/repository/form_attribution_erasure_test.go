@@ -127,7 +127,7 @@ func runFormAttributionErasedWithLead(t *testing.T, useMySQL bool) {
 		err := utils.NewTransactionManager(db).WithTransaction(context.Background(), func(ctx context.Context) error {
 			tx, ok := utils.GetTxFromContext(ctx)
 			require.True(t, ok)
-			require.NoError(t, NewLeadRepository(db).WithTx(tx).Delete(f.lead.ID))
+			require.NoError(t, NewLeadRepository(db).WithTx(tx).Delete(context.Background(), f.lead.ID))
 			// Inside the transaction the columns are already empty.
 			var inside models.FormSubmission
 			require.NoError(t, tx.Unscoped().First(&inside, f.live.ID).Error)
@@ -136,7 +136,7 @@ func runFormAttributionErasedWithLead(t *testing.T, useMySQL bool) {
 		})
 		require.ErrorIs(t, err, abort)
 		assert.Equal(t, before, attributionColumns(loadSubmission(t, db, f.live.ID)), "the rollback restores the attribution")
-		require.NoError(t, NewLeadRepository(db).Delete(f.lead.ID), "clean up the graph")
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), f.lead.ID), "clean up the graph")
 	})
 
 	t.Run("erasing the lead empties the attribution of every linked row", func(t *testing.T) {
@@ -144,7 +144,7 @@ func runFormAttributionErasedWithLead(t *testing.T, useMySQL bool) {
 		otherBefore := attributionColumns(loadSubmission(t, db, f.otherLead.ID))
 		unlinkedBefore := attributionColumns(loadSubmission(t, db, f.unlinked.ID))
 
-		require.NoError(t, NewLeadRepository(db).Delete(f.lead.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), f.lead.ID))
 
 		for _, id := range []uint{f.live.ID, f.gone.ID} {
 			submission := loadSubmission(t, db, id)

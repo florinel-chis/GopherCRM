@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -170,8 +171,8 @@ func (r *customerRepository) Update(customer *models.Customer) error {
 // As with users, the unit is a savepoint of the caller's transaction when this
 // repository was obtained through WithTx and a fresh transaction otherwise.
 // See erasure.go for the shared machinery and the full GDPR rationale.
-func (r *customerRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootCustomer, id: id}, r.lockSeams, nil, r.erasureListener)
+func (r *customerRepository) Delete(ctx context.Context, id uint) error {
+	return eraseGraph(ctx, r.db, true, erasureRoot{kind: erasureRootCustomer, id: id}, r.lockSeams, nil, r.erasureListener)
 }
 
 // customerErasurePlan lists what counts as personal data on a customer. It is

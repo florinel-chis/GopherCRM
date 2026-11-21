@@ -75,7 +75,7 @@ func ecoSeed(t *testing.T, f *ciFixture) ciSeed {
 // ecoErase is the user-rooted erasure of the owner, with hooks.
 func ecoErase(f *ciFixture, s ciSeed, hooks repository.ErasureHooks) func() error {
 	return func() error {
-		return repository.NewUserRepository(f.db, repository.WithUserErasureHooks(hooks)).Delete(s.owner.ID)
+		return repository.NewUserRepository(f.db, repository.WithUserErasureHooks(hooks)).Delete(context.Background(), s.owner.ID)
 	}
 }
 
@@ -613,7 +613,7 @@ func TestGovernedUserErasureVsCustomerErasureMySQL(t *testing.T) {
 	var customerTx atomic.Int32
 	customerSide := ciStart(func() error {
 		return repository.NewCustomerRepository(db,
-			repository.WithCustomerErasureHooks(ecoParkAfter(ecoStageCustomers, hold, &customerTx))).Delete(g.customer.ID)
+			repository.WithCustomerErasureHooks(ecoParkAfter(ecoStageCustomers, hold, &customerTx))).Delete(context.Background(), g.customer.ID)
 	})
 	hold.entered(t, "the customer-rooted erasure")
 

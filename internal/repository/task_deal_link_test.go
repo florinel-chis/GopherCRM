@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -305,7 +306,7 @@ func TestTaskDealLinkSurvivesErasure(t *testing.T) {
 		deal := seedTaskDealDeal(t, db, owner, nil, &lead.ID)
 		task := seedTaskDealTask(t, db, owner, &deal.ID)
 
-		require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 		var erased models.Lead
 		require.NoError(t, db.Unscoped().First(&erased, lead.ID).Error)
@@ -322,7 +323,7 @@ func TestTaskDealLinkSurvivesErasure(t *testing.T) {
 		deal := seedTaskDealDeal(t, db, owner, &customer.ID, nil)
 		task := seedTaskDealTask(t, db, owner, &deal.ID)
 
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 		var erased models.Customer
 		require.NoError(t, db.Unscoped().First(&erased, customer.ID).Error)

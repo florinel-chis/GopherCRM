@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -414,8 +415,8 @@ func TestErasingALinkedCustomerAndLeadKeepsTheCompanyLinkAndTheCompany(t *testin
 
 	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, subject.identifiers()))
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
-	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 

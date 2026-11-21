@@ -1,7 +1,11 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
@@ -320,10 +324,71 @@ func (suite *UserServiceTestSuite) TestDelete_Success() {
 		BaseModel: models.BaseModel{ID: 1},
 		Email:     "test@example.com",
 	}, nil)
-	suite.mockRepo.On("Delete", uint(1)).Return(nil)
+	suite.mockRepo.On("Delete", mock.Anything, uint(1)).Return(nil)
 
-	err := suite.userService.Delete(1)
+	err := suite.userService.Delete(context.Background(), 1)
 	assert.NoError(suite.T(), err)
+}
+
+// The erasure runs on the caller's context (#571): through Delete, through
+// DeleteAs without governance (its fallback to Delete), and through the
+// governed DeleteAs, whose erasure is a savepoint of the governed transaction.
+func (suite *UserServiceTestSuite) TestDelete_PassesTheContextToTheErasure() {
+	type marker struct{}
+	ctx := context.WithValue(context.Background(), marker{}, "erase")
+	matchesCtx := mock.MatchedBy(func(c context.Context) bool { return c.Value(marker{}) == "erase" })
+	suite.mockRepo.On("GetByID", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}}, nil)
+	suite.mockRepo.On("GetByID", uint(2)).Return(&models.User{BaseModel: models.BaseModel{ID: 2}}, nil)
+	suite.mockRepo.On("Delete", matchesCtx, uint(1)).Return(nil).Once()
+	suite.mockRepo.On("Delete", matchesCtx, uint(2)).Return(nil).Once()
+
+	assert.NoError(suite.T(), suite.userService.Delete(ctx, 1))
+	assert.NoError(suite.T(), suite.userService.DeleteAs(ctx, Actor{UserID: 9, AuthMethod: AuthMethodBearer}, 2))
+	suite.mockRepo.AssertExpectations(suite.T())
+
+	suite.Run("governed", func() {
+		t := suite.T()
+		db := openExternalIDSQLite(t)
+		var seen []context.Context
+		users := NewUserService(newEraseCtxRecorder(repository.NewUserRepository(db), &seen),
+			WithUserRoleGovernance(repository.NewRoleRepository(db), repository.NewRoleAuditRepository(db), utils.NewTransactionManager(db)))
+		admin := &models.User{Email: "ctx-admin@governed.test", Password: "not-a-login-hash",
+			FirstName: "Ada", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
+		require.NoError(t, db.Create(admin).Error)
+		login := &models.User{Email: "ctx-login@governed.test", Password: "not-a-login-hash",
+			FirstName: "Portal", LastName: "Login", Role: models.RoleCustomer, IsActive: true}
+		require.NoError(t, db.Create(login).Error)
+
+		require.NoError(t, users.DeleteAs(ctx, Actor{UserID: admin.ID, AuthMethod: AuthMethodBearer}, login.ID))
+
+		require.Len(t, seen, 1, "the governed write erases through its transaction's repository once")
+		assert.Equal(t, "erase", seen[0].Value(marker{}), "the governed erasure gets the caller's context")
+		var erased models.User
+		require.NoError(t, db.Unscoped().First(&erased, login.ID).Error)
+		assert.True(t, erased.DeletedAt.Valid, "the login was erased")
+	})
+}
+
+// eraseCtxRecorder is a real user repository that records the context of every
+// erasure (Delete) made through it or through the repositories WithTx binds.
+type eraseCtxRecorder struct {
+	repository.UserRepository
+	repository.UserRoleMaintenance
+	seen *[]context.Context
+}
+
+func newEraseCtxRecorder(inner repository.UserRepository, seen *[]context.Context) *eraseCtxRecorder {
+	maintenance, _ := inner.(repository.UserRoleMaintenance)
+	return &eraseCtxRecorder{UserRepository: inner, UserRoleMaintenance: maintenance, seen: seen}
+}
+
+func (r *eraseCtxRecorder) WithTx(tx *gorm.DB) repository.UserRepository {
+	return newEraseCtxRecorder(r.UserRepository.WithTx(tx), r.seen)
+}
+
+func (r *eraseCtxRecorder) Delete(ctx context.Context, id uint) error {
+	*r.seen = append(*r.seen, ctx)
+	return r.UserRepository.Delete(ctx, id)
 }
 
 // Erasing a user that does not exist must NOT report success. Both statements
@@ -333,13 +398,13 @@ func (suite *UserServiceTestSuite) TestDelete_Success() {
 func (suite *UserServiceTestSuite) TestDelete_NotFound() {
 	suite.mockRepo.On("GetByID", uint(99999)).Return(nil, gorm.ErrRecordNotFound)
 
-	err := suite.userService.Delete(99999)
+	err := suite.userService.Delete(context.Background(), 99999)
 
 	assert.Error(suite.T(), err)
 	assert.True(suite.T(), apperrors.IsNotFound(err),
 		"expected the not-found sentinel, got %v", err)
 	// Nothing may be erased on the strength of an ID that matches no row.
-	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything, mock.Anything)
 }
 
 // A database failure during the existence check is not "no such user": it must
@@ -349,11 +414,11 @@ func (suite *UserServiceTestSuite) TestDelete_LookupFailureIsNotReportedAsNotFou
 	dbErr := errors.New("dial tcp: connection refused")
 	suite.mockRepo.On("GetByID", uint(1)).Return(nil, dbErr)
 
-	err := suite.userService.Delete(1)
+	err := suite.userService.Delete(context.Background(), 1)
 
 	assert.ErrorIs(suite.T(), err, dbErr)
 	assert.False(suite.T(), apperrors.IsNotFound(err))
-	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything)
+	suite.mockRepo.AssertNotCalled(suite.T(), "Delete", mock.Anything, mock.Anything)
 }
 
 func (suite *UserServiceTestSuite) TestList_Success() {

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -95,7 +96,7 @@ func runAutomationWaitResume(t *testing.T, db *gorm.DB) {
 		lead := env.createLead(env.sales, models.LeadStatusContacted)
 		run := env.startRun(rule, lead)
 		env.executeDue()
-		require.NoError(t, env.leads.Delete(lead.ID))
+		require.NoError(t, env.leads.Delete(context.Background(), lead.ID))
 		cancelled := env.run(run.ID)
 		assert.Equal(t, models.AutomationRunCancelled, cancelled.Status)
 		assert.Equal(t, models.AutomationCancelRecordDeleted, cancelled.CancelReason)

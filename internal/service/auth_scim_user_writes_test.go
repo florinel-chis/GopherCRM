@@ -424,7 +424,7 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 		{"replace not visible", func(t *testing.T) {
 			customer := f.seedLinked(t, "cust@x.test", models.RoleCustomer, true, "")
 			erased := f.seedLinked(t, "gone@x.test", models.RoleSales, true, "")
-			require.NoError(t, repository.NewUserRepository(f.db).Delete(erased.ID), "erasure through the real path")
+			require.NoError(t, repository.NewUserRepository(f.db).Delete(context.Background(), erased.ID), "erasure through the real path")
 			before := f.counts(t)
 			for _, id := range []string{"999999", uintString(erased.ID), uintString(customer.ID), "abc", "0", "-1"} {
 				record, err := f.svc.Replace(ctx, id, SCIMUserInput{UserName: "x@x.test", Roles: []string{scimRoleSales}})

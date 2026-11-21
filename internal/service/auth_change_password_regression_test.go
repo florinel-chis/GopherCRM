@@ -17,6 +17,7 @@ package service
 // bounded.
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -455,7 +456,7 @@ func runChangePasswordValidationScenarios(t *testing.T, f *cpFixture) {
 	t.Run("an owner erased after the verification read is refused and stays erased", func(t *testing.T) {
 		s := f.seed(t)
 		f.hooks.install(func(h *cpHooks) {
-			h.afterRootGetByID = func(id uint) { require.NoError(t, f.userRepo.Delete(id)) }
+			h.afterRootGetByID = func(id uint) { require.NoError(t, f.userRepo.Delete(context.Background(), id)) }
 		})
 		tokens, err := f.svc.ChangePassword(s.owner.ID, cpOldPassword, cpNewPassword, "")
 		assert.ErrorIs(t, err, ErrAccountUnavailable)

@@ -23,6 +23,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -555,7 +556,7 @@ func llRunDeactivate(f *llFixture, s llSeed) error {
 
 // llRunErase is the DELETE /users/{id} path: UserService.Delete.
 func llRunErase(f *llFixture, s llSeed) error {
-	return f.users.Delete(s.owner.ID)
+	return f.users.Delete(context.Background(), s.owner.ID)
 }
 
 func llRunLogout(f *llFixture, s llSeed) error {
@@ -679,7 +680,7 @@ func runLoginOwnerLockDecisions(t *testing.T, f *llFixture, connections int) {
 			require.NoError(t, err)
 		}},
 		{name: "an erasure", want: llInvalidCredentials, apply: func(t *testing.T, s llSeed) {
-			require.NoError(t, f.users.Delete(s.owner.ID))
+			require.NoError(t, f.users.Delete(context.Background(), s.owner.ID))
 		}},
 		{name: "a lock later than the login clock", want: llAccountLocked, apply: func(t *testing.T, s llSeed) {
 			f.exec(t, "UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?",
@@ -1136,7 +1137,7 @@ func TestLoginOwnerLockLogsOmitPersonalData(t *testing.T) {
 	refuse(func(id uint) {
 		f.exec(t, "UPDATE users SET locked_until = ? WHERE id = ?", time.Now().Add(10*time.Minute), id)
 	}, func(id uint) { f.exec(t, "UPDATE users SET locked_until = NULL WHERE id = ?", id) }, llAccountLocked)
-	refuse(func(id uint) { require.NoError(t, f.users.Delete(id)) }, nil, llInvalidCredentials)
+	refuse(func(id uint) { require.NoError(t, f.users.Delete(context.Background(), id)) }, nil, llInvalidCredentials)
 
 	var baseline map[string]interface{}
 	var loginLines []map[string]interface{}

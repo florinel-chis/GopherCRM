@@ -165,8 +165,8 @@ func (m *MockUserService) CheckOwnEmailChange(id uint, email, currentPassword st
 	return args.Error(0)
 }
 
-func (m *MockUserService) Delete(id uint) error {
-	args := m.Called(id)
+func (m *MockUserService) Delete(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 

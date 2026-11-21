@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -186,7 +187,7 @@ func TestLoginOwnerLockAPISQLite(t *testing.T) {
 			require.NoError(t, err)
 		}},
 		{name: "an erasure", apply: func(t *testing.T, user *models.User) {
-			require.NoError(t, s.userService.Delete(user.ID))
+			require.NoError(t, s.userService.Delete(context.Background(), user.ID))
 		}},
 	}
 	for i, change := range changes {

@@ -246,9 +246,9 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("no updated event", func(t *testing.T) {
 		env.clearDeliveries()
 		erasedLead := env.seedLead()
-		require.NoError(t, env.leads.Delete(erasedLead.ID, models.RoleAdmin))
+		require.NoError(t, env.leads.Delete(context.Background(), erasedLead.ID, models.RoleAdmin))
 		erasedCustomer := env.seedCustomer()
-		require.NoError(t, env.customers.Delete(erasedCustomer.ID))
+		require.NoError(t, env.customers.Delete(context.Background(), erasedCustomer.ID))
 		deletedTicket := env.seedTicket(models.TicketStatusOpen)
 		require.NoError(t, env.tickets.Delete(deletedTicket.ID))
 
@@ -412,7 +412,7 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 		customer := env.seedCustomer()
 		stale, err := env.customers.GetByID(customer.ID)
 		require.NoError(t, err)
-		require.NoError(t, env.customers.Delete(customer.ID))
+		require.NoError(t, env.customers.Delete(context.Background(), customer.ID))
 		erased := storedCustomer(t, db, customer.ID)
 
 		stale.FirstName = "Back"

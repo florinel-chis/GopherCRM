@@ -182,7 +182,7 @@ func TestLeadErasureConversionFirstMySQL(t *testing.T) {
 			gate.awaitReached(t, "conversion")
 
 			eraseDone := make(chan error, 1)
-			go func() { eraseDone <- f.leadSvc.Delete(lead.ID, tc.role) }()
+			go func() { eraseDone <- f.leadSvc.Delete(context.Background(), lead.ID, tc.role) }()
 			awaitLeadCompanyLockWait(t, f.db, erasureLeadLock)
 			close(gate.release)
 
@@ -223,7 +223,7 @@ func TestLeadErasureErasureFirstMySQL(t *testing.T) {
 			}})
 
 			eraseDone := make(chan error, 1)
-			go func() { eraseDone <- f.leadSvc.Delete(lead.ID, tc.role) }()
+			go func() { eraseDone <- f.leadSvc.Delete(context.Background(), lead.ID, tc.role) }()
 			gate.awaitReached(t, "erasure")
 
 			convertDone := make(chan error, 1)
@@ -303,7 +303,7 @@ func TestLeadErasureConversionCommittedAfterCancelMySQL(t *testing.T) {
 			}})
 
 			eraseDone := make(chan error, 1)
-			go func() { eraseDone <- f.leadSvc.Delete(lead.ID, tc.role) }()
+			go func() { eraseDone <- f.leadSvc.Delete(context.Background(), lead.ID, tc.role) }()
 			gate.awaitReached(t, "erasure")
 
 			// The conversion runs to commit without waiting on the erasure.
@@ -353,7 +353,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 		lead := f.lead(nil)
 		customer, err := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 		require.NoError(t, err)
-		require.NoError(t, f.leadSvc.Delete(lead.ID, models.RoleAdmin))
+		require.NoError(t, f.leadSvc.Delete(context.Background(), lead.ID, models.RoleAdmin))
 		assertLeadAndCustomerErased(t, f, lead.ID, customer.ID)
 	})
 
@@ -363,7 +363,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 		customer, err := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		before := storedLeadState(f, lead.ID)
-		assertRefusedForNonAdmin(t, f.leadSvc.Delete(lead.ID, models.RoleSales))
+		assertRefusedForNonAdmin(t, f.leadSvc.Delete(context.Background(), lead.ID, models.RoleSales))
 		assert.Equal(t, before, storedLeadState(f, lead.ID))
 		assertConvertedUnchanged(t, f, lead, customer, run)
 	})
@@ -371,7 +371,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 	for _, tc := range leadErasureRoles {
 		t.Run("(c) "+tc.name+" erasure, then conversion is not found", func(t *testing.T) {
 			lead := f.lead(nil)
-			require.NoError(t, f.leadSvc.Delete(lead.ID, tc.role))
+			require.NoError(t, f.leadSvc.Delete(context.Background(), lead.ID, tc.role))
 			customersBefore := f.customerCount()
 			_, err := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 			require.Error(t, err)
@@ -394,7 +394,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 			}
 			t.Cleanup(func() { f.leadSvc.afterDeletePreRead = nil })
 
-			eraseErr := f.leadSvc.Delete(lead.ID, tc.role)
+			eraseErr := f.leadSvc.Delete(context.Background(), lead.ID, tc.role)
 			require.NoError(t, convertErr, "the conversion committed between the pre-read and the erasure")
 			require.NotNil(t, customer)
 			if tc.admin {
@@ -429,7 +429,7 @@ func TestLeadErasureUnrelatedConversionNotBlockedMySQL(t *testing.T) {
 			_ = tx.Rollback()
 		}
 	})
-	require.NoError(t, repository.NewLeadRepository(f.db).WithTx(tx).Delete(first.ID), "the erasure returns inside the open caller transaction")
+	require.NoError(t, repository.NewLeadRepository(f.db).WithTx(tx).Delete(context.Background(), first.ID), "the erasure returns inside the open caller transaction")
 
 	// Watch PROCESSLIST while the conversion runs: none of its statements may
 	// be seen executing on two consecutive polls.

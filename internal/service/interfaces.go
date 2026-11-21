@@ -85,7 +85,7 @@ type UserService interface {
 	// hash. A missing account is ErrNotFound. It writes nothing and counts
 	// nothing toward the login lockout.
 	CheckOwnEmailChange(id uint, email, currentPassword string) error
-	Delete(id uint) error
+	Delete(ctx context.Context, id uint) error
 	List(offset, limit int) ([]models.User, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, int64, error)
@@ -154,7 +154,7 @@ type LeadService interface {
 	// Delete erases the lead. Only an admin (actorRole) may erase a converted
 	// lead, because that erases the customer it became; anyone else is refused
 	// with an apperrors.ErrForbidden and nothing changes.
-	Delete(id uint, actorRole models.UserRole) error
+	Delete(ctx context.Context, id uint, actorRole models.UserRole) error
 	List(offset, limit int) ([]models.Lead, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
@@ -190,7 +190,7 @@ type CustomerService interface {
 	GetByID(id uint) (*models.Customer, error)
 	GetByUserID(userID uint) (*models.Customer, error)
 	Update(customer *models.Customer) error
-	Delete(id uint) error
+	Delete(ctx context.Context, id uint) error
 	List(offset, limit int) ([]models.Customer, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)

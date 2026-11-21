@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -178,7 +179,7 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 			taskStep(models.AutomationRecipientUser, recipient.ID, 1),
 			emailStep(models.AutomationRecipientUser, recipient.ID),
 			notifyStep(models.AutomationRecipientOwner, 0))
-		require.NoError(t, env.users.Delete(recipient.ID), "the recipient is erased after the rule was saved")
+		require.NoError(t, env.users.Delete(context.Background(), recipient.ID), "the recipient is erased after the rule was saved")
 		lead := env.createLead(env.sales, models.LeadStatusNew)
 		run := env.startRun(rule, lead)
 		tasksBefore, notificationsBefore, mailsBefore := env.count(&models.Task{}), env.count(&models.Notification{}), len(env.mailer.messages())
@@ -366,7 +367,7 @@ func runAutomationStepExecution(t *testing.T, db *gorm.DB) {
 					// advance deadlocks against the cancelled run row, so it
 					// runs on its own goroutine and is joined afterwards.
 					done := make(chan error, 1)
-					go func() { done <- env.leads.Delete(lead.ID) }()
+					go func() { done <- env.leads.Delete(context.Background(), lead.ID) }()
 					time.Sleep(500 * time.Millisecond)
 					return func() {
 						select {

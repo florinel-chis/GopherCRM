@@ -659,7 +659,7 @@ func runPasswordResetValidationScenarios(t *testing.T, db *gorm.DB) {
 	t.Run("an erased owner is rejected", func(t *testing.T) {
 		s := f.seed(t)
 		// Erasure scrubs the row, purges its credentials and soft-deletes it.
-		require.NoError(t, f.userRepo.Delete(s.owner.ID))
+		require.NoError(t, f.userRepo.Delete(context.Background(), s.owner.ID))
 
 		assert.ErrorIs(t, f.svc.ConfirmPasswordReset(s.token, resetNewPassword), ErrInvalidResetToken)
 

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -196,7 +197,7 @@ func seedExportTraversal(t *testing.T, db *gorm.DB) exportTraversalFixture {
 	repo := NewCustomerRepository(db)
 	erased := make([]uint, 0, exportTraversalErased)
 	for i := 0; i < exportTraversalErased; i++ {
-		require.NoError(t, repo.Delete(rows[i].ID))
+		require.NoError(t, repo.Delete(context.Background(), rows[i].ID))
 		erased = append(erased, rows[i].ID)
 	}
 

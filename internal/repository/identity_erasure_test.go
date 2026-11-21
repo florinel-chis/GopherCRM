@@ -779,17 +779,29 @@ type identityRoot struct {
 
 func identityRoots() []identityRoot {
 	return []identityRoot{
-		{"user", func(db *gorm.DB, g *identityGraph) error { return NewUserRepository(db).Delete(g.login.ID) }},
-		{"customer", func(db *gorm.DB, g *identityGraph) error { return NewCustomerRepository(db).Delete(g.customerLive.ID) }},
-		{"lead", func(db *gorm.DB, g *identityGraph) error { return NewLeadRepository(db).Delete(g.leadLive.ID) }},
+		{"user", func(db *gorm.DB, g *identityGraph) error {
+			return NewUserRepository(db).Delete(context.Background(), g.login.ID)
+		}},
+		{"customer", func(db *gorm.DB, g *identityGraph) error {
+			return NewCustomerRepository(db).Delete(context.Background(), g.customerLive.ID)
+		}},
+		{"lead", func(db *gorm.DB, g *identityGraph) error {
+			return NewLeadRepository(db).Delete(context.Background(), g.leadLive.ID)
+		}},
 		{"user_with_tx", func(db *gorm.DB, g *identityGraph) error {
-			return db.Transaction(func(tx *gorm.DB) error { return NewUserRepository(db).WithTx(tx).Delete(g.login.ID) })
+			return db.Transaction(func(tx *gorm.DB) error {
+				return NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID)
+			})
 		}},
 		{"customer_with_tx", func(db *gorm.DB, g *identityGraph) error {
-			return db.Transaction(func(tx *gorm.DB) error { return NewCustomerRepository(db).WithTx(tx).Delete(g.customerLive.ID) })
+			return db.Transaction(func(tx *gorm.DB) error {
+				return NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), g.customerLive.ID)
+			})
 		}},
 		{"lead_with_tx", func(db *gorm.DB, g *identityGraph) error {
-			return db.Transaction(func(tx *gorm.DB) error { return NewLeadRepository(db).WithTx(tx).Delete(g.leadLive.ID) })
+			return db.Transaction(func(tx *gorm.DB) error {
+				return NewLeadRepository(db).WithTx(tx).Delete(context.Background(), g.leadLive.ID)
+			})
 		}},
 	}
 }
@@ -842,7 +854,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 	t.Run("soft_deleted_comments_are_redacted_and_stay_deleted", func(t *testing.T) {
 		db := dbs.open(t)
 		g := seedIdentityGraph(t, db)
-		require.NoError(t, NewUserRepository(db).Delete(g.login.ID))
+		require.NoError(t, NewUserRepository(db).Delete(context.Background(), g.login.ID))
 		assertCommentRedacted(t, db, g.commentLive.ID, false)
 		assertCommentRedacted(t, db, g.commentGone.ID, true)
 	})
@@ -859,7 +871,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 
 			// Erasing a customer whose login is a staff account leaves the
 			// staff account, and its credentials, alone.
-			require.NoError(t, NewCustomerRepository(db).Delete(first.ID))
+			require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), first.ID))
 			var u models.User
 			require.NoError(t, db.First(&u, staff.ID).Error, "%s survives a customer erasure", staff.Role)
 			assert.Equal(t, "Staff", u.FirstName)
@@ -867,7 +879,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 
 			// Erasing the staff account itself leaves the customers that
 			// point at it alone.
-			require.NoError(t, NewUserRepository(db).Delete(staff.ID))
+			require.NoError(t, NewUserRepository(db).Delete(context.Background(), staff.ID))
 			var c models.Customer
 			require.NoError(t, db.First(&c, second.ID).Error, "a customer linked to an erased %s stays live", staff.Role)
 			assert.Equal(t, "Linked", c.FirstName)
@@ -912,7 +924,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		require.NoError(t, tx.Error)
 		label := &models.Label{Name: "outer-" + g.tag, Color: "#112233"}
 		require.NoError(t, tx.Create(label).Error)
-		err := NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+		err := NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID)
 		require.ErrorIs(t, err, sentinel)
 		require.GreaterOrEqual(t, calls(), 1)
 		// The caller handles the error and commits its own work anyway.
@@ -962,10 +974,12 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		g := seedIdentityGraph(t, db)
 		before := snapshotIdentityDB(t, db)
 		for _, id := range []uint{g.leadLive.ID, g.leadGone.ID, g.leadB.ID} {
-			err := NewLeadRepository(db).DeleteUnconverted(id)
+			err := NewLeadRepository(db).DeleteUnconverted(context.Background(), id)
 			require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin, "lead %d", id)
 			require.ErrorIs(t, err, apperrors.ErrForbidden)
-			err = db.Transaction(func(tx *gorm.DB) error { return NewLeadRepository(db).WithTx(tx).DeleteUnconverted(id) })
+			err = db.Transaction(func(tx *gorm.DB) error {
+				return NewLeadRepository(db).WithTx(tx).DeleteUnconverted(context.Background(), id)
+			})
 			require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin, "lead %d through WithTx", id)
 		}
 		assert.Equal(t, before, snapshotIdentityDB(t, db), "a refused erasure changes nothing")
@@ -977,7 +991,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		lead := &models.Lead{FirstName: "Unconverted" + g.tag, LastName: "Prospect" + g.tag, Email: "prospect." + g.tag + "@person.test",
 			Phone: "+1-555-" + g.tag, Notes: "met at the fair " + g.tag, OwnerID: g.sales.ID, Status: models.LeadStatusNew}
 		require.NoError(t, db.Create(lead).Error)
-		require.NoError(t, NewLeadRepository(db).DeleteUnconverted(lead.ID))
+		require.NoError(t, NewLeadRepository(db).DeleteUnconverted(context.Background(), lead.ID))
 		assert.Empty(t, identitySweep(t, db, []string{lead.FirstName, lead.LastName, lead.Email, lead.Phone, lead.Notes}))
 		var erased models.Lead
 		require.NoError(t, db.Unscoped().First(&erased, lead.ID).Error)
@@ -1005,7 +1019,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		tx := db.Begin()
 		require.NoError(t, tx.Error)
 		require.NoError(t, tx.Create(&models.Label{Name: "outer-" + g.tag, Color: "#112233"}).Error)
-		err := NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+		err := NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID)
 		require.ErrorIs(t, err, sentinel)
 		require.ErrorIs(t, err, rollbackFault)
 		require.ErrorIs(t, err, utils.ErrRollbackFailed)
@@ -1038,7 +1052,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		require.NoError(t, tx.Create(label).Error)
 		recovered := func() (r interface{}) {
 			defer func() { r = recover() }()
-			_ = NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+			_ = NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID)
 			return nil
 		}()
 		require.Equal(t, "injected panic soft-deleting customers", recovered, "the panic reaches the caller unchanged")
@@ -1058,7 +1072,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 
 		tx := db.Begin()
 		require.NoError(t, tx.Error)
-		require.NoError(t, NewUserRepository(db).WithTx(tx).Delete(g.login.ID))
+		require.NoError(t, NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID))
 		require.NoError(t, tx.Commit().Error)
 		assertGraphErased(t, db, g)
 
@@ -1066,7 +1080,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		sentinel, calls := failSoftDeletesOn(t, db, "leads")
 		tx = db.Begin()
 		require.NoError(t, tx.Error)
-		err := NewCustomerRepository(db).WithTx(tx).Delete(failing.customerLive.ID)
+		err := NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), failing.customerLive.ID)
 		require.ErrorIs(t, err, sentinel)
 		require.GreaterOrEqual(t, calls(), 1)
 		require.NoError(t, tx.Commit().Error)
@@ -1090,7 +1104,7 @@ func runIdentityErasure(t *testing.T, useMySQL bool) {
 		tx := db.Begin()
 		require.NoError(t, tx.Error)
 		require.NoError(t, tx.Create(&models.Label{Name: "outer-" + g.tag, Color: "#112233"}).Error)
-		err := NewUserRepository(db).WithTx(tx).Delete(g.login.ID)
+		err := NewUserRepository(db).WithTx(tx).Delete(context.Background(), g.login.ID)
 		require.ErrorIs(t, err, releaseFault)
 		require.NoError(t, tx.Commit().Error)
 		erasureControlExec = execTransactionControl

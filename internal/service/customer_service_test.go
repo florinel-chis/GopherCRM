@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -240,16 +241,30 @@ func (suite *CustomerServiceTestSuite) TestDelete_Success() {
 	}
 
 	suite.mockRepo.On("GetByID", uint(1)).Return(customer, nil)
-	suite.mockRepo.On("Delete", uint(1)).Return(nil)
+	suite.mockRepo.On("Delete", mock.Anything, uint(1)).Return(nil)
 
-	err := suite.service.Delete(1)
+	err := suite.service.Delete(context.Background(), 1)
 	assert.NoError(suite.T(), err)
+}
+
+// The erasure runs on the caller's context (#571): the repository erasure gets
+// the very context the service was called with.
+func (suite *CustomerServiceTestSuite) TestDelete_PassesTheContextToTheErasure() {
+	type marker struct{}
+	ctx := context.WithValue(context.Background(), marker{}, "erase")
+	suite.mockRepo.On("GetByID", uint(1)).Return(&models.Customer{BaseModel: models.BaseModel{ID: 1}}, nil)
+	suite.mockRepo.On("Delete", mock.MatchedBy(func(c context.Context) bool {
+		return c.Value(marker{}) == "erase"
+	}), uint(1)).Return(nil).Once()
+
+	assert.NoError(suite.T(), suite.service.Delete(ctx, 1))
+	suite.mockRepo.AssertExpectations(suite.T())
 }
 
 func (suite *CustomerServiceTestSuite) TestDelete_NotFound() {
 	suite.mockRepo.On("GetByID", uint(1)).Return(nil, gorm.ErrRecordNotFound)
 
-	err := suite.service.Delete(1)
+	err := suite.service.Delete(context.Background(), 1)
 	assert.Error(suite.T(), err)
 }
 

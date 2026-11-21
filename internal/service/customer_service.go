@@ -276,7 +276,7 @@ func customerStoredValuesChanged(before, after *models.Customer) bool {
 //
 // Note the logging below deliberately records only the customer ID: an erasure
 // audit trail that quotes the erased email would defeat the erasure.
-func (s *customerService) Delete(id uint) error {
+func (s *customerService) Delete(ctx context.Context, id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("customer_id", id), "CustomerService", "Delete")
 
 	// An erasure that matched no row must never report success: the update and
@@ -292,7 +292,7 @@ func (s *customerService) Delete(id uint) error {
 		return err
 	}
 
-	if err := s.customerRepo.Delete(id); err != nil {
+	if err := s.customerRepo.Delete(ctx, id); err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to erase customer")
 		return err
 	}

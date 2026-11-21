@@ -17,6 +17,7 @@ package repository
 // unreachable.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -181,9 +182,15 @@ type lockOrderRoot struct {
 
 func lockOrderRoots() []lockOrderRoot {
 	return []lockOrderRoot{
-		{"user root", func(db *gorm.DB, g *identityGraph) error { return NewUserRepository(db).Delete(g.login.ID) }},
-		{"customer root", func(db *gorm.DB, g *identityGraph) error { return NewCustomerRepository(db).Delete(g.customerGone.ID) }},
-		{"lead root", func(db *gorm.DB, g *identityGraph) error { return NewLeadRepository(db).Delete(g.leadB.ID) }},
+		{"user root", func(db *gorm.DB, g *identityGraph) error {
+			return NewUserRepository(db).Delete(context.Background(), g.login.ID)
+		}},
+		{"customer root", func(db *gorm.DB, g *identityGraph) error {
+			return NewCustomerRepository(db).Delete(context.Background(), g.customerGone.ID)
+		}},
+		{"lead root", func(db *gorm.DB, g *identityGraph) error {
+			return NewLeadRepository(db).Delete(context.Background(), g.leadB.ID)
+		}},
 	}
 }
 
@@ -335,7 +342,7 @@ func runErasureLockOrder(t *testing.T, useMySQL bool) {
 			Status: models.LeadStatusQualified, OwnerID: g.sales.ID}
 		require.NoError(t, db.Create(lead).Error)
 
-		trace, err := captureErasureTrace(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(lead.ID) })
+		trace, err := captureErasureTrace(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(context.Background(), lead.ID) })
 		require.NoError(t, err)
 		_, leadIDs := erasureLockReads(t, trace, erasureLeadLockRead)
 		assert.Equal(t, []uint{lead.ID}, leadIDs, "the root lead is locked")
@@ -348,7 +355,7 @@ func runErasureLockOrder(t *testing.T, useMySQL bool) {
 		assert.True(t, erased.DeletedAt.Valid)
 
 		// A converted lead is refused on its locked row, with the same reach.
-		trace, err = captureErasureTrace(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(g.leadB.ID) })
+		trace, err = captureErasureTrace(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(context.Background(), g.leadB.ID) })
 		require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin)
 		for _, s := range trace {
 			assert.NotContains(t, s.sql, "`customers`", "a refused erasure issues nothing on customers: %q", s.sql)
@@ -492,13 +499,13 @@ type crossRootSide struct {
 
 var (
 	crossRootUser = crossRootSide{"user-rooted", func(db *gorm.DB, p *crossRootPerson, hooks ErasureHooks) error {
-		return NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(p.login.ID)
+		return NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(context.Background(), p.login.ID)
 	}}
 	crossRootCustomer = crossRootSide{"customer-rooted", func(db *gorm.DB, p *crossRootPerson, hooks ErasureHooks) error {
-		return NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(p.customer.ID)
+		return NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(context.Background(), p.customer.ID)
 	}}
 	crossRootLead = crossRootSide{"lead-rooted", func(db *gorm.DB, p *crossRootPerson, hooks ErasureHooks) error {
-		return NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(p.lead.ID)
+		return NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(context.Background(), p.lead.ID)
 	}}
 )
 
@@ -652,7 +659,7 @@ func runErasureGraphChanged(t *testing.T, useMySQL bool) {
 				Updates(map[string]interface{}{"customer_id": customer.ID, "status": models.LeadStatusConverted}).Error)
 		}, nil)
 
-		require.NoError(t, NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(lead.ID))
+		require.NoError(t, NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(context.Background(), lead.ID))
 		require.NotNil(t, customer)
 		assertLeadErased(t, db, lead.ID)
 		assertCustomerErased(t, db, customer.ID)
@@ -674,7 +681,7 @@ func runErasureGraphChanged(t *testing.T, useMySQL bool) {
 				}
 			}, nil)
 
-			require.NoError(t, NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(p.login.ID))
+			require.NoError(t, NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(context.Background(), p.login.ID))
 			require.NotNil(t, second)
 			assertPersonErased(t, db, p)
 			assertCustomerErased(t, db, second.ID)
@@ -692,7 +699,7 @@ func runErasureGraphChanged(t *testing.T, useMySQL bool) {
 			added = append(added, f.leadOf(t, &p.customer.ID).ID)
 		}, nil)
 
-		err := NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(p.customer.ID)
+		err := NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(context.Background(), p.customer.ID)
 		require.Error(t, err)
 		require.ErrorIs(t, err, ErrErasureGraphChanged)
 		assert.EqualValues(t, erasureGraphMaxRestarts+1, counters.discoveries.Load(), "one discovery and the bounded restarts")
@@ -720,7 +727,7 @@ func runErasureGraphChanged(t *testing.T, useMySQL bool) {
 				return nil
 			})
 
-			require.NoError(t, NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(p.login.ID))
+			require.NoError(t, NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(context.Background(), p.login.ID))
 			require.NotNil(t, second)
 			assertPersonErased(t, db, p)
 			assertCustomerErased(t, db, second.ID)
@@ -746,13 +753,13 @@ func TestErasureRetryBoundSQLite(t *testing.T) {
 		erase func(g *identityGraph, hooks ErasureHooks) error
 	}{
 		{"user root", func(g *identityGraph, hooks ErasureHooks) error {
-			return NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(g.login.ID)
+			return NewUserRepository(db, WithUserErasureHooks(hooks)).Delete(context.Background(), g.login.ID)
 		}},
 		{"customer root", func(g *identityGraph, hooks ErasureHooks) error {
-			return NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(g.customerLive.ID)
+			return NewCustomerRepository(db, WithCustomerErasureHooks(hooks)).Delete(context.Background(), g.customerLive.ID)
 		}},
 		{"lead root", func(g *identityGraph, hooks ErasureHooks) error {
-			return NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(g.leadLive.ID)
+			return NewLeadRepository(db, WithLeadErasureLockHooks(hooks)).Delete(context.Background(), g.leadLive.ID)
 		}},
 	}
 

@@ -14,6 +14,7 @@ package service
 // on a disposable schema (TEST_MYSQL_DSN; it skips without it).
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -86,7 +87,7 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, models.QuoteStatusSent, view.Status)
 		historyBefore := env.history(quote.ID)
 
-		require.NoError(t, customers.Delete(customer.ID))
+		require.NoError(t, customers.Delete(context.Background(), customer.ID))
 
 		rows := env.tokenRows(quote.ID)
 		require.Len(t, rows, 1)
@@ -116,7 +117,7 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 		quote := quoteOf(customer, models.QuoteStatusDraft)
 		before := allTokens()
 
-		require.NoError(t, customers.Delete(customer.ID))
+		require.NoError(t, customers.Delete(context.Background(), customer.ID))
 
 		assert.Empty(t, env.tokenRows(quote.ID))
 		assert.Equal(t, before, allTokens(), "no token row was written or changed")
@@ -143,7 +144,7 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 				_ = tx.Rollback().Error
 			}
 		})
-		require.NoError(t, customers.WithTx(tx).Delete(customer.ID))
+		require.NoError(t, customers.WithTx(tx).Delete(context.Background(), customer.ID))
 
 		answered := make(chan error, 1)
 		go func() {
@@ -183,7 +184,7 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 					_, err := env.svc.RespondPublic(token, models.QuoteResponseAccept)
 					return err
 				},
-				func() error { return customers.Delete(customer.ID) },
+				func() error { return customers.Delete(context.Background(), customer.ID) },
 			)
 			require.Falsef(t, isLockFailure(answerErr), "round %d: the answer met a deadlock or lock wait: %v", round, answerErr)
 			require.Falsef(t, isLockFailure(eraseErr), "round %d: the erasure met a deadlock or lock wait: %v", round, eraseErr)

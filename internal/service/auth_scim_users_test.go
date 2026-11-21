@@ -101,7 +101,7 @@ func runSCIMUsers(t *testing.T, db *gorm.DB, mysql bool) {
 	identity(customer.ID, scimUsersTestIssuer, "sub-customer")
 	identity(erased.ID, scimUsersTestIssuer, "sub-erased")
 
-	require.NoError(t, repository.NewUserRepository(db).Delete(erased.ID), "erasure through the real path")
+	require.NoError(t, repository.NewUserRepository(db).Delete(context.Background(), erased.ID), "erasure through the real path")
 	var erasedRow models.User
 	require.NoError(t, db.Unscoped().First(&erasedRow, erased.ID).Error)
 	require.True(t, erasedRow.DeletedAt.Valid, "erasure soft-deletes")

@@ -1189,7 +1189,7 @@ var oidcSignInCases = []struct {
 	{"erased_user", func(t *testing.T, f *oidcFixture) {
 		user := f.seedUser(t, "erased@crm.example.test", models.RoleSales, true, "")
 		f.link(t, user.ID, "subject-erased")
-		require.NoError(t, repository.NewUserRepository(f.db).Delete(user.ID))
+		require.NoError(t, repository.NewUserRepository(f.db).Delete(context.Background(), user.ID))
 		assert.Equal(t, int64(1), f.identities(t), "erasure keeps the identity row")
 		tokens, err := f.signIn(t, oidcValid("subject-erased", "erased-new@idp.example.test"))
 		f.assertRefused(t, "account_erased", tokens, err, 1, 1)
@@ -1321,7 +1321,7 @@ var oidcSignInCases = []struct {
 		f.entraTenant(t)
 		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
 		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
-		require.NoError(t, repository.NewUserRepository(f.db).Delete(owner.ID))
+		require.NoError(t, repository.NewUserRepository(f.db).Delete(context.Background(), owner.ID))
 		tokens, err := f.signIn(t, oidcSCIMLinkSpec("new.person@idp.example.test"))
 		f.assertRefused(t, "account_erased", tokens, err, 1, 1)
 		assert.Len(t, f.identityRows(t, owner.ID), 1)

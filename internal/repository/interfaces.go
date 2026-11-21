@@ -32,7 +32,7 @@ type UserRepository interface {
 	// no full-struct update: GORM's Save upserts when its UPDATE matches
 	// nothing, which resurrected erased accounts.
 	UpdateFields(id uint, fields map[string]interface{}) error
-	Delete(id uint) error
+	Delete(ctx context.Context, id uint) error
 	List(offset, limit int) ([]models.User, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.User, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.User, error)
@@ -166,11 +166,11 @@ type LeadRepository interface {
 	Update(lead *models.Lead) error
 	// Delete erases the lead and everything that is the same person: the
 	// customer it was converted into and that customer's login and leads.
-	Delete(id uint) error
+	Delete(ctx context.Context, id uint) error
 	// DeleteUnconverted erases an unconverted lead and refuses a converted
 	// one (ErrConvertedLeadNeedsAdmin, an apperrors.ErrForbidden) without
 	// changing anything.
-	DeleteUnconverted(id uint) error
+	DeleteUnconverted(ctx context.Context, id uint) error
 	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
@@ -214,7 +214,7 @@ type CustomerRepository interface {
 	GetByEmailUnscoped(email string) (*models.Customer, error)
 	GetByUserID(userID uint) (*models.Customer, error)
 	Update(customer *models.Customer) error
-	Delete(id uint) error
+	Delete(ctx context.Context, id uint) error
 	List(offset, limit int) ([]models.Customer, error)
 	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)
 	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Customer, error)

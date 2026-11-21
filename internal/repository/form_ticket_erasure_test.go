@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -109,7 +110,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 		byTicket := f.key(t, "via-ticket", softDeleted.ID, otherSubmission.ID, other.ID)
 		kept := f.key(t, "client-key-other", otherTicket.ID, otherSubmission.ID, other.ID)
 
-		require.NoError(t, NewCustomerRepository(db).Delete(erased.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), erased.ID))
 
 		assert.False(t, keyExists(t, db, byCustomer.ID), "the customer's key row is purged")
 		assert.False(t, keyExists(t, db, byTicket.ID), "a key row naming a (soft-deleted) ticket of the customer is purged")
@@ -131,7 +132,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 		submission := f.submission(t, "login-customer@form-ticket.test", "login-key", nil)
 		row := f.key(t, "login-key", ticket.ID, submission.ID, customer.ID)
 
-		require.NoError(t, NewUserRepository(db).Delete(login.ID))
+		require.NoError(t, NewUserRepository(db).Delete(context.Background(), login.ID))
 		assert.False(t, keyExists(t, db, row.ID), "erasing the login reaches the customer and its key rows")
 		assert.Equal(t, "", submissionKey(t, db, submission.ID))
 	})
@@ -153,7 +154,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 		unrelated := f.submission(t, "unrelated@form-ticket.test", "unrelated-key", nil)
 		unrelatedRow := f.key(t, "unrelated-key", ticket.ID, unrelated.ID, customer.ID)
 
-		require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 		assert.Equal(t, "", submissionKey(t, db, linked.ID), "scrubLeadFormSubmissions empties the key")
 		assert.Equal(t, "", submissionKey(t, db, unlinked.ID), "scrubUnlinkedSubmissions empties the key")
 		assert.False(t, keyExists(t, db, linkedRow.ID))
@@ -171,7 +172,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 		f.submission(t, "nokeys@form-ticket.test", "no-table-key", nil)
 		require.NoError(t, db.Migrator().DropTable(&models.FormTicketKey{}))
 
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 		assert.EqualValues(t, 0, countRows(t, db, &models.Customer{}, "id = ? AND deleted_at IS NULL", customer.ID), "the erasure committed")
 	})
 
@@ -187,7 +188,7 @@ func runFormTicketKeyErasure(t *testing.T, useMySQL bool) {
 		// The table exists, so the probe passes, but the purge statement fails.
 		require.NoError(t, db.Exec("ALTER TABLE form_ticket_keys RENAME COLUMN customer_id TO customer_ref").Error)
 
-		require.Error(t, NewCustomerRepository(db).Delete(customer.ID))
+		require.Error(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 		var stored models.Customer
 		require.NoError(t, db.First(&stored, customer.ID).Error, "the customer is still live")
 		assert.Equal(t, "rollback@form-ticket.test", stored.Email, "and unchanged")
