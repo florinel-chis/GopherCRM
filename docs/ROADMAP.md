@@ -229,14 +229,6 @@ included. Found by reading the code path unless noted.
   - the assignee and customer lookups of `POST /tasks` and `PUT /tasks/{id}` answer 404;
   - the customer lookup of `POST /tickets` answers 404, and the assignee lookups of
     `POST /tickets` and `PUT /tickets/{id}` answer 400.
-- **A quote email in flight during the erasure of its customer keeps its response link (#395).**
-  The erasure stamps the unused response tokens of the erased customer's quotes, reading their ids
-  from the snapshot of its transaction. A token minted after that snapshot, or by a
-  `POST /quotes/{id}/email` that read the customer before the erasure committed and mints after
-  it, is not stamped: that mail goes to the address the request read, and its link works until
-  the quote leaves sent or `valid_until` passes. Links mailed before the erasure are refused.
-  Closing the window needs a re-check of the customer under the quote lock in
-  `mintResponseLink`. The public view and the `/quote-response` page hold no personal data.
 - **Quote PDF: the render credential store is per process (#384).** A render credential lives
   in the memory of the backend process that minted it. With several backend instances behind one
   origin, a render succeeds only when the render page's `POST /quotes/public/render` reaches the

@@ -34,7 +34,9 @@ func QuoteEmailSubject(quoteID uint, productName string) string {
 //
 // A sent quote also gets a client response link (#382), minted in one short
 // transaction after the recipient checks and before the send; see
-// mintResponseLink. An accepted quote is emailed without one.
+// mintResponseLink. An accepted quote is emailed without one. Only after the
+// mailer reports success are the links of earlier emails invalidated; see
+// invalidateEarlierResponseLinks.
 //
 // The quote's PDF is attached (#384) when PDF output is on and the mailer can
 // carry an attachment. It is rendered after the recipient checks and before
@@ -103,12 +105,14 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	productName := ResolveMailProductName(s.currency)
 	body := RenderQuoteEmail(quote)
 	attachments, pdf := s.quoteEmailPDF(id, logger)
+	var tokenID uint
 	if s.mintsResponseLink(quote) {
-		link, err := s.mintResponseLink(id, latestHistoryID)
+		link, minted, err := s.mintResponseLink(id, latestHistoryID)
 		if err != nil {
 			logServiceOutcome(logger, err, "Quote email refused")
 			return nil, err
 		}
+		tokenID = minted
 		body += renderQuoteResponseLink(link)
 	}
 	subject := QuoteEmailSubject(quote.ID, productName)
@@ -123,10 +127,16 @@ func (s *quoteService) Email(id uint) (*models.Quote, error) {
 	}
 	if err != nil {
 		// The mailer's own error is kept for errors.Is but not logged here:
-		// a transport error may quote the address. A response token minted
-		// above stays stored: its plain value was never delivered.
+		// a transport error may quote the address. Nothing is invalidated, so
+		// the link of the previous successful email stays usable. A response
+		// token minted above stays stored, unused: its plain value was never
+		// delivered, and the next successful send stamps it.
 		logger.Error("Quote email failed: mail delivery error")
 		return nil, fmt.Errorf("quote %d: %w: %w", id, apperrors.ErrMailDelivery, err)
+	}
+
+	if tokenID != 0 {
+		s.invalidateEarlierResponseLinks(id, tokenID, logger)
 	}
 
 	rows, err := s.quoteRepo.StampEmailed(id, latestHistoryID, s.stamp())
@@ -186,23 +196,30 @@ func (s *quoteService) mintsResponseLink(quote *models.Quote) bool {
 }
 
 // mintResponseLink stores a fresh response token for the quote and returns
-// the link that carries its plain value. One short transaction, in the order
-// quotes → quote_response_tokens: the locking read of the quote, the re-check
-// that it is still sent (apperrors.ErrQuoteNotSent otherwise) and that no
-// history row was written since the marker the caller read before the quote
-// (apperrors.ErrQuoteChangedDuringSend: a revision and re-send in between
-// would otherwise mail the old rendering with a live link to the new quote),
-// the invalidation of the quote's earlier unused tokens, and the insert. So a
-// quote has at most one usable link, the one of its latest email. Only the
-// hash is stored; the plain token and the link reach no log field and no
-// error text.
-func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, error) {
+// the link that carries its plain value, with the id of the new row. One
+// short transaction, in the order quotes → quote_response_tokens: the locking
+// read of the quote; the re-check that it is still sent
+// (apperrors.ErrQuoteNotSent otherwise); a plain read of the quote's customer
+// as live, the first consistent read after the lock, so on MySQL its snapshot
+// is taken after an erasure that held the quote has committed
+// (apperrors.ErrQuoteNoRecipient for a quote without a customer or with an
+// erased one, a customer erased while the PDF was rendered included); the
+// re-check that no history row was written since the marker the caller read
+// before the quote (apperrors.ErrQuoteChangedDuringSend: a revision and
+// re-send in between would otherwise mail the old rendering with a live link
+// to the new quote); and the insert. The customer read takes no lock, so it
+// never waits on an erasure that holds the customer row. The mint stamps no
+// earlier row: the links of earlier emails die only after this email was
+// delivered (invalidateEarlierResponseLinks), so a failed send leaves the
+// previous link usable. Only the hash is stored; the plain token and the link
+// reach no log field and no error text.
+func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, uint, error) {
 	plain, err := generateOpaqueToken()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	now := s.stamp()
-	err = s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+	token := &models.QuoteResponseToken{QuoteID: id, TokenHash: hashOpaqueToken(plain, s.tokenSecret)}
+	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
 		locked, err := repo.GetByIDForUpdate(id)
 		if err != nil {
 			if isNotFound(err) {
@@ -213,6 +230,15 @@ func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, error
 		if locked.Status != models.QuoteStatusSent {
 			return fmt.Errorf("quote %d is %s: %w", id, locked.Status, apperrors.ErrQuoteNotSent)
 		}
+		if locked.CustomerID == nil {
+			return fmt.Errorf("quote %d has no customer: %w", id, apperrors.ErrQuoteNoRecipient)
+		}
+		if _, err := customers.GetByID(*locked.CustomerID); err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("customer %d of quote %d is gone: %w", *locked.CustomerID, id, apperrors.ErrQuoteNoRecipient)
+			}
+			return err
+		}
 		latest, err := repo.LatestStatusChangeID(id)
 		if err != nil {
 			return err
@@ -220,19 +246,39 @@ func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, error
 		if latest != latestHistoryID {
 			return fmt.Errorf("quote %d changed before the send: %w", id, apperrors.ErrQuoteChangedDuringSend)
 		}
-		if err := tokens.InvalidateForQuote(id, now); err != nil {
-			return err
-		}
-		return tokens.Create(&models.QuoteResponseToken{
-			QuoteID:   id,
-			TokenHash: hashOpaqueToken(plain, s.tokenSecret),
-			ExpiresAt: quoteResponseExpiry(locked.ValidUntil),
-		})
+		token.ExpiresAt = quoteResponseExpiry(locked.ValidUntil)
+		return tokens.Create(token)
 	})
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	return s.appBaseURL + "/quote-response?token=" + url.QueryEscape(plain), nil
+	return s.appBaseURL + "/quote-response?token=" + url.QueryEscape(plain), token.ID, nil
+}
+
+// invalidateEarlierResponseLinks runs after the mailer reported success for
+// the email that carried token newestID: one short transaction, in the order
+// quotes → quote_response_tokens, that locks the quote and stamps used_at
+// (decision NULL) on its unused rows with a lower id. Rows of later emails
+// stay usable, so of two overlapping emails of one quote the one that
+// finishes last never kills the newer link. A quote deleted meanwhile ends
+// the step with nothing to do. The mail has already gone out, so a failure is
+// not an error of the email: one warn line with the ids the logger carries,
+// the new link stays usable, and the links of earlier emails survive until
+// the next successful send.
+func (s *quoteService) invalidateEarlierResponseLinks(id, newestID uint, logger *logrus.Entry) {
+	now := s.stamp()
+	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+		if _, err := repo.GetByIDForUpdate(id); err != nil {
+			if isNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		return tokens.InvalidateOlderForQuote(id, newestID, now)
+	})
+	if err != nil {
+		logger.WithError(utils.LogError(err)).Warn("Quote email: earlier response links not invalidated")
+	}
 }
 
 // quoteResponseExpiry is when a response token stops working: the start of

@@ -97,19 +97,29 @@ read on `companies` or `leads`, so it sits at the `customers` step of
 `companies → leads → customers → deals` and cannot invert the order against a company delete
 (`UnlinkCustomers`).
 
-**Quote response links (#382), a self-contained order.** Three flows take `quotes →
+**Quote response links (#382), a self-contained order.** Four flows take `quotes →
 quote_response_tokens`, each starting with the locking read of the quote by primary key
 (`QuoteRepository.GetByIDForUpdate`) and writing token rows only after it. The email mint
-(`internal/service/quote_email.go`, `mintResponseLink`) re-checks that the quote is still sent and
-that no history row was written since the marker read before the send, stamps the quote's unused
-token rows and inserts the new one, in one short transaction that ends before the mail goes out.
-A staff status change (`internal/service/quote_service.go`, `ChangeStatus`) that leaves `sent`
-stamps the unused token rows after its status claim. The client response
-(`internal/service/quote_response.go`, `RespondPublic`) finds the token with a plain read outside
-the transaction, then claims it with one conditional `UPDATE` by primary key
-(`internal/repository/quote_response_token_repository.go`, `Claim`: unused, unexpired, quote live
-and sent, all in the statement), claims the status (`WHERE status = 'sent'`) and inserts the
-history row. Two answers with one token serialise on the quote lock (on the single connection on
+(`internal/service/quote_email.go`, `mintResponseLink`) re-checks that the quote is still sent,
+reads the quote's customer as live and checks that no history row was written since the marker
+read before the send, then inserts the new token row, in one short transaction that ends before
+the mail goes out; it stamps no earlier row. After the mailer reports success, the post-send step
+(`invalidateEarlierResponseLinks`, same file) runs a second short transaction: the quote lock, then
+`InvalidateOlderForQuote`, which stamps only the quote's unused rows with an id lower than the
+token just sent, by primary key. A staff status change (`internal/service/quote_service.go`,
+`ChangeStatus`) that leaves `sent` stamps the unused token rows after its status claim. The client
+response (`internal/service/quote_response.go`, `RespondPublic`) finds the token with a plain read
+outside the transaction (`FindUsableByHash`, which also requires a live customer of the quote),
+then, under the quote lock, reads the quote's customer as live, claims the token with one
+conditional `UPDATE` by primary key (`internal/repository/quote_response_token_repository.go`,
+`Claim`: unused, unexpired, quote live and sent, all in the statement), claims the status
+(`WHERE status = 'sent'`) and inserts the history row. The customer reads of the mint and of the
+answer are plain reads and the first consistent read after the quote lock, so on MySQL and
+MariaDB their snapshot is taken after the lock was granted, after an erasure that held the quote
+has committed; no plain read precedes the lock in either transaction. The claim reads no
+`customers` row: a subquery of an `UPDATE` takes shared locks on the rows it reads under
+REPEATABLE READ, and under the quote lock that would wait on, and deadlock with, an erasure that
+holds the customer row and waits for the quote. Two answers with one token serialise on the quote lock (on the single connection on
 SQLite) and the second claims nothing. Transactions of two different quotes share no quote lock, so
 the token writes must not meet in the table either: `InvalidateForQuote` reads the ids of the
 quote's unused rows with a plain `SELECT` (complete, because every writer of those rows holds the
@@ -128,14 +138,17 @@ with the statements of `InvalidateForQuote`: a plain `SELECT` of the ids, then a
 primary key that still requires `used_at IS NULL`, and no `UPDATE` when there is no id. It issues
 no locking read and no write filtered on `quote_id`, so it holds no gap of
 `idx_quote_response_tokens_quote_id` either. A quote reached only through a scrubbed deal and
-addressed to another customer keeps its tokens. For the three quote flows the plain id read is
+addressed to another customer keeps its tokens. For the four quote flows the plain id read is
 complete, as said above. For the erasure it is complete only for the tokens committed before the
 snapshot of its transaction, which is fixed before the quote locks (after the `users` lock; in
 `DELETE /users/{id}` by the governed write's first read): a client answer committed after the
 snapshot is read as unused and left alone by the `used_at IS NULL` predicate of the stamp, and a
-token minted after the snapshot by a quote email in flight is not seen and not stamped. That
-last case is open (`docs/ROADMAP.md`, #395); closing it needs a re-check of the customer under
-the quote lock in `mintResponseLink`.
+token minted after the snapshot by a quote email in flight is not seen and not stamped. Such a
+token is dead all the same: the mint locked the quote before the erasure did, so the erasure's
+customer update was not committed when the mint read the customer, but the read predicate of
+`FindUsableByHash` and the customer read of `RespondPublic` refuse it once the erasure commits.
+A mint that locks the quote after the erasure committed reads the customer as gone and stores
+nothing.
 
 The erasure reaches `quotes` and then `quote_response_tokens` while it holds its `leads`,
 `customers`, `users` and credential locks and the `deals` rows it scrubbed, so there is a lock

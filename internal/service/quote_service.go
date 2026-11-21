@@ -122,6 +122,18 @@ func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, pr
 // without response links. Every caller touches the quotes row first, with a
 // locking read, and the token rows after it (quotes → quote_response_tokens).
 func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error) error {
+	return s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, _ repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
+		return fn(repo, tokens)
+	})
+}
+
+// inQuoteCustomerTokenTransaction is inQuoteTokenTransaction that also hands
+// over the customer repository bound to the same transaction. Its callers
+// read the quote's customer with a plain read only, as the first consistent
+// read after the locking read of the quote: the erasure of a customer locks
+// customers before quotes, so a locking customer read under the quote lock
+// would invert that order.
+func (s *quoteService) inQuoteCustomerTokenTransaction(fn func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error) error {
 	if s.txManager == nil {
 		return utils.ErrNoTransaction
 	}
@@ -134,7 +146,7 @@ func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepo
 		if s.tokenRepo != nil {
 			tokens = s.tokenRepo.WithTx(tx)
 		}
-		return fn(s.quoteRepo.WithTx(tx), tokens)
+		return fn(s.quoteRepo.WithTx(tx), s.customerRepo.WithTx(tx), tokens)
 	})
 }
 

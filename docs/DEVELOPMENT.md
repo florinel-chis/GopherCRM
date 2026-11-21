@@ -1366,22 +1366,39 @@ error text.
 
 - **Mint.** After the recipient checks and before `Mailer.Send`, `mintResponseLink` runs one short
   transaction: `GetByIDForUpdate(quote)`, the re-check that it is still sent (`ErrQuoteNotSent`
-  otherwise), the re-read of the latest history id against the marker read at the start
-  (`ErrQuoteChangedDuringSend` when it moved: a revision and re-send in between would mail the old
-  rendering with a live link to the new quote), `InvalidateForQuote`, `Create`. Both refusals are
-  409 and send nothing. No transaction is held during the send. A failed send leaves the stored
-  hash in place: its plain value was never delivered, and the next email stamps it.
+  otherwise), a plain read of the quote's customer through the transaction-bound customer
+  repository as the first consistent read after the lock (`ErrQuoteNoRecipient` for a quote
+  without a customer or whose customer was erased, for example during the PDF render), the re-read
+  of the latest history id against the marker read at the start (`ErrQuoteChangedDuringSend` when
+  it moved: a revision and re-send in between would mail the old rendering with a live link to the
+  new quote), `Create`. The refusals are 409 and send nothing. The customer read takes no lock: the
+  erasure locks `customers` before `quotes`. No transaction is held during the send.
+- **Post-send invalidation.** Only after the mailer reports success, and before `StampEmailed`,
+  `invalidateEarlierResponseLinks` runs a second short transaction: `GetByIDForUpdate(quote)` (a
+  quote deleted meanwhile ends the step) and `InvalidateOlderForQuote(quote, new token id)`, which
+  stamps the quote's unused rows with a lower id, so of two overlapping emails the one that
+  finishes last never kills the newer link. A failed send stamps nothing: the link of the previous
+  successful email stays usable, and the undelivered row stays stored until the next successful
+  send stamps it. A failure of this step is one warn line with the ids ("Quote email: earlier
+  response links not invalidated"); the email still succeeds and the earlier links survive until
+  the next successful send.
 - **Expiry.** `expires_at` is the start of the day after `valid_until` in `time.Local`, stored in
   UTC (`quoteResponseExpiry`), the same day `dateBefore` allows a staff acceptance; NULL without a
   `valid_until`. A sent quote whose `valid_until` has passed is still emailed, without a link and
   without a row; an accepted quote is emailed as before.
 - **Read.** `GetPublicResponse(token)` hashes, calls `FindUsableByHash` and loads the quote. It
-  never writes, so mail scanners and previews do not spend the link.
+  never writes, so mail scanners and previews do not spend the link. The read's predicates are the
+  claim's plus a live customer of the quote (a nested `EXISTS` on `customers`), so a link of an
+  erased customer is refused even when the erasure did not stamp its row.
 - **Claim.** `RespondPublic(token, decision)` reads the token by hash, then in one transaction, in
-  the order `quotes → quote_response_tokens`: `GetByIDForUpdate(quote)`, `Claim` (one conditional
+  the order `quotes → quote_response_tokens`: `GetByIDForUpdate(quote)`, a plain read of the
+  quote's customer as live (the first consistent read after the lock; a quote without a customer
+  or with an erased one is the generic rejection, which catches an erasure that commits between
+  the token read and the transaction), `Claim` (one conditional
   `UPDATE` setting `used_at`, `decision` and `updated_at` `WHERE id = ? AND used_at IS NULL AND
   (expires_at IS NULL OR expires_at > ?) AND EXISTS (the quote is live and sent)`; exactly one row,
-  else `gorm.ErrRecordNotFound`), `ClaimStatus(sent → accepted | rejected)` with `closed_at`, and
+  else `gorm.ErrRecordNotFound`; it reads no `customers` row, because a subquery of an `UPDATE`
+  takes shared locks on MySQL and MariaDB and would wait on an erasure under the quote lock), `ClaimStatus(sent → accepted | rejected)` with `closed_at`, and
   the history row with `changed_by_id` NULL and `source` `client` (#400; staff transitions write
   the acting user and `source` `staff`, and `GET /quotes/{id}/history` omits `changed_by` on a
   client row). A failure after the claim rolls it back
@@ -1396,7 +1413,7 @@ error text.
   The erasure of the quote's customer (#395) stamps the same way, with the same statements
   (`invalidateQuoteResponseTokens`), after its own update of the quote row: a link mailed before
   the erasure gets the generic rejection and the quote stays `sent`. See "Response links" under
-  the erasure below for which quotes and for the open email-in-flight case.
+  the erasure below for which quotes and for a token minted while the erasure runs.
 - **HTTP.** `SetupQuotePublicRoutes` mounts `GET` and `POST /quotes/public/response` on the public
   group with one shared `RateLimitStrict()` instance and no Auth. The `GET` reads the token from
   the `X-Quote-Token` request header only (a token in the query string is not read; the strict
@@ -2604,11 +2621,11 @@ What happens on `DELETE`:
   update of those `quotes` rows (the order `quotes → quote_response_tokens`), reads the ids with a
   plain `SELECT` and writes by primary key only, so it holds no gap of the `quote_id` index
   ([CONCURRENCY.md](CONCURRENCY.md)); the table is probed with `HasTable` like the others. It is
-  part of the unit: a rollback hands the link back. Not covered: the ids come from the snapshot
-  of the erasure's transaction, so a token minted by a quote email that is in flight while the
-  erasure runs (or sent by an `Email` call that read the customer before the erasure committed)
-  is not stamped and that link stays usable until the quote leaves `sent`
-  (`docs/ROADMAP.md`, #395).
+  part of the unit: a rollback hands the link back. The ids come from the snapshot of the
+  erasure's transaction, so a token minted by a quote email that is in flight while the erasure
+  runs is not stamped; that link is refused all the same, because the public read requires a live
+  customer and the answer re-reads the customer under the quote lock. A mint that locks the quote
+  after the erasure committed reads the customer as gone, stores no token and sends nothing.
 - **One unit, exactly once.** The whole graph is one transaction; a repository obtained through
   `WithTx` brackets it in a checked `SAVEPOINT` of the caller's transaction (released on success,
   rolled back on an error or a panic, sent past GORM's prepared-statement wrapper), so a caller

@@ -23,6 +23,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // sentQuoteWithLines is a quote taken through the real path — create, two
@@ -380,14 +381,52 @@ func (r *flippingReadRepository) GetByID(id uint) (*models.Quote, error) {
 	return quote, err
 }
 
+// erasingCustomerRepository erases the customer once, right after the first
+// plain read of it returns: the read of Email before the PDF render. WithTx
+// hands over the real transaction-bound repository, so the mint's read inside
+// its transaction does not erase again.
+type erasingCustomerRepository struct {
+	repository.CustomerRepository
+	erase func(id uint)
+	fired bool
+}
+
+func (r *erasingCustomerRepository) GetByID(id uint) (*models.Customer, error) {
+	customer, err := r.CustomerRepository.GetByID(id)
+	if err == nil && !r.fired {
+		r.fired = true
+		r.erase(id)
+	}
+	return customer, err
+}
+
+func (r *erasingCustomerRepository) WithTx(tx *gorm.DB) repository.CustomerRepository {
+	return r.CustomerRepository.WithTx(tx)
+}
+
+// failingInvalidationTokenRepository fails only InvalidateOlderForQuote, in
+// and out of a transaction; create, read and claim pass through.
+type failingInvalidationTokenRepository struct {
+	repository.QuoteResponseTokenRepository
+}
+
+func (r *failingInvalidationTokenRepository) InvalidateOlderForQuote(uint, uint, time.Time) error {
+	return errors.New("invalidation failed")
+}
+
+func (r *failingInvalidationTokenRepository) WithTx(tx *gorm.DB) repository.QuoteResponseTokenRepository {
+	return &failingInvalidationTokenRepository{QuoteResponseTokenRepository: r.QuoteResponseTokenRepository.WithTx(tx)}
+}
+
 // The email of a sent quote carries a single-use client response link
-// (#382): one usable token row per quote, only its HMAC-SHA256 hash stored,
-// earlier rows stamped, the plain token in no log line and no error text. An
-// accepted quote and a sent quote past its valid_until are emailed without a
-// link, and a quote that changed between the read and the mint is refused
-// before anything is sent.
+// (#382): only its HMAC-SHA256 hash stored, the rows of earlier emails stamped
+// once the mail was delivered (a failed send stamps nothing), the plain token
+// in no log line and no error text. An accepted quote and a sent quote past
+// its valid_until are emailed without a link, and a quote that changed or
+// whose customer was erased between the read and the mint is refused before
+// anything is sent.
 func TestQuoteEmailResponseLink(t *testing.T) {
-	db := openQuoteTestSQLite(t)
+	db := migrateQuoteErasureSchema(t, openQuoteTestSQLite(t))
 	env := newQuoteResponseEnv(t, db)
 	output, _ := capturePrivacyLogs(t)
 
@@ -486,6 +525,10 @@ func TestQuoteEmailResponseLink(t *testing.T) {
 
 	t.Run("a failed send keeps the token out of the error and the logs", func(t *testing.T) {
 		quote := env.sentQuoteWithLines(t)
+		first := env.emailForToken(quote.ID)
+		stampedAt := env.quote(quote.ID).LastEmailedAt
+		require.NotNil(t, stampedAt)
+
 		var mailed string
 		env.mailer.reset(nil, func(_, _, body string) error {
 			mailed = body
@@ -501,13 +544,122 @@ func TestQuoteEmailResponseLink(t *testing.T) {
 		assert.NotContains(t, output.String(), token)
 		assert.NotContains(t, output.String(), "quote-response")
 		assert.Empty(t, env.mailer.messages())
+		assert.True(t, stampedAt.Equal(*env.quote(quote.ID).LastEmailedAt), "last_emailed_at is unchanged")
+
+		// The link of the previous successful email still works: a failed
+		// send invalidates nothing.
+		rows := env.tokenRows(quote.ID)
+		require.Len(t, rows, 2)
+		assert.Equal(t, hashOpaqueToken(first, quoteResponseTestSecret), rows[0].TokenHash)
+		assert.Nil(t, rows[0].UsedAt, "the earlier link's row is unused")
+		_, err = env.svc.GetPublicResponse(first)
+		require.NoError(t, err, "the earlier link still works")
+		// The undelivered row stays stored too; the next successful email
+		// stamps every older row and leaves its own as the only usable one.
+		assert.Nil(t, rows[1].UsedAt)
+		third := env.emailForToken(quote.ID)
+		rows = env.tokenRows(quote.ID)
+		require.Len(t, rows, 3)
+		unused := env.unusedTokenRows(quote.ID)
+		require.Len(t, unused, 1, "exactly one usable row")
+		assert.Equal(t, rows[2].ID, unused[0].ID)
+		assert.Equal(t, hashOpaqueToken(third, quoteResponseTestSecret), unused[0].TokenHash)
+		for _, row := range rows[:2] {
+			assert.Nil(t, row.Decision, "invalidated without a decision")
+		}
+		env.assertResponseRejected(quote.ID, first, "the link of the first email after a later successful send")
+	})
+
+	t.Run("an email sent during the send of another keeps its newer link", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		var outer, inner string
+		nested := false
+		env.mailer.reset(nil, func(_, _, body string) error {
+			if nested {
+				inner = body
+				return nil
+			}
+			nested = true
+			outer = body
+			_, err := env.svc.Email(quote.ID)
+			return err
+		})
+		_, err := env.svc.Email(quote.ID)
+		require.NoError(t, err)
+		require.Len(t, env.mailer.messages(), 2, "both emails went out")
+		require.NotEmpty(t, inner)
+		firstToken, secondToken := responseTokenFromBody(t, outer), responseTokenFromBody(t, inner)
+		require.NotEqual(t, firstToken, secondToken)
+
+		rows := env.tokenRows(quote.ID)
+		require.Len(t, rows, 2)
+		assert.Equal(t, hashOpaqueToken(firstToken, quoteResponseTestSecret), rows[0].TokenHash)
+		require.NotNil(t, rows[0].UsedAt, "the first link's row is stamped by the second, delivered email")
+		assert.Nil(t, rows[0].Decision)
+		assert.Nil(t, rows[1].UsedAt, "the email that finished last did not stamp the newer row")
+		_, err = env.svc.GetPublicResponse(secondToken)
+		require.NoError(t, err, "the second link is usable")
+		_, err = env.svc.GetPublicResponse(firstToken)
+		assert.True(t, errors.Is(err, apperrors.ErrQuoteResponseRejected), "%v", err)
+	})
+
+	t.Run("a customer erased before the mint is refused without a token or a send", func(t *testing.T) {
+		customer := &models.Customer{FirstName: "Erased", LastName: "Recipient",
+			Email: fmt.Sprintf("erased-recipient-%d@example.com", quoteTestSeq.Add(1))}
+		require.NoError(t, db.Create(customer).Error)
+		quote := env.newQuote(models.QuoteStatusSent, 1, func(q *models.Quote) {
+			q.DealID, q.CustomerID, q.ValidUntil = nil, &customer.ID, dateDaysFromNow(t, 0)
+		})
+		erasing := &erasingCustomerRepository{CustomerRepository: repository.NewCustomerRepository(db)}
+		erasing.erase = func(id uint) {
+			require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), id))
+		}
+		svc := env.responseService(env.repo)
+		svc.customerRepo = erasing
+		env.mailer.reset(nil, nil)
+		output.Reset()
+
+		_, err := svc.Email(quote.ID)
+		require.Error(t, err)
+		assert.True(t, errors.Is(err, apperrors.ErrQuoteNoRecipient), "%v", err)
+		require.True(t, erasing.fired, "the customer was erased after Email's first read")
+		assert.Empty(t, env.mailer.messages(), "nothing is sent")
+		assert.Empty(t, env.tokenRows(quote.ID), "no token row is written")
 		assert.Nil(t, env.quote(quote.ID).LastEmailedAt)
-		// The stored hash stays: its plain value was never delivered, and the
-		// next email stamps it.
-		require.Len(t, env.unusedTokenRows(quote.ID), 1)
-		env.emailForToken(quote.ID)
-		assert.Len(t, env.tokenRows(quote.ID), 2)
-		assert.Len(t, env.unusedTokenRows(quote.ID), 1)
+		assert.NotContains(t, output.String(), customer.Email, "the logs carry no address")
+		assert.NotContains(t, err.Error(), customer.Email)
+	})
+
+	t.Run("a failed invalidation after the send still reports the email", func(t *testing.T) {
+		quote := env.sentQuoteWithLines(t)
+		first := env.emailForToken(quote.ID)
+		svc := env.responseService(env.repo)
+		svc.tokenRepo = &failingInvalidationTokenRepository{QuoteResponseTokenRepository: repository.NewQuoteResponseTokenRepository(db)}
+		require.NoError(t, db.Model(&models.Quote{}).Where("id = ?", quote.ID).Update("last_emailed_at", nil).Error)
+		env.mailer.reset(nil, nil)
+		output.Reset()
+
+		emailed, err := svc.Email(quote.ID)
+		require.NoError(t, err, "the mail went out, so the email succeeds")
+		require.NotNil(t, emailed.LastEmailedAt)
+		assert.NotNil(t, env.quote(quote.ID).LastEmailedAt, "last_emailed_at is stamped")
+		messages := env.mailer.messages()
+		require.Len(t, messages, 1)
+		second := responseTokenFromBody(t, messages[0].Body)
+
+		assert.Len(t, env.unusedTokenRows(quote.ID), 2, "no row was stamped")
+		for _, token := range []string{first, second} {
+			_, err := env.svc.GetPublicResponse(token)
+			require.NoError(t, err, "both links stay usable")
+		}
+		logs := output.String()
+		assert.Contains(t, logs, "earlier response links not invalidated")
+		for _, token := range []string{first, second} {
+			assert.NotContains(t, logs, token)
+			assert.NotContains(t, logs, hashOpaqueToken(token, quoteResponseTestSecret))
+		}
+		assert.NotContains(t, logs, "quote-response")
+		assert.NotContains(t, logs, env.customer.Email)
 	})
 
 	t.Run("a quote that left sent before the mint is refused without a token or a send", func(t *testing.T) {

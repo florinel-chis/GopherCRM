@@ -16,24 +16,41 @@ func NewQuoteResponseTokenRepository(db *gorm.DB) QuoteResponseTokenRepository {
 	return &quoteResponseTokenRepository{db: db}
 }
 
-// quoteResponseUsableClause is what makes a row spendable, shared by the read
-// and the claim so the two cannot disagree: unused, not past its expiry, and
-// its quote is live and still sent.
-const quoteResponseUsableClause = "used_at IS NULL AND (expires_at IS NULL OR expires_at > ?)" +
+// quoteResponseClaimClause is what the claim requires of a row: unused, not
+// past its expiry, and its quote is live and still sent. It reads no
+// customers row: on MySQL and MariaDB under REPEATABLE READ a subquery of an
+// UPDATE takes shared locks on the rows it reads, and the claim runs under
+// the quote lock, so a customers predicate here would wait on (and deadlock
+// with) an erasure that holds the customer row and waits for the quote. The
+// service checks the customer with a plain read under the quote lock before
+// the claim instead (RespondPublic).
+const quoteResponseClaimClause = "used_at IS NULL AND (expires_at IS NULL OR expires_at > ?)" +
 	" AND EXISTS (SELECT 1 FROM quotes WHERE quotes.id = quote_response_tokens.quote_id" +
 	" AND quotes.status = ? AND quotes.deleted_at IS NULL)"
+
+// quoteResponseReadClause is what makes a row usable for the plain read: the
+// claim's predicates plus a live customer of the quote. A plain SELECT takes
+// no lock, so the customer predicate costs the read nothing; it also kills a
+// token that the erasure of the customer did not stamp because the token was
+// inserted after the erasure's read of the token ids.
+const quoteResponseReadClause = "used_at IS NULL AND (expires_at IS NULL OR expires_at > ?)" +
+	" AND EXISTS (SELECT 1 FROM quotes WHERE quotes.id = quote_response_tokens.quote_id" +
+	" AND quotes.status = ? AND quotes.deleted_at IS NULL" +
+	" AND EXISTS (SELECT 1 FROM customers WHERE customers.id = quotes.customer_id" +
+	" AND customers.deleted_at IS NULL))"
 
 func (r *quoteResponseTokenRepository) Create(token *models.QuoteResponseToken) error {
 	return r.db.Create(token).Error
 }
 
 // FindUsableByHash returns only a spendable row. A used, expired or unknown
-// token and a token whose quote left sent or was deleted all surface as
+// token, a token whose quote left sent or was deleted, and a token whose
+// quote has no customer or whose customer was erased all surface as
 // gorm.ErrRecordNotFound, so a caller cannot tell them apart.
 func (r *quoteResponseTokenRepository) FindUsableByHash(tokenHash string, now time.Time) (*models.QuoteResponseToken, error) {
 	var token models.QuoteResponseToken
 	err := r.db.Where("token_hash = ?", tokenHash).
-		Where(quoteResponseUsableClause, now.UTC(), models.QuoteStatusSent).
+		Where(quoteResponseReadClause, now.UTC(), models.QuoteStatusSent).
 		First(&token).Error
 	if err != nil {
 		return nil, err
@@ -46,12 +63,14 @@ func (r *quoteResponseTokenRepository) FindUsableByHash(tokenHash string, now ti
 // one stamps it, and the other affects no row. Exactly one affected row is
 // the only success; zero is gorm.ErrRecordNotFound. The service runs the
 // claim inside the transaction that moves the quote and writes the history
-// row, so a rollback hands the link back.
+// row, so a rollback hands the link back. The claim carries the token and
+// quote predicates only, not the customer one of the read (see
+// quoteResponseClaimClause).
 func (r *quoteResponseTokenRepository) Claim(id uint, decision string, now time.Time) error {
 	stamp := now.UTC()
 	result := r.db.Model(&models.QuoteResponseToken{}).
 		Where("id = ?", id).
-		Where(quoteResponseUsableClause, stamp, models.QuoteStatusSent).
+		Where(quoteResponseClaimClause, stamp, models.QuoteStatusSent).
 		Updates(map[string]interface{}{
 			"used_at":    &stamp,
 			"decision":   decision,
@@ -92,22 +111,45 @@ func (r *quoteResponseTokenRepository) InvalidateForQuote(quoteID uint, now time
 	return err
 }
 
+// InvalidateOlderForQuote stamps used_at on the quote's unused rows whose id
+// is lower than newestID and leaves decision NULL: the email that carried
+// newestID was delivered, so the links of earlier emails die. newestID and
+// any higher id stay usable, so of two overlapping emails of one quote the one
+// that finishes last never kills the newer link. Same statements and lock
+// rules as InvalidateForQuote.
+func (r *quoteResponseTokenRepository) InvalidateOlderForQuote(quoteID, newestID uint, now time.Time) error {
+	if newestID == 0 {
+		return nil
+	}
+	_, err := invalidateQuoteResponseTokensBelow(r.db, []uint{quoteID}, newestID, now)
+	return err
+}
+
 // invalidateQuoteResponseTokens is the one statement pair that kills unused
-// links, shared by InvalidateForQuote and the erasure of a quote's customer
-// (business_text_erasure.go): a plain read of the unused ids of the quotes,
-// then a stamp by primary key that still requires used_at IS NULL. It returns
-// the ids it read. The stamp may affect fewer rows than were read, zero
-// included: a caller whose snapshot predates a committed client answer reads
-// that row as unused, and the predicate of the update leaves the answer's
-// used_at and decision alone.
+// links, shared by InvalidateForQuote, InvalidateOlderForQuote (with an upper
+// id bound) and the erasure of a quote's customer (business_text_erasure.go):
+// a plain read of the unused ids of the quotes, then a stamp by primary key
+// that still requires used_at IS NULL. It returns the ids it read. The stamp
+// may affect fewer rows than were read, zero included: a caller whose
+// snapshot predates a committed client answer reads that row as unused, and
+// the predicate of the update leaves the answer's used_at and decision alone.
 func invalidateQuoteResponseTokens(db *gorm.DB, quoteIDs []uint, now time.Time) ([]uint, error) {
+	return invalidateQuoteResponseTokensBelow(db, quoteIDs, 0, now)
+}
+
+// invalidateQuoteResponseTokensBelow is invalidateQuoteResponseTokens limited
+// to ids lower than belowID; 0 means no bound.
+func invalidateQuoteResponseTokensBelow(db *gorm.DB, quoteIDs []uint, belowID uint, now time.Time) ([]uint, error) {
 	if len(quoteIDs) == 0 {
 		return nil, nil
 	}
 	var ids []uint
-	err := db.Model(&models.QuoteResponseToken{}).
-		Where("quote_id IN ? AND used_at IS NULL", quoteIDs).
-		Order("id ASC").
+	query := db.Model(&models.QuoteResponseToken{}).
+		Where("quote_id IN ? AND used_at IS NULL", quoteIDs)
+	if belowID != 0 {
+		query = query.Where("id < ?", belowID)
+	}
+	err := query.Order("id ASC").
 		Pluck("id", &ids).Error
 	if err != nil {
 		return nil, err

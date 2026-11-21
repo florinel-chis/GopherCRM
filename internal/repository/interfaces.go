@@ -799,10 +799,15 @@ type QuoteRepository interface {
 
 // QuoteResponseTokenRepository stores the single-use tokens of the client
 // response link of a quote email (#382). A row is usable while it is unused,
-// not past expires_at, and its quote is live and sent; the read and the claim
-// carry the same predicates. Lock order: a transaction that writes here locks
-// its quotes row first (quotes → quote_response_tokens). The writers are the
-// three quote flows through this interface and the erasure of a quote's
+// not past expires_at, its quote is live and sent, and the quote's customer
+// is live. The read carries all of these; the claim carries all but the
+// customer one, because a customers subquery in an UPDATE would take shared
+// locks under the quote lock, so the answer checks the customer with a plain
+// read under the quote lock before the claim. Lock order: a transaction that
+// writes here locks its quotes row first (quotes → quote_response_tokens).
+// The writers are the quote flows through this interface (the mint of an
+// email, the post-send invalidation of the links of earlier emails, a staff
+// status change and the client's answer) and the erasure of a quote's
 // customer (#395), which stamps the unused rows of that customer's quotes
 // with the statements of InvalidateForQuote after its own update of those
 // quotes rows (business_text_erasure.go).
@@ -812,8 +817,8 @@ type QuoteResponseTokenRepository interface {
 	// anything else is gorm.ErrRecordNotFound. It never writes.
 	FindUsableByHash(tokenHash string, now time.Time) (*models.QuoteResponseToken, error)
 	// Claim stamps used_at and decision with one conditional update whose
-	// predicates are the usable ones: one affected row is success, zero is
-	// gorm.ErrRecordNotFound.
+	// predicates are the usable ones except the live customer: one affected
+	// row is success, zero is gorm.ErrRecordNotFound.
 	Claim(id uint, decision string, now time.Time) error
 	// InvalidateForQuote stamps used_at on every unused row of the quote and
 	// leaves decision NULL. It writes by primary key only (no lock on the
@@ -821,6 +826,11 @@ type QuoteResponseTokenRepository interface {
 	// other); the caller must hold the lock on the quotes row before the
 	// first read of its transaction.
 	InvalidateForQuote(quoteID uint, now time.Time) error
+	// InvalidateOlderForQuote stamps used_at on the quote's unused rows whose
+	// id is lower than newestID and leaves decision NULL; newestID and higher
+	// ids stay as they are. Same statements and lock rules as
+	// InvalidateForQuote.
+	InvalidateOlderForQuote(quoteID, newestID uint, now time.Time) error
 	WithTx(tx *gorm.DB) QuoteResponseTokenRepository
 }
 

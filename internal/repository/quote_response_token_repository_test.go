@@ -30,9 +30,9 @@ func readQuoteResponseToken(t *testing.T, db *gorm.DB, id uint) models.QuoteResp
 	return row
 }
 
-// The read and the claim share their predicates: a row is usable only while
-// it is unused, strictly before its expiry (or has none), and its quote is
-// live and sent. The claim is one conditional update, so the second of two
+// A row is usable only while it is unused, strictly before its expiry (or has
+// none), and its quote is live and sent; the read also requires the quote's
+// customer to be live, the claim does not. The claim is one conditional update, so the second of two
 // claims finds nothing; an invalidation stamps used_at and leaves decision
 // NULL.
 func TestQuoteResponseTokenRepository(t *testing.T) {
@@ -143,6 +143,65 @@ func TestQuoteResponseTokenRepository(t *testing.T) {
 		assert.Equal(t, models.QuoteResponseAccept, *stored.Decision)
 		_, err := repo.FindUsableByHash(kept.TokenHash, now)
 		require.NoError(t, err, "another quote's row is untouched")
+	})
+
+	t.Run("the read misses a token whose customer is erased and the claim still matches it", func(t *testing.T) {
+		customer := &models.Customer{FirstName: "Gone", LastName: "Client", Email: "gone-client-qrt@example.com"}
+		require.NoError(t, db.Create(customer).Error)
+		quote := &models.Quote{Title: "Erased customer", Status: models.QuoteStatusSent, Currency: "EUR", CustomerID: &customer.ID, OwnerID: f.owner.ID}
+		require.NoError(t, quotes.Create(quote))
+		row := newToken(t, quote.ID, "hash-erased-customer", nil)
+		_, err := repo.FindUsableByHash(row.TokenHash, now)
+		require.NoError(t, err, "usable while the customer is live")
+
+		require.NoError(t, db.Delete(customer).Error)
+		_, err = repo.FindUsableByHash(row.TokenHash, now)
+		assert.True(t, errors.Is(err, gorm.ErrRecordNotFound), "the read misses once the customer is soft-deleted: %v", err)
+		assert.Nil(t, readQuoteResponseToken(t, db, row.ID).UsedAt, "the read writes nothing")
+
+		// The claim carries no customer predicate: the service checks the
+		// customer under the quote lock before it claims.
+		require.NoError(t, repo.Claim(row.ID, models.QuoteResponseAccept, now))
+		claimed := readQuoteResponseToken(t, db, row.ID)
+		require.NotNil(t, claimed.UsedAt)
+		require.NotNil(t, claimed.Decision)
+		assert.Equal(t, models.QuoteResponseAccept, *claimed.Decision)
+	})
+
+	t.Run("the invalidation of older rows stamps only lower ids", func(t *testing.T) {
+		sent := f.quote(t, quotes, models.QuoteStatusSent, "Older")
+		other := f.quote(t, quotes, models.QuoteStatusSent, "Older other")
+		oldest := newToken(t, sent.ID, "hash-old-1", nil)
+		spent := newToken(t, sent.ID, "hash-old-2", nil)
+		require.NoError(t, repo.Claim(spent.ID, models.QuoteResponseDecline, now.Add(-time.Minute)))
+		older := newToken(t, sent.ID, "hash-old-3", &later)
+		otherRow := newToken(t, other.ID, "hash-old-4", nil)
+		newest := newToken(t, sent.ID, "hash-old-5", nil)
+		higher := newToken(t, sent.ID, "hash-old-6", nil)
+
+		require.NoError(t, repo.InvalidateOlderForQuote(sent.ID, newest.ID, now))
+		for _, row := range []*models.QuoteResponseToken{oldest, older} {
+			stored := readQuoteResponseToken(t, db, row.ID)
+			require.NotNil(t, stored.UsedAt)
+			assert.WithinDuration(t, now, *stored.UsedAt, time.Millisecond)
+			assert.Nil(t, stored.Decision, "an invalidated row carries no decision")
+			assertUnusable(t, row, now)
+		}
+		for _, row := range []*models.QuoteResponseToken{newest, higher, otherRow} {
+			stored := readQuoteResponseToken(t, db, row.ID)
+			assert.Nil(t, stored.UsedAt, "the given id, higher ids and other quotes' rows stay unused")
+			_, err := repo.FindUsableByHash(row.TokenHash, now)
+			require.NoError(t, err)
+		}
+		stored := readQuoteResponseToken(t, db, spent.ID)
+		assert.WithinDuration(t, now.Add(-time.Minute), *stored.UsedAt, time.Millisecond, "a spent row keeps its stamp")
+		require.NotNil(t, stored.Decision)
+		assert.Equal(t, models.QuoteResponseDecline, *stored.Decision)
+
+		// Nothing older left: a second call changes nothing.
+		before := readQuoteResponseToken(t, db, oldest.ID)
+		require.NoError(t, repo.InvalidateOlderForQuote(sent.ID, newest.ID, now.Add(time.Minute)))
+		assert.Equal(t, before, readQuoteResponseToken(t, db, oldest.ID))
 	})
 
 	t.Run("a transaction-bound repository rolls back with it", func(t *testing.T) {

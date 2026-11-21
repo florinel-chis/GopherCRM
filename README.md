@@ -914,7 +914,7 @@ authentication and live on the moderate tier:
   fails; `last_emailed_at` is set on success. Without `SMTP_HOST` the same logging fallback as the
   password reset applies: the mail is logged, not delivered, and the call still answers 200 and
   stamps `last_emailed_at`. The email of a sent quote ends with a single-use client response
-  link, `APP_BASE_URL/quote-response?token=...`; each email invalidates the previous link, a
+  link, `APP_BASE_URL/quote-response?token=...`; each successful email invalidates the previous link, a
   status change away from sent invalidates the current one, and the link works until the end of
   the `valid_until` day. An accepted quote and a sent quote past `valid_until` get no link. The
   link opens the web application's public page `/quote-response`, where the client sees the

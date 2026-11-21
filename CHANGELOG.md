@@ -1597,6 +1597,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A quote response link is created, sent and accepted only while the quote's customer exists,
+  and earlier links stop working only after a successful send (#557).** The mint transaction of
+  `POST /quotes/{id}/email` (`mintResponseLink` in `internal/service/quote_email.go`) now reads
+  the quote's customer under the quote lock and refuses with 409 when it is gone, storing no
+  token and sending nothing. The public read (`FindUsableByHash`) also requires a live customer,
+  and `RespondPublic` re-reads the customer under the quote lock before the claim; both refuse
+  with the same generic 400. The claim itself reads no `customers` row, so it adds no lock wait
+  against a customer erasure on MySQL and MariaDB. The mint no longer invalidates the links of
+  earlier emails: after the mailer reports success, a short transaction stamps only the quote's
+  unused tokens older than the one just sent (`InvalidateOlderForQuote`), so a failed send leaves
+  the client's current link usable. A failure of that step after the mail went out is logged
+  with ids only and the request still succeeds. No migration and no new route. Covered by new
+  subtests in `quote_email_test.go`, `quote_response_erasure_test.go` (SQLite, MySQL 8 and
+  MariaDB 10.11) and `quote_response_token_repository_test.go`.
+
 - **A refused user reload signs the tab out the same way the focus check does (#574).** When
   `GET /users/me` answered 401 or 403 to the reload that follows a role save or an own-account
   save, the web app cleared the tokens and the query cache but kept the old user and its
