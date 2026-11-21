@@ -48,9 +48,11 @@ import sys
 from pathlib import Path
 
 # Docs that are not checked by default, each with the test that pins it.
-# internal/config/concurrency_doc_test.go recomputes the line citations of
-# docs/CONCURRENCY.md from the code, so they cannot drift silently; this is
-# the only full exemption. An exemption applies to discovered files only.
+# internal/config/concurrency_doc_test.go pins every citation of
+# internal/service/auth_service.go in docs/CONCURRENCY.md to its enclosing
+# function and a text fragment of the cited line; citations of other files
+# are only checked to lie inside their file. This is the only full
+# exemption. An exemption applies to discovered files only.
 EXEMPT_FILES = {
     'docs/CONCURRENCY.md': 'internal/config/concurrency_doc_test.go',
 }

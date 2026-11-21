@@ -1577,6 +1577,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The password-reset and #175 citations of `docs/CONCURRENCY.md` point at the right lines again
+  (#581).** 23 citations of `internal/service/auth_service.go` (the retry-rule roots, the
+  password-reset request and confirm flows and the #175 failure-mode paragraph) had drifted to
+  unrelated statements and are re-pointed. The new `TestConcurrencyDocAuthServiceCitationsPinned`
+  in `internal/config/concurrency_doc_test.go` pins every auth_service.go citation of the document
+  to its enclosing function and a text fragment of the cited line, so a drifting line fails CI.
+  Documentation and tests only.
+
 - **An erasure stops and rolls back when its request is cancelled or times out (#571).**
   `DELETE /customers/{id}`, `DELETE /leads/{id}` and `DELETE /users/{id}` now run the erasure on
   the request's context, through the service and into the erasure transaction. A client that goes

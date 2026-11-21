@@ -2255,8 +2255,9 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   discovered through `git ls-files`, so a new doc is covered the moment it is tracked (pass file
   names as arguments to check only those; a file named explicitly is checked in full). The one
   exempt doc is `docs/CONCURRENCY.md`, listed in the script's `EXEMPT_FILES` with the test that
-  pins it: `internal/config/concurrency_doc_test.go` recomputes its line citations from the code,
-  so they cannot drift silently. Every other doc goes through all three rules. Every backticked
+  pins it: `internal/config/concurrency_doc_test.go` pins every `internal/service/auth_service.go`
+  citation there to its enclosing function and a text fragment of the cited line (#581), and
+  checks citations of other files only to lie inside their file. Every other doc goes through all three rules. Every backticked
   repository path must be a tracked file or directory, judged by `git ls-files` only, so an
   untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must
   match a tracked file, and a path with `<`, `>`, `{`, `}` or `$` is a placeholder. The gitignored
