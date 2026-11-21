@@ -34357,6 +34357,12 @@
             "description": "A registered outbound webhook endpoint (admin only). Never carries the signing secret; it is returned once, by POST /webhooks/endpoints and by POST /webhooks/endpoints/{id}/rotate-secret.",
             "type": "object",
             "properties": {
+                "consecutive_failures": {
+                    "description": "Consecutive failed sends since the last success; reset to 0 by a 2xx answer. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 0
+                },
                 "created_at": {
                     "description": "When the endpoint was registered (RFC 3339). Read-only.",
                     "type": "string",
@@ -34395,6 +34401,13 @@
                     "description": "Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.",
                     "type": "boolean",
                     "example": true
+                },
+                "paused_until": {
+                    "description": "Until this time (RFC 3339) the sender skips the endpoint's due deliveries. Set from the 3rd consecutive failed send, growing 1 min x 2^(n-3) up to 1 h; null when not paused; a past value means the pause is over and the next attempt decides. Cleared by a success. Read-only.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-20T09:31:00Z"
                 },
                 "previous_secret_expires_at": {
                     "description": "When the previous signing secret stops verifying (RFC 3339): until then every request carries a second signature under it. Null when there is none; a past value means the window is over and the value is cleared by the next send or rotation.",
@@ -34421,6 +34434,12 @@
             "description": "A newly registered webhook endpoint with its signing secret. The secret is shown once, here; only a rotation (POST /webhooks/endpoints/{id}/rotate-secret) returns a new one.",
             "type": "object",
             "properties": {
+                "consecutive_failures": {
+                    "description": "Consecutive failed sends since the last success; reset to 0 by a 2xx answer. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 0
+                },
                 "created_at": {
                     "description": "When the endpoint was registered (RFC 3339). Read-only.",
                     "type": "string",
@@ -34459,6 +34478,13 @@
                     "description": "Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.",
                     "type": "boolean",
                     "example": true
+                },
+                "paused_until": {
+                    "description": "Until this time (RFC 3339) the sender skips the endpoint's due deliveries. Set from the 3rd consecutive failed send, growing 1 min x 2^(n-3) up to 1 h; null when not paused; a past value means the pause is over and the next attempt decides. Cleared by a success. Read-only.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-20T09:31:00Z"
                 },
                 "previous_secret_expires_at": {
                     "description": "When the previous signing secret stops verifying (RFC 3339): until then every request carries a second signature under it. Null when there is none; a past value means the window is over and the value is cleared by the next send or rotation.",
@@ -34490,6 +34516,12 @@
             "description": "A webhook endpoint after a signing-secret rotation, with its new signing secret, shown once. Until previous_secret_expires_at every request also carries a signature under the replaced secret.",
             "type": "object",
             "properties": {
+                "consecutive_failures": {
+                    "description": "Consecutive failed sends since the last success; reset to 0 by a 2xx answer. Read-only.",
+                    "type": "integer",
+                    "readOnly": true,
+                    "example": 0
+                },
                 "created_at": {
                     "description": "When the endpoint was registered (RFC 3339). Read-only.",
                     "type": "string",
@@ -34528,6 +34560,13 @@
                     "description": "Whether new events are enqueued for this endpoint. An inactive endpoint's pending deliveries fail with endpoint_inactive.",
                     "type": "boolean",
                     "example": true
+                },
+                "paused_until": {
+                    "description": "Until this time (RFC 3339) the sender skips the endpoint's due deliveries. Set from the 3rd consecutive failed send, growing 1 min x 2^(n-3) up to 1 h; null when not paused; a past value means the pause is over and the next attempt decides. Cleared by a success. Read-only.",
+                    "type": "string",
+                    "x-nullable": true,
+                    "readOnly": true,
+                    "example": "2026-11-20T09:31:00Z"
                 },
                 "previous_secret_expires_at": {
                     "description": "When the previous signing secret stops verifying (RFC 3339): until then every request carries a second signature under it. Null when there is none; a past value means the window is over and the value is cleared by the next send or rotation.",

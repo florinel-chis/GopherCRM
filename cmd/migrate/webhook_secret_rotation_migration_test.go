@@ -120,12 +120,21 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 	t.Cleanup(func() { models.DB = previousDB })
 
 	// The parity reference: the table at the previous SQL head (before), and
-	// as MigrateDatabase builds it on top of that head (want).
+	// as MigrateDatabase builds it on top of that head without the columns a
+	// later migration owns (#569) (want). model is what MigrateDatabase
+	// leaves, the later columns included.
 	reference := openMigrationTestDB(t, baseDSN, "wsr_ref")
 	require.NoError(t, reference.m.Migrate(webhookSecretRotationPreviousVersion))
 	before := snapshotTable(t, reference, webhookEndpointsTable)
 	runMigrateDatabase(t, reference.dsn)
-	want := snapshotTable(t, reference, webhookEndpointsTable)
+	model := snapshotTable(t, reference, webhookEndpointsTable)
+	want := withoutColumns(model, webhookEndpointPauseColumns)
+	require.Len(t, model.Columns, len(want.Columns)+len(webhookEndpointPauseColumns))
+	// at reads the table at this migration's version: what the SQL head of
+	// that version and MigrateDatabase agree on.
+	at := func(tdb *migrationTestDB) tableSchema {
+		return withoutColumns(snapshotTable(t, tdb, webhookEndpointsTable), webhookEndpointPauseColumns)
+	}
 	require.Len(t, want.Columns, len(before.Columns)+2)
 	assert.Equal(t, before, withoutColumns(want, webhookSecretRotationColumns), "the migration owns only the two columns")
 	owned := ownedColumns(want, webhookSecretRotationColumns)
@@ -167,7 +176,7 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 			if autoMigrateFirst {
 				// A new binary started before the operator migrated.
 				runMigrateDatabase(t, tdb.dsn)
-				assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+				assert.Equal(t, want, at(tdb))
 			}
 
 			require.NoError(t, tdb.m.Migrate(webhookSecretRotationVersion), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
@@ -175,11 +184,11 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(webhookSecretRotationVersion), version)
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "the SQL migration and MigrateDatabase produce the same table")
+			assert.Equal(t, want, at(tdb), "the SQL migration and MigrateDatabase produce the same table")
 			assertRotationEndpointRowKept(t, tdb, id, url)
 
 			runMigrateDatabase(t, tdb.dsn)
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "MigrateDatabase does not change the table")
+			assert.Equal(t, want, at(tdb), "MigrateDatabase does not change the table")
 			require.ErrorIs(t, tdb.m.Migrate(webhookSecretRotationVersion), migrate.ErrNoChange)
 
 			// Rollback keeps the row and removes only what #503 added.
@@ -188,14 +197,14 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(webhookSecretRotationPreviousVersion), version)
-			assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable), "rollback removes the two columns only")
+			assert.Equal(t, before, at(tdb), "rollback removes the two columns only (MigrateDatabase added the #569 columns, which stay)")
 			var count int
 			require.NoError(t, tdb.sql.QueryRow("SELECT COUNT(*) FROM webhook_endpoints WHERE id = ? AND secret_sealed = 'enc:v1:kept-sealed'", id).Scan(&count))
 			assert.Equal(t, 1, count, "rollback keeps the endpoint row")
 
 			// And it applies again from there.
 			require.NoError(t, tdb.m.Migrate(webhookSecretRotationVersion), "reapply")
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+			assert.Equal(t, want, at(tdb))
 			assertRotationEndpointRowKept(t, tdb, id, url)
 			require.ErrorIs(t, tdb.m.Migrate(webhookSecretRotationVersion), migrate.ErrNoChange)
 		})

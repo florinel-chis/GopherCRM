@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A webhook endpoint that keeps failing is paused with a growing back-off (#569).** Every
+  delivery attempt that was actually sent and failed (a non-2xx answer, a redirect, a timeout, a
+  connection failure or a refused destination) adds one to the new
+  `webhook_endpoints.consecutive_failures`; from the 3rd consecutive failure the endpoint gets
+  `paused_until` = the attempt's finish + 1 minute, doubling with each further failure up to 1
+  hour (1, 2, 4, 8, 16, 32, then 60 minutes). Until then the sender leaves out every due delivery
+  of that endpoint, and a pass stops sending to an endpoint as soon as an attempt pauses it; the
+  skipped rows stay `pending` with their attempts and next attempt unchanged, and other endpoints
+  are sent to as before. A 2xx answer resets both columns. Attempts that send nothing
+  (`endpoint_inactive`, `secret_unavailable`, a database failure) do not count, and the test ping
+  neither reads nor changes the pause. A redelivered row of a paused endpoint waits for the pause,
+  and a `PUT` on the endpoint does not clear it. Both columns are read-only on the endpoint API
+  (`consecutive_failures`, `paused_until`); one log line "Webhook endpoint paused" carries the
+  endpoint id, the count and the pause end only. Migration `20261129120005_webhook_endpoint_pause`
+  adds the two columns on MySQL and MariaDB; SQLite gets them from AutoMigrate. The per-delivery
+  retry schedule and attempt cap are unchanged.
 - **Sign-in audit rows for password changes, password resets and logouts (#550).**
   `POST /auth/change-password`, `POST /auth/password-reset`, `POST /auth/password-reset/confirm`
   and `POST /auth/logout` each write one `auth_audit_log` row once the request reaches the

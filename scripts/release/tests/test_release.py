@@ -204,6 +204,8 @@ class ReleaseTests(unittest.TestCase):
                    'TestAPIKeyLifetimeMigration',
                    'TestRefreshTokenSessionMigrationFiles',
                    'TestRefreshTokenSessionMigration',
+                   'TestWebhookEndpointPauseMigrationFiles',
+                   'TestWebhookEndpointPauseMigration',
                    'TestSchemaParityAllowList',
                    'TestSchemaParityMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}

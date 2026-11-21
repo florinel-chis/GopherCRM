@@ -27,7 +27,13 @@ import (
 // status = 'pending'. A signing-secret rotation (RotateEndpointSecret, #503)
 // is one UPDATE of the endpoint by primary key with no read before it, and
 // the runtime's ClearExpiredPreviousSecret is a conditional UPDATE by primary
-// key fenced on the expiry in the statement; neither adds a lock edge.
+// key fenced on the expiry in the statement; neither adds a lock edge. The
+// endpoint circuit (#569) adds two more conditional UPDATEs of
+// webhook_endpoints by primary key, RecordEndpointFailure (fenced on the
+// consecutive_failures the runtime read) and RecordEndpointSuccess (fenced on
+// the endpoint not being healthy already), neither in a transaction nor after
+// a locking read, and discovery leaves out paused endpoints with a plain
+// subselect of webhook_endpoints; none of them adds a lock edge.
 
 // WebhookPruneChunk bounds how many rows one prune DELETE removes.
 const WebhookPruneChunk = 500
@@ -86,6 +92,31 @@ func (r *webhookRepository) ListEndpoints(ctx context.Context, offset, limit int
 		return nil, 0, err
 	}
 	return endpoints, total, nil
+}
+
+// RecordEndpointFailure is one conditional UPDATE by primary key fenced on
+// the failure count the caller read: a concurrent reset, another replica's
+// failure or a deleted endpoint makes it match nothing, which is not an error.
+// It always changes consecutive_failures, so it is never an identical write.
+// updated_at is left alone: the circuit is housekeeping of a send, not a change
+// an admin made.
+func (r *webhookRepository) RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) error {
+	var until interface{}
+	if pausedUntil != nil {
+		until = pausedUntil.UTC()
+	}
+	return r.db.WithContext(ctx).Exec(
+		"UPDATE webhook_endpoints SET consecutive_failures = consecutive_failures + 1, paused_until = ? WHERE id = ? AND consecutive_failures = ?",
+		until, id, failuresBefore).Error
+}
+
+// RecordEndpointSuccess is one conditional UPDATE by primary key that resets
+// the circuit only when it is not already reset, so a healthy endpoint is not
+// rewritten on every success. updated_at is left alone.
+func (r *webhookRepository) RecordEndpointSuccess(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Exec(
+		"UPDATE webhook_endpoints SET consecutive_failures = 0, paused_until = NULL WHERE id = ? AND (consecutive_failures <> 0 OR paused_until IS NOT NULL)",
+		id).Error
 }
 
 // webhookEndpointColumns is the closed set UpdateEndpoint writes.
@@ -206,8 +237,12 @@ type WebhookDueDelivery struct {
 
 func (r *webhookRepository) ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error) {
 	var due []WebhookDueDelivery
+	now = now.UTC()
+	// The paused endpoints are left out in SQL, before the limit, so the rows
+	// of one paused endpoint never fill the batch and starve the others.
 	err := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).Select("id", "endpoint_id").
-		Where("status = ? AND next_attempt_at <= ?", models.WebhookDeliveryPending, now.UTC()).
+		Where("status = ? AND next_attempt_at <= ?", models.WebhookDeliveryPending, now).
+		Where("endpoint_id NOT IN (SELECT id FROM webhook_endpoints WHERE paused_until IS NOT NULL AND paused_until > ?)", now).
 		Order("next_attempt_at").Order("id").Limit(limit).
 		Scan(&due).Error
 	return due, err

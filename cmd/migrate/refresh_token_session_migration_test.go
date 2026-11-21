@@ -108,21 +108,9 @@ func TestRefreshTokenSessionMigrationFiles(t *testing.T) {
 	assert.Equal(t, "password", models.RefreshTokenSignInPassword)
 	assert.Equal(t, "oidc", models.RefreshTokenSignInOIDC)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAPIKeyLifetimeMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, refreshTokenSessionMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, refreshTokenSessionVersion, version)
-	assert.Equal(t, refreshTokenSessionVersion, latestMigrationVersion)
+	// The newest-migration assertions moved to
+	// TestWebhookEndpointPauseMigrationFiles (#569).
+	assert.Less(t, refreshTokenSessionVersion, latestMigrationVersion)
 	assert.Equal(t, refreshTokenSessionPreviousVersion+1, refreshTokenSessionVersion)
 }
 

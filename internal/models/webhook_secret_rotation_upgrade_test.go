@@ -56,8 +56,8 @@ func TestWebhookSecretRotationSQLiteUpgrade(t *testing.T) {
 	require.NoError(t, MigrateDatabase())
 
 	names, columns := webhookColumns(t, "webhook_endpoints")
-	assert.Equal(t, []string{"created_at", "event_types", "id", "is_active", "previous_secret_expires_at", "previous_secret_sealed",
-		"secret_sealed", "updated_at", "url"}, names)
+	assert.Equal(t, []string{"consecutive_failures", "created_at", "event_types", "id", "is_active", "paused_until", "previous_secret_expires_at",
+		"previous_secret_sealed", "secret_sealed", "updated_at", "url"}, names)
 	for _, column := range []string{"previous_secret_sealed", "previous_secret_expires_at"} {
 		assert.Equal(t, 0, columns[column].NotNull, "%s is nullable", column)
 		assert.Nil(t, columns[column].Dflt, "%s has no default", column)

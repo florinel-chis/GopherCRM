@@ -40,6 +40,20 @@ import (
 // reaches the cap stores failed. Finished rows older than
 // WebhookDeliveryRetention are pruned at most once per WebhookPruneInterval.
 //
+// Each endpoint has a circuit (#569). Every attempt whose request was sent
+// (the endpoint was read, active and its secret opened) and failed adds one to
+// webhook_endpoints.consecutive_failures; from the WebhookEndpointPauseAfter-th
+// consecutive failure paused_until is set to the finish time +
+// min(WebhookEndpointPauseBase * 2^(failures-WebhookEndpointPauseAfter),
+// WebhookEndpointPauseMax). A 2xx answer resets both. Discovery leaves out
+// every row of an endpoint whose pause has not ended, and a worker skips the
+// rest of its group as soon as an attempt pauses the endpoint: those rows stay
+// pending, unclaimed, with their attempts and next_attempt_at. Attempts that
+// send nothing (a database failure reading the endpoint, endpoint_inactive,
+// secret_unavailable, no client factory) leave the circuit alone, and so does
+// the test ping. A manual redelivery of a paused endpoint's row waits for the
+// pause, and a PUT on the endpoint does not clear it.
+//
 // Stop cancels the loop: no worker starts a further claim, and every attempt
 // in flight runs to its end (its request is bounded by the request timeout and
 // its finish write by webhookFinishTimeout). A pass joins its workers before
@@ -47,7 +61,8 @@ import (
 // written after Stop returns nil.
 //
 // Log lines carry operation, endpoint_id, delivery_id, event_type, record_id,
-// attempts, status, http_status and error_code only: never the URL, its host,
+// attempts, status, http_status, error_code, consecutive_failures and
+// paused_until only: never the URL, its host,
 // a secret (current or previous), the signature or a body. Transport errors, which quote the URL,
 // are classified and never logged.
 
@@ -72,6 +87,14 @@ const (
 	// WebhookWorkers is the production size of the sender pool: at most this
 	// many endpoints are sent to at the same time by one runtime.
 	WebhookWorkers = 4
+	// WebhookEndpointPauseAfter is how many consecutive failed sends pause an
+	// endpoint for the first time (#569).
+	WebhookEndpointPauseAfter = 3
+	// WebhookEndpointPauseBase is the first pause; each further consecutive
+	// failure doubles it.
+	WebhookEndpointPauseBase = time.Minute
+	// WebhookEndpointPauseMax caps the pause of an endpoint.
+	WebhookEndpointPauseMax = time.Hour
 )
 
 const (
@@ -107,6 +130,30 @@ func WebhookBackoff(attempts int, base, ceiling time.Duration) time.Duration {
 		return ceiling
 	}
 	return delay
+}
+
+// WebhookEndpointPause is the pause after the given number of consecutive
+// failed sends of one endpoint (#569): zero below WebhookEndpointPauseAfter,
+// then WebhookBackoff(failures-WebhookEndpointPauseAfter+1,
+// WebhookEndpointPauseBase, WebhookEndpointPauseMax), so 1, 2, 4, 8, 16 and 32
+// minutes, then an hour from the 9th failure on.
+func WebhookEndpointPause(failures int) time.Duration {
+	if failures < WebhookEndpointPauseAfter {
+		return 0
+	}
+	return WebhookBackoff(failures-WebhookEndpointPauseAfter+1, WebhookEndpointPauseBase, WebhookEndpointPauseMax)
+}
+
+// webhookEndpointPausedUntil is the stored paused_until after the given
+// number of consecutive failed sends, anchored at finishedAt; nil below
+// WebhookEndpointPauseAfter.
+func webhookEndpointPausedUntil(failures int, finishedAt time.Time) *time.Time {
+	pause := WebhookEndpointPause(failures)
+	if pause <= 0 {
+		return nil
+	}
+	until := finishedAt.Add(pause)
+	return &until
 }
 
 // WebhookRuntimeOption configures NewWebhookRuntime.
@@ -306,7 +353,9 @@ func groupDueDeliveries(due []repository.WebhookDueDelivery) [][]uint {
 
 // sendGroups runs the groups on at most r.workers goroutines (never more than
 // there are groups); one worker works through a whole group, one row at a
-// time, and checks ctx before every claim. It returns after every worker has
+// time, and checks ctx before every claim. An attempt that pauses its
+// endpoint (#569) ends the group: the rest of its rows are neither claimed
+// nor touched in this pass. It returns after every worker has
 // joined, with the counters of every attempt.
 func (r *WebhookRuntime) sendGroups(ctx context.Context, groups [][]uint) WebhookPassResult {
 	workers := r.workers
@@ -330,18 +379,20 @@ func (r *WebhookRuntime) sendGroups(ctx context.Context, groups [][]uint) Webhoo
 					if ctx.Err() != nil {
 						return
 					}
-					outcome, attempted := r.deliver(ctx, id)
-					if !attempted {
-						continue
+					outcome, attempted, paused := r.deliver(ctx, id)
+					if attempted {
+						own.Attempted++
+						switch outcome {
+						case models.WebhookDeliverySucceeded:
+							own.Succeeded++
+						case models.WebhookDeliveryPending:
+							own.Retried++
+						case models.WebhookDeliveryFailed:
+							own.Failed++
+						}
 					}
-					own.Attempted++
-					switch outcome {
-					case models.WebhookDeliverySucceeded:
-						own.Succeeded++
-					case models.WebhookDeliveryPending:
-						own.Retried++
-					case models.WebhookDeliveryFailed:
-						own.Failed++
+					if paused {
+						break
 					}
 				}
 			}
@@ -375,11 +426,18 @@ type attemptOutcome struct {
 	errorCode  string
 	// terminal fails the row whatever its attempt count.
 	terminal bool
+	// sent is true when the request went through sendWebhook: only such an
+	// attempt counts in the endpoint circuit (#569).
+	sent bool
+	// failuresBefore is the endpoint's consecutive_failures as attempt read
+	// it, the fence of the circuit write.
+	failuresBefore int
 }
 
-// deliver claims one row and runs its attempt. It reports the stored status
-// and whether an attempt was claimed.
-func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool) {
+// deliver claims one row and runs its attempt. It reports the stored status,
+// whether an attempt was claimed, and whether the endpoint is now paused past
+// r.now() (#569).
+func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool, bool) {
 	claimAt := r.now()
 	delivery, err := r.repo.ClaimDelivery(ctx, id, claimAt, claimAt.Add(WebhookSendLease))
 	if err != nil {
@@ -387,14 +445,56 @@ func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool) {
 			r.log().WithFields(logrus.Fields{"operation": "webhook_claim", "delivery_id": id}).
 				WithError(utils.LogError(err)).Warn("Webhook delivery claim failed")
 		}
-		return "", false
+		return "", false, false
 	}
 
 	// From here the attempt runs to its end even when Stop cancels ctx: the
 	// request has its own timeout and the finish write its own bound.
 	work := context.WithoutCancel(ctx)
 	outcome := r.attempt(work, delivery)
-	return r.finish(work, delivery, outcome), true
+	status := r.finish(work, delivery, outcome)
+	if status == "" || !outcome.sent {
+		// A lost fence or a failed finish records nothing, and neither does
+		// an attempt that sent no request.
+		return status, true, false
+	}
+	return status, true, r.recordEndpointHealth(work, delivery.EndpointID, outcome)
+}
+
+// recordEndpointHealth writes the endpoint circuit after a stored finish of a
+// sent attempt (#569) and reports whether the endpoint is now paused past
+// r.now(). A write error is one Warn and never fails the pass.
+func (r *WebhookRuntime) recordEndpointHealth(ctx context.Context, endpointID uint, outcome attemptOutcome) bool {
+	writeCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
+	defer cancel()
+	if outcome.succeeded {
+		if err := r.repo.RecordEndpointSuccess(writeCtx, endpointID); err != nil {
+			r.logEndpointHealthError(endpointID, err)
+		}
+		return false
+	}
+	failures := outcome.failuresBefore + 1
+	finishedAt := r.now()
+	pausedUntil := webhookEndpointPausedUntil(failures, finishedAt)
+	if err := r.repo.RecordEndpointFailure(writeCtx, endpointID, outcome.failuresBefore, pausedUntil); err != nil {
+		r.logEndpointHealthError(endpointID, err)
+		return false
+	}
+	if pausedUntil == nil {
+		return false
+	}
+	r.log().WithFields(logrus.Fields{
+		"operation":            "webhook_endpoint_pause",
+		"endpoint_id":          endpointID,
+		"consecutive_failures": failures,
+		"paused_until":         pausedUntil.UTC().Format(time.RFC3339Nano),
+	}).Info("Webhook endpoint paused")
+	return pausedUntil.After(r.now())
+}
+
+func (r *WebhookRuntime) logEndpointHealthError(endpointID uint, err error) {
+	r.log().WithFields(logrus.Fields{"operation": "webhook_endpoint_health", "endpoint_id": endpointID}).
+		WithError(utils.LogError(err)).Warn("Webhook endpoint health not recorded")
 }
 
 func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDelivery) attemptOutcome {
@@ -426,9 +526,11 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 	if r.clients == nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
 	}
-	return sendWebhook(ctx, r.clients, endpoint.URL, r.timeout, func(reqCtx context.Context) (*http.Request, error) {
+	outcome := sendWebhook(ctx, r.clients, endpoint.URL, r.timeout, func(reqCtx context.Context) (*http.Request, error) {
 		return NewWebhookRequest(reqCtx, endpoint.URL, secrets, delivery, now)
 	})
+	outcome.failuresBefore = endpoint.ConsecutiveFailures
+	return outcome
 }
 
 // webhookSigningSecrets returns the secrets a request to endpoint signed at
@@ -463,13 +565,20 @@ func webhookSigningSecrets(box *utils.SecretBox, endpoint *models.WebhookEndpoin
 	return secrets, true
 }
 
-// sendWebhook is the send path shared by deliveries and the test ping: it
+// sendWebhook is the send path shared by deliveries and the test ping (which
+// ignores outcome.sent and never touches the endpoint circuit): it
 // gets the public-only client of url from clients (never nil), POSTs the
 // request build returns once under a timeout bound (connection and TLS
 // included), drains at most webhookResponseDrainBytes of the answer and
 // classifies it. A redirect is never followed. The transport's own error,
 // which quotes the URL, is classified and never returned.
 func sendWebhook(ctx context.Context, clients WebhookClientFactory, url string, timeout time.Duration, build func(reqCtx context.Context) (*http.Request, error)) attemptOutcome {
+	outcome := sendWebhookOnce(ctx, clients, url, timeout, build)
+	outcome.sent = true
+	return outcome
+}
+
+func sendWebhookOnce(ctx context.Context, clients WebhookClientFactory, url string, timeout time.Duration, build func(reqCtx context.Context) (*http.Request, error)) attemptOutcome {
 	client, err := clients.PublicHTTPClient(url)
 	if err != nil {
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
