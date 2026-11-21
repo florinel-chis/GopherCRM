@@ -73,9 +73,14 @@ func (s *quoteService) GetPublicResponse(token string) (*models.QuotePublicView,
 
 // RespondPublic is the client's answer. After the plain read of the token,
 // one transaction in the order quotes → quote_response_tokens: the locking
-// read of the quote, the conditional claim of the token (unused, unexpired,
-// quote live and sent, all in the statement), the conditional claim of the
-// status (WHERE status = 'sent'), and the history row. Of two calls with one
+// read of the quote; a plain read of its customer as live, the first
+// consistent read after the lock (a quote without a customer or with an
+// erased one is the rejection, so an erasure that commits between the token
+// read and the transaction is caught; the read takes no lock, so it never
+// waits on an erasure that holds the customer row); the conditional claim of
+// the token (unused, unexpired, quote live and sent, all in the statement;
+// the claim reads no customers row); the conditional claim of the status
+// (WHERE status = 'sent'); and the history row. Of two calls with one
 // token the second blocks on the quote lock on MySQL (on SQLite the single
 // connection serialises them) and then claims nothing. A failure after the
 // claim rolls the claim back, so the link stays usable. The deal is not
@@ -105,11 +110,20 @@ func (s *quoteService) RespondPublic(token, decision string) (*models.QuotePubli
 	quoteID := row.QuoteID
 	logger = logger.WithFields(map[string]interface{}{"quote_id": quoteID, "status": to})
 
-	err = s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
 		quote, err := repo.GetByIDForUpdate(quoteID)
 		if err != nil {
 			if isNotFound(err) {
 				return rejectQuoteResponse(fmt.Sprintf("quote %d is gone", quoteID))
+			}
+			return err
+		}
+		if quote.CustomerID == nil {
+			return rejectQuoteResponse(fmt.Sprintf("quote %d has no customer", quoteID))
+		}
+		if _, err := customers.GetByID(*quote.CustomerID); err != nil {
+			if isNotFound(err) {
+				return rejectQuoteResponse(fmt.Sprintf("the customer of quote %d is gone", quoteID))
 			}
 			return err
 		}

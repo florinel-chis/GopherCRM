@@ -21524,7 +21524,7 @@ paths:
       description: |-
         Send the quote as plain text (number, title, currency, validity, every line, subtotal, discount, total and notes) to the linked customer's current email address, with the quote's PDF attached when PDF output is on. Roles: admin (any quote) and sales (only the quotes it owns). No request body. The subject is 'Quote Q-000042 from' followed by the product name for quote 42: the general.company_name configuration value read at send time, or GopherCRM when it is unset, blank, unreadable or not usable in a mail header (for example 'Quote Q-000042 from GopherCRM').
         Only a sent or accepted quote can be emailed; a quote without a customer, whose customer was erased, or whose customer has no email address is refused; all 409 and no mail is sent. No transaction is held during the delivery; afterwards last_emailed_at is stamped by a conditional update that matches only while the quote is still sent or accepted and no revision back to draft committed since the request started (even one followed by a new send); otherwise 409 with last_emailed_at unchanged (the mail has then already gone out). With SMTP_HOST unset the server only logs the message and the request succeeds. A delivery failure is 502 MAIL_DELIVERY_FAILED. The status does not change.
-        The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each email of a sent quote invalidates the link of the previous one, and any status change away from sent invalidates the current one. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent.
+        The email of a sent quote ends with a single-use client response link, APP_BASE_URL/quote-response?token=..., which the client answers through GET and POST /quotes/public/response. Only a hash of the token is stored. Each successfully sent email invalidates the links of earlier emails; a failed send leaves them usable, and so does a failure of that invalidation after the mail went out (the request still succeeds). Any status change away from sent invalidates the current link. The link works until the end of the valid_until day (server's local date), or while the quote is sent when valid_until is not set; a sent quote whose valid_until has passed and an accepted quote are emailed without a link. When the quote left sent, or any status change was recorded, between the start of the request and the moment the link is stored, the request is refused with 409 and no mail is sent; so is a quote whose customer was erased before the link is stored.
         The attachment is one file, Quote-Q-000042.pdf (application/pdf) for quote 42: the document GET /quotes/{id}/pdf returns, rendered before the response link is stored, with no transaction held, in at most 15 seconds. When PDF output is off (GET /configurations/ui reports quotes.pdf_available false), or the render fails or runs out of time, the mail goes out as plain text only, exactly as without PDF output, and the request still succeeds; the fallback is logged, not reported. The response does not say whether a PDF was attached. Worst-case duration: 15 seconds for the render plus 30 seconds for the SMTP delivery, 45 seconds; a client should allow more than that (the web app allows 55) and a reverse proxy in front at least 60.
       parameters:
       - description: Quote ID
@@ -22388,7 +22388,7 @@ paths:
     get:
       description: |-
         Unauthenticated. Returns the quote the token of an emailed response link belongs to: its number, status, currency, validity date, lines and the five totals, and nothing else (no id, title, notes, owner, customer, deal or product reference). The request never writes, so opening the link does not spend the token.
-        A token is usable while it is unused, the quote is still sent and not deleted, and the day of the quote's valid_until (server's local date) has not ended; a quote without valid_until keeps its link while it is sent. A newer quote email, any staff status change away from sent and the erasure of the quote's customer invalidate the link. The token is read from the X-Quote-Token request header only; a token in the query string is ignored. A missing, empty, unknown, used, expired or invalidated token is the same 400 'Invalid or expired quote link', so validity cannot be probed. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+        A token is usable while it is unused, the quote is still sent and not deleted, the quote's customer has not been erased, and the day of the quote's valid_until (server's local date) has not ended; a quote without valid_until keeps its link while it is sent. A newer, successfully sent quote email, any staff status change away from sent and the erasure of the quote's customer invalidate the link. The token is read from the X-Quote-Token request header only; a token in the query string is ignored. A missing, empty, unknown, used, expired or invalidated token is the same 400 'Invalid or expired quote link', so validity cannot be probed. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
       parameters:
       - description: The token from the link in the quote email; missing or empty
           is the generic 400
@@ -22414,7 +22414,7 @@ paths:
         "400":
           description: 'BAD_REQUEST ''Invalid or expired quote link'': the X-Quote-Token
             header is missing or empty, or the token is unknown, used, expired or
-            invalidated, or its quote is no longer sent'
+            invalidated, or its quote is no longer sent or its customer was erased'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'
@@ -22452,7 +22452,7 @@ paths:
       - application/json
       description: |-
         Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.
-        The body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+        The body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent or a quote whose customer was erased, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
       parameters:
       - description: The token and the decision
         in: body
@@ -22480,7 +22480,7 @@ paths:
           description: 'VALIDATION_ERROR: malformed JSON, token missing or empty,
             or decision not accept or decline (details names the field). BAD_REQUEST
             ''Invalid or expired quote link'': the token is unknown, used, expired
-            or invalidated, or its quote is no longer sent'
+            or invalidated, or its quote is no longer sent or its customer was erased'
           schema:
             allOf:
             - $ref: '#/definitions/github_com_florinel-chis_gophercrm_internal_utils.APIResponse'

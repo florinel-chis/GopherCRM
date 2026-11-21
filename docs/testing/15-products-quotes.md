@@ -294,7 +294,8 @@ asserts the core outcome, the rest is pinned in Vitest).
   characters — #292) and a body listing the number, title, every line (description,
   quantity, unit price, discount, line total, tax rate and tax), subtotal, discount, net total, tax
   and gross total with currency (#324, see TC-PQ-034), `valid_until` and notes; **200** with `last_emailed_at` set by a conditional update. Step 2:
-  **409** `CONFLICT` each time and no mail. Step 3: **502** `MAIL_DELIVERY_FAILED` and
+  **409** `CONFLICT` each time and no mail; a customer erased after the request read it and before
+  the link is stored is also **409**, with no mail and no token row (#557). Step 3: **502** `MAIL_DELIVERY_FAILED` and
   `last_emailed_at` unchanged. No log line of the call contains the recipient, the customer's name
   or the body — a transport error that quotes the address is returned, not logged: the service
   does not log it, and the SMTP mailer's own failure line keeps the reply code without its text.
@@ -886,8 +887,9 @@ Sources: `internal/service/quote_email.go` (`mintResponseLink`), `internal/servi
   `used_at` set and `decision` NULL, one row is unused, and the first link is rejected. Step 3: the
   accepted quote and the quote past `valid_until` are mailed without a link and store no row; the
   quote without `valid_until` gets a row with `expires_at` NULL. Step 4: 502
-  `MAIL_DELIVERY_FAILED`; the error text does not contain the token; the stored row stays and the
-  next email stamps it.
+  `MAIL_DELIVERY_FAILED`; the error text does not contain the token; the link of the previous
+  successful email stays usable (its row keeps `used_at` NULL), the undelivered row stays stored,
+  and the next successful email stamps every older row and leaves its own as the only unused one.
 - **Automation:** automated — `internal/service/quote_email_test.go` `TestQuoteEmailResponseLink`.
 
 ### TC-PQ-040 — A quote that changed before the link is stored is refused and nothing is sent

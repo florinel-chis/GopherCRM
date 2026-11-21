@@ -112,6 +112,111 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, historyBefore, env.history(quote.ID), "and its history is unchanged")
 	})
 
+	// The token the erasure's snapshot can miss (a mint that commits after
+	// the erasure read the token ids) stands here as a token left unstamped
+	// while its customer is soft-deleted: the read predicate refuses it.
+	t.Run("a link whose customer is erased is refused even when its row was not stamped", func(t *testing.T) {
+		customer := newCustomer()
+		quote := quoteOf(customer, models.QuoteStatusSent)
+		token := env.emailForToken(quote.ID)
+		require.NoError(t, db.Delete(customer).Error)
+		rows := env.tokenRows(quote.ID)
+		require.Len(t, rows, 1)
+		require.Nil(t, rows[0].UsedAt, "the row stays unstamped")
+
+		env.assertResponseRejected(quote.ID, token, "a link of an erased customer")
+		var committed models.Quote
+		require.NoError(t, db.First(&committed, quote.ID).Error)
+		assert.Equal(t, models.QuoteStatusSent, committed.Status)
+		rows = env.tokenRows(quote.ID)
+		assert.Nil(t, rows[0].UsedAt)
+		assert.Nil(t, rows[0].Decision)
+	})
+
+	t.Run("a customer erased between the token read and the answer's transaction is refused", func(t *testing.T) {
+		for _, decision := range []string{models.QuoteResponseAccept, models.QuoteResponseDecline} {
+			customer := newCustomer()
+			quote := quoteOf(customer, models.QuoteStatusSent)
+			token := env.emailForToken(quote.ID)
+			historyBefore := len(env.history(quote.ID))
+
+			erasing := &erasingTokenReadRepository{QuoteResponseTokenRepository: repository.NewQuoteResponseTokenRepository(db)}
+			erasing.erase = func() {
+				// Soft-deleted without stamping the token, committed outside
+				// any transaction.
+				require.NoError(t, db.Delete(customer).Error)
+			}
+			svc := env.responseService(env.repo)
+			svc.tokenRepo = erasing
+
+			view, err := svc.RespondPublic(token, decision)
+			assert.Nil(t, view, decision)
+			require.True(t, erasing.fired, decision)
+			assert.Truef(t, errors.Is(err, apperrors.ErrQuoteResponseRejected), "%s: %v", decision, err)
+
+			rows := env.tokenRows(quote.ID)
+			require.Len(t, rows, 1)
+			assert.Nil(t, rows[0].UsedAt, "%s: the token stays unclaimed", decision)
+			assert.Nil(t, rows[0].Decision, decision)
+			var committed models.Quote
+			require.NoError(t, db.First(&committed, quote.ID).Error)
+			assert.Equal(t, models.QuoteStatusSent, committed.Status, decision)
+			assert.Len(t, env.history(quote.ID), historyBefore, "%s: no history row", decision)
+		}
+	})
+
+	// Row locks: MySQL and MariaDB only (SQLite holds one connection). The
+	// subtest is not registered on SQLite rather than skipped, because the
+	// CI database gates reject every skip.
+	if db.Dialector.Name() != "sqlite" {
+		t.Run("an open update of the customer row blocks neither an answer nor an email", func(t *testing.T) {
+			customer := newCustomer()
+			answered := quoteOf(customer, models.QuoteStatusSent)
+			answerToken := env.emailForToken(answered.ID)
+			emailed := quoteOf(customer, models.QuoteStatusSent)
+			earlier := env.emailForToken(emailed.ID)
+
+			holder := db.Begin()
+			require.NoError(t, holder.Error)
+			open := true
+			t.Cleanup(func() {
+				if open {
+					_ = holder.Rollback().Error
+				}
+			})
+			require.NoError(t, holder.Model(&models.Customer{}).Where("id = ?", customer.ID).Update("company", "Held").Error)
+
+			env.mailer.reset(nil, nil)
+			done := make(chan [2]error, 1)
+			go func() {
+				_, answerErr := env.svc.RespondPublic(answerToken, models.QuoteResponseAccept)
+				_, emailErr := env.svc.Email(emailed.ID)
+				done <- [2]error{answerErr, emailErr}
+			}()
+			select {
+			case errs := <-done:
+				require.Falsef(t, isLockFailure(errs[0]), "the answer met a deadlock or lock wait: %v", errs[0])
+				require.Falsef(t, isLockFailure(errs[1]), "the email met a deadlock or lock wait: %v", errs[1])
+				require.NoError(t, errs[0], "the answer commits while the customer row is held")
+				require.NoError(t, errs[1], "the email completes while the customer row is held")
+			case <-time.After(quoteTestTimeout):
+				t.Fatal("the answer or the email waited on the open update of the customer row")
+			}
+			require.NoError(t, holder.Rollback().Error)
+			open = false
+
+			var committed models.Quote
+			require.NoError(t, db.First(&committed, answered.ID).Error)
+			assert.Equal(t, models.QuoteStatusAccepted, committed.Status)
+			messages := env.mailer.messages()
+			require.Len(t, messages, 1)
+			_, err := env.svc.GetPublicResponse(responseTokenFromBody(t, messages[0].Body))
+			require.NoError(t, err, "the new link is usable")
+			_, err = env.svc.GetPublicResponse(earlier)
+			assert.Truef(t, errors.Is(err, apperrors.ErrQuoteResponseRejected), "the post-send step stamped the earlier link: %v", err)
+		})
+	}
+
 	t.Run("a customer whose only quote is an unmailed draft is erased without a token row", func(t *testing.T) {
 		customer := newCustomer()
 		quote := quoteOf(customer, models.QuoteStatusDraft)
@@ -220,4 +325,27 @@ func runQuoteResponseAfterCustomerErasure(t *testing.T, db *gorm.DB) {
 		}
 		t.Logf("outcomes over %d rounds: %v", quoteRaceRounds, outcomes)
 	})
+}
+
+// erasingTokenReadRepository soft-deletes the quote's customer once, right
+// after the first plain read of a token returns: between RespondPublic's read
+// and its transaction. WithTx hands over the real transaction-bound
+// repository.
+type erasingTokenReadRepository struct {
+	repository.QuoteResponseTokenRepository
+	erase func()
+	fired bool
+}
+
+func (r *erasingTokenReadRepository) FindUsableByHash(tokenHash string, now time.Time) (*models.QuoteResponseToken, error) {
+	row, err := r.QuoteResponseTokenRepository.FindUsableByHash(tokenHash, now)
+	if err == nil && !r.fired {
+		r.fired = true
+		r.erase()
+	}
+	return row, err
+}
+
+func (r *erasingTokenReadRepository) WithTx(tx *gorm.DB) repository.QuoteResponseTokenRepository {
+	return r.QuoteResponseTokenRepository.WithTx(tx)
 }
