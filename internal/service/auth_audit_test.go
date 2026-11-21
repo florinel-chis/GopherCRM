@@ -813,6 +813,8 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 	t.Run("discovery_failed", func(t *testing.T) {
 		f.reset(t)
 		code, state := f.issuer.authorize(t, f.start(t), oidcValid("subject-cov-df", "cov-df@idp.example.test"))
+		// The Start cached the discovery; drop it so the callback discovers.
+		f.clearProviderCache()
 		f.issuer.setDiscoveryRedirect(true)
 		from := output.Len()
 		_, err := f.svc.Callback(context.Background(), code, state, state)

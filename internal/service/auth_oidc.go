@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -114,6 +115,7 @@ const OIDCAttemptTTL = oidcAttemptTTL
 const (
 	oidcAttemptTTL         = 10 * time.Minute
 	oidcHTTPTimeout        = 10 * time.Second
+	oidcProviderCacheTTL   = 24 * time.Hour
 	oidcIssuerMaxBytes     = models.UserIdentityIssuerMaxLength
 	oidcSubjectMaxBytes    = models.UserIdentitySubjectMaxLength
 	oidcEmailMaxBytes      = 255
@@ -218,6 +220,11 @@ type oidcService struct {
 	appBaseURL    string
 	now           func() time.Time
 	rootCAs       *x509.CertPool
+	// client is the issuer client (newOIDCHTTPClient), built once by
+	// NewOIDCService after the options.
+	client *http.Client
+	// providers keeps the last discovered issuer (see discover).
+	providers oidcProviderCache
 	// beforeJITInsert is a test seam of the first sign-in (see
 	// oidcSignIn.beforeInsert); nil in production.
 	beforeJITInsert func()
@@ -273,6 +280,7 @@ func NewOIDCService(
 	for _, opt := range opts {
 		opt(s)
 	}
+	s.client = newOIDCHTTPClient(s.rootCAs)
 	return s
 }
 
@@ -323,9 +331,11 @@ func oidcLogger(ctx context.Context, attemptID uint) *logrus.Entry {
 	})
 }
 
-// newOIDCHTTPClient is the only client that talks to an issuer: discovery,
-// JWKS and the code exchange. It has a timeout, never follows a redirect and
-// ignores HTTP(S)_PROXY. rootCAs nil means the system roots.
+// newOIDCHTTPClient builds the client that talks to an issuer: discovery,
+// JWKS and the code exchange. NewOIDCService builds it once and every
+// sign-in shares it, including the cached key sets. It has a timeout, never
+// follows a redirect and ignores HTTP(S)_PROXY. rootCAs nil means the system
+// roots.
 func newOIDCHTTPClient(rootCAs *x509.CertPool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
@@ -366,17 +376,121 @@ func ssoConfigured(cfg EffectiveSSOConfig) bool {
 	return cfg.IssuerURL != "" && cfg.ClientID != "" && len(cfg.IssuerURL) <= oidcIssuerMaxBytes
 }
 
-// discover fetches the issuer's discovery document through the issuer
-// client. Any failure (unreachable, redirect, timeout, an issuer mismatch) is
-// ErrSSOUnavailable.
-func (s *oidcService) discover(ctx context.Context, issuer string, attemptID uint) (context.Context, *oidc.Provider, error) {
-	ctx = oidc.ClientContext(ctx, newOIDCHTTPClient(s.rootCAs))
-	provider, err := oidc.NewProvider(ctx, issuer)
+// oidcProviderKey identifies a cached discovery: the configured issuer URL,
+// whether the Entra ID application signing keys are used and, only then, the
+// client id they are read for.
+type oidcProviderKey struct {
+	issuer   string
+	appKeys  bool
+	clientID string
+}
+
+// oidcProvider is one discovered issuer: the go-oidc provider and, in
+// app-key mode, the key set of jwks_uri?appid=<client id> with the signing
+// algorithms the discovery document allows.
+type oidcProvider struct {
+	key       oidcProviderKey
+	provider  *oidc.Provider
+	appKeySet oidc.KeySet
+	appAlgs   []string
+	fetchedAt time.Time
+}
+
+// oidcProviderCache holds at most one discovered issuer. mu is held while a
+// miss fetches, so concurrent misses wait for one discovery.
+type oidcProviderCache struct {
+	mu    sync.Mutex
+	entry *oidcProvider
+}
+
+// oidcSigningAlgs are the ID token algorithms go-oidc verifies; a
+// discovery document's list is filtered to them the way go-oidc filters it
+// for provider.Verifier.
+var oidcSigningAlgs = map[string]bool{
+	oidc.RS256: true, oidc.RS384: true, oidc.RS512: true,
+	oidc.ES256: true, oidc.ES384: true, oidc.ES512: true,
+	oidc.PS256: true, oidc.PS384: true, oidc.PS512: true,
+	oidc.EdDSA: true,
+}
+
+// providerKey is the cache key of cfg. The application signing keys are used
+// only when OIDC_ENTRA_APP_SIGNING_KEYS is on and the issuer is Entra ID.
+func (s *oidcService) providerKey(cfg EffectiveSSOConfig) oidcProviderKey {
+	key := oidcProviderKey{issuer: cfg.IssuerURL}
+	if cfg.EntraAppSigningKeys && oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
+		key.appKeys, key.clientID = true, cfg.ClientID
+	}
+	return key
+}
+
+// discover returns the configured issuer's provider and the context that
+// carries the issuer client for the code exchange and the userinfo call.
+// The discovery document and the signing keys are kept for
+// oidcProviderCacheTTL per (issuer, app-key mode, client id in app-key
+// mode); a different key replaces the entry, and go-oidc fetches the keys
+// again when a token names an unknown key id. A failed discovery
+// (unreachable, redirect, timeout, an issuer mismatch) is not kept, leaves
+// the cached entry as it was and is ErrSSOUnavailable.
+func (s *oidcService) discover(ctx context.Context, cfg EffectiveSSOConfig, attemptID uint) (context.Context, *oidcProvider, error) {
+	ctx = oidc.ClientContext(ctx, s.client)
+	key := s.providerKey(cfg)
+
+	s.providers.mu.Lock()
+	defer s.providers.mu.Unlock()
+	if entry := s.providers.entry; entry != nil && entry.key == key && s.now().Before(entry.fetchedAt.Add(oidcProviderCacheTTL)) {
+		return ctx, entry, nil
+	}
+	entry, err := s.fetchProvider(ctx, key)
 	if err != nil {
 		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
 		return nil, nil, ssoUnavailable(AuthAuditReasonDiscoveryFailed)
 	}
-	return ctx, provider, nil
+	s.providers.entry = entry
+	return ctx, entry, nil
+}
+
+// fetchProvider runs the discovery of key.issuer and, in app-key mode,
+// prepares the key set of jwks_uri?appid=<client id>.
+func (s *oidcService) fetchProvider(ctx context.Context, key oidcProviderKey) (*oidcProvider, error) {
+	provider, err := oidc.NewProvider(ctx, key.issuer)
+	if err != nil {
+		return nil, err
+	}
+	entry := &oidcProvider{key: key, provider: provider, fetchedAt: s.now()}
+	if !key.appKeys {
+		return entry, nil
+	}
+	var document struct {
+		JWKSURI    string   `json:"jwks_uri"`
+		Algorithms []string `json:"id_token_signing_alg_values_supported"`
+	}
+	if err := provider.Claims(&document); err != nil {
+		return nil, err
+	}
+	jwksURL, err := url.Parse(document.JWKSURI)
+	if err != nil || document.JWKSURI == "" {
+		return nil, errors.New("the discovery document has no usable jwks_uri")
+	}
+	query := jwksURL.Query()
+	query.Set("appid", key.clientID)
+	jwksURL.RawQuery = query.Encode()
+	entry.appKeySet = oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), s.client), jwksURL.String())
+	for _, alg := range document.Algorithms {
+		if oidcSigningAlgs[alg] {
+			entry.appAlgs = append(entry.appAlgs, alg)
+		}
+	}
+	return entry, nil
+}
+
+// verifier checks ID tokens for the current client id against the entry's
+// keys: the provider's own key set, or the application signing keys in
+// app-key mode. It is built per call, never cached.
+func (p *oidcProvider) verifier(clientID string) *oidc.IDTokenVerifier {
+	if p.appKeySet == nil {
+		return p.provider.Verifier(&oidc.Config{ClientID: clientID})
+	}
+	return oidc.NewVerifier(p.key.issuer, p.appKeySet, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: p.appAlgs})
 }
 
 func (s *oidcService) oauthConfig(provider *oidc.Provider, cfg EffectiveSSOConfig) *oauth2.Config {
@@ -452,10 +566,11 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
 		return nil, ssoUnavailable(AuthAuditReasonNotConfigured)
 	}
-	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, 0)
+	ctx, discovered, err := s.discover(ctx, cfg, 0)
 	if err != nil {
 		return nil, err
 	}
+	provider := discovered.provider
 
 	state, err := generateOpaqueToken()
 	if err != nil {
@@ -614,10 +729,11 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
 		return nil, facts, ssoUnavailable(AuthAuditReasonNotConfigured)
 	}
-	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, attempt.ID)
+	ctx, discovered, err := s.discover(ctx, cfg, attempt.ID)
 	if err != nil {
 		return nil, facts, err
 	}
+	provider := discovered.provider
 
 	token, err := s.oauthConfig(provider, cfg).Exchange(ctx, code, oauth2.VerifierOption(attempt.CodeVerifier))
 	if err != nil {
@@ -628,7 +744,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if rawIDToken == "" {
 		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenMissing)
 	}
-	idToken, err := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}).Verify(ctx, rawIDToken)
+	idToken, err := discovered.verifier(cfg.ClientID).Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenInvalid)
 	}

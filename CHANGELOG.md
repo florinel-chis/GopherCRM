@@ -1156,6 +1156,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on keeps the issuer's discovery document and signing keys for 24 hours (#632).**
+  A sign-in no longer fetches the discovery document and the signing keys every time: they are
+  kept per issuer for up to 24 hours and fetched again when an ID token names a key id the kept
+  keys do not contain. A failed discovery is not kept, and a change of the configured issuer
+  (or, with the switch below, of the client id) takes effect on the next sign-in. The new
+  environment variable `OIDC_ENTRA_APP_SIGNING_KEYS` (default off) makes an Entra ID issuer's ID
+  tokens be checked against the application's own signing keys at `jwks_uri?appid=<client id>`,
+  which Entra ID uses when the app registration has claims mapping; any other issuer ignores it.
 - **SCIM Groups accept Microsoft Entra ID's group requests (#630).** `POST /scim/v2/Groups` no
   longer answers 405: when the body's `externalId` or, failing that, its `displayName` equals a
   `groups` value of the single sign-on role mapping byte for byte, it answers 201 with that

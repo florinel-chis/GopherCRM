@@ -46,6 +46,7 @@ func withCleanEnv(t *testing.T, setVars map[string]string, fn func()) {
 		"QUOTE_PDF_CHROME_PATH",
 		// Single sign-on fallbacks.
 		"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING",
+		"OIDC_ENTRA_APP_SIGNING_KEYS",
 		// SCIM token limit (#555).
 		"SCIM_RATE_LIMIT_PER_MINUTE", "SCIM_RATE_LIMIT_BURST",
 	}

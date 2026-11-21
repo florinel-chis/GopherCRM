@@ -359,8 +359,16 @@ transaction and logs `audit_id` with the outcome. A successful `POST /auth/login
 `POST /auth/refresh` writes one such row too; a refused one (#553), and a refused `ApiKey`
 (#466), adds to the row of its bucket (`attempts`, one row per method, reason, account, client
 network and UTC minute; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
-timeout, follows no redirect and ignores `HTTP(S)_PROXY`; tests trust their TLS issuer through
-`WithOIDCRootCAs`, and there is no option that replaces the client. After the code exchange
+timeout, follows no redirect and ignores `HTTP(S)_PROXY`; `NewOIDCService` builds it once, after
+the options, and every sign-in shares it. Tests trust their TLS issuer through
+`WithOIDCRootCAs`, and there is no option that replaces the client. `oidcService.discover` keeps
+one discovered issuer (`oidcProviderCache`) for `oidcProviderCacheTTL` (24 h), keyed by issuer,
+app-key mode (`OIDC_ENTRA_APP_SIGNING_KEYS` on an Entra ID issuer) and, in that mode, client id;
+a failed discovery is never kept and the mutex is held while a miss fetches. The fake issuer of
+`internal/service/auth_oidc_test.go` counts discovery and JWKS requests: the subtests
+`provider_cache_daily_refresh`, `provider_cache_unknown_kid`, `provider_cache_refetch` and
+`entra_app_signing_keys` under `TestOIDCSignIn{SQLite,MySQL}` assert exact counts, and the
+fixture's `reset` clears the cache and the counters. After the code exchange
 (PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
 `aud`, `exp`, nonce compared in constant time), one governed transaction
 (`userService.ApplyOIDCSignIn`, `internal/service/user_governed_writes.go`) takes

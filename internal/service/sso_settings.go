@@ -78,7 +78,11 @@ type EffectiveSSOConfig struct {
 	// reads on a group overage: OIDC_GRAPH_MAX_PAGES when it is 1..50, else
 	// oidcGraphDefaultMaxPages. Environment only, never a stored setting.
 	GraphMaxPages int
-	Sources       SSOConfigSources
+	// EntraAppSigningKeys is OIDC_ENTRA_APP_SIGNING_KEYS: an Entra ID issuer's
+	// ID tokens are verified against jwks_uri?appid=<client id>. Environment
+	// only, never a stored setting.
+	EntraAppSigningKeys bool
+	Sources             SSOConfigSources
 }
 
 // SSOSettingsUpdate is a full replacement of the stored single sign-on
@@ -223,6 +227,7 @@ func (s *ssoSettingsService) SSOConfig(ctx context.Context) (EffectiveSSOConfig,
 	out.Scopes, out.Sources.Scopes = s.effectiveScopes()
 	out.RoleMapping, out.Sources.RoleMapping = s.effectiveRoleMapping()
 	out.GraphMaxPages = effectiveGraphMaxPages(s.base.GraphMaxPages)
+	out.EntraAppSigningKeys = s.base.EntraAppSigningKeys
 	return out, nil
 }
 

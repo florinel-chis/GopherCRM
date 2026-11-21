@@ -201,6 +201,12 @@ groups read from Microsoft Graph; see group overage in the
 [troubleshooting table](single-sign-on.md#troubleshooting). To provision the groups through SCIM,
 see step 8.5.
 
+## Claims mapping (custom signing keys)
+
+If the app registration uses claims mapping (custom signing keys), set
+`OIDC_ENTRA_APP_SIGNING_KEYS=true` on the server, or every sign-in is refused with
+`id_token_invalid`.
+
 ## Accounts created through SCIM
 
 If Entra ID also provisions the people through [SCIM](scim-provisioning.md), keep the issuer URL

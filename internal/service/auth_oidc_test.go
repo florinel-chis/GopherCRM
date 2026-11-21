@@ -54,6 +54,8 @@ const (
 	oidcTestJWTSecret    = "oidc-sign-in-test-jwt-secret-0123456789abcdef"
 	oidcTestAPIKeySecret = "oidc-sign-in-test-api-key-secret-0123456789"
 	oidcTestKeyID        = "k1"
+	oidcTestRotatedKeyID = "k2"
+	oidcTestAppKeyID     = "app-key"
 
 	oidcGroupAdmins = "crm-admins"
 	oidcGroupSales  = "crm-sales"
@@ -92,6 +94,9 @@ type oidcTokenSpec struct {
 	audience string
 	// otherKey signs with a key the JWKS does not publish (same kid).
 	otherKey bool
+	// appKey signs with the application signing key (kid app-key), which
+	// the JWKS publishes only for appid=crm-client.
+	appKey bool
 }
 
 type oidcGrant struct {
@@ -104,6 +109,10 @@ type oidcTestIssuer struct {
 	server   *httptest.Server
 	key      *rsa.PrivateKey
 	otherKey *rsa.PrivateKey
+	// rotatedKey replaces key under kid k2 once rotated is set; appKey is
+	// the application signing key (kid app-key).
+	rotatedKey *rsa.PrivateKey
+	appKey     *rsa.PrivateKey
 	// other is a second trusted TLS server standing for another host; it
 	// counts the requests it receives.
 	other *httptest.Server
@@ -126,6 +135,17 @@ type oidcTestIssuer struct {
 	// "/<tenant>/v2.0", #505): discovery is served under it and iss carries
 	// it.
 	path string
+	// rotated makes the JWKS publish rotatedKey (k2) instead of key (k1)
+	// and new ID tokens carry k2.
+	rotated bool
+	// discoveryHits and jwksHits count the discovery (a redirected one
+	// included) and JWKS requests; jwksQueries is the raw query of each JWKS
+	// request.
+	discoveryHits int
+	jwksHits      int
+	jwksQueries   []string
+	// discoveryPaths is the path of each discovery request.
+	discoveryPaths []string
 }
 
 // Modes of the fake userinfo endpoint (#451).
@@ -190,7 +210,11 @@ func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 	require.NoError(t, err)
 	other, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, grants: map[string]oidcGrant{}, accessTokens: map[string]string{},
+	rotated, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	app, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, rotatedKey: rotated, appKey: app, grants: map[string]oidcGrant{}, accessTokens: map[string]string{},
 		accessSubjects: map[string]string{}, userinfo: oidcFakeUserInfo{mode: userinfoModeJSON}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", issuer.discovery)
@@ -406,6 +430,8 @@ func (i *oidcTestIssuer) rootCAs() *x509.CertPool {
 
 func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
 	i.mu.Lock()
+	i.discoveryHits++
+	i.discoveryPaths = append(i.discoveryPaths, r.URL.Path)
 	redirect := i.discoveryRedirect
 	omitUserInfo, plainUserInfo := i.userinfo.omitEndpoint, i.userinfo.plainHTTP
 	issuerPath := i.path
@@ -435,11 +461,60 @@ func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(document)
 }
 
-func (i *oidcTestIssuer) jwks(w http.ResponseWriter, _ *http.Request) {
+func (i *oidcTestIssuer) jwks(w http.ResponseWriter, r *http.Request) {
+	i.mu.Lock()
+	i.jwksHits++
+	i.jwksQueries = append(i.jwksQueries, r.URL.RawQuery)
+	key, kid := i.key, oidcTestKeyID
+	if i.rotated {
+		key, kid = i.rotatedKey, oidcTestRotatedKeyID
+	}
+	i.mu.Unlock()
+	keys := []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: kid, Algorithm: string(jose.RS256), Use: "sig"}}
+	if r.URL.Query().Get("appid") == oidcTestClientID {
+		keys = append(keys, jose.JSONWebKey{Key: &i.appKey.PublicKey, KeyID: oidcTestAppKeyID, Algorithm: string(jose.RS256), Use: "sig"})
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{
-		{Key: &i.key.PublicKey, KeyID: oidcTestKeyID, Algorithm: string(jose.RS256), Use: "sig"},
-	}})
+	_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: keys})
+}
+
+// rotate makes the issuer sign with a new key under kid k2 and publish only
+// that key; rotate(false) undoes it.
+func (i *oidcTestIssuer) rotate(on bool) {
+	i.mu.Lock()
+	i.rotated = on
+	i.mu.Unlock()
+}
+
+// fetches is how many discovery and JWKS requests the issuer received.
+func (i *oidcTestIssuer) fetches() (discovery, jwks int) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.discoveryHits, i.jwksHits
+}
+
+// lastDiscoveryPath is the path of the latest discovery request.
+func (i *oidcTestIssuer) lastDiscoveryPath() string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if len(i.discoveryPaths) == 0 {
+		return ""
+	}
+	return i.discoveryPaths[len(i.discoveryPaths)-1]
+}
+
+// jwksRequestQueries is the raw query of every JWKS request.
+func (i *oidcTestIssuer) jwksRequestQueries() []string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]string(nil), i.jwksQueries...)
+}
+
+// resetFetches zeroes the request counters and undoes the rotation.
+func (i *oidcTestIssuer) resetFetches() {
+	i.mu.Lock()
+	i.discoveryHits, i.jwksHits, i.jwksQueries, i.discoveryPaths, i.rotated = 0, 0, nil, nil, false
+	i.mu.Unlock()
 }
 
 func oidcTokenError(w http.ResponseWriter, status int, code string) {
@@ -538,12 +613,20 @@ func (i *oidcTestIssuer) sign(grant oidcGrant) string {
 	for k, v := range spec.extra {
 		claims[k] = v
 	}
-	key := i.key
-	if spec.otherKey {
+	i.mu.Lock()
+	key, kid := i.key, oidcTestKeyID
+	if i.rotated {
+		key, kid = i.rotatedKey, oidcTestRotatedKeyID
+	}
+	i.mu.Unlock()
+	switch {
+	case spec.appKey:
+		key, kid = i.appKey, oidcTestAppKeyID
+	case spec.otherKey:
 		key = i.otherKey
 	}
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key},
-		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", oidcTestKeyID))
+		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", kid))
 	require.NoError(i.t, err)
 	payload, err := json.Marshal(claims)
 	require.NoError(i.t, err)
@@ -715,6 +798,12 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.svc.graphBaseURL = oidcGraphBaseURL
 	f.svc.graphTimeout = oidcGraphTimeout
 	f.svc.userinfoTimeout = oidcUserInfoTimeout
+	f.clearProviderCache()
+	f.issuer.resetFetches()
+	require.Nil(t, f.cachedProvider(), "the provider cache is empty")
+	discovery, jwks := f.issuer.fetches()
+	require.Zero(t, discovery, "the discovery counter is zeroed")
+	require.Zero(t, jwks, "the JWKS counter is zeroed")
 	f.issuer.resetGraph()
 	f.issuer.resetUserInfo()
 	f.useSSO(f.defaultSSO)
@@ -723,6 +812,29 @@ func (f *oidcFixture) reset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, f.issuer.URL(), cfg.IssuerURL, "the configured issuer carries no tenant path")
 	require.Nil(t, f.svc.beforeSCIMLink, "the SCIM link seam is cleared")
+}
+
+// clearProviderCache drops the cached discovery, so the next call
+// discovers again.
+func (f *oidcFixture) clearProviderCache() {
+	f.svc.providers.mu.Lock()
+	f.svc.providers.entry = nil
+	f.svc.providers.mu.Unlock()
+}
+
+// cachedProvider is the cached discovery, nil when there is none.
+func (f *oidcFixture) cachedProvider() *oidcProvider {
+	f.svc.providers.mu.Lock()
+	defer f.svc.providers.mu.Unlock()
+	return f.svc.providers.entry
+}
+
+// assertFetches checks the issuer's discovery and JWKS request totals.
+func (f *oidcFixture) assertFetches(t *testing.T, discovery, jwks int, msg string) {
+	t.Helper()
+	gotDiscovery, gotJWKS := f.issuer.fetches()
+	assert.Equal(t, discovery, gotDiscovery, "discovery requests: %s", msg)
+	assert.Equal(t, jwks, gotJWKS, "JWKS requests: %s", msg)
 }
 
 // useSSO swaps the settings service of the fixture and of the sign-in.
@@ -1401,6 +1513,107 @@ var oidcSignInCases = []struct {
 		assert.ErrorIs(t, err, ErrSSOUnavailable)
 		assert.Equal(t, int64(0), f.count(t, "oidc_login_attempts", ""))
 	}},
+	{"provider_cache_daily_refresh", func(t *testing.T, f *oidcFixture) {
+		signIn := func(sub string) {
+			t.Helper()
+			_, err := f.signIn(t, oidcValid(sub, sub+"@idp.example.test"))
+			require.NoError(t, err)
+		}
+		signIn("subject-cache-1")
+		signIn("subject-cache-2")
+		f.assertFetches(t, 1, 1, "two sign-ins share one discovery and one key fetch")
+		f.advance(oidcProviderCacheTTL - time.Millisecond)
+		signIn("subject-cache-3")
+		f.assertFetches(t, 1, 1, "still cached 1ms before the 24h")
+		f.advance(time.Millisecond)
+		signIn("subject-cache-4")
+		f.assertFetches(t, 2, 2, "discovered and fetched again at 24h")
+	}},
+	{"provider_cache_unknown_kid", func(t *testing.T, f *oidcFixture) {
+		_, err := f.signIn(t, oidcValid("subject-kid-1", "kid-1@idp.example.test"))
+		require.NoError(t, err)
+		f.assertFetches(t, 1, 1, "first sign-in")
+		f.issuer.rotate(true)
+		_, err = f.signIn(t, oidcValid("subject-kid-2", "kid-2@idp.example.test"))
+		require.NoError(t, err, "a token under the new kid k2 is accepted")
+		f.assertFetches(t, 1, 2, "the unknown kid fetches the keys once, without a discovery")
+		_, err = f.signIn(t, oidcValid("subject-kid-3", "kid-3@idp.example.test"))
+		require.NoError(t, err)
+		f.assertFetches(t, 1, 2, "the new key is cached")
+	}},
+	{"provider_cache_refetch", func(t *testing.T, f *oidcFixture) {
+		f.issuer.setDiscoveryRedirect(true)
+		authURL, err := oidcStartURL(f.svc.Start(context.Background()))
+		assert.Empty(t, authURL)
+		require.ErrorIs(t, err, ErrSSOUnavailable)
+		assert.Equal(t, int64(0), f.count(t, "oidc_login_attempts", ""))
+		assert.Nil(t, f.cachedProvider(), "a failed discovery is not cached")
+		f.assertFetches(t, 1, 0, "the failed discovery")
+
+		f.issuer.setDiscoveryRedirect(false)
+		_, err = f.signIn(t, oidcValid("subject-refetch-1", "refetch-1@idp.example.test"))
+		require.NoError(t, err)
+		f.assertFetches(t, 2, 1, "the next Start discovers again")
+
+		// No linked accounts, so the issuer change needs no confirmation.
+		require.NoError(t, f.db.Exec("DELETE FROM user_identities").Error)
+		f.entraTenant(t)
+		_, err = f.signIn(t, oidcValid("subject-refetch-2", "refetch-2@idp.example.test"))
+		require.NoError(t, err)
+		f.assertFetches(t, 3, 2, "a changed issuer is discovered on the next sign-in")
+		assert.Equal(t, "/"+oidcTestTenant+"/v2.0/.well-known/openid-configuration", f.issuer.lastDiscoveryPath())
+		require.NotNil(t, f.cachedProvider())
+		assert.Equal(t, f.issuer.Issuer(), f.cachedProvider().key.issuer)
+	}},
+	{"entra_app_signing_keys", func(t *testing.T, f *oidcFixture) {
+		appKeySpec := func(sub string) oidcTokenSpec {
+			spec := oidcValid(sub, sub+"@idp.example.test")
+			spec.appKey = true
+			return spec
+		}
+		assertQueries := func(t *testing.T, want string) {
+			t.Helper()
+			queries := f.issuer.jwksRequestQueries()
+			require.NotEmpty(t, queries, "the keys were fetched")
+			for _, query := range queries {
+				assert.Equal(t, want, query)
+			}
+		}
+		t.Run("on", func(t *testing.T) {
+			f.reset(t)
+			f.useSSO(f.newSSO(config.SSOConfig{EntraAppSigningKeys: true}))
+			f.entra(t)
+			tokens, err := f.signIn(t, appKeySpec("subject-app-on"))
+			require.NoError(t, err)
+			require.NotNil(t, tokens)
+			assertQueries(t, "appid="+oidcTestClientID)
+			f.assertFetches(t, 1, 1, "app-key mode")
+
+			// Turning the switch off is a different cache key: the next
+			// sign-in discovers again and reads the plain jwks_uri.
+			f.useSSO(f.defaultSSO)
+			_, err = f.signIn(t, oidcValid("subject-app-switched-off", "app-switched-off@idp.example.test"))
+			require.NoError(t, err)
+			f.assertFetches(t, 2, 2, "the switch change discovers again")
+			queries := f.issuer.jwksRequestQueries()
+			assert.Equal(t, "", queries[len(queries)-1], "the plain jwks_uri after the switch is off")
+		})
+		t.Run("off", func(t *testing.T) {
+			f.reset(t)
+			f.entra(t)
+			tokens, err := f.signIn(t, appKeySpec("subject-app-off"))
+			f.assertRefused(t, "id_token_invalid", tokens, err, 0, 0)
+			assertQueries(t, "")
+		})
+		t.Run("not_entra", func(t *testing.T) {
+			f.reset(t)
+			f.useSSO(f.newSSO(config.SSOConfig{EntraAppSigningKeys: true}))
+			require.Equal(t, oidcEntraIssuerHost, f.svc.entraIssuerHost)
+			tokens, err := f.signIn(t, appKeySpec("subject-app-not-entra"))
+			f.assertRefused(t, "id_token_invalid", tokens, err, 0, 0)
+			assertQueries(t, "")
+		})
+	}},
 	{"log_privacy", func(t *testing.T, f *oidcFixture) {
 		previous := utils.Logger
 		require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "debug", Format: "json"}))
@@ -1697,9 +1910,11 @@ var oidcSignInCases = []struct {
 		// The empty access token: the oauth2 exchange itself refuses a token
 		// response without access_token, so the guard is driven directly.
 		f.reset(t)
-		ctx, provider, err := f.svc.discover(context.Background(), f.issuer.URL(), 0)
+		cfg, err := f.svc.sso.SSOConfig(context.Background())
 		require.NoError(t, err)
-		_, err = f.svc.resolveUserInfoGroups(ctx, provider, "", "subject-ui-no-access")
+		ctx, discovered, err := f.svc.discover(context.Background(), cfg, 0)
+		require.NoError(t, err)
+		_, err = f.svc.resolveUserInfoGroups(ctx, discovered.provider, "", "subject-ui-no-access")
 		assert.ErrorIs(t, err, errUserInfoNoAccessToken)
 		assert.Empty(t, f.issuer.userInfoRequests(), "no request without an access token")
 	}},
