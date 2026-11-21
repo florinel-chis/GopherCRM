@@ -152,3 +152,79 @@ func TestSCIMParseGroupPatch(t *testing.T) {
 		})
 	}
 }
+
+func TestSCIMGroupResourceWithoutMembers(t *testing.T) {
+	raw, err := json.Marshal(NewGroup("", "Sales", []string{"3"}).WithoutMembers())
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "members")
+	assert.Contains(t, string(raw), `"displayName":"Sales"`)
+}
+
+func TestSCIMExcludesMembers(t *testing.T) {
+	for _, raw := range []string{
+		"members", "MEMBERS", " members ", "displayName,members", "displayName, members",
+		"urn:ietf:params:scim:schemas:core:2.0:Group:members", "URN:IETF:PARAMS:SCIM:SCHEMAS:CORE:2.0:GROUP:Members",
+	} {
+		assert.True(t, ExcludesMembers(raw), raw)
+	}
+	for _, raw := range []string{
+		"", "members.value", "displayName", "meta", "member", "membersx",
+		"Kmembers", "memberſ", "urn:ietf:params:scim:schemas:core:2.0:User:members",
+	} {
+		assert.False(t, ExcludesMembers(raw), raw)
+	}
+}
+
+func TestSCIMParseGroupCreate(t *testing.T) {
+	str := func(s string) *string { return &s }
+	const objectID = "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159"
+	microsoft := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group","http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group"],` +
+		`"externalId":"` + objectID + `","displayName":"CRM Sales","meta":{"resourceType":"Group"}}`
+	accepted := []struct {
+		name, body string
+		want       GroupCreate
+	}{
+		{"microsoft", microsoft, GroupCreate{ExternalID: str(objectID), DisplayName: str("CRM Sales")}},
+		{"externalId only", `{"externalId":"a"}`, GroupCreate{ExternalID: str("a")}},
+		{"displayName only", `{"displayName":"b"}`, GroupCreate{DisplayName: str("b")}},
+		{"folded names", `{"EXTERNALID":"a","displayname":"b"}`, GroupCreate{ExternalID: str("a"), DisplayName: str("b")}},
+		{"null externalId", `{"externalId":null,"displayName":"b"}`, GroupCreate{DisplayName: str("b")}},
+		{"empty members", `{"displayName":"b","members":[]}`, GroupCreate{DisplayName: str("b")}},
+		{"null members", `{"displayName":"b","members":null}`, GroupCreate{DisplayName: str("b")}},
+		{"other keys ignored", `{"displayName":"b","id":5,"schemas":7,"meta":"x","x":{"y":1}}`, GroupCreate{DisplayName: str("b")}},
+		{"empty string", `{"displayName":""}`, GroupCreate{DisplayName: str("")}},
+	}
+	for _, tc := range accepted {
+		got, err := ParseGroupCreate([]byte(tc.body))
+		require.NoError(t, err, tc.name)
+		assert.Equal(t, tc.want, got, tc.name)
+	}
+	refused := []struct {
+		name, body, scimType string
+		members              bool
+	}{
+		{"not json", `{`, ScimTypeInvalidSyntax, false},
+		{"array", `[]`, ScimTypeInvalidSyntax, false},
+		{"string", `"Secret"`, ScimTypeInvalidSyntax, false},
+		{"trailing data", `{"displayName":"a"} {}`, ScimTypeInvalidSyntax, false},
+		{"duplicate displayName", `{"displayName":"a","displayname":"Secret"}`, ScimTypeInvalidSyntax, false},
+		{"duplicate externalId", `{"externalId":"a","externalId":"Secret"}`, ScimTypeInvalidSyntax, false},
+		{"duplicate members", `{"displayName":"a","members":[],"Members":[]}`, ScimTypeInvalidSyntax, false},
+		{"number displayName", `{"displayName":5}`, ScimTypeInvalidValue, false},
+		{"object externalId", `{"externalId":{"v":"Secret"},"displayName":"a"}`, ScimTypeInvalidValue, false},
+		{"bool displayName", `{"externalId":"a","displayName":true}`, ScimTypeInvalidValue, false},
+		{"members", `{"displayName":"a","members":[{"value":"3"}]}`, ScimTypeInvalidValue, true},
+		{"members object", `{"displayName":"a","members":{}}`, ScimTypeInvalidValue, true},
+		{"neither", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"]}`, ScimTypeInvalidValue, false},
+		{"both null", `{"externalId":null,"displayName":null}`, ScimTypeInvalidValue, false},
+		{"empty object", `{}`, ScimTypeInvalidValue, false},
+	}
+	for _, tc := range refused {
+		_, err := ParseGroupCreate([]byte(tc.body))
+		var createErr *GroupCreateError
+		require.True(t, errors.As(err, &createErr), tc.name)
+		assert.Equal(t, tc.scimType, createErr.ScimType, tc.name)
+		assert.Equal(t, tc.members, createErr.Members, tc.name)
+		assert.NotContains(t, err.Error(), "Secret", tc.name)
+	}
+}

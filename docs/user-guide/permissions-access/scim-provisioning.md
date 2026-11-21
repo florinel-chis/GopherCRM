@@ -77,8 +77,8 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 | `DELETE /scim/v2/Users/{id}` | Deactivates an account and never erases it. |
 | `GET /scim/v2/Groups` | Lists the groups of the role mapping. |
 | `GET /scim/v2/Groups/{id}` | Reads one group and its members. |
-| `PATCH /scim/v2/Groups/{id}` | Adds, removes or replaces a group's members. |
-| `POST /scim/v2/Groups` | Answers 405: groups cannot be created through SCIM. |
+| `PATCH /scim/v2/Groups/{id}` | Adds, removes or replaces a group's members; answers 204 with no body. |
+| `POST /scim/v2/Groups` | Answers 201 with the existing group when the request names a `groups` value of the role mapping; otherwise 400. |
 | `DELETE /scim/v2/Groups/{id}` | Answers 405: groups cannot be deleted through SCIM. |
 
 - **Listing.** The only filter accepted is `userName eq "<value>"`, which providers use to look a
@@ -106,10 +106,14 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   mapping unless you mean to.
 - **Groups.** Each distinct value of a mapping row with claim `groups` is one group; its
   `displayName` is that value, matched exactly, and its `id` is derived from it. Roles rows are not
-  groups. Groups come from the mapping: they cannot be created, renamed or deleted through SCIM,
-  so a POST or DELETE answers 405, a PUT gets the router's plain-text 404, and a PATCH of
-  `displayName` or any attribute other than `members` is refused with 400 `invalidPath`. A group
-  removed from the mapping answers 404. Listing accepts only the filter `displayName eq "<value>"`;
+  groups. Groups come from the mapping: they cannot be renamed or deleted through SCIM. A POST
+  only finds an existing group: when its `externalId` or, failing that, its `displayName` equals a
+  `groups` value exactly, it answers 201 with that group and changes nothing, so a repeat gives the
+  same answer; any other value is refused with 400 `invalidValue`, and a POST that lists members is
+  refused too (add them with PATCH). A DELETE answers 405, a PUT gets the router's plain-text 404,
+  and a PATCH of `displayName` or any attribute other than `members` is refused with 400
+  `invalidPath`. A successful PATCH answers 204 with no body. A group removed from the mapping
+  answers 404. Both reads accept `excludedAttributes=members`, which leaves the members out. Listing accepts only the filter `displayName eq "<value>"`;
   any other filter is refused with 400 `invalidFilter`. Entra ID looks groups up with
   `displayName eq`, so its group mapping must send the group's `objectId` as `displayName`; see
   [How to: Microsoft Entra ID](how-to-microsoft-entra-id.md#8-provision-accounts-through-scim-optional). Members are listed by their SCIM user id;
@@ -148,10 +152,13 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 
 ## What is not served
 
-- Groups are served, but only as the role mapping defines them. Creating a group (POST) or deleting
-  one (DELETE) answers 405 with a SCIM error and an `Allow` header; replacing one (PUT) is not
-  routed and gets the router's plain-text answer `404 page not found`. Renaming a group
-  (`displayName`) is refused with 400 `invalidPath`. Add or rename groups in the role mapping in
+- Groups are served, but only as the role mapping defines them. A POST of a group answers with an
+  existing group of the mapping and never adds one; a value outside the mapping is refused with
+  400 `invalidValue`. Deleting a group (DELETE) answers 405 with a SCIM error and an `Allow`
+  header; replacing one (PUT) is not routed and gets the router's plain-text answer
+  `404 page not found`. Renaming a group (`displayName`) is refused with 400 `invalidPath`, so
+  Entra ID's default group mapping, which sends the group's name as `displayName`, gets its group
+  created (201) and then its `displayName` update refused with 400 `invalidPath`. Add or rename groups in the role mapping in
   Settings → Single sign-on instead.
 - Bulk operations (/scim/v2/Bulk), sorting and ETags are not served.
 - To remove a person, have the provider deactivate them; a provider DELETE deactivates too. Erase

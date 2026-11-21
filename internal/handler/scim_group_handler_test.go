@@ -23,17 +23,22 @@ import (
 // stubSCIMGroups records the calls of the handler and answers what it is set
 // to.
 type stubSCIMGroups struct {
-	getCalls   []string
-	listCalls  []stubSCIMGroupListCall
-	patchCalls []stubSCIMGroupPatchCall
-	record     *service.SCIMGroupRecord
-	page       *service.SCIMGroupPage
-	err        error
+	getCalls    []string
+	listCalls   []stubSCIMGroupListCall
+	patchCalls  []stubSCIMGroupPatchCall
+	createCalls []stubSCIMGroupCreateCall
+	record      *service.SCIMGroupRecord
+	page        *service.SCIMGroupPage
+	err         error
 }
 
 type stubSCIMGroupListCall struct {
 	displayName       *string
 	startIndex, count int
+}
+
+type stubSCIMGroupCreateCall struct {
+	externalID, displayName *string
 }
 
 type stubSCIMGroupPatchCall struct {
@@ -48,6 +53,11 @@ func (s *stubSCIMGroups) List(_ context.Context, displayName *string, startIndex
 
 func (s *stubSCIMGroups) Get(_ context.Context, rawID string) (*service.SCIMGroupRecord, error) {
 	s.getCalls = append(s.getCalls, rawID)
+	return s.record, s.err
+}
+
+func (s *stubSCIMGroups) Create(_ context.Context, externalID, displayName *string) (*service.SCIMGroupRecord, error) {
+	s.createCalls = append(s.createCalls, stubSCIMGroupCreateCall{externalID, displayName})
 	return s.record, s.err
 }
 
@@ -143,12 +153,127 @@ func TestSCIMGroupHandler(t *testing.T) {
 	t.Run("patch", func(t *testing.T) {
 		stub := &stubSCIMGroups{record: sales}
 		w := send(setup(stub), http.MethodPatch, "/scim/v2/Groups/"+salesID, addBody)
-		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		assert.Equal(t, scim.ContentType, w.Header().Get("Content-Type"))
-		assert.Contains(t, w.Body.String(), `"members":[{"value":"3"},{"value":"9"}]`)
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+		assert.Equal(t, 0, w.Body.Len())
+		assert.Empty(t, w.Header().Get("Content-Type"))
 		require.Len(t, stub.patchCalls, 1)
 		assert.Equal(t, salesID, stub.patchCalls[0].rawID)
 		assert.Equal(t, []scim.GroupPatchOp{{Op: scim.GroupPatchAdd, Values: []string{"3"}}}, stub.patchCalls[0].patch.Ops)
+	})
+
+	t.Run("patch microsoft add and remove", func(t *testing.T) {
+		for _, tc := range []struct {
+			body string
+			want scim.GroupPatchOp
+		}{
+			{`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"$ref":null,"value":"3"}]}]}`,
+				scim.GroupPatchOp{Op: scim.GroupPatchAdd, Values: []string{"3"}}},
+			{`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Remove","path":"members","value":[{"$ref":null,"value":"3"}]}]}`,
+				scim.GroupPatchOp{Op: scim.GroupPatchRemove, Values: []string{"3"}}},
+		} {
+			stub := &stubSCIMGroups{record: sales}
+			w := send(setup(stub), http.MethodPatch, "/scim/v2/Groups/"+salesID, tc.body)
+			require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+			assert.Equal(t, 0, w.Body.Len())
+			assert.Empty(t, w.Header().Get("Content-Type"))
+			require.Len(t, stub.patchCalls, 1)
+			assert.Equal(t, []scim.GroupPatchOp{tc.want}, stub.patchCalls[0].patch.Ops)
+		}
+	})
+
+	t.Run("excludedAttributes members", func(t *testing.T) {
+		empty := &service.SCIMGroupRecord{Value: "Admins", MemberIDs: []uint{}}
+		page := &service.SCIMGroupPage{Total: 2, StartIndex: 1, Groups: []service.SCIMGroupRecord{*empty, *sales}}
+		for _, path := range []string{
+			"/scim/v2/Groups?excludedAttributes=members&filter=displayName+eq+%22Sales%22",
+			"/scim/v2/Groups?excludedAttributes=displayName,%20MEMBERS",
+			"/scim/v2/Groups/" + salesID + "?excludedAttributes=urn:ietf:params:scim:schemas:core:2.0:Group:members",
+		} {
+			stub := &stubSCIMGroups{record: sales, page: page}
+			w := send(setup(stub), http.MethodGet, path, "")
+			require.Equal(t, http.StatusOK, w.Code, path)
+			assert.NotContains(t, w.Body.String(), `"members"`, path)
+			assert.Contains(t, w.Body.String(), `"displayName":"Sales"`, path)
+		}
+		for _, path := range []string{"/scim/v2/Groups", "/scim/v2/Groups?excludedAttributes=members.value", "/scim/v2/Groups?excludedAttributes="} {
+			stub := &stubSCIMGroups{page: page}
+			w := send(setup(stub), http.MethodGet, path, "")
+			require.Equal(t, http.StatusOK, w.Code, path)
+			assert.Contains(t, w.Body.String(), `"members":[]`, path)
+			assert.Contains(t, w.Body.String(), `"members":[{"value":"3"},{"value":"9"}]`, path)
+		}
+		stub := &stubSCIMGroups{record: empty}
+		w := send(setup(stub), http.MethodGet, "/scim/v2/Groups/"+scim.GroupID("Admins"), "")
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), `"members":[]`)
+	})
+
+	t.Run("create microsoft body", func(t *testing.T) {
+		const objectID = "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159"
+		record := &service.SCIMGroupRecord{Value: objectID, MemberIDs: []uint{3}}
+		id := scim.GroupID(objectID)
+		body := `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group","http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group"],` +
+			`"externalId":"` + objectID + `","displayName":"CRM Sales","meta":{"resourceType":"Group"}}`
+		stub := &stubSCIMGroups{record: record}
+		w := send(setup(stub), http.MethodPost, "/scim/v2/Groups", body)
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+		assert.Equal(t, scim.ContentType, w.Header().Get("Content-Type"))
+		location := base + "/scim/v2/Groups/" + id
+		assert.Equal(t, location, w.Header().Get("Location"))
+		assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"id":"`+id+`","displayName":"`+objectID+`",
+			"members":[{"value":"3"}],"meta":{"resourceType":"Group","location":"`+location+`"}}`, w.Body.String())
+		require.Len(t, stub.createCalls, 1)
+		require.NotNil(t, stub.createCalls[0].externalID)
+		require.NotNil(t, stub.createCalls[0].displayName)
+		assert.Equal(t, objectID, *stub.createCalls[0].externalID)
+		assert.Equal(t, "CRM Sales", *stub.createCalls[0].displayName)
+
+		stub = &stubSCIMGroups{record: record}
+		w = send(setup(stub), http.MethodPost, "/scim/v2/Groups?excludedAttributes=members", `{"displayName":"`+objectID+`"}`)
+		require.Equal(t, http.StatusCreated, w.Code)
+		assert.NotContains(t, w.Body.String(), `"members"`)
+		require.Len(t, stub.createCalls, 1)
+		assert.Nil(t, stub.createCalls[0].externalID)
+	})
+
+	t.Run("create parse refusals call no service", func(t *testing.T) {
+		const syntax = "The request body is not a valid SCIM Group"
+		const mapping = "A Group can be created only for a groups value of the single sign-on role mapping"
+		for _, tc := range []struct{ name, body, scimType, detail string }{
+			{"not json", `{`, "invalidSyntax", syntax},
+			{"array", `[{"displayName":"Secret-Name"}]`, "invalidSyntax", syntax},
+			{"trailing", `{"displayName":"Secret-Name"}{}`, "invalidSyntax", syntax},
+			{"duplicate key", `{"displayName":"Secret-Name","DisplayName":"Secret-Name"}`, "invalidSyntax", syntax},
+			{"members", `{"displayName":"Secret-Name","members":[{"value":"3"}]}`, "invalidValue", "Add the members of a Group with PATCH"},
+			{"number displayName", `{"displayName":5}`, "invalidValue", mapping},
+			{"object externalId", `{"externalId":{"x":"Secret-Name"}}`, "invalidValue", mapping},
+			{"neither", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"]}`, "invalidValue", mapping},
+		} {
+			stub := &stubSCIMGroups{record: sales}
+			w := send(setup(stub), http.MethodPost, "/scim/v2/Groups", tc.body)
+			assert.Equal(t, http.StatusBadRequest, w.Code, tc.name)
+			assert.Equal(t, errorBody("400", tc.scimType, tc.detail), w.Body.String(), tc.name)
+			assert.NotContains(t, w.Body.String(), "Secret-Name", tc.name)
+			assert.Empty(t, w.Header().Get("Location"), tc.name)
+			assert.Empty(t, stub.createCalls, tc.name)
+		}
+	})
+
+	t.Run("create of a value outside the mapping", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := logrus.New()
+		logger.SetOutput(&buf)
+		previous := utils.Logger
+		utils.Logger = logger
+		t.Cleanup(func() { utils.Logger = previous })
+
+		stub := &stubSCIMGroups{err: fmt.Errorf("not a value: %w", service.ErrSCIMInvalidValue)}
+		w := send(setup(stub), http.MethodPost, "/scim/v2/Groups", `{"externalId":"Secret-Id","displayName":"Secret-Name"}`)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Equal(t, errorBody("400", "invalidValue", "A Group can be created only for a groups value of the single sign-on role mapping"), w.Body.String())
+		assert.Empty(t, w.Header().Get("Location"))
+		assert.Len(t, stub.createCalls, 1)
+		assert.Empty(t, buf.String(), "an unknown value is not logged as a failure")
 	})
 
 	t.Run("patch parse refusals call no service", func(t *testing.T) {
@@ -194,20 +319,19 @@ func TestSCIMGroupHandler(t *testing.T) {
 	})
 
 	t.Run("method not allowed", func(t *testing.T) {
-		for _, tc := range []struct{ method, path, allow string }{
-			{http.MethodPost, "/scim/v2/Groups", "GET"},
-			{http.MethodDelete, "/scim/v2/Groups/" + salesID, "GET, PATCH"},
-		} {
-			stub := &stubSCIMGroups{}
-			w := send(setup(stub), tc.method, tc.path, `{"displayName":"New"}`)
-			assert.Equal(t, http.StatusMethodNotAllowed, w.Code, tc.method)
-			assert.Equal(t, tc.allow, w.Header().Get("Allow"), tc.method)
-			assert.Equal(t, scim.ContentType, w.Header().Get("Content-Type"), tc.method)
-			assert.Equal(t, errorBody("405", "", "Groups come from the single sign-on role mapping and cannot be created or deleted through SCIM"), w.Body.String(), tc.method)
-			assert.Empty(t, stub.patchCalls)
-			assert.Empty(t, stub.getCalls)
-			assert.Empty(t, stub.listCalls)
-		}
+		stub := &stubSCIMGroups{}
+		w := send(setup(stub), http.MethodDelete, "/scim/v2/Groups/"+salesID, `{"displayName":"New"}`)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+		assert.Equal(t, "GET, PATCH", w.Header().Get("Allow"))
+		assert.Equal(t, scim.ContentType, w.Header().Get("Content-Type"))
+		assert.Equal(t, errorBody("405", "", "Groups come from the single sign-on role mapping and cannot be deleted through SCIM"), w.Body.String())
+		assert.Empty(t, stub.patchCalls)
+		assert.Empty(t, stub.getCalls)
+		assert.Empty(t, stub.listCalls)
+		assert.Empty(t, stub.createCalls)
+
+		w = send(setup(stub), http.MethodPut, "/scim/v2/Groups/"+salesID, `{"displayName":"New"}`)
+		assert.Equal(t, http.StatusNotFound, w.Code, "PUT is not routed")
 	})
 
 	t.Run("service error is a SCIM 500 and logs no request value", func(t *testing.T) {
@@ -226,6 +350,7 @@ func TestSCIMGroupHandler(t *testing.T) {
 			{http.MethodGet, "/scim/v2/Groups/" + secretID, ""},
 			{http.MethodGet, "/scim/v2/Groups?filter=displayName+eq+%22" + secretGroup + "%22", ""},
 			{http.MethodPatch, "/scim/v2/Groups/" + secretID, body},
+			{http.MethodPost, "/scim/v2/Groups", `{"externalId":"Secret-External-630","displayName":"` + secretGroup + `"}`},
 		} {
 			buf.Reset()
 			stub := &stubSCIMGroups{err: errors.New("driver: connection refused")}
@@ -235,7 +360,7 @@ func TestSCIMGroupHandler(t *testing.T) {
 			logged := buf.String()
 			assert.Contains(t, logged, "scim_groups", tc.path)
 			assert.Contains(t, logged, "SCIM group request failed", tc.path)
-			for _, secret := range []string{secretID, secretGroup, "424242", "Secret-Display"} {
+			for _, secret := range []string{secretID, secretGroup, "424242", "Secret-Display", "Secret-External-630"} {
 				assert.NotContains(t, logged, secret, tc.path)
 			}
 		}

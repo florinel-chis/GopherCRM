@@ -178,8 +178,15 @@ GopherCRM does with each request.
    matched exactly, so the group's `objectId` finds it. The `objectId` never changes, so Entra ID
    never sends a `displayName` update; GopherCRM would refuse one with 400 `invalidPath`. A group
    that is assigned in Entra ID but has no `groups` row in the role mapping is not found: Entra ID
-   then tries to create it, gets 405, and the **Provisioning logs** show the failure. Add the
-   group's Object ID to the role mapping instead.
+   then tries to create it, GopherCRM refuses the create with 400 `invalidValue`, and the
+   **Provisioning logs** show the failure. Add the group's Object ID to the role mapping instead.
+   When Entra ID creates a group whose Object ID is in the role mapping, GopherCRM answers 201
+   with the existing group and adds nothing.
+
+   Under the default group mapping (`displayName` → `displayName`), a group whose Object ID is in
+   the role mapping is still created (201), because Entra ID also sends the Object ID as
+   `externalId`. Entra ID then sends a `displayName` update with the group's name, which GopherCRM
+   refuses with 400 `invalidPath`, so keep the mapping of this step.
 6. Under **Settings**, set **Scope** to "Sync only assigned users and groups". Set **Provisioning
    Status** to **On** and choose **Save**.
 7. Optionally, use **Provision on demand** for one person first and read the result under

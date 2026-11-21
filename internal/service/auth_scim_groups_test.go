@@ -16,6 +16,8 @@ package service
 // deactivated and every credential it holds ends; a role that lacks a
 // permission the old one had ends its sessions. Every refusal also asserts
 // that is_active, token_version, refresh tokens and API keys are unchanged.
+// Issue #630: a group create resolves a current groups value, externalId
+// before displayName, byte for byte, and writes nothing.
 
 import (
 	"context"
@@ -402,6 +404,46 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			record, err = f.svc.Patch(ctx, salesID, parseGroupPatch(t, groupRemove(ann.ID)))
 			f.assertRefused(t, apperrors.ErrNotFound, record, err, before)
 			assert.NotContains(t, err.Error(), scimGroupSales, "no error names the group")
+		}},
+		{"create", func(t *testing.T) {
+			// Issue #630: a create resolves a current groups value and writes
+			// nothing.
+			ann := f.seed(t, "ann@x.test", models.RoleSales, true, scimGroupSales)
+			str := func(v string) *string { return &v }
+			before := f.state(t)
+			rows := f.count(t, "scim_group_members", "")
+
+			record, err := f.svc.Create(ctx, str(scimGroupSales), str("CRM Sales"))
+			require.NoError(t, err)
+			assert.Equal(t, &SCIMGroupRecord{Value: scimGroupSales, MemberIDs: []uint{ann.ID}}, record, "externalId match with its members")
+			record, err = f.svc.Create(ctx, str(scimGroupSales), str("CRM Sales"))
+			require.NoError(t, err, "a repeat answers the same group")
+			assert.Equal(t, scimGroupSales, record.Value)
+			record, err = f.svc.Create(ctx, str("unknown-object-id"), str(scimGroupAdmins))
+			require.NoError(t, err)
+			assert.Equal(t, &SCIMGroupRecord{Value: scimGroupAdmins, MemberIDs: []uint{}}, record, "displayName fallback")
+			record, err = f.svc.Create(ctx, nil, str(scimGroupAdmins))
+			require.NoError(t, err)
+			assert.Equal(t, scimGroupAdmins, record.Value)
+			record, err = f.svc.Create(ctx, str(scimGroupAdmins), str(scimGroupSales))
+			require.NoError(t, err)
+			assert.Equal(t, scimGroupAdmins, record.Value, "externalId wins when both are values")
+
+			for _, tc := range []struct{ externalID, displayName *string }{
+				{str("sales"), nil}, {str("Sales "), nil}, {nil, str("sales")}, {nil, str("Sales ")},
+				{str("SALES"), str("admins")}, {str("unknown"), str("unknown")}, {str(scimGroupRoleOnly), nil}, {nil, nil},
+			} {
+				record, err := f.svc.Create(ctx, tc.externalID, tc.displayName)
+				f.assertRefused(t, ErrSCIMInvalidValue, record, err, before)
+				assert.NotContains(t, err.Error(), "ales", "no error names the value")
+			}
+
+			// The mapping drops Sales: its create is refused.
+			f.setMapping([]SSORoleMapping{{Claim: SSOClaimGroups, Value: scimGroupAdmins, RoleID: f.roleIDs[models.RoleAdmin]}})
+			record, err = f.svc.Create(ctx, str(scimGroupSales), str(scimGroupSales))
+			f.assertRefused(t, ErrSCIMInvalidValue, record, err, before)
+			assert.Equal(t, before, f.state(t), "no create writes anything")
+			assert.Equal(t, rows, f.count(t, "scim_group_members", ""))
 		}},
 		{"add makes admin", func(t *testing.T) {
 			f.seed(t, "keeper@x.test", models.RoleAdmin, true)

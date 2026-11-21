@@ -21,9 +21,11 @@ const (
 	scimGroupInvalidValueDetail      = "A Group member is not a user this provider serves, or the role it maps to is invalid"
 	scimGroupLastAdminDetail         = "The last active admin must stay an active admin"
 	scimGroupInvalidPathDetail       = "Only the members of a Group can be changed"
-	scimGroupMethodNotAllowedDetail  = "Groups come from the single sign-on role mapping and cannot be created or deleted through SCIM"
-	scimGroupCollectionAllow         = "GET"
+	scimGroupMethodNotAllowedDetail  = "Groups come from the single sign-on role mapping and cannot be deleted through SCIM"
 	scimGroupResourceAllow           = "GET, PATCH"
+	scimGroupCreateSyntaxDetail      = "The request body is not a valid SCIM Group"
+	scimGroupCreateMembersDetail     = "Add the members of a Group with PATCH"
+	scimGroupCreateValueDetail       = "A Group can be created only for a groups value of the single sign-on role mapping"
 	scimGroupInternalErrorLogMessage = "SCIM group request failed"
 )
 
@@ -31,8 +33,9 @@ const (
 // /scim/v2/Groups with startIndex/count paging and the one filter
 // displayName eq "<value>", GET /scim/v2/Groups/:id and PATCH
 // /scim/v2/Groups/:id, which changes the members and recomputes their roles.
-// The groups come from the single sign-on role mapping, so POST and DELETE
-// answer 405. Not part of the OpenAPI document: /scim/v2 lies outside the API
+// Both reads honour excludedAttributes=members. The groups come from the
+// single sign-on role mapping, so POST /scim/v2/Groups (#630) only resolves
+// a mapping value to its existing group and DELETE answers 405. Not part of the OpenAPI document: /scim/v2 lies outside the API
 // base path.
 type SCIMGroupHandler struct {
 	groups        service.SCIMGroupService
@@ -53,12 +56,18 @@ func scimGroupLogger(c *gin.Context) *logrus.Entry {
 	return base.WithFields(logrus.Fields{"component": "scim_groups", "request_id": c.GetString("request_id")})
 }
 
-func (h *SCIMGroupHandler) resource(record *service.SCIMGroupRecord) scim.Group {
+// resource builds the Group of record; it omits members when the request's
+// excludedAttributes names them.
+func (h *SCIMGroupHandler) resource(c *gin.Context, record *service.SCIMGroupRecord) scim.Group {
 	ids := make([]string, len(record.MemberIDs))
 	for i, id := range record.MemberIDs {
 		ids[i] = strconv.FormatUint(uint64(id), 10)
 	}
-	return scim.NewGroup(h.publicBaseURL, record.Value, ids)
+	group := scim.NewGroup(h.publicBaseURL, record.Value, ids)
+	if excluded, present := c.GetQuery("excludedAttributes"); present && scim.ExcludesMembers(excluded) {
+		group = group.WithoutMembers()
+	}
+	return group
 }
 
 // List answers GET /scim/v2/Groups.
@@ -86,9 +95,9 @@ func (h *SCIMGroupHandler) List(c *gin.Context) {
 	}
 	resources := make([]scim.Group, 0, len(result.Groups))
 	for i := range result.Groups {
-		resources = append(resources, h.resource(&result.Groups[i]))
+		resources = append(resources, h.resource(c, &result.Groups[i]))
 	}
-	h.write(c, scim.NewGroupList(result.Total, result.StartIndex, resources))
+	h.write(c, http.StatusOK, scim.NewGroupList(result.Total, result.StartIndex, resources))
 }
 
 // Get answers GET /scim/v2/Groups/:id.
@@ -98,10 +107,50 @@ func (h *SCIMGroupHandler) Get(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	h.write(c, h.resource(record))
+	h.write(c, http.StatusOK, h.resource(c, record))
 }
 
-// Patch answers PATCH /scim/v2/Groups/:id: 200 with the patched group.
+// Create answers POST /scim/v2/Groups (#630): 201 with the existing group
+// whose value the body's externalId or, failing that, displayName equals,
+// and its Location. It writes nothing, so a repeat gives the same answer.
+func (h *SCIMGroupHandler) Create(c *gin.Context) {
+	raw, ok := readSCIMObject(c)
+	if !ok {
+		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
+		return
+	}
+	body, err := scim.ParseGroupCreate(raw)
+	if err != nil {
+		var createErr *scim.GroupCreateError
+		if !errors.As(err, &createErr) {
+			h.fail(c, err)
+			return
+		}
+		switch {
+		case createErr.ScimType == scim.ScimTypeInvalidSyntax:
+			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
+		case createErr.Members:
+			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateMembersDetail)
+		default:
+			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
+		}
+		return
+	}
+	record, err := h.groups.Create(c.Request.Context(), body.ExternalID, body.DisplayName)
+	if err != nil {
+		if errors.Is(err, service.ErrSCIMInvalidValue) {
+			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
+			return
+		}
+		h.fail(c, err)
+		return
+	}
+	group := h.resource(c, record)
+	c.Header("Location", group.Meta.Location)
+	h.write(c, http.StatusCreated, group)
+}
+
+// Patch answers PATCH /scim/v2/Groups/:id: 204 without a body.
 func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 	raw, ok := readSCIMObject(c)
 	if !ok {
@@ -127,7 +176,7 @@ func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 		scim.WriteErrorType(c, http.StatusBadRequest, patchErr.ScimType, detail)
 		return
 	}
-	record, err := h.groups.Patch(scimWriteContext(c), c.Param("id"), patch)
+	_, err = h.groups.Patch(scimWriteContext(c), c.Param("id"), patch)
 	if err != nil {
 		// The last-admin refusal first: it must answer mutability even if
 		// it were ever also an invalidValue.
@@ -141,28 +190,24 @@ func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 		}
 		return
 	}
-	h.write(c, h.resource(record))
+	c.Status(http.StatusNoContent)
 }
 
-// MethodNotAllowed answers POST /scim/v2/Groups and DELETE
-// /scim/v2/Groups/:id with a SCIM 405 and the Allow header of the path: the
-// groups are the role mapping's values. The request body is not read.
+// MethodNotAllowed answers DELETE /scim/v2/Groups/:id with a SCIM 405 and
+// Allow: GET, PATCH: the groups are the role mapping's values. The request
+// body is not read.
 func (h *SCIMGroupHandler) MethodNotAllowed(c *gin.Context) {
-	allow := scimGroupResourceAllow
-	if c.Param("id") == "" {
-		allow = scimGroupCollectionAllow
-	}
-	c.Header("Allow", allow)
+	c.Header("Allow", scimGroupResourceAllow)
 	scim.WriteError(c, http.StatusMethodNotAllowed, scimGroupMethodNotAllowedDetail)
 }
 
-func (h *SCIMGroupHandler) write(c *gin.Context, document any) {
+func (h *SCIMGroupHandler) write(c *gin.Context, status int, document any) {
 	body, err := json.Marshal(document)
 	if err != nil {
 		h.fail(c, err)
 		return
 	}
-	c.Data(http.StatusOK, scim.ContentType, body)
+	c.Data(status, scim.ContentType, body)
 }
 
 // fail maps a not-found to 404 and anything else to 500, logged without the

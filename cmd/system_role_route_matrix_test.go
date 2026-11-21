@@ -100,7 +100,7 @@ var routeMatrixPublic = map[string]bool{
 	"POST /api/v1/quotes/public/render":          true,
 	// SCIM 2.0 routes, the discovery documents (#468), the Users read (#469),
 	// the Users create and replace (#470), patch (#471) and delete (#504), and
-	// the Groups read, patch and 405s (#506): outside the API prefix, behind
+	// the Groups read, patch, create (#630) and 405 (#506): outside the API prefix, behind
 	// the SCIM token authentication instead of Auth, and not
 	// permission-guarded.
 	"GET /scim/v2/ServiceProviderConfig": true,
