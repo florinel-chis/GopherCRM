@@ -16,6 +16,15 @@ so the backend's CORS allowlist applies; the Compose files list the UI origin
 for you (`CORS_ALLOWED_ORIGINS`). The API is also reachable directly on
 `http://localhost:8080/api/v1` if you want to hit it with curl or an API key.
 
+The UI container's nginx also sends browser headers on every page and asset of
+the web app, error answers included: a content policy (`Content-Security-Policy`
+that allows scripts, styles, images, fonts and API calls from the UI origin
+only), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and
+`Referrer-Policy: same-origin`. Answers proxied from `/api/v1/` keep the
+backend's own headers. A UI built with `VITE_API_BASE_URL` on another origin
+(see below) needs that origin added to `connect-src` in
+`gocrm-ui/docker/nginx.conf`.
+
 If you would rather not run a database server, `docker-compose.sqlite.yml` is a
 two-container variant of the same stack backed by a SQLite file — see
 [SQLite flavor](#sqlite-flavor-no-database-server).

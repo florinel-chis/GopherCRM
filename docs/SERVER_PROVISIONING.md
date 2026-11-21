@@ -369,10 +369,18 @@ server {
     # keep that request out of the access log.
     location = /quote-response {
         access_log off;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
         try_files /index.html =404;
     }
 
     location / {
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "same-origin" always;
         try_files $uri $uri/ /index.html;
     }
 }
@@ -395,6 +403,13 @@ Enable it and run `nginx -t && systemctl reload nginx` again.
   uses `$uri` instead of `$request` works too). The page drops the token from the address bar
   after reading it and sends it to the API in a request header, so `/api/v1/` requests carry no
   token in their URL.
+- The four `add_header ... always;` lines (a content policy, `X-Frame-Options`,
+  `X-Content-Type-Options` and `Referrer-Policy`) are the same set as the Docker image's
+  `gocrm-ui/docker/nginx.conf`, and `always` puts them on error answers too. nginx drops inherited
+  `add_header` lines in a location that sets its own, so they are repeated in each web app
+  location instead of the server level. `location /api/v1/` and `location = /health` carry none:
+  proxied answers keep the backend's own headers. A UI built with `VITE_API_BASE_URL` on another
+  origin must add that origin to `connect-src`.
 - The web root stays empty until the first deploy, so the site answers 404 until then.
 
 ## Bootstrap and first deploy

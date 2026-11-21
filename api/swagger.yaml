@@ -18330,6 +18330,19 @@ paths:
             Cache-Control:
               description: no-store
               type: string
+            Content-Security-Policy:
+              description: default-src 'self'; script-src 'self' https://www.google.com/recaptcha/
+                https://www.gstatic.com/recaptcha/; frame-src https://www.google.com/recaptcha/
+                https://recaptcha.google.com/recaptcha/; connect-src 'self' https://www.google.com/recaptcha/;
+                style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src
+                'none'; base-uri 'none'; form-action 'self'
+              type: string
+            Referrer-Policy:
+              description: strict-origin-when-cross-origin
+              type: string
+            X-Content-Type-Options:
+              description: nosniff
+              type: string
           schema:
             type: string
         "429":
@@ -18364,6 +18377,20 @@ paths:
         "200":
           description: 'HTML page: the confirmation button, or the invalid-link page
             when the token is missing (text/html; charset=utf-8)'
+          headers:
+            Content-Security-Policy:
+              description: default-src 'none'; style-src 'unsafe-inline'; form-action
+                'self'; frame-ancestors 'none'; base-uri 'none'
+              type: string
+            Referrer-Policy:
+              description: same-origin
+              type: string
+            X-Content-Type-Options:
+              description: nosniff
+              type: string
+            X-Frame-Options:
+              description: DENY
+              type: string
           schema:
             type: string
         "429":
@@ -18403,6 +18430,20 @@ paths:
         "200":
           description: 'HTML page: ''Email confirmed'' on success, otherwise the generic
             invalid-link page (text/html; charset=utf-8)'
+          headers:
+            Content-Security-Policy:
+              description: default-src 'none'; style-src 'unsafe-inline'; form-action
+                'self'; frame-ancestors 'none'; base-uri 'none'
+              type: string
+            Referrer-Policy:
+              description: same-origin
+              type: string
+            X-Content-Type-Options:
+              description: nosniff
+              type: string
+            X-Frame-Options:
+              description: DENY
+              type: string
           schema:
             type: string
         "429":

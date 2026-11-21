@@ -3,6 +3,9 @@ package handler
 import (
 	"fmt"
 	"html"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // The forms module serves four small pages straight from the backend: the
@@ -16,6 +19,36 @@ import (
 // deliberately bypass the API envelope: their audience is a browser window,
 // not a script.
 const formPageContentType = "text/html; charset=utf-8"
+
+// formPageContentPolicy is the Content-Security-Policy of the confirmation
+// button page and its two outcome pages. They carry only the inline <style>
+// of formPageShell and a same-origin POST form, and nothing frames them.
+const formPageContentPolicy = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
+// formHostedPageContentPolicy is the Content-Security-Policy of the hosted
+// form page. It loads the same-origin embed script, which injects a <style>,
+// calls the same-origin API and may load reCAPTCHA. It has no frame-ancestors
+// (and the page no X-Frame-Options) because the hosted page may be framed.
+const formHostedPageContentPolicy = "default-src 'self'; script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; frame-src https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; connect-src 'self' https://www.google.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'"
+
+// writeFormPage answers 200 with a confirmation page and its browser headers.
+func writeFormPage(c *gin.Context, page []byte) {
+	c.Header("Content-Security-Policy", formPageContentPolicy)
+	c.Header("X-Frame-Options", "DENY")
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Referrer-Policy", "same-origin")
+	c.Data(http.StatusOK, formPageContentType, page)
+}
+
+// writeHostedFormPage answers 200 with the hosted form page and its browser
+// headers. The referrer policy stays at the browser default so reCAPTCHA
+// still receives the page origin.
+func writeHostedFormPage(c *gin.Context, page []byte) {
+	c.Header("Content-Security-Policy", formHostedPageContentPolicy)
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+	c.Data(http.StatusOK, formPageContentType, page)
+}
 
 // formPageCSS is inlined into every page. No external stylesheet, no font
 // download, no third-party request: these pages must render identically for a
