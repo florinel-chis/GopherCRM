@@ -19,6 +19,16 @@ type AuthHandler struct {
 	// every password change, password reset request, reset completion and
 	// logout that reaches the service (#550).
 	audit service.AuthAuditService
+	// resetQueue, when set, takes every valid password reset request; the
+	// queue issues the reset and writes its audit row after the answer.
+	resetQueue PasswordResetSubmitter
+}
+
+// PasswordResetSubmitter takes a password reset request for later issuing
+// (service.PasswordResetQueue). Submit never blocks; false means the request
+// was dropped.
+type PasswordResetSubmitter interface {
+	Submit(ctx context.Context, email string) bool
 }
 
 func NewAuthHandler(authService service.AuthService, userService service.UserService) *AuthHandler {
@@ -34,6 +44,15 @@ func NewAuthHandler(authService service.AuthService, userService service.UserSer
 // change.
 func (h *AuthHandler) WithAudit(audit service.AuthAuditService) *AuthHandler {
 	h.audit = audit
+	return h
+}
+
+// WithPasswordResetQueue makes RequestPasswordReset hand the email to q and
+// answer straight away; q issues the reset and writes the audit row. Without
+// a queue the request is issued and audited before the answer. cmd/main.go
+// always sets the queue; the synchronous path serves handler-only setups.
+func (h *AuthHandler) WithPasswordResetQueue(q PasswordResetSubmitter) *AuthHandler {
+	h.resetQueue = q
 	return h
 }
 
@@ -472,6 +491,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 // RequestPasswordReset godoc
 // @Summary Request a password reset link
 // @Description Public. Always the same 200 and the same message, whether or not an account exists for the email (anti-enumeration, like login). When an active account exists, its outstanding reset tokens are invalidated, a new single-use token valid for one hour is created and a link to APP_BASE_URL/reset-password?token=... is emailed (only logged when SMTP is not configured). A deactivated account receives nothing, and neither does an account linked to single sign-on (one with a linked OpenID Connect identity) unless password reset is allowed for such accounts (allow_password in /settings/sso, default off). Storage and delivery failures are logged server-side and never change the response.
+// @Description The request is answered before the account is looked up: the email is handed to a background queue (one worker, up to 100 waiting requests) that issues and mails the link, normally within seconds, and writes the reset_request audit row. A request the full queue cannot take is dropped with the same 200 and recorded as an unavailable reset_request row.
 // @Description Rate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.
 // @Tags auth
 // @Accept json
@@ -490,11 +510,18 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
-	// The service logs every outcome itself; the result only feeds the audit
-	// row, so this response is identical for existing and unknown accounts.
-	userID, err := h.authService.IssuePasswordReset(req.Email)
-	if h.audit != nil {
-		h.audit.RecordPasswordResetRequest(auditContext(c), userID, err)
+	if h.resetQueue != nil {
+		// The queue issues the reset and writes the audit row after this
+		// answer; a request it cannot take is dropped with the same answer.
+		h.resetQueue.Submit(auditContext(c), req.Email)
+	} else {
+		// The service logs every outcome itself; the result only feeds the
+		// audit row, so this response is identical for existing and unknown
+		// accounts.
+		userID, err := h.authService.IssuePasswordReset(req.Email)
+		if h.audit != nil {
+			h.audit.RecordPasswordResetRequest(auditContext(c), userID, err)
+		}
 	}
 
 	response := MessageResponse{Message: "If an account exists for that email, a password reset link has been sent"}

@@ -34,7 +34,7 @@ func TestWebhookProductionWiring(t *testing.T) {
 			"handler.SetupWebhookRoutes(protected, webhookHandler)",
 			"webhooks.start(backgroundCtx)",
 			"service.WithWebhookWorkers(service.WebhookWorkers)",
-			"combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)",
+			"combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, passwordReset.Stop, webhooks.Stop, aeoRuntime.Stop)",
 		} {
 			assert.Contains(t, text, fragment)
 		}

@@ -73,7 +73,11 @@ func TestPasswordResetSSOAccountWired(t *testing.T) {
 		require.NoError(t, models.DB.Model(&models.PasswordResetToken{}).Where("user_id = ?", userID).Count(&n).Error)
 		return n
 	}
+	// The reset queue issues each request after the answer and writes its
+	// audit row last, so the row tells that the request has been handled.
+	awaitResetRequestRow(t, provisioned.ID)
 	assert.Zero(t, tokens(provisioned.ID), "an account provisioned by single sign-on gets no reset token")
+	awaitResetRequestRow(t, password.ID)
 	assert.Equal(t, int64(1), tokens(password.ID), "a password account gets one reset token")
 }
 
@@ -160,6 +164,7 @@ func TestSSOPasswordPolicyWired(t *testing.T) {
 	require.NoError(t, err)
 	status, raw = do(http.MethodPost, "/auth/password-reset", string(body), "")
 	require.Equal(t, http.StatusOK, status, raw)
+	awaitResetRequestRow(t, linked.ID)
 	var resetTokens int64
 	require.NoError(t, models.DB.Model(&models.PasswordResetToken{}).Where("user_id = ?", linked.ID).Count(&resetTokens).Error)
 	assert.Equal(t, int64(1), resetTokens, "with allow_password on a linked account gets one reset token")

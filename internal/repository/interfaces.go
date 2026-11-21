@@ -982,6 +982,9 @@ type PasswordResetTokenRepository interface {
 	MarkUsed(id uint) error
 	// InvalidateAllForUser marks every outstanding (unused, unexpired) token of
 	// the user as used, so only the most recently issued reset link works.
+	// The reset request calls it before it stores a new token, and
+	// userRepository.UpdateFields calls it with every login email change, so
+	// a link mailed to the old address stops working.
 	InvalidateAllForUser(userID uint) error
 	DeleteExpired() error
 	WithTx(tx *gorm.DB) PasswordResetTokenRepository

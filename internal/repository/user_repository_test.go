@@ -116,3 +116,60 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 		assert.True(t, apperrors.IsNotFound(repo.UpdateLastLogin(user.ID)))
 	})
 }
+
+// A login email change through UpdateFields spends the user's unused password
+// reset tokens in the same write; nothing else does.
+func TestUpdateFieldsEmailSpendsResetTokens(t *testing.T) {
+	setup := func(t *testing.T) (*gorm.DB, *models.User, *models.User) {
+		t.Helper()
+		db := setupUserRepoDB(t)
+		require.NoError(t, db.AutoMigrate(&models.PasswordResetToken{}))
+		owner := createUserRepoTestUser(t, db, "reset-owner@example.com")
+		other := createUserRepoTestUser(t, db, "reset-other@example.com")
+		for i, u := range []*models.User{owner, other} {
+			require.NoError(t, db.Create(&models.PasswordResetToken{UserID: u.ID,
+				TokenHash: []string{"hash-owner", "hash-other"}[i], ExpiresAt: time.Now().Add(time.Hour)}).Error)
+		}
+		return db, owner, other
+	}
+	unused := func(t *testing.T, db *gorm.DB, userID uint) bool {
+		t.Helper()
+		var token models.PasswordResetToken
+		require.NoError(t, db.Where("user_id = ?", userID).First(&token).Error)
+		return token.UsedAt == nil
+	}
+
+	t.Run("email_change_spends_own_tokens", func(t *testing.T) {
+		db, owner, other := setup(t)
+		require.NoError(t, NewUserRepository(db).UpdateFields(owner.ID, map[string]interface{}{"email": "reset-owner-new@example.com"}))
+		assert.False(t, unused(t, db, owner.ID), "the owner's link is spent")
+		assert.True(t, unused(t, db, other.ID), "another user's link is untouched")
+	})
+
+	t.Run("other_fields_keep_tokens", func(t *testing.T) {
+		db, owner, _ := setup(t)
+		require.NoError(t, NewUserRepository(db).UpdateFields(owner.ID, map[string]interface{}{"first_name": "Renamed"}))
+		assert.True(t, unused(t, db, owner.ID))
+	})
+
+	t.Run("duplicate_email_keeps_tokens", func(t *testing.T) {
+		db, owner, other := setup(t)
+		err := NewUserRepository(db).UpdateFields(owner.ID, map[string]interface{}{"email": other.Email})
+		require.ErrorIs(t, err, apperrors.ErrDuplicateEmail)
+		assert.True(t, unused(t, db, owner.ID))
+	})
+
+	t.Run("inside_transaction_rolls_back_with_caller", func(t *testing.T) {
+		db, owner, _ := setup(t)
+		callerFailed := errors.New("caller failed after the email write")
+		err := db.Transaction(func(tx *gorm.DB) error {
+			require.NoError(t, NewUserRepository(db).WithTx(tx).UpdateFields(owner.ID, map[string]interface{}{"email": "reset-owner-tx@example.com"}))
+			return callerFailed
+		})
+		require.ErrorIs(t, err, callerFailed)
+		assert.True(t, unused(t, db, owner.ID), "the caller's rollback keeps the link")
+		var reread models.User
+		require.NoError(t, db.First(&reread, owner.ID).Error)
+		assert.Equal(t, "reset-owner@example.com", reread.Email)
+	})
+}

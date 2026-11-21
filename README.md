@@ -724,7 +724,10 @@ top-level `status` stays `healthy` and the answer stays 200 either way.
   once and only under the session it was sent with.
 - `POST /api/v1/auth/password-reset` - Request a password-reset email. Always answers `200`
   whether or not the account exists (anti-enumeration). Delivery goes through SMTP when
-  `SMTP_HOST` is configured, otherwise a logging fallback.
+  `SMTP_HOST` is configured, otherwise a logging fallback. The answer comes before the account is
+  looked up: a background queue (one worker, up to 100 waiting requests) issues the link and
+  mails it, normally within seconds. Changing an account's login email ends the reset links issued
+  before the change.
 - `POST /api/v1/auth/password-reset/confirm` - Redeem a single-use reset token (1 h expiry) and set
   a new password. The token claim, the password update, the lockout reset and the revocation of
   all refresh tokens are one transaction: a failed or rejected confirmation leaves the link

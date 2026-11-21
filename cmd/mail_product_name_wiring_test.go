@@ -204,6 +204,15 @@ func TestMailProductNameProductionWiring(t *testing.T) {
 
 	response := call(http.MethodPost, "/auth/password-reset", map[string]string{"email": admin.Email}, false)
 	require.Equal(t, http.StatusOK, response.Code, "body: %s", response.Body.String())
+	// The reset queue sends the mail after the answer.
+	require.Eventually(t, func() bool {
+		for _, subject := range relay.subjects(t) {
+			if subject == "Reset your Acme Ltd password" {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "the reset mail reached the relay")
 
 	response = call(http.MethodPost, fmt.Sprintf("/quotes/%d/email", quote.ID), nil, true)
 	require.Equal(t, http.StatusOK, response.Code, "body: %s", response.Body.String())

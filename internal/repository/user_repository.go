@@ -135,6 +135,16 @@ var userUpdatableColumns = map[string]struct{}{
 // wrote the erased person's name, email and password hash back and cleared
 // deleted_at; writing every column of a stale struct could also put an old
 // password hash back over a newer one. Callers name the columns they own.
+//
+// A write that names "email" (callers add it only when the login email
+// changes: the own profile and the admin edit through UpdateAs, the
+// ungoverned userService.Update, the SCIM replace and patch) also spends every
+// unused password reset token of the user, so a link mailed to the old
+// address stops working. Both writes are one unit (a transaction, or a
+// SAVEPOINT when the handle is bound to one): the token write runs only after
+// the users UPDATE matched the live row, and a failed users write (duplicate
+// email, not found) changes no token. The lock order is users, then
+// password_reset_tokens, as in the reset request.
 func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) error {
 	if len(fields) == 0 {
 		return nil
@@ -144,7 +154,20 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 			return fmt.Errorf("user column %q is not updatable", column)
 		}
 	}
-	result := r.db.Model(&models.User{}).
+	if _, emailChange := fields["email"]; !emailChange {
+		return updateUserFields(r.db, id, fields)
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := updateUserFields(tx, id, fields); err != nil {
+			return err
+		}
+		return NewPasswordResetTokenRepository(tx.Session(&gorm.Session{NewDB: true})).InvalidateAllForUser(id)
+	})
+}
+
+// updateUserFields is the conditional users UPDATE of UpdateFields on db.
+func updateUserFields(db *gorm.DB, id uint, fields map[string]interface{}) error {
+	result := db.Model(&models.User{}).
 		Where("id = ? AND deleted_at IS NULL", id).
 		Updates(fields)
 	if result.Error != nil {
@@ -160,7 +183,7 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 	// the values the row already held affects zero rows. Tell that apart
 	// from a missing or erased row.
 	var live int64
-	if err := r.db.Model(&models.User{}).Where("id = ? AND deleted_at IS NULL", id).Count(&live).Error; err != nil {
+	if err := db.Model(&models.User{}).Where("id = ? AND deleted_at IS NULL", id).Count(&live).Error; err != nil {
 		return err
 	}
 	if live == 0 {
