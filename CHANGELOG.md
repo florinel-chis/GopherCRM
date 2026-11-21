@@ -1649,6 +1649,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TestPasswordResetRequestOwnerLockConcurrentMySQL` now holds an erasure competitor uncommitted
   until the reset mail is recorded, so the mailer's committed check no longer races the erasure
   deleting the token (test only, #597).
+- The deadlock subtest of `TestTransactionRetryableErrorMySQL` now detects the first connection's
+  lock wait from information_schema.PROCESSLIST instead of the cached INNODB_TRX view, which a
+  continuous poll kept stale, and fails on a probe query error instead of ignoring it
+  (test only, #590).
 - **A quote response link is created, sent and accepted only while the quote's customer exists,
   and earlier links stop working only after a successful send (#557).** The mint transaction of
   `POST /quotes/{id}/email` (`mintResponseLink` in `internal/service/quote_email.go`) now reads

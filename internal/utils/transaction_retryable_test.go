@@ -157,21 +157,55 @@ func openRetryablePeerMySQL(t *testing.T, db *gorm.DB) *sql.DB {
 	return peer
 }
 
-// awaitLockWait polls information_schema.INNODB_TRX until the transaction of
-// connection threadID waits for a lock. The view and its trx_state value are
-// the same on MySQL 8 and MariaDB 10.11.
-func awaitLockWait(t *testing.T, peer *sql.DB, threadID int64) {
+// deadlockFirstWait is the statement the first connection of the deadlock
+// subtest sends while the second holds the row it updates. The test passes no
+// arguments, so the driver sends it as COM_QUERY text and PROCESSLIST.INFO
+// shows it verbatim on both engines.
+const deadlockFirstWait = "UPDATE tx_regression_records SET label = 'first' WHERE id = 2"
+
+// lockWaitPollInterval spaces the PROCESSLIST polls of awaitLockWait. It is a
+// poll interval, not a delay that orders the scenario.
+const lockWaitPollInterval = 10 * time.Millisecond
+
+// awaitLockWait returns once connection threadID has been seen executing
+// statement on two consecutive polls of information_schema.PROCESSLIST. An
+// uncontended primary-key update finishes in microseconds, so one still
+// executing a poll interval later waits for a row lock. PROCESSLIST exists on
+// MySQL 8 and MariaDB 10.11 and shows the same user's threads without the
+// PROCESS privilege. INNODB_TRX is not usable here: the server serves it from a
+// cache it refreshes only when the previous read is more than about 100 ms
+// old, so a continuous poll keeps reading the snapshot taken before the wait
+// began, and MySQL 8 reports some lock waits as RUNNING. done receives the
+// statement's result; if it returns before the wait is seen, the test fails at
+// once with that result. Every probe error fails the test.
+func awaitLockWait(t *testing.T, peer *sql.DB, threadID int64, statement string, done <-chan error) {
 	t.Helper()
 	ctx := boundedContext(t)
-	for ctx.Err() == nil {
-		var waiting int
-		err := peer.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.INNODB_TRX
-			WHERE trx_mysql_thread_id = ? AND trx_state = 'LOCK WAIT'`, threadID).Scan(&waiting)
-		if err == nil && waiting > 0 {
-			return
+	ticker := time.NewTicker(lockWaitPollInterval)
+	defer ticker.Stop()
+	seen := 0
+	for {
+		var command string
+		var info sql.NullString
+		err := peer.QueryRowContext(ctx, `SELECT COMMAND, INFO FROM information_schema.PROCESSLIST WHERE ID = ?`,
+			threadID).Scan(&command, &info)
+		require.NoError(t, err, "reading connection %d from information_schema.PROCESSLIST", threadID)
+		if (command == "Query" || command == "Execute") && info.Valid && info.String == statement {
+			seen++
+			if seen >= 2 {
+				return
+			}
+		} else {
+			seen = 0
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("connection %d finished %q before it was seen waiting for a lock: %v", threadID, statement, err)
+		case <-ctx.Done():
+			t.Fatalf("connection %d never waited for a lock on %q", threadID, statement)
+		case <-ticker.C:
 		}
 	}
-	t.Fatalf("connection %d never waited for a lock", threadID)
 }
 
 func mysqlErrorNumber(t *testing.T, err error) uint16 {
@@ -213,10 +247,10 @@ func TestTransactionRetryableErrorMySQL(t *testing.T) {
 
 		firstDone := make(chan error, 1)
 		go func() {
-			_, err := first.ExecContext(ctx, "UPDATE tx_regression_records SET label = 'first' WHERE id = 2")
+			_, err := first.ExecContext(ctx, deadlockFirstWait)
 			firstDone <- err
 		}()
-		awaitLockWait(t, peer, firstThread)
+		awaitLockWait(t, peer, firstThread, deadlockFirstWait, firstDone)
 		secondDone := make(chan error, 1)
 		go func() {
 			_, err := second.ExecContext(ctx, "UPDATE tx_regression_records SET label = 'second' WHERE id = 1")
