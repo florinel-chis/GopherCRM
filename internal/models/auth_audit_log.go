@@ -30,12 +30,14 @@ const (
 // foreign key and no soft delete: erasure leaves the rows alone and the stale
 // bulk operation sweep deletes them after AUTH_AUDIT_RETENTION_DAYS.
 //
-// A password, single sign-on, refresh, SCIM, password change, password reset,
-// logout or API key management outcome is one row with Attempts 1
-// and no AggregateKey. A refused API key (#466) adds to one row per reason,
-// user id, client network and UTC minute: the first refusal of that bucket
-// writes the row, every later one only adds 1 to Attempts, so the request id,
-// user-agent family and created_at stay those of the first refusal.
+// A refused password sign-in, refresh, SCIM authentication (#553) or API key
+// (#466) adds to one row per method, reason, user id, client network and UTC
+// minute: the first refusal of that bucket writes the row, every later one
+// only adds 1 to Attempts, so the request id, user-agent family and
+// created_at stay those of the first refusal. Every other outcome (a success
+// of any method, a single sign-on callback, a password change, a password
+// reset, a logout or an API key management action) is one row with Attempts
+// 1 and no AggregateKey.
 type AuthAuditLog struct {
 	ID uint `gorm:"primarykey" json:"id"`
 	// Written explicitly in UTC.
@@ -66,11 +68,12 @@ type AuthAuditLog struct {
 	ClientNetwork string `gorm:"type:varchar(64);not null" json:"client_network"`
 	// "<Browser> on <OS>" from a fixed vocabulary; empty without a user agent.
 	UserAgentFamily string `gorm:"type:varchar(64);not null" json:"user_agent_family"`
-	// How many outcomes the row counts: 1, or for a refused API key the
-	// refusals of its reason, account and network in its UTC minute.
+	// How many outcomes the row counts: 1, or for a refused password
+	// sign-in, refresh, SCIM authentication or API key the refusals of its
+	// method, reason, account and network in its UTC minute.
 	Attempts uint `gorm:"not null;default:1" json:"attempts"`
-	// "api_key|<reason>|<user id or 0>|<client network>|<UTC minute>" on an
-	// aggregated API-key row; NULL otherwise (NULLs never collide). Internal:
+	// "<method>|<reason>|<user id or 0>|<client network>|<UTC minute>" on a
+	// row that counts refusals; NULL otherwise (NULLs never collide). Internal:
 	// never returned or logged.
 	AggregateKey *string `gorm:"type:varchar(191);uniqueIndex:idx_auth_audit_log_aggregate_key" json:"-"`
 }

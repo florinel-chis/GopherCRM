@@ -2,6 +2,8 @@ package service
 
 // Issue #466: a refused API key adds to one auth_audit_log row per reason,
 // user id, client network and UTC minute instead of writing a row of its own.
+// Issue #553: refused password sign-ins, refreshes and SCIM authentications
+// are counted the same way, per method; success rows stay one each.
 // TestAuthAuditAPIKeyAggregation{SQLite,MySQL} run one table of checks through
 // the real audit writer and repository, with the clock pinned through the
 // service's now, on a SQLite file opened by the production connector and on a
@@ -184,29 +186,129 @@ func runAuthAuditAPIKeyAggregation(t *testing.T, db *gorm.DB) {
 		}
 	})
 
-	t.Run("password_and_refresh_stay_one_row_each", func(t *testing.T) {
-		clock.Set(minute.Add(45 * time.Second))
-		ctx := authAuditIPCtx("req-agg-mixed", "198.51.100.200")
-		var before int64
-		require.NoError(t, db.Model(&models.AuthAuditLog{}).Count(&before).Error)
-		ids := map[uint]bool{}
-		for i := 0; i < 3; i++ {
-			ids[svc.RecordPassword(ctx, nil, errLoginInvalidCredentials)] = true
-			ids[svc.RecordRefresh(ctx, nil, ErrInvalidRefreshToken)] = true
-		}
-		delete(ids, 0)
-		assert.Len(t, ids, 6, "six rows")
+	// refusalRows returns the rows of method and network created in the
+	// minute starting at start, oldest first.
+	refusalRows := func(t *testing.T, method, network string, start time.Time) []models.AuthAuditLog {
+		t.Helper()
 		var rows []models.AuthAuditLog
-		require.NoError(t, db.Where("method IN ? AND request_id = ?", []string{AuthAuditMethodPassword, AuthAuditMethodRefresh}, "req-agg-mixed").Find(&rows).Error)
+		require.NoError(t, db.Where("method = ? AND client_network = ? AND created_at >= ? AND created_at < ?",
+			method, network, start, start.Add(time.Minute)).Order("id").Find(&rows).Error)
+		return rows
+	}
+	countRows := func(t *testing.T) int64 {
+		t.Helper()
+		var n int64
+		require.NoError(t, db.Model(&models.AuthAuditLog{}).Count(&n).Error)
+		return n
+	}
+
+	t.Run("password_and_refresh_refusals_share_a_row", func(t *testing.T) {
+		clock.Set(minute.Add(45 * time.Second))
+		const ip, network = "198.51.100.200", "198.51.100.0/24"
+		before := countRows(t)
+		var passwordIDs, refreshIDs []uint
+		for i := 0; i < 3; i++ {
+			passwordIDs = append(passwordIDs, svc.RecordPassword(authAuditIPCtx(fmt.Sprintf("req-agg-pw-%d", i), ip), nil, errLoginInvalidCredentials))
+			refreshIDs = append(refreshIDs, svc.RecordRefresh(authAuditIPCtx(fmt.Sprintf("req-agg-rf-%d", i), ip), nil, ErrInvalidRefreshToken))
+		}
+		assert.Equal(t, before+2, countRows(t), "two rows for six refusals")
+		for method, want := range map[string]struct {
+			key, requestID string
+			ids            []uint
+		}{
+			AuthAuditMethodPassword: {"password|invalid_credentials|0|198.51.100.0/24|2026-11-25T12:00", "req-agg-pw-0", passwordIDs},
+			AuthAuditMethodRefresh:  {"refresh|token_invalid|0|198.51.100.0/24|2026-11-25T12:00", "req-agg-rf-0", refreshIDs},
+		} {
+			rows := refusalRows(t, method, network, minute)
+			require.Len(t, rows, 1, method)
+			row := rows[0]
+			assert.EqualValues(t, 3, row.Attempts, method)
+			require.NotNil(t, row.AggregateKey, method)
+			assert.Equal(t, want.key, *row.AggregateKey)
+			assert.Equal(t, want.requestID, row.RequestID, "the row keeps the first call's request id")
+			assert.Equal(t, AuthAuditOutcomeRefused, row.Outcome)
+			assert.Nil(t, row.UserID)
+			for _, id := range want.ids {
+				assert.Equal(t, row.ID, id, "every call returns its bucket's id")
+			}
+		}
+
+		// A known account has a bucket of its own, and the next minute
+		// starts a new row.
+		const userID = 5530001
+		locked := authRefusal(AuthAuditReasonAccountLocked, userID, errLoginAccountLocked)
+		first := svc.RecordPassword(authAuditIPCtx("req-agg-pw-user-0", ip), nil, locked)
+		require.NotZero(t, first)
+		assert.Equal(t, first, svc.RecordPassword(authAuditIPCtx("req-agg-pw-user-1", ip), nil, locked))
+		next := minute.Add(time.Minute)
+		clock.Set(next.Add(5 * time.Second))
+		later := svc.RecordPassword(authAuditIPCtx("req-agg-pw-user-2", ip), nil, locked)
+		require.NotZero(t, later)
+		assert.NotEqual(t, first, later, "the next minute starts a new row")
+		var userRows []models.AuthAuditLog
+		require.NoError(t, db.Where("method = ? AND user_id = ?", AuthAuditMethodPassword, userID).Order("id").Find(&userRows).Error)
+		require.Len(t, userRows, 2)
+		assert.Equal(t, first, userRows[0].ID)
+		assert.EqualValues(t, 2, userRows[0].Attempts)
+		require.NotNil(t, userRows[0].AggregateKey)
+		assert.Equal(t, "password|account_locked|5530001|198.51.100.0/24|2026-11-25T12:00", *userRows[0].AggregateKey)
+		assert.Equal(t, later, userRows[1].ID)
+		assert.EqualValues(t, 1, userRows[1].Attempts)
+		require.NotNil(t, userRows[1].AggregateKey)
+		assert.Equal(t, "password|account_locked|5530001|198.51.100.0/24|2026-11-25T12:01", *userRows[1].AggregateKey)
+	})
+
+	t.Run("scim_refusals_share_a_row", func(t *testing.T) {
+		clock.Set(minute.Add(50 * time.Second))
+		before := countRows(t)
+		entry := AuthAuditEntry{Method: AuthAuditMethodSCIM, Outcome: AuthAuditOutcomeRefused, Reason: AuthAuditReasonTokenMissing}
+		var ids []uint
+		for i := 0; i < 3; i++ {
+			ids = append(ids, svc.RecordAggregated(authAuditIPCtx(fmt.Sprintf("req-agg-scim-%d", i), "203.0.113.77"), entry))
+		}
+		assert.Equal(t, before+1, countRows(t))
+		rows := refusalRows(t, AuthAuditMethodSCIM, "203.0.113.0/24", minute)
+		require.Len(t, rows, 1)
+		assert.EqualValues(t, 3, rows[0].Attempts)
+		require.NotNil(t, rows[0].AggregateKey)
+		assert.Equal(t, "scim|token_missing|0|203.0.113.0/24|2026-11-25T12:00", *rows[0].AggregateKey)
+		assert.Equal(t, "req-agg-scim-0", rows[0].RequestID)
+		assert.Nil(t, rows[0].UserID)
+		for _, id := range ids {
+			assert.Equal(t, rows[0].ID, id)
+		}
+	})
+
+	t.Run("success_rows_stay_one_each", func(t *testing.T) {
+		clock.Set(minute.Add(55 * time.Second))
+		const userID = 5530002
+		tokens := &AuthTokens{User: &models.User{BaseModel: models.BaseModel{ID: userID}}}
+		ctx := authAuditIPCtx("req-agg-success", "198.51.100.201")
+		entry := AuthAuditEntry{Method: AuthAuditMethodSCIM, Outcome: AuthAuditOutcomeSuccess, UserID: userID}
+		ids := map[uint]bool{}
+		for i := 0; i < 2; i++ {
+			before := countRows(t)
+			for _, id := range []uint{
+				svc.RecordPassword(ctx, tokens, nil),
+				svc.RecordRefresh(ctx, tokens, nil),
+				svc.RecordAggregated(ctx, entry),
+			} {
+				require.NotZero(t, id)
+				assert.False(t, ids[id], "a success never reuses a row")
+				ids[id] = true
+			}
+			assert.Equal(t, before+3, countRows(t))
+		}
+		var rows []models.AuthAuditLog
+		require.NoError(t, db.Where("request_id = ?", "req-agg-success").Find(&rows).Error)
 		require.Len(t, rows, 6)
 		for _, row := range rows {
+			assert.Equal(t, AuthAuditOutcomeSuccess, row.Outcome)
 			assert.EqualValues(t, 1, row.Attempts)
 			assert.Nil(t, row.AggregateKey)
-			assert.Equal(t, "198.51.100.0/24", row.ClientNetwork)
+			require.NotNil(t, row.UserID)
+			assert.EqualValues(t, userID, *row.UserID)
 		}
-		var after int64
-		require.NoError(t, db.Model(&models.AuthAuditLog{}).Count(&after).Error)
-		assert.Equal(t, before+6, after)
 	})
 
 	t.Run("nil_error_writes_nothing", func(t *testing.T) {

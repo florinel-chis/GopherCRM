@@ -1298,13 +1298,14 @@ gophercrm/
   permanently at that age, at boot and then every 24 hours, so the first boot removes the existing
   backlog. Until a separate frontend task merges, the form-delete dialogs still say "Collected
   submissions are retained", which is wrong for those rows.
-- **Sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`.** Every password sign-in, single
-  sign-on callback and refresh writes one `auth_audit_log` row, so does every password change
+- **Sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`.** Every successful password
+  sign-in, single sign-on callback and successful refresh writes one `auth_audit_log` row, so does every password change
   (`password_change`), password reset request (`reset_request`), reset completion
   (`reset_confirm`) and logout (`logout`, #550), so does every API key creation
   (`api_key_create`), revocation (`api_key_revoke`) and refused re-enable of a revoked key
-  (`api_key_enable`, #551, with the key's id), and refused API keys are counted
-  in one row per reason, account, client network and minute (`attempts`, #466); rows are kept 90
+  (`api_key_enable`, #551, with the key's id), and refused API keys (#466), refused password
+  sign-ins, refused refreshes and refused SCIM authentications (#553) are counted in one row per
+  method, reason, account, client network and minute (`attempts`); rows are kept 90
   days by default (#454). The rows hold no email, name, subject or full IP address, and erasure leaves them
   to age out.
 - **Erasure does not reach logs or issued tokens.** Service logs omit email, name, title and

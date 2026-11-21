@@ -368,18 +368,19 @@ writes".
 
 ## Sign-in audit log
 
-Since #454 every sign-in outcome is recorded in `auth_audit_log`. Each `POST /auth/login`, each
-`POST /auth/oidc/callback` and each `POST /auth/refresh` that passes request validation writes
-one row of its own (`attempts` 1), after the sign-in's own transaction has ended, as one
-`INSERT`. A request whose `ApiKey` credential is refused is counted instead (#466): the
-refusals of one reason, one `user_id` (or none), one client network and one UTC minute share one
-row, whose `attempts` is how many there were. The first refusal of that bucket writes the row;
-every later one adds 1 to `attempts` in the same statement (`INSERT ... ON DUPLICATE KEY UPDATE`
-on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on SQLite, on a unique internal
-`aggregate_key`), so the row keeps the first refusal's `request_id`, `user_agent_family` and
-`created_at`. Since #468 each refused SCIM authentication on `/scim/v2` writes one row of its
-own (method `scim`, `attempts` 1, `user_id` NULL); those are not aggregated, because the strict
-SCIM tier in front of the authentication bounds them. Since #470 a successful SCIM user create
+Since #454 every sign-in outcome is recorded in `auth_audit_log`, after the sign-in's own
+transaction has ended. Each `POST /auth/oidc/callback`, and each `POST /auth/login` and
+`POST /auth/refresh` that passes request validation and succeeds, writes one row of its own
+(`attempts` 1) as one `INSERT`. Refusals are counted instead: a request whose `ApiKey`
+credential is refused (#466), a refused `POST /auth/login` or `POST /auth/refresh` and a refused
+SCIM authentication on `/scim/v2` (#553) add to the row of their method, reason, `user_id` (or
+none), client network and UTC minute, whose `attempts` is how many there were. The first refusal
+of that bucket writes the row; every later one adds 1 to `attempts` in the same statement
+(`INSERT ... ON DUPLICATE KEY UPDATE` on MySQL and MariaDB, `ON CONFLICT ... DO UPDATE` on
+SQLite, on a unique internal `aggregate_key`), so the row keeps the first refusal's
+`request_id`, `user_agent_family` and `created_at`. A refused SCIM authentication (#468) has
+method `scim`, `user_id` NULL and reason `token_missing`, `token_invalid` or `token_revoked`.
+Since #470 a successful SCIM user create
 or replace, since #471 a successful patch and since #504 a delete that deactivates, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
 after its transaction; since #506 a successful group patch writes one such row per account added
 to or removed from the group; a refused one (400 or 409), and a delete of an already inactive account,
@@ -494,11 +495,13 @@ count against the same budget as authenticated traffic. The refusals that reach 
 add to one row per reason, account, client network and UTC minute, however many addresses of
 that `/24` or `/48` and however many replicas they reach: a burst of bogus keys from one network
 writes at most one `key_invalid` row a minute, and its `attempts` still counts every refusal.
-Password, refresh and single sign-on rows stay one per request; their number is bounded by the
-strict tier on `/auth` (10 requests a minute, burst 5, per client address, applied before the
-handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded by the SCIM
-refusal limit on `/scim/v2` (10 a minute, burst 5, per client address; a refusal over it is
-answered 429 and writes nothing). Password change, reset request, reset completion and
+Refused password sign-ins and refreshes (#553) are counted the same way, one row per method,
+reason, account, client network and UTC minute; successful ones and single sign-on callbacks
+are one row per request. All of them pass the strict tier on `/auth` first (10 requests a
+minute, burst 5, per client address, applied before the handler, so a 429 writes nothing).
+Refused SCIM authentications are counted per reason, client network and UTC minute as well
+(#553), behind the SCIM refusal limit on `/scim/v2` (10 a minute, burst 5, per client address; a
+refusal over it is answered 429 and writes nothing). Password change, reset request, reset completion and
 logout rows (#550) are one per request as well: the strict `/auth` tier bounds the two reset
 routes, the authenticated tier bounds `POST /auth/change-password` and `POST /auth/logout`.
 `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
@@ -621,8 +624,8 @@ token (the scheme word is case-insensitive, the token is not trimmed). A user's 
 not a SCIM token and is refused, and a SCIM token is not accepted by the API. A successful
 request updates `last_used_at` best-effort (a failed write is logged without the token and never
 changes the answer) and writes no audit row. Every refusal is the same 401 whatever its reason,
-and writes one sign-in audit row with method `scim` and reason `token_missing`, `token_invalid`
-or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or hash is logged.
+and is counted in the sign-in audit row of its reason, client network and UTC minute (#553),
+method `scim`, reason `token_missing`, `token_invalid` or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or hash is logged.
 
 **Rate limit.** `/scim/v2` has two limits, applied inside the token authentication, per process,
 whatever the HTTP method (#555). The SCIM token limit counts every request whose token is

@@ -19,17 +19,16 @@ import (
 
 // Sign-in audit log (#454).
 //
-// One auth_audit_log row is written per password sign-in that reaches
-// LoginWithTokens, per single sign-on callback and per refresh, with attempts
-// 1. Failed API-key authentications are counted instead (#466): one row per
-// reason, user id, client network and UTC minute, whose attempts is the number
-// of refusals in that bucket; the first refusal writes the row and every later
-// one adds 1 to it in the same upsert statement, so its request id, user-agent
-// family and created_at stay the first refusal's. Each refused SCIM
-// authentication on /scim/v2 (#468) is one row of its own, method scim,
-// attempts 1 and user_id NULL, with reason token_missing, token_invalid or
-// token_revoked; they are not aggregated, because the strict rate tier in
-// front of the SCIM authentication bounds them. A successful SCIM user create,
+// A successful password sign-in that reaches LoginWithTokens, every single
+// sign-on callback and a successful refresh write one auth_audit_log row each,
+// with attempts 1. Refused password sign-ins, refused refreshes (#553), failed
+// API-key authentications (#466) and refused SCIM authentications on /scim/v2
+// (#468, #553) are counted instead: one row per method, reason, user id,
+// client network and UTC minute, whose attempts is the number of refusals in
+// that bucket; the first refusal writes the row and every later one adds 1 to
+// it in the same upsert statement, so its request id, user-agent family and
+// created_at stay the first refusal's. A SCIM refusal has user_id NULL and
+// reason token_missing, token_invalid or token_revoked. A successful SCIM user create,
 // replace or patch (#470, #471) writes one row, method scim, outcome success, with the
 // account's user id. A password change, a password reset request, a reset
 // completion and a logout (#550) each write one row of their own, methods
@@ -99,13 +98,19 @@ type AuthAuditEntry struct {
 }
 
 // AuthAuditService writes the sign-in audit log. Every method returns the id
-// of the row it wrote, or 0 when the write failed; none returns an error or
+// of the row it wrote or added to, or 0 when the write failed; none returns an error or
 // panics. A nil service is never called: the callers check for nil.
 type AuthAuditService interface {
 	Record(ctx context.Context, entry AuthAuditEntry) uint
-	// RecordPassword records the outcome of LoginWithTokens.
+	// RecordAggregated counts a refused entry in the row of its method,
+	// reason, user id, client network and UTC minute (#553); any other
+	// outcome is written as one row, as Record does.
+	RecordAggregated(ctx context.Context, entry AuthAuditEntry) uint
+	// RecordPassword records the outcome of LoginWithTokens: a refusal is
+	// counted in its aggregated row (#553), a success is one row.
 	RecordPassword(ctx context.Context, tokens *AuthTokens, err error) uint
-	// RecordRefresh records the outcome of RefreshAccessToken.
+	// RecordRefresh records the outcome of RefreshAccessToken: a refusal is
+	// counted in its aggregated row (#553), a success is one row.
 	RecordRefresh(ctx context.Context, tokens *AuthTokens, err error) uint
 	// RecordAPIKeyFailure counts a failed ValidateAPIKey in the aggregated
 	// row of its reason, user id, client network and UTC minute (#466).
@@ -162,7 +167,18 @@ func (s *authAuditService) Record(ctx context.Context, entry AuthAuditEntry) (id
 	return row.ID
 }
 
-// recordAggregated adds entry to the row of its reason, user id, client
+// RecordAggregated counts a refused entry in the row of its method, reason,
+// user id, client network and UTC minute and returns that row's id; an entry
+// of any other outcome is one row of its own, so a success is never counted
+// with others.
+func (s *authAuditService) RecordAggregated(ctx context.Context, entry AuthAuditEntry) uint {
+	if entry.Outcome != AuthAuditOutcomeRefused {
+		return s.Record(ctx, entry)
+	}
+	return s.recordAggregated(ctx, entry)
+}
+
+// recordAggregated adds entry to the row of its method, reason, user id, client
 // network and UTC minute and returns that row's id, or 0 after logging the
 // failure once.
 func (s *authAuditService) recordAggregated(ctx context.Context, entry AuthAuditEntry) (id uint) {
@@ -186,8 +202,8 @@ func (s *authAuditService) recordAggregated(ctx context.Context, entry AuthAudit
 	return id
 }
 
-// authAuditAggregateKey is the bucket of an API-key refusal:
-// "api_key|<reason>|<user id or 0>|<client network>|<UTC minute>". It holds
+// authAuditAggregateKey is the bucket of an aggregated refusal:
+// "<method>|<reason>|<user id or 0>|<client network>|<UTC minute>". It holds
 // no request fact beyond the stored network.
 func authAuditAggregateKey(row *models.AuthAuditLog) string {
 	var userID uint
@@ -225,16 +241,26 @@ func (s *authAuditService) row(ctx context.Context, entry AuthAuditEntry) *model
 	return row
 }
 
-// RecordPassword records one password sign-in: success with the signed-in
-// user, or the refusal reason AuthAuditReason finds.
+// RecordPassword records one password sign-in: a success is one row with the
+// signed-in user; a refusal, with the reason AuthAuditReason finds, is
+// counted in the aggregated row of its bucket.
 func (s *authAuditService) RecordPassword(ctx context.Context, tokens *AuthTokens, err error) uint {
-	return s.Record(ctx, outcomeEntry(AuthAuditMethodPassword, tokens, err, AuthAuditReasonInternalError))
+	entry := outcomeEntry(AuthAuditMethodPassword, tokens, err, AuthAuditReasonInternalError)
+	if err != nil {
+		return s.recordAggregated(ctx, entry)
+	}
+	return s.Record(ctx, entry)
 }
 
-// RecordRefresh records one refresh: success with the token owner, or the
-// refusal; an operational failure (the 503 path) is unavailable.
+// RecordRefresh records one refresh: a success is one row with the token
+// owner; a refusal is counted in the aggregated row of its bucket, and an
+// operational failure (the 503 path) is unavailable.
 func (s *authAuditService) RecordRefresh(ctx context.Context, tokens *AuthTokens, err error) uint {
-	return s.Record(ctx, outcomeEntry(AuthAuditMethodRefresh, tokens, err, AuthAuditReasonUnavailable))
+	entry := outcomeEntry(AuthAuditMethodRefresh, tokens, err, AuthAuditReasonUnavailable)
+	if err != nil {
+		return s.recordAggregated(ctx, entry)
+	}
+	return s.Record(ctx, entry)
 }
 
 // RecordAPIKeyFailure counts a refused API key in the row of its reason, user

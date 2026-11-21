@@ -66,6 +66,34 @@ func scimWiredRouterWith(t *testing.T, configure func(*automationBoot)) (*gin.En
 	return router, boot
 }
 
+// scimRefusedAttempts sums attempts over the refused scim rows of reason
+// ("" = every reason): a refusal adds 1 to the row of its reason, client
+// network and UTC minute (#553), so the sum counts the refused requests.
+func scimRefusedAttempts(t *testing.T, reason string) int64 {
+	t.Helper()
+	query := models.DB.Model(&models.AuthAuditLog{}).Where("method = ? AND outcome = ?", "scim", "refused")
+	if reason != "" {
+		query = query.Where("reason = ?", reason)
+	}
+	var sum int64
+	require.NoError(t, query.Select("COALESCE(SUM(attempts), 0)").Scan(&sum).Error)
+	return sum
+}
+
+// assertSCIMRefusalRows checks every refused scim row of reason: counted in
+// its bucket, no account, the request id of scimWiredSend.
+func assertSCIMRefusalRows(t *testing.T, reason string) {
+	t.Helper()
+	var rows []models.AuthAuditLog
+	require.NoError(t, models.DB.Where("method = ? AND outcome = ? AND reason = ?", "scim", "refused", reason).Find(&rows).Error)
+	require.NotEmpty(t, rows)
+	for _, row := range rows {
+		assert.NotNil(t, row.AggregateKey, "a SCIM refusal is counted in its bucket")
+		assert.Nil(t, row.UserID)
+		assert.Equal(t, "req-468", row.RequestID)
+	}
+}
+
 func scimWiredSend(router *gin.Engine, method, path, body, remote, authorization string) *httptest.ResponseRecorder {
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	request.RemoteAddr = remote
@@ -146,9 +174,6 @@ func TestSCIMRoutesWired(t *testing.T) {
 	assert.Equal(t, utils.HashAPIKeyHMAC(valid, boot.cfg.API.APIKeySecret), stored.TokenHash, "HMAC under API_KEY_SECRET")
 	unknown := "scim_" + strings.Repeat("9f", 32)
 
-	var lastID uint
-	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error)
-
 	for _, tc := range []struct{ name, authorization, reason string }{
 		{"no header", "", "token_missing"},
 		{"unknown scim token", "Bearer " + unknown, "token_invalid"},
@@ -157,24 +182,20 @@ func TestSCIMRoutesWired(t *testing.T) {
 		{"admin API key as Bearer", "Bearer " + apiKey, "token_invalid"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			before, total := scimRefusedAttempts(t, tc.reason), scimRefusedAttempts(t, "")
 			recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", nextRemote(), tc.authorization)
 			assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 			assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"), recorder.Header().Get("Content-Type"))
 			assert.Equal(t, scimWiredBody, recorder.Body.String())
 
-			var rows []models.AuthAuditLog
-			require.NoError(t, models.DB.Where("id > ?", lastID).Order("id").Find(&rows).Error)
-			require.Len(t, rows, 1, "exactly one audit row")
-			lastID = rows[0].ID
-			assert.Equal(t, "scim", rows[0].Method)
-			assert.Equal(t, "refused", rows[0].Outcome)
-			assert.Equal(t, tc.reason, rows[0].Reason)
-			assert.Nil(t, rows[0].UserID)
-			assert.EqualValues(t, 1, rows[0].Attempts)
-			assert.Nil(t, rows[0].AggregateKey)
-			assert.Equal(t, "req-468", rows[0].RequestID)
+			assert.Equal(t, before+1, scimRefusedAttempts(t, tc.reason), "the refusal adds 1 to its reason's attempts")
+			assert.Equal(t, total+1, scimRefusedAttempts(t, ""), "and to no other reason's")
+			assertSCIMRefusalRows(t, tc.reason)
 		})
 	}
+	var lastID uint
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error)
+	refusedBefore := scimRefusedAttempts(t, "")
 
 	for _, path := range []string{"/scim/v2/ServiceProviderConfig", "/scim/v2/Schemas", "/scim/v2/ResourceTypes"} {
 		recorder := scimWiredSend(router, http.MethodGet, path, "", nextRemote(), "Bearer "+valid)
@@ -187,6 +208,7 @@ func TestSCIMRoutesWired(t *testing.T) {
 	var after int64
 	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("id > ?", lastID).Count(&after).Error)
 	assert.Zero(t, after, "a successful SCIM authentication writes no audit row")
+	assert.Equal(t, refusedBefore, scimRefusedAttempts(t, ""), "and adds to no refusal row")
 
 	// A SCIM token is not a credential of the API.
 	recorder = scimWiredSend(router, http.MethodGet, prefix+"/users", "", nextRemote(), "Bearer "+valid)
@@ -211,29 +233,39 @@ func TestSCIMRoutesWired(t *testing.T) {
 }
 
 // TestSCIMStrictTierWired: from one client address the sixth rapid refusal is
-// answered 429 with the SCIM error body by the SCIM refusal limit and adds no
-// audit row, while a valid token from that address is still answered.
+// answered 429 with the SCIM error body by the SCIM refusal limit and adds
+// nothing to the audit log, while a valid token from that address is still
+// answered. The five refusals are counted in the row of their reason, network
+// and UTC minute (#553): at most two rows across a minute boundary.
 func TestSCIMStrictTierWired(t *testing.T) {
 	t.Setenv("DISABLE_RATE_LIMIT", "")
 	router, boot := scimWiredRouter(t)
 
 	count := func() int64 {
 		var n int64
-		require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ?", "scim").Count(&n).Error)
+		require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ?", "scim").
+			Select("COALESCE(SUM(attempts), 0)").Scan(&n).Error)
 		return n
 	}
 	for i := 0; i < 5; i++ {
 		recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.7:1234", "")
 		require.Equal(t, http.StatusUnauthorized, recorder.Code, "request %d", i+1)
 	}
-	require.EqualValues(t, 5, count())
+	require.EqualValues(t, 5, count(), "five refusals counted")
+	var refusedRows []models.AuthAuditLog
+	require.NoError(t, models.DB.Where("method = ? AND outcome = ?", "scim", "refused").Find(&refusedRows).Error)
+	assert.NotEmpty(t, refusedRows)
+	assert.LessOrEqual(t, len(refusedRows), 2, "one row per minute")
+	for _, row := range refusedRows {
+		assert.NotNil(t, row.AggregateKey)
+	}
 
 	recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.7:1234", "")
 	assert.Equal(t, http.StatusTooManyRequests, recorder.Code, recorder.Body.String())
 	assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
 	assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"429","detail":"Too many requests. Please try again later."}`,
 		recorder.Body.String())
-	assert.EqualValues(t, 5, count(), "the 429 adds no audit row")
+	assert.EqualValues(t, 5, count(), "the 429 adds nothing")
 
 	// The SCIM refusal limit of the address never holds back a valid token.
 	tokens := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), boot.cfg.API.APIKeySecret)
@@ -248,7 +280,7 @@ func TestSCIMStrictTierWired(t *testing.T) {
 	// 404, so a router answering 405 later shows up here.
 	recorder = scimWiredSend(router, http.MethodOptions, "/scim/v2/Users", "", "203.0.113.8:1234", "")
 	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
-	assert.EqualValues(t, 5, count(), "the OPTIONS request adds no audit row")
+	assert.EqualValues(t, 5, count(), "the OPTIONS request adds nothing")
 }
 
 // TestSCIMTokenTierWired pins the SCIM token limit of the shipped router
@@ -858,8 +890,6 @@ func TestSCIMGroupsWired(t *testing.T) {
 	const adminsID, salesID = "QWRtaW5z", "U2FsZXM"
 	addBody := fmt.Sprintf(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"members","value":[{"value":"%d"}]}]}`, member.ID)
 
-	var lastID uint
-	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error)
 	for _, route := range []struct{ method, path, body string }{
 		{http.MethodGet, "/scim/v2/Groups", ""},
 		{http.MethodPatch, "/scim/v2/Groups/" + adminsID, addBody},
@@ -869,17 +899,14 @@ func TestSCIMGroupsWired(t *testing.T) {
 			{"unknown token", "Bearer scim_" + strings.Repeat("ab", 32), "token_invalid"},
 		} {
 			t.Run(route.method+" "+tc.name, func(t *testing.T) {
+				before, total := scimRefusedAttempts(t, tc.reason), scimRefusedAttempts(t, "")
 				recorder := scimWiredSend(router, route.method, route.path, route.body, nextRemote(), tc.authorization)
 				assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 				assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
 				assert.Equal(t, scimWiredBody, recorder.Body.String())
-				var rows []models.AuthAuditLog
-				require.NoError(t, models.DB.Where("id > ?", lastID).Order("id").Find(&rows).Error)
-				require.Len(t, rows, 1, "exactly one audit row")
-				lastID = rows[0].ID
-				assert.Equal(t, "scim", rows[0].Method)
-				assert.Equal(t, "refused", rows[0].Outcome)
-				assert.Equal(t, tc.reason, rows[0].Reason)
+				assert.Equal(t, before+1, scimRefusedAttempts(t, tc.reason), "the refusal adds 1 to its reason's attempts")
+				assert.Equal(t, total+1, scimRefusedAttempts(t, ""), "and to no other reason's")
+				assertSCIMRefusalRows(t, tc.reason)
 			})
 		}
 	}

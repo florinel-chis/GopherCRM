@@ -284,8 +284,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SQLite). With a valid `Authorization: Bearer` token, `GET /scim/v2/ServiceProviderConfig`,
   `/scim/v2/Schemas` (the core User schema) and `/scim/v2/ResourceTypes` answer in
   `application/scim+json`. A user's JWT or API key is refused there, and a SCIM token is refused
-  on the API. Every refusal is the same 401 in the RFC 7644 error shape and writes one sign-in
-  audit row with the new method `scim` and the new reasons `token_missing` and `token_revoked`
+  on the API. Every refusal is the same 401 in the RFC 7644 error shape and is recorded in the
+  sign-in audit log (counted per reason, client network and minute since #553) with the new method `scim` and the new reasons `token_missing` and `token_revoked`
   (or `token_invalid`); a strict tier (10 requests a minute, burst 5, per client address)
   answers 429 in the same shape before the authentication. The sign-in audit filters and the
   SPA's lists offer the new method and reasons. The discovery routes are excluded from the
@@ -1156,6 +1156,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Sign-in audit: refused sign-ins, refreshes and SCIM authentications are counted per minute
+  (#553).** A refused `POST /auth/login`, a refused `POST /auth/refresh` and a refused SCIM
+  authentication on `/scim/v2` no longer write an `auth_audit_log` row each. Like refused API
+  keys (#466), they add to one row per method, reason, account, client network and UTC minute,
+  whose `attempts` holds the count; the row keeps the first attempt's request id, user-agent
+  family and time. Successful sign-ins and refreshes, single sign-on callbacks, password changes,
+  password resets, logouts and API key changes still write one row each. Answers, rate limits and
+  reason codes are unchanged, and `GET /audit/sign-ins` and Settings > Sign-in audit show every
+  reason with the full count. No migration: the `attempts` column and the unique
+  `aggregate_key` index exist since #466.
+
 - **Shutdown stops the background workers together (#561).** At shutdown the automation worker,
   the form retention purge, the bulk operation sweep, the webhook sender and AEO are now stopped
   at the same time and waited for together within the existing 15-second limit, instead of one
@@ -1402,8 +1413,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `auth_audit_log` row per reason, user id, client `/24` or `/48` network and UTC minute, through
   one conditional upsert on a unique internal `aggregate_key`; the new `attempts` column counts the
   refusals, and the row keeps the first refusal's request id, user-agent family and time.
-  Password, refresh and single sign-on outcomes keep one row each (`attempts` 1), bounded by the
-  strict `/auth` tier. `GET /audit/sign-ins` and Settings > Sign-in audit show `attempts`;
+  Since #553 refused password sign-ins and refreshes are counted the same way; successful ones
+  and single sign-on outcomes keep one row each (`attempts` 1), bounded by the strict `/auth`
+  tier. `GET /audit/sign-ins` and Settings > Sign-in audit show `attempts`;
   `aggregate_key` is never returned. Migration `20261125120000_auth_audit_log_attempts` adds the
   two columns and the unique index, each only when missing; existing rows read `attempts` 1.
 

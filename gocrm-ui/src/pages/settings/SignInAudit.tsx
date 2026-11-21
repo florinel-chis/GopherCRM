@@ -56,10 +56,12 @@ const userIdParam = (value: string): number | undefined =>
   /^[1-9]\d*$/.test(value) ? Number(value) : undefined;
 
 /**
- * The sign-in audit log (#455): one row per password login, single sign-on
- * callback, refresh or failed API-key authentication, and (#550) per password
- * change, password reset request, password reset completion or logout, in the
- * order the API returns (newest first). Only the stored, pseudonymous columns
+ * The sign-in audit log (#455): one row per successful password login,
+ * single sign-on callback or successful refresh, and (#550) per password
+ * change, password reset request, password reset completion or logout; the
+ * refused password logins, refreshes, SCIM and API-key authentications of one
+ * method, reason, account, client network and UTC minute share a row counted
+ * in attempts (#553). Rows come in the order the API returns (newest first). Only the stored, pseudonymous columns
  * are shown.
  */
 export const SignInAudit: React.FC = () => {

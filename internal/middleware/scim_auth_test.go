@@ -84,28 +84,44 @@ func (r *scimTokenMemoryRepo) TouchLastUsed(id uint, at time.Time) error {
 	return nil
 }
 
-// scimAuditRecorder records the entries of Record.
+// scimAuditRecorder records the entries of Record and RecordAggregated and,
+// in methods, which of the two received each one.
 type scimAuditRecorder struct {
 	service.AuthAuditService
 	mu      sync.Mutex
 	entries []service.AuthAuditEntry
 	ctxs    []context.Context
+	methods []string
 }
 
-func (r *scimAuditRecorder) Record(ctx context.Context, entry service.AuthAuditEntry) uint {
+func (r *scimAuditRecorder) add(ctx context.Context, method string, entry service.AuthAuditEntry) uint {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.entries = append(r.entries, entry)
 	r.ctxs = append(r.ctxs, ctx)
+	r.methods = append(r.methods, method)
 	return uint(len(r.entries))
 }
 
+func (r *scimAuditRecorder) Record(ctx context.Context, entry service.AuthAuditEntry) uint {
+	return r.add(ctx, "Record", entry)
+}
+
+func (r *scimAuditRecorder) RecordAggregated(ctx context.Context, entry service.AuthAuditEntry) uint {
+	return r.add(ctx, "RecordAggregated", entry)
+}
+
 func (r *scimAuditRecorder) taken() []service.AuthAuditEntry {
+	out, _ := r.takenWithMethods()
+	return out
+}
+
+func (r *scimAuditRecorder) takenWithMethods() ([]service.AuthAuditEntry, []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	out := r.entries
-	r.entries, r.ctxs = nil, nil
-	return out
+	out, methods := r.entries, r.methods
+	r.entries, r.ctxs, r.methods = nil, nil, nil
+	return out, methods
 }
 
 const scimAuthBody = `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`
@@ -175,9 +191,10 @@ func TestSCIMAuth(t *testing.T) {
 			assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"), recorder.Header().Get("Content-Type"))
 			assert.JSONEq(t, scimAuthBody, recorder.Body.String())
 			assert.Equal(t, scimAuthBody, recorder.Body.String(), "the same bytes for every reason")
-			entries := audit.taken()
-			require.Len(t, entries, 1, "one audit row per refusal")
+			entries, methods := audit.takenWithMethods()
+			require.Len(t, entries, 1, "each refusal is recorded once")
 			assert.Equal(t, service.AuthAuditEntry{Method: "scim", Outcome: "refused", Reason: tc.reason}, entries[0])
+			assert.Equal(t, []string{"RecordAggregated"}, methods, "a refusal is counted in its aggregated row, never written through Record")
 		})
 	}
 	assert.Zero(t, *reached, "a refusal reaches no handler")

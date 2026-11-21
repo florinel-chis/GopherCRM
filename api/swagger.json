@@ -3308,7 +3308,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion, logout, API key creation, API key revocation or refused re-enable of a revoked API key, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the API key id, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.\nFilters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nPermission: audit.sign_ins_view (among the system roles, admin only).",
+                "description": "One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one successful password login, single sign-on callback, successful refresh, successful SCIM user create, replace or patch, password change, password reset request, password reset completion, logout, API key creation, API key revocation or refused re-enable of a revoked API key, or the refused password logins, refreshes, SCIM authentications or API-key authentications of one method, reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the API key id, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.\nFilters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nPermission: audit.sign_ins_view (among the system roles, admin only).",
                 "produces": [
                     "application/json"
                 ],
@@ -35095,7 +35095,7 @@
                     "example": 3
                 },
                 "attempts": {
-                    "description": "How many outcomes the row counts: 1, or for an api_key refusal the number of refusals of that reason, account and network in that UTC minute. Such a row keeps the request id, user-agent family and created_at of the minute's first refusal.",
+                    "description": "How many outcomes the row counts: 1, or for a refused password, refresh, scim or api_key outcome the number of refusals of that method, reason, account and network in that UTC minute. Such a row keeps the request id, user-agent family and created_at of the minute's first refusal.",
                     "type": "integer",
                     "example": 1
                 },
