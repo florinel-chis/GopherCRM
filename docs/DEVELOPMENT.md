@@ -458,6 +458,10 @@ data) and parses it with `scim.ParseUserPatch` (`internal/scim/patch.go`, pure),
 (`invalidSyntax`, `invalidPath`, `noTarget`, `invalidValue`) the handler answers with a fixed
 detail that never echoes the path or value; service refusals go through `failWrite`. Paths and
 path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.EqualFold`).
+Since #629 a second table (`ignoredPatchNames`, `ignoredPatchMultiValued`, `enterpriseUserURN`,
+checked by `isIgnoredPatchPath`) names the User attributes the CRM does not store, whose
+operations are skipped, and `decodeRoles` reads a role `value` that is one JSON object with a
+string `value` member (Entra ID's form without `aadOptscim062020`) as that inner string.
 `scimUserService.Patch` (`internal/service/scim_user_writes.go`) runs in `roleGovernance.run`
 with `admin set → users → roles → refresh_tokens → api_keys`, applies the patch to the locked row, checks
 only the touched attributes (Replace's sequence for a changed address), resolves `roles` through

@@ -87,10 +87,13 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 - **Create.** The request must carry an `externalId`, and single sign-on must have an issuer
   configured. GopherCRM links the new account to that issuer, with the `externalId` as the
   person's identifier at the provider, and gives the account an unusable password.
-- **Replace and change.** PUT ignores `externalId`. PATCH refuses `externalId`, `displayName` and
-  every other attribute it does not list with 400 `invalidPath`. Limit the provider's attribute
-  mappings to the user name, active state, given and family name, work email and roles, as
-  [Single sign-on](single-sign-on.md) says.
+- **Replace and change.** PUT ignores `externalId`. PATCH changes the user name, active state,
+  given and family name, work email and roles. Changes to attributes GopherCRM does not store,
+  such as `externalId`, `displayName`, `title`, `nickName`, `preferredLanguage`, phone numbers,
+  addresses and enterprise extension attributes, are accepted and change nothing, so the
+  provider's default attribute mappings can stay. PATCH reads a role sent as plain text and the
+  JSON object form Microsoft Entra ID sends by default. Any other attribute, such as `password`
+  or `groups`, is refused with 400 `invalidPath`.
 - **Role.** The role always comes from the single sign-on role mapping. A Users write (create,
   PUT or PATCH with `roles`) uses the first mapping row with claim `roles` whose value equals one
   of the `roles` values the provider sends, exactly; it never reads groups. A create or PUT with no

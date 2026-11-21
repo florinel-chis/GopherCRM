@@ -1673,11 +1673,21 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 - **Steps:**
   1. `PATCH /scim/v2/Users/<id>` with
      `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Replace","path":"active","value":"False"}]}`.
-- **Expected:** 200 `application/scim+json` with `active` false; the row is inactive, its other
+  2. On another linked account, `PATCH` with Microsoft's "replace multiple attributes" body
+     without `aadOptscim062020` (`Replace` of `displayName`, `emails[type eq "work"].value`,
+     `name.givenName`, `name.familyName`, `externalId` and the enterprise `employeeNumber`), then
+     with a body of only `displayName`, `title`, `externalId`, enterprise and `phoneNumbers`
+     operations, then with Microsoft's SingleAppRoleAssignment body
+     (`{"op":"Add","path":"roles","value":[{"value":"{\"id\":\"...\",\"value\":\"<mapped role>\",\"displayName\":\"Role1234\"}"}]}`) (#629).
+- **Expected:** Step 1: 200 `application/scim+json` with `active` false; the row is inactive, its other
   columns unchanged; one `role_audit_log` row `user_deactivated` (`auth_method` `scim`, NULL
   `actor_user_id`, before `{"is_active":true}`, after `{"is_active":false}`; #552) and one
-  `auth_audit_log` row (method `scim`, outcome `success`, the account's `user_id`).
-- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`entra deactivate`), `TestSCIMUserPatchHandler`, `TestSCIMUserPatchWired`
+  `auth_audit_log` row (method `scim`, outcome `success`, the account's `user_id`). Step 2: each
+  answers 200. The first stores the new email and names; `externalId`, the `user_identities` row
+  and the identity count are unchanged and no role row is written. The second changes no account
+  column (`updated_at` included) and adds only the `auth_audit_log` success row. The third sets
+  the mapped role and writes one `user_role_changed` row.
+- **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`entra deactivate`, `entra replace without the flag ignores unstored attributes`, `unstored attributes only change nothing`, `entra role as JSON text`), `TestSCIMUserPatchHandler` (`Microsoft Entra ID bodies`), `TestParsePatch`, `TestSCIMUserPatchWired`
 
 ### TC-AUTH-082 — A SCIM patch in Okta's path-less form deactivates and reactivates
 - **Priority:** P0
@@ -1721,8 +1731,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 - **Type:** negative
 - **Preconditions:** A sales account.
 - **Steps:**
-  1. `PATCH` with path `externalId`, `displayName` or `name.formatted`, and path-less with
-     `{"value":{"active":true,"externalId":"x"}}`.
+  1. `PATCH` with path `password`, `groups` or `emails[type eq "home"].value`, and path-less with
+     `{"value":{"active":true,"password":"x"}}`.
   2. `PATCH` with `{"op":"remove"}` and no path.
   3. `PATCH` with `{"Operations":[]}`, and with an `op` of `move`.
   4. `PATCH` `active` with `"yes"` or `null`, and `remove` of `active`, `userName`, `emails` or
