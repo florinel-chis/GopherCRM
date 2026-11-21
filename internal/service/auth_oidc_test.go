@@ -1024,6 +1024,9 @@ var oidcSignInCases = []struct {
 				"session start %v before %v", *stored.SessionStartedAt, before)
 			assert.False(t, stored.SessionStartedAt.After(after.Add(time.Millisecond)),
 				"session start %v after %v", *stored.SessionStartedAt, after)
+			// A single sign-on session can be refreshed until 24 hours after
+			// the sign-in; the token expires then.
+			assert.WithinDuration(t, stored.SessionStartedAt.Add(24*time.Hour), stored.ExpiresAt, time.Second)
 		}
 	}},
 	{"second_sign_in_reapplies_mapping", func(t *testing.T, f *oidcFixture) {

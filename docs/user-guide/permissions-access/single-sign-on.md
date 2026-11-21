@@ -30,6 +30,12 @@ that also sends another attribute, such as `externalId` or `displayName`, is ref
 6. **Later sign-ins.** The person is recognised by the provider's own identifier for them, never by
    email address. The role from the mapping is applied again at every sign-in, so a change at the
    provider takes effect at the person's next sign-in.
+7. **How long a session lasts.** A session that starts with single sign-on can be refreshed for 24
+   hours after the sign-in at the provider. After that the person signs in at the provider again,
+   so changes made there (a removed assignment, another role) apply within about a day. An access
+   token already issued stays valid until it expires (`JWT_EXPIRY_HOURS`). Password sessions keep
+   the lifetime set by `REFRESH_TOKEN_EXPIRY_DAYS`, and a password change during a single sign-on
+   session keeps the same 24-hour limit.
 
 Accounts are never linked by email. If any GopherCRM account, active, deactivated or deleted,
 already uses the email address the provider sends (in any letter case), the sign-in is refused and

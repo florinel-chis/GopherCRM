@@ -20,7 +20,10 @@ a new one. A deleted account keeps no usable email address, so the new sign-in i
 ## How do I remove someone who signs in with single sign-on?
 
 Remove them at the identity provider: remove their assignment to the application, or the app role
-or group that the role mapping uses. Their next sign-in is refused.
+or group that the role mapping uses. Their next sign-in is refused. Without SCIM, their current
+session ends at most 24 hours after their last sign-in at the provider (an access token already
+issued stays valid until it expires); SCIM deprovisioning, or **Deactivate** in GopherCRM, ends it
+at once.
 
 If **Allow password sign-in and password reset for accounts linked to single sign-on** is on, also
 deactivate the account in GopherCRM (Users → the user → **Deactivate**, or

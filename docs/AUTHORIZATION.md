@@ -562,6 +562,7 @@ keeps its own, narrower revocation.
 |---|---|---|---|
 | Logout (`POST /auth/logout`) | Every earlier one ends | The presented one, or every one without a `refresh_token` | Not affected |
 | Refresh rotation (`POST /auth/refresh`) | None end; the replaced one stays valid until it expires | The presented one is spent and replaced | Not affected |
+| Single sign-on session limit (an `oidc` session at `session_started_at + 24` hours, #548) | None end; the last one issued stays valid until it expires | The session can no longer be rotated (reason `token_invalid`) or renewed by a password change (`session_stale`); nothing is written | Not affected |
 | Refresh token presented again after its exchange (`POST /auth/refresh`, reason `token_reuse`) | None end; those already issued stay valid until they expire | Every one of the presented token's session (its family), the successors included; other sessions are not affected | Not affected |
 | Password change (`POST /auth/change-password`) | Every earlier one ends, the caller's included; the renewed session's new token works | Every one, except the renewed session's successor | Every one, for good, the key that made the request included |
 | Password reset (`POST /auth/password-reset/confirm`) | Every earlier one ends | Every one | Every one, for good |
@@ -1275,6 +1276,17 @@ grant, so the actor-key and escalation checks do not apply): the last active adm
 demoted (401, nothing written, no session), a custom role is not given to a customer login, and
 a changed role commits one `role_audit_log` row with `auth_method` `oidc` and the signed-in user
 as actor. An unchanged role writes no row.
+
+**Session limit (#548).** The refresh session a single sign-on sign-in starts (`sign_in_method`
+`oidc`) ends at `session_started_at + 24` hours, a fixed limit with no setting, so the mapping is
+re-applied at least once a day. Every refresh token of the session expires by then; a presented
+`oidc` token at or past that instant, or one without a start (rows issued before the limit
+existed carry a later `expires_at`), is the generic refresh refusal, audited `token_invalid` with
+the owner's id, and nothing is written. An access token issued by the last allowed refresh stays
+valid until its own expiry (`JWT_EXPIRY_HOURS`). A password change that renews the session keeps
+the `oidc` method and start, so the limit carries over; past it the change is `409 SESSION_STALE`
+(`session_stale`) before anything is written. Password sessions keep `REFRESH_TOKEN_EXPIRY_DAYS`.
+Ending a session at once is SCIM deactivation or **Deactivate**.
 
 **JIT provisioning.** An unknown identity that no SCIM link names (see **Identity**) creates an active user with the mapped role, the
 `email` claim as given and `given_name`/`family_name` (cut to 100 bytes; when both are absent,

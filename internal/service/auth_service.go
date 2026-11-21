@@ -849,13 +849,33 @@ func newRefreshSession(method string) (refreshSession, error) {
 	return refreshSession{FamilyID: hex.EncodeToString(buf), SignInMethod: method, StartedAt: time.Now()}, nil
 }
 
+// ssoSessionMaxAge is how long a session that started with single sign-on
+// (sign_in_method oidc) can be refreshed, counted from session_started_at,
+// the sign-in at the identity provider. It is fixed, not configurable:
+// REFRESH_TOKEN_EXPIRY_DAYS never extends it. Past it the person signs in at
+// the provider again, which re-applies the provider's role mapping.
+const ssoSessionMaxAge = 24 * time.Hour
+
+// ssoSessionExpired reports whether a session can no longer be refreshed
+// because of the single sign-on limit: the method is oidc and the session has
+// no start, or now is at or past start + ssoSessionMaxAge. Every other method
+// ('password', an empty one) is never expired by this rule.
+func ssoSessionExpired(signInMethod string, startedAt *time.Time, now time.Time) bool {
+	if signInMethod != models.RefreshTokenSignInOIDC {
+		return false
+	}
+	return startedAt == nil || !now.Before(startedAt.Add(ssoSessionMaxAge))
+}
+
 // issueRefreshToken mints, hashes and persists a refresh token for the user
 // through the given repository — the root one at a login without a transaction
 // manager, the transaction-bound one at a wired login, a rotation or a
 // password change — returning the raw value for the client. The row records
 // the given session: a new one at a sign-in or a password change, the
 // presented token's at a rotation. Lifetime comes from
-// REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays).
+// REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays); a single sign-on
+// session (oidc) is capped at its start + ssoSessionMaxAge, whichever comes
+// first.
 func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, userID uint, session refreshSession) (string, error) {
 	raw, err := generateOpaqueToken()
 	if err != nil {
@@ -867,10 +887,18 @@ func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, 
 		days = 30
 	}
 
+	now := time.Now()
+	expiresAt := now.Add(time.Duration(days) * 24 * time.Hour)
+	if session.SignInMethod == models.RefreshTokenSignInOIDC {
+		if limit := session.StartedAt.Add(ssoSessionMaxAge); limit.Before(expiresAt) {
+			expiresAt = limit
+		}
+	}
+
 	token := &models.RefreshToken{
 		UserID:       userID,
 		TokenHash:    hashOpaqueToken(raw, s.sessionTokenSecret()),
-		ExpiresAt:    time.Now().Add(time.Duration(days) * 24 * time.Hour),
+		ExpiresAt:    expiresAt,
 		FamilyID:     session.FamilyID,
 		SignInMethod: session.SignInMethod,
 	}
@@ -1053,6 +1081,14 @@ func (s *authService) rotateRefreshTokenInTransaction(
 
 	// Defence in depth in case a repository implementation stops filtering.
 	if stored.Revoked || !stored.ExpiresAt.After(time.Now()) {
+		return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
+	}
+
+	// A single sign-on session can be refreshed only until ssoSessionMaxAge
+	// after its sign-in, whatever expiry the row carries (rows issued before
+	// the cap existed carry a later one). The refusal is the plain error, so
+	// the transaction rolls back and nothing is written.
+	if ssoSessionExpired(stored.SignInMethod, stored.SessionStartedAt, time.Now()) {
 		return nil, stored.UserID, fmt.Errorf("refresh token rejected: %w", ErrInvalidRefreshToken)
 	}
 
@@ -1290,8 +1326,12 @@ var errLogoutOwnerGone = errors.New("logout owner no longer exists")
 // refreshToken names the caller's current browser session. When it is given,
 // that session is renewed: the token is claimed and a replacement refresh
 // token and access token are returned. It must be a live token of this user;
-// anything else (unknown, revoked, expired, foreign) is ErrSessionStale and
-// nothing is written. When it is empty — API-key callers, scripts — the
+// anything else (unknown, revoked, expired, foreign, or a single sign-on
+// session at or past ssoSessionMaxAge after its sign-in) is ErrSessionStale
+// and nothing is written. The replacement starts a new family; a single
+// sign-on session keeps its sign-in method and start, so the renewal keeps
+// its 24-hour limit, while any other session becomes a password session
+// starting now. When it is empty — API-key callers, scripts — the
 // password is changed, every refresh token and every API key (the caller's
 // own key included) is revoked and no credentials are returned (nil tokens,
 // nil error).
@@ -1398,6 +1438,9 @@ func (s *authService) changePasswordInTransaction(
 		return nil, authRefusal(AuthAuditReasonInvalidCredentials, userID, ErrInvalidCurrentPassword)
 	}
 
+	// renewOIDCStart is the start of the presented single sign-on session,
+	// nil when the presented session is not one.
+	var renewOIDCStart *time.Time
 	if presentedHash != "" {
 		stored, err := refreshRepo.GetByTokenHash(presentedHash)
 		if err != nil {
@@ -1408,6 +1451,14 @@ func (s *authService) changePasswordInTransaction(
 		}
 		if stored.UserID != userID {
 			return nil, authRefusal(AuthAuditReasonSessionStale, userID, ErrSessionStale)
+		}
+		// A single sign-on session past its limit is not live either; it is
+		// refused before the claim, so nothing is written.
+		if ssoSessionExpired(stored.SignInMethod, stored.SessionStartedAt, time.Now()) {
+			return nil, authRefusal(AuthAuditReasonSessionStale, userID, ErrSessionStale)
+		}
+		if stored.SignInMethod == models.RefreshTokenSignInOIDC {
+			renewOIDCStart = stored.SessionStartedAt
 		}
 		if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
 			if apperrors.IsNotFound(err) {
@@ -1444,10 +1495,17 @@ func (s *authService) changePasswordInTransaction(
 	}
 
 	owner.Password = newHash
-	// The successor starts a new session, as its access token does.
+	// The successor starts a new family, as its access token does. A renewed
+	// single sign-on session keeps its sign-in method and start, so its
+	// expiry stays capped at that start + ssoSessionMaxAge; any other
+	// session becomes a password session starting now.
 	session, err := newRefreshSession(models.RefreshTokenSignInPassword)
 	if err != nil {
 		return nil, err
+	}
+	if renewOIDCStart != nil {
+		session.SignInMethod = models.RefreshTokenSignInOIDC
+		session.StartedAt = *renewOIDCStart
 	}
 	newRefreshToken, err := s.issueRefreshToken(refreshRepo, userID, session)
 	if err != nil {

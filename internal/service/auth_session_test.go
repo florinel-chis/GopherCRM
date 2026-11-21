@@ -120,7 +120,7 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	raw := "raw-refresh-token-value"
 	hash := hashOpaqueToken(raw, sessionTestSecret)
 
-	sessionStart := time.Date(2026, 11, 1, 9, 30, 15, 123000000, time.UTC)
+	sessionStart := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
 	stored := &models.RefreshToken{
 		BaseModel:        models.BaseModel{ID: 5},
 		UserID:           1,
@@ -163,9 +163,9 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	assert.Equal(t, hashOpaqueToken(tokens.RefreshToken, sessionTestSecret), newStored.TokenHash)
 	assert.NotContains(t, newStored.TokenHash, tokens.RefreshToken)
 
-	// Expiry honours REFRESH_TOKEN_EXPIRY_DAYS (30 days here).
-	expected := time.Now().Add(30 * 24 * time.Hour)
-	assert.WithinDuration(t, expected, newStored.ExpiresAt, time.Minute)
+	// A single sign-on session's successor expires 24 hours after the
+	// sign-in, before REFRESH_TOKEN_EXPIRY_DAYS (30 days here) would end it.
+	assert.WithinDuration(t, sessionStart.Add(24*time.Hour), newStored.ExpiresAt, time.Second)
 
 	// The successor continues the presented token's session: the same
 	// family, sign-in method and session start, held in its own value.
@@ -608,7 +608,7 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		user := sessionActiveUser(1, "CurrentPass1!")
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 		hash := hashOpaqueToken("current-refresh", sessionTestSecret)
-		presentedStart := time.Now().Add(-48 * time.Hour)
+		presentedStart := time.Now().Add(-time.Hour)
 		d.refreshRepo.On("GetByTokenHash", hash).Return(&models.RefreshToken{
 			BaseModel: models.BaseModel{ID: 7}, UserID: 1, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour),
 			FamilyID: "ffeeddccbbaa99887766554433221100", SignInMethod: models.RefreshTokenSignInOIDC, SessionStartedAt: &presentedStart,
@@ -622,9 +622,7 @@ func TestAuthService_ChangePassword(t *testing.T) {
 			return tok.UserID == 1
 		})).Return(nil)
 
-		before := time.Now()
 		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "current-refresh")
-		after := time.Now()
 
 		require.NoError(t, err)
 		require.NotNil(t, tokens)
@@ -632,9 +630,42 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		assert.NotEmpty(t, tokens.RefreshToken)
 		assert.NotEqual(t, "current-refresh", tokens.RefreshToken)
 		d.refreshRepo.AssertCalled(t, "ClaimForRotation", uint(7))
-		// The successor starts a new password session.
-		assertNewRefreshSession(t, successor, models.RefreshTokenSignInPassword, before, after)
+		// The successor starts a new family but keeps the single sign-on
+		// method and start, so it expires 24 hours after that sign-in.
+		require.NotNil(t, successor)
+		assert.Len(t, successor.FamilyID, 32)
 		assert.NotEqual(t, "ffeeddccbbaa99887766554433221100", successor.FamilyID, "the successor starts a new family")
+		assert.Equal(t, models.RefreshTokenSignInOIDC, successor.SignInMethod)
+		if assert.NotNil(t, successor.SessionStartedAt) {
+			assert.True(t, successor.SessionStartedAt.Equal(presentedStart), "the start is carried: %v", *successor.SessionStartedAt)
+		}
+		assert.WithinDuration(t, presentedStart.Add(24*time.Hour), successor.ExpiresAt, time.Second)
+	})
+
+	t.Run("a single sign-on session past 24 hours is stale and nothing is written", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.expectTransactionBoundRepos()
+		user := sessionActiveUser(1, "CurrentPass1!")
+		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
+		hash := hashOpaqueToken("sso-refresh", sessionTestSecret)
+		presentedStart := time.Now().Add(-24*time.Hour - time.Minute)
+		d.refreshRepo.On("GetByTokenHash", hash).Return(&models.RefreshToken{
+			BaseModel: models.BaseModel{ID: 8}, UserID: 1, TokenHash: hash, ExpiresAt: time.Now().Add(29 * 24 * time.Hour),
+			FamilyID: "ffeeddccbbaa99887766554433221100", SignInMethod: models.RefreshTokenSignInOIDC, SessionStartedAt: &presentedStart,
+		}, nil)
+
+		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "sso-refresh")
+
+		assert.ErrorIs(t, err, ErrSessionStale)
+		assert.Nil(t, tokens)
+		reason, auditUser := AuthAuditReason(err)
+		assert.Equal(t, AuthAuditReasonSessionStale, reason)
+		assert.Equal(t, uint(1), auditUser)
+		d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
+		d.userRepo.AssertNotCalled(t, "UpdateFields", mock.Anything, mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything)
+		d.apiKeyRepo.AssertNotCalled(t, "RevokeAllForUser", mock.Anything, mock.Anything)
+		d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
 	})
 
 	t.Run("a refresh token of another user is stale and nothing is written", func(t *testing.T) {
