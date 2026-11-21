@@ -12,8 +12,8 @@ import (
 
 // formRetentionBackground owns the retention purge of this process. Stop is what
 // main calls at shutdown, through the combined handle setupDependencies returns
-// (combineStops: automation, then this, then AEO), under the one drain deadline
-// main passes, aeoDrainTimeout (15 s). A nil runtime (FORM_RETENTION_DAYS unset)
+// (combineStops, which stops it together with the other runtimes), under the
+// one drain deadline main passes, aeoDrainTimeout (15 s). A nil runtime (FORM_RETENTION_DAYS unset)
 // has nothing to start or stop.
 type formRetentionBackground struct {
 	runtime       *service.FormRetentionRuntime

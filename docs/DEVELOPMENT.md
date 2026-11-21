@@ -3322,10 +3322,13 @@ closed-set table in `scripts/ci/check-api-docs.py`.
 Follow-up automation (#164) is the second owner of background work. `internal/service/
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
-(`combineStops`) that `main` runs — automation first, then the form retention purge, then the
-stale bulk operation sweep (#196), then the webhook sender (#345), then AEO — before
-`models.CloseDatabase`. That order describes the code and is not a contract: no handle depends on
-another, all five share one deadline, and no test asserts the order.
+(`combineStops`) that `main` runs before `models.CloseDatabase`. The combined handle stops the
+automation worker, the form retention purge, the stale bulk operation sweep (#196), the webhook
+sender (#345) and AEO together: every handle starts at the same moment under the one shared
+deadline, each cancels its own work before it waits, and the combined call returns only after
+every handle has returned, with their errors joined in argument order (#561). No handle depends
+on another, so a slow drain does not delay the others; `TestAutomationRuntimeLifecycle` (`cmd`)
+covers this.
 The pieces, and why each is shaped the way it is:
 
 - **The outbox event is written in the write transaction.** `LeadService.Create/Update/
@@ -3480,8 +3483,8 @@ The pieces, and why each is shaped the way it is:
   run), closes admission, cancels the owned context and waits for every admitted step to release —
   a step transaction in flight finishes or rolls back before `Stop` returns, and nothing is written
   afterwards — then joins the goroutine, all under the one deadline main passes to the combined
-  handle (`aeoDrainTimeout`, 15 s, shared with the form retention, bulk operation sweep and AEO
-  drains that run after it). A drained
+  handle (`aeoDrainTimeout`, 15 s, shared with the form retention, bulk operation sweep, webhook
+  and AEO drains, which run at the same time). A drained
   runtime holds no goroutine, and a repeated `Stop` is a no-op that returns nil
   even on a context that has already ended: the join and the admission drain check their
   "already done" state before they look at the deadline. The same crash policy as AEO applies when
@@ -3899,10 +3902,11 @@ commits. Code: `internal/models/webhook.go`,
   (`WebhookRequestTimeout`), response bodies read up to 4 KiB and discarded. `cmd/webhook_runtime.go`
   builds it from `aeo.NewEgressGuard(config.AEOEgressPolicy{})`, the real resolver and dialer.
 - **Drain.** `Stop` cancels the loop: no worker starts a further claim, every attempt in flight
-  (one per busy worker) runs to its end (request timeout plus a 5 s finish bound), `RunOnce` joins
-  its workers, then the loop goroutine joins. After `Stop`
-  returns nil nothing is written. Order in `combineStops`: automation, form retention, bulk sweep,
-  webhooks, AEO.
+  (one per busy worker) runs to its end (the endpoint read and the expired-secret clear each
+  bounded by `webhookFinishTimeout`, 5 s, the request by its timeout, the finish write by the same
+  5 s bound, #561), `RunOnce` joins its workers, then the loop goroutine joins. After `Stop`
+  returns nil nothing is written. `combineStops` stops the webhook sender together with the other
+  runtimes under the one shared deadline.
 - **Replicas.** Safe on every replica: claims are conditional, and a crashed sender's lease
   expires and is recovered. Delivery is at least once (a crash between the POST and the finish
   resends after the lease). The per-endpoint id order holds within one runtime's pass only: a
@@ -4028,7 +4032,7 @@ the setting is off, so no goroutine runs and no row is read.
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
-  drains after the automation worker and before the stale bulk operation sweep, the webhook sender
+  drains together with the automation worker, the stale bulk operation sweep, the webhook sender
   and AEO:
   `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)`.
 - **Replicas.** The purge is safe on every replica, like the automation worker (#237): extra sweeps only

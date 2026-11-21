@@ -70,8 +70,9 @@ import (
 // (nothing sent, circuit untouched), and the next check holds it.
 //
 // Stop cancels the loop: no worker starts a further claim, and every attempt
-// in flight runs to its end (its request is bounded by the request timeout and
-// its finish write by webhookFinishTimeout). A pass joins its workers before
+// in flight runs to its end (its endpoint read, its expired-secret clear and
+// its finish write are each bounded by webhookFinishTimeout, its request by
+// the request timeout). A pass joins its workers before
 // it returns and the loop goroutine joins after the pass, so nothing is
 // written after Stop returns nil.
 //
@@ -115,7 +116,8 @@ const (
 const (
 	// webhookDiscoveryBatch bounds the rows one pass discovers.
 	webhookDiscoveryBatch = 100
-	// webhookFinishTimeout bounds the finish write of one attempt.
+	// webhookFinishTimeout bounds the finish write of one attempt, and each of
+	// its two database reads (the endpoint read and the expired-secret clear).
 	webhookFinishTimeout = 5 * time.Second
 	// webhookResponseDrainBytes is how much of a response body is read (and
 	// discarded) before the connection is closed.
@@ -543,7 +545,8 @@ func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool, bo
 	}
 
 	// From here the attempt runs to its end even when Stop cancels ctx: the
-	// request has its own timeout and the finish write its own bound.
+	// request has its own timeout, and the endpoint read, the expired-secret
+	// clear and the finish write each have their own bound.
 	work := context.WithoutCancel(ctx)
 	outcome := r.attempt(work, delivery)
 	status := r.finish(work, delivery, outcome)
@@ -596,7 +599,12 @@ func (r *WebhookRuntime) logEndpointHealthError(endpointID uint, err error) {
 }
 
 func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDelivery) attemptOutcome {
-	endpoint, err := r.repo.GetEndpoint(ctx, delivery.EndpointID)
+	// The two database reads carry their own bound: ctx is the work context,
+	// which Stop does not cancel, so without one a stuck read would hold the
+	// attempt (and the shutdown drain) past every deadline.
+	readCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
+	endpoint, err := r.repo.GetEndpoint(readCtx, delivery.EndpointID)
+	cancel()
 	if err != nil && !isNotFound(err) {
 		// A database failure is not a verdict on the endpoint: nothing is
 		// sent and the attempt is retried like a failed connection.
@@ -619,7 +627,10 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 		// The window is over: clear the previous secret, fenced on the expiry
 		// in the statement so a rotation committed since the read survives.
 		// A failure is housekeeping only and never blocks the send.
-		if err := r.repo.ClearExpiredPreviousSecret(ctx, endpoint.ID, now); err != nil {
+		clearCtx, cancelClear := context.WithTimeout(ctx, webhookFinishTimeout)
+		err := r.repo.ClearExpiredPreviousSecret(clearCtx, endpoint.ID, now)
+		cancelClear()
+		if err != nil {
 			r.log().WithFields(logrus.Fields{"operation": "webhook_clear_previous_secret", "endpoint_id": endpoint.ID}).
 				WithError(utils.LogError(err)).Warn("Expired previous webhook secret not cleared")
 		}

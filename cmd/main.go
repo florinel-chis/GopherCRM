@@ -204,11 +204,12 @@ func main() {
 	utils.Logger.Info("Shutting down server...")
 
 	// Stop the background workers and drain the automation worker, the form
-	// retention purge and the AEO runtime first: admission closes, so no new
-	// run starts while the server is draining, an automation step or purge
-	// chunk in flight finishes or rolls back, and every scheduled, manual or
-	// single-prompt AEO run already in flight is cancelled and joined under
-	// aeoDrainTimeout. A request that asks for an AEO run from here on is
+	// retention purge, the bulk operation sweep, the webhook sender and the AEO
+	// runtime first, all together under the one aeoDrainTimeout: admission
+	// closes, so no new run starts while the server is draining, an automation
+	// step or purge chunk in flight finishes or rolls back, a webhook attempt in
+	// flight finishes, and every scheduled, manual or single-prompt AEO run
+	// already in flight is cancelled and joined. A request that asks for an AEO run from here on is
 	// answered 503.
 	stopBackground()
 	drainErr := drainAEO(stopAEO, aeoDrainTimeout)
@@ -708,10 +709,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	webhooks := newWebhookBackground(webhookRepo, webhookBox, service.WithWebhookWorkers(service.WebhookWorkers))
 	webhooks.start(backgroundCtx)
 
-	// One drain handle for every runtime: the automation worker first (its step
-	// transactions are short), then the form retention purge (a chunk in flight
-	// rolls back), then the bulk operation sweep, then the webhook sender (the
-	// attempts in flight finish, each bounded by its request timeout), then the AEO
-	// runs.
+	// One drain handle for every runtime, which stops them all at the same time
+	// under the one deadline: the automation worker (its step transactions are
+	// short), the form retention purge (a chunk in flight rolls back), the bulk
+	// operation sweep, the webhook sender (the attempts in flight finish, each
+	// read, request and write bounded) and the AEO runs.
 	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop), webhooks.runtime.SenderStatus
 }
