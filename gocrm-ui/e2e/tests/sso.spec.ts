@@ -537,12 +537,29 @@ test.describe('Single sign-on with the test issuer', () => {
     const settings = await currentSettings(admin);
     expect(settings.allow_password).toBe(false);
     try {
+      const [provisioned] = await admin.usersByEmail(who.email);
+      expect(provisioned, `user ${who.email}`).toBeTruthy();
       const before = passwordResetMailLines(who.email);
       const off = await anonymous.post(`${API_BASE_URL}/auth/password-reset`, {
         data: { email: who.email },
       });
       expect(off.status()).toBe(200);
-      // The mail is logged before the 200, so nothing more can arrive.
+      // The reset queue handles the request after the 200 and writes its
+      // audit row after any mail, so once the row exists no mail can follow.
+      await expect
+        .poll(
+          async () => {
+            const response = await admin.get('/audit/sign-ins', {
+              method: 'reset_request',
+              reason: 'sso_account',
+              user_id: provisioned.id,
+            });
+            expect(response.ok(), `GET /audit/sign-ins: ${response.status()}`).toBeTruthy();
+            return ((await response.json()).data ?? []).length;
+          },
+          { timeout: LOAD },
+        )
+        .toBeGreaterThan(0);
       expect(passwordResetMailLines(who.email)).toBe(before);
 
       await admin.putSSO({ ...settings, allow_password: true });

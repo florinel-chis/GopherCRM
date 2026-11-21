@@ -119,6 +119,8 @@ func (h *SCIMUserHandler) Create(c *gin.Context) {
 }
 
 // Replace answers PUT /scim/v2/Users/:id: 200 with the replaced resource.
+// A changed userName (the login email) also ends every password reset link
+// issued for the account before the change.
 func (h *SCIMUserHandler) Replace(c *gin.Context) {
 	in, ok := readSCIMUserBody(c)
 	if !ok {
@@ -133,6 +135,8 @@ func (h *SCIMUserHandler) Replace(c *gin.Context) {
 }
 
 // Patch answers PATCH /scim/v2/Users/:id: 200 with the patched resource.
+// A changed userName (the login email) also ends every password reset link
+// issued for the account before the change.
 func (h *SCIMUserHandler) Patch(c *gin.Context) {
 	raw, ok := readSCIMObject(c)
 	if !ok {

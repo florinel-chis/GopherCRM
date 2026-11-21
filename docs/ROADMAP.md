@@ -186,9 +186,7 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   before they issue anything, so against a user- or customer-rooted erasure they either commit
   first (and the erasure purges what they issued) or wait and are refused. The reset request and
   the reset confirm lock in opposite orders; when they deadlock the request is replayed and the
-  confirm fails with nothing written (putting the confirm under the retry rule is open), and a
-  reset request for an account whose row another transaction holds waits for it, which a timing
-  observer could tell apart from an unknown address (accepted residual). A deal or quote write
+  confirm fails with nothing written (putting the confirm under the retry rule is open). A deal or quote write
   racing the business-text scrub (#245) can be missed like a conversion: a deal linked, or a quote
   edited, while the erasure is in flight can keep its text.
 - **Deal and quote text left by the erasure (#245 follow-ups).** The erasure redacts the deal and

@@ -1090,7 +1090,7 @@ request, and so does a key taken away.
 authentication only, so the integration user can read and edit its own profile and create, list,
 update and revoke its own API keys. Changing its own email needs the account's current password
 in `current_password` (#394), so a leaked key alone cannot move the address a password reset is
-sent to. It cannot change its own role that way: `PUT /users/me` has
+sent to. A changed email also ends the reset links already issued for the account (#554). It cannot change its own role that way: `PUT /users/me` has
 no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and `is_active`
 from a caller without `users.assign_role` and `users.activate`. A request authenticated with an
 API key cannot create keys or switch one on: `POST /api-keys`, and `PUT /api-keys/{id}` with

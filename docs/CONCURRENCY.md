@@ -37,7 +37,10 @@ Three chains are specified. A transaction that locks rows of one chain takes the
   `users → refresh_tokens`; the password-reset request follows `users → password_reset_tokens`
   and API-key create `users → api_keys` (#342). The password-reset confirm is the exception: it
   claims its `password_reset_tokens` row before the owner, `password_reset_tokens → users`, the
-  inversion of the reset request's order (see both flows).
+  inversion of the reset request's order (see both flows). A login email change (#554: the own
+  profile and the admin edit, the ungoverned `UserService.Update`, the SCIM replace and patch)
+  follows `users → password_reset_tokens` too: `UserRepository.UpdateFields` spends the user's
+  unused reset tokens right after its `users` UPDATE, in the same unit.
   Every flow that ends all of an account's credentials (#526: the password change, the
   password-reset confirm, the governed deactivation and the SCIM deactivations) does it through
   `revokeAllCredentials` (`internal/service/credential_revocation.go`) after its own `users`
@@ -542,6 +545,10 @@ Logout never touches `api_keys`.
 
 ### Password-reset request
 
+Since #554 the request runs on the one worker of the password reset queue
+(`service.PasswordResetQueue`), after `POST /auth/password-reset` has answered; the transaction
+below is unchanged.
+
 - **Rows locked:** the owner's `users` row, read by primary key with a locking read (`FOR UPDATE`,
   `internal/service/auth_service.go:1594`, read by `lockLiveCredentialOwner` at
   `internal/service/auth_service.go:1490`); then a plain (non-locking) read of the user's
@@ -687,7 +694,12 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   the revocation, `user_email_changed` for a changed email, `user_activated` or
   `user_deactivated` for a changed `is_active`, then `user_role_changed`; an erasure inserts
   `user_erased` after its nested erasure returned, in the same root, so a restart or replay
-  commits one row.
+  commits one row. A changed email (#554) also spends the target's unused `password_reset_tokens`
+  rows inside `UpdateFields`, right after the `users` UPDATE (a SAVEPOINT in the root): users →
+  password_reset_tokens, the reset request's order and the inversion of the reset confirm's. When
+  such a write and a confirm of the same user deadlock, InnoDB ends one of them and its root is
+  replayed (`roleWriteMaxRetries` here, `resetConfirmMaxRetries` for the confirm); a replayed
+  confirm finds its token spent and answers the generic 400.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
@@ -763,6 +775,10 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   not change. It writes no `user_identities` row. A replace with `active` false (#471, #526)
   then ends every credential of the account after the `users` write (`revokeAllCredentials`):
   `token_version` plus one, every `refresh_tokens` row and every `api_keys` row revoked.
+  A replace that changes the address (#554) also spends the target's unused
+  `password_reset_tokens` rows inside `UpdateFields`, right after the `users` UPDATE; a deadlock
+  with a reset confirm of the same user is resolved as for the governed writes (see *RBAC
+  user-role and role writes*).
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
   that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
   a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
@@ -793,7 +809,10 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `token_version` to the locked value plus one, revokes every `refresh_tokens` row and then every
   `api_keys` row of the account (#526); then the `role_audit_log` rows are inserted: a changed
   address its `user_email_changed` row, a changed `active` its `user_activated` or
-  `user_deactivated` row (#552), and a role change its `user_role_changed` row. Like the replace, it plain-reads the target's
+  `user_deactivated` row (#552), and a role change its `user_role_changed` row. A changed address
+  (#554) also spends the target's unused `password_reset_tokens` rows inside `UpdateFields`, right
+  after the `users` UPDATE, so the patch continues users → password_reset_tokens; a deadlock with a
+  reset confirm of the same user is resolved as for the governed writes. Like the replace, it plain-reads the target's
   `user_identities` rows right after the `users` lock and refuses an account not linked under the
   effective issuer as a not-found before anything is written (#529); it writes no
   `user_identities` row.

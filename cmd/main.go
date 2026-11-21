@@ -204,10 +204,11 @@ func main() {
 	utils.Logger.Info("Shutting down server...")
 
 	// Stop the background workers and drain the automation worker, the form
-	// retention purge, the bulk operation sweep, the webhook sender and the AEO
-	// runtime first, all together under the one aeoDrainTimeout: admission
+	// retention purge, the bulk operation sweep, the password reset queue, the
+	// webhook sender and the AEO runtime first, all together under the one aeoDrainTimeout: admission
 	// closes, so no new run starts while the server is draining, an automation
-	// step or purge chunk in flight finishes or rolls back, a webhook attempt in
+	// step or purge chunk in flight finishes or rolls back, a password reset in
+	// flight finishes and the waiting ones are dropped, a webhook attempt in
 	// flight finishes, and every scheduled, manual or single-prompt AEO run
 	// already in flight is cancelled and joined. A request that asks for an AEO run from here on is
 	// answered 503.
@@ -283,8 +284,8 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 
 // setupDependencies wires every repository, service and handler onto the API
 // group and returns the function that drains the automation worker, the form
-// retention purge, the bulk operation sweep, the webhook sender and the AEO
-// runtime at shutdown, in that order, before main closes the database, and the
+// retention purge, the bulk operation sweep, the password reset queue, the
+// webhook sender and the AEO runtime at shutdown, in that order, before main closes the database, and the
 // status accessor of the webhook sender it started (GET /health reads it).
 func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) (func(context.Context) error, func() service.WebhookSenderStatus) {
 	// Outbound webhooks (#345): one repository is the outbox of every create,
@@ -493,6 +494,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	authAudit := service.NewAuthAuditService(authAuditRepo)
 	authHandler := handler.NewAuthHandler(authService, userService)
 	authHandler.WithAudit(authAudit)
+	// POST /auth/password-reset is answered at once; one background worker
+	// issues and mails the link and writes the reset_request audit row.
+	passwordReset := newPasswordResetBackground(authService, authAudit)
+	authHandler.WithPasswordResetQueue(passwordReset.queue)
 	userHandler := handler.NewUserHandler(userService)
 	roleHandler := handler.NewRoleHandler(roleService)
 	leadHandler := handler.NewLeadHandler(leadService)
@@ -590,6 +595,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	}
 
 	formRetention.start(backgroundCtx)
+
+	// The password reset worker, before the routes are served.
+	passwordReset.start(backgroundCtx)
 
 	// Public routes with strict rate limiting for auth endpoints
 	public := router.Group("")
@@ -712,7 +720,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// One drain handle for every runtime, which stops them all at the same time
 	// under the one deadline: the automation worker (its step transactions are
 	// short), the form retention purge (a chunk in flight rolls back), the bulk
-	// operation sweep, the webhook sender (the attempts in flight finish, each
-	// read, request and write bounded) and the AEO runs.
-	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop), webhooks.runtime.SenderStatus
+	// operation sweep, the password reset queue (the request in flight
+	// finishes, the waiting ones are dropped), the webhook sender (the attempts
+	// in flight finish, each read, request and write bounded) and the AEO runs.
+	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, passwordReset.Stop, webhooks.Stop, aeoRuntime.Stop), webhooks.runtime.SenderStatus
 }

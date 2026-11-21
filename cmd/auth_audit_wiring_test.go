@@ -3,7 +3,8 @@ package main
 // Issue #454 through the router production uses: setupRouter wires the sign-in
 // audit writer into POST /auth/login, POST /auth/refresh, the OIDC callback,
 // the ApiKey branch of the authentication middleware and (#550)
-// POST /auth/change-password, /auth/password-reset,
+// POST /auth/change-password, /auth/password-reset (written by the reset
+// queue after the answer),
 // /auth/password-reset/confirm and /auth/logout, and (#551) the API key
 // handler behind POST /api-keys, DELETE /api-keys/:id and
 // PUT /api-keys/:id, so every outcome
@@ -77,6 +78,16 @@ func TestAuthAuditWired(t *testing.T) {
 		require.Len(t, rows, 1, "exactly one audit row")
 		lastID = rows[0].ID
 		return rows[0]
+	}
+	// awaitRow is newRow for a row the password reset queue writes after the
+	// answer: it waits until the row exists.
+	awaitRow := func(t *testing.T) models.AuthAuditLog {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			var n int64
+			return models.DB.Model(&models.AuthAuditLog{}).Where("id > ?", lastID).Count(&n).Error == nil && n > 0
+		}, 5*time.Second, 10*time.Millisecond, "the queued reset request wrote its audit row")
+		return newRow(t)
 	}
 	assertRow := func(t *testing.T, row models.AuthAuditLog, method, outcome, reason string, userID uint) {
 		t.Helper()
@@ -256,7 +267,9 @@ func TestAuthAuditWired(t *testing.T) {
 
 	recorder = send(http.MethodPost, "/auth/password-reset", `{"email":"`+email+`"}`, "req-454", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-	assertRow(t, newRow(t), "reset_request", "success", "", user.ID)
+	// The queue issues the reset after the answer; the token is stored before
+	// the audit row is written.
+	assertRow(t, awaitRow(t), "reset_request", "success", "", user.ID)
 	knownBody := recorder.Body.String()
 	var stored int64
 	require.NoError(t, models.DB.Model(&models.PasswordResetToken{}).Where("user_id = ? AND used_at IS NULL", user.ID).Count(&stored).Error)
@@ -265,7 +278,7 @@ func TestAuthAuditWired(t *testing.T) {
 	recorder = send(http.MethodPost, "/auth/password-reset", `{"email":"nobody-0550@crm.example.test"}`, "req-454", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.Equal(t, knownBody, recorder.Body.String(), "the same answer for an unknown email")
-	assertRow(t, newRow(t), "reset_request", "refused", "account_unknown", 0)
+	assertRow(t, awaitRow(t), "reset_request", "refused", "account_unknown", 0)
 
 	recorder = send(http.MethodPost, "/auth/password-reset/confirm",
 		`{"token":"unknown-reset-token-0550","new_password":"Wired-Reset-Passw0rd!-0550"}`, "req-454", "")

@@ -545,6 +545,18 @@ issued only to a live, active owner.
   of the locked row. The method returns nil in every case (unknown, inactive, refused, rolled back,
   unwired, mail failure), so `POST /auth/password-reset` keeps its one 200 answer. A service
   without a transaction manager now writes and sends nothing.
+  Since #554 the handler does none of this while the client waits: `cmd/main.go` builds a
+  `service.PasswordResetQueue` over the auth service and the sign-in audit writer
+  (`cmd/password_reset_runtime.go`) and hands it to `AuthHandler.WithPasswordResetQueue`. The
+  handler validates the body, calls `Submit` with the request's audit context and answers the
+  same 200, whatever `Submit` returns. The queue's one worker (`PasswordResetQueueSize` 100
+  waiting requests, handled in submission order) calls `IssuePasswordReset` and then
+  `RecordPasswordResetRequest` on a `context.WithoutCancel` copy of the request context, so the
+  row keeps the request id and client network. A full or stopped queue drops the request with a
+  warning (`reset_queue_full`, `reset_queue_stopped`) and an `unavailable` `reset_request` row
+  with no user id; a panic in one item is recovered (`reset_worker_panic`). No queue log line
+  carries the email, the token or the link. A handler built without a queue (the handler-only
+  setups in `tests/` and `internal/handler`) still issues and audits before it answers.
 - **API-key create.** `NewAPIKeyService(apiKeyRepo, userRepo, txManager, apiKeySecret)`;
   `cmd/main.go` passes the shared `userRepo` and `txManager`. `Generate` runs one
   `WithTransactionAndRetry` transaction (`apiKeyCreateMaxRetries` 3) on `context.Background()`
@@ -563,9 +575,9 @@ issued only to a live, active owner.
   request victim is replayed by the retry helper, and so is a confirm victim, whose replay
   finds the token spent by the request and is refused (`ErrInvalidResetToken`). Neither party
   returns the 1213.
-- **Accepted residual.** A reset request for an account whose users row another transaction holds
-  waits for that lock, which a timing observer could tell apart from an unknown address. Neither
-  path moves onto the request context (the interfaces stay context-free).
+- **Lock waits.** A reset request for an account whose users row another transaction holds
+  waits for that lock on the password reset queue's worker (#554); the answer does not wait.
+  Neither path moves onto the request context (the interfaces stay context-free).
 - **Logs.** The refusal, rollback and unwired lines carry `user_id`, `operation`
   (`RequestPasswordReset`, `GenerateAPIKey`) and `error_code` only, plus the error through
   `utils.LogError`; never the address, a name, the token or its hash, the key, its prefix or its
@@ -773,7 +785,14 @@ and `UserService.Update` all go through it; a login whose account vanished under
 refused (`TestLoginErasedDuringAuthentication{SQLite,MySQL}` in
 `internal/service/auth_login_erasure_regression_test.go`). A wired login re-checks the password
 hash and the account state under the owner lock before it issues its session (#336, see *Login
-issuing transaction*).
+issuing transaction*). A write that names `email` (#554; callers add it only when the address
+changes: `UpdateAs` for `PUT /users/me` and `PUT /users/{id}`, the ungoverned
+`UserService.Update`, the SCIM replace and patch) also spends every unused reset token of the
+user (`PasswordResetTokenRepository.InvalidateAllForUser`) in one `r.db.Transaction` with the
+users UPDATE: a root transaction on a plain handle, a SAVEPOINT on a transaction-bound one. The
+token write runs only after the UPDATE matched the live row, and a failed users write (duplicate
+email, not found) or a caller rollback changes no token (`TestUpdateFieldsEmailSpendsResetTokens`
+in `internal/repository`, `TestResetLinkEmailChange{SQLite,MySQL}` in `internal/service`).
 
 **Customer writes never upsert (#256)** — `CustomerRepository.Update` is one `UPDATE … WHERE id = ?
 AND deleted_at IS NULL` of named columns: the names, email, phone, company, website, position,
@@ -3324,8 +3343,9 @@ Follow-up automation (#164) is the second owner of background work. `internal/se
 automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
 (`combineStops`) that `main` runs before `models.CloseDatabase`. The combined handle stops the
-automation worker, the form retention purge, the stale bulk operation sweep (#196), the webhook
-sender (#345) and AEO together: every handle starts at the same moment under the one shared
+automation worker, the form retention purge, the stale bulk operation sweep (#196), the password
+reset queue (#554: the request in flight finishes, the waiting ones are dropped and counted), the
+webhook sender (#345) and AEO together: every handle starts at the same moment under the one shared
 deadline, each cancels its own work before it waits, and the combined call returns only after
 every handle has returned, with their errors joined in argument order (#561). No handle depends
 on another, so a slow drain does not delay the others; `TestAutomationRuntimeLifecycle` (`cmd`)
@@ -4033,9 +4053,9 @@ the setting is off, so no goroutine runs and no row is read.
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge
-  drains together with the automation worker, the stale bulk operation sweep, the webhook sender
-  and AEO:
-  `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)`.
+  drains together with the automation worker, the stale bulk operation sweep, the password reset
+  queue, the webhook sender and AEO:
+  `combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, passwordReset.Stop, webhooks.Stop, aeoRuntime.Stop)`.
 - **Replicas.** The purge is safe on every replica, like the automation worker (#237): extra sweeps only
   compete for the same rows.
 - **Logs.** A sweep logs `spam_removed`, `pending_removed`, `tokens_removed` and `chunks`, and a

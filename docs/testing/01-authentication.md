@@ -720,7 +720,11 @@ file, not by trusting the coverage matrix.
   `data.message = "If an account exists for that email, a password reset link has been sent"`.
   `RequestPasswordReset` logs internal failures and never varies the response: an unknown,
   inactive, erased or deactivated account, a rollback, an unwired service and a mail failure all
-  answer the same 200 (TC-AUTH-036a).
+  answer the same 200 (TC-AUTH-036a). Since #554 the answer does not wait for the account lookup or
+  the mail: the handler hands the email to the password reset queue and answers at once; the
+  queue's worker issues and mails the link and writes the `reset_request` audit row. A request the
+  full queue cannot take gets the same 200 (`TestPasswordResetQueue`,
+  `TestPasswordResetQueueProductionWiring`).
 - **Automation:** blocked — no UI entry point exists (TC-AUTH-034); an API-only assertion belongs in
   the Go integration suite (`tests/auth_session_integration_test.go`) rather than in Playwright
 
@@ -741,8 +745,8 @@ file, not by trusting the coverage matrix.
   (`TestPasswordResetRequestOwnerLock{Decisions,Atomicity,Concurrent}SQLite`,
   `TestPasswordResetRequestOwnerLockConcurrentMySQL`, which needs `TEST_MYSQL_DSN`) and, over HTTP,
   `tests/credential_issuance_owner_lock_test.go` (`TestCredentialIssuanceOwnerLockAPISQLite`).
-  A reset request for an account whose row another transaction holds waits for that lock; the
-  timing difference is an accepted residual.
+  A reset request for an account whose row another transaction holds waits for that lock on the
+  reset queue's worker; the answer does not wait (#554).
 
 ### TC-AUTH-036b — A reset request racing a reset confirmation of the same user
 - **Priority:** P2
@@ -1924,3 +1928,22 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   `TestSCIMUserDelete{SQLite,MySQL}`, `TestSCIMGroups{SQLite,MySQL}` (the local-account,
   other-issuer and padded-issuer subtests), `TestSCIMUsersWired`, `TestSCIMUserPatchWired`,
   `TestSCIMUserDeleteWired`, `TestSCIMGroupsWired`
+
+### TC-AUTH-094 — A login email change ends the reset links issued before it (#554)
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** An active user holding a spendable reset link mailed to its current address.
+- **Steps:** Change the user's login email through `PUT /users/me` (own), `PUT /users/{id}` (an
+  admin), SCIM `PUT /scim/v2/Users/{id}` or SCIM `PATCH /scim/v2/Users/{id}` (`userName`), then
+  confirm the earlier link. Controls: change only the first name, or send the stored email again;
+  confirm the link before the email change; request a new reset after the change.
+- **Expected:** After an email change the earlier link is refused with the generic **400**
+  (`Invalid or expired reset token`) and the password is unchanged. The token is spent in the same
+  write as the email; a refused email write (a taken address) or a rolled-back transaction leaves
+  it usable. A name-only edit and an unchanged email keep the link working. A confirmation that
+  commits before the change stays in effect. A reset requested after the change is mailed to the
+  new address and its link works.
+- **Automation:** automated (backend) — `internal/service/auth_reset_email_change_test.go`
+  (`TestResetLinkEmailChangeSQLite`, `TestResetLinkEmailChangeMySQL`, which needs
+  `TEST_MYSQL_DSN`) and `internal/repository/user_repository_test.go`
+  (`TestUpdateFieldsEmailSpendsResetTokens`)

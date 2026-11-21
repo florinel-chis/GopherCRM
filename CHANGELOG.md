@@ -1156,6 +1156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Password reset requests are answered at once; an email change ends earlier reset links
+  (#554).** `POST /auth/password-reset` checks the body and answers the same `200` before the
+  account is looked up: the email goes on an in-process queue (one worker, so requests are handled
+  in order; up to 100 waiting), which issues the token, sends the mail and writes the
+  `reset_request` audit row, normally within seconds. A request the full queue cannot take, or one
+  that arrives during shutdown, is dropped with the same `200` and recorded as a `reset_request`
+  row refused `unavailable` with no user id; at shutdown the request in flight finishes and the
+  waiting ones are dropped. Changing an account's login email (`PUT /users/me`, `PUT /users/{id}`,
+  SCIM `PUT`/`PATCH /scim/v2/Users/{id}`) now spends the account's unused reset tokens in the same
+  write, so a link mailed before the change no longer works; other profile edits keep it. No
+  migration, route or setting.
+
 - **Sign-in audit: refused sign-ins, refreshes and SCIM authentications are counted per minute
   (#553).** A refused `POST /auth/login`, a refused `POST /auth/refresh` and a refused SCIM
   authentication on `/scim/v2` no longer write an `auth_audit_log` row each. Like refused API

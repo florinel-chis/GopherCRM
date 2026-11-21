@@ -705,7 +705,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   3. Repeat steps 1 and 2 on `PUT /users/<own id>`.
 - **Expected:** The API key is treated as a Bearer token is: **400** `CURRENT_PASSWORD_REQUIRED`,
   **400** `INVALID_CURRENT_PASSWORD`, then **200** with the email stored. A leaked key alone
-  cannot move the address a password reset is sent to.
+  cannot move the address a password reset is sent to. The stored email change also ends the
+  reset links issued before it (#554, TC-AUTH-094).
 - **Automation:** automated (backend) — `tests/users_me_password_test.go`
   `TestOwnEmailChangeNeedsCurrentPassword` (subtests `users-me/api-key`, `users-id/api-key`,
   `users-id/governed/api-key`)
