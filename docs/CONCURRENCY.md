@@ -91,8 +91,8 @@ transaction after the record insert, behind a plain read of the endpoints; they 
 the chains above. The same holds for the updated events (#408): the lead update, the ticket update
 and the lead and ticket bulk status batches insert their rows after the record write, inside the
 transaction and under the row locks they already took, behind the same plain read of the endpoints
-(once per batch). The customer update is the one path that gained a transaction: wired with
-webhooks, `CustomerService.Update` (`updateWithWebhooks`, `internal/service/customer_service.go`)
+(once per batch). The customer update is the one path that gained a transaction, and it is
+always one (#615): `CustomerService.Update` (`updateLocked`, `internal/service/customer_service.go`)
 takes exactly one row lock, the `customers` row it writes (a locking read by primary key, then the
 `UPDATE`), and inserts its rows after it. Its duplicate-email and company checks are plain reads
 made before the transaction, and it never calls `CompanyRepository.LockLive` or any other locking

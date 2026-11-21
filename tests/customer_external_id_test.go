@@ -61,7 +61,7 @@ func newExternalIDAPIFixture(t *testing.T) *externalIDAPIFixture {
 	userRepo := repository.NewUserRepository(db)
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "external-id-api-test-secret-0123456789", ExpiryHours: 1})
-	customerService := service.NewCustomerService(repository.NewCustomerRepository(db), userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(repository.NewCustomerRepository(db), userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	externalIDs := service.NewCustomerExternalIDService(repository.NewCustomerExternalIDRepository(db), utils.NewTransactionManager(db))
 	customerHandler := handler.NewCustomerHandler(customerService).WithExternalIDs(externalIDs)
 

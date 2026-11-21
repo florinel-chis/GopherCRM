@@ -99,7 +99,7 @@ func TestWebhookDeliveryAfterCommit(t *testing.T) {
 
 	t.Run("customer and ticket events are delivered the same way", func(t *testing.T) {
 		customer := env.newCustomer()
-		require.NoError(t, env.customers.Create(customer))
+		require.NoError(t, env.customers.Create(context.Background(), customer))
 		ticket := env.newTicket(customer.ID)
 		require.NoError(t, env.tickets.Create(ticket))
 		result, err := rt.RunOnce(ctx)

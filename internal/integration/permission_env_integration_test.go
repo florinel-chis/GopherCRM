@@ -145,7 +145,7 @@ func newPermissionEnvWith(t *testing.T, useMySQL bool, wrap roleRepositoryWrap) 
 	auth := service.NewAuthService(userRepo, apiKeyRepo, config.JWTConfig{Secret: permissionTestSecret, ExpiryHours: 1}, permissionTestSecret)
 	leadService := service.NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, txManager,
 		service.WithLeadAutomationEvents(automationRepo))
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo)
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager)
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo)
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db), dealRepo)

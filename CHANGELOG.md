@@ -1156,6 +1156,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Customer create and update always run as one transaction on the request context (#615).**
+  Services get one shared helper that runs a write in a single transaction and gives the callback
+  the repositories and the webhook and automation outlets bound to that transaction. The customer
+  service is the first to use it: its transaction manager is now a required constructor argument,
+  so customer create and update always run as one transaction, also where the service is built
+  without webhooks. They run on the request's context, so cancelling the request ends the
+  database work. Answers and webhook events are unchanged.
+
 - **Webhook events come from one catalogue and one emitter (#614).** The webhook entities (lead,
   customer, ticket) are registered once in the new `internal/webhook` package. Every create,
   update, bulk-status, form, delete and erasure path writes its delivery rows through an emitter

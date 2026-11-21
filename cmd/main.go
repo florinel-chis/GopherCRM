@@ -374,8 +374,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		service.WithLeadWebhooks(webhookEmitter))
 	// Customer create and update are each one transaction with their
 	// customer.created / customer.updated outbox rows (#345, #408).
-	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo,
-		service.WithCustomerWebhooks(webhookEmitter, txManager))
+	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager,
+		service.WithCustomerWebhooks(webhookEmitter))
 	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail

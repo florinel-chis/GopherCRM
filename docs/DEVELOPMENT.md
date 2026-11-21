@@ -169,9 +169,23 @@ across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCom
 (the independent reproduction of a recovered nested panic whose failed savepoint rollback used to
 be committed).
 
+**Service transaction units (#615)** — `internal/service/txunit.go` is the shared way a service
+runs one write in one transaction. `newTxDeps(txManager)` panics on a nil manager (a service
+built without one is a wiring mistake, not a mode) and holds the webhook emitter (`webhook.Nop`
+unless set), the optional automation repository and the base repositories to bind.
+`txDeps.Run(ctx, fn)` calls `WithTransaction` once on the caller's context, resolves the
+transaction once (`utils.ErrNoTransaction` if it is missing) and hands `fn` a `txUnit`: `Tx`, the
+repositories bound with `WithTx(Tx)`, `Webhooks` (`emitter.Bind(Tx)`) and `Automation`
+(`automationTx`, nil without an automation repository); `txUnit.LockingRead` is the
+`FOR UPDATE` handle with its fresh `Session`. `fn`'s error is returned unchanged. Called inside
+an enclosing transaction it nests under a savepoint. The customer service is the first user
+(`CustomerService.Create` and `Update`); the other services keep their own transaction code
+for now. Regression root: `TestTxUnit` (`internal/service`).
+
 **Request context (#107)** — lead conversion (including the handler's ownership read), lead
 assignment (`LeadService.Assign`, #255), the public form submission and confirmation, the
-three routed bulk status updates and the three erasures (`CustomerService.Delete`,
+three routed bulk status updates, customer create and update (`CustomerService.Create` and
+`Update`, #615) and the three erasures (`CustomerService.Delete`,
 `LeadService.Delete`, `UserService.Delete`/`DeleteAs`, #571) run on the HTTP request's context: the handler passes
 `c.Request.Context()` to the service, the service hands it to `WithTransaction` /
 `WithTransactionAndRetry`, and the reads and writes it issues outside the managed callback are
@@ -198,8 +212,10 @@ the conversion settings are read on the root handle, so running inside an enclos
 would either announce work that transaction could still roll back or need a second connection
 (which deadlocks SQLite's single-connection pool). No production caller nests them; the handlers
 are their only callers. `LeadService.Assign` also runs on the request context but is not one of
-these roots: it sends no mail and commits no audit row after its commit, so it does not refuse an
-enclosing transaction; called inside one, it nests under a savepoint. The erasures are not roots
+these roots, and neither are `CustomerService.Create` and `Update` (#615), which run their one
+transaction (`txDeps.Run`) on the request context too: none of them sends mail or commits an audit
+row after its commit, so none refuses an enclosing transaction; called inside one, each nests
+under a savepoint. The erasures are not roots
 either: on a caller's transaction (`WithTx`, the governed user delete) the erasure unit nests
 under a savepoint of its own (see *Deleting personal data*, Cancellation).
 
@@ -827,7 +843,7 @@ re-checked with a locking read, not a plain one: MySQL reports changed rows, so 
 affects zero rows and returns nil, while a plain read in a REPEATABLE READ transaction could still
 show a row whose erasure has committed and turn the lost write into a false success. No live row
 returns `gorm.ErrRecordNotFound`; `CustomerService.Update` and `Assign` log one Warn line with ids
-only and return `apperrors.ErrNotFound` (wired with webhooks, #408, `Update` is one transaction: a
+only and return `apperrors.ErrNotFound` (`Update` is always one transaction, #408/#615: a
 locking read of the live customer, which answers a missing row first with the same error, then the
 write and the `customer.updated` outbox rows; its email and company checks stay plain reads before
 the transaction), which `PUT /customers/{id}` and
@@ -835,7 +851,7 @@ the transaction), which `PUT /customers/{id}` and
 is scrubbed by it, whichever of the customer, converted-lead or customer-role-login deletes it came
 through. Live customers stay last-write-wins on purpose: two edits, a stale `PUT` undoing an assign
 or the reverse, and a stale write putting back a `company_id` that `UnlinkCustomers` cleared. None
-of these restores anything on an erased row, and `customerService` still has no transaction. Roots
+of these restores anything on an erased row, and `Assign` stays a plain write without a transaction. Roots
 (`test/integration/erasure_atomicity_test.go`):
 `TestCustomerUpdateLostToErasure{SQLite,MySQL}`, `TestCustomerAssignLostToErasure{SQLite,MySQL}`,
 `TestCustomerWriteAfterErasure{SQLite,MySQL}`, `TestCustomerWriteConcurrentWithErasure{SQLite,MySQL}`
@@ -3807,18 +3823,20 @@ commits. Code: `internal/models/webhook.go`,
   `internal/errors`, `internal/models`, `internal/repository` and `internal/utils`. A new entity
   needs one catalogue entry and one emitter call per write path; the event types, the check and
   the messages follow.
-- **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e,
-  txManager)`, `WithTicketWebhooks(e, txManager)` and `WithFormWebhooks(e)` take a `webhook.Emitter`;
-  `cmd/main.go` builds one `webhook.NewEmitter(webhookRepo)` and passes it with the shared
-  `txManager`. Each service holds `webhook.Nop` without the option (a nil emitter means `Nop`;
-  `WithCustomerWebhooks` and `WithTicketWebhooks` set the emitter and their transactional paths only
-  when both arguments are non-nil). After the record insert,
+- **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e)`,
+  `WithTicketWebhooks(e, txManager)` and `WithFormWebhooks(e)` take a `webhook.Emitter`;
+  `cmd/main.go` builds one `webhook.NewEmitter(webhookRepo)` and passes it, to the ticket option
+  with the shared `txManager`. Each service holds `webhook.Nop` without the option (a nil emitter
+  means `Nop`; `WithTicketWebhooks` sets the emitter and its transactional paths only when both
+  arguments are non-nil). The customer service takes the manager as a required constructor
+  argument (`NewCustomerService(..., txManager, opts...)`, #615), so its create and update are
+  always transactional. After the record insert,
   the bound emitter reads the active endpoints subscribed to the type (a plain read) and writes
   one `pending` row per endpoint in one batched INSERT in that transaction (pinned by
   `TestWebhookOutboxBatchInsert{SQLite,MySQL}`), all with one `evt_<32 hex>` id, `attempts` 0
   and `next_attempt_at = occurred_at` (UTC, ms), so the row is due at once. Paths: `LeadService.Create`, the form
-  create_lead path for a new lead (never a repeat enquiry), `CustomerService.Create` (now one
-  transaction when wired), `LeadService.ConvertToCustomer` (inside each retry attempt, so a replay
+  create_lead path for a new lead (never a repeat enquiry), `CustomerService.Create` (always one
+  transaction), `LeadService.ConvertToCustomer` (inside each retry attempt, so a replay
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
   `duplicate`). A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
@@ -3826,7 +3844,7 @@ commits. Code: `internal/models/webhook.go`,
   `NewBulkStatusService` call in `cmd/main.go`) make five update paths write `*.updated` rows in
   the transaction of the write: `LeadService.Update` (`applyUpdate`, `lead.updated`; without a
   transaction manager the update stays non-transactional and writes none),
-  `CustomerService.Update` (`updateWithWebhooks`, `customer.updated`), `TicketService.Update`
+  `CustomerService.Update` (`updateLocked`, `customer.updated`), `TicketService.Update`
   (`updateWithEvents`, `ticket.updated`), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
   with its own event id, per record whose locked status differed from the requested one;
   one `Updated` call with every changed id reads the endpoints once per batch and inserts every row in one statement).

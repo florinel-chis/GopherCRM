@@ -13,17 +13,17 @@ type CustomerService struct {
 	mock.Mock
 }
 
-// Create provides a mock function with given fields: customer
-func (_m *CustomerService) Create(customer *models.Customer) error {
-	ret := _m.Called(customer)
+// Create provides a mock function with given fields: ctx, customer
+func (_m *CustomerService) Create(ctx context.Context, customer *models.Customer) error {
+	ret := _m.Called(ctx, customer)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Create")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*models.Customer) error); ok {
-		r0 = rf(customer)
+	if rf, ok := ret.Get(0).(func(context.Context, *models.Customer) error); ok {
+		r0 = rf(ctx, customer)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -146,17 +146,17 @@ func (_m *CustomerService) List(offset int, limit int) ([]models.Customer, int64
 	return r0, r1, r2
 }
 
-// Update provides a mock function with given fields: customer
-func (_m *CustomerService) Update(customer *models.Customer) error {
-	ret := _m.Called(customer)
+// Update provides a mock function with given fields: ctx, customer
+func (_m *CustomerService) Update(ctx context.Context, customer *models.Customer) error {
+	ret := _m.Called(ctx, customer)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Update")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(*models.Customer) error); ok {
-		r0 = rf(customer)
+	if rf, ok := ret.Get(0).(func(context.Context, *models.Customer) error); ok {
+		r0 = rf(ctx, customer)
 	} else {
 		r0 = ret.Error(0)
 	}

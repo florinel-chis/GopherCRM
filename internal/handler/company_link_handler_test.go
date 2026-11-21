@@ -125,7 +125,7 @@ func (suite *LeadHandlerTestSuite) TestUpdate_UnknownCompanyIsInvalidReference()
 
 func (suite *CustomerHandlerTestSuite) TestCreate_PassesCompanyIDThroughAndZeroMeansNone() {
 	suite.router.POST("/customers", suite.handler.Create)
-	suite.mockService.On("Create", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Create", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.CompanyID != nil && *c.CompanyID == 9
 	})).Return(nil).Once()
 	rec := httptest.NewRecorder()
@@ -134,7 +134,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_PassesCompanyIDThroughAndZeroM
 	}))
 	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
 
-	suite.mockService.On("Create", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Create", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.CompanyID == nil
 	})).Return(nil).Once()
 	rec = httptest.NewRecorder()
@@ -146,7 +146,7 @@ func (suite *CustomerHandlerTestSuite) TestCreate_PassesCompanyIDThroughAndZeroM
 
 func (suite *CustomerHandlerTestSuite) TestCreate_UnknownCompanyIsInvalidReference() {
 	suite.router.POST("/customers", suite.handler.Create)
-	suite.mockService.On("Create", mock.Anything).
+	suite.mockService.On("Create", mock.Anything, mock.Anything).
 		Return(fmt.Errorf("unknown company_id 9: %w", apperrors.ErrCompanyNotFound))
 
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_CompanyIDAbsentKeepsZeroClears
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(fresh(), nil).Once()
-	suite.mockService.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Update", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.CompanyID != nil && *c.CompanyID == 4 && c.FirstName == "Jane"
 	})).Return(nil).Once()
 	rec := httptest.NewRecorder()
@@ -177,7 +177,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_CompanyIDAbsentKeepsZeroClears
 	assert.Equal(suite.T(), http.StatusOK, rec.Code, "absent keeps the link")
 
 	suite.mockService.On("GetByID", uint(1)).Return(fresh(), nil).Once()
-	suite.mockService.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Update", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.CompanyID == nil
 	})).Return(nil).Once()
 	rec = httptest.NewRecorder()
@@ -185,7 +185,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_CompanyIDAbsentKeepsZeroClears
 	assert.Equal(suite.T(), http.StatusOK, rec.Code, "0 clears the link")
 
 	suite.mockService.On("GetByID", uint(1)).Return(fresh(), nil).Once()
-	suite.mockService.On("Update", mock.MatchedBy(func(c *models.Customer) bool {
+	suite.mockService.On("Update", mock.Anything, mock.MatchedBy(func(c *models.Customer) bool {
 		return c.CompanyID != nil && *c.CompanyID == 9
 	})).Return(nil).Once()
 	rec = httptest.NewRecorder()
@@ -196,7 +196,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_CompanyIDAbsentKeepsZeroClears
 func (suite *CustomerHandlerTestSuite) TestUpdate_UnknownCompanyIsInvalidReference() {
 	suite.router.PUT("/customers/:id", suite.handler.Update)
 	suite.mockService.On("GetByID", uint(1)).Return(&models.Customer{BaseModel: models.BaseModel{ID: 1}, Email: "john@example.com"}, nil)
-	suite.mockService.On("Update", mock.Anything).
+	suite.mockService.On("Update", mock.Anything, mock.Anything).
 		Return(fmt.Errorf("unknown company_id 9: %w", apperrors.ErrCompanyNotFound))
 
 	rec := httptest.NewRecorder()

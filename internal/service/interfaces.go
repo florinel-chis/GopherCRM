@@ -186,10 +186,10 @@ type LeadService interface {
 }
 
 type CustomerService interface {
-	Create(customer *models.Customer) error
+	Create(ctx context.Context, customer *models.Customer) error
 	GetByID(id uint) (*models.Customer, error)
 	GetByUserID(userID uint) (*models.Customer, error)
-	Update(customer *models.Customer) error
+	Update(ctx context.Context, customer *models.Customer) error
 	Delete(ctx context.Context, id uint) error
 	List(offset, limit int) ([]models.Customer, int64, error)
 	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Customer, int64, error)

@@ -123,7 +123,7 @@ func newProductNameAPIFixture(t *testing.T) *productNameAPIFixture {
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
 		service.WithTicketCommentMail(repository.NewTicketMailDeliveryRepository(db), txManager, f.mailer),
 		service.WithTicketProductName(configService))
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), txManager)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()

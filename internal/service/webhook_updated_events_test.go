@@ -81,7 +81,7 @@ func updateCustomer(t *testing.T, env *webhookEnv, id uint, change func(*models.
 	customer, err := env.customers.GetByID(id)
 	require.NoError(t, err)
 	change(customer)
-	return env.customers.Update(customer)
+	return env.customers.Update(context.Background(), customer)
 }
 
 func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
@@ -417,7 +417,7 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 		erased := storedCustomer(t, db, customer.ID)
 
 		stale.FirstName = "Back"
-		err = env.customers.Update(stale)
+		err = env.customers.Update(context.Background(), stale)
 		require.ErrorIs(t, err, apperrors.ErrNotFound)
 		after := storedCustomer(t, db, customer.ID)
 		assert.Equal(t, erased.FirstName, after.FirstName, "the erased row is not written back")

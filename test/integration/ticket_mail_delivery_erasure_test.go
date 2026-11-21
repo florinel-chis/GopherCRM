@@ -84,7 +84,7 @@ func TestTicketMailDeliveryErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.NotContains(t, before, "ticket_mail_deliveries", "the delivery row never holds the address")
 
 	// DELETE /customers/{id} as an admin, through the real handler and route.
-	customerService := service.NewCustomerService(repository.NewCustomerRepository(db), repository.NewUserRepository(db), repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(repository.NewCustomerRepository(db), repository.NewUserRepository(db), repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	group := router.Group("/api/v1")

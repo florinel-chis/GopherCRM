@@ -17,22 +17,21 @@ func TestWebhookOptionsNilArguments(t *testing.T) {
 	t.Run("services hold the no-op emitter by default", func(t *testing.T) {
 		assert.Equal(t, webhook.Nop, NewLeadService(nil, nil, nil, nil, nil).(*leadService).webhooks)
 		assert.Equal(t, webhook.Nop, NewLeadService(nil, nil, nil, nil, nil, WithLeadWebhooks(nil)).(*leadService).webhooks)
-		assert.Equal(t, webhook.Nop, NewCustomerService(nil, nil, nil).(*customerService).webhooks)
+		assert.Equal(t, webhook.Nop, NewCustomerService(nil, nil, nil, tm).(*customerService).tx.webhooks)
 		assert.Equal(t, webhook.Nop, NewTicketService(nil, nil, nil).(*ticketService).webhooks)
 		assert.Equal(t, webhook.Nop, NewBulkStatusService(nil, nil, nil, nil, WithBulkWebhooks(nil)).(*bulkStatusService).webhooks)
 	})
 
-	t.Run("WithCustomerWebhooks changes nothing unless both are non-nil", func(t *testing.T) {
-		for name, opt := range map[string]CustomerServiceOption{
-			"nil emitter": WithCustomerWebhooks(nil, tm),
-			"nil manager": WithCustomerWebhooks(emitter, nil),
-		} {
-			s := NewCustomerService(nil, nil, nil, opt).(*customerService)
-			assert.Nil(t, s.txManager, name)
-			assert.Equal(t, webhook.Nop, s.webhooks, name)
-		}
-		s := NewCustomerService(nil, nil, nil, WithCustomerWebhooks(emitter, tm)).(*customerService)
-		assert.Same(t, tm, s.txManager)
+	t.Run("the customer service requires its manager and a nil emitter is Nop", func(t *testing.T) {
+		s := NewCustomerService(nil, nil, nil, tm, WithCustomerWebhooks(nil)).(*customerService)
+		assert.Equal(t, webhook.Nop, s.tx.webhooks)
+		assert.Same(t, tm, s.tx.tm, "the manager is stored")
+		s = NewCustomerService(nil, nil, nil, tm, WithCustomerWebhooks(emitter)).(*customerService)
+		assert.Equal(t, emitter, s.tx.webhooks)
+		assert.Same(t, tm, s.tx.tm)
+		assert.PanicsWithValue(t, txManagerRequired, func() {
+			NewCustomerService(nil, nil, nil, nil, WithCustomerWebhooks(emitter))
+		}, "a nil manager is a wiring mistake")
 	})
 
 	t.Run("WithTicketWebhooks takes the transactional paths only with both", func(t *testing.T) {

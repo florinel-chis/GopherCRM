@@ -351,7 +351,7 @@ func newCustomerWriteEnv(t *testing.T, useMySQL bool) *customerWriteEnv {
 		leadOwnerEnv:    base,
 		customers:       customers,
 		companies:       companies,
-		customerService: service.NewCustomerService(customers, base.users, companies),
+		customerService: service.NewCustomerService(customers, base.users, companies, utils.NewTransactionManager(base.db)),
 	}
 	e.mountCustomerRoutes(e.customerService)
 	return e
@@ -712,7 +712,7 @@ func runCustomerAssignLostToErasure(t *testing.T, useMySQL bool) {
 				CustomerRepository: e.customers,
 				erase:              func() error { return route.erase(e, p) },
 			}
-			e.mountCustomerRoutes(service.NewCustomerService(racing, e.users, e.companies))
+			e.mountCustomerRoutes(service.NewCustomerService(racing, e.users, e.companies, utils.NewTransactionManager(e.db)))
 
 			status, envelope := e.send(http.MethodPost, customerAssignWritePath(p.customer.ID), e.admin,
 				map[string]interface{}{"user_id": e.otherSales.ID})
@@ -758,7 +758,7 @@ func runCustomerWriteAfterErasure(t *testing.T, useMySQL bool) {
 			erasedRow := e.rawCustomer(id)
 
 			assert.ErrorIs(t, e.customers.Update(staleRepo), gorm.ErrRecordNotFound)
-			assert.ErrorIs(t, e.customerService.Update(staleService), apperrors.ErrNotFound)
+			assert.ErrorIs(t, e.customerService.Update(context.Background(), staleService), apperrors.ErrNotFound)
 			_, err := e.customerService.Assign(id, e.otherSales.ID)
 			assert.ErrorIs(t, err, apperrors.ErrNotFound)
 			status, envelope := e.send(http.MethodPut, customerWritePath(id), e.admin, customerWriteBody())
@@ -772,7 +772,7 @@ func runCustomerWriteAfterErasure(t *testing.T, useMySQL bool) {
 
 			assert.ErrorIs(t, e.customers.Update(staleAfterReuse), gorm.ErrRecordNotFound,
 				"the row matched nothing, so the unique index has nothing to refuse")
-			assert.ErrorIs(t, e.customerService.Update(staleServiceAfterReuse), apperrors.ErrDuplicateEmail)
+			assert.ErrorIs(t, e.customerService.Update(context.Background(), staleServiceAfterReuse), apperrors.ErrDuplicateEmail)
 
 			assert.Equal(t, replacementRow, e.rawCustomer(replacement.ID), "the new customer's row is unchanged")
 			assert.Equal(t, erasedRow, e.rawCustomer(id), "the erased row stays erased")
@@ -921,7 +921,7 @@ func TestCustomerWriteConcurrentWithErasureSQLite(t *testing.T) {
 		results := make(chan outcome, 3)
 		go func() {
 			<-start
-			results <- outcome{"update", e.customerService.Update(stale)}
+			results <- outcome{"update", e.customerService.Update(context.Background(), stale)}
 		}()
 		go func() {
 			<-start
@@ -1201,7 +1201,7 @@ func TestCustomerLostWriteLogsOmitPersonalData(t *testing.T) {
 				CustomerRepository: e.customers,
 				erase:              func() error { return route.erase(e, p) },
 			}
-			e.mountCustomerRoutes(service.NewCustomerService(racing, e.users, e.companies))
+			e.mountCustomerRoutes(service.NewCustomerService(racing, e.users, e.companies, utils.NewTransactionManager(e.db)))
 
 			output.Reset()
 			status, envelope := e.send(http.MethodPost, customerAssignWritePath(p.customer.ID), e.admin,

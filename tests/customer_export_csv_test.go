@@ -146,7 +146,7 @@ func newCustomerExportCSVHarness(t *testing.T, db *gorm.DB) *customerExportCSVHa
 		ExpiryHours: 1,
 	})
 	userService := service.NewUserService(userRepo)
-	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db))
+	customerService := service.NewCustomerService(customerRepo, userRepo, repository.NewCompanyRepository(db), utils.NewTransactionManager(db))
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
