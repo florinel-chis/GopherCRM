@@ -277,7 +277,8 @@ transaction through the transaction manager and the `WithTx` repositories: the p
 looked up, the owner is re-read with the same locking read as the reset flow (`FOR UPDATE` on
 MySQL, a plain read on SQLite), the token is claimed by `RefreshTokenRepository.ClaimForRotation`,
 a conditional update (`is_revoked = false AND expires_at > now`, exactly one affected row, else the
-generic rejection), the successor row is inserted and its access JWT is signed. An owner lookup
+generic rejection), the successor row is inserted and its access JWT is signed. The successor carries the presented
+row's `family_id`, `sign_in_method` and `session_started_at` unchanged (#546). An owner lookup
 that fails for a database reason aborts before the claim. A failure of the
 successor insert or of the signing rolls the claim back with it, so the presented token stays
 usable, no extra row exists and no credentials are returned; the same token succeeds once the

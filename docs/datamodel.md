@@ -1077,6 +1077,31 @@ Represents API keys for programmatic access.
 | is_active | boolean | Yes | true | - | Active status; false once revoked, and a revoked key cannot be switched on again |
 | revoked_at | timestamp | No | - | datetime(3) NULL | When the key was revoked; NULL while it is live and on keys revoked before #525 |
 
+## RefreshToken Model
+
+Represents one refresh token of a sign-in session (`refresh_tokens`). Only the hash of the opaque
+value is stored; a rotation revokes the presented row and inserts its successor.
+
+### Fields
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| id | bigint unsigned | No | auto | Primary key |
+| created_at, updated_at | datetime(3) | Yes | NULL | |
+| deleted_at | datetime(3) | Yes | NULL | Soft delete; index `idx_refresh_tokens_deleted_at` |
+| user_id | bigint unsigned | No | - | The owner; index `idx_refresh_tokens_user_id`, FK to `users.id` |
+| token_hash | varchar(255) | No | - | HMAC-SHA256 hash of the opaque token (hidden); unique index `idx_refresh_tokens_token_hash` |
+| expires_at | datetime(3) | No | - | `REFRESH_TOKEN_EXPIRY_DAYS` (30) after issuance |
+| is_revoked | tinyint(1) | No | 0 | Set by rotation, logout, and a password change or reset; erasure deletes the rows |
+| family_id | varchar(64) | No | '' | Shared by every token of one rotation chain; index `idx_refresh_tokens_family_id`. A sign-in (password or single sign-on) and the token issued by a password change start a new family of 32 lowercase hex characters; a rotation copies it. A row that predates #546 holds its own `id` as a decimal string |
+| sign_in_method | varchar(16) | No | '' | `password` or `oidc`, copied by a rotation. A row that predates #546 holds `oidc` when its owner has any `user_identities` row and `password` otherwise |
+| session_started_at | datetime(3) | Yes | NULL | When the sign-in of the chain happened, copied by a rotation; a password change starts a new one. A row that predates #546 holds its `created_at` |
+
+The three session columns come from AutoMigrate on SQLite and from migration
+`20261129120004_refresh_token_session` on MySQL/MariaDB; the startup step
+`backfillRefreshTokenSessions` and the up half fill legacy rows the same way, without touching
+`updated_at`, and a second run changes nothing.
+
 ## Configuration Model
 
 Represents system configuration settings that control application behavior.

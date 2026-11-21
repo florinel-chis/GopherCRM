@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -119,11 +120,15 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	raw := "raw-refresh-token-value"
 	hash := hashOpaqueToken(raw, sessionTestSecret)
 
+	sessionStart := time.Date(2026, 11, 1, 9, 30, 15, 123000000, time.UTC)
 	stored := &models.RefreshToken{
-		BaseModel: models.BaseModel{ID: 5},
-		UserID:    1,
-		TokenHash: hash,
-		ExpiresAt: time.Now().Add(24 * time.Hour),
+		BaseModel:        models.BaseModel{ID: 5},
+		UserID:           1,
+		TokenHash:        hash,
+		ExpiresAt:        time.Now().Add(24 * time.Hour),
+		FamilyID:         "00112233445566778899aabbccddeeff",
+		SignInMethod:     models.RefreshTokenSignInOIDC,
+		SessionStartedAt: &sessionStart,
 	}
 
 	d.refreshRepo.On("GetByTokenHash", hash).Return(stored, nil)
@@ -161,6 +166,34 @@ func TestAuthService_RefreshAccessToken_RotatesToken(t *testing.T) {
 	// Expiry honours REFRESH_TOKEN_EXPIRY_DAYS (30 days here).
 	expected := time.Now().Add(30 * 24 * time.Hour)
 	assert.WithinDuration(t, expected, newStored.ExpiresAt, time.Minute)
+
+	// The successor continues the presented token's session: the same
+	// family, sign-in method and session start, held in its own value.
+	assert.Equal(t, "00112233445566778899aabbccddeeff", newStored.FamilyID)
+	assert.Equal(t, models.RefreshTokenSignInOIDC, newStored.SignInMethod)
+	if assert.NotNil(t, newStored.SessionStartedAt) {
+		assert.True(t, newStored.SessionStartedAt.Equal(sessionStart), "the session start is carried: %v", *newStored.SessionStartedAt)
+		assert.NotSame(t, stored.SessionStartedAt, newStored.SessionStartedAt, "the successor holds a copy, not the presented row's pointer")
+		carried := sessionStart
+		*stored.SessionStartedAt = carried.Add(time.Hour)
+		assert.True(t, newStored.SessionStartedAt.Equal(carried), "a later change to the presented row does not reach the successor")
+	}
+}
+
+// refreshFamilyPattern is the shape of a new session's family id.
+var refreshFamilyPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// assertNewRefreshSession checks that a refresh token starts a new session
+// with the given method between before and after.
+func assertNewRefreshSession(t *testing.T, rt *models.RefreshToken, method string, before, after time.Time) {
+	t.Helper()
+	require.NotNil(t, rt)
+	assert.Regexp(t, refreshFamilyPattern, rt.FamilyID, "a new session gets a random family")
+	assert.Equal(t, method, rt.SignInMethod)
+	if assert.NotNil(t, rt.SessionStartedAt) {
+		assert.False(t, rt.SessionStartedAt.Before(before), "session start %v before %v", *rt.SessionStartedAt, before)
+		assert.False(t, rt.SessionStartedAt.After(after), "session start %v after %v", *rt.SessionStartedAt, after)
+	}
 }
 
 func TestAuthService_RefreshAccessToken_UnknownRevokedOrExpired(t *testing.T) {
@@ -328,7 +361,9 @@ func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {
 		return rt.UserID == 1
 	})).Return(nil)
 
+	before := time.Now()
 	tokens, err := d.svc.LoginWithTokens(user.Email, "Password123!")
+	after := time.Now()
 
 	assert.NoError(t, err)
 	assert.NotNil(t, tokens)
@@ -342,6 +377,43 @@ func TestAuthService_LoginWithTokens_IssuesRefreshToken(t *testing.T) {
 	d.userRepo.AssertCalled(t, "WithTx", mock.Anything)
 	d.refreshRepo.AssertCalled(t, "WithTx", mock.Anything)
 	d.userRepo.AssertNotCalled(t, "UpdateLastLogin", mock.Anything)
+	assertNewRefreshSession(t, stored, models.RefreshTokenSignInPassword, before, after)
+
+	// A second sign-in starts another family.
+	first := stored.FamilyID
+	_, err = d.svc.LoginWithTokens(user.Email, "Password123!")
+	require.NoError(t, err)
+	assert.NotEqual(t, first, stored.FamilyID, "two sign-ins have different families")
+
+	t.Run("without a transaction manager the root repository records the session", func(t *testing.T) {
+		d := newSessionAuthService(t)
+		d.svc = NewAuthServiceWithSessions(
+			d.userRepo, d.apiKeyRepo, d.refreshRepo, d.resetRepo, nil, d.mailer,
+			sessionTestJWTConfig, "http://localhost:5173", "")
+		user := sessionActiveUser(1, "Password123!")
+		d.userRepo.On("GetByEmail", user.Email).Return(user, nil)
+		d.userRepo.On("UpdateLastLogin", uint(1)).Return(nil)
+		var stored *models.RefreshToken
+		d.refreshRepo.On("Create", mock.MatchedBy(func(rt *models.RefreshToken) bool {
+			stored = rt
+			return rt.UserID == 1
+		})).Return(nil)
+
+		before := time.Now()
+		tokens, err := d.svc.LoginWithTokens(user.Email, "Password123!")
+		after := time.Now()
+
+		require.NoError(t, err)
+		require.NotNil(t, tokens)
+		assert.NotEmpty(t, tokens.RefreshToken)
+		d.refreshRepo.AssertNotCalled(t, "WithTx", mock.Anything)
+		assertNewRefreshSession(t, stored, models.RefreshTokenSignInPassword, before, after)
+
+		first := stored.FamilyID
+		_, err = d.svc.LoginWithTokens(user.Email, "Password123!")
+		require.NoError(t, err)
+		assert.NotEqual(t, first, stored.FamilyID, "two sign-ins have different families")
+	})
 }
 
 // Logout is one transaction (#236): the owner is read with the locking read,
@@ -510,15 +582,23 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		user := sessionActiveUser(1, "CurrentPass1!")
 		d.userRepo.On("GetByID", uint(1)).Return(user, nil)
 		hash := hashOpaqueToken("current-refresh", sessionTestSecret)
+		presentedStart := time.Now().Add(-48 * time.Hour)
 		d.refreshRepo.On("GetByTokenHash", hash).Return(&models.RefreshToken{
 			BaseModel: models.BaseModel{ID: 7}, UserID: 1, TokenHash: hash, ExpiresAt: time.Now().Add(time.Hour),
+			FamilyID: "ffeeddccbbaa99887766554433221100", SignInMethod: models.RefreshTokenSignInOIDC, SessionStartedAt: &presentedStart,
 		}, nil)
 		d.refreshRepo.On("ClaimForRotation", uint(7)).Return(nil)
 		d.userRepo.On("UpdateFields", uint(1), mock.Anything).Return(nil)
 		d.refreshRepo.On("RevokeAllForUser", uint(1)).Return(nil)
-		d.refreshRepo.On("Create", mock.MatchedBy(func(tok *models.RefreshToken) bool { return tok.UserID == 1 })).Return(nil)
+		var successor *models.RefreshToken
+		d.refreshRepo.On("Create", mock.MatchedBy(func(tok *models.RefreshToken) bool {
+			successor = tok
+			return tok.UserID == 1
+		})).Return(nil)
 
+		before := time.Now()
 		tokens, err := d.svc.ChangePassword(1, "CurrentPass1!", "NewSecret123!", "current-refresh")
+		after := time.Now()
 
 		require.NoError(t, err)
 		require.NotNil(t, tokens)
@@ -526,6 +606,9 @@ func TestAuthService_ChangePassword(t *testing.T) {
 		assert.NotEmpty(t, tokens.RefreshToken)
 		assert.NotEqual(t, "current-refresh", tokens.RefreshToken)
 		d.refreshRepo.AssertCalled(t, "ClaimForRotation", uint(7))
+		// The successor starts a new password session.
+		assertNewRefreshSession(t, successor, models.RefreshTokenSignInPassword, before, after)
+		assert.NotEqual(t, "ffeeddccbbaa99887766554433221100", successor.FamilyID, "the successor starts a new family")
 	})
 
 	t.Run("a refresh token of another user is stale and nothing is written", func(t *testing.T) {

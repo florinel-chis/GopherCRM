@@ -1004,6 +1004,26 @@ var oidcSignInCases = []struct {
 		assert.NotEqual(t, tokens.RefreshToken, rotated.RefreshToken)
 		assert.Equal(t, created.ID, rotated.User.ID)
 	}},
+	{"sign_in_records_session", func(t *testing.T, f *oidcFixture) {
+		before := time.Now()
+		tokens, err := f.signIn(t, oidcValid("subject-session", "session@idp.example.test"))
+		after := time.Now()
+		require.NoError(t, err)
+		require.NotEmpty(t, tokens.RefreshToken)
+
+		var stored models.RefreshToken
+		require.NoError(t, f.db.Where("token_hash = ?", hashOpaqueToken(tokens.RefreshToken, f.auth.sessionTokenSecret())).
+			First(&stored).Error)
+		assert.Equal(t, models.RefreshTokenSignInOIDC, stored.SignInMethod)
+		assert.Regexp(t, `^[0-9a-f]{32}$`, stored.FamilyID)
+		if assert.NotNil(t, stored.SessionStartedAt) {
+			// datetime(3) rounds to the nearest millisecond on MySQL/MariaDB.
+			assert.False(t, stored.SessionStartedAt.Before(before.Truncate(time.Millisecond)),
+				"session start %v before %v", *stored.SessionStartedAt, before)
+			assert.False(t, stored.SessionStartedAt.After(after.Add(time.Millisecond)),
+				"session start %v after %v", *stored.SessionStartedAt, after)
+		}
+	}},
 	{"second_sign_in_reapplies_mapping", func(t *testing.T, f *oidcFixture) {
 		spec := oidcValid("subject-second", "second@idp.example.test")
 		spec.groups = []string{oidcGroupUsers}
