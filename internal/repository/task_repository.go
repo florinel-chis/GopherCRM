@@ -5,6 +5,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type taskRepository struct {
@@ -49,6 +50,18 @@ func (r *taskRepository) GetByAssignedToID(assignedToID uint, offset, limit int)
 // and an edit that never mentioned labels must not touch them.
 func (r *taskRepository) Update(task *models.Task) error {
 	return r.db.Omit("Labels").Save(task).Error
+}
+
+// GetByIDForUpdate is the locking read of the single task update (#558): the
+// bare live task row, without preloads, with `FOR UPDATE` on MySQL/MariaDB (a
+// plain read on SQLite, where the dialector drops the clause). It implements
+// TaskLockingReader. A soft-deleted or missing task is gorm.ErrRecordNotFound.
+func (r *taskRepository) GetByIDForUpdate(id uint) (*models.Task, error) {
+	var task models.Task
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, id).Error; err != nil {
+		return nil, err
+	}
+	return &task, nil
 }
 
 func (r *taskRepository) Delete(id uint) error {

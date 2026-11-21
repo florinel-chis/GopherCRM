@@ -31,20 +31,6 @@ func (r *bulkStatusRepository) WithTx(tx *gorm.DB) BulkStatusRepository {
 // the whole contract: the caller runs both halves inside one transaction and
 // returns an error to roll it back.
 
-// getByIDs loads whatever rows exist among ids. Soft-deleted rows are excluded
-// by GORM's default scope, so a deleted record reads as missing, which is what
-// it is as far as the API is concerned.
-func getByIDs[T any](db *gorm.DB, ids []uint) ([]T, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	var entities []T
-	if err := db.Where("id IN ?", ids).Find(&entities).Error; err != nil {
-		return nil, err
-	}
-	return entities, nil
-}
-
 // setStatus writes one status onto every listed row.
 //
 // RowsAffected is deliberately not treated as a count of updated records: MySQL
@@ -99,8 +85,24 @@ func (r *bulkStatusRepository) GetTicketsByIDs(ids []uint) ([]models.Ticket, err
 	return tickets, nil
 }
 
+// GetTasksByIDs is a locking read of the batch's live tasks in id order
+// (#558): `SELECT … FOR UPDATE … ORDER BY id` on MySQL/MariaDB, a plain read
+// on SQLite where the dialector drops the clause. Soft-deleted tasks still
+// read as missing. Inside the batch transaction it locks the rows before the
+// found, assignee and completed-task checks, the same row the single task
+// update locks (taskService.UpdateWithLabels through GetByIDForUpdate), so
+// each writer judges the status and assignee the other committed.
 func (r *bulkStatusRepository) GetTasksByIDs(ids []uint) ([]models.Task, error) {
-	return getByIDs[models.Task](r.db, ids)
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var tasks []models.Task
+	err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id IN ?", ids).Order("id ASC").Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 func (r *bulkStatusRepository) SetLeadStatus(ids []uint, status models.LeadStatus) error {

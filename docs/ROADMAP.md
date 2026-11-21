@@ -191,10 +191,6 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   observer could tell apart from an unknown address (accepted residual). A deal or quote write
   racing the business-text scrub (#245) can be missed like a conversion: a deal linked, or a quote
   edited, while the erasure is in flight can keep its text.
-- **Unlocked completed-task check in the bulk task status batch** — the batch reads its tasks with
-  a plain `GetTasksByIDs` and locks them only at the status `UPDATE`, so its completed-task check is
-  not protected by a row lock: a task completed by another transaction between that read and the
-  `UPDATE` is moved out of `completed` (see [CONCURRENCY.md](CONCURRENCY.md), Bulk status).
 - **Deal and quote text left by the erasure (#245 follow-ups).** The erasure redacts the deal and
   quote text of the erased customers and leads, but a task a `create_task` step rendered from
   `{{deal.title}}` before the erasure keeps that text (`deal.title` stays allowed in task

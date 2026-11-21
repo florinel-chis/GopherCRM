@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -25,10 +26,31 @@ type taskService struct {
 	customerRepo repository.CustomerRepository
 	labelRepo    repository.LabelRepository
 	dealRepo     repository.DealRepository
+	// txManager, set by WithTaskRowLock (#558), makes UpdateWithLabels write
+	// in one transaction that locks the task row first. Nil keeps the
+	// unwrapped write.
+	txManager *utils.TransactionManager
+	// afterTaskLock is an instance-local test seam (#558), nil in production:
+	// it runs inside the update transaction right after the locking read of
+	// the task row.
+	afterTaskLock func(id uint)
 }
 
-func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository, dealRepo repository.DealRepository) TaskService {
-	return &taskService{
+// TaskServiceOption configures NewTaskService beyond its required
+// dependencies.
+type TaskServiceOption func(*taskService)
+
+// WithTaskRowLock makes UpdateWithLabels write in one transaction that takes a
+// locking read of the task row (GetByIDForUpdate, FOR UPDATE on MySQL/MariaDB),
+// re-checks the completed-task rule against that row and writes through the
+// same transaction (#558). The bulk task status batch locks the same rows, so
+// neither writer overwrites a status the other committed.
+func WithTaskRowLock(txManager *utils.TransactionManager) TaskServiceOption {
+	return func(s *taskService) { s.txManager = txManager }
+}
+
+func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository, dealRepo repository.DealRepository, opts ...TaskServiceOption) TaskService {
+	s := &taskService{
 		taskRepo:     taskRepo,
 		userRepo:     userRepo,
 		leadRepo:     leadRepo,
@@ -36,7 +58,15 @@ func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.User
 		labelRepo:    labelRepo,
 		dealRepo:     dealRepo,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
+
+// errTaskLockingReadUnavailable is returned by an update built WithTaskRowLock
+// whose task repository offers no locking read; nothing is written.
+var errTaskLockingReadUnavailable = errors.New("task repository has no locking read")
 
 // Create persists a task without touching its label set. It has no acting
 // user, so it cannot link a lead or a deal (see CanViewLead and CanViewDeal).
@@ -297,7 +327,9 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 	// and goes back on the task for the response below.
 	task.Deal = nil
 
-	if labelIDs == nil {
+	if s.txManager != nil {
+		err = s.writeLocked(logger, task, labelIDs != nil, labels)
+	} else if labelIDs == nil {
 		err = s.taskRepo.Update(task)
 	} else {
 		err = s.taskRepo.UpdateWithLabels(task, labels)
@@ -316,6 +348,44 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 
 	logger.WithField("task_id", task.ID).Info("Task updated successfully")
 	return nil
+}
+
+// writeLocked is the write step of an update built WithTaskRowLock (#558): one
+// transaction that locks the task row (GetByIDForUpdate), re-checks the
+// completed-task rule against the locked row and saves the task, with its
+// label set when withLabels, through the same transaction. Every statement in
+// it goes through the transaction's task repository: the SQLite pool holds one
+// connection, so a read on another repository here would wait on itself. The
+// other checks ran before, on the unlocked pre-read, exactly as without the
+// option.
+func (s *taskService) writeLocked(logger *logrus.Entry, task *models.Task, withLabels bool, labels []models.Label) error {
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		txTasks := s.taskRepo.WithTx(tx)
+		locker, ok := txTasks.(repository.TaskLockingReader)
+		if !ok {
+			return errTaskLockingReadUnavailable
+		}
+		locked, err := locker.GetByIDForUpdate(task.ID)
+		if err != nil {
+			logger.WithError(utils.LogError(err)).Warn("Task not found")
+			return err
+		}
+		if s.afterTaskLock != nil {
+			s.afterTaskLock(task.ID)
+		}
+		if locked.Status == models.TaskStatusCompleted && task.Status != models.TaskStatusCompleted {
+			logger.Warn("Cannot change status of completed task")
+			return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
+		}
+		if withLabels {
+			return txTasks.UpdateWithLabels(task, labels)
+		}
+		return txTasks.Update(task)
+	})
 }
 
 // settleDealLink decides the deal_id an update commits, writes it onto the task
