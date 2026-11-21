@@ -1534,6 +1534,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Failed sign-in attempts made at the same time are each counted (#545).** A wrong password
+  is now recorded in one transaction on the stored account row, read with a locking read, so the
+  account lock after five failed attempts no longer depends on request timing. An expired lock
+  still starts a fresh window, and an erased account's row is left untouched. A concurrent
+  regression test covers SQLite, MySQL 8 and MariaDB 10.11.
 - **The web app reloads the signed-in user after a role save and after an own-account save
   (#566).** Saving an existing role in the role editor, and saving the signed-in user's own
   account in the user form, now read `GET /users/me` again, so navigation, route guards and

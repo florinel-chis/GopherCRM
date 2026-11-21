@@ -197,6 +197,48 @@ func NewAuthServiceWithSessions(
 	return s
 }
 
+// recordLoginFailureInTransaction counts one failed login of userID on the
+// owner row read through userRepo, which the caller binds to a locking read
+// inside a transaction. The decision is taken on that row only:
+//   - the row is gone (erased meanwhile): nothing is written;
+//   - an active lock (a parallel attempt has just set it): nothing is written,
+//     the lock is neither extended nor reset;
+//   - an expired lock, including at its exact expiry instant, starts a fresh
+//     window with this attempt as its first;
+//   - otherwise the stored count grows by one.
+//
+// Reaching MaxFailedLoginAttempts locks the account for AccountLockDuration
+// from now. Exactly failed_login_attempts and locked_until are written. The
+// account's active flag plays no part: an inactive account's failures count.
+func recordLoginFailureInTransaction(userRepo repository.UserRepository, userID uint, now time.Time) error {
+	owner, err := userRepo.GetByID(userID)
+	if err != nil {
+		if apperrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	attempts := owner.FailedLoginAttempts
+	if owner.LockedUntil != nil {
+		if owner.LockedUntil.After(now) {
+			return nil
+		}
+		attempts = 0
+	}
+	attempts++
+	bookkeeping := map[string]interface{}{"failed_login_attempts": attempts, "locked_until": nil}
+	if attempts >= MaxFailedLoginAttempts {
+		lockUntil := now.Add(AccountLockDuration)
+		bookkeeping["locked_until"] = &lockUntil
+		utils.Logger.WithField("user_id", userID).WithField("operation", "Login").
+			Warn("Account locked due to too many failed login attempts")
+	}
+	if err := userRepo.UpdateFields(userID, bookkeeping); err != nil && !apperrors.IsNotFound(err) {
+		return err
+	}
+	return nil
+}
+
 // MaxFailedLoginAttempts is the number of failed attempts before an account is locked.
 const MaxFailedLoginAttempts = 5
 
@@ -291,6 +333,27 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 	// Check password result
 	if bcryptErr != nil {
 		logger.WithField("user_id", user.ID).Warn("Login failed - invalid password")
+		if s.txManager != nil {
+			// The failure is counted from the owner row read by primary key
+			// with a locking read, in its own transaction, so parallel failed
+			// attempts each count. bcrypt has already run, outside it.
+			err := s.txManager.WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+				tx, ok := utils.GetTxFromContext(ctx)
+				if !ok {
+					return utils.ErrNoTransaction
+				}
+				return recordLoginFailureInTransaction(
+					s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+					user.ID, now)
+			}, loginMaxRetries)
+			if err != nil {
+				utils.Logger.WithField("user_id", user.ID).WithField("operation", "Login").
+					WithField("error_code", "login_failure_record_failed").Warn("Recording a failed login attempt failed")
+			}
+			return nil, authRefusal(AuthAuditReasonInvalidCredentials, user.ID, errLoginInvalidCredentials)
+		}
+		// Legacy path of a service without a transaction manager
+		// (NewAuthService): one statement from the plain read, unchanged.
 		// An expired lock starts a fresh failure window, including at its
 		// exact expiry. Active locks have already returned above.
 		attempts := user.FailedLoginAttempts

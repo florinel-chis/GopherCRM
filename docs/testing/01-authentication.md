@@ -386,6 +386,10 @@ file, not by trusting the coverage matrix.
   failures and successful reset without waiting 15 minutes. The real HTTP/SQLite case
   `AuthSessionIntegrationTestSuite.TestLoginFailureResponsesRemainGeneric` verifies
   equivalent failure responses and persisted state through the session login endpoint.
+  `TestLoginFailedAttemptsConcurrent{SQLite,MySQL}`
+  (`internal/service/auth_login_failed_attempts_test.go`) sends parallel wrong passwords
+  that have all read the account first and checks the stored count is exact: 4 failures
+  leave 4, 20 leave 5 with the lock set, and 3 after an expired lock leave 3 with no lock.
 - **Validation:** the [auth profile](../VALIDATION_RELEASE.md) runs these regressions,
   the surrounding auth/session checks, and health/login/registration browser specs.
 
