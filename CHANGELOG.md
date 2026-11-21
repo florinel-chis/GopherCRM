@@ -1713,6 +1713,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `docs/FEATURES.md` row 1.12 now gives the shared OIDC sign-in table as 66 subtests instead of
+  65 (#579 added `sign_in_records_session`), and 67 on `TestOIDCSignInMySQL`, which also runs
+  `last_admin_race` (docs only, #611).
 - `TestPasswordResetRequestOwnerLockConcurrentMySQL` now holds an erasure competitor uncommitted
   until the reset mail is recorded, so the mailer's committed check no longer races the erasure
   deleting the token (test only, #597).
