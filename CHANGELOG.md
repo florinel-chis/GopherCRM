@@ -1086,6 +1086,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Refresh tokens record their session (#546).** `refresh_tokens` gains `family_id` (shared by
+  every token of one rotation chain, indexed by `idx_refresh_tokens_family_id`), `sign_in_method`
+  (`password` or `oidc`) and `session_started_at` (when that sign-in happened). A password sign-in,
+  a single sign-on sign-in and the token issued by a password change each start a new family of 32
+  hex characters; a refresh rotation gives the new token the family, method and start of the token
+  it replaces. Existing tokens get values at upgrade, from the startup step on every driver and from
+  migration `20261129120004_refresh_token_session` on MySQL/MariaDB: each is its own family (its id),
+  the method is `oidc` for an account linked to an identity provider and `password` otherwise, and
+  the start is the token's `created_at`. Routes, responses and refusals are unchanged.
 - **Sign-in audit vocabulary in one place (#549).** The five methods, two outcomes and 41 reason
   codes of the sign-in audit log are declared once, in `internal/service/auth_audit_vocabulary.go`.
   The code that writes audit rows (password, refresh, API key, single sign-on and SCIM) passes these

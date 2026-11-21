@@ -961,7 +961,11 @@ func (s *oidcService) resolveUserInfoGroups(ctx context.Context, provider *oidc.
 // does: the refresh token through the transaction-bound repository, the
 // access token signed from the row the transaction wrote.
 func (s *oidcService) issue(handle *gorm.DB, user *models.User) (*AuthTokens, error) {
-	refresh, err := s.auth.issueRefreshToken(s.refreshTokens.WithTx(handle), user.ID)
+	session, err := newRefreshSession(models.RefreshTokenSignInOIDC)
+	if err != nil {
+		return nil, err
+	}
+	refresh, err := s.auth.issueRefreshToken(s.refreshTokens.WithTx(handle), user.ID, session)
 	if err != nil {
 		return nil, err
 	}

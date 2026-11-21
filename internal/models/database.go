@@ -90,6 +90,11 @@ func MigrateDatabaseWith(db *gorm.DB) error {
 		if err := capAPIKeyLifetimes(tx); err != nil {
 			return err
 		}
+		// Refresh tokens that predate the session columns get their
+		// family, sign-in method and session start.
+		if err := backfillRefreshTokenSessions(tx); err != nil {
+			return err
+		}
 		if err := migrateLegacyQuoteLineQuantity(tx); err != nil {
 			return err
 		}

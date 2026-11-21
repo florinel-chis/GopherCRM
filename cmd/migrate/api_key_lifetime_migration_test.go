@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,8 +29,7 @@ const (
 
 // TestAPIKeyLifetimeMigrationFiles needs no database: the pair exists with
 // its headers, the up half is exactly the two UPDATEs and no DDL, the down
-// half writes nothing, and it is the newest migration of the directory, which
-// latestMigrationVersion names.
+// half writes nothing, and a newer migration follows it.
 func TestAPIKeyLifetimeMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, apiKeyLifetimeMigrationName+".up.sql"))
@@ -71,21 +69,9 @@ func TestAPIKeyLifetimeMigrationFiles(t *testing.T) {
 		assert.NotContains(t, downStatements, forbidden)
 	}
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAPIKeyRevokedAtMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, apiKeyLifetimeMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, apiKeyLifetimeVersion, version)
-	assert.Equal(t, apiKeyLifetimeVersion, latestMigrationVersion)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestRefreshTokenSessionMigrationFiles (#546).
+	assert.Less(t, apiKeyLifetimeVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, apiKeyLifetimePreviousVersion+1, apiKeyLifetimeVersion)
 }
 

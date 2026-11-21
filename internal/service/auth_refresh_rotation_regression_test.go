@@ -654,6 +654,50 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 		assert.Equal(t, afterLogout, f.state(t, s.owner.ID))
 		f.assertBystanderIntact(t, s)
 	})
+
+	t.Run("rotations carry the session of the sign-in and separate sign-ins have separate families", func(t *testing.T) {
+		f.reset(t)
+		owner := f.createUser(t, "owner@example.com")
+
+		first, err := f.svc.LoginWithTokens(owner.Email, resetOldPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, first.RefreshToken)
+		second, err := f.svc.LoginWithTokens(owner.Email, resetOldPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, second.RefreshToken)
+
+		rotated, err := f.svc.RefreshAccessToken(first.RefreshToken)
+		require.NoError(t, err)
+		rotatedAgain, err := f.svc.RefreshAccessToken(rotated.RefreshToken)
+		require.NoError(t, err)
+
+		type sessionRow struct {
+			FamilyID         string
+			SignInMethod     string
+			SessionStartedAt *time.Time
+		}
+		read := func(raw string) sessionRow {
+			t.Helper()
+			var row sessionRow
+			require.NoError(t, f.db.WithContext(resetContext(t)).Raw(
+				"SELECT family_id, sign_in_method, session_started_at FROM refresh_tokens WHERE token_hash = ?",
+				hashOpaqueToken(raw, rotationTestSecret)).Scan(&row).Error)
+			require.NotNil(t, row.SessionStartedAt, "the committed row has a session start")
+			return row
+		}
+		chain := []sessionRow{read(first.RefreshToken), read(rotated.RefreshToken), read(rotatedAgain.RefreshToken)}
+		assert.Regexp(t, `^[0-9a-f]{32}$`, chain[0].FamilyID)
+		assert.Equal(t, models.RefreshTokenSignInPassword, chain[0].SignInMethod)
+		for i, row := range chain[1:] {
+			assert.Equal(t, chain[0].FamilyID, row.FamilyID, "rotation %d keeps the family", i+1)
+			assert.Equal(t, chain[0].SignInMethod, row.SignInMethod, "rotation %d keeps the sign-in method", i+1)
+			assert.True(t, chain[0].SessionStartedAt.Equal(*row.SessionStartedAt),
+				"rotation %d keeps the session start: %v != %v", i+1, *row.SessionStartedAt, *chain[0].SessionStartedAt)
+		}
+		other := read(second.RefreshToken)
+		assert.Regexp(t, `^[0-9a-f]{32}$`, other.FamilyID)
+		assert.NotEqual(t, chain[0].FamilyID, other.FamilyID, "two sign-ins have different families")
+	})
 }
 
 // --------------------------------------------------------------- atomicity ---

@@ -406,7 +406,11 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 	// Refresh tokens are issued only when the session store is wired. If
 	// persisting one fails, the login still succeeds with a JWT-only session.
 	if withRefresh && s.refreshTokenRepo != nil {
-		refreshToken, err := s.issueRefreshToken(s.refreshTokenRepo, user.ID)
+		session, err := newRefreshSession(models.RefreshTokenSignInPassword)
+		var refreshToken string
+		if err == nil {
+			refreshToken, err = s.issueRefreshToken(s.refreshTokenRepo, user.ID, session)
+		}
 		if err != nil {
 			utils.Logger.WithError(utils.LogError(err)).WithField("user_id", user.ID).
 				Warn("Failed to issue refresh token at login; continuing with access token only")
@@ -500,7 +504,11 @@ func (s *authService) loginInTransaction(
 			if !ok {
 				return utils.ErrNoTransaction
 			}
-			issued, err := s.issueRefreshToken(s.refreshTokenRepo.WithTx(spTx), owner.ID)
+			session, err := newRefreshSession(models.RefreshTokenSignInPassword)
+			if err != nil {
+				return err
+			}
+			issued, err := s.issueRefreshToken(s.refreshTokenRepo.WithTx(spTx), owner.ID, session)
 			if err != nil {
 				return err
 			}
@@ -754,12 +762,38 @@ func generateOpaqueToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+// refreshSession is what a refresh token records about the session it
+// belongs to: the family shared by every token of one rotation chain, how
+// that session signed in and when.
+type refreshSession struct {
+	FamilyID     string
+	SignInMethod string
+	StartedAt    time.Time
+}
+
+// refreshFamilyIDBytes is the random length of a new family id, hex-encoded
+// to 32 lowercase characters.
+const refreshFamilyIDBytes = 16
+
+// newRefreshSession starts a session for a sign-in with the given method
+// (models.RefreshTokenSignInPassword or models.RefreshTokenSignInOIDC): a new
+// random family id and the current time as its start.
+func newRefreshSession(method string) (refreshSession, error) {
+	buf := make([]byte, refreshFamilyIDBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return refreshSession{}, fmt.Errorf("failed to generate refresh token family: %w", err)
+	}
+	return refreshSession{FamilyID: hex.EncodeToString(buf), SignInMethod: method, StartedAt: time.Now()}, nil
+}
+
 // issueRefreshToken mints, hashes and persists a refresh token for the user
 // through the given repository — the root one at a login without a transaction
 // manager, the transaction-bound one at a wired login, a rotation or a
-// password change — returning the raw value for the client. Lifetime
-// comes from REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays).
-func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, userID uint) (string, error) {
+// password change — returning the raw value for the client. The row records
+// the given session: a new one at a sign-in or a password change, the
+// presented token's at a rotation. Lifetime comes from
+// REFRESH_TOKEN_EXPIRY_DAYS (config JWT.RefreshTokenDays).
+func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, userID uint, session refreshSession) (string, error) {
 	raw, err := generateOpaqueToken()
 	if err != nil {
 		return "", err
@@ -771,9 +805,17 @@ func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, 
 	}
 
 	token := &models.RefreshToken{
-		UserID:    userID,
-		TokenHash: hashOpaqueToken(raw, s.sessionTokenSecret()),
-		ExpiresAt: time.Now().Add(time.Duration(days) * 24 * time.Hour),
+		UserID:       userID,
+		TokenHash:    hashOpaqueToken(raw, s.sessionTokenSecret()),
+		ExpiresAt:    time.Now().Add(time.Duration(days) * 24 * time.Hour),
+		FamilyID:     session.FamilyID,
+		SignInMethod: session.SignInMethod,
+	}
+	// A zero start (a presented row without one) stays NULL; the row gets
+	// its own copy of the value either way.
+	if !session.StartedAt.IsZero() {
+		startedAt := session.StartedAt
+		token.SessionStartedAt = &startedAt
 	}
 	if err := repo.Create(token); err != nil {
 		return "", fmt.Errorf("failed to store refresh token: %w", err)
@@ -962,7 +1004,12 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	// The successor is inserted and its access token signed inside the
 	// transaction, so a failure of either rolls the claim back: the presented
 	// token stays usable and the caller receives no credentials at all.
-	newRefreshToken, err := s.issueRefreshToken(refreshRepo, user.ID)
+	// The successor continues the presented token's session unchanged.
+	session := refreshSession{FamilyID: stored.FamilyID, SignInMethod: stored.SignInMethod}
+	if stored.SessionStartedAt != nil {
+		session.StartedAt = *stored.SessionStartedAt
+	}
+	newRefreshToken, err := s.issueRefreshToken(refreshRepo, user.ID, session)
 	if err != nil {
 		return nil, stored.UserID, err
 	}
@@ -1256,7 +1303,12 @@ func (s *authService) changePasswordInTransaction(
 	}
 
 	owner.Password = newHash
-	newRefreshToken, err := s.issueRefreshToken(refreshRepo, userID)
+	// The successor starts a new session, as its access token does.
+	session, err := newRefreshSession(models.RefreshTokenSignInPassword)
+	if err != nil {
+		return nil, err
+	}
+	newRefreshToken, err := s.issueRefreshToken(refreshRepo, userID, session)
 	if err != nil {
 		return nil, err
 	}
