@@ -324,10 +324,38 @@ Every role create, clone, update and delete, and every change of a user's `role`
 writes one `role_audit_log` row in the transaction of the change; a failed insert rolls the
 change back. A row holds the acting user (`actor_user_id`), how the request authenticated
 (`auth_method`: `bearer` or `api_key`, `oidc` for the role an OpenID Connect sign-in applied
-to its own account, #435, or `scim` for a SCIM 2.0 user create, replace or patch, #470 and
-#471, or a SCIM group patch that changes a member's role, #506 (a SCIM delete, #504, writes no role and no row), whose `actor_user_id` is NULL because no user acts, or `migration` for a startup or
+to its own account, #435, or `scim` for a SCIM 2.0 user create, replace, patch or delete, #470,
+#471 and #504, or a SCIM group patch, #506, whose `actor_user_id` is NULL because no user acts, or `migration` for a startup or
 migration data step, #524, also with `actor_user_id` NULL), the action and the state before and
-after, as ids, role names, permission keys and scopes only. The `migration` rows of #524 record
+after, as ids, role names, permission keys and scopes only.
+
+Since #552 the same table records account changes, with `role_id` NULL, an empty `role_name` and
+the account in `target_user_id`:
+
+- `user_activated` and `user_deactivated` (before and after hold `{"is_active": …}` only) when
+  `is_active` changes;
+- `user_erased` (no state) when an account is erased;
+- `user_email_changed` (no state, and neither the old nor the new address in any column) when the
+  login email changes.
+
+The writers are the governed user writes (`PUT /users/{id}` with a changed email or `is_active`,
+`POST /users/{id}/activate` and `/deactivate`, `DELETE /users/{id}`; method `bearer` or `api_key`,
+the caller as actor) and the SCIM writes (`PUT` and `PATCH /scim/v2/Users/{id}`, a `DELETE
+/scim/v2/Users/{id}` of an active account, which writes `user_deactivated`, and a group patch that
+deactivates members, one `user_deactivated` row each; method `scim`, actor NULL). A row is written
+only when the value changes: a repeated deactivation, an activation of an active account, the
+stored email sent again, a SCIM create and every refusal write none. In one write the rows come
+after the `users` write and the revocation, in the order email, activation, role. Three paths are
+left alone on purpose and write no account row:
+
+- an OpenID Connect sign-in, which never activates, deactivates, erases or changes an email (its
+  `user_role_changed` rows with method `oidc` are unchanged);
+- the caller's own profile-only email change (`PUT /users/me`, or `PUT /users/{own id}` without
+  `role` or `is_active`), which stays the plain update behind the current-password check (#394); a
+  `PUT` on the caller's own id that also carries `role` or `is_active` is governed and writes the
+  row;
+- the erasure of a customer login through `DELETE /customers/{id}` or a lead erasure cascade, which
+  is not a governed write. The `migration` rows of #524 record
 the role's stored permission rows, which can include a key the catalogue no longer resolves;
 the role API records the resolved set. `GET /roles/audit` lists the rows, newest first, and
 needs `roles.audit_view`.
@@ -777,7 +805,9 @@ address fails the format rule with 400. Either way nothing is written.
 sign-in (`admin set → users → roles → user_identities`, see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM user create and replace"). A create, and a replace that changes the role or
 `role_id`, writes one `role_audit_log` row (`user_role_changed`, `auth_method` `scim`,
-`actor_user_id` NULL); a replace that keeps the role writes none. After the commit one
+`actor_user_id` NULL); a replace that keeps the role writes none. Since #552 a replace that changes
+`userName` writes `user_email_changed`, and one that changes `active` writes `user_activated` or
+`user_deactivated`, the same way and before the role row; a create writes no such row. After the commit one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
 nothing.
 
@@ -867,7 +897,10 @@ credentials.
 **Transaction and audit.** One governed transaction in the order
 `admin set → users → roles → refresh_tokens → api_keys` (see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM user patch"). A changed role or `role_id` writes one `role_audit_log` row (`user_role_changed`,
-`auth_method` `scim`, `actor_user_id` NULL). After the commit one `auth_audit_log` row (method
+`auth_method` `scim`, `actor_user_id` NULL); since #552 a changed `userName` writes
+`user_email_changed` and a changed `active` `user_activated` or `user_deactivated`, the same way and
+before the role row. `active` false on an inactive account writes no row (it still increments
+`token_version`). After the commit one `auth_audit_log` row (method
 `scim`, outcome `success`) names the account. A refusal writes nothing: no `users`,
 `refresh_tokens`, `api_keys`, `role_audit_log` or `auth_audit_log` change.
 
@@ -907,9 +940,10 @@ reactivates the account, without bringing back an earlier session or API key.
 bearer check already refuses an inactive owner.
 
 **Transaction and audit.** One governed transaction in the order
-`admin set → users → refresh_tokens → api_keys`, a prefix-compatible subsequence of the patch order; no
+`admin set → users → refresh_tokens → api_keys → role_audit_log`, a prefix-compatible subsequence of the patch order; no
 `roles` row is locked because no role is written (see [CONCURRENCY.md](CONCURRENCY.md), flow
-"SCIM user patch"). No `role_audit_log` row is written. After the commit of a deactivation one
+"SCIM user patch"). The deactivation of an active account writes one `role_audit_log` row
+`user_deactivated` (`auth_method` `scim`, `actor_user_id` NULL, #552). After the commit of a deactivation one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
 nothing.
 
@@ -977,7 +1011,7 @@ refusal with `invalidValue`.
 scim_group_members → refresh_tokens → api_keys → role_audit_log` (see [CONCURRENCY.md](CONCURRENCY.md),
 flow "SCIM group patch"); the membership writes, the `users` writes, the credential revocations
 and the role audit rows commit together or not at all; each role change writes `user_role_changed` with `auth_method` `scim` and a NULL actor,
-and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
+each member the patch deactivates one `user_deactivated` row the same way (#552), and after the commit one `auth_audit_log` success row (method `scim`) names each managed account whose
 membership changed. A refusal, and a patch that changes nothing, write nothing.
 
 Regression roots: `TestSCIMGroupsWired` (`cmd`), `TestSCIMGroupHandler` and

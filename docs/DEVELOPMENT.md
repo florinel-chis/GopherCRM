@@ -452,6 +452,10 @@ path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.E
 with `admin set → users → roles → refresh_tokens → api_keys`, applies the patch to the locked row, checks
 only the touched attributes (Replace's sequence for a changed address), resolves `roles` through
 the mapping, keeps the last-admin rule and records `user_role_changed` only on a role change.
+Since #552 Replace and Patch also record `user_email_changed` when the written `userName` differs
+from the locked row's email and `user_activated`/`user_deactivated` when `active` differs from its
+`is_active` (`governedTx.recordEmailChange`, `recordActiveChange`), after the revocation and
+before the role row.
 A write that sets `active` false (Patch, and Replace since #471, and `scimUserService.Delete`
 since #504) calls `revokeAllCredentials` (`internal/service/credential_revocation.go`, #526)
 after its `users` write, in the same transaction: `token_version = locked + 1`, every refresh
@@ -466,8 +470,9 @@ discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUse
 
 **SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (`SCIMUserHandler.Delete`, no body
 read, 204 on success, refusals through `failWrite`) calls `scimUserService.Delete`, which runs
-`admin set → users → refresh_tokens → api_keys` in `roleGovernance.run` (no `roles` lock, no role
-write): an active visible target gets `is_active` false and then `revokeAllCredentials`, an
+`admin set → users → refresh_tokens → api_keys → role_audit_log` in `roleGovernance.run` (no `roles` lock, no role
+write): an active visible target gets `is_active` false, then `revokeAllCredentials`, then its
+`user_deactivated` role audit row (#552), an
 already inactive one commits nothing and records no audit row, the last active admin is
 `ErrSCIMLastAdmin`. It never calls the erasure path. Regression roots:
 `TestSCIMUserDeleteSQLite` and `TestSCIMUserDeleteMySQL` (`internal/service`, discovered by the
@@ -493,7 +498,9 @@ groups, nil)` and `scimMappedRole`. Since #530 an active member that gets no mat
 instead (`is_active` false, role kept, `revokeAllCredentials` on the locked row; an inactive one
 gets no `users` write), and a role write whose old permission set exceeds the new one
 (`permissionsExceed(escalationSet(old), escalationSet(new))`) calls `endSessions` after its
-`UpdateFields`; the role audit rows follow every `users` write and revocation.
+`UpdateFields`; the role audit rows follow every `users` write and revocation: a
+`user_deactivated` row per deactivated member (#552) and a `user_role_changed` row per role
+change, in the order of the `users` writes.
 `WithSCIMGroupWrites` takes the refresh token and API key repositories, and `Patch` returns
 `errSCIMGroupWritesNotWired` (500) before reading anything when either is nil. The patch refuses
 with `ErrSCIMGroupLastAdmin` (standalone, not an `ErrSCIMInvalidValue`) only when admins existed
@@ -1033,11 +1040,19 @@ activate, deactivate and `DELETE /users/{id}` call. What both share is in
   revokes nothing; production always wires governance.
 - **Audit.** `role_audit_log` gets one row per role create, clone (`role_created`), update and
   delete, and per change of a user's `role` or `role_id` (`user_role_changed`, also for the role a
-  new account is created with). `auth_method` is the request's `service.AuthMethodContextKey` value
+  new account is created with). Since #552 `governedWrite` also records, after the `users` write
+  and `revokeAllCredentials` and in this order, `user_email_changed` when `*change.email !=
+  target.Email`, `user_activated` or `user_deactivated` when `is_active` differs from the locked
+  row (`userActiveAuditState`, `{"is_active": …}`), then `user_role_changed`; an erasure records
+  `user_erased` after `tx.users.Delete` returned, in the same root, so a graph-change restart or
+  a deadlock replay commits one row. Account rows have `role_id` NULL, `role_name` '' and NULL
+  states except the activation rows; no address is stored. `auth_method` is the request's `service.AuthMethodContextKey` value
   (`bearer` or `api_key`), `oidc` (`service.AuthMethodOIDC`) for the role an OpenID Connect
   sign-in applied to its own account (#435), or `scim` (`service.AuthMethodSCIM`) for a SCIM user
-  create, replace or patch (#470, #471), whose `actor_user_id` is NULL. The log lines of these paths carry ids and action
-  names only.
+  or group write (#470, #471, #504, #506), whose `actor_user_id` is NULL. The OIDC sign-in, the
+  caller's own profile-only email change and the customer and lead erasure cascades write no
+  account row (see [AUTHORIZATION.md](AUTHORIZATION.md#audit-trail)). The log lines of these paths carry ids and action
+  names only. Regression roots: `TestAccountAudit{SQLite,MySQL}` (`internal/integration`).
 
 Regression roots (`internal/integration`, on the real Auth, routes, handlers and repositories):
 `TestRoleAPI{SQLite,MySQL}`, `TestRoleAPIRejectsInvalidPermissionsSQLite`,
@@ -2794,7 +2809,7 @@ What the erasure touches, and what it keeps on purpose:
 | `quote_response_tokens` of the quotes whose `customer_id` is an erased customer (#395) | unused rows: `used_at` stamped, `decision` stays NULL, so a mailed response link is refused | the rows, `token_hash`, `quote_id`, `expires_at`; rows the client spent; the tokens of quotes addressed to another customer. A hash, ids and timestamps, no personal data |
 | `tickets` (`title`, `description`, `resolution`), `tasks` (`title`, `description`), `companies` (`notes`), staff-written ticket comments, deals and quotes reached only through `owner_id` | not touched | Business records. Free text may have been typed to contain a name; that is an accepted limitation, not scrubbed (no reliable way to tell a name from content). Ticket text can be redacted by an operator before the erasure (see *Operator procedure for ticket text*). A task a `create_task` step rendered from `{{deal.title}}` before the erasure keeps that text |
 | `automation_events`, `automation_run_steps`, `deal_stage_changes`, `quote_status_changes`, `bulk_operations`, `products`, `deals.source` | not touched | Their writers store ids, statuses, values of non-personal fields and error codes; the `form_id` and `submission_id` of a `lead_form_submitted` event are ids, and its attribution stays on the submission row, which is scrubbed. Products are catalogue rows, not personal records |
-| `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys and scopes only, by contract (the #348 writers store role names, descriptions, permissions, `role` and `role_id` only). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
+| `roles`, `role_permissions`, `role_audit_log` (#344) | not touched | Role names carry no personal text by rule; audit rows hold ids, role names, permission keys, scopes and `is_active` only, by contract (the #348 writers store role names, descriptions, permissions, `role` and `role_id` only; the #552 account rows store `is_active` or nothing, never an address). An erased user keeps its `role_id` until `ClearRoleIDOfErased` |
 | `bulk_operation_items` (`data`, `error`) | not touched | Legacy rows written by the generic bulk subsystem removed in #112 can hold request payloads; nothing writes the table any more (retirement is on the roadmap) |
 | `form_submissions` with no `lead_id` (spam, never-confirmed opt-ins, forms that create no lead) whose `email` matches no erased row | not touched by erasure | Not linked to any person the CRM erased. With `FORM_RETENTION_DAYS` set, the retention purge removes old spam and never-confirmed rows (see *Form retention purge*); received rows of forms that create no lead stay |
 | `customer_external_ids` of an erased customer (#212) | hard-deleted (the customer plan's `AfterScrub`, every root that reaches the customer) | mappings of other customers |

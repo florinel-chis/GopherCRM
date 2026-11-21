@@ -25,8 +25,12 @@ import (
 // re-reads all of them under the locks and then refuses, in this order: an
 // actor that lacks a key the write needs (ErrForbidden), ErrRoleEscalation,
 // ErrCustomerLoginRole, ErrLastAdmin. A missing target is ErrNotFound and a
-// missing requested role ErrRoleNotFound, both before the refusals. A changed
-// role or role_id commits with its user_role_changed audit row.
+// missing requested role ErrRoleNotFound, both before the refusals. A
+// successful write appends its role_audit_log rows last, ids only (#552): a
+// changed login email its user_email_changed row, a changed is_active its
+// user_activated or user_deactivated row, a changed role or role_id its
+// user_role_changed row, in that order; an erasure its user_erased row. A
+// refusal writes none.
 
 // WithUserRoleGovernance turns the actor-taking writes of the user service
 // into governed transactions. The user repository must implement
@@ -272,6 +276,11 @@ func (s *userService) DeleteAs(ctx context.Context, actor Actor, id uint) error 
 // credential of the target after the users write: token_version incremented,
 // every refresh token and every API key revoked, continuing the lock order
 // with refresh_tokens → api_keys. An activation brings none of them back.
+// The audit rows come after those writes: user_email_changed when the email
+// differs from the locked row, user_activated or user_deactivated when
+// is_active does (an already inactive account deactivated again gets none),
+// then user_role_changed; an erasure appends user_erased after the nested
+// erasure returned.
 func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, change governedChange) (*models.User, error) {
 	deactivates := !change.erase && change.isActive != nil && !*change.isActive
 	var result *models.User
@@ -344,8 +353,12 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 
 		if change.erase {
 			// The erasure stays one savepoint-bracketed unit of this
-			// transaction.
-			return tx.users.Delete(ctx, id)
+			// transaction; its audit row follows it in the same root, so a
+			// restarted or replayed attempt commits one row.
+			if err := tx.users.Delete(ctx, id); err != nil {
+				return err
+			}
+			return tx.recordErasure(actor, id)
 		}
 		// A deactivation the service cannot complete is refused before any
 		// write, after the refusals every governed write answers first.
@@ -354,7 +367,8 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 		}
 
 		fields := map[string]interface{}{}
-		if change.email != nil && *change.email != target.Email {
+		emailChanged := change.email != nil && *change.email != target.Email
+		if emailChanged {
 			if existing, _ := tx.users.GetByEmailUnscoped(*change.email); existing != nil {
 				return fmt.Errorf("user with this email already exists: %w", apperrors.ErrDuplicateEmail)
 			}
@@ -396,6 +410,16 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 				if isNotFound(err) {
 					return fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
 				}
+				return err
+			}
+		}
+		if emailChanged {
+			if err := tx.recordEmailChange(actor, id); err != nil {
+				return err
+			}
+		}
+		if change.isActive != nil {
+			if err := tx.recordActiveChange(actor, id, target.IsActive, *change.isActive); err != nil {
 				return err
 			}
 		}

@@ -628,6 +628,12 @@ func TestOwnEmailChangeNeedsCurrentPassword(t *testing.T) {
 				assert.Equal(t, newEmail, after.Email)
 				assert.Equal(t, models.RoleAdmin, after.Role)
 				assert.Equal(t, hash, stack.storedHash(t, admin.ID))
+				// Governed, so the email change is audited; the account
+				// stayed active and admin, so nothing else is.
+				assert.Equal(t, audited+1, stack.auditRows(t), "one user_email_changed row")
+				var row models.RoleAuditEntry
+				require.NoError(t, stack.db.Order("id DESC").First(&row).Error)
+				assert.Equal(t, models.RoleAuditUserEmailChanged, row.Action)
 			})
 		})
 	}

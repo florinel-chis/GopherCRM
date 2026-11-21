@@ -22,21 +22,24 @@ import (
 //
 //	admin set → users → roles → user_identities (create and replace)
 //	admin set → users → roles → refresh_tokens → api_keys  (patch, a deactivating replace)
-//	admin set → users → refresh_tokens → api_keys          (delete)
+//	admin set → users → refresh_tokens → api_keys → role_audit_log (delete)
 //
 // The role always comes from the single sign-on role mapping: the first entry
 // with claim roles, in stored order, whose value equals one of the request's
 // roles values exactly. A mapping to the customer system role is refused,
 // because the SCIM Users resource serves staff and custom accounts only. A
 // change of role or role_id commits its user_role_changed audit row with
-// auth_method scim and actor_user_id NULL; after the commit one successful
+// auth_method scim and actor_user_id NULL, and a written userName or a
+// changed active its user_email_changed or user_activated/user_deactivated
+// row the same way, before the role row (#552); after the commit one successful
 // auth_audit_log row with method scim names the account (create, replace or
 // patch). A write that sets active false deprovisions: in the same
 // transaction it ends every credential of the account (revokeAllCredentials):
 // users.token_version is incremented, which ends every access token, and
 // every refresh token and every API key is revoked. A later active true
-// brings none of them back. A refusal writes nothing, audit rows included. Delete deactivates the same way and never
-// erases; on an already inactive account it writes nothing.
+// brings none of them back. A refusal writes nothing, audit rows included. Delete deactivates the same way, with its
+// user_deactivated row, and never erases; on an already inactive account it
+// writes nothing. Create writes no account row.
 //
 // Replace, Patch and Delete change managed accounts only: live, not customer,
 // and linked by a user_identities row under the effective single sign-on
@@ -417,6 +420,16 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 				return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 			}
 		}
+		if _, ok := fields["email"]; ok {
+			if err := tx.recordEmailChange(Actor{AuthMethod: AuthMethodSCIM}, id); err != nil {
+				return err
+			}
+		}
+		if active, ok := fields["is_active"].(bool); ok {
+			if err := tx.recordActiveChange(Actor{AuthMethod: AuthMethodSCIM}, id, target.IsActive, active); err != nil {
+				return err
+			}
+		}
 		if role != target.Role || !sameRoleID(roleID, target.RoleID) {
 			if err := tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserRoleChanged,
 				roleID, assignedRoleName(role, custom), &id,
@@ -447,7 +460,8 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 // Patch applies a SCIM PatchOp (#471) to the managed account rawID names, with
 // the checks of Replace for the attributes it touches. The patch is applied
 // to the row locked in the transaction. Untouched roles keep the stored role
-// and write no role audit row; active false deprovisions as in Replace.
+// and write no role audit row; active false deprovisions as in Replace, and
+// an active false on an inactive row writes no account audit row.
 func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPatch) (*SCIMUserRecord, error) {
 	if s.writes == nil || !s.writes.credentialsWired() {
 		return nil, errSCIMWritesNotWired
@@ -568,6 +582,16 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 				return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 			}
 		}
+		if _, ok := fields["email"]; ok {
+			if err := tx.recordEmailChange(Actor{AuthMethod: AuthMethodSCIM}, id); err != nil {
+				return err
+			}
+		}
+		if active, ok := fields["is_active"].(bool); ok {
+			if err := tx.recordActiveChange(Actor{AuthMethod: AuthMethodSCIM}, id, target.IsActive, active); err != nil {
+				return err
+			}
+		}
 		if role != target.Role || !sameRoleID(roleID, target.RoleID) {
 			if err := tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserRoleChanged,
 				roleID, assignedRoleName(role, custom), &id,
@@ -598,7 +622,8 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 // Delete deactivates the managed account rawID names (#504) the way active false
 // does: in one governed transaction it sets is_active false and ends every
 // credential (revokeAllCredentials: token_version incremented, every refresh
-// token and every API key revoked). It never erases: no
+// token and every API key revoked) and appends its user_deactivated role
+// audit row (#552). It never erases: no
 // deleted_at, and email, names, role, role_id and the identity link stay. An
 // already inactive account is a success that writes nothing, audit rows
 // included (unlike Patch, which bumps token_version again). The last active
@@ -649,7 +674,8 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 		if err := revokeAllCredentials(s.writes.credentialStores(tx), target, time.Now()); err != nil {
 			return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 		}
-		return nil
+		return tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserDeactivated, nil, "", &id,
+			userActiveAuditState{IsActive: true}, userActiveAuditState{IsActive: false})
 	})
 	if err != nil {
 		return err

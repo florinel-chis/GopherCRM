@@ -141,8 +141,8 @@ func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 			audits int64
 		}{
 			{"demotion", demote, "role=sales role_id=null active=true erased=false", 1},
-			{"deactivation", deactivate, "role=admin role_id=null active=false erased=false", 0},
-			{"erasure", erase, "active=false erased=true", 0},
+			{"deactivation", deactivate, "role=admin role_id=null active=false erased=false", 1},
+			{"erasure", erase, "active=false erased=true", 1},
 		} {
 			second := env.user("second-admin", models.RoleAdmin)
 			require.EqualValues(t, 2, env.activeAdmins(), c.name)
@@ -325,7 +325,8 @@ func runLastAdminConcurrent(t *testing.T, useMySQL bool) {
 		// won, and when the second did.
 		firstWon, secondWon [2]string
 		// secondAudits is the audit rows the second request writes when it
-		// commits: one when it is a demotion too.
+		// commits: one role change row for a demotion, one account row for
+		// a deactivation or an erasure.
 		secondAudits int64
 	}{
 		{
@@ -348,8 +349,9 @@ func runLastAdminConcurrent(t *testing.T, useMySQL bool) {
 					{y, http.MethodPost, userRoutePath(x.ID) + "/deactivate", nil},
 				}
 			},
-			firstWon:  [2]string{"role=admin role_id=null active=true erased=false", "role=sales role_id=null active=true erased=false"},
-			secondWon: [2]string{"role=admin role_id=null active=false erased=false", "role=admin role_id=null active=true erased=false"},
+			firstWon:     [2]string{"role=admin role_id=null active=true erased=false", "role=sales role_id=null active=true erased=false"},
+			secondWon:    [2]string{"role=admin role_id=null active=false erased=false", "role=admin role_id=null active=true erased=false"},
+			secondAudits: 1,
 		},
 		{
 			name: "demote against erase",
@@ -359,8 +361,9 @@ func runLastAdminConcurrent(t *testing.T, useMySQL bool) {
 					{y, http.MethodDelete, userRoutePath(x.ID), nil},
 				}
 			},
-			firstWon:  [2]string{"role=admin role_id=null active=true erased=false", "role=sales role_id=null active=true erased=false"},
-			secondWon: [2]string{"role=admin role_id=null active=false erased=true", "role=admin role_id=null active=true erased=false"},
+			firstWon:     [2]string{"role=admin role_id=null active=true erased=false", "role=sales role_id=null active=true erased=false"},
+			secondWon:    [2]string{"role=admin role_id=null active=false erased=true", "role=admin role_id=null active=true erased=false"},
+			secondAudits: 1,
 		},
 		{
 			name: "self-demotion against self-deactivation",
@@ -370,8 +373,9 @@ func runLastAdminConcurrent(t *testing.T, useMySQL bool) {
 					{y, http.MethodPut, userRoutePath(y.ID), map[string]interface{}{"is_active": false}},
 				}
 			},
-			firstWon:  [2]string{"role=sales role_id=null active=true erased=false", "role=admin role_id=null active=true erased=false"},
-			secondWon: [2]string{"role=admin role_id=null active=true erased=false", "role=admin role_id=null active=false erased=false"},
+			firstWon:     [2]string{"role=sales role_id=null active=true erased=false", "role=admin role_id=null active=true erased=false"},
+			secondWon:    [2]string{"role=admin role_id=null active=true erased=false", "role=admin role_id=null active=false erased=false"},
+			secondAudits: 1,
 		},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

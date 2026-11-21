@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Role audit rows for account activation, deactivation, erasure and email change, and a Role
+  audit screen (#552).** `role_audit_log` gains the actions `user_activated`, `user_deactivated`,
+  `user_erased` and `user_email_changed`, each written in the transaction of the change with the
+  acting user and `auth_method`, `role_id` NULL, an empty `role_name` and the account in
+  `target_user_id`. Activation rows store `{"is_active":…}` before and after; the erasure and
+  email rows store no state and neither address. Writers: `PUT /users/{id}` (a changed email or
+  `is_active`, in the order email, activation, role), `POST /users/{id}/activate` and
+  `/deactivate`, `DELETE /users/{id}`, SCIM `PUT`/`PATCH /scim/v2/Users/{id}` (method `scim`, no
+  actor), SCIM `DELETE /scim/v2/Users/{id}` on an active account and a SCIM group patch that
+  deactivates members. Repeating a deactivation, activating an active account, sending the stored
+  email again, a SCIM create and every refusal write no account row; if the row cannot be written
+  the change is not made. An OpenID Connect sign-in, a caller's own profile-only email change and
+  the erasure of a customer login through `DELETE /customers/{id}` or a lead erasure write none.
+  A new read-only Settings → Role audit screen (`/settings/role-audit`, `roles.audit_view`) lists
+  `GET /roles/audit` with pagination. No migration, route or setting.
 - **Sign-in audit rows for API key creation, revocation and refused re-enabling (#551).**
   `POST /api-keys` answered 201 writes one `auth_audit_log` row with method `api_key_create`; a
   revocation answered 200, through `DELETE /api-keys/{id}` (an idempotent repeat included) or
@@ -110,8 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   role, `role_id` and single sign-on link stay, and erasure remains the administrator's
   `DELETE /api/v1/users/{id}`. A repeat on the inactive account answers 204 and writes nothing.
   The last active admin is 400 `invalidValue`, an id the provider does not see the SCIM 404 `User
-  not found`. A deactivation writes one `auth_audit_log` row with method `scim` and no role audit
-  row. No new setting, table or migration.
+  not found`. A deactivation writes one `auth_audit_log` row with method `scim` and, since #552,
+  one `user_deactivated` role audit row. No new setting, table or migration.
 - **Webhook signing-secret rotation (#503).** `POST /api/v1/webhooks/endpoints/{id}/rotate-secret`
   (`webhooks.manage`) generates a new `whsec_` secret and answers 200 with the endpoint, the new
   `secret` (shown this once) and `previous_secret_expires_at` (now + 24 h). The replaced secret is

@@ -639,8 +639,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
-  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:275`, and
-  `CreateAs`, `internal/service/user_governed_writes.go:141`) locks the `users` rows of the active
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:284`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:145`) locks the `users` rows of the active
   admins (`LockActiveAdmins`, `internal/repository/user_repository.go:298`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
@@ -680,12 +680,16 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `revokeAllCredentials` after its `users` write and before the audit row: `token_version` on the
   locked row, every `refresh_tokens` row, every `api_keys` row, so the write continues with
   refresh_tokens → api_keys. A service built without `WithUserCredentialRevocation` refuses such a
-  write before any write.
+  write before any write. The `role_audit_log` rows come last (#552): after the `users` write and
+  the revocation, `user_email_changed` for a changed email, `user_activated` or
+  `user_deactivated` for a changed `is_active`, then `user_role_changed`; an erasure inserts
+  `user_erased` after its nested erasure returned, in the same root, so a restart or replay
+  commits one row.
 - **Transaction:** one root transaction per write (`roleGovernance.run`,
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:348`), once and without a retry of its own. By then
+  (`internal/service/user_governed_writes.go:358`), once and without a retry of its own. By then
   the write holds the target's `users` row, so the nested erasure takes leads and customers after
   users, the one inversion of the erasure order (#385); `governedWrite` is not reordered.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3
@@ -784,8 +788,9 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   checked with a plain read (`SCIMUserRepository.EmailTakenByOther`); then the touched `users`
   columns are written in one `UPDATE`; on `active` false `revokeAllCredentials` then sets
   `token_version` to the locked value plus one, revokes every `refresh_tokens` row and then every
-  `api_keys` row of the account (#526); then, on a role change, the `role_audit_log` row is
-  inserted. Like the replace, it plain-reads the target's
+  `api_keys` row of the account (#526); then the `role_audit_log` rows are inserted: a changed
+  address its `user_email_changed` row, a changed `active` its `user_activated` or
+  `user_deactivated` row (#552), and a role change its `user_role_changed` row. Like the replace, it plain-reads the target's
   `user_identities` rows right after the `users` lock and refuses an account not linked under the
   effective issuer as a not-found before anything is written (#529); it writes no
   `user_identities` row.
@@ -793,15 +798,16 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   (`LockActiveAdmins`) and the target's `users` row (`LockLiveByIDs`) and no `roles` row, since it
   writes no role; it plain-reads the target's identities as the patch does (#529); on an active
   target it writes `is_active` false, then `revokeAllCredentials` writes `token_version` plus one
-  and revokes every `refresh_tokens` and every `api_keys` row of the account. On an already inactive
+  and revokes every `refresh_tokens` and every `api_keys` row of the account, and last inserts the
+  `user_deactivated` `role_audit_log` row (#552). On an already inactive
   target it writes nothing and commits an empty transaction.
   The last-admin rule counts the target's locked `users` row as an admin before the write whenever
   that row is an active admin, next to the admin set: `LockActiveAdmins` discovers the admins with
   a consistent read, so on MySQL/MariaDB an admin promoted by a SCIM group handover that committed
   while this write waited is missing from that set, and only the locking read of `LockLiveByIDs`
   sees it (#513). This can only refuse more often during such a race, never less.
-- **Order:** admin set → users → roles → refresh_tokens → api_keys (the delete: admin set → users →
-  refresh_tokens → api_keys). The `users` row comes before its
+- **Order:** admin set → users → roles → refresh_tokens → api_keys → role_audit_log (the delete:
+  admin set → users → refresh_tokens → api_keys → role_audit_log). The `users` row comes before its
   `refresh_tokens` and `api_keys` rows, as in refresh rotation, logout and password change, so a
   competing refresh waits on the `users` row and then finds its token revoked.
 - **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx`

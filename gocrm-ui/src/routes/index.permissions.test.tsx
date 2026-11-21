@@ -67,6 +67,7 @@ vi.mock('@/pages/settings/RoleEditor', () => ({ Component: () => <div>Role Edito
 vi.mock('@/pages/settings/Webhooks', () => ({ Component: () => <div>Webhooks Page</div> }));
 vi.mock('@/pages/settings/SSOSettings', () => ({ Component: () => <div>SSO Settings Page</div> }));
 vi.mock('@/pages/settings/SignInAudit', () => ({ Component: () => <div>Sign-in Audit Page</div> }));
+vi.mock('@/pages/settings/RoleAudit', () => ({ Component: () => <div>Role Audit Page</div> }));
 vi.mock('@/pages/settings/SCIMTokens', () => ({ Component: () => <div>SCIM Tokens Page</div> }));
 
 import { router } from './index';
@@ -198,6 +199,15 @@ describe('routes', () => {
     // The single sign-on settings key does not stand in for it.
     signedInWith(customPermissions('settings.sso_manage'));
     expect(await landOn('/settings/sign-in-audit', 'Access Denied')).toBe('/unauthorized');
+  }, 120000);
+
+  it('open the role audit only with roles.audit_view', async () => {
+    signedInWith(customPermissions('roles.audit_view'));
+    expect(await landOn('/settings/role-audit', 'Role Audit Page')).toBe('/settings/role-audit');
+
+    // Neither the role keys nor the sign-in audit key stand in for it.
+    signedInWith(customPermissions('roles.view', 'roles.manage', 'audit.sign_ins_view'));
+    expect(await landOn('/settings/role-audit', 'Access Denied')).toBe('/unauthorized');
   }, 120000);
 
   it('open the SCIM tokens screen only with settings.scim_manage', async () => {

@@ -196,6 +196,21 @@ func (f *scimGroupsFixture) roleAudits(t *testing.T, target uint) []models.RoleA
 	return rows
 }
 
+// assertSCIMDeactivationRow checks a user_deactivated role audit row of a
+// SCIM write: method scim, no actor, no role, is_active true → false.
+func assertSCIMDeactivationRow(t *testing.T, row models.RoleAuditEntry) {
+	t.Helper()
+	assert.Equal(t, models.RoleAuditUserDeactivated, row.Action)
+	assert.Equal(t, AuthMethodSCIM, row.AuthMethod)
+	assert.Nil(t, row.ActorUserID)
+	assert.Nil(t, row.RoleID)
+	assert.Empty(t, row.RoleName)
+	require.NotNil(t, row.BeforeState)
+	require.NotNil(t, row.AfterState)
+	assert.JSONEq(t, `{"is_active":true}`, *row.BeforeState)
+	assert.JSONEq(t, `{"is_active":false}`, *row.AfterState)
+}
+
 func (f *scimGroupsFixture) scimAudits(t *testing.T, userID uint) int64 {
 	t.Helper()
 	return f.count(t, "auth_audit_log", "method = ? AND outcome = ? AND user_id = ?", AuthAuditMethodSCIM, AuthAuditOutcomeSuccess, userID)
@@ -456,7 +471,10 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			assert.Equal(t, added.TokenVersion+1, stored.TokenVersion, "every access token ends")
 			f.assertSessionsEnded(t, u.ID)
 			f.assertKeys(t, u.ID, true)
-			assert.Equal(t, roleAuditsBefore, f.count(t, "role_audit_log", ""), "no role audit row")
+			assert.Equal(t, roleAuditsBefore+1, f.count(t, "role_audit_log", ""), "one role audit row")
+			rows := f.roleAudits(t, u.ID)
+			require.Len(t, rows, 2)
+			assertSCIMDeactivationRow(t, rows[1])
 			assert.Equal(t, scimAuditsBefore+1, f.scimAudits(t, u.ID), "one sign-in audit row for the remove")
 			assert.Equal(t, int64(2), f.scimAudits(t, u.ID), "the membership changed twice")
 			assert.Empty(t, f.members(t))
@@ -551,7 +569,9 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			assert.Equal(t, before.TokenVersion+1, stored.TokenVersion)
 			f.assertSessionsEnded(t, x.ID)
 			f.assertKeys(t, x.ID, true)
-			assert.Empty(t, f.roleAudits(t, x.ID))
+			rows := f.roleAudits(t, x.ID)
+			require.Len(t, rows, 1, "the deactivation row only")
+			assertSCIMDeactivationRow(t, rows[0])
 			assert.Len(t, f.roleAudits(t, y.ID), 1)
 			assert.Equal(t, int64(1), f.scimAudits(t, x.ID))
 			assert.Equal(t, int64(1), f.activeAdmins(t))
@@ -582,7 +602,13 @@ func runSCIMGroups(t *testing.T, f *scimGroupsFixture) {
 			assert.Equal(t, c.TokenVersion, stored.TokenVersion)
 			assert.Zero(t, f.count(t, "refresh_tokens", "user_id = ? AND is_revoked = ?", c.ID, true))
 			f.assertKeys(t, c.ID, false)
-			assert.Zero(t, f.count(t, "role_audit_log", ""))
+			for _, u := range []*models.User{a, b} {
+				rows := f.roleAudits(t, u.ID)
+				require.Len(t, rows, 1, "one user_deactivated row per deactivated member")
+				assertSCIMDeactivationRow(t, rows[0])
+			}
+			assert.Empty(t, f.roleAudits(t, c.ID))
+			assert.Equal(t, int64(2), f.count(t, "role_audit_log", ""))
 			assert.Equal(t, []string{"Admins/" + uintString(c.ID)}, f.members(t))
 		}},
 		{"handover_add_remove", func(t *testing.T) {

@@ -142,18 +142,31 @@ someone the Admin role, or edit, deactivate or delete an administrator.
 ## Audit trail
 
 Every role create, clone, edit and delete, and every change of a user's role, writes one row to the
-role audit log. A row records who made the change, how that request was authenticated, what was
-done, and the state before and after.
+role audit log. So do these account changes:
 
-The SPA has no screen for this log. Read it through the API with `GET /roles/audit`, which lists
-the rows newest first and needs `roles.audit_view`. The `auth_method` field says how the change
-was made:
+| Action | Shown as | When |
+|---|---|---|
+| `user_activated` | Account activated | An inactive account is activated (Activate, `PUT /users/{id}` with `is_active` true, or SCIM). |
+| `user_deactivated` | Account deactivated | An active account is deactivated (Deactivate, `PUT /users/{id}` with `is_active` false, a SCIM delete or deactivation, or a SCIM group change that leaves the person in no mapped group). |
+| `user_erased` | Account erased | An account is erased with Delete user (`DELETE /users/{id}`). |
+| `user_email_changed` | Email changed | The login email of an account is changed by an administrator, or by SCIM. |
+
+A row records who made the change, how that request was authenticated, what was done, and for a
+role change or an activation the state before and after. An account row names the account by its
+id only; an email change stores neither the old nor the new address. Repeating a deactivation, a
+change you make to your own email from your profile, and a refused change write no row.
+
+Open the log in Settings → Role audit (`/settings/role-audit`, needs `roles.audit_view`). It lists
+the rows newest first, a page at a time, with the time, the action, the method, the acting user's
+id, the target user's id and the role name. The same rows are available through the API with
+`GET /roles/audit`. The `auth_method` field (Method on the screen) says how the change was made:
 
 | `auth_method` | Meaning |
 |---|---|
 | `bearer` | A person signed in to the SPA (or a client using a sign-in token) made the change. |
 | `api_key` | The change was made with an API key. |
 | `oidc` | A single sign-on sign-in applied the role from the provider's mapping to the person's own account. |
+| `scim` | The identity provider made the change through SCIM provisioning; no person is recorded. |
 | `migration` | A data step of an upgrade changed a custom role (for example, removing the admin-only permissions); no person is recorded. |
 
 Changes to the single sign-on settings are not audited yet. Sign-in attempts are recorded

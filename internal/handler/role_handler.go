@@ -149,7 +149,7 @@ type PermissionCatalogueNode struct {
 
 // RoleAuditEntryResponse is one row of the role audit log.
 //
-// @Description One row of the role audit log. It holds ids, role names, permission keys and scopes only.
+// @Description One row of the role audit log. It holds ids, role names, permission keys, scopes and the is_active flag only; an email-change row stores neither address.
 type RoleAuditEntryResponse struct {
 	// Row id.
 	ID uint `json:"id" example:"42"`
@@ -160,23 +160,27 @@ type RoleAuditEntryResponse struct {
 	ActorUserID *uint `json:"actor_user_id" example:"1"`
 	// How the acting request authenticated: bearer or api_key, oidc for the
 	// role an OpenID Connect sign-in applied to its own account, scim for a
-	// SCIM 2.0 user create, replace or patch (actor null), or migration for a
+	// SCIM 2.0 user or group write (actor null), or migration for a
 	// startup or migration data step (actor null).
 	AuthMethod string `json:"auth_method" enums:"bearer,api_key,oidc,scim,migration" example:"bearer"`
 	// Kind of change.
-	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed" example:"role_updated"`
+	Action models.RoleAuditAction `json:"action" enums:"role_created,role_updated,role_deleted,user_role_changed,user_activated,user_deactivated,user_erased,user_email_changed" example:"role_updated"`
 	// The affected role, or the custom role a user received; null when a user
-	// received a system role.
+	// received a system role, and on an account row (user_activated,
+	// user_deactivated, user_erased, user_email_changed).
 	RoleID *uint `json:"role_id" example:"7"`
 	// Name of that role at the time of the change; the system role's key when
-	// a user received a system role.
+	// a user received a system role; empty on an account row.
 	RoleName string `json:"role_name" example:"Sales lead"`
-	// The user whose role changed; null on a role change.
+	// The user whose role changed, or the account an account row records;
+	// null on a role change.
 	TargetUserID *uint `json:"target_user_id" example:"12"`
 	// State before the change: name, description and permissions of a role,
-	// or role and role_id of a user. null on a create.
+	// or role and role_id of a user, or is_active of an activation or
+	// deactivation row. null on a create, an erasure and an email change.
 	BeforeState json.RawMessage `json:"before_state"`
-	// State after the change, in the same shape. null on a role delete.
+	// State after the change, in the same shape. null on a role delete, an
+	// erasure and an email change.
 	AfterState json.RawMessage `json:"after_state"`
 }
 
@@ -570,7 +574,7 @@ func (h *RoleHandler) Clone(c *gin.Context) {
 
 // ListAudit godoc
 // @Summary List the role audit log
-// @Description A page of the append-only role audit log as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). A row is written, in the transaction of the change it records, for every role create, clone (role_created), update and delete, and for every change of a user's role or role_id (user_role_changed, also for the role a new user is created with). Rows hold ids, role names, permission keys and scopes only. Without sort_by the newest row comes first (created_at descending, then id descending); with an allowed sort_by the rows are ordered by that column, then by id, in the requested direction. Needs roles.audit_view.
+// @Description A page of the append-only role audit log as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). A row is written, in the transaction of the change it records, for every role create, clone (role_created), update and delete, for every change of a user's role or role_id (user_role_changed, also for the role a new user is created with), and for every account change made by the user routes or SCIM: an activation (user_activated) or deactivation (user_deactivated, before and after holding is_active only), an erasure (user_erased) and a change of the login email (user_email_changed, storing neither address). An account row has role_id null and an empty role_name. Rows hold ids, role names, permission keys, scopes and the is_active flag only. Without sort_by the newest row comes first (created_at descending, then id descending); with an allowed sort_by the rows are ordered by that column, then by id, in the requested direction. Needs roles.audit_view.
 // @Description Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0). An unknown sort_by is ignored rather than rejected. A role_id or target_user_id that is not an unsigned integer is ignored too.
 // @Tags users
 // @Produce json
@@ -581,7 +585,7 @@ func (h *RoleHandler) Clone(c *gin.Context) {
 // @Param sort_by query string false "Sort column; any other value is ignored (newest first)" Enums(id, created_at, action)
 // @Param sort_order query string false "Sort direction; any other value falls back to desc" Enums(asc, desc) default(desc)
 // @Param role_id query int false "Only the rows of this role"
-// @Param target_user_id query int false "Only the role changes of this user"
+// @Param target_user_id query int false "Only the rows of this user"
 // @Success 200 {object} utils.APIResponse{data=[]RoleAuditEntryResponse,meta=utils.APIMeta} "A page of audit rows; pagination in meta"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
 // @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: the caller does not hold roles.audit_view (Insufficient permissions)"

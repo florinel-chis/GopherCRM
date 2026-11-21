@@ -138,7 +138,9 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			require.NoError(t, err)
 			assert.False(t, record.User.IsActive)
 			assertDeactivated(t, ann.ID, version)
-			assert.Empty(t, f.roleAudits(t, ann.ID), "an untouched role writes no role audit row")
+			audits := f.roleAudits(t, ann.ID)
+			require.Len(t, audits, 1, "an untouched role writes no role row, only the deactivation row")
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
 			f.assertSuccessAudit(t, ann.ID)
 			stored := f.user(t, ann.ID)
 			assert.Equal(t, "ann@x.test", stored.Email, "untouched attributes stay")
@@ -161,6 +163,9 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			_, err = f.svc.Patch(ctx, uintString(bob.ID), parsePatch(t, `{"Operations":[{"op":"replace","path":"active","value":false}]}`))
 			require.NoError(t, err)
 			assert.Equal(t, version+2, f.user(t, bob.ID).TokenVersion, "active false always increments")
+			audits := f.roleAudits(t, bob.ID)
+			require.Len(t, audits, 1, "the second deactivation of the inactive row writes no row")
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
 		}},
 		{"sessions end", func(t *testing.T) {
 			cy := seed(t, "cy@x.test", models.RoleSales)
@@ -202,6 +207,13 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.True(t, record.User.IsActive)
 			stored := f.user(t, dee.ID)
 			assert.True(t, stored.IsActive, "active true reactivates")
+			audits := f.roleAudits(t, dee.ID)
+			require.Len(t, audits, 2)
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
+			assertSCIMAccountRow(t, audits[1], models.RoleAuditUserActivated, `{"is_active":false}`, `{"is_active":true}`)
+			_, err = f.svc.Patch(ctx, uintString(dee.ID), parsePatch(t, `{"Operations":[{"op":"replace","value":{"active":true}}]}`))
+			require.NoError(t, err)
+			assert.Len(t, f.roleAudits(t, dee.ID), 2, "an activation of an active row writes no row")
 			assert.Equal(t, version+1, stored.TokenVersion, "active true does not move the generation")
 			assert.Zero(t, f.liveRefreshTokens(t, dee.ID), "active true brings no session back")
 
@@ -307,7 +319,9 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, "User", stored.LastName, "an untouched name part stays")
 			assert.True(t, stored.IsActive)
 			assert.Equal(t, int64(1), f.liveRefreshTokens(t, fay.ID), "no deactivation, no session ends")
-			assert.Empty(t, f.roleAudits(t, fay.ID), "an untouched role writes no role audit row")
+			audits := f.roleAudits(t, fay.ID)
+			require.Len(t, audits, 1, "an untouched role writes no role row, only the email row")
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserEmailChanged, "", "")
 			f.assertSuccessAudit(t, fay.ID)
 
 			_, err = f.svc.Patch(ctx, uintString(fay.ID), parsePatch(t, `{"Operations":[{"op":"remove","path":"name.familyName"},
@@ -317,7 +331,9 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, "", stored.LastName, "remove clears the part")
 			assert.Equal(t, "Faye", stored.FirstName)
 			assert.Equal(t, "fay@x.test", stored.Email, "the work address wins")
-			assert.Empty(t, f.roleAudits(t, fay.ID))
+			audits = f.roleAudits(t, fay.ID)
+			require.Len(t, audits, 2, "the address changed back: a second email row")
+			assertSCIMAccountRow(t, audits[1], models.RoleAuditUserEmailChanged, "", "")
 			assert.Equal(t, int64(2), scimAudits(t, fay.ID))
 			assert.Equal(t, int64(2), f.count(t, "auth_audit_log", ""))
 

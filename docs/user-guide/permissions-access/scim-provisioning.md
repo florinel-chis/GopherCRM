@@ -155,18 +155,24 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 
 - A create, and a role change made through SCIM, write a role audit row `user_role_changed` with
   `auth_method` `scim` and no actor. See the [audit trail](roles-and-permissions.md#audit-trail).
+- A replace or patch that changes `active` writes a role audit row `user_activated` or
+  `user_deactivated`, and one that changes `userName` writes `user_email_changed`, also with
+  `auth_method` `scim` and no actor. A DELETE of an active account writes one `user_deactivated`
+  row. A deactivation of an account that is already inactive, and a create, write no such row.
 - Every successful SCIM write records a sign-in audit row with method `scim` and outcome `success`,
   except a DELETE of an account that is already deactivated, which changes nothing and records
   nothing.
 - A request with a refused token records method `scim` with the reason `token_missing`,
   `token_invalid` or `token_revoked`.
 - A group patch writes one role audit row `user_role_changed` (`auth_method` `scim`, no actor)
-  for each member whose role changes, and, after it succeeds, one sign-in audit row with method
+  for each member whose role changes and one `user_deactivated` row for each member it
+  deactivates, and, after it succeeds, one sign-in audit row with method
   `scim` and outcome `success` for each person added to or removed from the group. A group patch
   that changes no member records nothing.
 - A refused write (400 or 409) records nothing.
 
-Sign-in audit rows are listed in Settings → Sign-in audit (`/settings/sign-in-audit`).
+Sign-in audit rows are listed in Settings → Sign-in audit (`/settings/sign-in-audit`), role audit
+rows in Settings → Role audit (`/settings/role-audit`).
 
 ## Microsoft Entra ID: the first single sign-on of a SCIM-created account
 

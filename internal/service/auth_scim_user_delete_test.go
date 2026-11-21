@@ -9,8 +9,9 @@ package service
 // row keeps its profile, role, identity link and a NULL deleted_at, while
 // token_version moves one up and every refresh token is revoked in the same
 // transaction, checked BEFORE any refresh call (a refresh of an inactive
-// owner would revoke them by itself). A repeat on the inactive row is a
-// success that writes nothing.
+// owner would revoke them by itself), and one user_deactivated role audit row
+// is committed with it (#552). A repeat on the inactive row is a success that
+// writes nothing.
 
 import (
 	"context"
@@ -129,7 +130,10 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, auditsBefore+1, scimAudits(t, id), "one successful scim audit row")
 			after := rows(t)
 			assert.Equal(t, rowsBefore.counts.authAudits+1, after.counts.authAudits, "exactly one new auth_audit_log row")
-			assert.Equal(t, rowsBefore.counts.roleAudits, after.counts.roleAudits, "no role_audit_log row")
+			assert.Equal(t, rowsBefore.counts.roleAudits+1, after.counts.roleAudits, "exactly one new role_audit_log row")
+			audits := f.roleAudits(t, id)
+			require.Len(t, audits, 2, "the create's role row and the deactivation row")
+			assertSCIMAccountRow(t, audits[1], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
 			assert.Equal(t, rowsBefore.counts.users, after.counts.users)
 			assert.Equal(t, rowsBefore.counts.identities, after.counts.identities)
 		}},
@@ -178,6 +182,9 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			assert.Equal(t, version+1, stored.TokenVersion)
 			assert.Zero(t, f.liveRefreshTokens(t, admin.ID))
 			f.assertSuccessAudit(t, admin.ID)
+			audits := f.roleAudits(t, admin.ID)
+			require.Len(t, audits, 1)
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
 		}},
 		{"not found", func(t *testing.T) {
 			customer := f.seedLinked(t, "cust@x.test", models.RoleCustomer, true, scimDeletePassword)

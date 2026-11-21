@@ -3890,12 +3890,20 @@ definitions:
     - role_updated
     - role_deleted
     - user_role_changed
+    - user_activated
+    - user_deactivated
+    - user_erased
+    - user_email_changed
     type: string
     x-enum-varnames:
     - RoleAuditRoleCreated
     - RoleAuditRoleUpdated
     - RoleAuditRoleDeleted
     - RoleAuditUserRoleChanged
+    - RoleAuditUserActivated
+    - RoleAuditUserDeactivated
+    - RoleAuditUserErased
+    - RoleAuditUserEmailChanged
   github_com_florinel-chis_gophercrm_internal_models.Task:
     description: A to-do item assigned to one user, optionally linked to a lead or
       a customer (never both) and to a deal, and carrying labels.
@@ -7622,7 +7630,8 @@ definitions:
     type: object
   internal_handler.RoleAuditEntryResponse:
     description: One row of the role audit log. It holds ids, role names, permission
-      keys and scopes only.
+      keys, scopes and the is_active flag only; an email-change row stores neither
+      address.
     properties:
       action:
         allOf:
@@ -7633,6 +7642,10 @@ definitions:
         - role_updated
         - role_deleted
         - user_role_changed
+        - user_activated
+        - user_deactivated
+        - user_erased
+        - user_email_changed
         example: role_updated
       actor_user_id:
         description: |-
@@ -7641,12 +7654,14 @@ definitions:
         example: 1
         type: integer
       after_state:
-        description: State after the change, in the same shape. null on a role delete.
+        description: |-
+          State after the change, in the same shape. null on a role delete, an
+          erasure and an email change.
       auth_method:
         description: |-
           How the acting request authenticated: bearer or api_key, oidc for the
           role an OpenID Connect sign-in applied to its own account, scim for a
-          SCIM 2.0 user create, replace or patch (actor null), or migration for a
+          SCIM 2.0 user or group write (actor null), or migration for a
           startup or migration data step (actor null).
         enum:
         - bearer
@@ -7659,7 +7674,8 @@ definitions:
       before_state:
         description: |-
           State before the change: name, description and permissions of a role,
-          or role and role_id of a user. null on a create.
+          or role and role_id of a user, or is_active of an activation or
+          deactivation row. null on a create, an erasure and an email change.
       created_at:
         description: UTC time of the change (RFC 3339).
         example: "2026-11-18T09:00:00Z"
@@ -7671,17 +7687,20 @@ definitions:
       role_id:
         description: |-
           The affected role, or the custom role a user received; null when a user
-          received a system role.
+          received a system role, and on an account row (user_activated,
+          user_deactivated, user_erased, user_email_changed).
         example: 7
         type: integer
       role_name:
         description: |-
           Name of that role at the time of the change; the system role's key when
-          a user received a system role.
+          a user received a system role; empty on an account row.
         example: Sales lead
         type: string
       target_user_id:
-        description: The user whose role changed; null on a role change.
+        description: |-
+          The user whose role changed, or the account an account row records;
+          null on a role change.
         example: 12
         type: integer
     type: object
@@ -23165,7 +23184,7 @@ paths:
   /roles/audit:
     get:
       description: |-
-        A page of the append-only role audit log as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). A row is written, in the transaction of the change it records, for every role create, clone (role_created), update and delete, and for every change of a user's role or role_id (user_role_changed, also for the role a new user is created with). Rows hold ids, role names, permission keys and scopes only. Without sort_by the newest row comes first (created_at descending, then id descending); with an allowed sort_by the rows are ordered by that column, then by id, in the requested direction. Needs roles.audit_view.
+        A page of the append-only role audit log as a bare array in data, with the pagination in meta (page, per_page, total, total_pages; each omitted when 0). A row is written, in the transaction of the change it records, for every role create, clone (role_created), update and delete, for every change of a user's role or role_id (user_role_changed, also for the role a new user is created with), and for every account change made by the user routes or SCIM: an activation (user_activated) or deactivation (user_deactivated, before and after holding is_active only), an erasure (user_erased) and a change of the login email (user_email_changed, storing neither address). An account row has role_id null and an empty role_name. Rows hold ids, role names, permission keys, scopes and the is_active flag only. Without sort_by the newest row comes first (created_at descending, then id descending); with an allowed sort_by the rows are ordered by that column, then by id, in the requested direction. Needs roles.audit_view.
         Pagination: limit defaults to 20 and is capped at 100 (a missing, non-numeric or non-positive value gives 20); offset defaults to 0 (non-numeric or negative gives 0). An unknown sort_by is ignored rather than rejected. A role_id or target_user_id that is not an unsigned integer is ignored too.
       parameters:
       - default: 0
@@ -23199,7 +23218,7 @@ paths:
         in: query
         name: role_id
         type: integer
-      - description: Only the role changes of this user
+      - description: Only the rows of this user
         in: query
         name: target_user_id
         type: integer
@@ -25687,7 +25706,7 @@ paths:
     delete:
       description: |-
         Needs users.delete (route guard, repeated in the handler; the admin system role holds it); a caller cannot erase its own account. The erasure runs in one transaction that first locks the active admins, the caller and the target (ascending id) and their custom roles, reads them again and answers in this order: FORBIDDEN (the caller lacks a permission the erasure needs), ROLE_ESCALATION (a caller that is not on the admin system role cannot erase an account whose permissions are above its own; a customer login never is), LAST_ADMIN (the last active admin cannot be erased). This is a GDPR Article 17 erasure and cannot be undone: in one transaction every personal field is overwritten in place (the email becomes a random address in the reserved .invalid domain, the names are blanked, the password hash is made unusable, is_active becomes false and the login bookkeeping is cleared), the user's API keys, refresh tokens, password-reset tokens and notifications are deleted, the bodies of the ticket comments the user wrote become [deleted], and the row is soft-deleted. The row is kept so references from tickets, tasks, leads and deals still resolve, and the original email becomes free for a new account.
-        Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers; erasing a customer login that has such a linked customer record therefore needs customers.delete next to users.delete (FORBIDDEN without it, and nothing is erased), while a customer login without one needs users.delete alone. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. To suspend an account reversibly use POST /users/{id}/deactivate instead.
+        Erasing a customer-role user also erases, in the same transaction, every customer record whose user_id is that login and every lead converted into those customers; erasing a customer login that has such a linked customer record therefore needs customers.delete next to users.delete (FORBIDDEN without it, and nothing is erased), while a customer login without one needs users.delete alone. Erasing a staff user leaves the records it owns, manages or is assigned to untouched. The erasure writes a user_erased row to the role audit log in the same transaction. To suspend an account reversibly use POST /users/{id}/deactivate instead.
         When a customer-role user is erased, the deals and quotes of the customers and leads it reaches keep their links, stages, amounts, statuses, totals and history, but their staff-typed text is overwritten in the same transaction: deal title [redacted] with empty notes and lost_reason, quote title [redacted] with empty notes, each quote line's description set to its product's name; notifications about those deals are deleted. Deals and quotes owned by an erased staff user are not touched (owner_id is never followed).
       parameters:
       - description: User ID
@@ -25874,7 +25893,7 @@ paths:
       - application/json
       description: |-
         Any authenticated account may update its own profile fields; updating another account needs users.update (checked before the body is read; the admin system role holds it). Only non-empty fields are written. role and role_id are applied only for a caller holding users.assign_role and is_active only for one holding users.activate; each is silently ignored otherwise, an inconsistent role and role_id pair included. A body with nothing to apply returns the account unchanged. A password key in the body is ignored; passwords are changed through POST /auth/change-password, not here. A caller that changes the email of its own account (an email that differs from the stored one) must send its current password in current_password, for a Bearer token and an API key alike and also when the body carries role or is_active: without it the answer is 400 CURRENT_PASSWORD_REQUIRED, with a wrong one 400 INVALID_CURRENT_PASSWORD, and nothing is written; this is checked before the email is looked up, so the answer does not tell whether the address is in use. current_password is ignored and not verified when the email does not change or the account is another one, and a wrong value is not counted toward the login lockout. Changing role, role_id or is_active takes effect on the account's next request (tokens are re-checked against the stored account); a role change revokes no session. is_active false does what POST /users/{id}/deactivate does: the same transaction increments the account token_version, revokes every refresh token and revokes every API key of the account, and none of them works again after a reactivation.
-        Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lacks a permission the request needs), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. Changing the email of a customer login that has a linked customer record (a customer record whose user_id is that login) also needs customers.update; its other fields, and a customer login without a linked customer record, need users.update alone. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
+        Every update of another account, and every update that writes role, role_id or is_active (the caller's own account included), is one transaction: the active admins are locked, then the caller and the target in ascending id, then the custom roles of caller, target and the requested role in ascending id; all are read again and the checks answer in this order: FORBIDDEN (the caller lacks a permission the request needs), ROLE_ESCALATION, CUSTOMER_LOGIN_ROLE, LAST_ADMIN. Changing the email of a customer login that has a linked customer record (a customer record whose user_id is that login) also needs customers.update; its other fields, and a customer login without a linked customer record, need users.update alone. The escalation rule: a caller that is not on the admin system role can neither edit an account whose permissions are above its own (profile fields included) nor give a role whose permissions are above its own; the customer role never counts as above the caller. role custom needs role_id and any other role clears it. A changed role or role_id is recorded in the role audit log (user_role_changed) in the same transaction; so are a changed email (user_email_changed, storing neither address) and a changed is_active (user_deactivated or user_activated), written before the role row. A caller's own email change without role or is_active is not one of these transactions and writes no audit row. The last active admin can be neither demoted nor deactivated, by itself or by anyone else.
       parameters:
       - description: User ID
         in: path
@@ -25995,10 +26014,11 @@ paths:
         it). Sets is_active to true, so the account can log in again. No access token,
         refresh token or API key from before the deactivation works again: the deactivation
         ended them, so the account signs in afresh and its owner issues new API keys.
-        Idempotent: an already active account is returned unchanged. One transaction
-        with the locks of PUT /users/{id}; the escalation rule applies: a caller that
-        is not on the admin system role cannot activate an account whose permissions
-        are above its own (a customer login never is).'
+        Idempotent: an already active account is returned unchanged. Activating an
+        inactive account writes a user_activated row to the role audit log in the
+        same transaction. One transaction with the locks of PUT /users/{id}; the escalation
+        rule applies: a caller that is not on the admin system role cannot activate
+        an account whose permissions are above its own (a customer login never is).'
       parameters:
       - description: User ID
         in: path
@@ -26096,8 +26116,10 @@ paths:
         and a refresh of its tokens fails. The same transaction increments the account
         token_version, revokes every refresh token and revokes every API key of the
         account, so none of them works again after a later POST /users/{id}/activate.
-        No business data is changed. A repeat on an inactive account answers the same
-        and increments token_version again.'
+        No business data is changed. Deactivating an active account writes a user_deactivated
+        row to the role audit log in the same transaction. A repeat on an inactive
+        account answers the same, increments token_version again and writes no audit
+        row.'
       parameters:
       - description: User ID
         in: path

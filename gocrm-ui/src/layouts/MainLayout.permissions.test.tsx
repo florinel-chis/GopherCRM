@@ -135,6 +135,22 @@ describe('MainLayout permission gating', () => {
     expect(navigation().queryByText('Sign-in audit')).not.toBeInTheDocument();
   });
 
+  it('shows Role audit under Settings only to a caller holding roles.audit_view', async () => {
+    signedInWith('customer', customPermissions('roles.audit_view'));
+    const held = render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Role audit')).toBeInTheDocument();
+    expect(navigation().queryByText('Sign-in audit')).not.toBeInTheDocument();
+    held.unmount();
+
+    // The sign-in audit and role keys alone do not show the entry.
+    signedInWith('admin', customPermissions('audit.sign_ins_view', 'roles.view'));
+    render(<MainLayout />);
+    await userEvent.click(navigation().getByText('Settings'));
+    expect(navigation().getByText('Sign-in audit')).toBeInTheDocument();
+    expect(navigation().queryByText('Role audit')).not.toBeInTheDocument();
+  });
+
   it('shows SCIM tokens under Settings only to a caller holding settings.scim_manage', async () => {
     signedInWith('customer', customPermissions('settings.scim_manage'));
     const held = render(<MainLayout />);

@@ -306,6 +306,42 @@ type userRoleAuditState struct {
 	RoleID *uint           `json:"role_id"`
 }
 
+// userActiveAuditState is the before/after state of an activation or
+// deactivation row: the users.is_active value only. The email-change and
+// erasure rows store no state.
+type userActiveAuditState struct {
+	IsActive bool `json:"is_active"`
+}
+
+// recordActiveChange appends the user_activated or user_deactivated row of
+// an account whose is_active went from before to after; nothing when the
+// value did not change.
+func (tx *governedTx) recordActiveChange(actor Actor, targetUserID uint, before, after bool) error {
+	if before == after {
+		return nil
+	}
+	action := models.RoleAuditUserDeactivated
+	if after {
+		action = models.RoleAuditUserActivated
+	}
+	target := targetUserID
+	return tx.record(actor, action, nil, "", &target,
+		userActiveAuditState{IsActive: before}, userActiveAuditState{IsActive: after})
+}
+
+// recordEmailChange appends the user_email_changed row of an account whose
+// login email the transaction wrote. Neither address is stored.
+func (tx *governedTx) recordEmailChange(actor Actor, targetUserID uint) error {
+	target := targetUserID
+	return tx.record(actor, models.RoleAuditUserEmailChanged, nil, "", &target, nil, nil)
+}
+
+// recordErasure appends the user_erased row of an erased account.
+func (tx *governedTx) recordErasure(actor Actor, targetUserID uint) error {
+	target := targetUserID
+	return tx.record(actor, models.RoleAuditUserErased, nil, "", &target, nil, nil)
+}
+
 func uniqueSortedIDs(ids []uint) []uint {
 	seen := make(map[uint]bool, len(ids))
 	out := make([]uint, 0, len(ids))
