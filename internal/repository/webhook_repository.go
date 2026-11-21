@@ -96,18 +96,24 @@ func (r *webhookRepository) ListEndpoints(ctx context.Context, offset, limit int
 
 // RecordEndpointFailure is one conditional UPDATE by primary key fenced on
 // the failure count the caller read: a concurrent reset, another replica's
-// failure or a deleted endpoint makes it match nothing, which is not an error.
-// It always changes consecutive_failures, so it is never an identical write.
+// failure or a deleted endpoint makes it match nothing, which is (false, nil)
+// and not an error. It reports true only when exactly one row was updated
+// (#586). It always changes consecutive_failures, so it is never an identical
+// write and MySQL's default changed-rows count equals the matched rows.
 // updated_at is left alone: the circuit is housekeeping of a send, not a change
 // an admin made.
-func (r *webhookRepository) RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) error {
+func (r *webhookRepository) RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) (bool, error) {
 	var until interface{}
 	if pausedUntil != nil {
 		until = pausedUntil.UTC()
 	}
-	return r.db.WithContext(ctx).Exec(
+	result := r.db.WithContext(ctx).Exec(
 		"UPDATE webhook_endpoints SET consecutive_failures = consecutive_failures + 1, paused_until = ? WHERE id = ? AND consecutive_failures = ?",
-		until, id, failuresBefore).Error
+		until, id, failuresBefore)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 // RecordEndpointSuccess is one conditional UPDATE by primary key that resets

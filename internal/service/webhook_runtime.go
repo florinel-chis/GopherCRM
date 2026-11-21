@@ -463,7 +463,10 @@ func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool, bo
 
 // recordEndpointHealth writes the endpoint circuit after a stored finish of a
 // sent attempt (#569) and reports whether the endpoint is now paused past
-// r.now(). A write error is one Warn and never fails the pass.
+// r.now(). A write error is one Warn and never fails the pass. A failure write
+// that lost its fence (another replica's reset or failure landed first) logs
+// nothing and reports false, so the group is not stopped on a pause that was
+// never stored (#586).
 func (r *WebhookRuntime) recordEndpointHealth(ctx context.Context, endpointID uint, outcome attemptOutcome) bool {
 	writeCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
 	defer cancel()
@@ -476,11 +479,12 @@ func (r *WebhookRuntime) recordEndpointHealth(ctx context.Context, endpointID ui
 	failures := outcome.failuresBefore + 1
 	finishedAt := r.now()
 	pausedUntil := webhookEndpointPausedUntil(failures, finishedAt)
-	if err := r.repo.RecordEndpointFailure(writeCtx, endpointID, outcome.failuresBefore, pausedUntil); err != nil {
+	updated, err := r.repo.RecordEndpointFailure(writeCtx, endpointID, outcome.failuresBefore, pausedUntil)
+	if err != nil {
 		r.logEndpointHealthError(endpointID, err)
 		return false
 	}
-	if pausedUntil == nil {
+	if !updated || pausedUntil == nil {
 		return false
 	}
 	r.log().WithFields(logrus.Fields{

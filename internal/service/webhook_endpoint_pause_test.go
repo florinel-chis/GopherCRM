@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 )
 
 // The endpoint circuit (#569): every sent attempt that fails adds one to
@@ -273,12 +275,18 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 
 	t.Run("(h) a stale failure write after a reset changes nothing", func(t *testing.T) {
 		endpoint := env.endpoint(consumer.url("/fail-h"), true, models.WebhookEventLeadCreated)
-		require.NoError(t, env.repo.RecordEndpointFailure(ctx, endpoint.ID, 0, nil))
-		require.NoError(t, env.repo.RecordEndpointFailure(ctx, endpoint.ID, 1, nil))
+		updated, err := env.repo.RecordEndpointFailure(ctx, endpoint.ID, 0, nil)
+		require.NoError(t, err)
+		require.True(t, updated)
+		updated, err = env.repo.RecordEndpointFailure(ctx, endpoint.ID, 1, nil)
+		require.NoError(t, err)
+		require.True(t, updated)
 		require.Equal(t, 2, stored(t, endpoint.ID).ConsecutiveFailures)
 		require.NoError(t, env.repo.RecordEndpointSuccess(ctx, endpoint.ID))
 		until := clock.Now().Add(time.Minute)
-		require.NoError(t, env.repo.RecordEndpointFailure(ctx, endpoint.ID, 2, &until), "a lost fence is not an error")
+		updated, err = env.repo.RecordEndpointFailure(ctx, endpoint.ID, 2, &until)
+		require.NoError(t, err, "a lost fence is not an error")
+		assert.False(t, updated, "a lost fence updates no row")
 		state := stored(t, endpoint.ID)
 		assert.Equal(t, 0, state.ConsecutiveFailures)
 		assert.Nil(t, state.PausedUntil)
@@ -326,4 +334,62 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		require.NoError(t, err)
 		assert.True(t, until.Equal(*state.PausedUntil), "the logged pause end is the stored one")
 	})
+
+	// Every endpoint of the earlier subtests has its pending rows retired, so
+	// the only due rows in this pass are the two seeded here.
+	t.Run("(j) a lost failure fence neither logs a pause nor stops the group", func(t *testing.T) {
+		path := "/fail-j"
+		endpoint := env.endpoint(consumer.url(path), true, models.WebhookEventLeadCreated)
+		defer retire(t, endpoint.ID)
+		setCircuit(t, endpoint.ID, 2, nil)
+		seedPoolDelivery(t, env, endpoint.ID, recordID, due())
+		seedPoolDelivery(t, env, endpoint.ID, recordID, due())
+
+		logger := logrus.New()
+		logger.SetOutput(io.Discard)
+		logger.SetLevel(logrus.DebugLevel)
+		hook := logtest.NewLocal(logger)
+		// Replica B's 2xx reset lands between the first attempt's read (2
+		// failures) and its failure write, so that write loses its fence.
+		repo := newResetBeforeFailureWebhookRepository(env.repo, endpoint.ID)
+		result, err := NewWebhookRuntime(repo, consumer.guard(nil), env.box, WithWebhookClock(clock.Now), WithWebhookLogger(logger)).RunOnce(ctx)
+		require.NoError(t, err)
+
+		assert.EqualValues(t, 1, repo.resets.Load(), "the concurrent reset was injected exactly once")
+		assert.Equal(t, 2, requestsTo(path), "the group was not stopped: both rows were sent")
+		assert.Equal(t, 2, result.Attempted)
+		for _, entry := range hook.AllEntries() {
+			assert.NotEqual(t, "Webhook endpoint paused", entry.Message, "a lost fence logs no pause")
+		}
+		state := stored(t, endpoint.ID)
+		assert.Nil(t, state.PausedUntil, "no pause was stored")
+		assert.Equal(t, 1, state.ConsecutiveFailures, "the first write lost to the reset, the second read 0 and wrote 1")
+	})
+}
+
+// resetBeforeFailureWebhookRepository wraps the real repository: on the first
+// RecordEndpointFailure for endpointID it first runs RecordEndpointSuccess for
+// that endpoint, as another replica's 2xx answer would, and then delegates.
+// Later calls go straight to the real repository.
+type resetBeforeFailureWebhookRepository struct {
+	repository.WebhookRepository
+	endpointID uint
+	resets     *atomic.Int32
+}
+
+func newResetBeforeFailureWebhookRepository(inner repository.WebhookRepository, endpointID uint) *resetBeforeFailureWebhookRepository {
+	return &resetBeforeFailureWebhookRepository{WebhookRepository: inner, endpointID: endpointID, resets: &atomic.Int32{}}
+}
+
+func (r *resetBeforeFailureWebhookRepository) WithTx(tx *gorm.DB) repository.WebhookRepository {
+	return &resetBeforeFailureWebhookRepository{WebhookRepository: r.WebhookRepository.WithTx(tx), endpointID: r.endpointID, resets: r.resets}
+}
+
+func (r *resetBeforeFailureWebhookRepository) RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) (bool, error) {
+	if id == r.endpointID && r.resets.CompareAndSwap(0, 1) {
+		if err := r.WebhookRepository.RecordEndpointSuccess(ctx, id); err != nil {
+			return false, err
+		}
+	}
+	return r.WebhookRepository.RecordEndpointFailure(ctx, id, failuresBefore, pausedUntil)
 }

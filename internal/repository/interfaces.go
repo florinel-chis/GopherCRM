@@ -436,10 +436,11 @@ type WebhookRepository interface {
 	// RecordEndpointFailure counts one failed send of the endpoint circuit
 	// (#569): consecutive_failures + 1 and paused_until = pausedUntil (NULL
 	// when nil), in one UPDATE by primary key fenced on consecutive_failures =
-	// failuresBefore. Matching nothing (a concurrent reset or failure, a
-	// deleted endpoint) is not an error. It does not touch updated_at and
-	// opens no transaction.
-	RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) error
+	// failuresBefore. The bool is true only when the UPDATE affected exactly
+	// one row (#586). A lost fence (a concurrent reset, another replica's
+	// failure, a deleted endpoint) is (false, nil), not an error. It does not
+	// touch updated_at and opens no transaction.
+	RecordEndpointFailure(ctx context.Context, id uint, failuresBefore int, pausedUntil *time.Time) (bool, error)
 	// RecordEndpointSuccess resets the endpoint circuit (#569):
 	// consecutive_failures = 0 and paused_until = NULL, in one UPDATE by
 	// primary key that matches only an endpoint not already reset. It does not
