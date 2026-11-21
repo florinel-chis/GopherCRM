@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -177,7 +178,7 @@ func (s *userService) CheckOwnEmailChange(id uint, email, currentPassword string
 // operator would then record a completed Article 17 erasure that never
 // happened, which is precisely the kind of thing a supervisory authority asks
 // to see evidence of. Not found must say so, like the customer path does.
-func (s *userService) Delete(id uint) error {
+func (s *userService) Delete(ctx context.Context, id uint) error {
 	if _, err := s.userRepo.GetByID(id); err != nil {
 		if isNotFound(err) {
 			return fmt.Errorf("user %d not found: %w", id, apperrors.ErrNotFound)
@@ -187,7 +188,7 @@ func (s *userService) Delete(id uint) error {
 		return err
 	}
 
-	return s.userRepo.Delete(id)
+	return s.userRepo.Delete(ctx, id)
 }
 
 func (s *userService) List(offset, limit int) ([]models.User, int64, error) {

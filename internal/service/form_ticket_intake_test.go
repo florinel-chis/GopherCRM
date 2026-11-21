@@ -692,7 +692,7 @@ func TestFormTicketIntakeVsCustomerErasureSQLite(t *testing.T) {
 		require.NoError(t, env.svc.ConfirmSubmission(context.Background(), token))
 		require.EqualValues(t, 1, env.count(&models.FormTicketKey{}, "customer_id = ?", customer.ID))
 
-		require.NoError(t, customers.Delete(customer.ID))
+		require.NoError(t, customers.Delete(context.Background(), customer.ID))
 		assert.True(t, customerErased(t, env, customer.ID))
 		assertNoKeyOfErasedCustomer(t, env, customer.ID)
 		assert.Equal(t, "", env.submission(row.ID).IdempotencyKey, "the submission's key is scrubbed")
@@ -702,7 +702,7 @@ func TestFormTicketIntakeVsCustomerErasureSQLite(t *testing.T) {
 		customer := env.customer("erase.first@ticket-intake.test")
 		_, token := env.submit(env.svc, form, "erase.first@ticket-intake.test", keyPtr("erase-2"), "x")
 		row := env.latestSubmission(form.ID)
-		require.NoError(t, customers.Delete(customer.ID))
+		require.NoError(t, customers.Delete(context.Background(), customer.ID))
 
 		err := env.svc.ConfirmSubmission(context.Background(), token)
 		if err != nil {
@@ -750,7 +750,7 @@ func TestFormTicketIntakeVsCustomerErasureMySQL(t *testing.T) {
 		}
 
 		eraseDone := make(chan error, 1)
-		go func() { eraseDone <- customers.Delete(customer.ID) }()
+		go func() { eraseDone <- customers.Delete(context.Background(), customer.ID) }()
 		// The erasure's first lock on the customer row is its locking read by
 		// primary key (#385), ahead of the scrub UPDATE.
 		waitForStatement(t, db, "SELECT `id`,`user_id`,`deleted_at` FROM `customers`")
@@ -790,7 +790,7 @@ func TestFormTicketIntakeVsCustomerErasureMySQL(t *testing.T) {
 		eraseDone := make(chan error, 1)
 		go func() {
 			eraseDone <- db.Transaction(func(tx *gorm.DB) error {
-				if err := customers.WithTx(tx).Delete(customer.ID); err != nil {
+				if err := customers.WithTx(tx).Delete(context.Background(), customer.ID); err != nil {
 					return err
 				}
 				close(erased)

@@ -260,7 +260,7 @@ func (s *userService) SetActiveAs(ctx context.Context, actor Actor, id uint, act
 
 func (s *userService) DeleteAs(ctx context.Context, actor Actor, id uint) error {
 	if s.governance == nil {
-		return s.Delete(id)
+		return s.Delete(ctx, id)
 	}
 	_, err := s.governedWrite(ctx, actor, id, governedChange{keys: []string{permissions.UsersDelete}, erase: true})
 	return err
@@ -345,7 +345,7 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 		if change.erase {
 			// The erasure stays one savepoint-bracketed unit of this
 			// transaction.
-			return tx.users.Delete(id)
+			return tx.users.Delete(ctx, id)
 		}
 		// A deactivation the service cannot complete is refused before any
 		// write, after the refusals every governed write answers first.

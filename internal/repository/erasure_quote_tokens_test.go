@@ -104,7 +104,7 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 		quotesBefore := businessTextRows(t, db, "quotes", open.ID, dated.ID)
 		historyBefore := snapshotIdentityDB(t, db)["quote_status_changes"]
 
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 		assertQuoteTokenInvalidated(t, db, tokensBefore[noExpiry.ID], noExpiry, "token without expiry")
 		assertQuoteTokenInvalidated(t, db, tokensBefore[withExpiry.ID], withExpiry, "token with a future expiry")
@@ -138,7 +138,7 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 		unusedBefore := businessTextRows(t, db, "quote_response_tokens", unused.ID)[unused.ID]
 		kept := businessTextRows(t, db, "quote_response_tokens", spent.ID, foreignToken.ID, viaDealToken.ID)
 
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 		assertQuoteTokenInvalidated(t, db, unusedBefore, unused, "the erased customer's unused token")
 		assertRowsUnchanged(t, db, "quote_response_tokens", kept)
@@ -158,8 +158,8 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 		f.quote(t, "draft", f.sales.ID, &drafter.ID, nil, models.QuoteStatusDraft, false, product)
 		before := quoteTokenTable(t, db)
 
-		require.NoError(t, NewCustomerRepository(db).Delete(bare.ID))
-		require.NoError(t, NewCustomerRepository(db).Delete(drafter.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), bare.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), drafter.ID))
 
 		assert.Equal(t, before, quoteTokenTable(t, db), "no token row was written, stamped or removed")
 	})
@@ -169,14 +169,14 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 			"converted lead": func(f *businessTextFixture) (uint, func() error) {
 				customer := f.customer(t, "c", nil)
 				lead := f.lead(t, "l", &customer.ID)
-				return customer.ID, func() error { return NewLeadRepository(db).Delete(lead.ID) }
+				return customer.ID, func() error { return NewLeadRepository(db).Delete(context.Background(), lead.ID) }
 			},
 			"customer login": func(f *businessTextFixture) (uint, func() error) {
 				login := &models.User{Email: fmt.Sprintf("login-%s@person.test", f.tag), Password: "$2a$10$loginhash",
 					FirstName: "Bt", LastName: "Login" + f.tag, Role: models.RoleCustomer, IsActive: true}
 				require.NoError(t, db.Create(login).Error)
 				customer := f.customer(t, "c", &login.ID)
-				return customer.ID, func() error { return NewUserRepository(db).Delete(login.ID) }
+				return customer.ID, func() error { return NewUserRepository(db).Delete(context.Background(), login.ID) }
 			},
 		}
 		for name, build := range roots {
@@ -205,7 +205,7 @@ func runErasureInvalidatesQuoteResponseTokens(t *testing.T, useMySQL bool) {
 
 		tx := db.Begin()
 		require.NoError(t, tx.Error)
-		require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(customer.ID))
+		require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), customer.ID))
 		var inside models.QuoteResponseToken
 		require.NoError(t, tx.First(&inside, token.ID).Error)
 		assert.NotNil(t, inside.UsedAt, "the stamp is part of the caller's transaction")
@@ -263,7 +263,7 @@ func TestErasureQuoteTokenWritesLeaveGapsFreeMySQL(t *testing.T) {
 			_ = tx.Rollback().Error
 		}
 	})
-	require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(customer.ID))
+	require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), customer.ID))
 	var stamped models.QuoteResponseToken
 	require.NoError(t, tx.First(&stamped, token.ID).Error)
 	require.NotNil(t, stamped.UsedAt, "the open erasure stamped the token of Q1")

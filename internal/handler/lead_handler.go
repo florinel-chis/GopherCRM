@@ -799,7 +799,7 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 		utils.RespondForbidden(c, "Insufficient permissions")
 		return
 	}
-	if err := h.leadService.Delete(uint(id), eraseRole); err != nil {
+	if err := h.leadService.Delete(c.Request.Context(), uint(id), eraseRole); err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
 			utils.RespondForbidden(c, "Only an admin can delete a converted lead: it also erases the customer it became")
 			return

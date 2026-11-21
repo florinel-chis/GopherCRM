@@ -105,7 +105,7 @@ func runLastAdminInvariant(t *testing.T, useMySQL bool) {
 		inactive := env.user("inactive-admin", models.RoleAdmin)
 		require.NoError(t, env.db.Model(&models.User{}).Where("id = ?", inactive.ID).Update("is_active", false).Error)
 		erased := env.user("erased-admin", models.RoleAdmin)
-		require.NoError(t, env.userRepo.Delete(erased.ID))
+		require.NoError(t, env.userRepo.Delete(context.Background(), erased.ID))
 		require.EqualValues(t, 1, env.activeAdmins())
 
 		for name, change := range map[string]func(uint) error{

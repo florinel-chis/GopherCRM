@@ -13,6 +13,7 @@ package repository
 // it is unreachable.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -175,7 +176,7 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 
 	t.Run("admin erasure of a converted lead", func(t *testing.T) {
 		seed := seedLeadForErasure(t, db, owner, rule, true)
-		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).Delete(seed.lead.ID) })
+		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).Delete(context.Background(), seed.lead.ID) })
 		require.NoError(t, err)
 		assertCancelFirst(t, statements)
 
@@ -201,7 +202,7 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 
 	t.Run("refused non-admin erasure of a converted lead", func(t *testing.T) {
 		seed := seedLeadForErasure(t, db, owner, rule, true)
-		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(seed.lead.ID) })
+		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(context.Background(), seed.lead.ID) })
 		require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin)
 		require.ErrorIs(t, err, apperrors.ErrForbidden)
 		assertCancelFirst(t, statements)
@@ -219,7 +220,7 @@ func TestLeadErasureLockOrderSQLite(t *testing.T) {
 
 	t.Run("non-admin erasure of an unconverted lead", func(t *testing.T) {
 		seed := seedLeadForErasure(t, db, owner, rule, false)
-		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(seed.lead.ID) })
+		statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).DeleteUnconverted(context.Background(), seed.lead.ID) })
 		require.NoError(t, err)
 		assertCancelFirst(t, statements)
 		leadRead := firstMatch(statements, erasureLeadLockRead)
@@ -276,7 +277,7 @@ func TestLeadErasureDiscoveryReadsLockMySQL(t *testing.T) {
 	rule := seedAutomationRule(t, db, models.AutomationEntityLead)
 	seed := seedLeadForErasure(t, db, owner, rule, true)
 
-	statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).Delete(seed.lead.ID) })
+	statements, err := captureErasureStatements(t, db, func() error { return NewLeadRepository(db).Delete(context.Background(), seed.lead.ID) })
 	require.NoError(t, err)
 
 	locked := func(re *regexp.Regexp, what string) {
@@ -363,7 +364,7 @@ func TestLeadErasureSurvivesAutomationStepMySQL(t *testing.T) {
 	require.NoError(t, err)
 
 	erased := make(chan error, 1)
-	go func() { erased <- NewLeadRepository(db).Delete(seed.lead.ID) }()
+	go func() { erased <- NewLeadRepository(db).Delete(context.Background(), seed.lead.ID) }()
 	awaitLockOrderWait(t, db, regexp.MustCompile("(?s)^SELECT `id`,`status`,`customer_id`,`deleted_at` FROM `leads` WHERE .*FOR UPDATE$"))
 
 	// By then the erasure has cancelled the run (uncommitted, read dirty).
@@ -433,14 +434,14 @@ func TestLeadErasureHooksDefaultUnset(t *testing.T) {
 	assert.Same(t, hooked.erasureSeams, copied.erasureSeams, "WithTx copies the hooks")
 
 	first := seedLeadForErasure(t, db, owner, rule, false)
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return hooked.WithTx(tx).Delete(first.lead.ID) }))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return hooked.WithTx(tx).Delete(context.Background(), first.lead.ID) }))
 	mu.Lock()
 	assert.Equal(t, []uint{first.lead.ID}, cancelled, "AfterAutomationCancel ran through the WithTx copy")
 	assert.Equal(t, []uint{first.lead.ID}, locked, "AfterLeadLock ran through the WithTx copy")
 	mu.Unlock()
 
 	second := seedLeadForErasure(t, db, owner, rule, false)
-	require.NoError(t, NewLeadRepository(db).Delete(second.lead.ID))
+	require.NoError(t, NewLeadRepository(db).Delete(context.Background(), second.lead.ID))
 	mu.Lock()
 	assert.Len(t, cancelled, 1, "another instance never runs these hooks")
 	assert.Len(t, locked, 1)

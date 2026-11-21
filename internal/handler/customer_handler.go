@@ -516,7 +516,7 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	if err := h.customerService.Delete(uint(id)); err != nil {
+	if err := h.customerService.Delete(c.Request.Context(), uint(id)); err != nil {
 		// Only the not-found sentinel means "there was nobody to erase". Any
 		// other error is a failed erasure and must surface as a 500, so an
 		// operator never records a completed erasure that did not happen.

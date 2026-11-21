@@ -1577,6 +1577,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An erasure stops and rolls back when its request is cancelled or times out (#571).**
+  `DELETE /customers/{id}`, `DELETE /leads/{id}` and `DELETE /users/{id}` now run the erasure on
+  the request's context, through the service and into the erasure transaction. A client that goes
+  away, or a request that times out, before the commit leaves the person untouched: no field is
+  overwritten, no credential is purged and nothing is soft-deleted, and the request answers the
+  generic 500. Inside a caller's transaction the erasure's savepoint is still rolled back, without
+  aborting that transaction. No API or schema change.
 - **Bulk task status changes and single task updates read the task rows with a locking read
   (#558).** `POST /tasks/bulk/status` reads its tasks with a locking read in id order, and
   `PUT /tasks/{id}` writes in one transaction that first reads the task row with a locking read

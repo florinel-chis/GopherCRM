@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -204,8 +205,8 @@ func (r *userRepository) UpdateFields(id uint, fields map[string]interface{}) er
 // locked forever.
 //
 // See erasure.go for the shared machinery and the full GDPR rationale.
-func (r *userRepository) Delete(id uint) error {
-	return eraseGraph(r.db, true, erasureRoot{kind: erasureRootUser, id: id}, r.lockSeams, nil, r.erasureListener)
+func (r *userRepository) Delete(ctx context.Context, id uint) error {
+	return eraseGraph(ctx, r.db, true, erasureRoot{kind: erasureRootUser, id: id}, r.lockSeams, nil, r.erasureListener)
 }
 
 // userErasurePlan lists what counts as personal data on a user, and what goes

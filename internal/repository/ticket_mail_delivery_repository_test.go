@@ -295,9 +295,11 @@ func runTicketMailDeliveryErasure(t *testing.T, db *gorm.DB) {
 		name  string
 		erase func(p *ticketMailPerson) error
 	}{
-		{"customer", func(p *ticketMailPerson) error { return NewCustomerRepository(db).Delete(p.customer.ID) }},
-		{"converted_lead", func(p *ticketMailPerson) error { return NewLeadRepository(db).Delete(p.lead.ID) }},
-		{"customer_login", func(p *ticketMailPerson) error { return NewUserRepository(db).Delete(p.login.ID) }},
+		{"customer", func(p *ticketMailPerson) error {
+			return NewCustomerRepository(db).Delete(context.Background(), p.customer.ID)
+		}},
+		{"converted_lead", func(p *ticketMailPerson) error { return NewLeadRepository(db).Delete(context.Background(), p.lead.ID) }},
+		{"customer_login", func(p *ticketMailPerson) error { return NewUserRepository(db).Delete(context.Background(), p.login.ID) }},
 	}
 	for _, root := range roots {
 		root := root
@@ -325,7 +327,7 @@ func runTicketMailDeliveryErasure(t *testing.T, db *gorm.DB) {
 		name := "ticket_mail_delivery_erasure_test:fail_customer_soft_delete"
 		calls := failOn(t, db, name, "customers", sentinel)
 
-		err := NewCustomerRepository(db).Delete(person.customer.ID)
+		err := NewCustomerRepository(db).Delete(context.Background(), person.customer.ID)
 		require.ErrorIs(t, err, sentinel)
 		require.Positive(t, calls.Load())
 		require.NoError(t, db.Callback().Delete().Remove(name))
@@ -340,7 +342,7 @@ func runTicketMailDeliveryErasure(t *testing.T, db *gorm.DB) {
 		name := "ticket_mail_delivery_erasure_test:fail_delivery_delete"
 		calls := failOn(t, db, name, "ticket_mail_deliveries", sentinel)
 
-		err := NewCustomerRepository(db).Delete(person.customer.ID)
+		err := NewCustomerRepository(db).Delete(context.Background(), person.customer.ID)
 		require.ErrorIs(t, err, sentinel)
 		require.EqualValues(t, 1, calls.Load(), "the failure was injected into the delivery purge")
 		require.NoError(t, db.Callback().Delete().Remove(name))
@@ -382,15 +384,15 @@ func TestTicketMailDeliveryErasureWithoutTable(t *testing.T) {
 	}
 
 	_, c1, _ := newPerson("a")
-	require.NoError(t, NewCustomerRepository(db).Delete(c1.ID))
+	require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), c1.ID))
 	erased(t, c1.ID)
 
 	_, c2, l2 := newPerson("b")
-	require.NoError(t, NewLeadRepository(db).Delete(l2.ID))
+	require.NoError(t, NewLeadRepository(db).Delete(context.Background(), l2.ID))
 	erased(t, c2.ID)
 
 	u3, c3, _ := newPerson("c")
-	require.NoError(t, NewUserRepository(db).Delete(u3.ID))
+	require.NoError(t, NewUserRepository(db).Delete(context.Background(), u3.ID))
 	erased(t, c3.ID)
 
 	// The ticket delete skips the purge on such a schema too.

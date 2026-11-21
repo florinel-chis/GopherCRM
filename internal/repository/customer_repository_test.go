@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -82,7 +83,7 @@ func TestListAllForExport_ExcludesSoftDeletedRows(t *testing.T) {
 	erased := &models.Customer{FirstName: "Erased", LastName: "Customer", Email: "erased@example.com"}
 	require.NoError(t, db.Create(live).Error)
 	require.NoError(t, db.Create(erased).Error)
-	require.NoError(t, repo.Delete(erased.ID))
+	require.NoError(t, repo.Delete(context.Background(), erased.ID))
 
 	customers, err := repo.ListAllForExport("", "", "")
 	require.NoError(t, err)

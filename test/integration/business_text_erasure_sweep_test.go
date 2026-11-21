@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -147,7 +148,7 @@ func TestCustomerErasureWithNamedDealAndQuoteTextLeavesNoPersonalData(t *testing
 
 	requireSweepSeesNamedBusinessText(t, db, subject, "customers")
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	assertBusinessTextRedacted(t, db, seeded)
@@ -166,7 +167,7 @@ func TestLeadErasureWithNamedDealAndQuoteTextLeavesNoPersonalData(t *testing.T) 
 
 	requireSweepSeesNamedBusinessText(t, db, subject, "leads")
 
-	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	assertBusinessTextRedacted(t, db, seeded)

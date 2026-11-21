@@ -567,7 +567,7 @@ var ciCompetitors = []ciCompetitor{
 		name:    "a user-rooted erasure",
 		erasure: true,
 		// DELETE /users/{id}: UserService.Delete.
-		run:         func(f *ciFixture, s ciSeed) error { return f.users.Delete(s.owner.ID) },
+		run:         func(f *ciFixture, s ciSeed) error { return f.users.Delete(context.Background(), s.owner.ID) },
 		park:        ciParkOnUsersUpdate,
 		waitPattern: ciForUpdateWait,
 	},
@@ -577,7 +577,7 @@ var ciCompetitors = []ciCompetitor{
 		customerLogin: true,
 		// DELETE /customers/{id}: the customer erasure reaching its
 		// customer-role login.
-		run:         func(f *ciFixture, s ciSeed) error { return f.customers.Delete(s.customer.ID) },
+		run:         func(f *ciFixture, s ciSeed) error { return f.customers.Delete(context.Background(), s.customer.ID) },
 		park:        ciParkOnUsersUpdate,
 		waitPattern: ciForUpdateWait,
 	},
@@ -606,7 +606,7 @@ func TestPasswordResetRequestOwnerLockDecisionsSQLite(t *testing.T) {
 			f.exec(t, "UPDATE users SET is_active = ? WHERE id = ?", false, s.owner.ID)
 		}},
 		{"an owner erased after the lookup", func(t *testing.T, s ciSeed) {
-			require.NoError(t, f.users.Delete(s.owner.ID))
+			require.NoError(t, f.users.Delete(context.Background(), s.owner.ID))
 		}},
 		{"an owner soft-deleted after the lookup", func(t *testing.T, s ciSeed) {
 			f.exec(t, "UPDATE users SET deleted_at = ? WHERE id = ?", time.Now(), s.owner.ID)
@@ -988,7 +988,7 @@ func TestAPIKeyCreateOwnerLockDecisionsSQLite(t *testing.T) {
 			f.exec(t, "UPDATE users SET is_active = ? WHERE id = ?", false, s.owner.ID)
 		}},
 		{"an erased owner", func(t *testing.T, s ciSeed) {
-			require.NoError(t, f.users.Delete(s.owner.ID))
+			require.NoError(t, f.users.Delete(context.Background(), s.owner.ID))
 		}},
 		{"a soft-deleted owner", func(t *testing.T, s ciSeed) {
 			f.exec(t, "UPDATE users SET deleted_at = ? WHERE id = ?", time.Now(), s.owner.ID)
@@ -1236,11 +1236,11 @@ func TestCredentialIssuanceOwnerLockLogsOmitPersonalData(t *testing.T) {
 
 	// Erased owners, both paths.
 	f.exec(t, "UPDATE users SET is_active = ? WHERE id = ?", true, s.owner.ID)
-	f.issuer.resetBeforeLock = func(id uint) { require.NoError(t, f.users.Delete(id)) }
+	f.issuer.resetBeforeLock = func(id uint) { require.NoError(t, f.users.Delete(context.Background(), id)) }
 	require.NoError(t, f.issuer.RequestPasswordReset(ciOwnerEmail))
 	f.issuer.resetBeforeLock = nil
 	s = f.seedKeyOwner(t)
-	f.keys.beforeLock = func(id uint) { require.NoError(t, f.users.Delete(id)) }
+	f.keys.beforeLock = func(id uint) { require.NoError(t, f.users.Delete(context.Background(), id)) }
 	_, _, err = f.keys.Generate(s.owner.ID, ciKeyName, nil)
 	require.ErrorIs(t, err, ErrAccountUnavailable)
 	f.keys.beforeLock = nil

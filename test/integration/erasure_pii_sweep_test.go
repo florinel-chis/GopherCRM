@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -405,7 +406,7 @@ func TestCustomerErasureWithQuotesLeavesNoPersonalData(t *testing.T) {
 	require.Equal(t, []string{"customers"}, tablesHolding(t, db, subject.identifiers()),
 		"the sweep must see the person before the erasure, and only in customers")
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 
@@ -474,7 +475,7 @@ func TestUserErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.Equal(t, []string{"ticket_comments", "users"}, tablesHolding(t, db, subject.identifiers()),
 		"the sweep must be able to see the person before the erasure, or its silence afterwards proves nothing")
 
-	require.NoError(t, repository.NewUserRepository(db).Delete(user.ID))
+	require.NoError(t, repository.NewUserRepository(db).Delete(context.Background(), user.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 
@@ -504,7 +505,7 @@ func TestCustomerErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 
 	require.Equal(t, []string{"customers"}, tablesHolding(t, db, subject.identifiers()))
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 }
@@ -539,7 +540,7 @@ func TestLeadErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		require.True(t, seen[column], "the sweep must see the person in form_submissions.%s before the erasure", column)
 	}
 
-	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	for _, submission := range submissions {
@@ -614,7 +615,7 @@ func TestUnlinkedSubmissionErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.EqualValues(t, 1, countBySubmission(&models.FormConfirmationToken{}))
 	require.EqualValues(t, 1, countBySubmission(&models.FormMailDelivery{}))
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	assert.Zero(t, countBySubmission(&models.FormConfirmationToken{}), "the token is hard-deleted")
@@ -649,7 +650,7 @@ func TestErasingAConvertedCustomerLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, subject.identifiers()),
 		"the conversion must have left a copy in each table for this test to mean anything")
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 }
@@ -665,7 +666,7 @@ func TestErasingAConvertedLeadLeavesNoPersonalDataInAnyTable(t *testing.T) {
 
 	require.Equal(t, []string{"customers", "leads"}, tablesHolding(t, db, subject.identifiers()))
 
-	require.NoError(t, repository.NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, repository.NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 }
@@ -710,7 +711,7 @@ func TestErasingACustomerLoginLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	login, _, _ := seedCustomerWithLogin(t, db, subject)
 	bystander.asCustomer(t, db)
 
-	require.NoError(t, repository.NewUserRepository(db).Delete(login.ID))
+	require.NoError(t, repository.NewUserRepository(db).Delete(context.Background(), login.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	assert.Equal(t, []string{"customers"}, tablesHolding(t, db, bystander.identifiers()))
@@ -723,7 +724,7 @@ func TestErasingACustomerWithALoginLeavesNoPersonalDataInAnyTable(t *testing.T) 
 	subject := newErasureSubject("customer-login-sweep")
 	login, customer, _ := seedCustomerWithLogin(t, db, subject)
 
-	require.NoError(t, repository.NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertNoPersonalDataAnywhere(t, db, subject.identifiers())
 	var keys int64
@@ -741,7 +742,7 @@ func TestErasingAStaffUserLeavesTheCustomerLinkedToItIntact(t *testing.T) {
 	customer := customerSubject.asCustomer(t, db)
 	require.NoError(t, db.Model(customer).Update("user_id", user.ID).Error)
 
-	require.NoError(t, repository.NewUserRepository(db).Delete(user.ID))
+	require.NoError(t, repository.NewUserRepository(db).Delete(context.Background(), user.ID))
 
 	assertNoPersonalDataAnywhere(t, db, staff.identifiers())
 	assert.Equal(t, []string{"customers"}, tablesHolding(t, db, customerSubject.identifiers()))

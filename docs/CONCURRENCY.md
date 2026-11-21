@@ -149,7 +149,7 @@ the erasure commits and the answer is refused with the generic rejection.
 from: `automation runs → leads → customers → users → refresh_tokens → password_reset_tokens →
 api_keys`, ids ascending inside each table. The automation runs of every discovered lead are
 cancelled first (writes only, #337); every other step is a locking read by primary key only
-(`lockGraph`, `internal/repository/erasure_cascade.go:862`, and `lockCredentials`, `:975` in the
+(`lockGraph`, `internal/repository/erasure_cascade.go:867`, and `lockCredentials`, `:980` in the
 same file). The lead before the customer is the direction of the #182 chain, and the user before
 its credential rows is the direction of the session chain. Two flows still lock against this
 order. The governed user write of `DELETE /users/{id}` (#348) holds the target's `users` row,
@@ -190,7 +190,7 @@ login (`internal/service/auth_service.go:398`), the password-reset request
 (`internal/service/auth_service.go:1503`), API-key create
 (`internal/service/apikey_service.go:116`), the RBAC user-role and role writes
 (`internal/service/role_governance.go:162`) and, since #385, the three erasures
-(`runErasureUnit`, `internal/repository/erasure.go:431`).
+(`runErasureUnit`, `internal/repository/erasure.go:438`).
 For company delete, bulk status and refresh rotation it is the #183
 target, a bounded whole-root retry, not today's behaviour. The lead writes also restart the whole
 root on `errLeadCompanyMoved`, a separate bounded loop (`runLeadCompanyAttempts`) described in
@@ -202,22 +202,22 @@ governed user write does the same around its nested erasure.
 ### User-rooted erasure
 
 - **Rows locked:** for a customer-role login: the automation runs of the leads converted into its
-  customers (cancelled, `cancelAutomationInTables`, `internal/repository/erasure.go:608`, called
-  at `internal/repository/erasure_cascade.go:747`), those `leads` rows
-  (`internal/repository/erasure_cascade.go:872`), every `customers` row linked to the login
-  (`:894` in the same file), the `users` row (`:915`, the role is read under this lock) and the
+  customers (cancelled, `cancelAutomationInTables`, `internal/repository/erasure.go:625`, called
+  at `internal/repository/erasure_cascade.go:752`), those `leads` rows
+  (`internal/repository/erasure_cascade.go:877`), every `customers` row linked to the login
+  (`:899` in the same file), the `users` row (`:920`, the role is read under this lock) and the
   user's `refresh_tokens`, `password_reset_tokens` and `api_keys` rows (`lockCredentials`,
-  `internal/repository/erasure_cascade.go:975`). All of them are locking reads by primary key. A
+  `internal/repository/erasure_cascade.go:980`). All of them are locking reads by primary key. A
   staff login is erased alone: its `users` row and its credential rows. The scrub follows the
   locks: `eraseRecord` (`internal/repository/erasure.go:146`) with a locking read of the address
   (`readErasedEmail`, `internal/repository/erasure.go:274`), the credential delete by `user_id`
-  (`purgeCredentials`, `internal/repository/erasure.go:536`, which stays the authority for what
+  (`purgeCredentials`, `internal/repository/erasure.go:553`, which stays the authority for what
   is removed), then the text of the linked deals and quotes
-  (`internal/repository/erasure_cascade.go:805`), whose `deals`, `quotes` and `quote_lines` rows
+  (`internal/repository/erasure_cascade.go:810`), whose `deals`, `quotes` and `quote_lines` rows
   are written by primary key or by `quote_id`, and last the unused `quote_response_tokens` rows of
   the quotes addressed to an erased customer, stamped by primary key after those `quotes` rows
   (#395). Last, inside the unit, the erasure listener the shipped server wires (#437,
-  `notifyListener`, `internal/repository/erasure_cascade.go:809`) writes the `lead.deleted` and
+  `notifyListener`, `internal/repository/erasure_cascade.go:814`) writes the `lead.deleted` and
   `customer.deleted` webhook events of the leads and customers that were live when locked: a
   plain read of the active `webhook_endpoints`, then one `INSERT` into `webhook_deliveries` with a
   row for every active endpoint subscribed to the deleted type, whether or not that endpoint
@@ -226,26 +226,26 @@ governed user write does the same around its nested erasure.
   only.
 - **Order:** automation runs → leads → customers → users → refresh_tokens →
   password_reset_tokens → api_keys, ids ascending inside each table, after a discovery of the
-  graph with plain reads (`discoverErasureGraph`, `internal/repository/erasure_cascade.go:497`);
+  graph with plain reads (`discoverErasureGraph`, `internal/repository/erasure_cascade.go:498`);
   after the credential rows, deals and quotes text, then `quote_response_tokens` (#395).
   The webhook outbox read and insert come after all of them (#437).
   The credential ids are read with a plain `SELECT … WHERE user_id IN (…)` after the `users`
   lock and then locked by primary key. No locking read filters on `leads.customer_id`,
   `customers.user_id`, `deleted_at` or a credential table's `user_id`: such a read locks an index
   range and its gaps. Right after the `users` lock the graph is read again
-  (`internal/repository/erasure_cascade.go:764`): forward links (`customer_id`, `user_id`,
+  (`internal/repository/erasure_cascade.go:769`): forward links (`customer_id`, `user_id`,
   `role`) from the locked rows, reverse links (the leads of a customer, the customers of a
   login) by plain reads; a graph that differs from the discovery rolls the unit back with
   `ErrErasureGraphChanged`. Snapshot rule: under REPEATABLE READ the first plain read of a
   transaction fixes its snapshot, so the discovery and the schema probes of the cancel
-  (`probeAutomationTables`, `internal/repository/erasure.go:581`) run on the root handle before
+  (`probeAutomationTables`, `internal/repository/erasure.go:598`) run on the root handle before
   the transaction begins, and no plain read of any kind runs on the transaction before the
   `users` lock, the last graph lock: only the writes of the cancel and `FOR UPDATE` reads by
   primary key. A migrator probe counts as a plain read: on MySQL 8 a select on
   `information_schema` fixes the snapshot (on MariaDB 10.11 it does not), and the reverse
   re-read would then miss a customer linked to the login before the locks were granted.
-- **Transaction:** `userRepository.Delete` (`internal/repository/user_repository.go:194`) →
-  `eraseGraph` (`internal/repository/erasure_cascade.go:673`) → `runErasureUnit`
+- **Transaction:** `userRepository.Delete` (`internal/repository/user_repository.go:195`) →
+  `eraseGraph` (`internal/repository/erasure_cascade.go:674`) → `runErasureUnit`
   (`internal/repository/erasure.go:429`): a root transaction of its own, or a checked SAVEPOINT
   inside the caller's transaction. On `DELETE /users/{id}` the caller is the governed user write
   of #348 (see the RBAC flow), which holds the admin set, the actor and the target before the
@@ -255,7 +255,7 @@ governed user write does the same around its nested erasure.
   or SQLite busy/locked, on the same discovery (the re-read under the locks catches a stale one).
   Around it `eraseGraph` starts over from a new discovery on `ErrErasureGraphChanged` only, and
   only after a clean rollback (`shouldRestartErasure`,
-  `internal/repository/erasure_cascade.go:706`), at most `erasureGraphMaxRestarts` (3) times
+  `internal/repository/erasure_cascade.go:711`), at most `erasureGraphMaxRestarts` (3) times
   (`internal/repository/erasure.go:390`); then the error, which wraps the sentinel, is returned.
   Inside a caller's transaction the unit runs once and both kinds of error go to the caller: on
   `DELETE /users/{id}` the governed user write replays or restarts its whole root (see the RBAC
@@ -291,7 +291,7 @@ survive.
   first), those `leads` rows, the `customers` row and, when its login is a customer-role account,
   every other `customers` row of that login with their leads, the login's `users` row and its
   credential rows: the statements of the user-rooted erasure, the graph being the same person. A
-  staff account in `user_id` is locked (`internal/repository/erasure_cascade.go:915`, its role
+  staff account in `user_id` is locked (`internal/repository/erasure_cascade.go:920`, its role
   decides the link) and left alone. Each row's address is read by `readErasedEmail` during the
   scrub. The text scrub then writes the linked `deals` and `quotes`, and the unused
   `quote_response_tokens` rows of the customers' quotes are stamped by primary key after those
@@ -301,9 +301,9 @@ survive.
   re-read after the `users` lock and the snapshot rule of the user-rooted erasure; after the
   credential rows, deals and quotes text, then `quote_response_tokens` (#395). The leads of
   the customer are found by the plain pluck by `customer_id`
-  (`convertedLeadsOf`, `internal/repository/erasure_cascade.go:464`) in the discovery and again
+  (`convertedLeadsOf`, `internal/repository/erasure_cascade.go:465`) in the discovery and again
   in the re-read, never by a locking read.
-- **Transaction:** `customerRepository.Delete` (`internal/repository/customer_repository.go:173`)
+- **Transaction:** `customerRepository.Delete` (`internal/repository/customer_repository.go:174`)
   → `eraseGraph` → `runErasureUnit`, as for the user-rooted erasure.
 - **Retry:** `WithTransactionAndRetry` with `erasureMaxRetries` 3 and the `ErrErasureGraphChanged`
   restart bounded by `erasureGraphMaxRestarts`, as for the user-rooted erasure.
@@ -313,12 +313,12 @@ survive.
 
 - **Rows locked:** the automation runs of every lead of the graph (cancelled first, with the
   answers of the discovery's schema probes; the lead plan still names the cancel as its
-  `BeforeScrub`, `cancelLeadAutomation`, `internal/repository/erasure_cascade.go:78`, which the
+  `BeforeScrub`, `cancelLeadAutomation`, `internal/repository/erasure_cascade.go:79`, which the
   unit clears after running it), the `leads` row (locking read by id,
-  `internal/repository/erasure_cascade.go:872`, the first lock on the leads row in the unit; the
+  `internal/repository/erasure_cascade.go:877`, the first lock on the leads row in the unit; the
   non-admin refusal is decided on that locked row, and a `customer_id` that differs from the
   discovery ends the attempt), then the customer it was converted into
-  (`internal/repository/erasure_cascade.go:894`) with that customer's other leads, its login and
+  (`internal/repository/erasure_cascade.go:899`) with that customer's other leads, its login and
   the login's credential rows. `readErasedEmail` reads each address during the scrub. The text
   scrub then writes the linked `deals` and `quotes`, and for a converted lead the unused
   `quote_response_tokens` rows of the customer's quotes are stamped by primary key after those
@@ -327,12 +327,12 @@ survive.
   password_reset_tokens → api_keys, ids ascending inside each table, with the discovery, the
   re-read after the `users` lock and the snapshot rule of the user-rooted erasure: automation
   runs (`cancelAutomationInTables`) → leads (locking read by id,
-  `internal/repository/erasure_cascade.go:872`) → customers (locking read by id, `:894` in the
-  same file) → users (locking read by id, `:915`) → the credential rows → deals and quotes text,
+  `internal/repository/erasure_cascade.go:877`) → customers (locking read by id, `:899` in the
+  same file) → users (locking read by id, `:920`) → the credential rows → deals and quotes text,
   then `quote_response_tokens` (#395).
   `DeleteUnconverted` discovers and locks the root lead only and never reads or locks a customer
   or a user. The converted-lead pluck (`WHERE customer_id = ?`,
-  `internal/repository/erasure_cascade.go:466-467`) stays a plain read: a locking read there
+  `internal/repository/erasure_cascade.go:467-468`) stays a plain read: a locking read there
   would take next-key locks on the `leads.customer_id` index and block unrelated conversions,
   and it is not needed, because a conversion always inserts a new customer,
   so no lead can be converted into a customer being erased. Every erased row is soft-deleted by
@@ -348,10 +348,10 @@ survive.
   MariaDB 10.11 (QA) and on MySQL 8.0 (the #355 acceptance run). The cancel stays ahead of the
   lead lock so that the erasure has modified rows when it waits on a lead an automation step
   holds, and is the survivor of that deadlock.
-- **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:166`)
+- **Transaction:** `leadRepository.Delete` (admins, `internal/repository/lead_repository.go:167`)
   or `leadRepository.DeleteUnconverted` (non-admins, refused with `ErrConvertedLeadNeedsAdmin` on
   the locked lead row before the lead is written, the cancel rolled back with the unit,
-  `internal/repository/lead_repository.go:176`) → `eraseGraph` → `runErasureUnit`.
+  `internal/repository/lead_repository.go:177`) → `eraseGraph` → `runErasureUnit`.
 - **Retry:** `WithTransactionAndRetry` with `erasureMaxRetries` 3 and the `ErrErasureGraphChanged`
   restart bounded by `erasureGraphMaxRestarts`, as for the user-rooted erasure. A refusal is not
   retried.
@@ -628,10 +628,10 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
   `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:275`, and
   `CreateAs`, `internal/service/user_governed_writes.go:141`) locks the `users` rows of the active
-  admins (`LockActiveAdmins`, `internal/repository/user_repository.go:297`: a plain read discovers
+  admins (`LockActiveAdmins`, `internal/repository/user_repository.go:298`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
-  `internal/repository/user_repository.go:335`, one locking read by primary key in id order) and
+  `internal/repository/user_repository.go:336`, one locking read by primary key in id order) and
   the `roles` rows of the actor's, the target's and the requested custom role with their
   `role_permissions` rows (`RoleRepository.LockByIDs`,
   `internal/repository/role_repository.go:227`: the roles by primary key in id order, then their
@@ -642,7 +642,7 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   (`internal/repository/role_repository.go:140`, `:178` in the same file) lock the `roles` row
   again by primary key before they delete its `role_permissions` rows. The role delete also takes
   a locking read of the live users holding the role, by `role_id`
-  (`LockLiveRoleHolders`, `internal/repository/user_repository.go:356`), before the roles and
+  (`LockLiveRoleHolders`, `internal/repository/user_repository.go:357`), before the roles and
   again after them (`internal/service/role_service.go:358`, `:382` in the same file).
 - **Order:** admin set → users (id ascending) → roles (id ascending), with a role's
   `role_permissions` rows after its `roles` row. A role write starts at the actor's `users` row:

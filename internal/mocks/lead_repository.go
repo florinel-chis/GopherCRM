@@ -4,6 +4,7 @@
 package mocks
 
 import (
+	"context"
 	"time"
 
 	models "github.com/florinel-chis/gophercrm/internal/models"
@@ -83,17 +84,17 @@ func (_m *LeadRepository) Create(lead *models.Lead) error {
 	return r0
 }
 
-// Delete provides a mock function with given fields: id
-func (_m *LeadRepository) Delete(id uint) error {
-	ret := _m.Called(id)
+// Delete provides a mock function with given fields: ctx, id
+func (_m *LeadRepository) Delete(ctx context.Context, id uint) error {
+	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Delete")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(uint) error); ok {
-		r0 = rf(id)
+	if rf, ok := ret.Get(0).(func(context.Context, uint) error); ok {
+		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -101,17 +102,17 @@ func (_m *LeadRepository) Delete(id uint) error {
 	return r0
 }
 
-// DeleteUnconverted provides a mock function with given fields: id
-func (_m *LeadRepository) DeleteUnconverted(id uint) error {
-	ret := _m.Called(id)
+// DeleteUnconverted provides a mock function with given fields: ctx, id
+func (_m *LeadRepository) DeleteUnconverted(ctx context.Context, id uint) error {
+	ret := _m.Called(ctx, id)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteUnconverted")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(uint) error); ok {
-		r0 = rf(id)
+	if rf, ok := ret.Get(0).(func(context.Context, uint) error); ok {
+		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
 	}

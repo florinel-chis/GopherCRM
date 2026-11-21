@@ -170,8 +170,9 @@ across several nesting levels) and `TestTransactionRecoveredNestedPanicCannotCom
 be committed).
 
 **Request context (#107)** — lead conversion (including the handler's ownership read), lead
-assignment (`LeadService.Assign`, #255), the public form submission and confirmation, and the
-three routed bulk status updates run on the HTTP request's context: the handler passes
+assignment (`LeadService.Assign`, #255), the public form submission and confirmation, the
+three routed bulk status updates and the three erasures (`CustomerService.Delete`,
+`LeadService.Delete`, `UserService.Delete`/`DeleteAs`, #571) run on the HTTP request's context: the handler passes
 `c.Request.Context()` to the service, the service hands it to `WithTransaction` /
 `WithTransactionAndRetry`, and the reads and writes it issues outside the managed callback are
 bound to it as well — the lead and published-form reads that precede the
@@ -198,11 +199,13 @@ would either announce work that transaction could still roll back or need a seco
 (which deadlocks SQLite's single-connection pool). No production caller nests them; the handlers
 are their only callers. `LeadService.Assign` also runs on the request context but is not one of
 these roots: it sends no mail and commits no audit row after its commit, so it does not refuse an
-enclosing transaction; called inside one, it nests under a savepoint.
+enclosing transaction; called inside one, it nests under a savepoint. The erasures are not roots
+either: on a caller's transaction (`WithTx`, the governed user delete) the erasure unit nests
+under a savepoint of its own (see *Deleting personal data*, Cancellation).
 
-Not yet bound: the conversion settings (`ConfigurationService` takes no context), and every service
-method not named above (`LeadService.Create` and `Update` among them), which still passes
-`context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
+Not yet bound: the conversion settings (`ConfigurationService` takes no context), the plain
+`GetByID` pre-reads of the three erasures, and every service method not named above
+(`LeadService.Create` and `Update` among them), which still passes `context.Background()`. AEO runs deliberately keep the service-owned lifecycle context and never
 take a request's. Regression roots: `TestRequestCancellation{SQLite,MySQL}`
 (one-connection pool; cancelled while the first read, the transaction or the spam write waits,
 cancelled before the call, and the bulk outcome recorded `failed`, or left `pending` until a sweep
@@ -2554,7 +2557,7 @@ What happens on `DELETE`:
   calls its field `user_id`, but it writes `assigned_to_id`.
 - **Who may erase what.** `DELETE /users/{id}` and `DELETE /customers/{id}` are admin-only routes.
   `DELETE /leads/{id}` admits the admin and the owning sales user, but a converted lead reaches a
-  customer, so only an admin may erase one: `LeadService.Delete(id, actorRole)` gives any other
+  customer, so only an admin may erase one: `LeadService.Delete(ctx, id, actorRole)` gives any other
   role `LeadRepository.DeleteUnconverted`, which refuses a converted lead
   (`ErrConvertedLeadNeedsAdmin`, an `apperrors.ErrForbidden`, 403) inside the erasure transaction,
   on the lead row it has locked, before the lead is written (#337). The unit rolls back, the
@@ -2613,6 +2616,21 @@ What happens on `DELETE`:
   `utils.ErrTransactionPoisoned`). Nothing is retried inside; a deadlock reaches the caller. The
   traversal remembers every row it has visited, checked before any read, so each row is scrubbed
   once and the cycle user → customer → lead → customer → user terminates.
+- **Cancellation (#571).** The erasure runs on the request's context, from the handler
+  (`c.Request.Context()` in the customer, lead and user `Delete` handlers) through
+  `CustomerService.Delete(ctx, id)`, `LeadService.Delete(ctx, id, actorRole)` and
+  `UserService.Delete`/`DeleteAs` into `eraseGraph` and `runErasureUnit`: the discovery, the
+  transaction (`WithTransactionAndRetry(ctx, …)`) and every statement of the unit are bound to it.
+  A request that is cancelled or times out before the commit rolls back every overwrite, the
+  credential purges and the soft delete, and answers the generic 500; the error wraps
+  `context.Canceled` or `context.DeadlineExceeded` and is neither replayed nor restarted. Inside a
+  caller's transaction (`WithTx`, the governed user delete) the unit's savepoint is rolled back on
+  `context.WithoutCancel(ctx)`, so a cancelled request still discards the unit's writes without
+  poisoning a caller transaction whose own context is alive. Regression roots:
+  `TestErasureCancellation{SQLite,MySQL}` (`internal/repository/erasure_cancellation_test.go`:
+  user, customer and lead roots, cancelled before the call, after the first scrub, past a deadline
+  and inside a caller's transaction), and the handler tests `TestDelete_PassesTheRequestContext`
+  of the customer, lead and user handler suites.
 - The lead's automation state ends in the same transaction, *before* the lead is even read
   (`erasurePlan.BeforeScrub`, run by the erasure unit for every lead of the graph, ahead of its first locking read of a lead): every pending, waiting or running run on the lead is cancelled with
   `cancel_reason = record_deleted`, so no further step runs against it, and every notification

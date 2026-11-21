@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -457,7 +458,7 @@ func (suite *CustomerHandlerTestSuite) TestUpdate_LookupFailureIsInternalError()
 func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
 	suite.router.DELETE("/customers/:id", suite.handler.Delete)
 
-	suite.mockService.On("Delete", uint(1)).Return(nil)
+	suite.mockService.On("Delete", mock.Anything, uint(1)).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
 	rec := httptest.NewRecorder()
@@ -467,10 +468,30 @@ func (suite *CustomerHandlerTestSuite) TestDelete_Success() {
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
 }
 
+// The erasure runs on the request's own context (#571), so a client that goes
+// away or a request that times out stops it and rolls it back.
+func (suite *CustomerHandlerTestSuite) TestDelete_PassesTheRequestContext() {
+	suite.router.DELETE("/customers/:id", suite.handler.Delete)
+
+	type marker struct{}
+	requestCtx := context.WithValue(context.Background(), marker{}, "erase")
+	suite.mockService.On("Delete", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx.Value(marker{}) == "erase"
+	}), uint(1)).Return(nil).Once()
+
+	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil).WithContext(requestCtx)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+	suite.mockService.AssertExpectations(suite.T())
+}
+
 func (suite *CustomerHandlerTestSuite) TestDelete_NotFound() {
 	suite.router.DELETE("/customers/:id", suite.handler.Delete)
 
-	suite.mockService.On("Delete", uint(1)).
+	suite.mockService.On("Delete", mock.Anything, uint(1)).
 		Return(fmt.Errorf("customer %d not found: %w", 1, apperrors.ErrNotFound))
 
 	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
@@ -496,7 +517,7 @@ func (suite *CustomerHandlerTestSuite) TestDelete_GenuineFailureIsInternalError(
 	// never existed - the operator would record a completed erasure request
 	// for personal data that is still in the database.
 	dbErr := errors.New("Error 1213: Deadlock found when trying to get lock; try restarting transaction")
-	suite.mockService.On("Delete", uint(1)).Return(dbErr)
+	suite.mockService.On("Delete", mock.Anything, uint(1)).Return(dbErr)
 
 	req := httptest.NewRequest(http.MethodDelete, "/customers/1", nil)
 	rec := httptest.NewRecorder()

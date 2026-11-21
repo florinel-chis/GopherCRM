@@ -183,7 +183,7 @@ func runSCIMUserDelete(t *testing.T, base *oidcFixture) {
 			customer := f.seedLinked(t, "cust@x.test", models.RoleCustomer, true, scimDeletePassword)
 			f.login(t, customer.Email, scimDeletePassword)
 			erased := f.seedLinked(t, "gone@x.test", models.RoleSales, true, "")
-			require.NoError(t, repository.NewUserRepository(f.db).Delete(erased.ID), "erasure through the real path")
+			require.NoError(t, repository.NewUserRepository(f.db).Delete(context.Background(), erased.ID), "erasure through the real path")
 			rowsBefore := rows(t)
 			customerBefore := f.patchState(t, customer.ID)
 			erasedBefore := f.user(t, erased.ID)

@@ -422,7 +422,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("Delete", uint(1), models.RoleAdmin).Return(nil)
+	suite.mockService.On("Delete", mock.Anything, uint(1), models.RoleAdmin).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil)
 	rec := httptest.NewRecorder()
@@ -430,6 +430,28 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+// The erasure runs on the request's own context (#571), so a client that goes
+// away or a request that times out stops it and rolls it back.
+func (suite *LeadHandlerTestSuite) TestDelete_PassesTheRequestContext() {
+	suite.router.DELETE("/leads/:id", suite.handler.Delete)
+
+	type marker struct{}
+	requestCtx := context.WithValue(context.Background(), marker{}, "erase")
+	existingLead := &models.Lead{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", OwnerID: 1}
+	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
+	suite.mockService.On("Delete", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx.Value(marker{}) == "erase"
+	}), uint(1), models.RoleAdmin).Return(nil).Once()
+
+	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil).WithContext(requestCtx)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+	suite.mockService.AssertExpectations(suite.T())
 }
 
 // An owning sales user may not erase a converted lead: the service refuses it
@@ -443,7 +465,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_ConvertedLeadForbiddenForSales() {
 	router.DELETE("/leads/:id", suite.handler.Delete)
 
 	suite.mockService.On("GetByID", uint(5)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 5}, OwnerID: 2}, nil)
-	suite.mockService.On("Delete", uint(5), models.RoleSales).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
+	suite.mockService.On("Delete", mock.Anything, uint(5), models.RoleSales).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/5", nil)
 	rec := httptest.NewRecorder()

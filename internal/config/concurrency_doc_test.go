@@ -584,7 +584,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 			"acting.requireKeys(", "checkEscalation(")
 	}
 	governed := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) governedWrite(")
-	inOrder(governed, "checkEscalation(", "apperrors.ErrCustomerLoginRole", "apperrors.ErrLastAdmin", "tx.users.Delete(id)",
+	inOrder(governed, "checkEscalation(", "apperrors.ErrCustomerLoginRole", "apperrors.ErrLastAdmin", "tx.users.Delete(ctx, id)",
 		"tx.users.UpdateFields(id, fields)", "tx.record(")
 	// #526: a deactivation ends every credential after the users write and
 	// before the role audit row.
@@ -1173,7 +1173,7 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 			}
 		}
 	}
-	inOrder(graph, "discoverErasureGraph(db, root, allowCustomers)", "seams.runAfterDiscovery()", "runErasureUnit(db,",
+	inOrder(graph, "db = db.WithContext(ctx)", "discoverErasureGraph(db, root, allowCustomers)", "seams.runAfterDiscovery()", "runErasureUnit(ctx, db,",
 		"cascade.erase(tx, root, discovery)", "if inTransaction(db) {", "shouldRestartErasure(err)", "restarts >= erasureGraphMaxRestarts")
 	restart := concurrencyDocFuncBody(t, cascade, "func shouldRestartErasure(")
 	for _, want := range []string{"ErrErasureGraphChanged", "utils.ErrRollbackFailed", "utils.ErrTransactionPoisoned",
@@ -1232,7 +1232,8 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 	// The unit: WithTransactionAndRetry on the database, a savepoint in a
 	// caller's transaction, and no db.Transaction any more.
 	unit := concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func runErasureUnit(")
-	assert.Contains(t, unit, "utils.NewTransactionManager(db).WithTransactionAndRetry(context.Background(),")
+	assert.Contains(t, unit, "utils.NewTransactionManager(db).WithTransactionAndRetry(ctx,")
+	assert.NotContains(t, unit, "context.Background()")
 	assert.Contains(t, unit, "}, erasureMaxRetries)")
 	assert.Contains(t, unit, `"SAVEPOINT "+name`)
 	assert.NotContains(t, unit, "db.Transaction(")
@@ -1243,7 +1244,7 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 		"internal/repository/customer_repository.go": 1,
 		"internal/repository/lead_repository.go":     2,
 	} {
-		assert.Equal(t, calls, strings.Count(readRepositoryFile(t, file), "return eraseGraph(r.db, "), file)
+		assert.Equal(t, calls, strings.Count(readRepositoryFile(t, file), "return eraseGraph(ctx, r.db, "), file)
 	}
 }
 

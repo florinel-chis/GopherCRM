@@ -359,7 +359,7 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 		{"not visible", func(t *testing.T) {
 			customer := seed(t, "cust@x.test", models.RoleCustomer)
 			erased := seed(t, "gone@x.test", models.RoleSales)
-			require.NoError(t, repository.NewUserRepository(f.db).Delete(erased.ID), "erasure through the real path")
+			require.NoError(t, repository.NewUserRepository(f.db).Delete(context.Background(), erased.ID), "erasure through the real path")
 			before := f.counts(t)
 			deactivate := parsePatch(t, `{"Operations":[{"op":"replace","path":"active","value":false}]}`)
 			for _, id := range []string{"999999", uintString(erased.ID), uintString(customer.ID), "abc", "0", "-1", ""} {

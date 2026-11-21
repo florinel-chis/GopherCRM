@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -147,7 +148,7 @@ func TestUserErasureRemovesPersonalDataFromTheTable(t *testing.T) {
 	user := seedUser(t, db, "erase-me@example.com")
 	originalHash := user.Password
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	// Nothing anywhere in the users table may still carry the address or name,
 	// including the soft-deleted rows an ordinary query would hide.
@@ -159,7 +160,7 @@ func TestUserErasureKeepsTheRowSoftDeletedWithAPlaceholderEmail(t *testing.T) {
 	userRepo := repository.NewUserRepository(db)
 
 	user := seedUser(t, db, "still-there@example.com")
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	// The row must survive so foreign keys pointing at it stay valid.
 	erased := fetchErasedUser(t, db, user.ID)
@@ -189,7 +190,7 @@ func TestErasedUserEmailCanBeRegisteredAgain(t *testing.T) {
 		IsActive:  true,
 	}
 	require.NoError(t, userService.Register(original, "Str0ng!Passw0rd"))
-	require.NoError(t, userRepo.Delete(original.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), original.ID))
 
 	// The address is no longer held by anything, so the same person (or anyone
 	// else) can register it again. Before erasure the unique index kept it
@@ -221,7 +222,7 @@ func TestUserErasureScrubsEveryPersonalFieldAndDisablesThePassword(t *testing.T)
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", user.ID).
 		Update("locked_until", &lockedUntil).Error)
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	erased := fetchErasedUser(t, db, user.ID)
 	assert.Empty(t, erased.FirstName)
@@ -265,7 +266,7 @@ func TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount(t *testing.T) 
 		UserID: survivor.ID, TokenHash: "reset-survivor", ExpiresAt: time.Now().Add(time.Hour),
 	}).Error)
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	// Gone for good — not merely soft-deleted, or the secret would still be
 	// stored and the key would still hash-match on lookup.
@@ -309,7 +310,7 @@ func TestUserErasureFailsAndRollsBackWhenCredentialsCannotBePurged(t *testing.T)
 		UserID: user.ID, IsActive: true,
 	}).Error)
 
-	err := userRepo.Delete(user.ID)
+	err := userRepo.Delete(context.Background(), user.ID)
 	require.Error(t, err, "an erasure that cannot purge credentials must not report success")
 
 	// Everything must be back as it was: a half-done erasure that anonymises the
@@ -341,7 +342,7 @@ func TestUserErasureRunsInsideACallerSuppliedTransaction(t *testing.T) {
 
 	// A caller composing the erasure with its own work in a single unit of work.
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := userRepo.WithTx(tx).Delete(user.ID); err != nil {
+		if err := userRepo.WithTx(tx).Delete(context.Background(), user.ID); err != nil {
 			return err
 		}
 		return tx.Create(&models.Task{
@@ -378,7 +379,7 @@ func TestUserErasureRollsBackWithTheCallersTransaction(t *testing.T) {
 
 	abort := errors.New("caller aborted the unit of work")
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := userRepo.WithTx(tx).Delete(user.ID); err != nil {
+		if err := userRepo.WithTx(tx).Delete(context.Background(), user.ID); err != nil {
 			return err
 		}
 		return abort
@@ -403,7 +404,7 @@ func TestCustomerErasureRunsInsideACallerSuppliedTransaction(t *testing.T) {
 	customer := seedCustomer(t, db, "customer-caller-tx@example.com")
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return customerRepo.WithTx(tx).Delete(customer.ID)
+		return customerRepo.WithTx(tx).Delete(context.Background(), customer.ID)
 	}))
 
 	erased := fetchErasedCustomer(t, db, customer.ID)
@@ -420,7 +421,7 @@ func TestCustomerErasureRollsBackWithTheCallersTransaction(t *testing.T) {
 
 	abort := errors.New("caller aborted the unit of work")
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := customerRepo.WithTx(tx).Delete(customer.ID); err != nil {
+		if err := customerRepo.WithTx(tx).Delete(context.Background(), customer.ID); err != nil {
 			return err
 		}
 		return abort
@@ -442,7 +443,7 @@ func TestErasingAUserThatDoesNotExistReportsNotFound(t *testing.T) {
 	db := setupErasureDB(t)
 	userService := service.NewUserService(repository.NewUserRepository(db))
 
-	err := userService.Delete(99999)
+	err := userService.Delete(context.Background(), 99999)
 
 	require.Error(t, err, "erasing a nonexistent user must not report success")
 	assert.True(t, apperrors.IsNotFound(err), "expected the not-found sentinel, got %v", err)
@@ -456,7 +457,7 @@ func TestErasingACustomerThatDoesNotExistReportsNotFound(t *testing.T) {
 		repository.NewCompanyRepository(db),
 	)
 
-	err := customerService.Delete(99999)
+	err := customerService.Delete(context.Background(), 99999)
 
 	require.Error(t, err)
 	assert.True(t, apperrors.IsNotFound(err), "expected the not-found sentinel, got %v", err)
@@ -478,7 +479,7 @@ func TestErasingAUserIDThatDoesNotExistTouchesNobodyElse(t *testing.T) {
 		Name: "ci", KeyHash: "hash-bystander", Prefix: "gcrm_bys", UserID: first.ID, IsActive: true,
 	}).Error)
 
-	require.NoError(t, userRepo.Delete(99999), "there was nothing to erase, which is not a failure")
+	require.NoError(t, userRepo.Delete(context.Background(), 99999), "there was nothing to erase, which is not a failure")
 
 	for _, id := range []uint{first.ID, second.ID} {
 		var user models.User
@@ -501,7 +502,7 @@ func TestErasingACustomerIDThatDoesNotExistTouchesNobodyElse(t *testing.T) {
 	first := seedCustomer(t, db, "customer-bystander-1@example.com")
 	second := seedCustomer(t, db, "customer-bystander-2@example.com")
 
-	require.NoError(t, customerRepo.Delete(99999))
+	require.NoError(t, customerRepo.Delete(context.Background(), 99999))
 
 	for _, id := range []uint{first.ID, second.ID} {
 		var customer models.Customer
@@ -520,7 +521,7 @@ func TestErasingALeadIDThatDoesNotExistTouchesNobodyElse(t *testing.T) {
 	lead := seedLead(t, db, owner.ID, "lead-bystander@example.com")
 	customer := seedCustomer(t, db, "lead-bystander-customer@example.com")
 
-	require.NoError(t, leadRepo.Delete(99999))
+	require.NoError(t, leadRepo.Delete(context.Background(), 99999))
 
 	var reloaded models.Lead
 	require.NoError(t, db.First(&reloaded, lead.ID).Error, "an unrelated lead was erased")
@@ -553,7 +554,7 @@ func TestErasingAUserThatWasAlreadySoftDeletedStillScrubsIt(t *testing.T) {
 	require.Equal(t, "legacy-soft-deleted@example.com", legacy.Email,
 		"the fixture must reproduce the old behaviour: hidden, not erased")
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	assertColumnsFreeOf(t, db, "users", "legacy-soft-deleted@example.com", "Erasure", "Subject")
 	erased := fetchErasedUser(t, db, user.ID)
@@ -574,7 +575,7 @@ func TestErasingACustomerThatWasAlreadySoftDeletedStillScrubsIt(t *testing.T) {
 	require.NoError(t, db.Delete(&models.Customer{}, customer.ID).Error)
 	require.Equal(t, "legacy-customer@example.com", fetchErasedCustomer(t, db, customer.ID).Email)
 
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	assertColumnsFreeOf(t, db, "customers",
 		"legacy-customer@example.com", "Erasure", "Subject", "+40 721 000 111", "Prefers to be called")
@@ -613,7 +614,7 @@ func TestAPIKeyOfAnErasedUserCannotAuthenticate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, user.ID, authenticated.ID)
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	// The purge removed it, so it cannot even be found...
 	_, err = authService.ValidateAPIKey(rawKey)
@@ -670,7 +671,7 @@ func TestUserErasureDoesNotCascadeAwayBusinessRecords(t *testing.T) {
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, userRepo.Delete(user.ID))
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID))
 
 	// The task is business history and must be untouched...
 	var reloaded models.Task
@@ -721,7 +722,7 @@ func TestSuccessiveUserErasuresProduceDistinctPlaceholders(t *testing.T) {
 	placeholders := make(map[string]struct{})
 	for i := 0; i < 5; i++ {
 		user := seedUser(t, db, fmt.Sprintf("bulk-%d@example.com", i))
-		require.NoError(t, userRepo.Delete(user.ID),
+		require.NoError(t, userRepo.Delete(context.Background(), user.ID),
 			"erasure %d failed — a colliding placeholder would violate the unique index", i)
 
 		erased := fetchErasedUser(t, db, user.ID)
@@ -740,7 +741,7 @@ func TestCustomerErasureRemovesPersonalDataFromTheTable(t *testing.T) {
 	customerRepo := repository.NewCustomerRepository(db)
 
 	customer := seedCustomer(t, db, "erase-customer@example.com")
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	assertColumnsFreeOf(t, db, "customers",
 		"erase-customer@example.com", "Erasure", "Subject", "+40 721 000 111",
@@ -753,7 +754,7 @@ func TestCustomerErasureKeepsTheRowSoftDeletedWithAPlaceholderEmail(t *testing.T
 	customerRepo := repository.NewCustomerRepository(db)
 
 	customer := seedCustomer(t, db, "customer-still-there@example.com")
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	erased := fetchErasedCustomer(t, db, customer.ID)
 	assert.True(t, erased.DeletedAt.Valid, "the row must remain, soft-deleted")
@@ -782,7 +783,7 @@ func TestErasedCustomerEmailCanBeUsedAgain(t *testing.T) {
 
 	original := &models.Customer{FirstName: "First", LastName: "Tenant", Email: "reusable-customer@example.com"}
 	require.NoError(t, customerService.Create(original))
-	require.NoError(t, customerRepo.Delete(original.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), original.ID))
 
 	replacement := &models.Customer{FirstName: "Second", LastName: "Tenant", Email: "reusable-customer@example.com"}
 	require.NoError(t, customerService.Create(replacement),
@@ -805,7 +806,7 @@ func TestCustomerErasureDoesNotCascadeAwayTickets(t *testing.T) {
 	}
 	require.NoError(t, db.Create(ticket).Error)
 
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	var reloaded models.Ticket
 	require.NoError(t, db.First(&reloaded, ticket.ID).Error)
@@ -824,7 +825,7 @@ func TestSuccessiveCustomerErasuresProduceDistinctPlaceholders(t *testing.T) {
 	placeholders := make(map[string]struct{})
 	for i := 0; i < 5; i++ {
 		customer := seedCustomer(t, db, fmt.Sprintf("bulk-customer-%d@example.com", i))
-		require.NoError(t, customerRepo.Delete(customer.ID),
+		require.NoError(t, customerRepo.Delete(context.Background(), customer.ID),
 			"erasure %d failed — a colliding placeholder would violate the unique index", i)
 
 		erased := fetchErasedCustomer(t, db, customer.ID)

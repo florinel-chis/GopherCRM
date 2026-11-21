@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -56,8 +57,8 @@ func (m *MockUserRepository) UpdateFields(id uint, fields map[string]interface{}
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) Delete(id uint) error {
-	args := m.Called(id)
+func (m *MockUserRepository) Delete(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 

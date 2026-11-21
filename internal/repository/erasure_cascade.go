@@ -28,6 +28,7 @@ package repository
 // state that erasure.go goes out of its way to avoid.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -670,14 +671,18 @@ func newErasureCascade(allowCustomers bool) *erasureCascade {
 // rollback. When db is a caller's transaction (WithTx) the discovery answers
 // from the caller's snapshot, the unit is one checked SAVEPOINT that runs
 // once, and both kinds of error go to the caller.
-func eraseGraph(db *gorm.DB, allowCustomers bool, root erasureRoot, seams *erasureSeams, hooks *leadErasureSeams, listener ErasureListener) error {
+func eraseGraph(ctx context.Context, db *gorm.DB, allowCustomers bool, root erasureRoot, seams *erasureSeams, hooks *leadErasureSeams, listener ErasureListener) error {
+	// Bound once (#571): the discovery, the schema probes and every statement
+	// of the unit carry the caller's context. A done context fails the next
+	// discovery or begin, and neither is restarted.
+	db = db.WithContext(ctx)
 	attempt := func() error {
 		discovery, err := discoverErasureGraph(db, root, allowCustomers)
 		if err != nil {
 			return err
 		}
 		seams.runAfterDiscovery()
-		return runErasureUnit(db, func(tx *gorm.DB) error {
+		return runErasureUnit(ctx, db, func(tx *gorm.DB) error {
 			cascade := newErasureCascade(allowCustomers)
 			cascade.seams, cascade.hooks, cascade.listener = seams, hooks, listener
 			return cascade.erase(tx, root, discovery)

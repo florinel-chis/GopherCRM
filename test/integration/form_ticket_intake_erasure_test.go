@@ -193,7 +193,7 @@ func TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 	t.Run("customer", func(t *testing.T) {
 		c := seedConfirmedTicketSubmission(t, "ftcust", false)
 		c.assertSeeded(t)
-		require.NoError(t, repository.NewCustomerRepository(c.db).Delete(c.customer.ID))
+		require.NoError(t, repository.NewCustomerRepository(c.db).Delete(context.Background(), c.customer.ID))
 		c.assertNothingLinkable(t)
 		assertNoPersonalDataAnywhere(t, c.db, append(c.subject.identifiers(), c.linkNeedles()...))
 	})
@@ -203,7 +203,7 @@ func TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		c.assertSeeded(t)
 		var login models.User
 		require.NoError(t, c.db.Where("email = ?", c.subject.Email).First(&login).Error)
-		require.NoError(t, repository.NewUserRepository(c.db).Delete(login.ID))
+		require.NoError(t, repository.NewUserRepository(c.db).Delete(context.Background(), login.ID))
 		c.assertNothingLinkable(t)
 		assertNoPersonalDataAnywhere(t, c.db, append(c.subject.identifiers(), c.linkNeedles()...))
 	})
@@ -214,7 +214,7 @@ func TestFormTicketIntakeErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		var owner models.User
 		require.NoError(t, c.db.Where("role = ?", models.RoleAdmin).First(&owner).Error)
 		lead := c.subject.asLead(t, c.db, owner.ID)
-		require.NoError(t, repository.NewLeadRepository(c.db).Delete(lead.ID))
+		require.NoError(t, repository.NewLeadRepository(c.db).Delete(context.Background(), lead.ID))
 		// The customer is a separate record nobody asked to erase; what links
 		// the submission and its key to the person is gone.
 		c.assertNothingLinkable(t)

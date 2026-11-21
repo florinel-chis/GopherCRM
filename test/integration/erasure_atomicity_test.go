@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -163,7 +164,7 @@ func TestUserErasureRollsBackEverythingWhenTheSoftDeleteFails(t *testing.T) {
 
 	failure := failDeletesOn(t, db, "users", nil)
 
-	err := userRepo.Delete(user.ID)
+	err := userRepo.Delete(context.Background(), user.ID)
 	require.Error(t, err, "an erasure whose soft delete fails must not report success")
 	require.Equal(t, 1, failure.Calls(), "the failure must have been injected into the erasure's own delete")
 
@@ -193,10 +194,10 @@ func TestAUserErasureCanBeRetriedAfterAFailedAttempt(t *testing.T) {
 
 	failure := failDeletesOn(t, db, "users", func(call int) bool { return call == 1 })
 
-	require.Error(t, userRepo.Delete(user.ID))
+	require.Error(t, userRepo.Delete(context.Background(), user.ID))
 	assertUserIsUntouched(t, db, user.ID, "retry-after-failure@example.com")
 
-	require.NoError(t, userRepo.Delete(user.ID), "the second attempt must succeed")
+	require.NoError(t, userRepo.Delete(context.Background(), user.ID), "the second attempt must succeed")
 	require.Equal(t, 2, failure.Calls())
 
 	assertColumnsFreeOf(t, db, "users", "retry-after-failure@example.com", "Erasure", "Subject")
@@ -218,7 +219,7 @@ func TestCustomerErasureRollsBackWhenTheSoftDeleteFails(t *testing.T) {
 	customer := seedCustomer(t, db, "atomic-customer@example.com")
 	failure := failDeletesOn(t, db, "customers", nil)
 
-	err := customerRepo.Delete(customer.ID)
+	err := customerRepo.Delete(context.Background(), customer.ID)
 	require.Error(t, err, "an erasure whose soft delete fails must not report success")
 	require.Equal(t, 1, failure.Calls())
 
@@ -245,7 +246,7 @@ func TestLeadErasureRollsBackWhenTheSoftDeleteFails(t *testing.T) {
 
 	failure := failDeletesOn(t, db, "leads", nil)
 
-	require.Error(t, leadRepo.Delete(lead.ID))
+	require.Error(t, leadRepo.Delete(context.Background(), lead.ID))
 	require.Equal(t, 1, failure.Calls())
 
 	var reloaded models.Lead
@@ -275,7 +276,7 @@ func TestConvertedPairErasureRollsBackWhenTheSecondHalfFails(t *testing.T) {
 
 	failure := failDeletesOn(t, db, "customers", nil)
 
-	require.Error(t, leadRepo.Delete(lead.ID),
+	require.Error(t, leadRepo.Delete(context.Background(), lead.ID),
 		"a cascade that cannot finish must not report success")
 	require.Equal(t, 1, failure.Calls())
 
@@ -304,7 +305,7 @@ func TestCustomerFirstCascadeRollsBackWhenTheLeadHalfFails(t *testing.T) {
 
 	failure := failDeletesOn(t, db, "leads", nil)
 
-	require.Error(t, customerRepo.Delete(customer.ID))
+	require.Error(t, customerRepo.Delete(context.Background(), customer.ID))
 	require.Equal(t, 1, failure.Calls())
 
 	var reloadedCustomer models.Customer
@@ -484,19 +485,19 @@ var customerErasureRoutes = []struct {
 	{
 		name: "customer delete",
 		erase: func(e *customerWriteEnv, p *linkedPerson) error {
-			return e.customers.Delete(p.customer.ID)
+			return e.customers.Delete(context.Background(), p.customer.ID)
 		},
 	},
 	{
 		name: "converted lead delete",
 		erase: func(e *customerWriteEnv, p *linkedPerson) error {
-			return e.leadRepo.Delete(p.lead.ID)
+			return e.leadRepo.Delete(context.Background(), p.lead.ID)
 		},
 	},
 	{
 		name: "customer login delete",
 		erase: func(e *customerWriteEnv, p *linkedPerson) error {
-			return e.users.Delete(p.login.ID)
+			return e.users.Delete(context.Background(), p.login.ID)
 		},
 	},
 }
@@ -836,7 +837,7 @@ func TestCustomerWriteConcurrentWithErasureMySQL(t *testing.T) {
 		tx := e.db.Begin()
 		require.NoError(t, tx.Error)
 		defer tx.Rollback()
-		require.NoError(t, e.customers.WithTx(tx).Delete(p.customer.ID))
+		require.NoError(t, e.customers.WithTx(tx).Delete(context.Background(), p.customer.ID))
 
 		done := make(chan error, 1)
 		go func() { done <- e.customers.Update(stale) }()
@@ -863,7 +864,7 @@ func TestCustomerWriteConcurrentWithErasureMySQL(t *testing.T) {
 		require.NoError(t, e.customers.WithTx(tx).Update(edited))
 
 		done := make(chan error, 1)
-		go func() { done <- e.customers.Delete(p.customer.ID) }()
+		go func() { done <- e.customers.Delete(context.Background(), p.customer.ID) }()
 		awaitBlockedCustomerUpdate(t, e.db, done)
 
 		require.NoError(t, tx.Commit().Error)
@@ -889,7 +890,7 @@ func TestCustomerWriteConcurrentWithErasureMySQL(t *testing.T) {
 		var seen models.Customer
 		require.NoError(t, tx.First(&seen, p.customer.ID).Error, "this read fixes the snapshot")
 
-		require.NoError(t, e.customers.Delete(p.customer.ID))
+		require.NoError(t, e.customers.Delete(context.Background(), p.customer.ID))
 
 		var liveInSnapshot int64
 		require.NoError(t, tx.Model(&models.Customer{}).Where("id = ?", p.customer.ID).Count(&liveInSnapshot).Error)
@@ -929,7 +930,7 @@ func TestCustomerWriteConcurrentWithErasureSQLite(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			results <- outcome{"erase", e.customers.Delete(p.customer.ID)}
+			results <- outcome{"erase", e.customers.Delete(context.Background(), p.customer.ID)}
 		}()
 		close(start)
 

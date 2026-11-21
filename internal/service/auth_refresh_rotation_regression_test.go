@@ -16,6 +16,7 @@ package service
 // seam of the service under test. All waits are bounded.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -638,7 +639,7 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 	t.Run("an erased owner is rejected", func(t *testing.T) {
 		s := f.seed(t)
 		// Erasure scrubs the row, purges its credentials and soft-deletes it.
-		require.NoError(t, f.userRepo.Delete(s.owner.ID))
+		require.NoError(t, f.userRepo.Delete(context.Background(), s.owner.ID))
 
 		tokens, err := f.svc.RefreshAccessToken(s.token)
 		assert.Nil(t, tokens)

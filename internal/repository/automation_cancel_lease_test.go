@@ -12,6 +12,7 @@ package repository
 // orderings are exercised sequentially.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -172,7 +173,7 @@ func runAutomationCancelReleasesLease(t *testing.T, db *gorm.DB) {
 
 	leadErasures := []struct {
 		name  string
-		erase func(id uint) error
+		erase func(ctx context.Context, id uint) error
 	}{
 		{"admin LeadRepository.Delete", leads.Delete},
 		{"non-admin DeleteUnconverted of an unconverted lead", leads.DeleteUnconverted},
@@ -188,7 +189,7 @@ func runAutomationCancelReleasesLease(t *testing.T, db *gorm.DB) {
 			otherRunningBefore := takeCancelLeaseSnapshot(t, db, otherRunning.ID)
 			otherPendingBefore := takeCancelLeaseSnapshot(t, db, otherPending.ID)
 
-			require.NoError(t, erasure.erase(lead.ID))
+			require.NoError(t, erasure.erase(context.Background(), lead.ID))
 
 			for _, run := range []*models.AutomationRun{pending, waiting, running} {
 				assertCancelled(t, run.ID, models.AutomationCancelRecordDeleted, fmt.Sprintf("run %d (%s)", run.ID, run.Status))
@@ -324,7 +325,7 @@ func runAutomationCancelReleasesLease(t *testing.T, db *gorm.DB) {
 	}
 	lateCancels := []lateCancel{
 		{"lead erasure", models.AutomationEntityLead, func(t *testing.T, _ *models.AutomationRule, run *models.AutomationRun) {
-			require.NoError(t, leads.Delete(run.EntityID))
+			require.NoError(t, leads.Delete(context.Background(), run.EntityID))
 		}},
 		{"ticket delete", models.AutomationEntityTicket, func(t *testing.T, _ *models.AutomationRule, run *models.AutomationRun) {
 			require.NoError(t, tickets.Delete(run.EntityID))

@@ -287,7 +287,7 @@ func TestSCIMUsersWired(t *testing.T) {
 	erased := &models.User{Email: "erased-0469@crm.example.test", Password: string(hash), FirstName: "Ernie", LastName: "Erased", Role: models.RoleSupport, IsActive: true}
 	require.NoError(t, models.DB.Create(erased).Error)
 	erasedEmail := erased.Email
-	require.NoError(t, repository.NewUserRepository(models.DB).Delete(erased.ID), "erasure through the real path")
+	require.NoError(t, repository.NewUserRepository(models.DB).Delete(context.Background(), erased.ID), "erasure through the real path")
 
 	recorder := scimWiredSend(router, http.MethodPost, prefix+"/auth/login", `{"email":"`+admin.Email+`","password":"`+password+`"}`, nextRemote(), "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())

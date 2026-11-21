@@ -23,13 +23,13 @@ func TestCustomerExternalIDErasureLeavesNoPersonalDataInAnyTable(t *testing.T) {
 		erase func(db *gorm.DB, login *models.User, customer *models.Customer, lead *models.Lead) error
 	}{
 		{"customer", func(db *gorm.DB, _ *models.User, customer *models.Customer, _ *models.Lead) error {
-			return repository.NewCustomerRepository(db).Delete(customer.ID)
+			return repository.NewCustomerRepository(db).Delete(context.Background(), customer.ID)
 		}},
 		{"converted_lead", func(db *gorm.DB, _ *models.User, _ *models.Customer, lead *models.Lead) error {
-			return repository.NewLeadRepository(db).Delete(lead.ID)
+			return repository.NewLeadRepository(db).Delete(context.Background(), lead.ID)
 		}},
 		{"customer_login", func(db *gorm.DB, login *models.User, _ *models.Customer, _ *models.Lead) error {
-			return repository.NewUserRepository(db).Delete(login.ID)
+			return repository.NewUserRepository(db).Delete(context.Background(), login.ID)
 		}},
 	}
 	for _, root := range roots {

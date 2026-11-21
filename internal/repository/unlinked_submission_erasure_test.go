@@ -178,24 +178,24 @@ func unlinkedRoots() []unlinkedRoot {
 			lead := &models.Lead{FirstName: "Jane", LastName: "Doe" + f.tag, Email: email, Source: "website",
 				Status: models.LeadStatusNew, OwnerID: f.sales.ID}
 			require.NoError(t, db.Create(lead).Error)
-			return func() error { return NewLeadRepository(db).Delete(lead.ID) }, &models.Lead{}, lead.ID
+			return func() error { return NewLeadRepository(db).Delete(context.Background(), lead.ID) }, &models.Lead{}, lead.ID
 		}},
 		{"customer", func(t *testing.T, db *gorm.DB, f *unlinkedFixture, email string) (func() error, interface{}, uint) {
 			customer := &models.Customer{FirstName: "Jane", LastName: "Doe" + f.tag, Email: email}
 			require.NoError(t, db.Create(customer).Error)
-			return func() error { return NewCustomerRepository(db).Delete(customer.ID) }, &models.Customer{}, customer.ID
+			return func() error { return NewCustomerRepository(db).Delete(context.Background(), customer.ID) }, &models.Customer{}, customer.ID
 		}},
 		{"staff_user", func(t *testing.T, db *gorm.DB, f *unlinkedFixture, email string) (func() error, interface{}, uint) {
 			user := &models.User{Email: email, Password: "$2a$10$personhash", FirstName: "Jane", LastName: "Doe" + f.tag,
 				Role: models.RoleSupport, IsActive: true}
 			require.NoError(t, db.Create(user).Error)
-			return func() error { return NewUserRepository(db).Delete(user.ID) }, &models.User{}, user.ID
+			return func() error { return NewUserRepository(db).Delete(context.Background(), user.ID) }, &models.User{}, user.ID
 		}},
 		{"customer_user", func(t *testing.T, db *gorm.DB, f *unlinkedFixture, email string) (func() error, interface{}, uint) {
 			user := &models.User{Email: email, Password: "$2a$10$personhash", FirstName: "Jane", LastName: "Doe" + f.tag,
 				Role: models.RoleCustomer, IsActive: true}
 			require.NoError(t, db.Create(user).Error)
-			return func() error { return NewUserRepository(db).Delete(user.ID) }, &models.User{}, user.ID
+			return func() error { return NewUserRepository(db).Delete(context.Background(), user.ID) }, &models.User{}, user.ID
 		}},
 	}
 }
@@ -378,7 +378,7 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 		err := utils.NewTransactionManager(db).WithTransaction(context.Background(), func(ctx context.Context) error {
 			tx, ok := utils.GetTxFromContext(ctx)
 			require.True(t, ok)
-			require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(customer.ID))
+			require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), customer.ID))
 			// Inside the transaction the scrub has happened.
 			inside := loadSubmission(t, tx, f.matched[1].ID)
 			assert.True(t, strings.HasSuffix(inside.Email, "@"+anonymizedEmailDomain))
@@ -405,12 +405,12 @@ func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
 		login := &models.User{Email: mixedCaseAddress(tag), Password: "$2a$10$personhash", FirstName: "Jane", LastName: "Doe" + tag,
 			Role: models.RoleCustomer, IsActive: true}
 		require.NoError(t, db.Create(login).Error)
-		require.NoError(t, NewUserRepository(db).Delete(login.ID), "a user erasure succeeds")
+		require.NoError(t, NewUserRepository(db).Delete(context.Background(), login.ID), "a user erasure succeeds")
 		assert.True(t, strings.HasSuffix(storedEmailOf(t, db, &models.User{}, login.ID), "@"+anonymizedEmailDomain))
 
 		customer := &models.Customer{FirstName: "Jane", LastName: "Doe" + tag, Email: "Jane.Customer." + tag + "@Example.COM"}
 		require.NoError(t, db.Create(customer).Error)
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID), "a customer erasure succeeds")
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID), "a customer erasure succeeds")
 		assert.True(t, strings.HasSuffix(storedEmailOf(t, db, &models.Customer{}, customer.ID), "@"+anonymizedEmailDomain))
 	})
 }

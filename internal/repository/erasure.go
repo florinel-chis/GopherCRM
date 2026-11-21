@@ -426,9 +426,16 @@ var erasureSavepointSeq atomic.Uint64
 // transaction nothing is retried here: the unit runs once, and a deadlock, a
 // lock timeout or ErrErasureGraphChanged reaches the caller, whose whole
 // transaction is the only safe unit to replay.
-func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
+//
+// Context (#571). ctx is the caller's request context. On the database the
+// transaction is bound to it: a done context fails before begin, and one that
+// ends before the commit rolls the whole unit back; a cancellation is never
+// replayed. On a caller's transaction the SAVEPOINT and the unit's statements
+// carry ctx, and the rollback to the savepoint runs on an uncancellable copy
+// of it (rollbackErasureUnit). Either way the error wraps ctx's error.
+func runErasureUnit(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
 	if !inTransaction(db) {
-		return utils.NewTransactionManager(db).WithTransactionAndRetry(context.Background(), func(ctx context.Context) error {
+		return utils.NewTransactionManager(db).WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 			tx, ok := utils.GetTxFromContext(ctx)
 			if !ok {
 				return utils.ErrNoTransaction
@@ -437,6 +444,7 @@ func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
 		}, erasureMaxRetries)
 	}
 
+	db = db.WithContext(ctx)
 	name := fmt.Sprintf("gocrm_erasure_%d", erasureSavepointSeq.Add(1))
 	if execErr := erasureControlExec(db, "SAVEPOINT "+name); execErr != nil {
 		return fmt.Errorf("%w: %w", utils.ErrSavepointFailed, execErr)
@@ -472,7 +480,16 @@ func runErasureUnit(db *gorm.DB, fn func(tx *gorm.DB) error) (err error) {
 // rollbackErasureUnit rolls the caller's transaction back to the unit's
 // savepoint. When that fails the whole caller transaction is rolled back, and
 // the returned error says nothing of it may be committed.
+//
+// The rollback runs on an uncancellable copy of the unit's context (#571), the
+// rule of utils runNested: a cancelled or expired request must still discard
+// the unit's writes, and must not poison a caller transaction whose own
+// context is alive. All three rollbacks of runErasureUnit (after a panic, a
+// failed RELEASE and an error of fn) come through here.
 func rollbackErasureUnit(db *gorm.DB, name string) error {
+	if ctx := db.Statement.Context; ctx != nil {
+		db = db.WithContext(context.WithoutCancel(ctx))
+	}
 	rbErr := erasureControlExec(db, "ROLLBACK TO SAVEPOINT "+name)
 	if rbErr == nil {
 		return nil

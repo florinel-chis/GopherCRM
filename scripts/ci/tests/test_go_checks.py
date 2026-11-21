@@ -59,7 +59,8 @@ elif sys.argv[1] == 'test':
         self.assertIn('TestLeadConversionTransaction', selected['test/integration'])
         for name in ('TestErasureCrossRootMySQL', 'TestErasureGraphChangedMySQL',
                      'TestErasureInvalidatesQuoteResponseTokensMySQL',
-                     'TestErasureQuoteTokenWritesLeaveGapsFreeMySQL'):
+                     'TestErasureQuoteTokenWritesLeaveGapsFreeMySQL',
+                     'TestErasureCancellationSQLite', 'TestErasureCancellationMySQL'):
             self.assertIn(name, selected['internal/repository'])
         for name in ('TestErasureVsCredentialFlowsMySQL', 'TestGovernedUserErasureVsCustomerErasureMySQL',
                      'TestQuoteResponseAfterCustomerErasureMySQL'):

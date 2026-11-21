@@ -201,7 +201,7 @@ func (e *leadOwnerEnv) deactivate(user *models.User) {
 // satisfy the foreign key, which is why this case needs its own check.
 func (e *leadOwnerEnv) erase(user *models.User) {
 	e.t.Helper()
-	require.NoError(e.t, e.users.Delete(user.ID))
+	require.NoError(e.t, e.users.Delete(context.Background(), user.ID))
 	var row models.User
 	require.NoError(e.t, e.db.Unscoped().First(&row, user.ID).Error, "the erased row stays for the foreign key")
 	require.True(e.t, row.DeletedAt.Valid)
@@ -479,7 +479,7 @@ func TestLeadAssignPermissionsSQLite(t *testing.T) {
 	})
 	t.Run("a lead erased through LeadRepository.Delete", func(t *testing.T) {
 		erased := e.newLead(e.sales.ID)
-		require.NoError(t, e.leadRepo.Delete(erased.ID))
+		require.NoError(t, e.leadRepo.Delete(context.Background(), erased.ID))
 		for _, caller := range []*models.User{e.admin, e.sales} {
 			status, _ := e.send(http.MethodPost, leadAssignPath(erased.ID), caller, valid)
 			assert.Equal(t, http.StatusNotFound, status)

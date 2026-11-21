@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -69,7 +70,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		seedNotification(t, db, colleague.ID, models.AutomationEntityLead, lead.ID)
 		kept := seedNotification(t, db, owner.ID, models.AutomationEntityLead, other.ID)
 
-		require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 
 		for _, id := range []uint{pending.ID, waiting.ID, running.ID} {
 			status, reason := runStatus(id)
@@ -95,7 +96,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		seedNotification(t, db, leaver.ID, models.AutomationEntityLead, lead.ID)
 		seedNotification(t, db, leaver.ID, models.AutomationEntityDeal, 42)
 		kept := seedNotification(t, db, owner.ID, models.AutomationEntityLead, lead.ID)
-		require.NoError(t, NewUserRepository(db).Delete(leaver.ID))
+		require.NoError(t, NewUserRepository(db).Delete(context.Background(), leaver.ID))
 		assert.Zero(t, countNotifications("user_id = ?", leaver.ID))
 		assert.EqualValues(t, 1, countNotifications("id = ?", kept.ID))
 	})
@@ -109,7 +110,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 				tx.AddError(errors.New("injected notification purge fault"))
 			}
 		}))
-		err := NewLeadRepository(db).Delete(lead.ID)
+		err := NewLeadRepository(db).Delete(context.Background(), lead.ID)
 		require.NoError(t, db.Callback().Delete().Remove("probe:fail-notification-purge"))
 		require.Error(t, err)
 
@@ -148,7 +149,7 @@ func runAutomationErasure(t *testing.T, db *gorm.DB) {
 		// The erasure from a second connection: it cancels the run, purges
 		// the notifications and then waits for the lead row the step holds.
 		erased := make(chan error, 1)
-		go func() { erased <- NewLeadRepository(db).Delete(lead.ID) }()
+		go func() { erased <- NewLeadRepository(db).Delete(context.Background(), lead.ID) }()
 		time.Sleep(500 * time.Millisecond)
 		select {
 		case err := <-erased:

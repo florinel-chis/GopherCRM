@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -326,6 +327,26 @@ func (suite *UserHandlerTestSuite) TestDelete_Success() {
 	suite.router.ServeHTTP(rec, req)
 
 	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+}
+
+// The erasure runs on the request's own context (#571), so a client that goes
+// away or a request that times out stops it and rolls it back.
+func (suite *UserHandlerTestSuite) TestDelete_PassesTheRequestContext() {
+	suite.router.DELETE("/users/:id", suite.handler.Delete)
+
+	type marker struct{}
+	requestCtx := context.WithValue(context.Background(), marker{}, "erase")
+	suite.mockService.On("DeleteAs", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx.Value(marker{}) == "erase"
+	}), mock.Anything, uint(2)).Return(nil).Once()
+
+	req := httptest.NewRequest(http.MethodDelete, "/users/2", nil).WithContext(requestCtx)
+	rec := httptest.NewRecorder()
+
+	suite.router.ServeHTTP(rec, req)
+
+	assert.Equal(suite.T(), http.StatusNoContent, rec.Code)
+	suite.mockService.AssertExpectations(suite.T())
 }
 
 func (suite *UserHandlerTestSuite) TestDelete_NotFound() {

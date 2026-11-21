@@ -9,6 +9,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,7 +238,7 @@ func TestTicketCommentEmailAPISQLite(t *testing.T) {
 		gone := &models.Customer{FirstName: "Gone", LastName: "Customer", Email: "gone@ticket-mail-api.test"}
 		require.NoError(t, f.db.Create(gone).Error)
 		ticket := f.newTicket(t, gone.ID, "Ticket of an erased customer")
-		require.NoError(t, repository.NewCustomerRepository(f.db).Delete(gone.ID))
+		require.NoError(t, repository.NewCustomerRepository(f.db).Delete(context.Background(), gone.ID))
 		before := len(f.mailer.messages())
 
 		status, raw, envelope := f.do(t, "admin", http.MethodPost, fmt.Sprintf("/tickets/%d/comments", ticket.ID),

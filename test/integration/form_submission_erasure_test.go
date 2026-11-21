@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -94,7 +95,7 @@ func TestLeadErasureScrubsLinkedFormSubmissions(t *testing.T) {
 	}
 	require.NoError(t, db.Create(unrelated).Error)
 
-	require.NoError(t, leadRepo.Delete(lead.ID))
+	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	var erasedLead models.Lead
 	require.NoError(t, db.Unscoped().First(&erasedLead, lead.ID).Error)
@@ -157,7 +158,7 @@ func TestConvertedLeadErasureScrubsSubmissionsViaTheCascade(t *testing.T) {
 
 	sub := seedFormSubmission(t, db, form.ID, &lead.ID, lead.Email)
 
-	require.NoError(t, customerRepo.Delete(customer.ID))
+	require.NoError(t, customerRepo.Delete(context.Background(), customer.ID))
 
 	var scrubbed models.FormSubmission
 	require.NoError(t, db.Unscoped().First(&scrubbed, sub.ID).Error)

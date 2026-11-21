@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -286,7 +287,7 @@ func runCustomerErasureScrubsDealText(t *testing.T, useMySQL bool) {
 	reached := businessTextRows(t, db, "deals", live.ID, gone.ID)
 	snapshot := snapshotIdentityDB(t, db)
 
-	require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertDealsRedacted(t, db, reached)
 	after := snapshotIdentityDB(t, db)
@@ -339,7 +340,7 @@ func runCustomerErasureScrubsQuoteText(t *testing.T, useMySQL bool) {
 	require.Len(t, linesBefore, 2*2*len(models.QuoteStatuses)+2)
 	snapshot := snapshotIdentityDB(t, db)
 
-	require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 
 	assertQuotesRedacted(t, db, before, linesBefore)
 	after := snapshotIdentityDB(t, db)
@@ -393,10 +394,12 @@ func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
 	}
 
 	t.Run("admin_erases_an_unconverted_lead", func(t *testing.T) {
-		unconverted(t, func(db *gorm.DB, id uint) error { return NewLeadRepository(db).Delete(id) })
+		unconverted(t, func(db *gorm.DB, id uint) error { return NewLeadRepository(db).Delete(context.Background(), id) })
 	})
 	t.Run("non_admin_erases_an_unconverted_lead", func(t *testing.T) {
-		unconverted(t, func(db *gorm.DB, id uint) error { return NewLeadRepository(db).DeleteUnconverted(id) })
+		unconverted(t, func(db *gorm.DB, id uint) error {
+			return NewLeadRepository(db).DeleteUnconverted(context.Background(), id)
+		})
 	})
 
 	// One person as a customer-role login, a customer and two converted leads.
@@ -456,18 +459,24 @@ func runLeadErasureScrubsDealAndQuoteText(t *testing.T, useMySQL bool) {
 	}
 
 	t.Run("converted_lead_reaches_every_lead_and_customer", func(t *testing.T) {
-		cascade(t, func(db *gorm.DB, g *graph) error { return NewLeadRepository(db).Delete(g.leadA.ID) })
+		cascade(t, func(db *gorm.DB, g *graph) error {
+			return NewLeadRepository(db).Delete(context.Background(), g.leadA.ID)
+		})
 	})
 	t.Run("customer_role_login_reaches_its_customers_and_their_leads", func(t *testing.T) {
-		cascade(t, func(db *gorm.DB, g *graph) error { return NewUserRepository(db).Delete(g.login.ID) })
+		cascade(t, func(db *gorm.DB, g *graph) error {
+			return NewUserRepository(db).Delete(context.Background(), g.login.ID)
+		})
 	})
 	t.Run("refused_non_admin_erasure_of_a_converted_lead_changes_nothing", func(t *testing.T) {
 		db := dbs.open(t)
 		g := seedGraph(t, db)
 		before := snapshotIdentityDB(t, db)
-		err := NewLeadRepository(db).DeleteUnconverted(g.leadA.ID)
+		err := NewLeadRepository(db).DeleteUnconverted(context.Background(), g.leadA.ID)
 		require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin)
-		err = db.Transaction(func(tx *gorm.DB) error { return NewLeadRepository(db).WithTx(tx).DeleteUnconverted(g.leadB.ID) })
+		err = db.Transaction(func(tx *gorm.DB) error {
+			return NewLeadRepository(db).WithTx(tx).DeleteUnconverted(context.Background(), g.leadB.ID)
+		})
 		require.ErrorIs(t, err, ErrConvertedLeadNeedsAdmin)
 		assert.Equal(t, before, snapshotIdentityDB(t, db), "a refused erasure leaves every deal and quote unchanged")
 	})
@@ -524,9 +533,9 @@ func runBusinessTextErasureLeavesUnrelatedRecords(t *testing.T, useMySQL bool) {
 	lines := businessTextRows(t, db, "quote_lines", lineIDsOf(t, db, quoteIDs...)...)
 	notes := businessTextRows(t, db, "notifications", notificationIDs...)
 
-	require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
-	require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
-	require.NoError(t, NewUserRepository(db).Delete(owner.ID))
+	require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
+	require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
+	require.NoError(t, NewUserRepository(db).Delete(context.Background(), owner.ID))
 
 	assertRowsUnchanged(t, db, "deals", deals)
 	assertRowsUnchanged(t, db, "quotes", quotes)
@@ -580,7 +589,7 @@ func runBusinessTextErasureAtomic(t *testing.T, useMySQL bool) {
 	}))
 	t.Cleanup(func() { _ = db.Callback().Update().Remove(name) })
 
-	err := NewCustomerRepository(db).Delete(customer.ID)
+	err := NewCustomerRepository(db).Delete(context.Background(), customer.ID)
 	require.ErrorIs(t, err, sentinel)
 	require.Equal(t, 1, calls, "the failure was injected into the quote_lines scrub")
 	assert.Contains(t, err.Error(), "quote_lines")
@@ -593,7 +602,7 @@ func runBusinessTextErasureAtomic(t *testing.T, useMySQL bool) {
 	// A WithTx erasure whose caller rolls back leaves them unchanged too.
 	tx := db.Begin()
 	require.NoError(t, tx.Error)
-	require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(customer.ID))
+	require.NoError(t, NewCustomerRepository(db).WithTx(tx).Delete(context.Background(), customer.ID))
 	var inside models.Deal
 	require.NoError(t, tx.First(&inside, deal.ID).Error)
 	require.Equal(t, RedactedBusinessTitle, inside.Title, "the scrub ran inside the caller's transaction")
@@ -652,8 +661,8 @@ func TestBusinessTextErasureWithoutDealTables(t *testing.T) {
 		db := openBusinessTextSubsetDB(t)
 		absent(t, db, &models.Deal{}, &models.Quote{}, &models.QuoteLine{}, &models.Product{}, &models.Notification{})
 		_, customer, lead := seed(t, db, nextIdentityTag())
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
-		require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 		assertPersonErased(t, db, customer.ID, lead.ID)
 	})
 
@@ -668,8 +677,8 @@ func TestBusinessTextErasureWithoutDealTables(t *testing.T) {
 		for _, d := range []*models.Deal{onCustomer, onLead, untouched} {
 			require.NoError(t, db.Create(d).Error)
 		}
-		require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
-		require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+		require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
+		require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 		assertPersonErased(t, db, customer.ID, lead.ID)
 		for _, id := range []uint{onCustomer.ID, onLead.ID} {
 			var d models.Deal
@@ -722,13 +731,13 @@ func runBusinessTextErasurePurgesDealNotifications(t *testing.T, useMySQL bool) 
 
 	// The lead's deal is reached through a lead erasure, the customer's deal
 	// through a customer erasure.
-	require.NoError(t, NewCustomerRepository(db).Delete(customer.ID))
+	require.NoError(t, NewCustomerRepository(db).Delete(context.Background(), customer.ID))
 	for _, n := range purged[:2] {
 		assert.Zero(t, countRows(t, db, &models.Notification{}, "id = ?", n.ID), "notification %d about a reached deal is gone", n.ID)
 	}
 	assert.EqualValues(t, 1, countRows(t, db, &models.Notification{}, "id = ?", purged[2].ID), "the lead's deal is not reached yet")
 
-	require.NoError(t, NewLeadRepository(db).Delete(lead.ID))
+	require.NoError(t, NewLeadRepository(db).Delete(context.Background(), lead.ID))
 	assert.Zero(t, countRows(t, db, &models.Notification{}, "id = ?", purged[2].ID), "a soft-deleted reached deal's notification is gone")
 	assertRowsUnchanged(t, db, "notifications", keptRows)
 }

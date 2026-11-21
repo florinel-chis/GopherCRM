@@ -762,7 +762,7 @@ func (s *leadService) Assign(ctx context.Context, leadID, ownerID uint, actor Le
 //
 // Note the logging below deliberately records only the lead ID: an erasure
 // audit trail that quotes the erased email would defeat the erasure.
-func (s *leadService) Delete(id uint, actorRole models.UserRole) error {
+func (s *leadService) Delete(ctx context.Context, id uint, actorRole models.UserRole) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Delete")
 
 	// An erasure that matched no row must never report success: the scrub and
@@ -787,7 +787,7 @@ func (s *leadService) Delete(id uint, actorRole models.UserRole) error {
 	if actorRole == models.RoleAdmin {
 		erase = s.leadRepo.Delete
 	}
-	if err := erase(id); err != nil {
+	if err := erase(ctx, id); err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
 			logger.Warn("Erasure of a converted lead refused for a non-admin caller")
 			return err
