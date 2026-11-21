@@ -1646,6 +1646,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TestPasswordResetRequestOwnerLockConcurrentMySQL` now holds an erasure competitor uncommitted
+  until the reset mail is recorded, so the mailer's committed check no longer races the erasure
+  deleting the token (test only, #597).
 - **A quote response link is created, sent and accepted only while the quote's customer exists,
   and earlier links stop working only after a successful send (#557).** The mint transaction of
   `POST /quotes/{id}/email` (`mintResponseLink` in `internal/service/quote_email.go`) now reads

@@ -265,7 +265,9 @@ type ciMail struct {
 // ciMailer records reset mails. At send time it reads the mailed token on a
 // separate handle of the same database with a short deadline: inside an open
 // transaction (the one-connection SQLite pool) that read could not run, and on
-// MySQL an uncommitted insert is invisible to it.
+// MySQL an uncommitted insert is invisible to it. The contended "request
+// committed before" subtests hold their competitor uncommitted until the
+// request has returned, so this check never races the competitor's commit.
 type ciMailer struct {
 	mu   sync.Mutex
 	db   *gorm.DB
@@ -792,8 +794,23 @@ func runResetRequestConcurrent(t *testing.T, f *ciFixture, contended bool) {
 				}
 				competitor := ciStart(func() error { return c.run(f, s) })
 				f.contend(t, reached, competitor, c.waitPattern, c.name)
+				// Keep the competitor uncommitted until the request has
+				// returned, and with it the mailer's committed check: an
+				// erasure released by the request's commit could otherwise
+				// delete the token before the mailer reads it. The request
+				// writes no users row, so the parker fires only here.
+				mailed := newLLHold()
+				defer mailed.release()
+				c.park(f, mailed)
 				hold.release()
 				reqErr := ciAwait(t, req, "the reset request")
+				select {
+				case err := <-competitor:
+					t.Fatalf("%s finished (%v) before the reset request returned", c.name, err)
+				default:
+				}
+				mailed.entered(t, c.name)
+				mailed.release()
 				done := ciAwait(t, competitor, c.name)
 				llNoDeadlock(t, reqErr, "the reset request")
 				llNoDeadlock(t, done, c.name)
