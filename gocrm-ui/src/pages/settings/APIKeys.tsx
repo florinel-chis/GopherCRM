@@ -37,11 +37,29 @@ import { apiKeysApi, type GeneratedAPIKey } from '@/api/endpoints/apikeys';
 import type { APIKey } from '@/types';
 import { formatDate, DATE_FALLBACK } from '@/utils/date';
 
+/**
+ * The latest expiry date the form offers, as `yyyy-MM-dd` in local time: one
+ * year from today minus one day. The chosen day is pinned to 23:59:59 local
+ * time (see toExpiryTimestamp), which keeps it inside the server's limit of
+ * one year from now.
+ */
+const maxExpiryDate = (now: Date = new Date()): string => {
+  const limit = new Date(now.getTime());
+  limit.setFullYear(limit.getFullYear() + 1);
+  limit.setDate(limit.getDate() - 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${limit.getFullYear()}-${pad(limit.getMonth() + 1)}-${pad(limit.getDate())}`;
+};
+
 const createKeySchema = z.object({
   // The backend binding is `min=3,max=100`; matching it here keeps the failure
   // in the form instead of a round-trip 400.
   name: z.string().min(3, 'Name must be at least 3 characters').max(100, 'Name must be at most 100 characters'),
-  expires_on: z.string(),
+  // Empty means one year (the server's default); a date is at most one year
+  // ahead, as the server allows.
+  expires_on: z
+    .string()
+    .refine((value) => !value || value <= maxExpiryDate(), 'Expiry can be at most one year from today'),
 });
 
 type CreateKeyFormData = z.infer<typeof createKeySchema>;
@@ -283,8 +301,12 @@ export const APIKeys: React.FC = () => {
               fullWidth
               margin="normal"
               error={!!errors.expires_on}
-              helperText={errors.expires_on?.message || 'Optional. Leave empty for a key that never expires.'}
+              helperText={
+                errors.expires_on?.message ||
+                'Optional. Leave empty for a key that expires in one year; at most one year from today.'
+              }
               InputLabelProps={{ shrink: true }}
+              inputProps={{ max: maxExpiryDate() }}
             />
           </DialogContent>
           <DialogActions>

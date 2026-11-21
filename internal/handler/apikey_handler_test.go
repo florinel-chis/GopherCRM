@@ -32,6 +32,12 @@ type APIKeyHandlerTestSuite struct {
 	// authMethod is what the test middleware stores under
 	// service.AuthMethodContextKey; empty stores nothing.
 	authMethod string
+	// role is what the test middleware stores under user_role.
+	role string
+	// signedInAt is what the test middleware stores under
+	// service.SignedInAtContextKey; nil stores nothing. SetupTest sets a
+	// fresh sign-in.
+	signedInAt *time.Time
 }
 
 func (suite *APIKeyHandlerTestSuite) SetupTest() {
@@ -44,6 +50,9 @@ func (suite *APIKeyHandlerTestSuite) SetupTest() {
 	utils.InitLogger(logConfig)
 
 	suite.authMethod = service.AuthMethodBearer
+	suite.role = "admin"
+	fresh := time.Now()
+	suite.signedInAt = &fresh
 	suite.mockService = new(mocks.APIKeyService)
 	suite.handler = NewAPIKeyHandler(suite.mockService)
 
@@ -55,9 +64,12 @@ func (suite *APIKeyHandlerTestSuite) SetupTest() {
 	suite.router.Use(func(c *gin.Context) {
 		c.Set("request_id", "test-request-id")
 		c.Set("user_id", uint(1))
-		c.Set("user_role", "admin")
+		c.Set("user_role", suite.role)
 		if suite.authMethod != "" {
 			c.Set(service.AuthMethodContextKey, suite.authMethod)
+		}
+		if suite.signedInAt != nil {
+			c.Set(service.SignedInAtContextKey, *suite.signedInAt)
 		}
 		c.Next()
 	})
@@ -730,6 +742,98 @@ func (suite *APIKeyHandlerTestSuite) TestUpdate_InternalError() {
 	err := json.Unmarshal(rec.Body.Bytes(), &response)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "INTERNAL_ERROR", response.Error.Code)
+}
+
+// postCreate sends POST /api-keys with body and decodes the envelope.
+func (suite *APIKeyHandlerTestSuite) postCreate(body string) (*httptest.ResponseRecorder, utils.APIResponse) {
+	req := httptest.NewRequest(http.MethodPost, "/api-keys", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	suite.router.ServeHTTP(rec, req)
+	var response utils.APIResponse
+	assert.NoError(suite.T(), json.Unmarshal(rec.Body.Bytes(), &response))
+	return rec, response
+}
+
+const reauthenticationMessage = "Sign in again to create an API key: creating a key needs a sign-in within the last 15 minutes"
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_StaleSignInIsForbidden() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	stale := time.Now().Add(-16 * time.Minute)
+	suite.signedInAt = &stale
+
+	for _, body := range []string{`{"name":"Stale key"}`, `{"name":`} {
+		rec, response := suite.postCreate(body)
+		assert.Equal(suite.T(), http.StatusForbidden, rec.Code, body)
+		assert.Equal(suite.T(), "REAUTHENTICATION_REQUIRED", response.Error.Code, body)
+		assert.Equal(suite.T(), reauthenticationMessage, response.Error.Message, body)
+	}
+	suite.mockService.AssertNotCalled(suite.T(), "Generate", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_SignInWindowBoundary() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	suite.handler.now = func() time.Time { return now }
+
+	signedIn := now.Add(-15 * time.Minute)
+	suite.signedInAt = &signedIn
+	suite.mockService.On("Generate", uint(1), "Boundary key", (*time.Time)(nil)).
+		Return("gcrm_x", &models.APIKey{BaseModel: models.BaseModel{ID: 1}, UserID: 1, Name: "Boundary key"}, nil).Once()
+	rec, _ := suite.postCreate(`{"name":"Boundary key"}`)
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code, "a sign-in exactly 15 minutes old is accepted")
+
+	late := now.Add(-15*time.Minute - time.Second)
+	suite.signedInAt = &late
+	rec, response := suite.postCreate(`{"name":"Boundary key"}`)
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Equal(suite.T(), "REAUTHENTICATION_REQUIRED", response.Error.Code)
+	suite.mockService.AssertNumberOfCalls(suite.T(), "Generate", 1)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_NoSignInTimeIsForbidden() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.signedInAt = nil
+
+	rec, response := suite.postCreate(`{"name":"Refreshed key"}`)
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Equal(suite.T(), "REAUTHENTICATION_REQUIRED", response.Error.Code)
+	assert.Equal(suite.T(), reauthenticationMessage, response.Error.Message)
+	suite.mockService.AssertNotCalled(suite.T(), "Generate", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_CustomerIsForbidden() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.role = string(models.RoleCustomer)
+
+	rec, response := suite.postCreate(`{"name":"Customer key"}`)
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
+	assert.Equal(suite.T(), "Customer accounts cannot hold API keys", response.Error.Message)
+	suite.mockService.AssertNotCalled(suite.T(), "Generate", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_ExpiryBeyondOneYear() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.mockService.On("Generate", uint(1), "Long key", mock.AnythingOfType("*time.Time")).
+		Return("", nil, fmt.Errorf("refused: %w", service.ErrAPIKeyExpiryTooLate))
+
+	expiry := time.Now().AddDate(2, 0, 0).UTC().Format(time.RFC3339)
+	rec, response := suite.postCreate(fmt.Sprintf(`{"name":"Long key","expires_at":%q}`, expiry))
+	assert.Equal(suite.T(), http.StatusBadRequest, rec.Code)
+	assert.Equal(suite.T(), "BAD_REQUEST", response.Error.Code)
+	assert.Equal(suite.T(), "expires_at must be at most one year from now", response.Error.Message)
+}
+
+func (suite *APIKeyHandlerTestSuite) TestCreate_CustomerRefusedUnderLock() {
+	suite.router.POST("/api-keys", suite.handler.Create)
+	suite.mockService.On("Generate", uint(1), "Late key", (*time.Time)(nil)).
+		Return("", nil, service.ErrAPIKeyCustomerAccount)
+
+	rec, response := suite.postCreate(`{"name":"Late key"}`)
+	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
+	assert.Equal(suite.T(), "FORBIDDEN", response.Error.Code)
+	assert.Equal(suite.T(), "Customer accounts cannot hold API keys", response.Error.Message)
 }
 
 func TestAPIKeyHandlerTestSuite(t *testing.T) {

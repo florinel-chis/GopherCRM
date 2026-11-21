@@ -85,6 +85,11 @@ func MigrateDatabaseWith(db *gorm.DB) error {
 		if err := stripAdminOnlyRolePermissions(tx); err != nil {
 			return err
 		}
+		// Every API key expires within one year, and customer accounts
+		// hold none (#532).
+		if err := capAPIKeyLifetimes(tx); err != nil {
+			return err
+		}
 		if err := migrateLegacyQuoteLineQuantity(tx); err != nil {
 			return err
 		}

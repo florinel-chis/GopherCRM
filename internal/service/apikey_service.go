@@ -25,6 +25,16 @@ var ErrAPIKeyIssuanceUnavailable = errors.New("api key issuance is not available
 // revoked key: revocation is final. Nothing is written.
 var ErrAPIKeyRevoked = errors.New("api key is revoked")
 
+// ErrAPIKeyExpiryTooLate is returned by Generate when the requested expiry is
+// later than models.APIKeyExpiryCap(now): a key lives at most one year (#532).
+// Nothing is written.
+var ErrAPIKeyExpiryTooLate = errors.New("api key expiry is more than one year ahead")
+
+// ErrAPIKeyCustomerAccount is returned by Generate when the owner, read under
+// the owner lock, is a customer account: customer accounts hold no API keys
+// (#532). Nothing is written.
+var ErrAPIKeyCustomerAccount = errors.New("customer accounts cannot hold api keys")
+
 // apiKeyCreateMaxRetries is how often the API-key issuing transaction is
 // replayed after a deadlock, a lock wait timeout or SQLite busy/locked (#183
 // retry rule).
@@ -66,14 +76,26 @@ func NewAPIKeyService(
 // reads the owner by primary key with a locking read (`SELECT ... FOR UPDATE`
 // on MySQL/MariaDB, a plain read on SQLite) and refuses a missing, erased
 // (soft-deleted) or inactive owner with an error matching
-// ErrAccountUnavailable, writing nothing. Lock order users → api_keys: an
-// erasure that commits first makes the request refuse, and one that commits
-// after it purges the key it issued.
+// ErrAccountUnavailable, writing nothing. A customer owner, read under the
+// same lock, is refused with ErrAPIKeyCustomerAccount (#532). Lock order
+// users → api_keys: an erasure that commits first makes the request refuse,
+// and one that commits after it purges the key it issued.
+//
+// A nil expiresAt becomes models.APIKeyExpiryCap(now); one later than that is
+// refused with ErrAPIKeyExpiryTooLate before the transaction (#532).
 func (s *apiKeyService) Generate(userID uint, name string, expiresAt *time.Time) (string, *models.APIKey, error) {
 	log := utils.Logger.WithField("user_id", userID).WithField("operation", "GenerateAPIKey")
 	if s.userRepo == nil || s.txManager == nil {
 		log.WithField("error_code", "issuance_unwired").Error("API key issuance is not wired")
 		return "", nil, ErrAPIKeyIssuanceUnavailable
+	}
+
+	expiryCap := models.APIKeyExpiryCap(time.Now().UTC())
+	if expiresAt == nil {
+		expiresAt = &expiryCap
+	} else if expiresAt.After(expiryCap) {
+		log.WithField("error_code", "expiry_too_late").Warn("API key not issued: expiry more than one year ahead")
+		return "", nil, ErrAPIKeyExpiryTooLate
 	}
 
 	// Generate random key
@@ -98,10 +120,16 @@ func (s *apiKeyService) Generate(userID uint, name string, expiresAt *time.Time)
 		}
 		// Owner first, by primary key, on a fresh Session of the locking
 		// handle so the clause does not leak into the insert.
-		if _, err := lockLiveCredentialOwner(
+		owner, err := lockLiveCredentialOwner(
 			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
-			userID); err != nil {
+			userID)
+		if err != nil {
 			return err
+		}
+		// Checked under the lock, so a role change that commits first is
+		// seen here.
+		if owner.Role == models.RoleCustomer {
+			return ErrAPIKeyCustomerAccount
 		}
 		apiKey := &models.APIKey{
 			Name:      name,
@@ -120,6 +148,8 @@ func (s *apiKeyService) Generate(userID uint, name string, expiresAt *time.Time)
 		var refusal *credentialOwnerRefusal
 		if errors.As(err, &refusal) {
 			log.WithField("error_code", refusal.code).Warn("API key refused under the owner lock")
+		} else if errors.Is(err, ErrAPIKeyCustomerAccount) {
+			log.WithField("error_code", "customer_account").Warn("API key refused under the owner lock")
 		} else {
 			log.WithError(utils.LogError(err)).WithField("error_code", "api_key_insert_failed").
 				Error("API key issuing transaction rolled back")

@@ -323,6 +323,15 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, "API key owner is not active", err.Error())
 		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodAPIKey, AuthAuditOutcomeRefused, "account_inactive", user.ID, "req-ak-inactive")
 	})
+	t.Run("api_key_customer_account", func(t *testing.T) {
+		user := e.seedUser(t, "ak-customer-0532@crm.example.test")
+		raw, _ := e.seedAPIKey(t, user.ID, "customer", nil)
+		e.update(t, user.ID, "role", models.RoleCustomer)
+		before := e.maxAuditID(t)
+		err := apiKey(t, e.auth, raw, "req-ak-customer")
+		assert.Equal(t, "API key owner is a customer account", err.Error())
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodAPIKey, AuthAuditOutcomeRefused, "customer_login_role", user.ID, "req-ak-customer")
+	})
 	t.Run("api_key_account_erased", func(t *testing.T) {
 		user := e.seedUser(t, "ak-erased-0454@crm.example.test")
 		raw, _ := e.seedAPIKey(t, user.ID, "erased", nil)

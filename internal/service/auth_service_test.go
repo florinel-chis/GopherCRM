@@ -538,12 +538,12 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 		user := &models.User{
 			BaseModel: models.BaseModel{ID: 1},
 			Email:     "test@example.com",
-			Role:      models.RoleCustomer,
+			Role:      models.RoleSales,
 			IsActive:  true,
 		}
 
 		apiKey := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 1},
+			BaseModel: models.BaseModel{ID: 1, CreatedAt: time.Now()},
 			UserID:    1,
 			User:      *user,
 			IsActive:  true,
@@ -573,7 +573,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		apiKey := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 7},
+			BaseModel: models.BaseModel{ID: 7, CreatedAt: time.Now()},
 			UserID:    42,
 			IsActive:  true,
 		}
@@ -599,7 +599,7 @@ func TestAuthService_ValidateAPIKey(t *testing.T) {
 
 		authService := NewAuthService(mockUserRepo, mockAPIKeyRepo, jwtConfig)
 		apiKey := &models.APIKey{
-			BaseModel: models.BaseModel{ID: 8},
+			BaseModel: models.BaseModel{ID: 8, CreatedAt: time.Now()},
 			UserID:    43,
 			IsActive:  true,
 		}

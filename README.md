@@ -968,9 +968,11 @@ authentication and live on the moderate tier:
 
 ### API Keys *(always scoped to the caller's own keys — no admin override)*
 - `GET /api/v1/api-keys` - List user's API keys
-- `POST /api/v1/api-keys` - Create new API key (optional RFC3339 `expires_at`; the plaintext key is
-  returned only in this response). Only a signed-in session (password or single sign-on) creates
-  keys: a request authenticated with an API key is 403
+- `POST /api/v1/api-keys` - Create new API key (optional RFC3339 `expires_at`, by default and at
+  most one year from now; the plaintext key is returned only in this response). Staff accounts only:
+  a customer account is 403. Only a signed-in session (password or single sign-on) creates keys, and
+  its sign-in must be within the last 15 minutes (403 `REAUTHENTICATION_REQUIRED` otherwise, also
+  for a token from `POST /auth/refresh`): a request authenticated with an API key is 403
 - `GET /api/v1/api-keys/:id` - Get one key
 - `PUT /api/v1/api-keys/:id` - Rename or revoke a key (`is_active: false`); `is_active: true` on a
   revoked key is 409, and from a request authenticated with an API key 403

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
@@ -52,6 +53,18 @@ func (m *MockAuthService) ValidateAPIKey(key string) (*models.User, error) {
 func (m *MockAuthService) GenerateJWT(user *models.User) (string, error) {
 	args := m.Called(user)
 	return args.String(0), args.Error(1)
+}
+
+// SignedInAt returns the expectation's time and flag when one is set up, and
+// (zero, false) otherwise, so tests that do not care need no expectation.
+func (m *MockAuthService) SignedInAt(token string) (time.Time, bool) {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "SignedInAt" {
+			args := m.Called(token)
+			return args.Get(0).(time.Time), args.Bool(1)
+		}
+	}
+	return time.Time{}, false
 }
 
 func (m *MockAuthService) GenerateTokens(user *models.User) (*service.AuthTokens, error) {
@@ -436,4 +449,63 @@ func TestAuth_DoesNotRecordBearerFailure(t *testing.T) {
 	assert.Empty(t, audit.apiKeyFailures, "a Bearer or missing credential is never recorded")
 	assert.Zero(t, audit.other)
 	mockAuth.AssertExpectations(t)
+}
+
+// TestAuth_SetsSignedInAt: a Bearer request whose token carries a sign-in
+// time publishes it under service.SignedInAtContextKey (#532); an ApiKey
+// request and a Bearer token without one publish nothing.
+func TestAuth_SetsSignedInAt(t *testing.T) {
+	user := &models.User{BaseModel: models.BaseModel{ID: 42}, Role: models.RoleSales, IsActive: true}
+	signedIn := time.Unix(1_790_000_000, 0)
+
+	run := func(t *testing.T, mockAuth *MockAuthService, header string) (time.Time, bool) {
+		t.Helper()
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Use(Auth(mockAuth))
+		var got time.Time
+		var present bool
+		r.GET("/protected", func(c *gin.Context) {
+			value, ok := c.Get(service.SignedInAtContextKey)
+			present = ok
+			if ok {
+				got = value.(time.Time)
+			}
+			c.Status(http.StatusOK)
+		})
+		req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", header)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+		return got, present
+	}
+
+	t.Run("bearer with a sign-in time", func(t *testing.T) {
+		mockAuth := new(MockAuthService)
+		mockAuth.On("ValidateToken", "signed-in").Return(user, nil)
+		mockAuth.On("SignedInAt", "signed-in").Return(signedIn, true)
+		got, present := run(t, mockAuth, "Bearer signed-in")
+		assert.True(t, present)
+		assert.True(t, got.Equal(signedIn))
+		mockAuth.AssertExpectations(t)
+	})
+
+	t.Run("api key", func(t *testing.T) {
+		mockAuth := new(MockAuthService)
+		mockAuth.On("ValidateAPIKey", "gcrm_key").Return(user, nil)
+		mockAuth.On("SignedInAt", mock.Anything).Return(signedIn, true)
+		_, present := run(t, mockAuth, "ApiKey gcrm_key")
+		assert.False(t, present)
+		mockAuth.AssertNotCalled(t, "SignedInAt", mock.Anything)
+	})
+
+	t.Run("bearer without a sign-in time", func(t *testing.T) {
+		mockAuth := new(MockAuthService)
+		mockAuth.On("ValidateToken", "refreshed").Return(user, nil)
+		mockAuth.On("SignedInAt", "refreshed").Return(time.Time{}, false)
+		_, present := run(t, mockAuth, "Bearer refreshed")
+		assert.False(t, present)
+		mockAuth.AssertExpectations(t)
+	})
 }

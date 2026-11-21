@@ -192,3 +192,10 @@ func refusalMessage(c *gin.Context, forCustomer, forSales, otherwise string) str
 func callerRoleForLog(c *gin.Context) string {
 	return c.GetString("user_role")
 }
+
+// customerAccount reports whether the caller is a customer account (the
+// customer system role). Customer accounts hold no API keys (#532): that is
+// an account rule, not a permission any role can be granted.
+func customerAccount(c *gin.Context) bool {
+	return models.UserRole(c.GetString("user_role")) == models.RoleCustomer
+}

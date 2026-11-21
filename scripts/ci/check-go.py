@@ -69,13 +69,15 @@ MIGRATION_SOURCES = {
                     'user_identity_source_migration_test.go', 'scim_group_members_migration_test.go',
                     'admin_only_sso_scim_permissions_migration_test.go',
                     'api_key_revoked_at_migration_test.go',
+                    'api_key_lifetime_migration_test.go',
                     'schema_parity_migration_test.go'),
     'internal/models': ('database_sqlite_upgrade_test.go', 'customer_website_upgrade_test.go',
                         'role_schema_test.go', 'webhook_secret_rotation_upgrade_test.go',
                         'user_identity_source_upgrade_test.go'),
     'internal/repository': ('lookup_index_plan_test.go', 'pagination_determinism_test.go',
                             'company_domain_normalization_test.go', 'system_role_seed_test.go',
-                            'admin_only_permission_strip_test.go'),
+                            'admin_only_permission_strip_test.go',
+                            'api_key_lifetime_step_test.go'),
 }
 KNOWN_SKIPS = {
     ('github.com/florinel-chis/gophercrm/test/integration',
@@ -138,6 +140,8 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
                             'TestAdminOnlyPermissionsMigration',
                             'TestAPIKeyRevokedAtMigrationFiles',
                             'TestAPIKeyRevokedAtMigration',
+                            'TestAPIKeyLifetimeMigrationFiles',
+                            'TestAPIKeyLifetimeMigration',
                             'TestSchemaParityAllowList',
                             'TestSchemaParityMigration'},
             'internal/models': {'TestMigrateDatabase_SQLiteUpgradeFromV120',
@@ -154,7 +158,8 @@ def run(profile, *, storage_only=False, root=go_checks.ROOT):
                                     'TestCompanyDomainNormalizationSQLite',
                                     'TestCompanyDomainNormalizationMySQL',
                                     'TestSystemRoleSeedSQLite', 'TestSystemRoleSeedMySQL',
-                                    'TestAdminOnlyPermissionStripSQLite', 'TestAdminOnlyPermissionStripMySQL'},
+                                    'TestAdminOnlyPermissionStripSQLite', 'TestAdminOnlyPermissionStripMySQL',
+                                    'TestAPIKeyLifetimeStepSQLite', 'TestAPIKeyLifetimeStepMySQL'},
         }
         if any(not names.issubset(selected.get(package, [])) for package, names in required_by_package.items()):
             raise go_checks.GateError('Missing required SQL migration or SQLite upgrade regressions')

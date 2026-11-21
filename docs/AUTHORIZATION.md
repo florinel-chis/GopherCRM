@@ -389,8 +389,10 @@ or the full user agent. Neither are they logged.
 - `refresh`: `token_invalid` (unknown, revoked, expired or already spent), `account_inactive`,
   `account_erased`, `unavailable` (the 503 `SESSION_REFRESH_UNAVAILABLE` path).
 - `api_key`: `key_invalid` (no live key with that hash), `key_revoked` (a revoked key,
-  `is_active` false, recorded with the owner's `user_id`), `key_expired`, `account_inactive`,
-  `account_erased` (the owner row is gone). A key that is both revoked and expired is recorded
+  `is_active` false, recorded with the owner's `user_id`), `key_expired` (past `expires_at`, or,
+  for a key stored without one, more than one year after `created_at`), `account_inactive`,
+  `account_erased` (the owner row is gone), `customer_login_role` (a key owned by a customer
+  account, #532). A key that is both revoked and expired is recorded
   as `key_revoked`.
 - `scim` (#468): `token_missing` (no `Authorization` header, another scheme than `Bearer`, or an
   empty token), `token_invalid` (no SCIM token has that hash: an unknown token, a user's JWT or
@@ -1005,12 +1007,17 @@ no role field, and `PUT /users/{id}` on its own id ignores `role`, `role_id` and
 from a caller without `users.assign_role` and `users.activate`. A request authenticated with an
 API key cannot create keys or switch one on: `POST /api-keys`, and `PUT /api-keys/{id}` with
 `is_active: true`, answer 403 `FORBIDDEN` to it (#525). Only a signed-in session (password or
-single sign-on) creates keys, and a key never expires unless `expires_at` is sent.
+single sign-on) creates keys, and only with a sign-in within the last 15 minutes: otherwise, and
+for a token from `POST /auth/refresh`, it answers 403 `REAUTHENTICATION_REQUIRED` (#532). A key
+expires one year after creation unless an earlier `expires_at` is sent, and never later. Customer
+accounts cannot hold keys (403 `FORBIDDEN`).
 
 **Rotate.** Create the successor with `POST /api-keys`, signed in as the integration user; deploy
 it; then revoke the old key with `DELETE /api-keys/{id}` (or `PUT /api-keys/{id}` with
 `is_active: false`), from either key or the session. Both keys work until the old one is
-revoked. `expires_at` at creation forces a rotation date; it cannot be changed afterwards.
+revoked. Every key expires at most one year after creation (one year when `expires_at` is not
+sent), so rotate at least once a year; `expires_at` at creation forces an earlier rotation date and
+cannot be changed afterwards. Creating the successor needs a sign-in within the last 15 minutes.
 
 **Revoke.** `DELETE /api-keys/{id}` by the owner answers 200 and the key's next request is 401
 `UNAUTHORIZED`. The row is kept with `is_active: false` and `revoked_at` stamped, and revocation

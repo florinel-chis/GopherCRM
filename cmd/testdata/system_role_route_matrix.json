@@ -419,8 +419,8 @@
           "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
         },
         "customer": {
-          "own": {"status": 201, "code": ""},
-          "malformed_body": {"status": 400, "code": "BAD_REQUEST"}
+          "own": {"status": 403, "code": "FORBIDDEN"},
+          "malformed_body": {"status": 403, "code": "FORBIDDEN"}
         }
       }
     },

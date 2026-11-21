@@ -80,7 +80,9 @@ type LoginRequest struct {
 // @Description Session credentials returned by login, refresh and registration.
 type AuthResponse struct {
 	// Access token: an HS256-signed JWT (claims user_id, email, role,
-	// token_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or
+	// token_version, exp, and auth_time, the sign-in time in Unix seconds:
+	// present on tokens from a sign-in, absent on tokens from POST
+	// /auth/refresh) valid for JWT_EXPIRY_HOURS (24 hours by default), or
 	// until a logout, a password change or a password reset of its account ends
 	// it earlier. Send it as `Authorization: Bearer <token>`.
 	Token string `json:"token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0Mn0.c2lnbmF0dXJl"`

@@ -1071,7 +1071,7 @@ Represents API keys for programmatic access.
 | prefix | string | Yes | - | max 8 | Key prefix for identification |
 | user_id | uint | Yes | - | FK to users | Key owner |
 | last_used_at | timestamp | No | - | - | Last usage timestamp |
-| expires_at | timestamp | No | - | - | Expiration timestamp |
+| expires_at | timestamp | No | - | - | Expiration timestamp. Set at creation: one year ahead by default and at most one year ahead (#532). NULL only on older rows, which count as expiring one year after `created_at`; migration `20261129120003_api_key_lifetime` and the same startup step capped every existing key at one year from the upgrade |
 | is_active | boolean | Yes | true | - | Active status; false once revoked, and a revoked key cannot be switched on again |
 | revoked_at | timestamp | No | - | datetime(3) NULL | When the key was revoked; NULL while it is live and on keys revoked before #525 |
 

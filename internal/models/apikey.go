@@ -24,7 +24,9 @@ type APIKey struct {
 	// effort basis. Absent when the key has never been used. Read-only.
 	LastUsedAt *time.Time `json:"last_used_at,omitempty" example:"2026-10-30T11:00:00Z" readonly:"true"`
 	// Expiry time (RFC 3339); requests with the key are rejected from this
-	// instant on. Absent when the key never expires. Set only at creation.
+	// instant on. Set at creation: one year by default and at most one year
+	// ahead; a key without one (older rows) expires one year after
+	// created_at.
 	ExpiresAt *time.Time `json:"expires_at,omitempty" example:"2026-12-31T23:59:59Z"`
 	// False once the key is revoked: DELETE /api-keys/{id}, PUT with
 	// is_active=false, or a password change, password reset or deactivation

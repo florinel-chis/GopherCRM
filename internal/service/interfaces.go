@@ -37,12 +37,21 @@ const (
 	AuthMethodMigration = models.RoleAuditAuthMethodMigration
 )
 
+// SignedInAtContextKey holds the sign-in time (a time.Time) of a Bearer
+// request whose access token carries auth_time, set by the auth middleware
+// (#532). It is absent for an ApiKey request and for a token from a refresh.
+const SignedInAtContextKey = "signed_in_at"
+
 type AuthService interface {
 	Login(email, password string) (string, error)
 	LoginWithTokens(email, password string) (*AuthTokens, error)
 	ValidateToken(token string) (*models.User, error)
 	ValidateAPIKey(key string) (*models.User, error)
 	GenerateJWT(user *models.User) (string, error)
+	// SignedInAt returns the sign-in time (auth_time claim) of an access
+	// token that verifies, and false when the token does not verify or has
+	// no numeric claim: tokens from a refresh carry none (#532).
+	SignedInAt(token string) (time.Time, bool)
 	GenerateTokens(user *models.User) (*AuthTokens, error)
 	RefreshAccessToken(refreshToken string) (*AuthTokens, error)
 	InvalidateRefreshToken(refreshToken string) error

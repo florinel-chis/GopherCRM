@@ -601,8 +601,14 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 		return nil, authRefusal(AuthAuditReasonKeyRevoked, apiKey.UserID, errors.New("API key has been revoked"))
 	}
 
-	// Check expiration
-	if apiKey.ExpiresAt != nil && apiKey.ExpiresAt.Before(time.Now()) {
+	// Check expiration. A key stored without an expiry (older rows, or rows
+	// written by an older binary) expires one year after it was created
+	// (#532).
+	expiresAt := models.APIKeyExpiryCap(apiKey.CreatedAt)
+	if apiKey.ExpiresAt != nil {
+		expiresAt = *apiKey.ExpiresAt
+	}
+	if expiresAt.Before(time.Now()) {
 		return nil, authRefusal(AuthAuditReasonKeyExpired, apiKey.UserID, errors.New("API key expired"))
 	}
 
@@ -628,6 +634,13 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 			Warn("Rejected API key of an inactive user")
 		return nil, authRefusal(AuthAuditReasonAccountInactive, apiKey.UserID, errors.New("API key owner is not active"))
 	}
+	// Customer accounts hold no API keys (#532); a key left from before is
+	// refused like any other unusable credential.
+	if user.Role == models.RoleCustomer {
+		utils.Logger.WithField("api_key_id", apiKey.ID).WithField("user_id", apiKey.UserID).
+			Warn("Rejected API key of a customer account")
+		return nil, authRefusal(AuthAuditReasonCustomerAccount, apiKey.UserID, errors.New("API key owner is a customer account"))
+	}
 
 	// Update last used timestamp (best effort - don't fail validation if this fails)
 	if err := s.apiKeyRepo.UpdateLastUsed(apiKey.ID); err != nil {
@@ -638,19 +651,62 @@ func (s *authService) ValidateAPIKey(key string) (*models.User, error) {
 	return user, nil
 }
 
+// GenerateJWT signs the access token of a sign-in: a password login, a
+// registration, a single sign-on session or the renewed token of a password
+// change. It carries auth_time, the sign-in time (#532).
 func (s *authService) GenerateJWT(user *models.User) (string, error) {
+	return s.signJWT(user, true)
+}
+
+// signJWT signs an access token for user. With signIn the token carries
+// auth_time = now (Unix seconds); without it (a refresh rotation) it carries
+// none.
+func (s *authService) signJWT(user *models.User, signIn bool) (string, error) {
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"user_id": user.ID,
 		"email":   user.Email,
 		"role":    user.Role,
-		"exp":     time.Now().Add(time.Hour * time.Duration(s.jwtConfig.ExpiryHours)).Unix(),
+		"exp":     now.Add(time.Hour * time.Duration(s.jwtConfig.ExpiryHours)).Unix(),
 		// The owner's session generation; ValidateToken refuses the token once
 		// the stored counter has moved on (#236).
 		tokenVersionClaim: user.TokenVersion,
 	}
+	if signIn {
+		claims[signInTimeClaim] = now.Unix()
+	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(s.jwtConfig.Secret))
+}
+
+// signInTimeClaim is the access-token claim holding the sign-in time in Unix
+// seconds (the OpenID Connect name, #532).
+const signInTimeClaim = "auth_time"
+
+// SignedInAt returns the auth_time claim of an access token. The signature is
+// verified exactly as ValidateToken verifies it; the account is not read. It
+// reports false when the token does not verify, or the claim is absent or not
+// a number.
+func (s *authService) SignedInAt(tokenString string) (time.Time, bool) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(s.jwtConfig.Secret), nil
+	})
+	if err != nil || !token.Valid {
+		return time.Time{}, false
+	}
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return time.Time{}, false
+	}
+	seconds, ok := claims[signInTimeClaim].(float64)
+	if !ok {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(seconds), 0), true
 }
 
 // LoginWithTokens verifies the credentials and issues an access token plus,
@@ -725,14 +781,24 @@ func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, 
 	return raw, nil
 }
 
-// accessTokenFor signs the access token of a wired login, a rotation or a
-// password change through the
-// instance-local seam when one is installed, GenerateJWT otherwise.
+// accessTokenFor signs the access token of a wired login, a single sign-on
+// session or a password change through the instance-local seam when one is
+// installed, GenerateJWT otherwise. The token carries auth_time.
 func (s *authService) accessTokenFor(user *models.User) (string, error) {
 	if s.signAccessToken != nil {
 		return s.signAccessToken(user)
 	}
 	return s.GenerateJWT(user)
+}
+
+// refreshedAccessTokenFor signs the access token of a refresh rotation
+// through the same seam. It carries no auth_time: a refresh is not a sign-in
+// (#532).
+func (s *authService) refreshedAccessTokenFor(user *models.User) (string, error) {
+	if s.signAccessToken != nil {
+		return s.signAccessToken(user)
+	}
+	return s.signJWT(user, false)
 }
 
 // errRefreshOwnerRejected marks a rotation refused because of its owner —
@@ -901,7 +967,7 @@ func (s *authService) rotateRefreshTokenInTransaction(
 		return nil, stored.UserID, err
 	}
 
-	accessToken, err := s.accessTokenFor(user)
+	accessToken, err := s.refreshedAccessTokenFor(user)
 	if err != nil {
 		return nil, stored.UserID, fmt.Errorf("failed to sign access token during rotation: %w", err)
 	}

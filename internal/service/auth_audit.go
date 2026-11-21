@@ -79,6 +79,9 @@ const (
 	AuthAuditReasonKeyRevoked         = "key_revoked"
 	AuthAuditReasonKeyExpired         = "key_expired"
 	AuthAuditReasonSSODisabled        = "sso_disabled"
+	// A key owned by a customer account (#532); the same code as the single
+	// sign-on refusal of a customer login.
+	AuthAuditReasonCustomerAccount = "customer_login_role"
 	// SCIM refusals (#468); a bad SCIM token reuses token_invalid.
 	AuthAuditReasonTokenMissing = "token_missing"
 	AuthAuditReasonTokenRevoked = "token_revoked"

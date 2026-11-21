@@ -398,6 +398,18 @@ func (f *ciFixture) createUser(t *testing.T, email string, role models.UserRole)
 // erasure reaches it.
 func (f *ciFixture) seed(t *testing.T) ciSeed {
 	t.Helper()
+	return f.seedWithOwnerRole(t, models.RoleCustomer)
+}
+
+// seedKeyOwner is seed with a sales owner, for the API-key roots: customer
+// accounts hold no API keys (#532).
+func (f *ciFixture) seedKeyOwner(t *testing.T) ciSeed {
+	t.Helper()
+	return f.seedWithOwnerRole(t, models.RoleSales)
+}
+
+func (f *ciFixture) seedWithOwnerRole(t *testing.T, role models.UserRole) ciSeed {
+	t.Helper()
 	f.issueHooks.reset()
 	f.otherHooks.reset()
 	f.parker.disarm()
@@ -409,7 +421,7 @@ func (f *ciFixture) seed(t *testing.T) ciSeed {
 		require.NoError(t, f.db.WithContext(ctx).Exec("DELETE FROM "+table).Error)
 	}
 	s := ciSeed{
-		owner:     f.createUser(t, ciOwnerEmail, models.RoleCustomer),
+		owner:     f.createUser(t, ciOwnerEmail, role),
 		bystander: f.createUser(t, ciBystanderEmail, models.RoleSales),
 	}
 	ownerID := s.owner.ID
@@ -528,7 +540,10 @@ func ciAwait(t *testing.T, ch <-chan error, what string) error {
 type ciCompetitor struct {
 	name    string
 	erasure bool
-	run     func(f *ciFixture, s ciSeed) error
+	// customerLogin marks a competitor that reaches only a customer-role
+	// owner; the API-key roots, whose owner is staff, skip it.
+	customerLogin bool
+	run           func(f *ciFixture, s ciSeed) error
 	// park arms the hold inside the competitor's transaction, after it took
 	// the owner's row lock.
 	park func(f *ciFixture, h *llHold)
@@ -557,8 +572,9 @@ var ciCompetitors = []ciCompetitor{
 		waitPattern: ciForUpdateWait,
 	},
 	{
-		name:    "a customer-rooted erasure",
-		erasure: true,
+		name:          "a customer-rooted erasure",
+		erasure:       true,
+		customerLogin: true,
 		// DELETE /customers/{id}: the customer erasure reaching its
 		// customer-role login.
 		run:         func(f *ciFixture, s ciSeed) error { return f.customers.Delete(s.customer.ID) },
@@ -983,7 +999,7 @@ func TestAPIKeyCreateOwnerLockDecisionsSQLite(t *testing.T) {
 	}
 	for _, refusal := range refusals {
 		t.Run(refusal.name+" is refused with ErrAccountUnavailable and no row", func(t *testing.T) {
-			s := f.seed(t)
+			s := f.seedKeyOwner(t)
 			applied := false
 			f.keys.beforeLock = func(id uint) {
 				require.Equal(t, s.owner.ID, id)
@@ -1002,7 +1018,7 @@ func TestAPIKeyCreateOwnerLockDecisionsSQLite(t *testing.T) {
 	}
 
 	t.Run("a live, active owner gets exactly one row inserted after the lock", func(t *testing.T) {
-		s := f.seed(t)
+		s := f.seedKeyOwner(t)
 		key, apiKey, err := f.keys.Generate(s.owner.ID, ciKeyName, nil)
 		require.NoError(t, err)
 		require.NotNil(t, apiKey)
@@ -1029,7 +1045,7 @@ func TestAPIKeyCreateOwnerLockAtomicitySQLite(t *testing.T) {
 		"without a transaction manager": NewAPIKeyService(keyRepo, userRepo, nil, ciSecret),
 	} {
 		t.Run(name+" Generate returns ErrAPIKeyIssuanceUnavailable and writes nothing", func(t *testing.T) {
-			s := f.seed(t)
+			s := f.seedKeyOwner(t)
 			key, apiKey, err := svc.Generate(s.owner.ID, ciKeyName, nil)
 			assert.ErrorIs(t, err, ErrAPIKeyIssuanceUnavailable)
 			assert.False(t, errors.Is(err, ErrAccountUnavailable))
@@ -1045,7 +1061,7 @@ func TestAPIKeyCreateOwnerLockAtomicitySQLite(t *testing.T) {
 		"after its insert":  func(h *ciHookSet) { h.afterKeySave = func(*models.APIKey) error { return injected } },
 	} {
 		t.Run("an insert failing "+name+" returns an error, no row and no key", func(t *testing.T) {
-			s := f.seed(t)
+			s := f.seedKeyOwner(t)
 			f.issueHooks.install(install)
 			key, apiKey, err := f.keys.Generate(s.owner.ID, ciKeyName, nil)
 			assert.ErrorIs(t, err, injected)
@@ -1082,8 +1098,13 @@ func runAPIKeyCreateConcurrent(t *testing.T, f *ciFixture, contended bool) {
 
 	for _, c := range ciCompetitors {
 		c := c
+		if c.customerLogin {
+			// A customer account holds no API keys (#532), so no key owner
+			// is reached by a customer-rooted erasure.
+			continue
+		}
 		t.Run(c.name+" committed first refuses the key", func(t *testing.T) {
-			s := f.seed(t)
+			s := f.seedKeyOwner(t)
 			var out generated
 			var err error
 			if !contended {
@@ -1118,7 +1139,7 @@ func runAPIKeyCreateConcurrent(t *testing.T, f *ciFixture, contended bool) {
 		})
 
 		t.Run("key created before "+c.name, func(t *testing.T) {
-			s := f.seed(t)
+			s := f.seedKeyOwner(t)
 			var out generated
 			if !contended {
 				require.NoError(t, generate(s, &out)())
@@ -1175,7 +1196,7 @@ func TestCredentialIssuanceOwnerLockLogsOmitPersonalData(t *testing.T) {
 	var mailed []string
 
 	// Password-reset request: success, mail failure, refusals, rollback, unwired.
-	s := f.seed(t)
+	s := f.seedKeyOwner(t)
 	require.NoError(t, f.issuer.RequestPasswordReset(ciOwnerEmail))
 	f.mailer.fail = errors.New("smtp down")
 	require.NoError(t, f.issuer.RequestPasswordReset(ciOwnerEmail))
@@ -1218,7 +1239,7 @@ func TestCredentialIssuanceOwnerLockLogsOmitPersonalData(t *testing.T) {
 	f.issuer.resetBeforeLock = func(id uint) { require.NoError(t, f.users.Delete(id)) }
 	require.NoError(t, f.issuer.RequestPasswordReset(ciOwnerEmail))
 	f.issuer.resetBeforeLock = nil
-	s = f.seed(t)
+	s = f.seedKeyOwner(t)
 	f.keys.beforeLock = func(id uint) { require.NoError(t, f.users.Delete(id)) }
 	_, _, err = f.keys.Generate(s.owner.ID, ciKeyName, nil)
 	require.ErrorIs(t, err, ErrAccountUnavailable)
