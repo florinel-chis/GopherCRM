@@ -9,13 +9,30 @@ import { defineConfig, devices } from '@playwright/test';
 // dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 /**
- * `make e2e` (scripts/e2e/run.sh) sets E2E_UI_PORT: the run then starts its own
- * Vite server on that port and never reuses one that is already running, which
- * could be pointed at a different API. Without it (manual runs) the dev server
- * on 5173 is reused as before.
+ * `make e2e` (scripts/e2e/run.sh) builds the web app the way the release
+ * artifact does (VITE_API_BASE_URL=/api/v1) into E2E_UI_DIST and sets
+ * E2E_UI_PORT and E2E_API_ORIGIN: the run then serves that build with
+ * `vite preview` on that port, which forwards /api/v1 to E2E_API_ORIGIN
+ * (vite.config.ts), and never reuses a server that is already running, which
+ * could be serving something else. With E2E_UI_PORT alone the run starts its
+ * own dev server on that port. Without either (manual runs) the dev server on
+ * 5173 is reused as before.
  */
 const e2eUiPort = process.env.E2E_UI_PORT;
+const e2eUiDist = process.env.E2E_UI_DIST;
+if (e2eUiDist && (!e2eUiPort || !process.env.E2E_API_ORIGIN)) {
+  throw new Error(
+    'E2E_UI_DIST is set, so E2E_UI_PORT and E2E_API_ORIGIN must be set too: the built web app is served on E2E_UI_PORT and forwards /api/v1 to E2E_API_ORIGIN',
+  );
+}
 const uiBaseURL = `http://localhost:${e2eUiPort ?? '5173'}`;
+
+function webServerCommand(): string {
+  if (e2eUiDist) {
+    return `npx vite preview --outDir ${JSON.stringify(e2eUiDist)} --port ${e2eUiPort} --strictPort`;
+  }
+  return e2eUiPort ? `npm run dev -- --port ${e2eUiPort} --strictPort` : 'npm run dev';
+}
 
 /**
  * See https://playwright.dev/docs/test-configuration.
@@ -64,11 +81,11 @@ export default defineConfig({
     },
   ],
 
-  /* Run your local dev server before starting the tests */
+  /* Serve the built web app (make e2e) or run the dev server before starting the tests */
   webServer: {
-    command: e2eUiPort ? `npm run dev -- --port ${e2eUiPort} --strictPort` : 'npm run dev',
+    command: webServerCommand(),
     url: uiBaseURL,
-    reuseExistingServer: !e2eUiPort,
+    reuseExistingServer: !e2eUiPort && !e2eUiDist,
     stdout: 'ignore',
     stderr: 'pipe',
     timeout: 120 * 1000, // 2 minutes to start

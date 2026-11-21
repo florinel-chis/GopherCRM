@@ -207,7 +207,10 @@ describe('VITE_APP_NAME signed-out browser spec', () => {
       'Welcome to ',
       'Create your ',
       'loadEnv',
-      "loadEnv('development', process.cwd(), 'VITE_')",
+      // The mode of the served web app: the production build under make e2e
+      // (E2E_UI_DIST), the dev server otherwise.
+      "process.env.E2E_UI_DIST ? 'production' : 'development'",
+      "loadEnv(mode, process.cwd(), 'VITE_')",
       'VITE_APP_NAME',
       'GoCRM',
     ]) {

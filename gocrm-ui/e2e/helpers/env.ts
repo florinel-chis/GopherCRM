@@ -3,9 +3,11 @@
  * Where the app under test lives, for specs that call the API directly or need
  * to recognise the UI origin.
  *
- * `make e2e` (scripts/e2e/run.sh) exports VITE_API_BASE_URL and E2E_UI_PORT for
- * the backend and Vite server it starts. Manual runs fall back to the local dev
- * defaults: gocrm-ui/.env points the UI at :8090, and Vite serves on :5173.
+ * `make e2e` (scripts/e2e/run.sh) exports VITE_API_BASE_URL (the backend it
+ * starts, for calls made from Node) and E2E_UI_PORT (the port `vite preview`
+ * serves the built web app on; the bundle itself uses the relative /api/v1).
+ * Manual runs fall back to the local dev defaults: gocrm-ui/.env points the UI
+ * at :8090, and Vite serves on :5173.
  */
 export const API_BASE_URL = process.env.VITE_API_BASE_URL ?? 'http://localhost:8090/api/v1';
 

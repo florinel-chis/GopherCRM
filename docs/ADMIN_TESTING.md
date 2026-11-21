@@ -99,8 +99,10 @@ The entity suite includes realistic CRM workflows:
 ## Running the Tests
 
 The standard way is `make e2e` from the repository root (details in `gocrm-ui/e2e/README.md`): it
-resets the `gocrm_e2e` database, builds and starts the backend and a Vite server on free ports,
-runs Playwright and stops the backend again, so the API and frontend need not already be running.
+resets the `gocrm_e2e` database, builds and starts the backend on a free port, builds the web app
+as the release does (API base `/api/v1`) and serves it with `vite preview` on another, forwarding
+`/api/v1` to the backend, runs Playwright and stops the backend again, so the API and frontend need
+not already be running.
 The default run needs a running MySQL or MariaDB server and credentials with privileges on
 `gocrm_e2e.*`; add `E2E_DB_DRIVER=sqlite` to run without a database server. `SPECS` selects specs by
 path relative to `gocrm-ui/`:
