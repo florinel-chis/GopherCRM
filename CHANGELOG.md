@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Changing the single sign-on issuer asks for confirmation while accounts are linked (#556).**
+  `PUT /settings/sso` with an otherwise valid body whose effective issuer (`issuer_url`, or
+  `OIDC_ISSUER_URL` when it is empty) differs from the current one answers 409
+  `ISSUER_CHANGE_UNCONFIRMED` with `details.affected_links`, the number of `user_identities` rows
+  under the current issuer (any source, erased accounts included, compared byte for byte), and
+  stores nothing, unless the body carries `"confirm_issuer_change": true`. Setting the first
+  issuer, keeping it, or changing it while no account is linked saves as before. Settings → Single
+  sign-on shows the dialog "Change the issuer?" with that count and resends the save on
+  "Change issuer". The issuer URL, stored or from `OIDC_ISSUER_URL`, is now limited to 512 bytes,
+  the width of `user_identities.issuer` (was 2048); a longer value is refused on save and a longer
+  `OIDC_ISSUER_URL` is treated as unset.
 - **A webhook endpoint that keeps failing is paused with a growing back-off (#569).** Every
   delivery attempt that was actually sent and failed (a non-2xx answer, a redirect, a timeout, a
   connection failure or a refused destination) adds one to the new

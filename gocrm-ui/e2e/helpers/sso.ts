@@ -35,6 +35,7 @@ export interface SSOSettingsBody {
   scopes: string[];
   role_mapping: SSORoleMapping[];
   client_secret?: string;
+  confirm_issuer_change?: boolean;
 }
 
 export interface UserRow {
@@ -178,6 +179,9 @@ export const SSO_OFF: SSOSettingsBody = {
   scopes: [],
   role_mapping: [],
   client_secret: '',
+  // Sign-ins of the suite link accounts under the test issuer, so clearing it
+  // is an issuer change that needs the confirmation.
+  confirm_issuer_change: true,
 };
 
 /** The public status the login page reads. */

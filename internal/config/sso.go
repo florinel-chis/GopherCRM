@@ -67,8 +67,10 @@ func envBoolRecognised(name string) bool {
 	return raw == "true" || raw == "1" || raw == "false" || raw == "0"
 }
 
-// OIDCIssuerMaxBytes caps an issuer URL.
-const OIDCIssuerMaxBytes = 2048
+// OIDCIssuerMaxBytes caps an issuer URL at the width of
+// user_identities.issuer (models.UserIdentityIssuerMaxLength; this package
+// does not import models, a service test pins the two together).
+const OIDCIssuerMaxBytes = 512
 
 // ParseOIDCIssuer validates an OpenID Connect issuer URL and returns it
 // trimmed and otherwise unchanged, because issuers are compared exactly. It
@@ -79,7 +81,7 @@ const OIDCIssuerMaxBytes = 2048
 func ParseOIDCIssuer(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if len(trimmed) > OIDCIssuerMaxBytes {
-		return "", errors.New("issuer URL is longer than 2048 bytes")
+		return "", errors.New("issuer URL is longer than 512 bytes")
 	}
 	if _, err := ParseAEOEndpoint(trimmed, false); err != nil {
 		reason := strings.TrimPrefix(err.Error(), "base URL ")

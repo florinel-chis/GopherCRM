@@ -729,4 +729,75 @@ test.describe('Single sign-on with the test issuer', () => {
       await admin.dispose();
     }
   });
+  test('S14: changing the issuer asks for confirmation and reports the linked accounts', async ({
+    page,
+    browser,
+  }) => {
+    // At least one link under the test issuer, whatever ran before.
+    const linked = await ssoSignInOK(browser, {
+      ...uniqueIdentity('issuer'),
+      roles: [CLAIM_SALES],
+    });
+    await linked.context.close();
+
+    const admin = await APIClient.admin();
+    const before = await currentSettings(admin);
+    expect(before.issuer_url).toBe(OIDC_ISSUER_URL);
+    const otherIssuer = 'https://other-idp.example.test';
+
+    const puts: string[] = [];
+    page.on('request', (req) => {
+      if (req.method() === 'PUT' && new URL(req.url()).pathname.endsWith('/settings/sso')) {
+        puts.push(req.postData() ?? '');
+      }
+    });
+    try {
+      await new AdminAuthHelper(page).ensureAdminLoggedIn();
+      const settings = new SSOSettingsPage(page);
+      await settings.goto();
+      await expect(settings.issuerURL).toHaveValue(OIDC_ISSUER_URL, { timeout: LOAD });
+      await settings.issuerURL.fill(otherIssuer);
+
+      // The save is refused with the number of links under the current issuer.
+      const refused = await settings.save();
+      expect(refused.status(), await refused.text()).toBe(409);
+      const refusal = await refused.json();
+      expect(refusal.error.code).toBe('ISSUER_CHANGE_UNCONFIRMED');
+      const links: number = refusal.error.details.affected_links;
+      expect(links).toBeGreaterThanOrEqual(1);
+      expect(JSON.parse(puts[0])).not.toHaveProperty('confirm_issuer_change');
+
+      const dialog = settings.issuerChangeDialog;
+      await expect(dialog).toBeVisible({ timeout: LOAD });
+      await expect(dialog).toContainText(
+        links === 1
+          ? '1 account link uses the current issuer.'
+          : `${links} account links use the current issuer.`,
+      );
+      await expect(dialog).toContainText('not recognised at their next sign-in');
+
+      // Cancel: nothing more is sent, the form keeps the new value, nothing is stored.
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(dialog).toBeHidden();
+      await expect(settings.issuerURL).toHaveValue(otherIssuer);
+      expect(puts).toHaveLength(1);
+      expect((await admin.getSSO()).issuer_url).toBe(OIDC_ISSUER_URL);
+
+      // Save again and confirm: the same body plus the flag, stored.
+      const again = await settings.save();
+      expect(again.status()).toBe(409);
+      await expect(dialog).toBeVisible({ timeout: LOAD });
+      const confirmed = await settings.confirmIssuerChange();
+      expect(confirmed.status(), await confirmed.text()).toBe(200);
+      await expect(dialog).toBeHidden();
+      expect(puts).toHaveLength(3);
+      expect(JSON.parse(puts[2])).toEqual({ ...JSON.parse(puts[1]), confirm_issuer_change: true });
+      expect((await admin.getSSO()).issuer_url).toBe(otherIssuer);
+    } finally {
+      // Back to the test issuer; no link exists under the other one, so no flag is needed.
+      await admin.putSSO(before);
+      expect((await admin.getSSO()).issuer_url).toBe(OIDC_ISSUER_URL);
+      await admin.dispose();
+    }
+  });
 });

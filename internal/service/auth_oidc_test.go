@@ -645,7 +645,7 @@ func newOIDCFixture(t *testing.T, db, competitor *gorm.DB) *oidcFixture {
 		db:         db,
 		competitor: competitor,
 		issuer:     newOIDCTestIssuer(t),
-		sso:        NewSSOSettingsService(configs, roleRepo, config.SSOConfig{}),
+		sso:        NewSSOSettingsService(configs, roleRepo, repository.NewUserIdentityRepository(db), config.SSOConfig{}),
 		clock:      time.Now().UTC().Truncate(time.Millisecond),
 		roleIDs:    map[models.UserRole]uint{},
 	}
@@ -656,7 +656,9 @@ func newOIDCFixture(t *testing.T, db, competitor *gorm.DB) *oidcFixture {
 		repository.NewPasswordResetTokenRepository(db), txManager, nil, oidcTestJWTConfig(),
 		oidcTestAppBaseURL, oidcTestAPIKeySecret).(*authService)
 	f.defaultSSO = f.sso
-	f.newSSO = func(base config.SSOConfig) SSOSettingsService { return NewSSOSettingsService(configs, roleRepo, base) }
+	f.newSSO = func(base config.SSOConfig) SSOSettingsService {
+		return NewSSOSettingsService(configs, roleRepo, repository.NewUserIdentityRepository(db), base)
+	}
 	f.audit = NewAuthAuditService(repository.NewAuthAuditRepository(db))
 	f.svc = NewOIDCService(f.sso, f.auth, userRepo, roleRepo, repository.NewRoleAuditRepository(db), refreshRepo,
 		repository.NewUserIdentityRepository(db), repository.NewOIDCLoginAttemptRepository(db), txManager,
@@ -2237,7 +2239,7 @@ func TestOIDCGraphDefaults(t *testing.T) {
 
 	for raw, want := range map[int]int{0: 10, -1: 10, 51: 10, 1: 1, 50: 50, 7: 7} {
 		assert.Equal(t, want, effectiveGraphMaxPages(raw), "OIDC_GRAPH_MAX_PAGES=%d", raw)
-		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), config.SSOConfig{GraphMaxPages: raw}).SSOConfig(ssoCtx())
+		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), nil, config.SSOConfig{GraphMaxPages: raw}).SSOConfig(ssoCtx())
 		require.NoError(t, err)
 		assert.Equal(t, want, cfg.GraphMaxPages, "effective GraphMaxPages for %d", raw)
 	}

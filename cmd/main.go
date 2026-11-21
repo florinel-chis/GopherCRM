@@ -341,7 +341,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// Single sign-on settings (#434): stored security.sso.* rows over the
 	// OIDC_* fallbacks. The auth service reads security.sso.allow_password
 	// from them (#457) and the OpenID Connect sign-in below reads the rest.
-	ssoSettings := service.NewSSOSettingsService(configService, roleRepo, cfg.SSO)
+	ssoSettings := service.NewSSOSettingsService(configService, roleRepo, repository.NewUserIdentityRepository(models.DB), cfg.SSO)
 	// The password reset confirmation claims the token, writes the password
 	// and revokes the sessions in one transaction, so the auth service takes
 	// the same transaction manager as the other transactional services. An

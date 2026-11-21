@@ -58,6 +58,22 @@ func (r *userIdentityRepository) ExistsForUser(userID uint) (bool, error) {
 	return count > 0, nil
 }
 
+// CountByIssuer counts the rows whose issuer equals issuer exactly. utf8mb4_bin
+// is PAD SPACE on MySQL/MariaDB, where issuer = ? alone also matches a stored
+// issuer with a trailing space; the LENGTH guard refuses it on every engine.
+func (r *userIdentityRepository) CountByIssuer(issuer string) (int64, error) {
+	if issuer == "" {
+		return 0, nil
+	}
+	var count int64
+	if err := r.db.Model(&models.UserIdentity{}).
+		Where("issuer = ? AND LENGTH(issuer) = LENGTH(?)", issuer, issuer).
+		Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (r *userIdentityRepository) WithTx(tx *gorm.DB) UserIdentityRepository {
 	return &userIdentityRepository{db: tx}
 }

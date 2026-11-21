@@ -29,7 +29,9 @@ describes what GopherCRM does today. Single sign-on itself is described in
   for it, and naming it as a group member is refused with 400 `invalidValue`. A POST whose user
   name is such an account's address answers 409 `uniqueness` and changes nothing. Customer
   accounts and erased accounts are never served either. Changing the issuer in Settings → Single
-  sign-on hides the accounts linked only under the old issuer.
+  sign-on hides the accounts linked only under the old issuer; while accounts are linked under the
+  current issuer, the settings ask for confirmation first and report how many account links stop
+  matching.
 
 ## Base URL
 

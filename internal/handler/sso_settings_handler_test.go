@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -70,9 +71,24 @@ const ssoHandlerTestSecret = "handler-test-client-secret-0434"
 // ssoValidBody is an otherwise-valid PUT body.
 const ssoValidBody = `{"enabled":true,"issuer_url":"https://idp.example.com","client_id":"crm","client_secret":"` + ssoHandlerTestSecret + `","scopes":["openid","email"],"role_mapping":[{"claim":"groups","value":"g-1","role_id":2}]}`
 
+// ssoLinkCounter answers CountByIssuer with links and records each issuer.
+type ssoLinkCounter struct {
+	links   int64
+	issuers []string
+}
+
+func (c *ssoLinkCounter) CountByIssuer(issuer string) (int64, error) {
+	c.issuers = append(c.issuers, issuer)
+	return c.links, nil
+}
+
 func newSSOSettingsTestRouter(store *ssoConfigStore, caller func(*gin.Context)) *gin.Engine {
+	return newSSOSettingsTestRouterWithLinks(store, &ssoLinkCounter{}, caller)
+}
+
+func newSSOSettingsTestRouterWithLinks(store *ssoConfigStore, links service.SSOIssuerLinks, caller func(*gin.Context)) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := NewSSOSettingsHandler(service.NewSSOSettingsService(store, ssoRoleRepo{}, config.SSOConfig{}))
+	h := NewSSOSettingsHandler(service.NewSSOSettingsService(store, ssoRoleRepo{}, links, config.SSOConfig{}))
 	router := gin.New()
 	router.Use(middleware.ErrorHandler())
 	group := router.Group("", func(c *gin.Context) {
@@ -135,7 +151,7 @@ func TestSSOSettingsHandlerForbidden(t *testing.T) {
 	t.Run("handler repeats the guard", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
 		store := newSSOConfigStore()
-		h := NewSSOSettingsHandler(service.NewSSOSettingsService(store, ssoRoleRepo{}, config.SSOConfig{}))
+		h := NewSSOSettingsHandler(service.NewSSOSettingsService(store, ssoRoleRepo{}, nil, config.SSOConfig{}))
 		router := gin.New()
 		router.Use(func(c *gin.Context) { c.Set("user_role", "sales"); c.Next() })
 		router.GET("/settings/sso", h.Get)
@@ -206,6 +222,58 @@ func TestSSOSettingsHandlerAdmin(t *testing.T) {
 			assert.Equal(t, before, store.snapshot(), "no row changed")
 		})
 	}
+}
+
+func TestSSOSettingsHandlerIssuerChange(t *testing.T) {
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	const changed = `{"enabled":true,"issuer_url":"https://other-idp.example.com","client_id":"crm","scopes":["openid","email"],"role_mapping":[{"claim":"groups","value":"g-1","role_id":2}]}`
+
+	t.Run("409 without the flag, nothing stored; 200 with it", func(t *testing.T) {
+		store := newSSOConfigStore()
+		store.values[models.ConfigKeySSOIssuerURL] = "https://idp.example.com"
+		before := store.snapshot()
+		links := &ssoLinkCounter{links: 2}
+		router := newSSOSettingsTestRouterWithLinks(store, links, asSystemRole("admin"))
+
+		w := ssoRequest(router, http.MethodPut, changed)
+		require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+		var envelope struct {
+			Error struct {
+				Code    string                 `json:"code"`
+				Details map[string]interface{} `json:"details"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		assert.Equal(t, "ISSUER_CHANGE_UNCONFIRMED", envelope.Error.Code)
+		assert.Equal(t, float64(2), envelope.Error.Details["affected_links"], "a JSON number")
+		assert.Equal(t, []string{"https://idp.example.com"}, links.issuers, "counted under the current issuer")
+		assert.Zero(t, store.writes)
+		assert.Equal(t, before, store.snapshot())
+
+		confirmed := changed[:len(changed)-1] + `,"confirm_issuer_change":true}`
+		w = ssoRequest(router, http.MethodPut, confirmed)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, "https://other-idp.example.com", store.values[models.ConfigKeySSOIssuerURL])
+		assert.Len(t, links.issuers, 1, "a confirmed save counts nothing")
+	})
+
+	t.Run("400 for a 513-byte issuer", func(t *testing.T) {
+		store := newSSOConfigStore()
+		issuer := "https://idp.example.com/" + strings.Repeat("a", 513-len("https://idp.example.com/"))
+		body := `{"issuer_url":"` + issuer + `","scopes":["openid"]}`
+		w := ssoRequest(newSSOSettingsTestRouter(store, asSystemRole("admin")), http.MethodPut, body)
+		require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+		var envelope struct {
+			Error struct {
+				Code    string            `json:"code"`
+				Details map[string]string `json:"details"`
+			} `json:"error"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+		assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code)
+		assert.Contains(t, envelope.Error.Details["issuer_url"], "at most 512 bytes")
+		assert.Zero(t, store.writes)
+	})
 }
 
 func TestSSOSettingsHandlerAllowPassword(t *testing.T) {

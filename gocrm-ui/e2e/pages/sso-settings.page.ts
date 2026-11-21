@@ -35,6 +35,11 @@ export class SSOSettingsPage {
     return this.page.getByTestId('sso-secret-status');
   }
 
+  /** The confirmation a save that changes the issuer in force opens (#556). */
+  get issuerChangeDialog() {
+    return this.page.getByRole('dialog', { name: 'Change the issuer?' });
+  }
+
   /** Adds a role-mapping row and fills it: claim, value and role (by name). */
   async addMapping(claim: 'groups' | 'roles', value: string, roleName: string) {
     const rows = this.page.locator('[data-testid^="sso-mapping-row-"]');
@@ -53,12 +58,25 @@ export class SSOSettingsPage {
 
   /** Presses Save and returns the PUT /settings/sso response. */
   async save() {
+    return this.answerTo(() =>
+      this.page.getByRole('button', { name: 'Save', exact: true }).click(),
+    );
+  }
+
+  /** Presses "Change issuer" in the confirmation and returns the PUT it sends. */
+  async confirmIssuerChange() {
+    return this.answerTo(() =>
+      this.issuerChangeDialog.getByRole('button', { name: 'Change issuer', exact: true }).click(),
+    );
+  }
+
+  private async answerTo(action: () => Promise<void>) {
     const saved = this.page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname.endsWith('/settings/sso') &&
         response.request().method() === 'PUT',
     );
-    await this.page.getByRole('button', { name: 'Save', exact: true }).click();
+    await action();
     return saved;
   }
 }

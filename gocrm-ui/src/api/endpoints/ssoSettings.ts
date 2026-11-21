@@ -40,6 +40,9 @@ export interface SSOSettings {
 
 // PUT /settings/sso is a full replacement. client_secret absent keeps the
 // stored secret, "" clears it, any other value replaces it.
+// confirm_issuer_change true confirms a save that changes the issuer in force
+// while accounts are linked to the current one; without it such a save is
+// answered 409 ISSUER_CHANGE_UNCONFIRMED with details.affected_links.
 export interface SSOSettingsUpdate {
   enabled: boolean;
   allow_password: boolean;
@@ -48,6 +51,7 @@ export interface SSOSettingsUpdate {
   scopes: string[];
   role_mapping: SSORoleMapping[];
   client_secret?: string;
+  confirm_issuer_change?: boolean;
 }
 
 export const ssoSettingsApi = {

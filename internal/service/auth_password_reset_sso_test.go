@@ -195,7 +195,7 @@ func newSSOPolicyFixture(t *testing.T, db *gorm.DB) *ssoPolicyFixture {
 	configs := NewConfigurationService(repository.NewConfigurationRepository(db),
 		utils.NewSecretBox(resetTestSecret, "configuration-secret"))
 	require.NoError(t, configs.InitializeDefaults())
-	policy := NewSSOSettingsService(configs, repository.NewRoleRepository(db), config.SSOConfig{})
+	policy := NewSSOSettingsService(configs, repository.NewRoleRepository(db), repository.NewUserIdentityRepository(db), config.SSOConfig{})
 	f := &ssoPolicyFixture{ssoResetFixture: &ssoResetFixture{db: db, mailer: &fakeFormMailer{}}, configs: configs}
 	f.svc = NewAuthServiceWithSessions(
 		repository.NewUserRepository(db),
