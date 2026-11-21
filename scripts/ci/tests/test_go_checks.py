@@ -69,7 +69,8 @@ elif sys.argv[1] == 'test':
                      'TestWebhookDeletedFanOutSQLite', 'TestWebhookDeletedFanOutMySQL',
                      'TestWebhookDeletedAtomicitySQLite', 'TestWebhookDeletedAtomicityMySQL',
                      'TestWebhookWorkerPoolSQLite', 'TestWebhookWorkerPoolMySQL',
-                     'TestWebhookEndpointPauseSQLite', 'TestWebhookEndpointPauseMySQL'):
+                     'TestWebhookEndpointPauseSQLite', 'TestWebhookEndpointPauseMySQL',
+                     'TestWebhookOutboxBatchInsertSQLite', 'TestWebhookOutboxBatchInsertMySQL'):
             self.assertIn(name, selected['internal/service'])
 
     def test_missing_database_or_boundary_cannot_reduce_profile(self):

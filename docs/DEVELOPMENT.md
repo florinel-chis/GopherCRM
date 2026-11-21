@@ -3671,9 +3671,10 @@ commits. Code: `internal/models/webhook.go`,
 - **Outbox in the creating transaction.** `WithLeadWebhooks(repo)`, `WithCustomerWebhooks(repo,
   txManager)`, `WithTicketWebhooks(repo, txManager)` and `WithFormWebhooks(repo)`; `cmd/main.go`
   passes one `WebhookRepository` and the shared `txManager`. After the record insert,
-  `enqueueWebhookEvent` reads the active endpoints subscribed to the type (a plain read) and inserts
-  one `pending` row per endpoint, all with one `evt_<32 hex>` id, `attempts` 0 and `next_attempt_at
-  = occurred_at` (UTC, ms), so the row is due at once. Paths: `LeadService.Create`, the form
+  `enqueueWebhookEvent` reads the active endpoints subscribed to the type (a plain read) and writes
+  one `pending` row per endpoint in one batched INSERT in that transaction (pinned by
+  `TestWebhookOutboxBatchInsert{SQLite,MySQL}`), all with one `evt_<32 hex>` id, `attempts` 0
+  and `next_attempt_at = occurred_at` (UTC, ms), so the row is due at once. Paths: `LeadService.Create`, the form
   create_lead path for a new lead (never a repeat enquiry), `CustomerService.Create` (now one
   transaction when wired), `LeadService.ConvertToCustomer` (inside each retry attempt, so a replay
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never

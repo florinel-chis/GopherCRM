@@ -1102,6 +1102,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Webhook outbox rows of one change are written in one batched INSERT (#570).** The outbox rows
+  of one event (one per subscribed endpoint) and of a bulk batch of records are written by a
+  single multi-row INSERT inside the transaction that makes the change, so they roll back with it.
+  The production path already did this; `TestWebhookOutboxBatchInsert{SQLite,MySQL}` now pins one
+  statement per change, in the caller's transaction, on SQLite, MySQL and MariaDB. No behaviour
+  change.
 - **Webhook deliveries are sent by a small worker pool (#568).** A delivery pass used to send its
   due rows one after another, so one slow endpoint held up every other endpoint until its request
   timed out. The runtime now hands each endpoint's due rows to one of 4 workers
