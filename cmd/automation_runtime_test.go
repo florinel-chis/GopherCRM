@@ -9,9 +9,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -210,13 +212,74 @@ func TestAutomationRuntimeLifecycle(t *testing.T) {
 	})
 
 	t.Run("combineStops runs every handle and joins their errors", func(t *testing.T) {
-		calls := 0
-		stop := combineStops(nil, func(context.Context) error { calls++; return nil }, func(context.Context) error { calls++; return context.DeadlineExceeded })
+		// The handles run on their own goroutines, so the counter is atomic.
+		var calls atomic.Int32
+		stop := combineStops(nil, func(context.Context) error { calls.Add(1); return nil }, func(context.Context) error { calls.Add(1); return context.DeadlineExceeded })
 		err := stop(context.Background())
-		assert.Equal(t, 2, calls)
+		assert.Equal(t, int32(2), calls.Load())
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 		assert.NoError(t, combineStops()(context.Background()))
 		assert.NoError(t, newAutomationBackground(nil).Stop(context.Background()))
+	})
+
+	t.Run("combineStops starts every handle before any returns", func(t *testing.T) {
+		// The first handle can only finish once the second has started, so a
+		// combined call that ran them one after another would sit out the
+		// deadline.
+		signal := make(chan struct{})
+		first := func(ctx context.Context) error {
+			select {
+			case <-signal:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		second := func(context.Context) error { close(signal); return nil }
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		started := time.Now()
+		err := combineStops(first, second)(ctx)
+		assert.NoError(t, err)
+		assert.Less(t, time.Since(started), time.Second)
+	})
+
+	t.Run("a slow handle does not starve the others", func(t *testing.T) {
+		slow := func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		var secondErr, thirdErr error
+		var finished atomic.Bool
+		second := func(ctx context.Context) error {
+			secondErr = ctx.Err()
+			time.Sleep(50 * time.Millisecond)
+			finished.Store(true)
+			return nil
+		}
+		third := func(ctx context.Context) error {
+			thirdErr = ctx.Err()
+			return nil
+		}
+		// A handle that returns its error only after the deadline still
+		// appears in the joined result.
+		late := errors.New("late handle")
+		lateStop := func(ctx context.Context) error {
+			<-ctx.Done()
+			time.Sleep(20 * time.Millisecond)
+			return late
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		err := combineStops(slow, second, third, lateStop)(ctx)
+		elapsed := time.Since(started)
+		assert.NoError(t, secondErr, "the second handle starts before the deadline")
+		assert.NoError(t, thirdErr, "the third handle starts before the deadline")
+		assert.True(t, finished.Load(), "the combined call joins every handle before it returns")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.ErrorIs(t, err, late)
+		assert.Less(t, elapsed, 2*time.Second)
 	})
 }
 

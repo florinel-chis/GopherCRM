@@ -1156,6 +1156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Shutdown stops the background workers together (#561).** At shutdown the automation worker,
+  the form retention purge, the bulk operation sweep, the webhook sender and AEO are now stopped
+  at the same time and waited for together within the existing 15-second limit, instead of one
+  after another, so a worker that is slow to stop no longer delays the others. The endpoint read
+  and the expired-secret clear inside a webhook delivery attempt now each have a 5-second limit,
+  like the write that records the attempt's outcome.
+
 - **Browser tests started by `make e2e` and the release workflow run against the production build
   of the web app (#563).** `scripts/e2e/run.sh` builds the web app with
   `VITE_API_BASE_URL=/api/v1 npm run build`, the relative API base of the release artifact and the

@@ -311,6 +311,50 @@ func TestWebhookUndeliverableEndpoint(t *testing.T) {
 	assert.True(t, rt.SenderStatus().Paused)
 }
 
+// deadlineRecordingWebhookRepository wraps the real repository and records,
+// for GetEndpoint and ClearExpiredPreviousSecret, the time of each call and
+// the deadline its context carried, then delegates.
+type deadlineRecordingWebhookRepository struct {
+	repository.WebhookRepository
+	mu    sync.Mutex
+	reads map[string][]recordedDeadline
+}
+
+type recordedDeadline struct {
+	calledAt time.Time
+	deadline time.Time
+	ok       bool
+}
+
+func (r *deadlineRecordingWebhookRepository) record(name string, ctx context.Context) {
+	// The timestamp is taken before the deadline is read, so deadline <=
+	// calledAt + bound holds for any bound set before the call.
+	calledAt := time.Now()
+	deadline, ok := ctx.Deadline()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.reads == nil {
+		r.reads = map[string][]recordedDeadline{}
+	}
+	r.reads[name] = append(r.reads[name], recordedDeadline{calledAt: calledAt, deadline: deadline, ok: ok})
+}
+
+func (r *deadlineRecordingWebhookRepository) calls(name string) []recordedDeadline {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]recordedDeadline(nil), r.reads[name]...)
+}
+
+func (r *deadlineRecordingWebhookRepository) GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error) {
+	r.record("GetEndpoint", ctx)
+	return r.WebhookRepository.GetEndpoint(ctx, id)
+}
+
+func (r *deadlineRecordingWebhookRepository) ClearExpiredPreviousSecret(ctx context.Context, id uint, now time.Time) error {
+	r.record("ClearExpiredPreviousSecret", ctx)
+	return r.WebhookRepository.ClearExpiredPreviousSecret(ctx, id, now)
+}
+
 func TestWebhookRuntimeLifecycle(t *testing.T) {
 	assert.Equal(t, 5*time.Second, WebhookPollInterval)
 	assert.Equal(t, 10*time.Second, WebhookRequestTimeout)
@@ -414,6 +458,40 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	})
+
+	t.Run("the attempt's database reads carry a deadline", func(t *testing.T) {
+		env := webhookRuntimeEnv(t)
+		reads := newWebhookConsumer(t)
+		created := env.endpoint(reads.url("/hook"), true, models.WebhookEventLeadCreated)
+		_, err := env.endpoints.RotateEndpointSecret(context.Background(), created.ID)
+		require.NoError(t, err)
+		// Close the rotation window, so the attempt clears the previous secret.
+		closed := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+		require.NoError(t, env.db.Model(&models.WebhookEndpoint{}).Where("id = ?", created.ID).
+			Update("previous_secret_expires_at", closed).Error)
+		row := seedPoolDelivery(t, env, created.ID, env.seedLead().ID, time.Now().UTC().Add(-time.Minute))
+
+		wrapper := &deadlineRecordingWebhookRepository{WebhookRepository: env.repo}
+		rt := NewWebhookRuntime(wrapper, reads.guard(nil), env.box)
+		result, err := rt.RunOnce(context.Background())
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.Succeeded)
+
+		for _, name := range []string{"GetEndpoint", "ClearExpiredPreviousSecret"} {
+			calls := wrapper.calls(name)
+			require.NotEmpty(t, calls, "%s is called", name)
+			for _, call := range calls {
+				require.True(t, call.ok, "%s runs with a deadline", name)
+				assert.True(t, call.deadline.After(call.calledAt), "%s: the deadline lies after the call", name)
+				assert.False(t, call.deadline.After(call.calledAt.Add(webhookFinishTimeout)),
+					"%s: the deadline is at most webhookFinishTimeout after the call", name)
+			}
+		}
+		var stored models.WebhookEndpoint
+		require.NoError(t, env.db.Where("id = ?", created.ID).Take(&stored).Error)
+		assert.Nil(t, stored.PreviousSecretSealed, "the expired previous secret is cleared")
+		assert.Equal(t, models.WebhookDeliverySucceeded, env.delivery(row.ID).Status, "the request is not cut short by the read bound")
 	})
 
 	t.Run("Stop drains every attempt in flight of a pool", func(t *testing.T) {

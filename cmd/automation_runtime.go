@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -10,8 +11,8 @@ import (
 
 // automationBackground owns the follow-up automation worker of this process.
 // Stop is what main calls at shutdown, through the combined handle
-// setupDependencies returns (combineStops: automation first, then the form
-// retention purge, then AEO), under the one drain deadline main passes,
+// setupDependencies returns (combineStops, which stops every background runtime
+// at the same time), under the one drain deadline main passes,
 // aeoDrainTimeout (15 s). A step
 // transaction is a handful of statements, so an honest drain takes well under
 // that; when the deadline passes anyway, main does not close the database
@@ -56,18 +57,27 @@ func (b *automationBackground) Stop(ctx context.Context) error {
 }
 
 // combineStops joins several drain handles into the one main receives: every
-// handle runs, in order, under the same context, and their errors are joined.
+// non-nil handle starts at the same time, on its own goroutine, under the same
+// context, so the handles share the one deadline instead of queueing behind
+// each other. Each handle cancels its own work before it waits, so every
+// runtime is cancelled before any join can hold another up. The combined call
+// returns only after every handle has returned, and joins their errors in
+// argument order.
 func combineStops(stops ...func(context.Context) error) func(context.Context) error {
 	return func(ctx context.Context) error {
-		var errs []error
-		for _, stop := range stops {
+		errs := make([]error, len(stops))
+		var wg sync.WaitGroup
+		for i, stop := range stops {
 			if stop == nil {
 				continue
 			}
-			if err := stop(ctx); err != nil {
-				errs = append(errs, err)
-			}
+			wg.Add(1)
+			go func(i int, stop func(context.Context) error) {
+				defer wg.Done()
+				errs[i] = stop(ctx)
+			}(i, stop)
 		}
+		wg.Wait()
 		return errors.Join(errs...)
 	}
 }

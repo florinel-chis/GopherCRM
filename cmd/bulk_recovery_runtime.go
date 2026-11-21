@@ -16,8 +16,8 @@ import (
 // (one day) before (#453) and the auth_audit_log rows older than
 // AUTH_AUDIT_RETENTION_DAYS (#454). Stop is what main calls at
 // shutdown, through the combined handle setupDependencies returns
-// (combineStops: automation, form retention, this, then AEO), under the one
-// drain deadline main passes, aeoDrainTimeout (15 s).
+// (combineStops, which stops it together with the other runtimes), under the
+// one drain deadline main passes, aeoDrainTimeout (15 s).
 type bulkRecoveryBackground struct {
 	runtime *service.BulkOperationRecoveryRuntime
 }
