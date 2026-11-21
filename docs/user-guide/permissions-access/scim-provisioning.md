@@ -134,8 +134,8 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
 - **Duplicates.** An email address or an `externalId` that another account already holds is
   refused with 409 `uniqueness`.
 - **Rate limit.** Two limits apply. The SCIM token limit counts the requests of each SCIM
-  provider token, whatever address they come from: by default 600 a minute with a burst of 60.
-  `SCIM_RATE_LIMIT_PER_MINUTE` sets the requests a minute (maximum 6000) and
+  provider token, whatever address they come from: by default 1500 a minute (25 a second) with
+  a burst of 150. `SCIM_RATE_LIMIT_PER_MINUTE` sets the requests a minute (maximum 6000) and
   `SCIM_RATE_LIMIT_BURST` the burst (maximum 1000).
   The SCIM refusal limit counts requests without a valid token per client address: 10 a minute
   with a burst of 5. Above either limit the provider gets 429 and retries later; a refusal over

@@ -1433,7 +1433,7 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   `application/scim+json` and body status `"429"` (the SCIM refusal limit, 10 a minute, burst 5,
   per client address). Step 2: the `attempts` of the `scim` rows add up to 5, in one
   `token_missing` row per UTC minute (#553); the 429 added none. Step 3: 200, because accepted
-  requests count against the SCIM token limit of their token (default 600 a minute, burst 60),
+  requests count against the SCIM token limit of their token (default 1500 a minute, burst 150),
   not the address. The `/auth`, moderate and generous tiers answer as before.
 - **Automation:** automated — Go: `TestSCIMStrictTierWired`, `TestSCIMTokenTierWired`, `TestSCIMRateLimits`
 

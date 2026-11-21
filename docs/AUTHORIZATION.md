@@ -631,9 +631,9 @@ method `scim`, reason `token_missing`, `token_invalid` or `token_revoked` (see [
 **Rate limit.** `/scim/v2` has two limits, applied inside the token authentication, per process,
 whatever the HTTP method (#555). The SCIM token limit counts every request whose token is
 accepted per token id, whatever the client address: `SCIM_RATE_LIMIT_PER_MINUTE` a minute
-(default 600, maximum 6000) with a burst of `SCIM_RATE_LIMIT_BURST` (default 60, maximum 1000);
-an unset, unparseable or below-1 value takes the default. Over it the request is answered 429,
-reaches no handler and writes no audit row; accepted requests never count against the client
+(default 1500, maximum 6000; 25 requests a second) with a burst of `SCIM_RATE_LIMIT_BURST`
+(default 150, maximum 1000); an unset, unparseable or below-1 value takes the default. Over it
+the request is answered 429, reaches no handler and writes no audit row; accepted requests never count against the client
 address. The SCIM refusal limit counts every refused request (missing, invalid or revoked token)
 per client address: 10 requests a minute, burst 5. Within it a refusal is the 401 below with its
 audit row; over it the answer is 429 and no audit row is written. Refusals never count against a

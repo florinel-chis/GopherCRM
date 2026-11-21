@@ -819,14 +819,14 @@ func TestLoad_AEOBaseURLs(t *testing.T) {
 }
 
 // SCIM_RATE_LIMIT_PER_MINUTE and SCIM_RATE_LIMIT_BURST (#555) default to
-// 600/60 for every value that is not a positive number, are trimmed, and are
+// 1500/150 for every value that is not a positive number, are trimmed, and are
 // capped at 6000/1000. Load never fails on them.
 func TestLoad_SCIMRateLimit(t *testing.T) {
 	t.Run("unset", func(t *testing.T) {
 		withCleanEnv(t, map[string]string{"JWT_SECRET": validSecret()}, func() {
 			cfg, err := Load()
 			require.NoError(t, err)
-			assert.Equal(t, SCIMConfig{RateLimitPerMinute: 600, RateLimitBurst: 60}, cfg.SCIM)
+			assert.Equal(t, SCIMConfig{RateLimitPerMinute: 1500, RateLimitBurst: 150}, cfg.SCIM)
 		})
 	})
 	for _, tc := range []struct {
@@ -835,10 +835,10 @@ func TestLoad_SCIMRateLimit(t *testing.T) {
 	}{
 		{"1200", "100", 1200, 100},
 		{" 30 ", " 30 ", 30, 30},
-		{"0", "0", 600, 60},
-		{"-5", "-5", 600, 60},
-		{"abc", "abc", 600, 60},
-		{"", "", 600, 60},
+		{"0", "0", 1500, 150},
+		{"-5", "-5", 1500, 150},
+		{"abc", "abc", 1500, 150},
+		{"", "", 1500, 150},
 		{"999999", "999999", 6000, 1000},
 		{"6000", "5000", 6000, 1000},
 		{"1", "1", 1, 1},
@@ -860,8 +860,8 @@ func TestLoad_SCIMRateLimit(t *testing.T) {
 
 func TestNormalizeSCIMRateLimits(t *testing.T) {
 	for _, tc := range []struct{ perMinute, burst, wantPerMinute, wantBurst int }{
-		{0, 0, 600, 60},
-		{-3, -3, 600, 60},
+		{0, 0, 1500, 150},
+		{-3, -3, 1500, 150},
 		{6001, 1001, 6000, 1000},
 		{6000, 1000, 6000, 1000},
 		{1, 1, 1, 1},
@@ -876,7 +876,7 @@ func TestNormalizeSCIMRateLimits(t *testing.T) {
 // token, the defaults and the maximums.
 func TestEnvExample_SCIMRateLimitDocumented(t *testing.T) {
 	text := readRepositoryFile(t, ".env.example")
-	entry := "\n# SCIM_RATE_LIMIT_PER_MINUTE=600\n# SCIM_RATE_LIMIT_BURST=60\n"
+	entry := "\n# SCIM_RATE_LIMIT_PER_MINUTE=1500\n# SCIM_RATE_LIMIT_BURST=150\n"
 	require.Equal(t, 1, strings.Count(text, entry), "one commented pair of entries")
 	assert.NotContains(t, text, "\nSCIM_RATE_LIMIT_PER_MINUTE=", "the entry stays commented")
 	assert.NotContains(t, text, "\nSCIM_RATE_LIMIT_BURST=", "the entry stays commented")
@@ -884,7 +884,7 @@ func TestEnvExample_SCIMRateLimitDocumented(t *testing.T) {
 	start := strings.LastIndex(text[:end], "\n\n")
 	require.GreaterOrEqual(t, start, 0, "the entries have a comment block")
 	block := text[start:end]
-	for _, needle := range []string{"per token", "default 600", "maximum 6000", "default 60", "maximum 1000"} {
+	for _, needle := range []string{"per token", "(default 1500,", "maximum 6000", "(default 150,", "maximum 1000", "25 requests a second"} {
 		assert.Contains(t, block, needle, "the comment block mentions %s", needle)
 	}
 }

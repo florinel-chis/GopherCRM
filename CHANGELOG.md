@@ -1156,6 +1156,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The default SCIM limit per provider token is 25 requests a second (#635).** A SCIM provider
+  token may now make 1500 requests a minute (25 a second, up from 10 a second) with a burst of 150
+  by default, the rate Microsoft Entra documents for provisioning. `SCIM_RATE_LIMIT_PER_MINUTE` and
+  `SCIM_RATE_LIMIT_BURST` still override it, with the same maximums of 6000 and 1000.
 - **Single sign-on sessions can be refreshed for 24 hours after the sign-in (#548).** A refresh
   session that started with single sign-on (`refresh_tokens.sign_in_method` `oidc`) can be rotated
   only until `session_started_at + 24` hours, a fixed limit with no setting: every refresh token
@@ -1210,7 +1214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still use the dev server.
 - **SCIM requests with a valid provider token are limited per token (#555).** Requests on
   `/scim/v2` whose SCIM provider token is accepted are counted per token instead of per client
-  address: by default 600 a minute with a burst of 60, set by `SCIM_RATE_LIMIT_PER_MINUTE`
+  address: by default 1500 a minute with a burst of 150, set by `SCIM_RATE_LIMIT_PER_MINUTE`
   (maximum 6000) and `SCIM_RATE_LIMIT_BURST` (maximum 1000); an unset, unparseable or below-1
   value takes the default. A full provisioning cycle from an identity provider's shared
   addresses is no longer throttled. Requests without a valid token keep the limit of 10 a minute,
