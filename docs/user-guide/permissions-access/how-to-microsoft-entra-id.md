@@ -139,9 +139,9 @@ GopherCRM does with each request.
       With `mailNickname`, the person's first single sign-on is refused with the audit reason
       `email_taken`. The `objectId` never changes, so Entra ID never sends an update for it.
    2. Make this change before the first provisioning cycle. An account created while the mapping
-      sent `mailNickname` keeps that value: PUT ignores `externalId` and PATCH refuses it with
-      400 `invalidPath`.
-   3. Keep only the rows GopherCRM reads:
+      sent `mailNickname` keeps that value: PUT and PATCH both ignore `externalId`, so a later
+      change of the mapping does not relink the account.
+   3. GopherCRM reads these rows:
       - `userPrincipalName` → `userName` (the matching attribute, unchanged)
       - the `IsSoftDeleted` expression → `active`
       - `givenName` → `name.givenName`
@@ -149,9 +149,9 @@ GopherCRM does with each request.
       - `mail` → `emails[type eq "work"].value`
       - `objectId` → `externalId`
 
-      Delete the other rows, for example `displayName`, `title`, the phone numbers, the addresses,
-      `preferredLanguage` and the enterprise extension rows. An update that carries one of them is
-      refused whole with 400 `invalidPath`, as [SCIM provisioning](scim-provisioning.md) says.
+      The other rows, for example `displayName`, `title`, the phone numbers, the addresses,
+      `preferredLanguage` and the enterprise extension rows, can stay: GopherCRM accepts their
+      updates and does not store them, as [SCIM provisioning](scim-provisioning.md) says.
    4. Choose **Add New Mapping**: **Mapping type** Expression, **Expression**
       `SingleAppRoleAssignment([appRoleAssignments])`, **Target attribute**
       `roles[primary eq "True"].value`. Choose **Ok**. GopherCRM reads the app role's value, which
@@ -159,10 +159,10 @@ GopherCRM does with each request.
       in scope needs an app role: a create without a matching role, for example an assignment with
       "Default Access", is refused with 400 `invalidValue`.
 
-      A later change of a person's app role in Entra ID is not applied: Entra ID sends it as an
-      update of `roles[primary eq "True"].value`, which GopherCRM refuses with 400 `invalidPath`,
-      and the failure shows in the **Provisioning logs**. Change the role in GopherCRM instead, or
-      remove the person from the application and provision them again.
+      A later change of a person's app role in Entra ID is applied: Entra ID sends it as an
+      update of `roles`, and GopherCRM accepts both forms Entra ID uses for the role, the app
+      role's value as plain text and the JSON object Entra ID sends without the
+      `aadOptscim062020` flag, from which it reads the inner `value`.
    5. Choose **Save**.
 5. Only when you map groups (needs P1; see
    [Mapping groups instead of app roles](#mapping-groups-instead-of-app-roles)): under

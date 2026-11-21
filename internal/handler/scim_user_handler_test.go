@@ -394,9 +394,9 @@ func TestSCIMUserPatchHandler(t *testing.T) {
 			{"over 64 KiB", oversized, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
 			{"empty Operations", `{"Operations":[]}`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
 			{"unknown op", `{"Operations":[{"op":"` + secret + `","path":"active","value":true}]}`, "invalidSyntax", "The request body is not a valid SCIM PatchOp"},
-			{"externalId", `{"Operations":[{"op":"replace","path":"externalId","value":"` + secret + `"}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
-			{"displayName", `{"Operations":[{"op":"replace","value":{"displayName":"` + secret + `"}}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
-			{"name.formatted", `{"Operations":[{"op":"replace","path":"name.formatted","value":"` + secret + `"}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"password", `{"Operations":[{"op":"replace","path":"password","value":"` + secret + `"}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"path-less password", `{"Operations":[{"op":"replace","value":{"displayName":"x","password":"` + secret + `"}}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
+			{"groups", `{"Operations":[{"op":"add","path":"groups","value":[{"value":"` + secret + `"}]}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
 			{"unknown path", `{"Operations":[{"op":"replace","path":"` + secret + `","value":true}]}`, "invalidPath", "The patch names an attribute this provider does not support"},
 			{"remove without path", `{"Operations":[{"op":"remove","value":{"active":"` + secret + `"}}]}`, "noTarget", "A remove operation needs a path"},
 			{"active yes", `{"Operations":[{"op":"replace","path":"active","value":"yes"}]}`, "invalidValue", "A User attribute is missing or invalid"},
@@ -415,9 +415,9 @@ func TestSCIMUserPatchHandler(t *testing.T) {
 			assert.Equal(t, "400", doc["status"], tc.name)
 			assert.Empty(t, stub.patchCalls, "%s: the service is not called", tc.name)
 			assert.NotContains(t, w.Body.String(), secret, tc.name)
-			assert.NotContains(t, w.Body.String(), "externalId", tc.name)
+			assert.NotContains(t, w.Body.String(), "password", tc.name)
 			assert.NotContains(t, w.Body.String(), "displayName", tc.name)
-			assert.NotContains(t, w.Body.String(), "formatted", tc.name)
+			assert.NotContains(t, w.Body.String(), "groups", tc.name)
 		}
 	})
 
@@ -435,6 +435,36 @@ func TestSCIMUserPatchHandler(t *testing.T) {
 			w := send(setup(stub), body)
 			require.Equal(t, http.StatusOK, w.Code, "%s: %s", name, w.Body.String())
 			assert.Len(t, stub.patchCalls, 1, name)
+		}
+	})
+
+	t.Run("Microsoft Entra ID bodies", func(t *testing.T) {
+		str := func(v string) *string { return &v }
+		for _, tc := range []struct {
+			name string
+			body string
+			want service.SCIMUserPatch
+		}{
+			{"replace multiple attributes without the flag",
+				`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Replace","path":"displayName","value":"Pvlo"},{"op":"Replace","path":"emails[type eq \"work\"].value","value":"TestBcwqnm@test.microsoft.com"},{"op":"Replace","path":"name.givenName","value":"Gtfd"},{"op":"Replace","path":"name.familyName","value":"Pkqf"},{"op":"Replace","path":"externalId","value":"Eqpj"},{"op":"Replace","path":"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber","value":"Eqpj"}]}`,
+				service.SCIMUserPatch{Email: str("TestBcwqnm@test.microsoft.com"), GivenName: str("Gtfd"), FamilyName: str("Pkqf")}},
+			{"replace multiple attributes with the flag",
+				`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"emails[type eq \"work\"].value","value":"TestMhvaes@test.microsoft.com"},{"op":"replace","value":{"displayName":"Bjfe","name.givenName":"Kkom","name.familyName":"Unua","urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber":"Aklq"}}]}`,
+				service.SCIMUserPatch{Email: str("TestMhvaes@test.microsoft.com"), GivenName: str("Kkom"), FamilyName: str("Unua")}},
+			{"SingleAppRoleAssignment role as JSON text",
+				`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"roles","value":[{"value":"{\"id\":\"06b07648-ecfe-589f-9d2f-6325724a46ee\",\"value\":\"25\",\"displayName\":\"Role1234\"}"}]}]}`,
+				service.SCIMUserPatch{Roles: &[]string{"25"}}},
+			{"nickName add only",
+				`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"nickName","value":"Babs"}]}`,
+				service.SCIMUserPatch{}},
+		} {
+			stub := &stubSCIMUsers{record: &service.SCIMUserRecord{User: user}}
+			w := send(setup(stub), tc.body)
+			require.Equal(t, http.StatusOK, w.Code, "%s: %s", tc.name, w.Body.String())
+			assert.Equal(t, "application/scim+json", w.Header().Get("Content-Type"), tc.name)
+			require.Len(t, stub.patchCalls, 1, tc.name)
+			assert.Equal(t, "9", stub.patchCalls[0].rawID, tc.name)
+			assert.Equal(t, tc.want, stub.patchCalls[0].patch, tc.name)
 		}
 	})
 

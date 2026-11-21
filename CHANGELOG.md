@@ -1156,6 +1156,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **SCIM user patch accepts both Microsoft Entra ID PATCH formats (#629).** A role can arrive as a
+  JSON object serialised into the role's `value` string (Entra ID's default PATCH format) or as a
+  plain string (the standard form); the inner `value` is used. Add, replace and remove operations
+  on User attributes GopherCRM does not keep (`externalId`, `displayName`, `title`, `nickName`,
+  `preferredLanguage`, phone numbers, addresses, `name.formatted` and the other unkept name parts,
+  and enterprise extension attributes) answer 200 and change nothing. Other unknown attributes,
+  such as `password` or `groups`, are still refused with 400 `invalidPath`. The provisioning
+  guides no longer ask administrators to delete those attribute mappings.
+
 - **Tests open their databases through a shared test-support package (#613).** The new
   test-only package `internal/testsupport` opens a private SQLite database (`OpenSQLite`), reads
   the `TEST_MYSQL_DSN` server and skips without it (`MySQLFromEnv`), creates and drops a

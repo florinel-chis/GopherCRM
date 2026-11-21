@@ -372,6 +372,76 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 				assert.Equal(t, "gus.u@x.test", f.user(t, gus.ID).Email, name)
 			}
 		}},
+		{"entra replace without the flag ignores unstored attributes", func(t *testing.T) {
+			kim := seed(t, "kim@x.test", models.RoleSales)
+			var identitiesBefore []models.UserIdentity
+			require.NoError(t, f.db.Where("user_id = ?", kim.ID).Order("id").Find(&identitiesBefore).Error)
+			require.Len(t, identitiesBefore, 1)
+			before := f.counts(t)
+			// Microsoft's flag-less "replace multiple attributes" body with
+			// the address and the names changed to fixture values.
+			record, err := f.svc.Patch(ctx, uintString(kim.ID), parsePatch(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[
+				{"op":"Replace","path":"displayName","value":"Pvlo"},
+				{"op":"Replace","path":"emails[type eq \"work\"].value","value":"kim.new@x.test"},
+				{"op":"Replace","path":"name.givenName","value":"Kimberly"},
+				{"op":"Replace","path":"name.familyName","value":"Newname"},
+				{"op":"Replace","path":"externalId","value":"Eqpj"},
+				{"op":"Replace","path":"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:employeeNumber","value":"Eqpj"}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, "sub-kim@x.test", record.ExternalID, "externalId is not taken from the patch")
+			stored := f.user(t, kim.ID)
+			assert.Equal(t, "kim.new@x.test", stored.Email)
+			assert.Equal(t, "Kimberly", stored.FirstName)
+			assert.Equal(t, "Newname", stored.LastName)
+			assert.Equal(t, models.RoleSales, stored.Role)
+			var identitiesAfter []models.UserIdentity
+			require.NoError(t, f.db.Where("user_id = ?", kim.ID).Order("id").Find(&identitiesAfter).Error)
+			require.Len(t, identitiesAfter, 1)
+			assert.Equal(t, identitiesBefore[0].Issuer, identitiesAfter[0].Issuer)
+			assert.Equal(t, "sub-kim@x.test", identitiesAfter[0].Subject)
+			assert.Equal(t, identitiesBefore[0].Subject, identitiesAfter[0].Subject)
+			assert.Equal(t, identitiesBefore[0].Source, identitiesAfter[0].Source)
+			assert.Equal(t, before.identities, f.counts(t).identities, "no identity is added or removed")
+			for _, audit := range f.roleAudits(t, kim.ID) {
+				assert.NotEqual(t, models.RoleAuditUserRoleChanged, audit.Action, "no role audit row")
+			}
+			f.assertSuccessAudit(t, kim.ID)
+		}},
+		{"unstored attributes only change nothing", func(t *testing.T) {
+			lou := seed(t, "lou@x.test", models.RoleSales)
+			f.login(t, lou.Email, scimPatchPassword)
+			before := f.patchState(t, lou.ID)
+			updatedBefore := f.user(t, lou.ID).UpdatedAt
+			record, err := f.svc.Patch(ctx, uintString(lou.ID), parsePatch(t, `{"Operations":[
+				{"op":"Replace","path":"displayName","value":"Lou D"},
+				{"op":"Add","path":"title","value":"Engineer"},
+				{"op":"Replace","path":"externalId","value":"other-subject"},
+				{"op":"Replace","path":"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User:department","value":"R&D"},
+				{"op":"Replace","path":"phoneNumbers[type eq \"work\"].value","value":"+1 555 0100"},
+				{"op":"Remove","path":"title"},
+				{"op":"replace","value":{"nickName":"lou","urn:ietf:params:scim:schemas:extension:enterprise:2.0:User":{"employeeNumber":"7"}}}]}`))
+			require.NoError(t, err)
+			assert.Equal(t, "sub-lou@x.test", record.ExternalID)
+			want := before
+			want.counts.authAudits++
+			assert.Equal(t, want, f.patchState(t, lou.ID), "only the sign-in audit row is added")
+			assert.True(t, updatedBefore.Equal(f.user(t, lou.ID).UpdatedAt), "updated_at is unchanged")
+			f.assertSuccessAudit(t, lou.ID)
+		}},
+		{"entra role as JSON text", func(t *testing.T) {
+			mo := seed(t, "mo@x.test", models.RoleSales)
+			// Microsoft's SingleAppRoleAssignment body with the inner value
+			// replaced by a mapped app role.
+			_, err := f.svc.Patch(ctx, uintString(mo.ID), parsePatch(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Add","path":"roles","value":[{"value":"{\"id\":\"06b07648-ecfe-589f-9d2f-6325724a46ee\",\"value\":\"`+oidcAppRole+`\",\"displayName\":\"Role1234\"}"}]}]}`))
+			require.NoError(t, err)
+			stored := f.user(t, mo.ID)
+			assert.Equal(t, models.RoleSupport, stored.Role)
+			assert.Nil(t, stored.RoleID)
+			audits := f.roleAudits(t, mo.ID)
+			require.Len(t, audits, 1)
+			assert.Equal(t, models.RoleAuditUserRoleChanged, audits[0].Action)
+			f.assertSuccessAudit(t, mo.ID)
+		}},
 		{"not visible", func(t *testing.T) {
 			customer := seed(t, "cust@x.test", models.RoleCustomer)
 			erased := seed(t, "gone@x.test", models.RoleSales)

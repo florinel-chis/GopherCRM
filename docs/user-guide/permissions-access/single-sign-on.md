@@ -7,9 +7,9 @@ GopherCRM supports single sign-on through OpenID Connect, with one identity prov
 sign-in, or in advance by a provider that provisions through SCIM 2.0 (create, update and
 deactivate; a deactivation signs the person out everywhere at once, a SCIM DELETE deactivates
 too, and SCIM never erases an account; the provider can also manage the members of the groups the
-role mapping names; see [SCIM provisioning](scim-provisioning.md)). Limit the provider's SCIM attribute
-mappings to the user name, active state, given and family name, work email and roles: an update
-that also sends another attribute, such as `externalId` or `displayName`, is refused.
+role mapping names; see [SCIM provisioning](scim-provisioning.md)). SCIM stores the user name, active
+state, given and family name, work email and roles; other attributes the provider sends, such as
+`externalId` or `displayName`, are accepted and not stored.
 
 ## What happens at sign-in
 

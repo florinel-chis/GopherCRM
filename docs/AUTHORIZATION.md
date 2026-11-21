@@ -862,7 +862,22 @@ schema URN prefix:
 | `name.givenName`, `name.familyName` | a string | clears the part |
 | `emails` | a non-empty array of objects with a string `value`; the entry with `primary: true` wins, then the first with `type` `work`, then a sole entry | 400 `invalidValue` |
 | `emails[type eq "work"].value` | a string | 400 `invalidValue` |
-| `roles` | an array of objects with a string `value` | 400 `invalidValue` |
+| `roles` | an array of objects with a string `value`; a `value` that is itself one JSON object with a string `value` member, sent as text (Entra ID's form without `aadOptscim062020`, `"value":"{\"id\":...,\"value\":\"Admin\"}"`), stands for that inner string; any other text is the role as sent | 400 `invalidValue` |
+
+**Attributes GopherCRM does not store.** An `add`, `replace` or `remove` on one of these paths, or
+a path-less key of that kind, succeeds and changes nothing, whatever the value's JSON type; with a
+path, `add` and `replace` still need a `value` (400 `invalidValue` without one). Names match with
+ASCII-only folding and no trimming.
+
+| Ignored path | Form |
+|---|---|
+| `externalId`, `displayName`, `nickName`, `profileUrl`, `title`, `userType`, `preferredLanguage`, `locale`, `timezone`, `name.formatted`, `name.middleName`, `name.honorificPrefix`, `name.honorificSuffix` | the exact name |
+| `phoneNumbers`, `addresses`, `ims`, `photos`, `entitlements`, `x509Certificates` | the name alone or followed by `[` or `.`, for example `phoneNumbers[type eq "work"].value` |
+| `urn:ietf:params:scim:schemas:extension:enterprise:2.0:User` | the URN alone or followed by `:`, for example `...:2.0:User:employeeNumber` |
+
+`externalId` is ignored on every patch: a patch never changes the identity link of an account.
+A patch made only of ignored operations still answers 200 with the resource and writes the
+`auth_audit_log` success row, but no `users` change.
 
 Without a `path` (Okta's form, and Entra ID's value-object form), an `add` or `replace` value must
 be an object whose keys are judged as paths by the same rules, for example
@@ -883,7 +898,7 @@ locked in the transaction.
 | Condition | Answer |
 |---|---|
 | Body over 64 KiB, not one JSON object, trailing data, no or an empty `Operations` array, an operation that is not an object, an `op` other than add/replace/remove, a non-string `path`, a path-less value that is not an object | 400 `invalidSyntax` |
-| A path or path-less key outside the table (`externalId`, `displayName`, `name.formatted`, another filter, an extension URN) | 400 `invalidPath` |
+| A path or path-less key in neither table (for example `password`, `groups`, `id`, `meta`, another `emails` filter, a core schema URN prefix such as `urn:ietf:params:scim:schemas:core:2.0:User:active`); a path-less value with one such key is answered so as a whole | 400 `invalidPath` |
 | `remove` without a `path` | 400 `noTarget` |
 | A value of the wrong type (`null` included), `remove` of `active`, `userName`, `emails` or `roles`, `emails` without a winning entry, and every `invalidValue` of PUT for the touched attributes | 400 `invalidValue` |
 | The last active admin would lose the admin role or be deactivated | 400 `invalidValue` (`The last active admin must stay an active admin`) |
@@ -909,10 +924,10 @@ before the role row. `active` false on an inactive account writes no row (it sti
 `scim`, outcome `success`) names the account. A refusal writes nothing: no `users`,
 `refresh_tokens`, `api_keys`, `role_audit_log` or `auth_audit_log` change.
 
-**Provider mappings.** The default attribute mappings of Entra ID and Okta send more than this
-list, for example `externalId` or `displayName` on update, and every such operation is refused
-whole with 400 `invalidPath`. Trim the provider's attribute mappings to `userName`, `active`,
-`name.givenName`, `name.familyName`, the work email and `roles` before turning provisioning on.
+**Provider mappings.** The default attribute mappings of Entra ID and Okta send more than the
+stored attributes, for example `externalId`, `displayName`, `title` or enterprise extension
+attributes on update. Those operations are skipped as described above, so the default rows can
+stay; Entra ID's PATCH bodies are accepted with and without the `aadOptscim062020` flag.
 
 Regression roots: see the end of the previous section.
 

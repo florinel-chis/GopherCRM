@@ -67,6 +67,49 @@ var patchPaths = []struct {
 	{"roles", targetRoles},
 }
 
+// ignoredPatchNames are User attributes the CRM does not store. An add or
+// replace on one of them, or on a path that starts with one of
+// ignoredPatchMultiValued followed by "[" or ".", or on the enterprise
+// extension, is accepted and changes nothing; so is a remove. Names match
+// under ASCII-only case folding, without trimming.
+var ignoredPatchNames = []string{
+	"externalId", "displayName", "nickName", "profileUrl", "title", "userType",
+	"preferredLanguage", "locale", "timezone",
+	"name.formatted", "name.middleName", "name.honorificPrefix", "name.honorificSuffix",
+}
+
+var ignoredPatchMultiValued = []string{
+	"phoneNumbers", "addresses", "ims", "photos", "entitlements", "x509Certificates",
+}
+
+// enterpriseUserURN is the enterprise extension schema; the URN itself and
+// every path below it ("<URN>:department") are ignored.
+const enterpriseUserURN = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
+
+// isIgnoredPatchPath reports whether path names an attribute the CRM does not
+// store, so that an operation on it is accepted and skipped.
+func isIgnoredPatchPath(path string) bool {
+	for _, name := range ignoredPatchNames {
+		if asciiEqualFold(path, name) {
+			return true
+		}
+	}
+	for _, name := range ignoredPatchMultiValued {
+		if asciiEqualFold(path, name) {
+			return true
+		}
+		if len(path) > len(name) && asciiEqualFold(path[:len(name)], name) &&
+			(path[len(name)] == '[' || path[len(name)] == '.') {
+			return true
+		}
+	}
+	if asciiEqualFold(path, enterpriseUserURN) {
+		return true
+	}
+	n := len(enterpriseUserURN)
+	return len(path) > n && asciiEqualFold(path[:n], enterpriseUserURN) && path[n] == ':'
+}
+
 func lookupPatchPath(path string) patchTarget {
 	for _, p := range patchPaths {
 		if asciiEqualFold(path, p.path) {
@@ -167,8 +210,14 @@ type patchState struct {
 // on the paths active, userName, name, name.givenName, name.familyName,
 // emails, emails[type eq "work"].value and roles, both with a path and in the
 // path-less form whose value is an object of such paths (Okta, and Entra ID's
-// value-object form). Operations apply in array order; the last write to an
-// attribute wins. Every refusal is a *PatchError carrying its scimType.
+// value-object form). Operations on attributes the CRM does not store
+// (isIgnoredPatchPath: externalId, displayName, title, phone numbers,
+// addresses, the enterprise extension and the like) are accepted and change
+// nothing, with a path or as a path-less key; with a path, add and replace
+// still need a value. A role may be sent plain or as a JSON object serialised
+// into its value string (see decodeRoles). Operations apply in array order;
+// the last write to an attribute wins. Every other path is refused with
+// invalidPath. Every refusal is a *PatchError carrying its scimType.
 func ParseUserPatch(raw []byte) (UserPatch, error) {
 	members, ok := objectMembers(raw)
 	if !ok {
@@ -236,17 +285,23 @@ func (s *patchState) apply(raw json.RawMessage) error {
 		}
 		target := lookupPatchPath(path)
 		if target == targetNone {
+			if isIgnoredPatchPath(path) {
+				return nil
+			}
 			return patchPath("unsupported path")
 		}
 		return s.remove(target)
 	}
 	if hasPath {
 		target := lookupPatchPath(path)
-		if target == targetNone {
+		if target == targetNone && !isIgnoredPatchPath(path) {
 			return patchPath("unsupported path")
 		}
 		if !hasValue {
 			return patchValue("the operation has no value")
+		}
+		if target == targetNone {
+			return nil
 		}
 		return s.set(target, value)
 	}
@@ -264,6 +319,9 @@ func (s *patchState) apply(raw json.RawMessage) error {
 		target := lookupPatchPath(entry.name)
 		switch target {
 		case targetNone:
+			if isIgnoredPatchPath(entry.name) {
+				continue
+			}
 			return patchPath("unsupported attribute")
 		case targetGivenName, targetFamilyName:
 			later = append(later, entry)
@@ -439,7 +497,12 @@ func decodeEmails(raw json.RawMessage) (string, error) {
 	return "", patchValue("no primary or work address")
 }
 
-// decodeRoles reads the value of every entry of a roles array.
+// decodeRoles reads the string value of every entry of a roles array. When
+// that string is exactly one JSON object with a single member "value" (ASCII
+// folding) holding a JSON string, the role is that inner string: Entra ID
+// sends an app role this way without aadOptscim062020
+// ("value":"{\"id\":...,\"value\":\"Admin\",...}"). Any other string is the
+// role as sent.
 func decodeRoles(raw json.RawMessage) ([]string, error) {
 	if jsonKind(raw) != '[' {
 		return nil, patchValue("roles is not an array")
@@ -462,7 +525,24 @@ func decodeRoles(raw json.RawMessage) ([]string, error) {
 		if !ok {
 			return nil, patchValue("a roles value is not a string")
 		}
-		roles = append(roles, role)
+		roles = append(roles, roleText(role))
 	}
 	return roles, nil
+}
+
+// roleText returns the inner value of a role sent as a JSON object in text,
+// or the text itself.
+func roleText(text string) string {
+	members, ok := objectMembers(json.RawMessage(text))
+	if !ok {
+		return text
+	}
+	inner, present, ok := lookupMember(members, "value")
+	if !ok || !present {
+		return text
+	}
+	if role, ok := decodeString(inner); ok {
+		return role
+	}
+	return text
 }
