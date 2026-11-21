@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { RouteObject } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -878,7 +878,7 @@ describe('single sign-on callback route', () => {
     ).toBeInTheDocument();
     expect(view.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
     expect(memoryRouter.state.location.pathname).toBe('/auth/callback');
-    expect(memoryRouter.state.location.search).toBe('');
+    await waitFor(() => expect(memoryRouter.state.location.search).toBe(''));
     expect(view.queryByText('Access Denied')).not.toBeInTheDocument();
     expect(view.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument();
     view.unmount();

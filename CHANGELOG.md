@@ -1723,6 +1723,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lock wait from information_schema.PROCESSLIST instead of the cached INNODB_TRX view, which a
   continuous poll kept stale, and fails on a probe query error instead of ignoring it
   (test only, #590).
+- The single sign-on callback route test in `gocrm-ui/src/routes/index.test.tsx` now waits for
+  the page to clear the query string instead of reading it once right after the failure message
+  appears, since the page clears it in an effect after the first render (test only, #607).
 - **A quote response link is created, sent and accepted only while the quote's customer exists,
   and earlier links stop working only after a successful send (#557).** The mint transaction of
   `POST /quotes/{id}/email` (`mintResponseLink` in `internal/service/quote_email.go`) now reads
