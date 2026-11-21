@@ -1100,11 +1100,11 @@ value is stored; a rotation revokes the presented row and inserts its successor.
 | deleted_at | datetime(3) | Yes | NULL | Soft delete; index `idx_refresh_tokens_deleted_at` |
 | user_id | bigint unsigned | No | - | The owner; index `idx_refresh_tokens_user_id`, FK to `users.id` |
 | token_hash | varchar(255) | No | - | HMAC-SHA256 hash of the opaque token (hidden); unique index `idx_refresh_tokens_token_hash` |
-| expires_at | datetime(3) | No | - | `REFRESH_TOKEN_EXPIRY_DAYS` (30) after issuance |
+| expires_at | datetime(3) | No | - | `REFRESH_TOKEN_EXPIRY_DAYS` (30) after issuance; for `sign_in_method` `oidc` at most `session_started_at + 24` hours (#548), and an `oidc` row is refused at rotation from that instant on (or without a start) whatever this column holds |
 | is_revoked | tinyint(1) | No | 0 | Set by rotation, logout, and a password change or reset; erasure deletes the rows |
 | family_id | varchar(64) | No | '' | Shared by every token of one rotation chain; index `idx_refresh_tokens_family_id`. A sign-in (password or single sign-on) and the token issued by a password change start a new family of 32 lowercase hex characters; a rotation copies it. A row that predates #546 holds its own `id` as a decimal string |
 | sign_in_method | varchar(16) | No | '' | `password` or `oidc`, copied by a rotation. A row that predates #546 holds `oidc` when its owner has any `user_identities` row and `password` otherwise |
-| session_started_at | datetime(3) | Yes | NULL | When the sign-in of the chain happened, copied by a rotation; a password change starts a new one. A row that predates #546 holds its `created_at` |
+| session_started_at | datetime(3) | Yes | NULL | When the sign-in of the chain happened, copied by a rotation. A password change that renews an `oidc` session keeps its `sign_in_method` and this start (#548); one that renews a password session starts a new one. A row that predates #546 holds its `created_at` |
 
 The three session columns come from AutoMigrate on SQLite and from migration
 `20261129120004_refresh_token_session` on MySQL/MariaDB; the startup step

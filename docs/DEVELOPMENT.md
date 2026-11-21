@@ -281,7 +281,16 @@ looked up, the owner is re-read with the same locking read as the reset flow (`F
 MySQL, a plain read on SQLite), the token is claimed by `RefreshTokenRepository.ClaimForRotation`,
 a conditional update (`is_revoked = false AND expires_at > now`, exactly one affected row, else the
 generic rejection), the successor row is inserted and its access JWT is signed. The successor carries the presented
-row's `family_id`, `sign_in_method` and `session_started_at` unchanged (#546). An owner lookup
+row's `family_id`, `sign_in_method` and `session_started_at` unchanged (#546). A single sign-on
+session (#548) has a fixed limit of `session_started_at + 24` hours (`ssoSessionMaxAge`, no
+setting): right after the defence-in-depth check and before the owner lock, a presented `oidc` row
+at or past that instant, or one without a start, is refused through `ssoSessionExpired` with the
+plain generic error, so the transaction rolls back and nothing is written (audit `token_invalid`
+with the owner's id). `issueRefreshToken` caps the `expires_at` of every `oidc` row it issues (the
+sign-in, each rotation, a password-change renewal) at the same instant, so newer rows already miss
+the live lookup past it. `changePasswordInTransaction` applies the same check after the owner lock
+and the owner checks and before the claim (past the limit: `session_stale`, nothing written), and
+its successor keeps an `oidc` session's method and start while starting a new family. An owner lookup
 that fails for a database reason aborts before the claim. A failure of the
 successor insert or of the signing rolls the claim back with it, so the presented token stays
 usable, no extra row exists and no credentials are returned; the same token succeeds once the

@@ -1156,6 +1156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Single sign-on sessions can be refreshed for 24 hours after the sign-in (#548).** A refresh
+  session that started with single sign-on (`refresh_tokens.sign_in_method` `oidc`) can be rotated
+  only until `session_started_at + 24` hours, a fixed limit with no setting: every refresh token
+  such a session issues expires by then, and an older `oidc` token presented past the limit, or one
+  without a start, is refused with the usual `401` (audit reason `token_invalid`) and nothing is
+  written. The person then signs in at the identity provider again, which applies role and access
+  changes made there. An access token issued by the last allowed refresh stays valid until its own
+  expiry (`JWT_EXPIRY_HOURS`). Password sessions keep `REFRESH_TOKEN_EXPIRY_DAYS`. A password change
+  that renews a single sign-on session keeps its sign-in method and start, so the renewed session
+  has the same limit; past it, `POST /auth/change-password` answers `409 SESSION_STALE` and changes
+  nothing. No migration, route or setting.
+
 - **Password reset requests are answered at once; an email change ends earlier reset links
   (#554).** `POST /auth/password-reset` checks the body and answers the same `200` before the
   account is looked up: the email goes on an in-process queue (one worker, so requests are handled
