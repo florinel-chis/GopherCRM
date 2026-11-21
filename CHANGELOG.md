@@ -1498,6 +1498,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The web app reloads the signed-in user after a role save and after an own-account save
+  (#566).** Saving an existing role in the role editor, and saving the signed-in user's own
+  account in the user form, now read `GET /users/me` again, so navigation, route guards and
+  buttons follow the new permission list straight away instead of at the next window focus or
+  page reload. Creating a role, saving another account and a refused save do not reload.
+
 - **A users write racing a SCIM group handover can no longer remove the last active admin
   (#513).** SCIM user replace, patch and delete, the governed user write behind
   `PUT`/activate/deactivate/`DELETE /users` and the OIDC sign-in role re-apply judged the

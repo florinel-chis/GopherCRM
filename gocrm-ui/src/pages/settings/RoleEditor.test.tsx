@@ -23,20 +23,22 @@ vi.mock('@/api/endpoints', () => ({
 }));
 
 const mockUseAuth = vi.fn();
+const mockRefreshUser = vi.fn();
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => mockUseAuth(),
 }));
 
 const signedInWith = (permissions: Permission[]) =>
   mockUseAuth.mockReturnValue({
-    user: createMockUser({ id: 1, role: 'customer' }),
+    // Signed in with a role other than the one the update tests edit (9).
+    user: createMockUser({ id: 1, role: 'customer', role_id: 4 }),
     permissions,
     isLoading: false,
     isAuthenticated: true,
     login: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
-    refreshUser: vi.fn(),
+    refreshUser: mockRefreshUser,
   });
 
 // The shapes the API sends: a group and a system-only permission are both
@@ -129,6 +131,7 @@ describe('RoleEditor', () => {
     vi.mocked(rolesApi.getCatalogue).mockResolvedValue(catalogue);
     vi.mocked(rolesApi.createRole).mockResolvedValue({ ...customRole, id: 20 });
     vi.mocked(rolesApi.updateRole).mockResolvedValue(customRole);
+    mockRefreshUser.mockResolvedValue(undefined);
   });
 
   it('ticking a parent ticks every selectable child and sends their keys', async () => {
@@ -212,6 +215,44 @@ describe('RoleEditor', () => {
     expect('description' in body).toBe(true);
     expect('permissions' in body).toBe(true);
     expect(body).toEqual({ name: 'Field Sales', description: '', permissions: [] });
+  });
+
+  it('reloads the signed-in user after saving an existing role, whoever holds it', async () => {
+    await openExisting(customRole);
+
+    fireEvent.click(box('View labels'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/settings/roles'));
+    expect(rolesApi.updateRole).toHaveBeenCalledTimes(1);
+    expect(mockRefreshUser).toHaveBeenCalledTimes(1);
+    expect(mockRefreshUser.mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(rolesApi.updateRole).mock.invocationCallOrder[0],
+    );
+  });
+
+  it('does not reload the signed-in user after creating a role', async () => {
+    await openNew();
+
+    fireEvent.change(nameField(), { target: { value: 'Night Shift' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/settings/roles'));
+    expect(rolesApi.createRole).toHaveBeenCalledTimes(1);
+    expect(mockRefreshUser).not.toHaveBeenCalled();
+  });
+
+  it('does not reload the signed-in user when an update is refused', async () => {
+    vi.mocked(rolesApi.updateRole).mockRejectedValue(apiError(409, 'ROLE_NAME_TAKEN'));
+    await openExisting(customRole);
+
+    fireEvent.change(nameField(), { target: { value: 'Sales' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(nameField()).toHaveAttribute('aria-invalid', 'true'));
+    expect(rolesApi.updateRole).toHaveBeenCalledTimes(1);
+    expect(mockRefreshUser).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it('shows ROLE_NAME_TAKEN on the name field', async () => {

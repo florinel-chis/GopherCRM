@@ -22,6 +22,7 @@ import {
 } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { rolesApi, type CatalogueNode, type Role, type RoleData } from '@/api/endpoints';
+import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { getAPIError } from '@/utils/apiError';
@@ -140,6 +141,7 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { can } = usePermissions();
+  const { refreshUser } = useAuth();
   const { showSuccess, showError } = useSnackbar();
   const isNew = id === undefined;
   const roleId = Number(id);
@@ -185,6 +187,9 @@ export const Component: React.FC = () => {
     onSuccess: () => {
       showSuccess(isNew ? 'Role created' : 'Role saved');
       queryClient.invalidateQueries({ queryKey: ['roles'] });
+      // The signed-in user may hold the saved role: reload their permissions
+      // so the menus and route guards follow without waiting for a focus.
+      if (!isNew) void refreshUser();
       navigate('/settings/roles');
     },
     onError: (error: unknown) => {

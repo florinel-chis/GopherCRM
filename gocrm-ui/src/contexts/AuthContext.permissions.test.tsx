@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
 import { authApi } from '@/api/endpoints';
 import { apiClient } from '@/api/client';
 import type { CurrentUser, Permission } from '@/types';
@@ -258,6 +259,29 @@ describe('AuthProvider permissions', () => {
     for (const value of published.slice(before)) {
       expect(value.isLoading).toBe(false);
     }
+  });
+
+  it('refreshUser publishes the permission list /users/me now answers', async () => {
+    stored.token = 'stored-token';
+    vi.mocked(authApi.getCurrentUser).mockResolvedValueOnce(me(FIRST));
+    const { result } = renderHook(() => ({ auth: useAuth(), checks: usePermissions() }), {
+      wrapper: AuthProvider,
+    });
+    await waitFor(() => expect(result.current.auth.isLoading).toBe(false));
+    expect(result.current.auth.permissions).toEqual(FIRST);
+    expect(result.current.checks.can('leads.view')).toBe(true);
+    expect(result.current.checks.scopeOf('tickets.view')).toBe('all');
+
+    vi.mocked(authApi.getCurrentUser).mockResolvedValueOnce(me(CHANGED));
+    await act(async () => {
+      await result.current.auth.refreshUser();
+    });
+
+    expect(authApi.getCurrentUser).toHaveBeenCalledTimes(2);
+    expect(result.current.auth.user?.id).toBe(user.id);
+    expect(result.current.auth.permissions).toEqual(CHANGED);
+    expect(result.current.checks.can('leads.view')).toBe(false);
+    expect(result.current.checks.scopeOf('tickets.view')).toBe('own');
   });
 
   it('does not ask /users/me on focus without a stored token', async () => {
