@@ -43,20 +43,27 @@ type SSOConfig struct {
 	// its groups overflow the ID token. The service applies the range and
 	// the default.
 	GraphMaxPages int
+	// EntraAppSigningKeys is OIDC_ENTRA_APP_SIGNING_KEYS (false when unset
+	// or not a boolean): an Entra ID issuer's ID tokens are verified against
+	// the application's own signing keys at jwks_uri?appid=<client id>, which
+	// Entra ID uses when the app registration has claims mapping. Any other
+	// issuer ignores it.
+	EntraAppSigningKeys bool
 }
 
 func loadSSOConfig() SSOConfig {
 	return SSOConfig{
-		Enabled:          getEnvAsBool("OIDC_ENABLED", false),
-		EnabledSet:       envBoolRecognised("OIDC_ENABLED"),
-		AllowPassword:    getEnvAsBool("OIDC_ALLOW_PASSWORD", false),
-		AllowPasswordSet: envBoolRecognised("OIDC_ALLOW_PASSWORD"),
-		IssuerURL:        os.Getenv("OIDC_ISSUER_URL"),
-		ClientID:         os.Getenv("OIDC_CLIENT_ID"),
-		ClientSecret:     os.Getenv("OIDC_CLIENT_SECRET"),
-		Scopes:           os.Getenv("OIDC_SCOPES"),
-		RoleMapping:      os.Getenv("OIDC_ROLE_MAPPING"),
-		GraphMaxPages:    getEnvAsInt("OIDC_GRAPH_MAX_PAGES", 0),
+		Enabled:             getEnvAsBool("OIDC_ENABLED", false),
+		EnabledSet:          envBoolRecognised("OIDC_ENABLED"),
+		AllowPassword:       getEnvAsBool("OIDC_ALLOW_PASSWORD", false),
+		AllowPasswordSet:    envBoolRecognised("OIDC_ALLOW_PASSWORD"),
+		IssuerURL:           os.Getenv("OIDC_ISSUER_URL"),
+		ClientID:            os.Getenv("OIDC_CLIENT_ID"),
+		ClientSecret:        os.Getenv("OIDC_CLIENT_SECRET"),
+		Scopes:              os.Getenv("OIDC_SCOPES"),
+		RoleMapping:         os.Getenv("OIDC_ROLE_MAPPING"),
+		GraphMaxPages:       getEnvAsInt("OIDC_GRAPH_MAX_PAGES", 0),
+		EntraAppSigningKeys: getEnvAsBool("OIDC_ENTRA_APP_SIGNING_KEYS", false),
 	}
 }
 

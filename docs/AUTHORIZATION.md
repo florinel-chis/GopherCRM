@@ -1192,7 +1192,9 @@ records the conditions phase 2 has to meet, which the sign-in below follows.
 ### OIDC sign-in (#435)
 
 **Flow.** `POST /auth/oidc/start` (no body, strict `/auth` tier, no authentication) re-reads the
-settings, discovers the issuer, stores one single-use `oidc_login_attempts` row (the HMAC of a
+settings, discovers the issuer (the discovery document and the signing keys are kept per issuer
+for 24 hours, fetched again when an ID token names an unknown key id, never kept when the
+discovery fails, and replaced when the settings change; see *Discovery cache* below), stores one single-use `oidc_login_attempts` row (the HMAC of a
 fresh state keyed like the other opaque tokens, the nonce, the PKCE verifier and the issuer,
 valid ten minutes) and answers `{authorization_url}`. The SPA sends the browser there; the issuer
 redirects back to the redirect URI `APP_BASE_URL/auth/callback`, which must be registered at the
@@ -1206,6 +1208,16 @@ Single sign-on off is 404; on but unconfigured, undiscoverable (including a
 redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S)_PROXY`) or with
 a failing token endpoint is 503 `SSO_UNAVAILABLE`; every refusal is the same 401 "Single sign-on
 failed", with the reason logged as an `error_code` only.
+
+**Discovery cache (#632).** One discovery is kept at a time, keyed by the configured issuer URL,
+whether the application signing keys are used and, only then, the client id. A sign-in that
+starts 24 hours or more after the fetch, or with another key, discovers again; a failed discovery
+answers 503 as before and leaves the kept entry unchanged. go-oidc fetches the keys again when a
+token names a key id it does not hold. `OIDC_ENTRA_APP_SIGNING_KEYS=true` (environment only, not
+a stored setting) makes an Entra ID issuer's ID tokens be verified against
+`jwks_uri?appid=<client id>`, the application signing keys Entra ID uses with claims mapping, and
+with the signing algorithms the discovery document lists (filtered to those go-oidc supports); any
+other issuer ignores it and uses the plain `jwks_uri`.
 
 **Sign-in cookie (#528).** A sign-in finishes only in the browser that started it. A 200 from
 `POST /auth/oidc/start` sets the cookie `gophercrm_oidc_state`, holding the state of the returned

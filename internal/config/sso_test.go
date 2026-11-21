@@ -17,29 +17,31 @@ func TestLoad_SSOEnvironment(t *testing.T) {
 	})
 
 	withCleanEnv(t, map[string]string{
-		"JWT_SECRET":           validSecret(),
-		"OIDC_ENABLED":         "true",
-		"OIDC_ALLOW_PASSWORD":  "1",
-		"OIDC_ISSUER_URL":      "https://idp.example.com",
-		"OIDC_CLIENT_ID":       "crm",
-		"OIDC_CLIENT_SECRET":   "not-a-real-secret",
-		"OIDC_SCOPES":          "openid email",
-		"OIDC_ROLE_MAPPING":    `[{"claim":"groups","value":"g1","role_id":2}]`,
-		"OIDC_GRAPH_MAX_PAGES": "7",
+		"JWT_SECRET":                  validSecret(),
+		"OIDC_ENABLED":                "true",
+		"OIDC_ALLOW_PASSWORD":         "1",
+		"OIDC_ISSUER_URL":             "https://idp.example.com",
+		"OIDC_CLIENT_ID":              "crm",
+		"OIDC_CLIENT_SECRET":          "not-a-real-secret",
+		"OIDC_SCOPES":                 "openid email",
+		"OIDC_ROLE_MAPPING":           `[{"claim":"groups","value":"g1","role_id":2}]`,
+		"OIDC_GRAPH_MAX_PAGES":        "7",
+		"OIDC_ENTRA_APP_SIGNING_KEYS": "true",
 	}, func() {
 		cfg, err := Load()
 		require.NoError(t, err)
 		assert.Equal(t, SSOConfig{
-			Enabled:          true,
-			EnabledSet:       true,
-			AllowPassword:    true,
-			AllowPasswordSet: true,
-			IssuerURL:        "https://idp.example.com",
-			ClientID:         "crm",
-			ClientSecret:     "not-a-real-secret",
-			Scopes:           "openid email",
-			RoleMapping:      `[{"claim":"groups","value":"g1","role_id":2}]`,
-			GraphMaxPages:    7,
+			Enabled:             true,
+			EnabledSet:          true,
+			AllowPassword:       true,
+			AllowPasswordSet:    true,
+			IssuerURL:           "https://idp.example.com",
+			ClientID:            "crm",
+			ClientSecret:        "not-a-real-secret",
+			Scopes:              "openid email",
+			RoleMapping:         `[{"claim":"groups","value":"g1","role_id":2}]`,
+			GraphMaxPages:       7,
+			EntraAppSigningKeys: true,
 		}, cfg.SSO)
 	})
 
@@ -56,12 +58,13 @@ func TestLoad_SSOEnvironment(t *testing.T) {
 
 	// Invalid values never stop the boot; the service judges them.
 	withCleanEnv(t, map[string]string{
-		"JWT_SECRET":           validSecret(),
-		"OIDC_ENABLED":         "maybe",
-		"OIDC_ALLOW_PASSWORD":  "yes",
-		"OIDC_ISSUER_URL":      "http://not-https.example.com",
-		"OIDC_ROLE_MAPPING":    "not json",
-		"OIDC_GRAPH_MAX_PAGES": "many",
+		"JWT_SECRET":                  validSecret(),
+		"OIDC_ENABLED":                "maybe",
+		"OIDC_ALLOW_PASSWORD":         "yes",
+		"OIDC_ISSUER_URL":             "http://not-https.example.com",
+		"OIDC_ROLE_MAPPING":           "not json",
+		"OIDC_GRAPH_MAX_PAGES":        "many",
+		"OIDC_ENTRA_APP_SIGNING_KEYS": "yes",
 	}, func() {
 		cfg, err := Load()
 		require.NoError(t, err)
@@ -71,12 +74,13 @@ func TestLoad_SSOEnvironment(t *testing.T) {
 		assert.False(t, cfg.SSO.AllowPasswordSet)
 		assert.Equal(t, "http://not-https.example.com", cfg.SSO.IssuerURL)
 		assert.Equal(t, 0, cfg.SSO.GraphMaxPages, "a non-number reads as unset")
+		assert.False(t, cfg.SSO.EntraAppSigningKeys, "an unrecognised value counts as off")
 	})
 }
 
 func TestEnvExample_OIDCVariablesDocumented(t *testing.T) {
 	text := readRepositoryFile(t, ".env.example")
-	for _, name := range []string{"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING", "OIDC_GRAPH_MAX_PAGES"} {
+	for _, name := range []string{"OIDC_ENABLED", "OIDC_ALLOW_PASSWORD", "OIDC_ISSUER_URL", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "OIDC_SCOPES", "OIDC_ROLE_MAPPING", "OIDC_GRAPH_MAX_PAGES", "OIDC_ENTRA_APP_SIGNING_KEYS"} {
 		assert.Regexp(t, regexp.MustCompile(`(?m)^(# )?`+name+`=`), text, "%s is documented", name)
 		assert.NotRegexp(t, regexp.MustCompile(`(?m)^`+name+`=`), text, "%s stays commented", name)
 	}

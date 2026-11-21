@@ -106,8 +106,14 @@ a new one to replace it, or click **Clear client secret** to remove it.
 the page marks a field whose value comes from the environment with "From the environment
 (OIDC_*)". The first **Save** stores every value the page shows, including those that came from
 the environment, so from then on changing an `OIDC_*` variable has no effect on that field. Stored
-settings take effect without a restart. One single sign-on setting exists only in the environment:
-`OIDC_GRAPH_MAX_PAGES` (see group overage below).
+settings take effect without a restart. Two single sign-on settings exist only in the environment:
+`OIDC_GRAPH_MAX_PAGES` (see group overage below) and `OIDC_ENTRA_APP_SIGNING_KEYS` (Entra ID
+only, default off): set it to `true` when the Entra ID app registration uses claims mapping, so ID
+tokens are checked against the application's own signing keys (`jwks_uri?appid=<client id>`).
+
+GopherCRM keeps the provider's discovery document and signing keys for up to 24 hours, fetches the
+keys again when a token is signed with a key it does not know yet, and starts over on the next
+sign-in after you change the issuer.
 
 To switch single sign-on off, switch **Enabled** off and save. The button disappears from the
 sign-in page; local password accounts keep working.
@@ -148,5 +154,6 @@ method and read the reason column.
 | Saving the settings fails on **Issuer URL**. | The issuer is not an absolute `https` URL of at most 512 bytes, or it carries credentials, a query or a fragment. | Enter the issuer exactly as the provider publishes it, starting with `https://`. An invalid `OIDC_ISSUER_URL` (one longer than 512 bytes included) is ignored with a warning in the server log. |
 | Saving opens **Change the issuer?** (the API answers 409 `ISSUER_CHANGE_UNCONFIRMED`). | The save changes the issuer in force while accounts are linked to the current issuer; the `affected_links` detail is the number of account links that stop matching. | Click **Change issuer** only if those people should be linked again under the new issuer; an API client resends the same body with `confirm_issuer_change` true. Otherwise click **Cancel**. |
 | "Single sign-on failed" for people in many groups; reason `groups_unavailable` or `group_overage`. | Group overage: above 200 groups Entra ID leaves the groups out of the token. GopherCRM then reads them from Microsoft Graph, which needs the delegated permission `User.Read` (granted), and reads at most `OIDC_GRAPH_MAX_PAGES` pages (default 10). An overage from a sovereign cloud (US Government, China) or from any other provider is refused with `group_overage`. | Prefer app roles (claim `roles`): they have no overage. Otherwise check that `User.Read` is listed and granted, or raise `OIDC_GRAPH_MAX_PAGES` (at most 50). |
+| "Single sign-on failed" for everyone with Entra ID; reason `id_token_invalid`, after claims mapping was set up for the app registration. | With claims mapping, Entra ID signs the ID tokens with the application's own keys, which the plain signing keys do not include. | Set `OIDC_ENTRA_APP_SIGNING_KEYS=true` in the server's environment and restart. |
 | "Single sign-on failed"; reason `account_inactive` or `account_erased`. | The account was deactivated or deleted in GopherCRM. | Activate the account if the person should have access. A deleted account cannot be restored. |
 | "Single sign-on failed"; reason `last_admin`. | The mapping would move the last active administrator to another role. | Map that person to the Admin role, or make another user an administrator first. |
