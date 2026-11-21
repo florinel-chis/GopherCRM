@@ -767,8 +767,9 @@ write but neither served on the resource nor advertised in the discovery documen
 **Linking.** The created account gets one `user_identities` row: the effective single sign-on
 issuer (whether sign-on is enabled does not matter) with `externalId` as the subject and
 `source` `scim` (#505). A later OIDC sign-in with the same issuer and a `sub` equal to
-`externalId` uses this account instead of provisioning one. Entra ID sends the `objectId` as
-`externalId` while its `sub` is pairwise, so for an Entra ID issuer an unknown `sub` also finds
+`externalId` uses this account instead of provisioning one. Entra ID's default user mapping sends
+`mailNickname` as `externalId`; the administrator maps `objectId` to it (user guide), and its `sub`
+is pairwise, so for an Entra ID issuer an unknown `sub` also finds
 this account through the token's `oid` when its `tid` equals the configured issuer's tenant
 segment (see **Identity** under OpenID Connect sign-in); any other provider must send as
 `externalId` the value its ID tokens carry as `sub`.
