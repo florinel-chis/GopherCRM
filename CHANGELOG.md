@@ -1103,6 +1103,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Webhook deliveries wait instead of failing when the endpoint's signing secret cannot be read
+  (#559).** Before every pass the sender opens the current signing secret of each active endpoint
+  with the configured key (`API_KEY_SECRET`, or `JWT_SECRET` without it). The due deliveries of an
+  endpoint whose secret cannot be opened are left out of the pass: they stay `pending`, unclaimed,
+  with their attempts, next attempt, error code and last attempt time unchanged, the endpoint's
+  failure count and pause are not touched, and the other endpoints are sent to as before. They go
+  out on the first pass after a restart with the right key or after the endpoint's secret is
+  rotated, without a manual redelivery. `GET /health` gains a `webhooks` object:
+  `{"state": "running"}`, or `{"state": "paused", "reason": "secret_unavailable"}` while at least
+  one endpoint is held; the top-level `status`, `revision` and the 200 answer are unchanged. One
+  Error "Webhook deliveries held: endpoint signing secret cannot be opened" is logged when an
+  endpoint is held and one Info "Webhook deliveries resumed" when it is released, each with the
+  operation and endpoint id only (plus the error code on the first). A secret that stops opening
+  between the check and the attempt now gives a normal retry with `secret_unavailable` instead of
+  a failed delivery. The test ping is unchanged.
 - **Webhook outbox rows of one change are written in one batched INSERT (#570).** The outbox rows
   of one event (one per subscribed endpoint) and of a bulk batch of records are written by a
   single multi-row INSERT inside the transaction that makes the change, so they roll back with it.

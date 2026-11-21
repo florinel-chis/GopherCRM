@@ -137,7 +137,7 @@ func runWebhookWorkerPool(t *testing.T, db *gorm.DB) {
 		require.Less(t, d1.ID, d2.ID)
 		require.Less(t, d2.ID, d3.ID)
 
-		discovered, err := env.repo.ListDueDeliveries(context.Background(), now, 100)
+		discovered, err := env.repo.ListDueDeliveries(context.Background(), now, 100, nil)
 		require.NoError(t, err)
 		var order []uint
 		for _, row := range discovered {

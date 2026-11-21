@@ -563,8 +563,11 @@ def verify(secret, headers, body: bytes, tolerance=300):
 string or fragment. Every connection resolves the host again and refuses private, loopback, CGNAT,
 unique-local, link-local, metadata, multicast and unspecified addresses; proxy variables are
 ignored. The AEO egress allowlists do not apply to webhooks. The secret is stored encrypted with
-`API_KEY_SECRET` (or `JWT_SECRET`); changing that secret makes existing endpoints fail with
-`secret_unavailable` until they are re-created or their secret rotated.
+`API_KEY_SECRET` (or `JWT_SECRET`). After that secret changes, the sender holds the deliveries of
+every endpoint whose secret it can no longer open: they stay `pending` with their attempts
+unchanged, and go out once the secret can be read again, after a restart with the previous key or
+after the endpoint's secret is rotated. Meanwhile `GET /health` reports `webhooks.state` `paused`
+and one error line per held endpoint is logged.
 
 **Delivery log.** The "Delivery log" tab of Settings > Webhooks lists each event per endpoint,
 newest first, with its event type, record id, status, attempts, last attempt time and last
@@ -690,7 +693,10 @@ generated into `api/`: open `api/index.html` in a browser (a static page that wo
 straight from the checkout), or feed `api/swagger.json` / `api/swagger.yaml` (Swagger 2.0) to a
 client generator. The list below is the overview.
 
-`GET /health` is served outside the API prefix and needs no authentication.
+`GET /health` is served outside the API prefix and needs no authentication. Its `webhooks` field
+is `{"state": "running"}`, or `{"state": "paused", "reason": "secret_unavailable"}` while the
+webhook sender holds the deliveries of an endpoint whose signing secret cannot be opened; the
+top-level `status` stays `healthy` and the answer stays 200 either way.
 
 ### Authentication (public)
 - `POST /api/v1/auth/register` - Register a new user. **Gated by the

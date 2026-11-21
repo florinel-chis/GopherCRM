@@ -210,7 +210,7 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 		later := seedWebhookDelivery(t, db, endpoint.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(now.Add(time.Hour))})
 
 		statements, stop := captureWebhookStatements(t, db, "webhook_repo_discovery")
-		discovered, err := repo.ListDueDeliveries(ctx, now, 100)
+		discovered, err := repo.ListDueDeliveries(ctx, now, 100, nil)
 		require.NoError(t, err)
 		stop()
 		var ids []uint
@@ -536,7 +536,7 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 
 		discoveredIDs := func(at time.Time) []uint {
 			statements, stop := captureWebhookStatements(t, db, fmt.Sprintf("webhook_repo_pause_%d", at.UnixNano()))
-			due, err := repo.ListDueDeliveries(ctx, at, 100000)
+			due, err := repo.ListDueDeliveries(ctx, at, 100000, nil)
 			require.NoError(t, err)
 			stop()
 			for _, statement := range statements() {
@@ -624,5 +624,59 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 		require.NoError(t, repo.RecordEndpointSuccess(ctx, endpoint.ID), "a healthy endpoint is not an error")
 		assert.Equal(t, stored, readEndpoint(t, endpoint.ID))
 		assert.NoError(t, repo.RecordEndpointSuccess(ctx, 99999999), "a missing endpoint is not an error")
+	})
+
+	t.Run("discovery leaves out the skipped endpoints before the limit, active endpoint secrets in id order", func(t *testing.T) {
+		held := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		readable := seedWebhookEndpoint(t, repo, true, models.WebhookEventLeadCreated)
+		inactive := seedWebhookEndpoint(t, repo, false, models.WebhookEventLeadCreated)
+		// Far in the past, so no row of another subtest is due at the
+		// discovery instant and the limit sees these two rows only.
+		base := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+		heldRow := seedWebhookDelivery(t, db, held.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(base)})
+		readableRow := seedWebhookDelivery(t, db, readable.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(base.Add(time.Second))})
+		at := base.Add(2 * time.Second)
+
+		ids := func(due []WebhookDueDelivery) []uint {
+			out := []uint{}
+			for _, row := range due {
+				out = append(out, row.ID)
+			}
+			return out
+		}
+
+		due, err := repo.ListDueDeliveries(ctx, at, 1, []uint{held.ID})
+		require.NoError(t, err)
+		assert.Equal(t, []uint{readableRow.ID}, ids(due), "the skipped endpoint's older row is left out before the limit")
+
+		due, err = repo.ListDueDeliveries(ctx, at, 1, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []uint{heldRow.ID}, ids(due), "without a skip list the older row comes first")
+
+		due, err = repo.ListDueDeliveries(ctx, at, 100, nil)
+		require.NoError(t, err)
+		assert.Equal(t, []uint{heldRow.ID, readableRow.ID}, ids(due), "nil skips nothing")
+		due, err = repo.ListDueDeliveries(ctx, at, 100, []uint{})
+		require.NoError(t, err)
+		assert.Equal(t, []uint{heldRow.ID, readableRow.ID}, ids(due), "an empty slice skips nothing")
+		due, err = repo.ListDueDeliveries(ctx, at, 100, []uint{held.ID, readable.ID})
+		require.NoError(t, err)
+		assert.Empty(t, due, "every listed endpoint is skipped")
+
+		secrets, err := repo.ListActiveEndpointSecrets(ctx)
+		require.NoError(t, err)
+		var activeIDs []uint
+		require.NoError(t, db.Model(&models.WebhookEndpoint{}).Where("is_active = ?", true).Order("id").Pluck("id", &activeIDs).Error)
+		var got []uint
+		byID := map[uint]string{}
+		for _, secret := range secrets {
+			got = append(got, secret.ID)
+			byID[secret.ID] = secret.SecretSealed
+		}
+		assert.Equal(t, activeIDs, got, "every active endpoint, in id order")
+		assert.Contains(t, got, held.ID)
+		assert.Contains(t, got, readable.ID)
+		assert.NotContains(t, got, inactive.ID, "an inactive endpoint is not listed")
+		assert.Equal(t, held.SecretSealed, byID[held.ID], "the sealed current secret is returned")
 	})
 }

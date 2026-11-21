@@ -54,6 +54,21 @@ import (
 // the test ping. A manual redelivery of a paused endpoint's row waits for the
 // pause, and a PUT on the endpoint does not clear it.
 //
+// Before discovery every pass checks the current secret of each active
+// endpoint (#559): it reads their id and secret_sealed with a plain SELECT and
+// opens each one the way a send would (webhookOpenCurrentSecret). The
+// endpoints whose secret does not open, for example after the master secret
+// changed, form the held set, and discovery leaves out their rows in the
+// statement, before the limit. Held rows are never claimed or written: they
+// stay pending with their attempts, next_attempt_at, error_code and
+// last_attempt_at, and the circuit is not touched. The set is judged again on
+// every pass, so the rows go out on the first pass after a restart with the
+// right key or a rotation of the endpoint's secret. Entering the set logs one
+// Error, leaving it one Info; SenderStatus reports paused while the last check
+// held an endpoint. An endpoint whose secret stops opening between the check
+// and its attempt is retried on the normal schedule with secret_unavailable
+// (nothing sent, circuit untouched), and the next check holds it.
+//
 // Stop cancels the loop: no worker starts a further claim, and every attempt
 // in flight runs to its end (its request is bounded by the request timeout and
 // its finish write by webhookFinishTimeout). A pass joins its workers before
@@ -230,6 +245,12 @@ type WebhookRuntime struct {
 	passMu    sync.Mutex
 	lastPrune time.Time
 
+	// heldMu guards held and checked: the pass writes them, SenderStatus
+	// reads them from the HTTP goroutines.
+	heldMu  sync.Mutex
+	held    map[uint]struct{}
+	checked bool
+
 	mu      sync.Mutex
 	started bool
 	stopped bool
@@ -284,9 +305,75 @@ type WebhookPassResult struct {
 	Failed    int
 	Recovered int64
 	Pruned    int64
+	// HeldEndpoints is the number of active endpoints whose current secret
+	// did not open in this pass's check (#559); their rows were left out.
+	HeldEndpoints int
 }
 
-// RunOnce runs one pass: lease recovery, discovery, one attempt per due row
+// WebhookSenderStatus is what GET /health reports about the sender (#559).
+type WebhookSenderStatus struct {
+	// Paused is true when the last completed secret check held at least one
+	// active endpoint; false before the first check.
+	Paused bool
+}
+
+// SenderStatus reports the state of the last completed secret check. It is
+// safe for concurrent use with a running pass.
+func (r *WebhookRuntime) SenderStatus() WebhookSenderStatus {
+	r.heldMu.Lock()
+	defer r.heldMu.Unlock()
+	return WebhookSenderStatus{Paused: r.checked && len(r.held) > 0}
+}
+
+// checkEndpointSecrets opens the current secret of every active endpoint
+// (#559), replaces the held set with the endpoints whose secret does not open
+// and returns their ids in id order. The set and its enter/leave log lines
+// change under one lock, so two passes running together (the loop and a
+// direct RunOnce) never log one change twice. A read error leaves the set as
+// it was.
+func (r *WebhookRuntime) checkEndpointSecrets(ctx context.Context) ([]uint, error) {
+	endpoints, err := r.repo.ListActiveEndpointSecrets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	next := make(map[uint]struct{})
+	var held []uint
+	for _, endpoint := range endpoints {
+		if _, ok := webhookOpenCurrentSecret(r.box, endpoint.SecretSealed); !ok {
+			next[endpoint.ID] = struct{}{}
+			held = append(held, endpoint.ID)
+		}
+	}
+
+	r.heldMu.Lock()
+	defer r.heldMu.Unlock()
+	for _, id := range held {
+		if _, was := r.held[id]; !was {
+			r.log().WithFields(logrus.Fields{
+				"operation":   "webhook_secret_check",
+				"endpoint_id": id,
+				"error_code":  models.WebhookErrorSecretUnavailable,
+			}).Error("Webhook deliveries held: endpoint signing secret cannot be opened")
+		}
+	}
+	resumed := make([]uint, 0, len(r.held))
+	for id := range r.held {
+		if _, still := next[id]; !still {
+			resumed = append(resumed, id)
+		}
+	}
+	sort.Slice(resumed, func(a, b int) bool { return resumed[a] < resumed[b] })
+	for _, id := range resumed {
+		r.log().WithFields(logrus.Fields{"operation": "webhook_secret_check", "endpoint_id": id}).
+			Info("Webhook deliveries resumed")
+	}
+	r.held = next
+	r.checked = true
+	return held, nil
+}
+
+// RunOnce runs one pass: lease recovery, the secret check of the active
+// endpoints (#559), discovery without the held endpoints' rows, one attempt per due row
 // through the worker pool, and the prune when it is due. It stops claiming
 // once ctx is done and returns only after every worker has joined.
 func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error) {
@@ -306,7 +393,14 @@ func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error)
 			Info("Webhook deliveries with an expired lease were recovered")
 	}
 
-	due, err := r.repo.ListDueDeliveries(ctx, now, webhookDiscoveryBatch)
+	held, err := r.checkEndpointSecrets(ctx)
+	if err != nil {
+		r.logPassError(ctx, "webhook_secret_check", err)
+		return result, err
+	}
+	result.HeldEndpoints = len(held)
+
+	due, err := r.repo.ListDueDeliveries(ctx, now, webhookDiscoveryBatch, held)
 	if err != nil {
 		r.logPassError(ctx, "webhook_discover", err)
 		return result, err
@@ -516,7 +610,10 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 	now := r.now()
 	secrets, ok := webhookSigningSecrets(r.box, endpoint, now, r.log(), "webhook_deliver")
 	if !ok {
-		return attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable, terminal: true}
+		// The secret stopped opening after this pass's check: nothing is
+		// sent, the circuit is left alone and the row is retried on the
+		// normal schedule; the next check holds the endpoint (#559).
+		return attemptOutcome{errorCode: models.WebhookErrorSecretUnavailable}
 	}
 	if endpoint.PreviousSecretExpiresAt != nil && !now.Before(*endpoint.PreviousSecretExpiresAt) {
 		// The window is over: clear the previous secret, fenced on the expiry
@@ -541,17 +638,16 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 // now carries (#503): the opened current secret first, then the previous
 // secret while its rotation window is open (now strictly before
 // previous_secret_expires_at; at the expiry instant the window is over). ok is
-// false when the current secret does not open or is not a whsec_ key, which
-// fails the attempt with secret_unavailable. A previous secret that does not
+// false when the current secret does not open or is not a whsec_ key
+// (webhookOpenCurrentSecret, the same test the per-pass secret check makes, so
+// the check holds such an endpoint's rows before they are claimed; an attempt
+// that still meets it is retried with secret_unavailable). A previous secret that does not
 // open is dropped with one Warn (operation, endpoint_id and
 // error_code=previous_secret_unavailable only) and the request goes out with
 // the current signature.
 func webhookSigningSecrets(box *utils.SecretBox, endpoint *models.WebhookEndpoint, now time.Time, logger *logrus.Logger, operation string) ([]string, bool) {
-	current, err := box.Open(endpoint.SecretSealed)
-	if err != nil || current == "" {
-		return nil, false
-	}
-	if _, err := webhookKey(current); err != nil {
+	current, ok := webhookOpenCurrentSecret(box, endpoint.SecretSealed)
+	if !ok {
 		return nil, false
 	}
 	secrets := []string{current}
@@ -567,6 +663,20 @@ func webhookSigningSecrets(box *utils.SecretBox, endpoint *models.WebhookEndpoin
 	logger.WithFields(logrus.Fields{"operation": operation, "endpoint_id": endpoint.ID, "error_code": "previous_secret_unavailable"}).
 		Warn("Previous webhook secret cannot be used; signing with the current secret only")
 	return secrets, true
+}
+
+// webhookOpenCurrentSecret opens a sealed current secret: ok only when box
+// opens it, it is not empty and it is a whsec_ key webhookKey accepts. The
+// per-pass secret check and webhookSigningSecrets both use it (#559).
+func webhookOpenCurrentSecret(box *utils.SecretBox, sealed string) (string, bool) {
+	current, err := box.Open(sealed)
+	if err != nil || current == "" {
+		return "", false
+	}
+	if _, err := webhookKey(current); err != nil {
+		return "", false
+	}
+	return current, true
 }
 
 // sendWebhook is the send path shared by deliveries and the test ping (which

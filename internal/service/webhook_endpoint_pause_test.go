@@ -264,7 +264,14 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		}
 		result, err := runtime().RunOnce(ctx)
 		require.NoError(t, err)
-		assert.Equal(t, 6, result.Failed)
+		// The inactive endpoint's rows fail; the unreadable endpoint is held
+		// and its rows stay pending, unclaimed (#559).
+		assert.Equal(t, 3, result.Failed)
+		assert.Equal(t, 1, result.HeldEndpoints)
+		var pending int64
+		require.NoError(t, db.Model(&models.WebhookDelivery{}).
+			Where("endpoint_id = ? AND status = ? AND attempts = 0", unreadable.ID, models.WebhookDeliveryPending).Count(&pending).Error)
+		assert.EqualValues(t, 3, pending)
 		assert.Zero(t, requestsTo("/fail-g-inactive")+requestsTo("/fail-g-unreadable"))
 		for _, id := range []uint{inactive.ID, unreadable.ID} {
 			state := stored(t, id)

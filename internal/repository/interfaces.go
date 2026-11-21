@@ -453,6 +453,10 @@ type WebhookRepository interface {
 	// ListActiveEndpointsFor reads, without a lock, the active endpoints
 	// subscribed to eventType, in id order.
 	ListActiveEndpointsFor(ctx context.Context, eventType string) ([]models.WebhookEndpoint, error)
+	// ListActiveEndpointSecrets is a plain SELECT (no locking clause) of the
+	// id and secret_sealed of every active endpoint, in id order: the
+	// runtime's per-pass secret check reads it.
+	ListActiveEndpointSecrets(ctx context.Context) ([]WebhookEndpointSecret, error)
 
 	// EnqueueDeliveries inserts outbox rows (the caller's transaction).
 	EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error
@@ -461,8 +465,11 @@ type WebhookRepository interface {
 	// now, ordered by next_attempt_at then id, at most limit. That order is
 	// not id order: the runtime sorts each endpoint's rows by id itself. The
 	// rows of an endpoint whose paused_until is after now are left out in the
-	// statement (#569); at paused_until == now the endpoint is due again.
-	ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error)
+	// statement (#569); at paused_until == now the endpoint is due again. The
+	// rows of the endpoints in skipEndpoints (the runtime's held endpoints,
+	// whose current secret does not open) are left out in the statement too,
+	// before the limit; a nil or empty skipEndpoints adds no predicate.
+	ListDueDeliveries(ctx context.Context, now time.Time, limit int, skipEndpoints []uint) ([]WebhookDueDelivery, error)
 	// ClaimDelivery moves one due pending row to sending (attempts + 1,
 	// last_attempt_at, lease_until) by primary key and returns it, or
 	// ErrWebhookDeliveryNotClaimed when another claimer won or the row is not
