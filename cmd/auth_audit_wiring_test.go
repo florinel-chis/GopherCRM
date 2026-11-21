@@ -4,7 +4,9 @@ package main
 // audit writer into POST /auth/login, POST /auth/refresh, the OIDC callback,
 // the ApiKey branch of the authentication middleware and (#550)
 // POST /auth/change-password, /auth/password-reset,
-// /auth/password-reset/confirm and /auth/logout, so every outcome
+// /auth/password-reset/confirm and /auth/logout, and (#551) the API key
+// handler behind POST /api-keys, DELETE /api-keys/:id and
+// PUT /api-keys/:id, so every outcome
 // below leaves exactly the row it should, with the request id of the request
 // and the client's /24. Over a SQLite file opened by the real connector.
 
@@ -14,6 +16,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +181,37 @@ func TestAuthAuditWired(t *testing.T) {
 	var signedIn session
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &signedIn))
 	require.NotEmpty(t, signedIn.Data.Token)
+
+	// #551: creating a key, revoking it and the refused re-enable each leave
+	// one row naming the caller and the key.
+	assertKeyRow := func(t *testing.T, method, outcome, reason string, keyID uint) {
+		t.Helper()
+		row := newRow(t)
+		assertRow(t, row, method, outcome, reason, user.ID)
+		if assert.NotNil(t, row.APIKeyID, "api_key_id is set") {
+			assert.Equal(t, keyID, *row.APIKeyID)
+		}
+	}
+	recorder = send(http.MethodPost, "/api-keys", `{"name":"Wired key 0551"}`, "req-454", "Bearer "+signedIn.Data.Token)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var created struct {
+		Data struct {
+			APIKey struct {
+				ID uint `json:"id"`
+			} `json:"api_key"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+	keyID := created.Data.APIKey.ID
+	require.NotZero(t, keyID)
+	assertKeyRow(t, "api_key_create", "success", "", keyID)
+	keyPath := "/api-keys/" + strconv.FormatUint(uint64(keyID), 10)
+	recorder = send(http.MethodDelete, keyPath, "", "req-454", "Bearer "+signedIn.Data.Token)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assertKeyRow(t, "api_key_revoke", "success", "", keyID)
+	recorder = send(http.MethodPut, keyPath, `{"is_active":true}`, "req-454", "Bearer "+signedIn.Data.Token)
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	assertKeyRow(t, "api_key_enable", "refused", "key_revoked", keyID)
 
 	const changed = "Wired-Changed-Passw0rd!-0550"
 	recorder = send(http.MethodPost, "/auth/change-password",

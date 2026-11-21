@@ -26,6 +26,9 @@ const apiKeyCreateSignInWindow = 15 * time.Minute
 
 type APIKeyHandler struct {
 	apiKeyService service.APIKeyService
+	// audit writes the sign-in audit rows of key creations, revocations and
+	// refused re-enables (#551); nil writes nothing.
+	audit service.AuthAuditService
 	// now is an instance-local clock for the sign-in window; nil uses
 	// time.Now.
 	now func() time.Time
@@ -40,6 +43,13 @@ func (h *APIKeyHandler) clock() time.Time {
 
 func NewAPIKeyHandler(apiKeyService service.APIKeyService) *APIKeyHandler {
 	return &APIKeyHandler{apiKeyService: apiKeyService}
+}
+
+// WithAudit sets the writer of the sign-in audit rows (#551) and returns h.
+// A nil audit writes nothing.
+func (h *APIKeyHandler) WithAudit(audit service.AuthAuditService) *APIKeyHandler {
+	h.audit = audit
+	return h
 }
 
 // @Description Body of POST /api-keys.
@@ -81,7 +91,7 @@ type UpdateAPIKeyRequest struct {
 
 // Create godoc
 // @Summary Create an API key
-// @Description Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
+// @Description Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased. A 201 writes one sign-in audit row (method api_key_create, outcome success) with the caller's user id and the new key's id in api_key_id, and never the key, its prefix or its name.
 // @Description expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future and at most one year from now; omitted or empty, the key expires one year from now. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
 // @Tags api-keys
 // @Accept json
@@ -175,6 +185,10 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if h.audit != nil {
+		h.audit.RecordAPIKeyCreate(auditContext(c), userID, apiKey.ID)
+	}
+
 	response := CreateAPIKeyResponse{
 		Key:    key,
 		APIKey: apiKey,
@@ -263,7 +277,7 @@ func (h *APIKeyHandler) Get(c *gin.Context) {
 
 // Update godoc
 // @Summary Rename or revoke an API key
-// @Description Owner only (a key of another user is 403, with no admin override). Applies only the fields present: name and/or is_active, each written on its own so a rename never changes is_active. A body with neither is a 400 rather than a no-op. is_active false revokes the key as DELETE does and stamps revoked_at. Revocation is final: is_active true on a revoked key is 409 CONFLICT and changes nothing, the name included; on a live key it changes nothing. is_active true from a request authenticated with an API key is 403. Expiry is not affected: an expired key stays unusable whatever is_active says.
+// @Description Owner only (a key of another user is 403, with no admin override). Applies only the fields present: name and/or is_active, each written on its own so a rename never changes is_active. A body with neither is a 400 rather than a no-op. is_active false revokes the key as DELETE does and stamps revoked_at. Revocation is final: is_active true on a revoked key is 409 CONFLICT and changes nothing, the name included; on a live key it changes nothing. is_active true from a request authenticated with an API key is 403. Expiry is not affected: an expired key stays unusable whatever is_active says. A 200 with is_active false writes one sign-in audit row (method api_key_revoke, outcome success), and the 409 for a revoked key writes one (method api_key_enable, outcome refused, reason key_revoked), each with the caller's user id and the key's id in api_key_id; a rename alone writes none.
 // @Tags api-keys
 // @Accept json
 // @Produce json
@@ -313,6 +327,9 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 	apiKey, err := h.apiKeyService.Update(uint(id), userID, req.Name, req.IsActive)
 	if err != nil {
 		if errors.Is(err, service.ErrAPIKeyRevoked) {
+			if h.audit != nil {
+				h.audit.RecordAPIKeyEnableRefused(auditContext(c), userID, uint(id))
+			}
 			logger.WithField("user_id", userID).WithField("error_code", "api_key_revoked").
 				Warn("Revoked API key not switched on")
 			utils.RespondConflict(c, "A revoked API key cannot be switched on again")
@@ -334,13 +351,17 @@ func (h *APIKeyHandler) Update(c *gin.Context) {
 		return
 	}
 
+	if h.audit != nil && req.IsActive != nil && !*req.IsActive {
+		h.audit.RecordAPIKeyRevoke(auditContext(c), userID, uint(id))
+	}
+
 	utils.LogHandlerResponse(logger, http.StatusOK, apiKey)
 	utils.RespondSuccess(c, http.StatusOK, apiKey)
 }
 
 // Revoke godoc
 // @Summary Revoke an API key
-// @Description Owner only (a key of another user is 403, with no admin override). Marks the key inactive and stamps revoked_at; the row is kept, not deleted, and revocation is final: the key cannot be switched on again. Idempotent: revoking a revoked key succeeds again and keeps the first revoked_at. Requests already authenticated with the key are not affected; later ones are rejected.
+// @Description Owner only (a key of another user is 403, with no admin override). Marks the key inactive and stamps revoked_at; the row is kept, not deleted, and revocation is final: the key cannot be switched on again. Idempotent: revoking a revoked key succeeds again and keeps the first revoked_at. Requests already authenticated with the key are not affected; later ones are rejected. Every 200, a repeat on a revoked key included, writes one sign-in audit row (method api_key_revoke, outcome success) with the caller's user id and the key's id in api_key_id.
 // @Tags api-keys
 // @Produce json
 // @Security BearerAuth
@@ -381,6 +402,10 @@ func (h *APIKeyHandler) Revoke(c *gin.Context) {
 		logger.WithError(utils.LogError(err)).Error("Failed to revoke API key")
 		utils.RespondInternalError(c)
 		return
+	}
+
+	if h.audit != nil {
+		h.audit.RecordAPIKeyRevoke(auditContext(c), userID, uint(id))
 	}
 
 	utils.LogHandlerResponse(logger, http.StatusOK, nil)

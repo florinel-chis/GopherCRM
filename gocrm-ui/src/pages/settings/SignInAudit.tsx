@@ -113,8 +113,9 @@ export const SignInAudit: React.FC = () => {
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Password logins, single sign-on callbacks, refreshes, refused API keys, password changes,
-        password reset requests and completions, and logouts, newest first. Rows hold ids, a reason
-        code, the client network and the browser family; never an email or a name.
+        password reset requests and completions, logouts, and API key creation, revocation and
+        refused re-enabling, newest first. Rows hold ids, a reason code, the client network and the
+        browser family; never an email or a name.
       </Typography>
 
       <Paper sx={{ mb: 2, p: 2 }}>

@@ -8,6 +8,9 @@ import type { ApiResponseWithMeta } from '../client';
 
 export const SIGN_IN_AUDIT_METHODS = [
   'api_key',
+  'api_key_create',
+  'api_key_enable',
+  'api_key_revoke',
   'logout',
   'oidc',
   'password',
@@ -81,6 +84,8 @@ export interface SignInAuditEntry {
   reason: string;
   user_id: number | null;
   attempt_id: number | null;
+  /** The API key an api_key_create, api_key_revoke or api_key_enable row concerns. */
+  api_key_id: number | null;
   request_id: string;
   subject_ref: string | null;
   claim_roles: string[] | null;

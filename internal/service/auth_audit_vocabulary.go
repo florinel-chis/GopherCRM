@@ -22,6 +22,12 @@ const (
 	AuthAuditMethodResetRequest   = "reset_request"
 	AuthAuditMethodResetConfirm   = "reset_confirm"
 	AuthAuditMethodLogout         = "logout"
+	// API key management (#551): POST /api-keys, a revocation through
+	// DELETE /api-keys/:id or PUT /api-keys/:id with is_active false, and a
+	// refused PUT /api-keys/:id with is_active true on a revoked key.
+	AuthAuditMethodAPIKeyCreate = "api_key_create"
+	AuthAuditMethodAPIKeyRevoke = "api_key_revoke"
+	AuthAuditMethodAPIKeyEnable = "api_key_enable"
 )
 
 // Outcomes of an auth_audit_log row.
@@ -31,7 +37,8 @@ const (
 )
 
 // Reason codes of password sign-ins, refreshes, API keys, SCIM tokens,
-// password changes, password resets and logouts.
+// password changes, password resets and logouts. A refused re-enable of a
+// revoked API key (#551) reuses key_revoked.
 const (
 	AuthAuditReasonInvalidCredentials = "invalid_credentials"
 	AuthAuditReasonAccountLocked      = "account_locked"
@@ -109,6 +116,9 @@ var authAuditMethodList = []string{
 	AuthAuditMethodResetRequest,
 	AuthAuditMethodResetConfirm,
 	AuthAuditMethodLogout,
+	AuthAuditMethodAPIKeyCreate,
+	AuthAuditMethodAPIKeyRevoke,
+	AuthAuditMethodAPIKeyEnable,
 }
 
 // authAuditOutcomeList is every outcome, once.
@@ -181,7 +191,7 @@ func authAuditSet(values []string) map[string]bool {
 	return set
 }
 
-// IsAuthAuditMethod reports whether value is one of the nine methods.
+// IsAuthAuditMethod reports whether value is one of the twelve methods.
 func IsAuthAuditMethod(value string) bool { return authAuditMethods[value] }
 
 // IsAuthAuditOutcome reports whether value is success or refused.

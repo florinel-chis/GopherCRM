@@ -360,16 +360,24 @@ writes none. Since #550 each `POST /auth/change-password`, `POST /auth/password-
 row of its own (methods `password_change`, `reset_request`, `reset_confirm` and `logout`,
 `attempts` 1) after the service returns: a request refused by the authentication middleware or
 a rate tier, a binding 400 or a new password refused by the length or complexity check writes
-none. Any other successful API-key or
-SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
+none. Since #551 a `POST /api-keys` answered 201, a revocation answered 200 (`DELETE /api-keys/:id`,
+an idempotent repeat included, or `PUT /api-keys/:id` with `is_active` false, with or without a
+new name) and a `PUT /api-keys/:id` with `is_active` true answered 409 because the key is revoked
+each write one row (methods `api_key_create`, `api_key_revoke` and `api_key_enable`, `attempts`
+1) after the service returns, with the caller's `user_id` and the key's id in `api_key_id`; a
+rename alone, `is_active` true on a live key, a 400, 401, 403, 404 or 500 and every `GET` write
+none. Any other request made with an API key, and any other SCIM request, writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
 Answers, status codes and messages are the same as before.
 
 **Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
-`api_key`, `scim`, `password_change`, `reset_request`, `reset_confirm`, `logout`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
+`api_key`, `scim`, `password_change`, `reset_request`, `reset_confirm`, `logout`,
+`api_key_create`, `api_key_revoke`, `api_key_enable`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
 account, when the account row was found, else NULL); `attempt_id` (the `oidc_login_attempts` row
-a callback claimed, else NULL); `request_id` (the request's `X-Request-ID`, stored only when it
+a callback claimed, else NULL); `api_key_id` (the `api_keys` row an `api_key_create`,
+`api_key_revoke` or `api_key_enable` row concerns, else NULL; no foreign key, and never the key,
+its prefix, its hash or its name); `request_id` (the request's `X-Request-ID`, stored only when it
 matches `^[A-Za-z0-9._:-]{1,64}$`, else empty); `subject_ref` (see below, else NULL);
 `claim_roles` and `claim_groups` (JSON arrays of the `roles` and `groups` values the role mapping
 used, after a Microsoft Graph or userinfo resolution; at most 100 values of at most 256 bytes
@@ -432,6 +440,10 @@ or the full user agent. Neither are they logged.
   `token_invalid` names the owner only when a stored token was found but another confirmation
   claimed it first. The owner refusals carry the owner's `user_id`.
 - `logout` (#550, the caller's `user_id`): success, or `internal_error` (the 500).
+- `api_key_create` and `api_key_revoke` (#551, the caller's `user_id` and the key's
+  `api_key_id`): success only.
+- `api_key_enable` (#551, the caller's `user_id` and the key's `api_key_id`): `key_revoked`
+  only (the 409 for a revoked key).
 
 **Subject reference.** A single sign-on refusal decided after the ID token verified and its nonce
 matched stores `subject_ref`, the hex HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it

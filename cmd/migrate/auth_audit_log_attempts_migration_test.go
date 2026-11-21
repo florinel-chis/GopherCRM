@@ -126,7 +126,11 @@ func TestAuthAuditLogAttemptsMigration(t *testing.T) {
 	before := snapshotTable(t, reference, authAuditLogTable)
 	require.Len(t, before.Columns, 13)
 	runMigrateDatabase(t, reference.dsn)
-	want := snapshotTable(t, reference, authAuditLogTable)
+	// api_key_id (#551) belongs to a later migration: it is left out of every
+	// comparison here, so this root checks only what #466 added.
+	wantModel := snapshotTable(t, reference, authAuditLogTable)
+	want := withoutAuthAuditAPIKeyID(wantModel)
+	require.Len(t, wantModel.Columns, 16)
 	require.Len(t, want.Columns, 15)
 	assert.Equal(t, before, withoutAuthAuditAttempts(want), "the migration owns only the two columns and the index")
 	assert.Contains(t, want.Indexes, authAuditLogAggregateIndex+" (aggregate_key) non_unique=0")
@@ -145,12 +149,12 @@ func TestAuthAuditLogAttemptsMigration(t *testing.T) {
 	t.Run("Fresh", func(t *testing.T) {
 		tdb := openMigrationTestDB(t, baseDSN, "aaa_fresh")
 		require.NoError(t, tdb.m.Migrate(authAuditLogAttemptsVersion), "the up applies on an empty database")
-		assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable), "a fresh SQL schema carries what MigrateDatabase builds")
+		assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "a fresh SQL schema carries what MigrateDatabase builds")
 
 		require.NoError(t, tdb.m.Steps(-1))
-		assert.Equal(t, before, snapshotTable(t, tdb, authAuditLogTable), "rollback removes the two columns and the index only")
+		assert.Equal(t, before, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "rollback removes the two columns and the index only")
 		require.NoError(t, tdb.m.Migrate(authAuditLogAttemptsVersion))
-		assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable))
+		assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)))
 		require.ErrorIs(t, tdb.m.Migrate(authAuditLogAttemptsVersion), migrate.ErrNoChange)
 
 		// The unique key holds: a second row with the same key is refused,
@@ -181,7 +185,7 @@ func TestAuthAuditLogAttemptsMigration(t *testing.T) {
 			if autoMigrateFirst {
 				// A new binary started before the operator migrated.
 				runMigrateDatabase(t, tdb.dsn)
-				assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable))
+				assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)))
 			}
 
 			require.NoError(t, tdb.m.Migrate(authAuditLogAttemptsVersion), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
@@ -189,11 +193,11 @@ func TestAuthAuditLogAttemptsMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(authAuditLogAttemptsVersion), version)
-			assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable), "the SQL migration and MigrateDatabase produce the same table")
+			assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "the SQL migration and MigrateDatabase produce the same table")
 			assertAuthAuditRowsKept(t, tdb, rows)
 
 			runMigrateDatabase(t, tdb.dsn)
-			assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable), "MigrateDatabase does not change the table")
+			assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "MigrateDatabase does not change the table")
 			require.ErrorIs(t, tdb.m.Migrate(authAuditLogAttemptsVersion), migrate.ErrNoChange)
 
 			// Rollback keeps every row and removes only what #466 added.
@@ -202,14 +206,14 @@ func TestAuthAuditLogAttemptsMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(authAuditLogAttemptsPreviousVersion), version)
-			assert.Equal(t, before, snapshotTable(t, tdb, authAuditLogTable), "rollback removes the two columns and the index only")
+			assert.Equal(t, before, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "rollback removes the two columns and the index only")
 			var count int
 			require.NoError(t, tdb.sql.QueryRow("SELECT COUNT(*) FROM auth_audit_log").Scan(&count))
 			assert.Equal(t, rows, count, "rollback keeps every row")
 
 			// And it applies again from there.
 			require.NoError(t, tdb.m.Migrate(authAuditLogAttemptsVersion))
-			assert.Equal(t, want, snapshotTable(t, tdb, authAuditLogTable))
+			assert.Equal(t, want, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)))
 			assertAuthAuditRowsKept(t, tdb, rows)
 			require.ErrorIs(t, tdb.m.Migrate(authAuditLogAttemptsVersion), migrate.ErrNoChange)
 		})

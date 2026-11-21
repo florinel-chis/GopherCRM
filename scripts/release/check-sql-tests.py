@@ -48,6 +48,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestRefreshTokenSessionMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookEndpointPauseMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestWebhookEndpointPauseMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAuthAuditLogAPIKeyIDMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAuthAuditLogAPIKeyIDMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityAllowList'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityMigration'),
     }

@@ -1003,7 +1003,9 @@ a refresh, a refused SCIM authentication (#468, one row each) or a successful SC
 replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`), or one
 such row per member a successful SCIM group patch added or removed (#506), or a password change,
 password reset request, password reset completion or logout that reached the service (#550, one
-row each, written after the service returns); refused API keys are counted in one row per reason, `user_id`, client network and UTC
+row each, written after the service returns), or an API key creation, revocation or refused
+re-enable of a revoked key (#551, one row each, with the key's id in `api_key_id`, migration
+`20261129120006_auth_audit_log_api_key_id`); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
@@ -1014,11 +1016,12 @@ subject, a token, a code, a state, a nonce, a password, a full IP address or a f
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Written in UTC; index `idx_auth_audit_log_created_at` (the prune) |
-| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key`, `scim` (#468), `password_change`, `reset_request`, `reset_confirm` or `logout` (#550) |
+| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key`, `scim` (#468), `password_change`, `reset_request`, `reset_confirm` or `logout` (#550), `api_key_create`, `api_key_revoke` or `api_key_enable` (#551) |
 | outcome | varchar(16) | No | - | `success` or `refused` |
 | reason | varchar(64) | No | - | Stable reason code of a refusal (see [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log)); `''` on success |
 | user_id | bigint unsigned | Yes | NULL | The account, when the account row was found; index `idx_auth_audit_log_user_id`; no foreign key |
 | attempt_id | bigint unsigned | Yes | NULL | The `oidc_login_attempts` row a callback claimed |
+| api_key_id | bigint unsigned | Yes | NULL | The `api_keys` row an `api_key_create`, `api_key_revoke` or `api_key_enable` row concerns (#551); no index, no foreign key; never the key, its prefix, its hash or its name |
 | request_id | varchar(64) | No | - | `X-Request-ID` when it matches `^[A-Za-z0-9._:-]{1,64}$`, else `''` |
 | subject_ref | varchar(64) | Yes | NULL | hex(HMAC-SHA256) keyed by `API_KEY_SECRET`, else `JWT_SECRET`, of the issuer and subject of a single sign-on identity refused after the ID token verified; index `idx_auth_audit_log_subject_ref` |
 | claim_roles | text | Yes | NULL | JSON array of the `roles` values the role mapping used (at most 100 of 256 bytes) |

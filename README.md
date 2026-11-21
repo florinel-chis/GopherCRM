@@ -1301,7 +1301,9 @@ gophercrm/
 - **Sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`.** Every password sign-in, single
   sign-on callback and refresh writes one `auth_audit_log` row, so does every password change
   (`password_change`), password reset request (`reset_request`), reset completion
-  (`reset_confirm`) and logout (`logout`, #550), and refused API keys are counted
+  (`reset_confirm`) and logout (`logout`, #550), so does every API key creation
+  (`api_key_create`), revocation (`api_key_revoke`) and refused re-enable of a revoked key
+  (`api_key_enable`, #551, with the key's id), and refused API keys are counted
   in one row per reason, account, client network and minute (`attempts`, #466); rows are kept 90
   days by default (#454). The rows hold no email, name, subject or full IP address, and erasure leaves them
   to age out.

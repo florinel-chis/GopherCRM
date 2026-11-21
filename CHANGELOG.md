@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sign-in audit rows for API key creation, revocation and refused re-enabling (#551).**
+  `POST /api-keys` answered 201 writes one `auth_audit_log` row with method `api_key_create`; a
+  revocation answered 200, through `DELETE /api-keys/{id}` (an idempotent repeat included) or
+  `PUT /api-keys/{id}` with `is_active` false, writes one with method `api_key_revoke`; and
+  `PUT /api-keys/{id}` with `is_active` true answered 409 because the key is revoked writes one
+  with method `api_key_enable`, outcome `refused`, reason `key_revoked`. Each row carries the
+  caller's user id, the request id, the client network and the browser family, and the key's
+  numeric id in the new nullable column `auth_audit_log.api_key_id`; never the key, its prefix,
+  its hash or its name. A rename alone, `is_active` true on a live key, any other refusal and every
+  read write no row. Migration `20261129120006_auth_audit_log_api_key_id` adds the column on
+  MySQL and MariaDB; SQLite gets it from AutoMigrate. `GET /audit/sign-ins` returns `api_key_id`
+  (null when unset), and it and Settings > Sign-in audit accept the 12 methods and 44 reason codes
+  as filters. Answers, status codes and messages of `/api-keys` are unchanged.
 - **Changing the single sign-on issuer asks for confirmation while accounts are linked (#556).**
   `PUT /settings/sso` with an otherwise valid body whose effective issuer (`issuer_url`, or
   `OIDC_ISSUER_URL` when it is empty) differs from the current one answers 409

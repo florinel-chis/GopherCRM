@@ -39,6 +39,7 @@ const entry = {
   reason: '',
   user_id: 1,
   attempt_id: null,
+  api_key_id: null,
   request_id: 'req-1',
   subject_ref: null,
   claim_roles: null,

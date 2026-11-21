@@ -72,6 +72,7 @@ func TestAuthAuditLogHandler(t *testing.T) {
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
 	uid := uint(7)
 	attempt := uint(3)
+	keyID := uint(12)
 	ref := "abc123"
 	roles := `["crm-admins","crm-sales"]`
 	broken := `not json`
@@ -80,7 +81,7 @@ func TestAuthAuditLogHandler(t *testing.T) {
 
 	t.Run("admin gets the rows in the service's order with meta.total", func(t *testing.T) {
 		svc := &fakeAuthAuditLogService{total: 42, rows: []models.AuthAuditLog{
-			{ID: 5, CreatedAt: newer, Method: "oidc", Outcome: "refused", Reason: "no_mapping_match", UserID: &uid, AttemptID: &attempt,
+			{ID: 5, CreatedAt: newer, Method: "oidc", Outcome: "refused", Reason: "no_mapping_match", UserID: &uid, AttemptID: &attempt, APIKeyID: &keyID,
 				RequestID: "req-1", SubjectRef: &ref, ClaimRoles: &roles, ClaimGroups: &broken, ClientNetwork: "203.0.113.0/24", UserAgentFamily: "Firefox on Linux"},
 			{ID: 9, CreatedAt: older, Method: "password", Outcome: "success"},
 		}}
@@ -107,7 +108,8 @@ func TestAuthAuditLogHandler(t *testing.T) {
 		assert.Equal(t, []interface{}{"crm-admins", "crm-sales"}, first["claim_roles"])
 		assert.Nil(t, first["claim_groups"], "a value that does not decode is null")
 		assert.Equal(t, "abc123", first["subject_ref"])
-		wantKeys := []string{"id", "created_at", "method", "outcome", "reason", "user_id", "attempt_id", "request_id",
+		assert.EqualValues(t, 12, first["api_key_id"])
+		wantKeys := []string{"id", "created_at", "method", "outcome", "reason", "user_id", "attempt_id", "api_key_id", "request_id",
 			"subject_ref", "claim_roles", "claim_groups", "client_network", "user_agent_family", "attempts"}
 		for _, row := range body.Data {
 			keys := make([]string, 0, len(row))
@@ -117,7 +119,7 @@ func TestAuthAuditLogHandler(t *testing.T) {
 			assert.ElementsMatch(t, wantKeys, keys)
 		}
 		second := body.Data[1]
-		for _, key := range []string{"user_id", "attempt_id", "subject_ref", "claim_roles", "claim_groups"} {
+		for _, key := range []string{"user_id", "attempt_id", "api_key_id", "subject_ref", "claim_roles", "claim_groups"} {
 			value, present := second[key]
 			assert.True(t, present, key)
 			assert.Nil(t, value, key)
@@ -167,7 +169,7 @@ func TestAuthAuditLogHandler(t *testing.T) {
 			{"outcome", service.AuthAuditOutcomes(), func(f repository.AuthAuditFilter) string { return f.Outcome }},
 		}
 		require.Len(t, cases[0].values, 44)
-		require.Len(t, cases[1].values, 9)
+		require.Len(t, cases[1].values, 12)
 		require.Len(t, cases[2].values, 2)
 		for _, tc := range cases {
 			for _, value := range tc.values {

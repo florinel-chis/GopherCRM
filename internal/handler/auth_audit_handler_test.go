@@ -69,6 +69,21 @@ func (r *recordingAuthAudit) RecordLogout(ctx context.Context, userID uint, err 
 	return 1
 }
 
+func (r *recordingAuthAudit) RecordAPIKeyCreate(ctx context.Context, userID, _ uint) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "api_key_create", ctx: ctx, userID: userID})
+	return 1
+}
+
+func (r *recordingAuthAudit) RecordAPIKeyRevoke(ctx context.Context, userID, _ uint) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "api_key_revoke", ctx: ctx, userID: userID})
+	return 1
+}
+
+func (r *recordingAuthAudit) RecordAPIKeyEnableRefused(ctx context.Context, userID, _ uint) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "api_key_enable", ctx: ctx, userID: userID})
+	return 1
+}
+
 func (r *recordingAuthAudit) RecordAPIKeyFailure(ctx context.Context, err error) uint {
 	r.calls = append(r.calls, recordedAuthAudit{kind: "api_key", ctx: ctx, err: err})
 	return 1

@@ -412,6 +412,21 @@ func (r *recordingAudit) RecordLogout(context.Context, uint, error) uint {
 	return 1
 }
 
+func (r *recordingAudit) RecordAPIKeyCreate(context.Context, uint, uint) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordAPIKeyRevoke(context.Context, uint, uint) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordAPIKeyEnableRefused(context.Context, uint, uint) uint {
+	r.other++
+	return 1
+}
+
 func (r *recordingAudit) RecordAPIKeyFailure(ctx context.Context, err error) uint {
 	r.apiKeyFailures = append(r.apiKeyFailures, recordedAPIKeyFailure{ctx: ctx, err: err})
 	return 1

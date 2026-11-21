@@ -504,7 +504,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	productHandler := handler.NewProductHandler(productService).WithExternalIDs(service.NewProductExternalIDService(productExternalIDRepo, txManager))
 	quoteHandler := handler.NewQuoteHandler(quoteService)
 	quotePublicHandler := handler.NewQuotePublicHandler(quoteService)
-	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
+	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService).WithAudit(authAudit)
 	configHandler := handler.NewConfigurationHandler(configService).WithQuotePDFAvailable(quoteService.PDFAvailable)
 	ssoSettingsHandler := handler.NewSSOSettingsHandler(ssoSettings)
 	// OpenID Connect sign-in (#435): the settings above, re-read on every call,
