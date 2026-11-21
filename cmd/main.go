@@ -370,7 +370,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		service.WithTicketProductName(configService),
 		service.WithTicketAutomationEvents(automationRepo, txManager),
 		service.WithTicketWebhooks(webhookRepo, txManager))
-	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo)
+	// A task update locks its task row in one transaction before the
+	// completed-task re-check and the write, the row the bulk task status
+	// batch locks too (#558).
+	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo,
+		service.WithTaskRowLock(txManager))
 	labelService := service.NewLabelService(labelRepo)
 	// A key is issued only inside one transaction that locks its owner's users
 	// row first (#342), so the service takes the shared userRepo and txManager.

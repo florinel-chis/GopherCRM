@@ -423,21 +423,23 @@ confirm and the gaps of the re-check.
 ### Bulk status
 
 - **Rows locked:** leads, `FOR UPDATE` in id ascending order (`GetLeadsByIDs`,
-  `internal/repository/bulk_status_repository.go:69`, #182, no company lock); tickets, `FOR
-  UPDATE` in id ascending order (`GetTicketsByIDs`, `internal/repository/bulk_status_repository.go:89`,
-  #242); tasks only at the write; and last the batch's own `bulk_operations` row (`CompletePending`,
-  `internal/repository/bulk_operation_repository.go:39`).
+  `internal/repository/bulk_status_repository.go:55`, #182, no company lock); tickets, `FOR
+  UPDATE` in id ascending order (`GetTicketsByIDs`, `internal/repository/bulk_status_repository.go:75`,
+  #242); tasks, `FOR UPDATE` in id ascending order (`GetTasksByIDs`,
+  `internal/repository/bulk_status_repository.go:95`, #558); and last the batch's own
+  `bulk_operations` row (`CompletePending`, `internal/repository/bulk_operation_repository.go:39`).
 - **Order:** the pending `bulk_operations` row is inserted before and outside the transaction
-  (`internal/service/bulk_status_service.go:153`); inside it the batch's rows of one table, then
-  its `bulk_operations` row (`internal/service/bulk_status_service.go:166`). `GetTasksByIDs`
-  (`internal/repository/bulk_status_repository.go:102-104`) reads the tasks without a lock: the
-  task batch locks only its task rows (at the `UPDATE` in `SetTaskStatus`,
-  `internal/repository/bulk_status_repository.go:114`) and its own `bulk_operations` row
-  (`CompletePending`), so it can invert no cross-table order. The completed-task check
-  (`internal/service/bulk_status_service.go:383`) is a read before that `UPDATE` and is not
-  protected by a row lock: a task completed by another transaction between the read and the
-  `UPDATE` is moved out of `completed` (a ROADMAP gap).
-- **Transaction:** `WithTransaction` (`internal/service/bulk_status_service.go:158`); a
+  (`internal/service/bulk_status_service.go:147`); inside it the batch's rows of one table, then
+  its `bulk_operations` row (`internal/service/bulk_status_service.go:160`). The task batch locks
+  only its task rows (`GetTasksByIDs`, `internal/service/bulk_status_service.go:367`) and its own
+  `bulk_operations` row (`CompletePending`), so it can invert no cross-table order. The found,
+  assignee and completed-task checks (`internal/service/bulk_status_service.go:383`) judge the
+  locked rows, so a status or assignee committed by another transaction before the lock is the one
+  they see. The single task update (`taskService.UpdateWithLabels`, `PUT /tasks/{id}`) is one
+  transaction that locks the same row (`GetByIDForUpdate`,
+  `internal/repository/task_repository.go:59`) before its completed-task re-check and the write
+  (`internal/service/task_service.go:361`), so the batch and the update wait for each other.
+- **Transaction:** `WithTransaction` (`internal/service/bulk_status_service.go:152`); a
   transaction root.
 - **Retry:** none today. Target: the #183 retry rule.
 - **Status:** implemented
@@ -863,7 +865,7 @@ same on MySQL 8 and MariaDB 10.11.
 | Lead conversion | #182 | implemented |
 | Lead update | #182 | implemented |
 | Company delete | #182 | implemented |
-| Bulk status | #182, #242 | implemented |
+| Bulk status | #182, #242, #558 | implemented |
 | Login | C2 | implemented |
 | Refresh rotation | C2 | implemented |
 | Password-reset request | C3 | implemented |

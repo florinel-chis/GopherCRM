@@ -342,6 +342,17 @@ type TicketLockingReader interface {
 	GetByIDForUpdate(id uint) (*models.Ticket, error)
 }
 
+// TaskLockingReader is the locking read of the single task update (#558):
+// taskService.UpdateWithLabels, when built WithTaskRowLock, reads the task
+// through it inside its write transaction before the completed-task re-check
+// and the write. The production taskRepository implements it (FOR UPDATE on
+// MySQL/MariaDB, a plain read on SQLite); it is kept apart from TaskRepository
+// so the hand-written mocks need no change. A soft-deleted or missing task is
+// gorm.ErrRecordNotFound.
+type TaskLockingReader interface {
+	GetByIDForUpdate(id uint) (*models.Task, error)
+}
+
 // TicketMailDeliveryOutcome is what FinishPending writes on a pending ticket
 // comment mail delivery (#219).
 type TicketMailDeliveryOutcome struct {
@@ -965,6 +976,9 @@ type BulkStatusRepository interface {
 	// order every ticket writer and automation step uses, and records the
 	// events from the status it read under the lock.
 	GetTicketsByIDs(ids []uint) ([]models.Ticket, error)
+	// GetTasksByIDs is a locking read in id order (FOR UPDATE on MySQL, a
+	// plain read on SQLite, #558): the batch locks the task rows the single
+	// task update locks, and judges them as committed.
 	GetTasksByIDs(ids []uint) ([]models.Task, error)
 	SetLeadStatus(ids []uint, status models.LeadStatus) error
 	SetTicketStatus(ids []uint, status models.TicketStatus) error

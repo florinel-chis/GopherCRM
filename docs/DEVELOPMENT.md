@@ -1974,7 +1974,7 @@ Each one normalises the ids (1–100, duplicates count once), checks the role, w
 `BulkStatusRepository`, refuses the whole batch if any id is missing, not the caller's to change
 or in a forbidden transition (the offending ids go into `error.details`), and only then writes
 the status — plus, for leads and tickets (#242), the automation events on the same transaction;
-the ticket read is a locking read in id order — and, as the last
+the lead, ticket and task reads are locking reads in id order (#182, #242, #558) — and, as the last
 write of that transaction, sets the history row `completed` (see below). There is no generic bulk
 create/update/delete/action machinery any more (#112); a new
 bulk operation gets its own narrow service method and repository halves the same way, and a bulk

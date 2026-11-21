@@ -117,7 +117,7 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"Lead conversion":                "#182",
 	"Lead update":                    "#182",
 	"Company delete":                 "#182",
-	"Bulk status":                    "#182, #242",
+	"Bulk status":                    "#182, #242, #558",
 	"Login":                          "C2",
 	"Refresh rotation":               "C2",
 	"Password-reset request":         "C3",
@@ -358,23 +358,32 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(leadService, "WithTransactionAndRetry("),
 		"only lead conversion uses WithTransactionAndRetry in lead_service.go")
 
-	// Bulk status: tasks are read without a lock, locked at the UPDATE, and
-	// the completed-task check is not protected.
+	// Bulk status: tasks are locked in id order (#558), and the single task
+	// update locks the same row before its completed-task re-check.
 	bulk := flow("Bulk status")
 	for _, want := range []string{
-		"`GetTasksByIDs`",
-		"reads the tasks without a lock",
-		"the task batch locks only its task rows (at the `UPDATE` in `SetTaskStatus`",
+		"tasks, `FOR UPDATE` in id ascending order (`GetTasksByIDs`",
+		"#558",
 		"its own `bulk_operations` row (`CompletePending`)",
 		"so it can invert no cross-table order",
-		"The completed-task check",
-		"is a read before that `UPDATE` and is not protected by a row lock",
+		"The found, assignee and completed-task checks",
+		"judge the locked rows",
+		"The single task update (`taskService.UpdateWithLabels`, `PUT /tasks/{id}`) is one transaction that locks the same row (`GetByIDForUpdate`",
+		"before its completed-task re-check and the write",
 	} {
 		assert.Contains(t, bulk, want, "Bulk status")
 	}
+	for _, gone := range []string{"reads the tasks without a lock", "tasks only at the write", "not protected by a row lock"} {
+		assert.NotContains(t, bulk, gone, "Bulk status")
+	}
 	const bulkRepo = "internal/repository/bulk_status_repository.go"
-	assert.NotContains(t, concurrencyDocFuncBody(t, bulkRepo, "func (r *bulkStatusRepository) GetTasksByIDs("), "Locking",
-		"GetTasksByIDs is documented as a read without a lock")
+	assert.Contains(t, concurrencyDocFuncBody(t, bulkRepo, "func (r *bulkStatusRepository) GetTasksByIDs("), "clause.Locking",
+		"GetTasksByIDs is documented as a locking read")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/task_repository.go", "func (r *taskRepository) GetByIDForUpdate("), "clause.Locking")
+	taskUpdate := concurrencyDocFuncBody(t, "internal/service/task_service.go", "func (s *taskService) writeLocked(")
+	assert.Contains(t, taskUpdate, "GetByIDForUpdate(")
+	assert.Contains(t, taskUpdate, "TaskStatusCompleted")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/service/task_service.go", "func (s *taskService) UpdateWithLabels("), "s.writeLocked(")
 	assert.Contains(t, concurrencyDocFuncBody(t, bulkRepo, "func (r *bulkStatusRepository) GetLeadsByIDs("), "clause.Locking")
 	assert.Contains(t, concurrencyDocFuncBody(t, bulkRepo, "func (r *bulkStatusRepository) GetTicketsByIDs("), "clause.Locking")
 	taskBatch := concurrencyDocFuncBody(t, "internal/service/bulk_status_service.go", "func (s *bulkStatusService) BulkSetTaskStatus(")
@@ -1025,16 +1034,11 @@ func TestConcurrencyDocCrossLinks(t *testing.T) {
 			"docs/ROADMAP.md still lists the closed login gap")
 	}
 
-	var gaps []string
+	// The bulk task batch locks its tasks since #558: the gap bullet is gone.
 	for _, b := range bullets {
-		if strings.Contains(b, "GetTasksByIDs") {
-			gaps = append(gaps, concurrencyDocNormalize(b))
-		}
-	}
-	if assert.Len(t, gaps, 1, "one ROADMAP gap bullet names GetTasksByIDs") {
-		assert.Contains(t, gaps[0], "](CONCURRENCY.md)")
-		assert.Contains(t, gaps[0], "completed-task check")
-		assert.Contains(t, gaps[0], "not protected by a row lock")
+		assert.False(t, strings.HasPrefix(b, "- **Unlocked completed-task check in the bulk task status batch**"),
+			"docs/ROADMAP.md still lists the closed bulk task gap")
+		assert.NotContains(t, b, "GetTasksByIDs", "no ROADMAP bullet names GetTasksByIDs")
 	}
 }
 

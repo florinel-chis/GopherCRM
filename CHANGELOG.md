@@ -1534,6 +1534,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bulk task status changes and single task updates read the task rows with a locking read
+  (#558).** `POST /tasks/bulk/status` reads its tasks with a locking read in id order, and
+  `PUT /tasks/{id}` writes in one transaction that first reads the task row with a locking read
+  and re-checks the completed-task rule against it. Each writer now sees the status the other
+  committed: a task completed by one request is not moved out of `completed` by the other, and the
+  bulk assignee check judges the current assignee. No API or schema change.
 - **Failed sign-in attempts made at the same time are each counted (#545).** A wrong password
   is now recorded in one transaction on the stored account row, read with a locking read, so the
   account lock after five failed attempts no longer depends on request timing. An expired lock

@@ -350,7 +350,10 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 //
 // Admins may update any task, everyone else only tasks assigned to them. A
 // completed task's status is final for admins too, exactly as it is through the
-// single-record update.
+// single-record update. The tasks are read with a locking read in id order
+// (GetTasksByIDs, #558), so the found, assignee and completed-task checks
+// judge the rows as committed, and the single task update, which locks the
+// same row, waits for the batch or the batch for it.
 func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
@@ -364,6 +367,9 @@ func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint,
 		tasks, err := txRepo.GetTasksByIDs(unique)
 		if err != nil {
 			return err
+		}
+		if s.afterTaskLock != nil {
+			s.afterTaskLock(unique)
 		}
 
 		found := make(map[uint]struct{}, len(tasks))
@@ -411,6 +417,9 @@ type bulkStatusService struct {
 	// afterLeadLock is an instance-local test seam (#182), nil in production:
 	// it runs inside the lead batch right after the locking read of the leads.
 	afterLeadLock func(ids []uint)
+	// afterTaskLock is an instance-local test seam (#558), nil in production:
+	// it runs inside the task batch right after the locking read of the tasks.
+	afterTaskLock func(ids []uint)
 }
 
 // BulkStatusServiceOption configures NewBulkStatusService beyond its required
