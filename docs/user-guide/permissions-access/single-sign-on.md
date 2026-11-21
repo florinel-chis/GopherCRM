@@ -79,11 +79,13 @@ first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-i
    unless you need it (see [Mixed accounts](#mixed-accounts)).
 6. Switch **Enabled** on and click **Save**.
 
-When the save changes the issuer in force while accounts are linked to the current issuer, the
-dialog **Change the issuer?** shows how many account links stop matching: those people are not
-recognised at their next sign-in, and provisioning no longer sees them. Click **Change issuer** to
-save anyway, or **Cancel** to keep the current issuer; nothing is saved until you confirm. Setting
-the first issuer, keeping it, or changing it while no account is linked needs no confirmation.
+   When the save changes the issuer in force while accounts are linked to the current issuer,
+   the dialog **Change the issuer?** shows how many account links stop matching: those people are
+   not recognised at their next sign-in, and provisioning no longer sees them. Click
+   **Change issuer** to save anyway, or **Cancel** to keep the current issuer; nothing is saved
+   until you confirm. Setting the first issuer, keeping it, or changing it while no account is
+   linked needs no confirmation.
+
 7. Sign out and test with a person who should get each mapped role. Keep a local administrator
    account signed in elsewhere until the test passes.
    [Testing single sign-on](testing-single-sign-on.md) lists the checks and test cases.
