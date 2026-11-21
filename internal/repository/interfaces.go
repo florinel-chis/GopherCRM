@@ -443,9 +443,11 @@ type WebhookRepository interface {
 
 	// EnqueueDeliveries inserts outbox rows (the caller's transaction).
 	EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error
-	// ListDueDeliveryIDs is a plain SELECT of the ids whose status is pending
-	// and next_attempt_at <= now, oldest due first, at most limit.
-	ListDueDeliveryIDs(ctx context.Context, now time.Time, limit int) ([]uint, error)
+	// ListDueDeliveries is a plain SELECT (no locking clause) of the id and
+	// endpoint_id of the rows whose status is pending and next_attempt_at <=
+	// now, ordered by next_attempt_at then id, at most limit. That order is
+	// not id order: the runtime sorts each endpoint's rows by id itself.
+	ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error)
 	// ClaimDelivery moves one due pending row to sending (attempts + 1,
 	// last_attempt_at, lease_until) by primary key and returns it, or
 	// ErrWebhookDeliveryNotClaimed when another claimer won or the row is not

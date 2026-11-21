@@ -3732,8 +3732,17 @@ commits. Code: `internal/models/webhook.go`,
   `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
 - **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
-  with `lease_expired` at the cap), a plain `SELECT id … WHERE status = 'pending' AND
-  next_attempt_at <= now`, then per row a conditional claim by primary key (`pending → sending`,
+  with `lease_expired` at the cap), a plain `SELECT id, endpoint_id … WHERE status = 'pending' AND
+  next_attempt_at <= now ORDER BY next_attempt_at, id` (`ListDueDeliveries`), then the rows are
+  grouped per endpoint and each group is sorted by ascending id (the discovery order is not id
+  order: a retried row comes back after newer ones). The groups go to a pool of
+  `WebhookWorkers` (4) goroutines, set with `WithWebhookWorkers` in `cmd/main.go` (a runtime built
+  without the option has 1, the sequential pass), started and joined inside `RunOnce`. One worker
+  takes a whole group and sends it one row at a time, so a slow endpoint holds only its own worker
+  and the other endpoints keep moving (#568); it checks the context before every claim and claims
+  each row just before its send, never the group up front, so the lease covers only the row being
+  sent. A failed or retried row does not hold back the later rows of its endpoint. The pass waits
+  for every worker before the prune. Per row: a conditional claim by primary key (`pending → sending`,
   `attempts + 1`, `last_attempt_at`, `lease_until = now + WebhookSendLease` 2 min), one POST, and a
   finish fenced on `status = 'sending' AND attempts = <claimed>`. A missing or inactive endpoint
   fails the row with `endpoint_inactive`, an unopenable secret with `secret_unavailable`; neither
@@ -3772,13 +3781,16 @@ commits. Code: `internal/models/webhook.go`,
   [AEO_SECURITY.md](AEO_SECURITY.md#public-only-egress-for-webhooks)), 10 s per attempt
   (`WebhookRequestTimeout`), response bodies read up to 4 KiB and discarded. `cmd/webhook_runtime.go`
   builds it from `aeo.NewEgressGuard(config.AEOEgressPolicy{})`, the real resolver and dialer.
-- **Drain.** `Stop` cancels the loop: no further claim starts, an attempt already claimed runs to
-  its end (request timeout plus a 5 s finish bound), then the goroutine joins. After `Stop`
+- **Drain.** `Stop` cancels the loop: no worker starts a further claim, every attempt in flight
+  (one per busy worker) runs to its end (request timeout plus a 5 s finish bound), `RunOnce` joins
+  its workers, then the loop goroutine joins. After `Stop`
   returns nil nothing is written. Order in `combineStops`: automation, form retention, bulk sweep,
   webhooks, AEO.
 - **Replicas.** Safe on every replica: claims are conditional, and a crashed sender's lease
   expires and is recovered. Delivery is at least once (a crash between the POST and the finish
-  resends after the lease) and unordered; consumers deduplicate on `webhook-id`.
+  resends after the lease). The per-endpoint id order holds within one runtime's pass only: a
+  retry goes back in the queue behind newer rows, and two replicas can each send rows of the same
+  endpoint, so consumers deduplicate on `webhook-id` and do not rely on order.
 - **Privacy.** Rows hold ids, the event type, a status and timestamps; erasure and ticket delete
   leave them (a non-goal). Log lines of the registry, the outbox, the runtime and the handler carry
   `operation`, `endpoint_id`, `delivery_id`, `event_type`, `record_id`, `attempts`, `status`,
@@ -3797,7 +3809,9 @@ Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models
 `TestWebhookDeliveryAfterCommit`, `TestWebhookRetryBackoffAndCap`, `TestWebhookUndeliverableEndpoint`,
 `TestWebhookRuntimeLifecycle`, `TestWebhookEgressRefusal`, `TestWebhookRequestTimeout`,
 `TestWebhookEndpointService`, `TestWebhookDeliveryLogAndPrune`, `TestWebhookLogsOmitSecrets`,
-`TestWebhookUpdated{FanOut,Atomicity}{SQLite,MySQL}` (#408) (`internal/service`);
+`TestWebhookUpdated{FanOut,Atomicity}{SQLite,MySQL}` (#408),
+`TestWebhookWorkerPool{SQLite,MySQL}` (#568, registered in the transaction profile of
+`scripts/ci/check-go.py`) (`internal/service`);
 `TestWebhookRoutesAdminOnly`, `TestWebhookHandlerValidation` (`internal/handler`);
 `TestWebhookAPISQLite`, `TestWebhookUpdatedAPISQLite` (`tests`); `TestWebhookProductionWiring`,
 `TestWebhookUpdatedProductionWiring` (`cmd`);

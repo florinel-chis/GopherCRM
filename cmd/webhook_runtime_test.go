@@ -33,6 +33,7 @@ func TestWebhookProductionWiring(t *testing.T) {
 			"service.WithFormWebhooks(webhookRepo)",
 			"handler.SetupWebhookRoutes(protected, webhookHandler)",
 			"webhooks.start(backgroundCtx)",
+			"service.WithWebhookWorkers(service.WebhookWorkers)",
 			"combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)",
 		} {
 			assert.Contains(t, text, fragment)
@@ -73,6 +74,8 @@ func TestWebhookProductionWiring(t *testing.T) {
 		require.NotNil(t, built, "setupDependencies builds the webhook runtime")
 		assert.Equal(t, service.WebhookPollInterval, built.Interval())
 		assert.Equal(t, service.WebhookRequestTimeout, built.RequestTimeout())
+		assert.Equal(t, service.WebhookWorkers, built.Workers(), "main sizes the sender pool")
+		assert.Greater(t, service.WebhookWorkers, 1, "the production pool is wider than the sequential default")
 
 		// The first pass runs at start; the secret opens (the right context),
 		// and the real guard refuses localhost before any connection.

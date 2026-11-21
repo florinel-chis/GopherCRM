@@ -688,14 +688,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 
 	// The outbound webhook sender (#345) runs on every replica: every
 	// service.WebhookPollInterval it delivers the committed outbox rows through
-	// the public-only egress guard.
-	webhooks := newWebhookBackground(webhookRepo, webhookBox)
+	// the public-only egress guard, on a pool of service.WebhookWorkers workers
+	// that sends each endpoint's rows one at a time in id order (#568).
+	webhooks := newWebhookBackground(webhookRepo, webhookBox, service.WithWebhookWorkers(service.WebhookWorkers))
 	webhooks.start(backgroundCtx)
 
 	// One drain handle for every runtime: the automation worker first (its step
 	// transactions are short), then the form retention purge (a chunk in flight
-	// rolls back), then the bulk operation sweep, then the webhook sender (an
-	// attempt in flight finishes, bounded by its request timeout), then the AEO
+	// rolls back), then the bulk operation sweep, then the webhook sender (the
+	// attempts in flight finish, each bounded by its request timeout), then the AEO
 	// runs.
 	return combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, webhooks.Stop, aeoRuntime.Stop)
 }

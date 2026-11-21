@@ -510,7 +510,9 @@ update or a delete that rolls back sends nothing. A background sender delivers c
 is success. A non-2xx answer, a redirect (never followed), a timeout (10 seconds), a connection
 failure or a refused destination is retried after 1, 2, 4, … minutes (at most 6 hours apart) until
 10 attempts have been made (about 8.5 hours); the event is then marked failed. Delivery is at least
-once and unordered: deduplicate on `webhook-id`.
+once. A sender works on several endpoints at a time but sends one endpoint's events one at a time,
+oldest first, so a slow endpoint does not hold up the others. A retry or a second replica can still
+deliver an endpoint's events out of order: deduplicate on `webhook-id` and do not rely on order.
 
 **Test ping.** `POST /api/v1/webhooks/endpoints/:id/test` sends one signed request to the endpoint
 at once, active or not, and answers with the outcome: `{"event_id":"evt_…","outcome":"succeeded",

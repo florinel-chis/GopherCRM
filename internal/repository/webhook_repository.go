@@ -198,13 +198,19 @@ func (r *webhookRepository) EnqueueDeliveries(ctx context.Context, deliveries []
 	return r.db.WithContext(ctx).Create(&deliveries).Error
 }
 
-func (r *webhookRepository) ListDueDeliveryIDs(ctx context.Context, now time.Time, limit int) ([]uint, error) {
-	var ids []uint
-	err := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).
+// WebhookDueDelivery is one row discovery returns: its id and its endpoint.
+type WebhookDueDelivery struct {
+	ID         uint
+	EndpointID uint
+}
+
+func (r *webhookRepository) ListDueDeliveries(ctx context.Context, now time.Time, limit int) ([]WebhookDueDelivery, error) {
+	var due []WebhookDueDelivery
+	err := r.db.WithContext(ctx).Model(&models.WebhookDelivery{}).Select("id", "endpoint_id").
 		Where("status = ? AND next_attempt_at <= ?", models.WebhookDeliveryPending, now.UTC()).
 		Order("next_attempt_at").Order("id").Limit(limit).
-		Pluck("id", &ids).Error
-	return ids, err
+		Scan(&due).Error
+	return due, err
 }
 
 // matchesAfterZero re-checks a conditional write that reported zero changed
