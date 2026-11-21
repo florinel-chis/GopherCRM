@@ -1577,6 +1577,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A refused user reload signs the tab out the same way the focus check does (#574).** When
+  `GET /users/me` answered 401 or 403 to the reload that follows a role save or an own-account
+  save, the web app cleared the tokens and the query cache but kept the old user and its
+  permission list published with no token stored. `loadUser` in
+  `gocrm-ui/src/contexts/AuthContext.tsx` now also publishes the signed-out state, as
+  `refetchOnFocus` already did; a late refusal of a session that was replaced in the meantime
+  still changes nothing, and a 429 or a network error keeps the session. The mount path is
+  unchanged. Covered by new cases in `gocrm-ui/src/contexts/AuthContext.permissions.test.tsx`.
+  Frontend only, no API change.
+
 - **The password-reset and #175 citations of `docs/CONCURRENCY.md` point at the right lines again
   (#581).** 23 citations of `internal/service/auth_service.go` (the retry-rule roots, the
   password-reset request and confirm flows and the #175 failure-mode paragraph) had drifted to

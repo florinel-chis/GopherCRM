@@ -339,6 +339,80 @@ describe('AuthProvider permissions', () => {
     }
   });
 
+  it('signs the user out when refreshUser is refused', async () => {
+    for (const status of [401, 403]) {
+      vi.mocked(authApi.getCurrentUser).mockReset();
+      vi.mocked(apiClient.clearTokens).mockClear();
+      const { result, unmount } = await mountSignedIn(FIRST);
+      vi.mocked(authApi.getCurrentUser).mockRejectedValueOnce(httpError(status));
+
+      await act(() => result.current.refreshUser());
+
+      expect(result.current.user).toBeNull();
+      expect(result.current.isAuthenticated).toBe(false);
+      expect(result.current.permissions).toEqual([]);
+      expect(apiClient.clearTokens).toHaveBeenCalledTimes(1);
+      expect(stored.token).toBeNull();
+      unmount();
+    }
+  });
+
+  it('keeps the user and the permissions when refreshUser fails for another reason', async () => {
+    const { result } = await mountSignedIn(FIRST);
+
+    for (const failure of [httpError(429), new Error('Network Error')]) {
+      vi.mocked(authApi.getCurrentUser).mockRejectedValueOnce(failure);
+
+      await act(() => result.current.refreshUser());
+
+      expect(result.current.user?.id).toBe(user.id);
+      expect(result.current.permissions).toEqual(FIRST);
+      expect(apiClient.clearTokens).not.toHaveBeenCalled();
+      expect(stored.token).toBe('stored-token');
+    }
+  });
+
+  it('ignores a refreshUser refusal that belongs to an earlier session', async () => {
+    const { result } = await mountSignedIn(FIRST);
+    const lateRefusal = deferred<CurrentUser>();
+    vi.mocked(authApi.getCurrentUser).mockReturnValueOnce(lateRefusal.promise);
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.refreshUser();
+    });
+    await waitFor(() => expect(authApi.getCurrentUser).toHaveBeenCalledTimes(2));
+
+    // Another tab replaced the stored session while /users/me was in flight.
+    stored.generation += 1;
+    stored.token = 'newer-token';
+
+    await act(async () => {
+      lateRefusal.reject(httpError(401));
+      await pending;
+    });
+
+    expect(result.current.user?.id).toBe(user.id);
+    expect(result.current.permissions).toEqual(FIRST);
+    expect(apiClient.clearTokens).not.toHaveBeenCalled();
+    expect(stored.token).toBe('newer-token');
+  });
+
+  it('ends a refused session on mount without ever publishing a user', async () => {
+    stored.token = 'stored-token';
+    vi.mocked(authApi.getCurrentUser).mockRejectedValueOnce(httpError(401));
+
+    const { result, published } = mount();
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.permissions).toEqual([]);
+    expect(published.every((value) => value.user === null)).toBe(true);
+    expect(apiClient.clearTokens).toHaveBeenCalledTimes(1);
+    expect(stored.token).toBeNull();
+  });
+
   it('ignores a focus answer that belongs to an earlier session', async () => {
     // A logout while the refetch is in flight: the late answer must not bring
     // the user back.
