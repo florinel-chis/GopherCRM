@@ -114,21 +114,93 @@ OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":<Admin role id
 Keep your local administrator account. It is the way back in if the secret expires or the mapping
 is wrong.
 
+## 8. Provision accounts through SCIM (optional)
+
+With SCIM, Entra ID creates, updates and deactivates the GopherCRM accounts of the people assigned
+to the application before they sign in. See [SCIM provisioning](scim-provisioning.md) for what
+GopherCRM does with each request.
+
+1. In GopherCRM, open Settings → SCIM tokens and create a token as described in
+   [SCIM provisioning](scim-provisioning.md#tokens). Copy it at once.
+2. In the Microsoft Entra admin center, go to Identity → Applications → Enterprise applications →
+   the application → **Provisioning**. Set **Provisioning Mode** to **Automatic**.
+3. Under **Admin credentials**, enter:
+   - **Tenant URL**: `PUBLIC_BASE_URL/scim/v2`, for example https://crm.example.com/scim/v2
+   - **Secret Token**: the SCIM token from step 8.1
+
+   Choose **Test Connection**, then **Save**.
+4. Under **Mappings**, open **Provision Microsoft Entra ID Users** and change the attribute
+   mappings:
+   1. Edit the row whose target attribute is `externalId`. Entra ID's default source attribute
+      for it is `mailNickname`. Change the source attribute to `objectId`, with mapping type
+      **Direct**. Single sign-on links the account SCIM created through the token's `oid`, which
+      equals the `objectId` (see [Accounts created through SCIM](#accounts-created-through-scim)).
+      With `mailNickname`, the person's first single sign-on is refused with the audit reason
+      `email_taken`. The `objectId` never changes, so Entra ID never sends an update for it.
+   2. Make this change before the first provisioning cycle. An account created while the mapping
+      sent `mailNickname` keeps that value: PUT ignores `externalId` and PATCH refuses it with
+      400 `invalidPath`.
+   3. Keep only the rows GopherCRM reads:
+      - `userPrincipalName` → `userName` (the matching attribute, unchanged)
+      - the `IsSoftDeleted` expression → `active`
+      - `givenName` → `name.givenName`
+      - `surname` → `name.familyName`
+      - `mail` → `emails[type eq "work"].value`
+      - `objectId` → `externalId`
+
+      Delete the other rows, for example `displayName`, `title`, the phone numbers, the addresses,
+      `preferredLanguage` and the enterprise extension rows. An update that carries one of them is
+      refused whole with 400 `invalidPath`, as [SCIM provisioning](scim-provisioning.md) says.
+   4. Choose **Add New Mapping**: **Mapping type** Expression, **Expression**
+      `SingleAppRoleAssignment([appRoleAssignments])`, **Target attribute**
+      `roles[primary eq "True"].value`. Choose **Ok**. GopherCRM reads the app role's value, which
+      must exactly equal the **Value** of a `roles` row of the role mapping (step 6.4). Every person
+      in scope needs an app role: a create without a matching role, for example an assignment with
+      "Default Access", is refused with 400 `invalidValue`.
+
+      A later change of a person's app role in Entra ID is not applied: Entra ID sends it as an
+      update of `roles[primary eq "True"].value`, which GopherCRM refuses with 400 `invalidPath`,
+      and the failure shows in the **Provisioning logs**. Change the role in GopherCRM instead, or
+      remove the person from the application and provision them again.
+   5. Choose **Save**.
+5. Only when you map groups (needs P1; see
+   [Mapping groups instead of app roles](#mapping-groups-instead-of-app-roles)): under
+   **Mappings**, open **Provision Microsoft Entra ID Groups**.
+   1. Edit the row whose target attribute is `displayName` and change its source attribute to
+      `objectId`. Keep **Match objects using this attribute** set to **Yes**, with matching
+      precedence 1.
+   2. Delete the row `objectId` → `externalId`. Keep the `members` row.
+   3. Choose **Save**.
+
+   Entra ID looks a group up with `displayName eq "<value>"`. GopherCRM serves each `groups` value
+   of the role mapping (the group's Object ID) as a group whose `displayName` is that value,
+   matched exactly, so the group's `objectId` finds it. The `objectId` never changes, so Entra ID
+   never sends a `displayName` update; GopherCRM would refuse one with 400 `invalidPath`. A group
+   that is assigned in Entra ID but has no `groups` row in the role mapping is not found: Entra ID
+   then tries to create it, gets 405, and the **Provisioning logs** show the failure. Add the
+   group's Object ID to the role mapping instead.
+6. Under **Settings**, set **Scope** to "Sync only assigned users and groups". Set **Provisioning
+   Status** to **On** and choose **Save**.
+7. Optionally, use **Provision on demand** for one person first and read the result under
+   **Provisioning logs**.
+
 ## Mapping groups instead of app roles
 
 If you prefer groups, use the claim `groups` and the group's **Object ID** as the value, never its
 name. Add a groups claim to the token in **Token configuration** → **Add groups claim** (security
 groups), and grant `GroupMember.Read.All` with admin consent as in step 3. A person in more than 200
 groups has their groups read from Microsoft Graph; see group overage in the
-[troubleshooting table](single-sign-on.md#troubleshooting).
+[troubleshooting table](single-sign-on.md#troubleshooting). To provision the groups through SCIM,
+see step 8.5.
 
 ## Accounts created through SCIM
 
 If Entra ID also provisions the people through [SCIM](scim-provisioning.md), keep the issuer URL
 tenant-specific, `https://login.microsoftonline.com/<tenant id>/v2.0` as in step 6. A person's first
 single sign-on then finds the account SCIM created for them: the token's `oid` must equal the
-`externalId` Entra ID sent (the `objectId`, the default mapping) and its `tid` must equal the
-`<tenant id>` of the issuer. From then on the person signs in to that account directly. A token
+`externalId` Entra ID sent, which must be the `objectId` as mapped in
+[step 8.4](#8-provision-accounts-through-scim-optional) (Entra ID's default sends `mailNickname`),
+and its `tid` must equal the `<tenant id>` of the issuer. From then on the person signs in to that account directly. A token
 from another tenant or without those claims is handled as a first sign-in, and an email address
 alone never links an account. Details:
 [SCIM provisioning](scim-provisioning.md#microsoft-entra-id-the-first-single-sign-on-of-a-scim-created-account).

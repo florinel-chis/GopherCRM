@@ -1717,6 +1717,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Microsoft Entra ID provisioning guidance now gives Entra ID's default `externalId` source as
+  `mailNickname` (docs only, #628). The how-to
+  (`docs/user-guide/permissions-access/how-to-microsoft-entra-id.md`) gains a SCIM provisioning
+  section that names each Entra admin center screen: it maps `objectId` to `externalId` before the
+  first cycle, keeps only the user attributes GopherCRM reads, adds the app-role expression mapping
+  to `roles` and says that a later app-role change is refused today (400 `invalidPath`, changed in
+  GopherCRM instead), and makes groups match by sending the group's `objectId` as `displayName`.
+  `docs/user-guide/permissions-access/scim-provisioning.md` and `docs/AUTHORIZATION.md` no longer
+  call `objectId` the default. This supersedes the Entra ID mapping wording of the #505 and #491
+  entries.
 - `docs/FEATURES.md` row 1.12 now gives the shared OIDC sign-in table as 66 subtests instead of
   65 (#579 added `sign_in_records_session`), and 67 on `TestOIDCSignInMySQL`, which also runs
   `last_admin_race` (docs only, #611).

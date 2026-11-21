@@ -107,7 +107,9 @@ once and stays in the list. Rotating `API_KEY_SECRET` (or `JWT_SECRET`, when
   so a POST or DELETE answers 405, a PUT gets the router's plain-text 404, and a PATCH of
   `displayName` or any attribute other than `members` is refused with 400 `invalidPath`. A group
   removed from the mapping answers 404. Listing accepts only the filter `displayName eq "<value>"`;
-  any other filter is refused with 400 `invalidFilter`. Members are listed by their SCIM user id;
+  any other filter is refused with 400 `invalidFilter`. Entra ID looks groups up with
+  `displayName eq`, so its group mapping must send the group's `objectId` as `displayName`; see
+  [How to: Microsoft Entra ID](how-to-microsoft-entra-id.md#8-provision-accounts-through-scim-optional). Members are listed by their SCIM user id;
   a member value that is not the id of an account the provider sees (an unknown, customer, erased
   or locally created account) is refused with 400 `invalidValue` and nothing changes. A deactivated
   account can be added. A membership of a locally created account stored before is not listed; a
@@ -181,8 +183,10 @@ rows in Settings → Role audit (`/settings/role-audit`).
 Single sign-on recognises a person by the exact pair of issuer and `sub` (the identifier in the
 provider's ID token). A SCIM create stores a link with the `externalId` as that identifier.
 
-Entra ID's default attribute mapping sends the user's `objectId` as `externalId`, but the `sub` in
-an Entra ID token is pairwise: it is different for every application and does not equal the
+Entra ID's default user mapping sends `mailNickname` as `externalId`; the link below works only
+when the administrator maps `objectId` to `externalId`, as
+[How to: Microsoft Entra ID](how-to-microsoft-entra-id.md#8-provision-accounts-through-scim-optional)
+describes. The `sub` in an Entra ID token is pairwise: it is different for every application and does not equal the
 `objectId`. GopherCRM therefore also reads two other claims of an Entra ID token: `oid` (the
 person's object id) and `tid` (the tenant id). When a person's first single sign-on carries a
 `sub` that no account holds yet, GopherCRM signs them in as the account SCIM created for them when
@@ -200,7 +204,8 @@ link of that account, so every later sign-in finds the account by its `sub` dire
 When any of these does not hold, the first sign-in is handled as before: it creates a new account
 or is refused. That is the case for a token from another tenant, a token without `oid` or `tid`, an
 issuer that is not Entra ID (or the multi-tenant `common` or `organizations` issuer), and an
-`objectId` that no SCIM create stored. A deactivated SCIM-created account is refused with the
+`objectId` that no SCIM create stored, which includes an account created while the mapping sent
+`mailNickname`. A deactivated SCIM-created account is refused with the
 reason `account_inactive`, an erased one with `account_erased`; neither gets a new account.
 
 GopherCRM never links accounts by email address. A first sign-in that matches no SCIM link but
