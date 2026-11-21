@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sign-in audit rows for password changes, password resets and logouts (#550).**
+  `POST /auth/change-password`, `POST /auth/password-reset`, `POST /auth/password-reset/confirm`
+  and `POST /auth/logout` each write one `auth_audit_log` row once the request reaches the
+  service, with methods `password_change`, `reset_request`, `reset_confirm` and `logout`. A row
+  uses the same pseudonymous fields as a sign-in: the user id, a reason code, the request id, the
+  client network and the browser family; never an email address, a token or a full address. Two
+  reason codes are new: `session_stale` (a password change whose refresh token is not a live
+  session of the caller) and `account_unknown` (a reset requested for an email with no account,
+  stored without a user id). A reset completion with an unknown, spent or expired token is
+  `token_invalid` without a user id. `GET /audit/sign-ins` and Settings > Sign-in audit accept
+  the nine methods and 43 reason codes as filters. Answers, status codes and messages are
+  unchanged.
 - **Schema comparison of the two MySQL/MariaDB schema paths (#523).**
   `cmd/migrate/schema_parity_migration_test.go` builds one fresh schema from every SQL migration and
   one with the startup auto-migration (`models.MigrateDatabaseWith`) and compares their tables,

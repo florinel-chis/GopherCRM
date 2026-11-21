@@ -17,7 +17,10 @@ const (
 // AuthAuditLog is one sign-in outcome (#454): a password login, a single
 // sign-on callback, a refresh, a failed API-key authentication, a refused
 // SCIM authentication (#468) or a successful SCIM user create, replace or
-// patch (#470, #471, method scim, outcome success, the account's user id). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
+// patch (#470, #471, method scim, outcome success, the account's user id), or
+// a password change, password reset request, password reset completion or
+// logout (#550, methods password_change, reset_request, reset_confirm and
+// logout). The row is pseudonymous: it holds ids, a stable reason code, the client's /24 (IPv4) or
 // /48 (IPv6) network, a user-agent family from a fixed vocabulary and, for a
 // single sign-on refusal after the ID token verified, an HMAC of the issuer
 // and subject. It never holds an email, a name, a subject, a token, a code, a
@@ -25,7 +28,8 @@ const (
 // foreign key and no soft delete: erasure leaves the rows alone and the stale
 // bulk operation sweep deletes them after AUTH_AUDIT_RETENTION_DAYS.
 //
-// A password, single sign-on, refresh or SCIM outcome is one row with Attempts 1
+// A password, single sign-on, refresh, SCIM, password change, password reset
+// or logout outcome is one row with Attempts 1
 // and no AggregateKey. A refused API key (#466) adds to one row per reason,
 // user id, client network and UTC minute: the first refusal of that bucket
 // writes the row, every later one only adds 1 to Attempts, so the request id,
@@ -34,7 +38,8 @@ type AuthAuditLog struct {
 	ID uint `gorm:"primarykey" json:"id"`
 	// Written explicitly in UTC.
 	CreatedAt time.Time `gorm:"not null;index:idx_auth_audit_log_created_at" json:"created_at"`
-	// password, oidc, refresh, api_key or scim.
+	// password, oidc, refresh, api_key, scim, password_change,
+	// reset_request, reset_confirm or logout.
 	Method string `gorm:"type:varchar(16);not null" json:"method"`
 	// success or refused.
 	Outcome string `gorm:"type:varchar(16);not null" json:"outcome"`

@@ -3308,7 +3308,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication or successful SCIM user create, replace or patch, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.\nFilters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nPermission: audit.sign_ins_view (among the system roles, admin only).",
+                "description": "One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion or logout, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.\nFilters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).\nPermission: audit.sign_ins_view (among the system roles, admin only).",
                 "produces": [
                     "application/json"
                 ],
@@ -3337,9 +3337,13 @@
                     {
                         "enum": [
                             "api_key",
+                            "logout",
                             "oidc",
                             "password",
+                            "password_change",
                             "refresh",
+                            "reset_confirm",
+                            "reset_request",
                             "scim"
                         ],
                         "type": "string",
@@ -3362,6 +3366,7 @@
                             "account_erased",
                             "account_inactive",
                             "account_locked",
+                            "account_unknown",
                             "binding_mismatch",
                             "binding_missing",
                             "claims_invalid",
@@ -3390,6 +3395,7 @@
                             "password_changed",
                             "role_missing",
                             "roles_malformed",
+                            "session_stale",
                             "sso_account",
                             "sso_disabled",
                             "state_invalid",
@@ -35001,19 +35007,23 @@
                     "example": 42
                 },
                 "method": {
-                    "description": "How the caller tried to sign in.",
+                    "description": "How the caller tried to sign in, or the password change, password reset\nstep or logout the row records.",
                     "type": "string",
                     "enum": [
                         "password",
                         "oidc",
                         "refresh",
                         "api_key",
-                        "scim"
+                        "scim",
+                        "password_change",
+                        "reset_request",
+                        "reset_confirm",
+                        "logout"
                     ],
                     "example": "password"
                 },
                 "outcome": {
-                    "description": "Whether the sign-in succeeded.",
+                    "description": "Whether the sign-in or the recorded request succeeded.",
                     "type": "string",
                     "enum": [
                         "success",
@@ -35027,7 +35037,7 @@
                     "example": "invalid_credentials"
                 },
                 "request_id": {
-                    "description": "The request id of the sign-in request; empty when none was usable.",
+                    "description": "The request id of the recorded request; empty when none was usable.",
                     "type": "string",
                     "example": "3f2a9c1e-5b7d-4e2a-9c1e-5b7d4e2a9c1e"
                 },

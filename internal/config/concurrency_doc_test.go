@@ -426,7 +426,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Contains(t, owner, "!owner.IsActive")
 	assert.Contains(t, owner, "apperrors.IsNotFound(err)")
 
-	reset := concurrencyDocFuncBody(t, authService, "func (s *authService) RequestPasswordReset(")
+	reset := concurrencyDocFuncBody(t, authService, "func (s *authService) IssuePasswordReset(")
 	assert.Contains(t, reset, "s.txManager.WithTransactionAndRetry(context.Background(),")
 	assert.Contains(t, reset, "clause.Locking{Strength: \"UPDATE\"}")
 	assert.Contains(t, reset, "resetRequestMaxRetries)")
@@ -487,14 +487,14 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 		"loginInTransaction locks the owner, then inserts the refresh token, then signs")
 	// The rotation is one plain root; the confirm is replayed (#407).
 	for sig, root := range map[string]string{
-		"func (s *authService) RefreshAccessToken(":   "s.txManager.WithTransaction(",
-		"func (s *authService) ConfirmPasswordReset(": "s.txManager.WithTransactionAndRetry(",
+		"func (s *authService) RefreshAccessToken(":    "s.txManager.WithTransaction(",
+		"func (s *authService) CompletePasswordReset(": "s.txManager.WithTransactionAndRetry(",
 	} {
 		body := concurrencyDocFuncBody(t, authService, sig)
 		assert.Contains(t, body, root, sig)
 		assert.Contains(t, body, "clause.Locking{Strength: \"UPDATE\"}", sig)
 	}
-	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) ConfirmPasswordReset("),
+	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) CompletePasswordReset("),
 		"}, resetConfirmMaxRetries)")
 	// Child inserts under the owner lock: the foreign-key check's shared lock
 	// falls on an owner row the issuing transaction already holds.

@@ -500,7 +500,7 @@ func TestAuthAuditWritersUseRegisteredValues(t *testing.T) {
 			sort.Strings(got)
 			assert.Equal(t, want[kind], got, "the %s list", kind)
 		}
-		assert.Len(t, registry[authAuditKindReason], 41)
+		assert.Len(t, registry[authAuditKindReason], 43)
 	})
 
 	t.Run("constants are declared in the vocabulary file only", func(t *testing.T) {

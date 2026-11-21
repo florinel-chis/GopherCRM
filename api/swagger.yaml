@@ -5180,17 +5180,23 @@ definitions:
         example: 42
         type: integer
       method:
-        description: How the caller tried to sign in.
+        description: |-
+          How the caller tried to sign in, or the password change, password reset
+          step or logout the row records.
         enum:
         - password
         - oidc
         - refresh
         - api_key
         - scim
+        - password_change
+        - reset_request
+        - reset_confirm
+        - logout
         example: password
         type: string
       outcome:
-        description: Whether the sign-in succeeded.
+        description: Whether the sign-in or the recorded request succeeded.
         enum:
         - success
         - refused
@@ -5201,7 +5207,7 @@ definitions:
         example: invalid_credentials
         type: string
       request_id:
-        description: The request id of the sign-in request; empty when none was usable.
+        description: The request id of the recorded request; empty when none was usable.
         example: 3f2a9c1e-5b7d-4e2a-9c1e-5b7d4e2a9c1e
         type: string
       subject_ref:
@@ -10708,7 +10714,7 @@ paths:
   /audit/sign-ins:
     get:
       description: |-
-        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication or successful SCIM user create, replace or patch, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion or logout, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
         Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
         Permission: audit.sign_ins_view (among the system roles, admin only).
       parameters:
@@ -10728,9 +10734,13 @@ paths:
       - description: 'Only rows of this method (unknown value: 400)'
         enum:
         - api_key
+        - logout
         - oidc
         - password
+        - password_change
         - refresh
+        - reset_confirm
+        - reset_request
         - scim
         in: query
         name: method
@@ -10748,6 +10758,7 @@ paths:
         - account_erased
         - account_inactive
         - account_locked
+        - account_unknown
         - binding_mismatch
         - binding_missing
         - claims_invalid
@@ -10776,6 +10787,7 @@ paths:
         - password_changed
         - role_missing
         - roles_malformed
+        - session_stale
         - sso_account
         - sso_disabled
         - state_invalid

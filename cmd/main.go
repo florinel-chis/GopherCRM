@@ -469,7 +469,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	formRetention := newFormRetentionBackground(cfg.Forms, formRepo, txManager)
 
 	// The sign-in audit log (#454): password, refresh, single sign-on and
-	// failed API-key outcomes, one row each, pruned by the bulk sweep below.
+	// failed API-key outcomes, and (#550) password change, password reset
+	// request, password reset completion and logout outcomes, pruned by the
+	// bulk sweep below.
 	authAuditRepo := repository.NewAuthAuditRepository(models.DB)
 	authAudit := service.NewAuthAuditService(authAuditRepo)
 	authHandler := handler.NewAuthHandler(authService, userService)

@@ -117,6 +117,16 @@ func (m *MockAuthService) ConfirmPasswordReset(token, newPassword string) error 
 	return args.Error(0)
 }
 
+func (m *MockAuthService) IssuePasswordReset(email string) (uint, error) {
+	args := m.Called(email)
+	return args.Get(0).(uint), args.Error(1)
+}
+
+func (m *MockAuthService) CompletePasswordReset(token, newPassword string) (uint, error) {
+	args := m.Called(token, newPassword)
+	return args.Get(0).(uint), args.Error(1)
+}
+
 type MockUserService struct {
 	mock.Mock
 }
@@ -744,8 +754,8 @@ func (suite *AuthHandlerTestSuite) TestChangePassword_WeakNewPassword_BadRequest
 // Anti-enumeration: the response for an existing account and an unknown one
 // must be byte-for-byte identical.
 func (suite *AuthHandlerTestSuite) TestPasswordReset_AntiEnumeration_IdenticalResponses() {
-	suite.mockAuthService.On("RequestPasswordReset", "exists@example.com").Return(nil)
-	suite.mockAuthService.On("RequestPasswordReset", "unknown@example.com").Return(nil)
+	suite.mockAuthService.On("IssuePasswordReset", "exists@example.com").Return(uint(7), nil)
+	suite.mockAuthService.On("IssuePasswordReset", "unknown@example.com").Return(uint(0), errors.New("password reset not issued"))
 
 	responses := make([]*httptest.ResponseRecorder, 0, 2)
 	for _, email := range []string{"exists@example.com", "unknown@example.com"} {
@@ -764,7 +774,7 @@ func (suite *AuthHandlerTestSuite) TestPasswordReset_AntiEnumeration_IdenticalRe
 }
 
 func (suite *AuthHandlerTestSuite) TestPasswordResetConfirm_Success() {
-	suite.mockAuthService.On("ConfirmPasswordReset", "valid-token", "BrandNewPass1!").Return(nil)
+	suite.mockAuthService.On("CompletePasswordReset", "valid-token", "BrandNewPass1!").Return(uint(7), nil)
 
 	body, _ := json.Marshal(map[string]string{
 		"token":        "valid-token",
@@ -780,8 +790,8 @@ func (suite *AuthHandlerTestSuite) TestPasswordResetConfirm_Success() {
 }
 
 func (suite *AuthHandlerTestSuite) TestPasswordResetConfirm_InvalidToken_Generic400() {
-	suite.mockAuthService.On("ConfirmPasswordReset", "spent-token", "BrandNewPass1!").
-		Return(service.ErrInvalidResetToken)
+	suite.mockAuthService.On("CompletePasswordReset", "spent-token", "BrandNewPass1!").
+		Return(uint(0), service.ErrInvalidResetToken)
 
 	body, _ := json.Marshal(map[string]string{
 		"token":        "spent-token",

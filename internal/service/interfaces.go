@@ -62,7 +62,14 @@ type AuthService interface {
 	// RequestPasswordReset never discloses whether the account exists; mail
 	// and lookup failures are swallowed by design (anti-enumeration).
 	RequestPasswordReset(email string) error
+	// IssuePasswordReset is RequestPasswordReset with its result (#550): the
+	// account's id once a reset link was stored, otherwise a refusal that
+	// carries the audit reason. The caller's answer must not depend on it.
+	IssuePasswordReset(email string) (uint, error)
 	ConfirmPasswordReset(token, newPassword string) error
+	// CompletePasswordReset is ConfirmPasswordReset returning the owner's id
+	// on success (#550).
+	CompletePasswordReset(token, newPassword string) (uint, error)
 }
 
 type UserService interface {

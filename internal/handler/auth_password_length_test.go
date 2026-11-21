@@ -82,12 +82,12 @@ func TestPasswordLengthLimit(t *testing.T) {
 			success: http.StatusOK,
 		},
 		{
-			name: "POST /auth/password-reset/confirm", path: "/auth/password-reset/confirm", method: "ConfirmPasswordReset",
+			name: "POST /auth/password-reset/confirm", path: "/auth/password-reset/confirm", method: "CompletePasswordReset",
 			body: func(password string) map[string]interface{} {
 				return map[string]interface{}{"token": "reset-token", "new_password": password}
 			},
 			expect: func(auth *MockAuthService, _ *MockUserService, password string) {
-				auth.On("ConfirmPasswordReset", "reset-token", password).Return(nil).Once()
+				auth.On("CompletePasswordReset", "reset-token", password).Return(uint(42), nil).Once()
 			},
 			success: http.StatusOK,
 		},

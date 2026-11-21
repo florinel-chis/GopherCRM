@@ -6,10 +6,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -28,6 +30,7 @@ type recordedAuthAudit struct {
 	kind   string
 	ctx    context.Context
 	tokens *service.AuthTokens
+	userID uint
 	err    error
 }
 
@@ -46,14 +49,35 @@ func (r *recordingAuthAudit) RecordRefresh(ctx context.Context, tokens *service.
 	return 1
 }
 
+func (r *recordingAuthAudit) RecordPasswordChange(ctx context.Context, userID uint, err error) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "password_change", ctx: ctx, userID: userID, err: err})
+	return 1
+}
+
+func (r *recordingAuthAudit) RecordPasswordResetRequest(ctx context.Context, userID uint, err error) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "reset_request", ctx: ctx, userID: userID, err: err})
+	return 1
+}
+
+func (r *recordingAuthAudit) RecordPasswordResetConfirm(ctx context.Context, userID uint, err error) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "reset_confirm", ctx: ctx, userID: userID, err: err})
+	return 1
+}
+
+func (r *recordingAuthAudit) RecordLogout(ctx context.Context, userID uint, err error) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "logout", ctx: ctx, userID: userID, err: err})
+	return 1
+}
+
 func (r *recordingAuthAudit) RecordAPIKeyFailure(ctx context.Context, err error) uint {
 	r.calls = append(r.calls, recordedAuthAudit{kind: "api_key", ctx: ctx, err: err})
 	return 1
 }
 
-// TestAuthHandlerAudit: Login and Refresh record their outcome once with the
-// request id, client IP and user agent on the context, and answer exactly as
-// before; the OIDC callback hands the service the same context facts.
+// TestAuthHandlerAudit: Login, Refresh, ChangePassword, RequestPasswordReset,
+// ConfirmPasswordReset and Logout record their outcome once with the request
+// id, client IP and user agent on the context, and answer exactly as before;
+// the OIDC callback hands the service the same context facts.
 func TestAuthHandlerAudit(t *testing.T) {
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
 	gin.SetMode(gin.TestMode)
@@ -135,6 +159,169 @@ func TestAuthHandlerAudit(t *testing.T) {
 				assert.Equal(t, "refresh", audit.calls[0].kind)
 				assert.Same(t, tc.err, audit.calls[0].err)
 				assertCtx(t, audit.calls[0].ctx)
+			})
+		}
+	})
+	// signedIn registers route behind what middleware.Auth leaves for a
+	// bearer session of user 42.
+	signedIn := func(route func(r *gin.Engine)) func(r *gin.Engine) {
+		return func(r *gin.Engine) {
+			r.Use(func(c *gin.Context) {
+				c.Set("user_id", uint(42))
+				c.Set(service.AuthMethodContextKey, service.AuthMethodBearer)
+				c.Next()
+			})
+			route(r)
+		}
+	}
+	assertOne := func(t *testing.T, audit *recordingAuthAudit, kind string, userID uint, err error) {
+		t.Helper()
+		require.Len(t, audit.calls, 1, "one record per request")
+		assert.Equal(t, kind, audit.calls[0].kind)
+		assert.Equal(t, userID, audit.calls[0].userID)
+		if err == nil {
+			assert.NoError(t, audit.calls[0].err)
+		} else {
+			assert.Same(t, err, audit.calls[0].err)
+		}
+		assertCtx(t, audit.calls[0].ctx)
+	}
+
+	t.Run("change_password", func(t *testing.T) {
+		const body = `{"current_password":"Old!Passw0rd1","new_password":"New!Passw0rd1","refresh_token":"refresh-0550"}`
+		for _, tc := range []struct {
+			name    string
+			err     error
+			status  int
+			message string
+		}{
+			{"success", nil, http.StatusOK, "Password changed successfully"},
+			{"wrong_current_password", service.ErrInvalidCurrentPassword, http.StatusBadRequest, "The current password is incorrect"},
+			{"session_stale", service.ErrSessionStale, http.StatusConflict, "SESSION_STALE"},
+			{"account_unavailable", service.ErrAccountUnavailable, http.StatusUnauthorized, "Unauthorized"},
+			{"storage", errors.New("database down"), http.StatusInternalServerError, "INTERNAL_ERROR"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				authSvc := new(MockAuthService)
+				authSvc.On("ChangePassword", uint(42), "Old!Passw0rd1", "New!Passw0rd1", "refresh-0550").Return(nil, tc.err)
+				audit := &recordingAuthAudit{}
+				h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+				w := serve(t, signedIn(func(r *gin.Engine) { r.POST("/auth/change-password", h.ChangePassword) }),
+					"/auth/change-password", body)
+				assert.Equal(t, tc.status, w.Code, "the answer is unchanged")
+				assert.Contains(t, w.Body.String(), tc.message)
+				assertOne(t, audit, "password_change", 42, tc.err)
+			})
+		}
+	})
+	t.Run("change_password_bad_request_records_nothing", func(t *testing.T) {
+		for name, body := range map[string]string{
+			"bad_json":      `{"current_password":`,
+			"weak_password": `{"current_password":"Old!Passw0rd1","new_password":"` + strings.Repeat("a", 73) + `"}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				authSvc := new(MockAuthService)
+				audit := &recordingAuthAudit{}
+				h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+				w := serve(t, signedIn(func(r *gin.Engine) { r.POST("/auth/change-password", h.ChangePassword) }),
+					"/auth/change-password", body)
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Empty(t, audit.calls, "a 400 writes no row")
+				authSvc.AssertNotCalled(t, "ChangePassword", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			})
+		}
+	})
+	t.Run("reset_request", func(t *testing.T) {
+		bodies := map[string]string{}
+		for _, tc := range []struct {
+			name   string
+			email  string
+			userID uint
+			err    error
+		}{
+			{"success", "known@example.com", 42, nil},
+			{"account_unknown", "unknown@example.com", 0, errors.New("password reset not issued")},
+		} {
+			authSvc := new(MockAuthService)
+			authSvc.On("IssuePasswordReset", tc.email).Return(tc.userID, tc.err)
+			audit := &recordingAuthAudit{}
+			h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+			w := serve(t, func(r *gin.Engine) { r.POST("/auth/password-reset", h.RequestPasswordReset) },
+				"/auth/password-reset", `{"email":"`+tc.email+`"}`)
+			assert.Equal(t, http.StatusOK, w.Code, tc.name)
+			assertOne(t, audit, "reset_request", tc.userID, tc.err)
+			bodies[tc.name] = w.Body.String()
+		}
+		assert.Equal(t, bodies["success"], bodies["account_unknown"], "the answer does not depend on the account")
+	})
+	t.Run("reset_request_bad_request_records_nothing", func(t *testing.T) {
+		audit := &recordingAuthAudit{}
+		h := NewAuthHandler(new(MockAuthService), nil).WithAudit(audit)
+		w := serve(t, func(r *gin.Engine) { r.POST("/auth/password-reset", h.RequestPasswordReset) },
+			"/auth/password-reset", `{"email":"not-an-email"}`)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, audit.calls)
+	})
+	t.Run("reset_confirm", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			userID  uint
+			err     error
+			status  int
+			message string
+		}{
+			{"success", 42, nil, http.StatusOK, "Password has been reset successfully"},
+			{"token_invalid", 0, service.ErrInvalidResetToken, http.StatusBadRequest, "Invalid or expired reset token"},
+			{"storage", 0, errors.New("database down"), http.StatusInternalServerError, "INTERNAL_ERROR"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				authSvc := new(MockAuthService)
+				authSvc.On("CompletePasswordReset", "reset-0550", "New!Passw0rd1").Return(tc.userID, tc.err)
+				audit := &recordingAuthAudit{}
+				h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+				w := serve(t, func(r *gin.Engine) { r.POST("/auth/password-reset/confirm", h.ConfirmPasswordReset) },
+					"/auth/password-reset/confirm", `{"token":"reset-0550","new_password":"New!Passw0rd1"}`)
+				assert.Equal(t, tc.status, w.Code, "the answer is unchanged")
+				assert.Contains(t, w.Body.String(), tc.message)
+				assertOne(t, audit, "reset_confirm", tc.userID, tc.err)
+			})
+		}
+	})
+	t.Run("reset_confirm_bad_request_records_nothing", func(t *testing.T) {
+		for name, body := range map[string]string{
+			"bad_json":      `{"token":`,
+			"weak_password": `{"token":"reset-0550","new_password":"` + strings.Repeat("a", 73) + `"}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				authSvc := new(MockAuthService)
+				audit := &recordingAuthAudit{}
+				h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+				w := serve(t, func(r *gin.Engine) { r.POST("/auth/password-reset/confirm", h.ConfirmPasswordReset) },
+					"/auth/password-reset/confirm", body)
+				assert.Equal(t, http.StatusBadRequest, w.Code)
+				assert.Empty(t, audit.calls, "a 400 writes no row")
+				authSvc.AssertNotCalled(t, "CompletePasswordReset", mock.Anything, mock.Anything)
+			})
+		}
+	})
+	t.Run("logout", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			err    error
+			status int
+		}{
+			{"success", nil, http.StatusOK},
+			{"storage", errors.New("database down"), http.StatusInternalServerError},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				authSvc := new(MockAuthService)
+				authSvc.On("Logout", uint(42), "refresh-0550").Return(tc.err)
+				audit := &recordingAuthAudit{}
+				h := NewAuthHandler(authSvc, nil).WithAudit(audit)
+				w := serve(t, signedIn(func(r *gin.Engine) { r.POST("/auth/logout", h.Logout) }),
+					"/auth/logout", `{"refresh_token":"refresh-0550"}`)
+				assert.Equal(t, tc.status, w.Code, "the answer is unchanged")
+				assertOne(t, audit, "logout", 42, tc.err)
 			})
 		}
 	})

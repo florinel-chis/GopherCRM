@@ -111,6 +111,16 @@ func (m *MockAuthService) ConfirmPasswordReset(token, newPassword string) error 
 	return args.Error(0)
 }
 
+func (m *MockAuthService) IssuePasswordReset(email string) (uint, error) {
+	args := m.Called(email)
+	return args.Get(0).(uint), args.Error(1)
+}
+
+func (m *MockAuthService) CompletePasswordReset(token, newPassword string) (uint, error) {
+	args := m.Called(token, newPassword)
+	return args.Get(0).(uint), args.Error(1)
+}
+
 func setupAuthTestRouter(authSvc *MockAuthService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -378,6 +388,26 @@ func (r *recordingAudit) RecordPassword(context.Context, *service.AuthTokens, er
 }
 
 func (r *recordingAudit) RecordRefresh(context.Context, *service.AuthTokens, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordPasswordChange(context.Context, uint, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordPasswordResetRequest(context.Context, uint, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordPasswordResetConfirm(context.Context, uint, error) uint {
+	r.other++
+	return 1
+}
+
+func (r *recordingAudit) RecordLogout(context.Context, uint, error) uint {
 	r.other++
 	return 1
 }

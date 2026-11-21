@@ -63,6 +63,54 @@ func newAuthAuditAuthService(db *gorm.DB, apiKeys repository.APIKeyRepository, a
 		WithAuthIdentities(repository.NewUserIdentityRepository(db))).(*authService)
 }
 
+// newAuthAuditResetService is newAuthAuditAuthService with mail as its
+// mailer, so the reset flow is wired (#550). A nil mailer turns every reset
+// request into an unavailable refusal.
+func newAuthAuditResetService(db *gorm.DB, mail *ciMailer) *authService {
+	return NewAuthServiceWithSessions(repository.NewUserRepository(db), repository.NewAPIKeyRepository(db),
+		repository.NewRefreshTokenRepository(db), repository.NewPasswordResetTokenRepository(db),
+		utils.NewTransactionManager(db), mail, oidcTestJWTConfig(), oidcTestAppBaseURL, oidcTestAPIKeySecret,
+		WithAuthIdentities(repository.NewUserIdentityRepository(db))).(*authService)
+}
+
+// lastResetToken is the raw token of the newest recorded reset mail.
+func lastResetToken(t *testing.T, mail *ciMailer) string {
+	t.Helper()
+	mails := mail.mails()
+	require.NotEmpty(t, mails, "a reset mail was sent")
+	raw := ciTokenOf(mails[len(mails)-1].url)
+	require.NotEmpty(t, raw)
+	return raw
+}
+
+// authAuditResetTokens returns stored instead of the lookup's answer when
+// stored is set, and fails every claim with a not-found when lostClaim is set,
+// as a concurrent confirmation that claimed first would.
+type authAuditResetTokens struct {
+	repository.PasswordResetTokenRepository
+	stored    *models.PasswordResetToken
+	lostClaim bool
+}
+
+func (r *authAuditResetTokens) WithTx(tx *gorm.DB) repository.PasswordResetTokenRepository {
+	return &authAuditResetTokens{PasswordResetTokenRepository: r.PasswordResetTokenRepository.WithTx(tx), stored: r.stored, lostClaim: r.lostClaim}
+}
+
+func (r *authAuditResetTokens) GetByTokenHash(hash string) (*models.PasswordResetToken, error) {
+	if r.stored != nil {
+		copied := *r.stored
+		return &copied, nil
+	}
+	return r.PasswordResetTokenRepository.GetByTokenHash(hash)
+}
+
+func (r *authAuditResetTokens) MarkUsed(id uint) error {
+	if r.lostClaim {
+		return gorm.ErrRecordNotFound
+	}
+	return r.PasswordResetTokenRepository.MarkUsed(id)
+}
+
 func (e *authAuditEnv) seedUser(t *testing.T, email string) *models.User {
 	t.Helper()
 	hash, err := bcrypt.GenerateFromPassword([]byte(authAuditTestPassword), bcrypt.MinCost)
@@ -357,6 +405,203 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 			assert.Equal(t, "", row.RequestID, "a request id outside the pattern is not stored")
 		}
 	})
+
+	// #550: password change, password reset request and completion, logout.
+	const newPassword = "Audit-New-Passw0rd!-0550"
+	mail := &ciMailer{}
+	resets := newAuthAuditResetService(db, mail)
+	changePassword := func(t *testing.T, userID uint, current, refreshToken, requestID string) error {
+		t.Helper()
+		_, err := e.auth.ChangePassword(userID, current, newPassword, refreshToken)
+		lastID = e.audit.RecordPasswordChange(authAuditCtx(requestID), userID, err)
+		return err
+	}
+	resetRequest := func(t *testing.T, email, requestID string) (uint, error) {
+		t.Helper()
+		id, err := resets.IssuePasswordReset(email)
+		lastID = e.audit.RecordPasswordResetRequest(authAuditCtx(requestID), id, err)
+		return id, err
+	}
+	resetConfirm := func(t *testing.T, svc *authService, token, requestID string) error {
+		t.Helper()
+		id, err := svc.CompletePasswordReset(token, newPassword)
+		lastID = e.audit.RecordPasswordResetConfirm(authAuditCtx(requestID), id, err)
+		return err
+	}
+	assertResetRefusal := func(t *testing.T, err error) {
+		t.Helper()
+		require.ErrorIs(t, err, ErrInvalidResetToken)
+		assert.Equal(t, "reset token rejected: invalid or expired reset token", err.Error(), "the message is unchanged")
+	}
+	passwordIs := func(t *testing.T, userID uint, password string) bool {
+		t.Helper()
+		var stored models.User
+		require.NoError(t, db.Unscoped().First(&stored, userID).Error)
+		return bcrypt.CompareHashAndPassword([]byte(stored.Password), []byte(password)) == nil
+	}
+
+	t.Run("password_change_success", func(t *testing.T) {
+		user := e.seedUser(t, "pc-ok-0550@crm.example.test")
+		tokens, err := e.auth.LoginWithTokens(user.Email, authAuditTestPassword)
+		require.NoError(t, err)
+		before := e.maxAuditID(t)
+		require.NoError(t, changePassword(t, user.ID, authAuditTestPassword, tokens.RefreshToken, "req-pc-ok"))
+		row := e.onlyNewRow(t, before)
+		assert.Equal(t, row.ID, lastID)
+		assertAuditRow(t, row, AuthAuditMethodPasswordChange, AuthAuditOutcomeSuccess, "", user.ID, "req-pc-ok")
+	})
+	t.Run("password_change_invalid_credentials", func(t *testing.T) {
+		user := e.seedUser(t, "pc-wrong-0550@crm.example.test")
+		before := e.maxAuditID(t)
+		err := changePassword(t, user.ID, "Wrong-Passw0rd!", "", "req-pc-wrong")
+		require.ErrorIs(t, err, ErrInvalidCurrentPassword)
+		assert.Equal(t, ErrInvalidCurrentPassword.Error(), err.Error(), "the message is unchanged")
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodPasswordChange, AuthAuditOutcomeRefused, "invalid_credentials", user.ID, "req-pc-wrong")
+	})
+	t.Run("password_change_session_stale", func(t *testing.T) {
+		user := e.seedUser(t, "pc-stale-0550@crm.example.test")
+		other := e.seedUser(t, "pc-stale-other-0550@crm.example.test")
+		foreign, err := e.auth.LoginWithTokens(other.Email, authAuditTestPassword)
+		require.NoError(t, err)
+		for name, token := range map[string]string{"foreign": foreign.RefreshToken, "unknown": "unknown-refresh-token-0550"} {
+			before := e.maxAuditID(t)
+			err := changePassword(t, user.ID, authAuditTestPassword, token, "req-pc-stale")
+			require.ErrorIs(t, err, ErrSessionStale, name)
+			assert.Equal(t, ErrSessionStale.Error(), err.Error(), "the message is unchanged")
+			assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodPasswordChange, AuthAuditOutcomeRefused, "session_stale", user.ID, "req-pc-stale")
+		}
+		assert.True(t, passwordIs(t, user.ID, authAuditTestPassword), "the password is unchanged")
+	})
+	t.Run("password_change_account_inactive", func(t *testing.T) {
+		user := e.seedUser(t, "pc-inactive-0550@crm.example.test")
+		e.update(t, user.ID, "is_active", false)
+		before := e.maxAuditID(t)
+		err := changePassword(t, user.ID, authAuditTestPassword, "", "req-pc-inactive")
+		require.ErrorIs(t, err, ErrAccountUnavailable)
+		assert.Equal(t, ErrAccountUnavailable.Error(), err.Error(), "the message is unchanged")
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodPasswordChange, AuthAuditOutcomeRefused, "account_inactive", user.ID, "req-pc-inactive")
+	})
+	t.Run("password_change_account_erased", func(t *testing.T) {
+		user := e.seedUser(t, "pc-erased-0550@crm.example.test")
+		e.erase(t, user.ID)
+		before := e.maxAuditID(t)
+		err := changePassword(t, user.ID, authAuditTestPassword, "", "req-pc-erased")
+		require.ErrorIs(t, err, ErrAccountUnavailable)
+		assert.Equal(t, ErrAccountUnavailable.Error(), err.Error(), "the message is unchanged")
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodPasswordChange, AuthAuditOutcomeRefused, "account_erased", user.ID, "req-pc-erased")
+	})
+
+	t.Run("reset_request_success", func(t *testing.T) {
+		user := e.seedUser(t, "rr-ok-0550@crm.example.test")
+		before := e.maxAuditID(t)
+		id, err := resetRequest(t, user.Email, "req-rr-ok")
+		require.NoError(t, err)
+		assert.Equal(t, user.ID, id)
+		require.NoError(t, resets.RequestPasswordReset(user.Email), "RequestPasswordReset still answers nil")
+		rows := []models.AuthAuditLog{}
+		require.NoError(t, db.Where("id > ?", before).Find(&rows).Error)
+		require.Len(t, rows, 1, "RequestPasswordReset itself writes no row")
+		assert.Equal(t, rows[0].ID, lastID)
+		assertAuditRow(t, rows[0], AuthAuditMethodResetRequest, AuthAuditOutcomeSuccess, "", user.ID, "req-rr-ok")
+	})
+	t.Run("reset_request_account_unknown", func(t *testing.T) {
+		before := e.maxAuditID(t)
+		id, err := resetRequest(t, "nobody-0550@crm.example.test", "req-rr-unknown")
+		require.ErrorIs(t, err, errPasswordResetNotIssued)
+		assert.Zero(t, id)
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetRequest, AuthAuditOutcomeRefused, "account_unknown", 0, "req-rr-unknown")
+	})
+	t.Run("reset_request_account_inactive", func(t *testing.T) {
+		user := e.seedUser(t, "rr-inactive-0550@crm.example.test")
+		e.update(t, user.ID, "is_active", false)
+		before := e.maxAuditID(t)
+		_, err := resetRequest(t, user.Email, "req-rr-inactive")
+		require.ErrorIs(t, err, errPasswordResetNotIssued)
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetRequest, AuthAuditOutcomeRefused, "account_inactive", user.ID, "req-rr-inactive")
+	})
+	t.Run("reset_request_sso_account", func(t *testing.T) {
+		user := e.seedUser(t, "rr-sso-0550@crm.example.test")
+		require.NoError(t, e.db.Create(&models.UserIdentity{UserID: user.ID, Issuer: "https://idp.example.test", Subject: "rr-sso-0550"}).Error)
+		sent := len(mail.mails())
+		before := e.maxAuditID(t)
+		_, err := resetRequest(t, user.Email, "req-rr-sso")
+		require.ErrorIs(t, err, errPasswordResetNotIssued)
+		assert.Len(t, mail.mails(), sent, "no mail")
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetRequest, AuthAuditOutcomeRefused, "sso_account", user.ID, "req-rr-sso")
+	})
+
+	t.Run("reset_confirm_success", func(t *testing.T) {
+		user := e.seedUser(t, "rc-ok-0550@crm.example.test")
+		_, err := resets.IssuePasswordReset(user.Email)
+		require.NoError(t, err)
+		before := e.maxAuditID(t)
+		require.NoError(t, resetConfirm(t, resets, lastResetToken(t, mail), "req-rc-ok"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeSuccess, "", user.ID, "req-rc-ok")
+		assert.True(t, passwordIs(t, user.ID, newPassword))
+	})
+	t.Run("reset_confirm_token_invalid_unknown", func(t *testing.T) {
+		before := e.maxAuditID(t)
+		assertResetRefusal(t, resetConfirm(t, resets, "unknown-reset-token-0550", "req-rc-unknown"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeRefused, "token_invalid", 0, "req-rc-unknown")
+	})
+	t.Run("reset_confirm_token_invalid_spent", func(t *testing.T) {
+		user := e.seedUser(t, "rc-spent-0550@crm.example.test")
+		_, err := resets.IssuePasswordReset(user.Email)
+		require.NoError(t, err)
+		raw := lastResetToken(t, mail)
+		require.NoError(t, resetConfirm(t, resets, raw, "req-rc-first"))
+		before := e.maxAuditID(t)
+		assertResetRefusal(t, resetConfirm(t, resets, raw, "req-rc-spent"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeRefused, "token_invalid", 0, "req-rc-spent")
+	})
+	t.Run("reset_confirm_account_inactive", func(t *testing.T) {
+		user := e.seedUser(t, "rc-inactive-0550@crm.example.test")
+		_, err := resets.IssuePasswordReset(user.Email)
+		require.NoError(t, err)
+		e.update(t, user.ID, "is_active", false)
+		before := e.maxAuditID(t)
+		assertResetRefusal(t, resetConfirm(t, resets, lastResetToken(t, mail), "req-rc-inactive"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeRefused, "account_inactive", user.ID, "req-rc-inactive")
+		assert.True(t, passwordIs(t, user.ID, authAuditTestPassword), "the password is unchanged")
+	})
+	// The stored-token refusals: the shipped lookup filters used and expired
+	// tokens, so the owner is named only when a concurrent confirmation
+	// claimed the token first, or a lookup returned a used row anyway.
+	t.Run("reset_confirm_token_invalid_lost_claim", func(t *testing.T) {
+		user := e.seedUser(t, "rc-lost-0550@crm.example.test")
+		_, err := resets.IssuePasswordReset(user.Email)
+		require.NoError(t, err)
+		stub := newAuthAuditResetService(db, mail)
+		stub.resetTokenRepo = &authAuditResetTokens{PasswordResetTokenRepository: stub.resetTokenRepo, lostClaim: true}
+		before := e.maxAuditID(t)
+		assertResetRefusal(t, resetConfirm(t, stub, lastResetToken(t, mail), "req-rc-lost"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeRefused, "token_invalid", user.ID, "req-rc-lost")
+		assert.True(t, passwordIs(t, user.ID, authAuditTestPassword), "the password is unchanged")
+	})
+	t.Run("reset_confirm_token_invalid_used_row", func(t *testing.T) {
+		user := e.seedUser(t, "rc-used-0550@crm.example.test")
+		usedAt := time.Now().Add(-time.Minute)
+		stub := newAuthAuditResetService(db, mail)
+		stub.resetTokenRepo = &authAuditResetTokens{PasswordResetTokenRepository: stub.resetTokenRepo,
+			stored: &models.PasswordResetToken{UserID: user.ID, TokenHash: "used", UsedAt: &usedAt, ExpiresAt: time.Now().Add(time.Hour)}}
+		before := e.maxAuditID(t)
+		assertResetRefusal(t, resetConfirm(t, stub, "used-reset-token-0550", "req-rc-used"))
+		assertAuditRow(t, e.onlyNewRow(t, before), AuthAuditMethodResetConfirm, AuthAuditOutcomeRefused, "token_invalid", user.ID, "req-rc-used")
+		assert.True(t, passwordIs(t, user.ID, authAuditTestPassword), "the password is unchanged")
+	})
+
+	t.Run("logout_success", func(t *testing.T) {
+		user := e.seedUser(t, "lo-ok-0550@crm.example.test")
+		tokens, err := e.auth.LoginWithTokens(user.Email, authAuditTestPassword)
+		require.NoError(t, err)
+		before := e.maxAuditID(t)
+		err = e.auth.Logout(user.ID, tokens.RefreshToken)
+		require.NoError(t, err)
+		lastID = e.audit.RecordLogout(authAuditCtx("req-lo-ok"), user.ID, err)
+		row := e.onlyNewRow(t, before)
+		assert.Equal(t, row.ID, lastID)
+		assertAuditRow(t, row, AuthAuditMethodLogout, AuthAuditOutcomeSuccess, "", user.ID, "req-lo-ok")
+	})
 }
 
 func TestAuthAuditOutcomesSQLite(t *testing.T) {
@@ -583,9 +828,41 @@ func runAuthAuditPrivacy(t *testing.T, db, competitor *gorm.DB) {
 	e.audit.RecordAPIKeyFailure(authAuditCtx("req-privacy-ak"), err)
 	secrets = append(secrets, badKey, authAuditTestIP, authAuditTestUA)
 
+	// #550: a reset request for the known and an unknown email, its
+	// completion, a password change that renews the session, and a logout,
+	// on a service whose mailer records the link and logs nothing.
+	const (
+		unknownMail   = "privacy-unknown-0550@crm.example.test"
+		resetPassword = "Privacy-Reset-Passw0rd!-0550"
+		changedPass   = "Privacy-Changed-Passw0rd!-0550"
+	)
+	mail := &ciMailer{}
+	resets := newAuthAuditResetService(db, mail)
+	id, err := resets.IssuePasswordReset(pwEmail)
+	require.NoError(t, err)
+	e.audit.RecordPasswordResetRequest(authAuditCtx("req-privacy-rr"), id, err)
+	id, err = resets.IssuePasswordReset(unknownMail)
+	require.Error(t, err)
+	e.audit.RecordPasswordResetRequest(authAuditCtx("req-privacy-rr-unknown"), id, err)
+	resetURL := mail.mails()[0].url
+	rawReset := lastResetToken(t, mail)
+	id, err = resets.CompletePasswordReset(rawReset, resetPassword)
+	require.NoError(t, err)
+	e.audit.RecordPasswordResetConfirm(authAuditCtx("req-privacy-rc"), id, err)
+	session, err := resets.LoginWithTokens(pwEmail, resetPassword)
+	require.NoError(t, err)
+	renewed, err := resets.ChangePassword(user.ID, resetPassword, changedPass, session.RefreshToken)
+	require.NoError(t, err)
+	e.audit.RecordPasswordChange(authAuditCtx("req-privacy-pc"), user.ID, err)
+	err = resets.Logout(user.ID, renewed.RefreshToken)
+	require.NoError(t, err)
+	e.audit.RecordLogout(authAuditCtx("req-privacy-lo"), user.ID, err)
+	secrets = append(secrets, unknownMail, resetPassword, changedPass, rawReset, resetURL,
+		session.AccessToken, session.RefreshToken, renewed.AccessToken, renewed.RefreshToken)
+
 	var rows []map[string]interface{}
 	require.NoError(t, db.Table("auth_audit_log").Find(&rows).Error)
-	require.Len(t, rows, 5, "one row per outcome")
+	require.Len(t, rows, 10, "one row per outcome")
 	var stored strings.Builder
 	for _, row := range rows {
 		for column, value := range row {
