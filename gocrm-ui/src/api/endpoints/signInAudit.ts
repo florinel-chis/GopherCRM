@@ -93,9 +93,9 @@ export interface SignInAuditEntry {
   client_network: string;
   user_agent_family: string;
   /**
-   * 1, or for an api_key refusal the refusals of that reason, account and
-   * network in that UTC minute; the row keeps the first refusal's request id
-   * and time.
+   * 1, or for a refused password, refresh, scim or api_key outcome the
+   * refusals of that method, reason, account and network in that UTC minute;
+   * the row keeps the first refusal's request id and time.
    */
   attempts: number;
 }

@@ -91,11 +91,35 @@ func TestAuthAuditWired(t *testing.T) {
 		assert.Equal(t, "req-454", row.RequestID)
 		assert.Equal(t, "192.0.2.0/24", row.ClientNetwork, "httptest's RemoteAddr 192.0.2.1")
 		assert.Equal(t, "Chrome on Windows", row.UserAgentFamily)
+		assert.EqualValues(t, 1, row.Attempts)
+		if outcome == "refused" && (method == "password" || method == "refresh" || method == "api_key") {
+			assert.NotNil(t, row.AggregateKey, "a refused %s outcome is counted in its bucket (#553)", method)
+		} else {
+			assert.Nil(t, row.AggregateKey, "a %s %s row is one row of its own", method, outcome)
+		}
 	}
 
 	recorder := send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"Wrong-Passw0rd!"}`, "req-454", "")
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	assertRow(t, newRow(t), "password", "refused", "invalid_credentials", user.ID)
+
+	// #553: the same refusal again adds to the row of its method, reason,
+	// account, network and UTC minute; across a minute boundary it starts a
+	// second row.
+	recorder = send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"Wrong-Passw0rd!"}`, "req-454", "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	var refusedLogins []models.AuthAuditLog
+	require.NoError(t, models.DB.Where("method = ? AND reason = ? AND user_id = ?", "password", "invalid_credentials", user.ID).
+		Order("id").Find(&refusedLogins).Error)
+	require.NotEmpty(t, refusedLogins)
+	assert.LessOrEqual(t, len(refusedLogins), 2)
+	var refusedAttempts uint
+	for _, row := range refusedLogins {
+		refusedAttempts += row.Attempts
+		assert.NotNil(t, row.AggregateKey)
+	}
+	assert.EqualValues(t, 2, refusedAttempts, "two refused logins counted")
+	require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Select("COALESCE(MAX(id), 0)").Scan(&lastID).Error)
 
 	recorder = send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"`+password+`"}`, "req-454", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
@@ -157,13 +181,20 @@ func TestAuthAuditWired(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
 	assertRow(t, newRow(t), "oidc", "refused", "state_invalid", 0)
 
-	// A request id outside ^[A-Za-z0-9._:-]{1,64}$ is not stored.
-	for _, bad := range []string{strings.Repeat("x", 100), "has space", "mail@example.test"} {
-		recorder = send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"Wrong-Passw0rd!"}`, bad, "")
+	// A request id outside ^[A-Za-z0-9._:-]{1,64}$ is not stored. Each
+	// refusal names an account of its own, so each starts a row of its own
+	// rather than adding to an earlier refusal's (#553).
+	for i, bad := range []string{strings.Repeat("x", 100), "has space", "mail@example.test"} {
+		other := &models.User{Email: "wired-rid-" + strconv.Itoa(i) + "-0454@crm.example.test", Password: string(hash),
+			FirstName: "Wired", LastName: "Request", Role: models.RoleSales, IsActive: true}
+		require.NoError(t, models.DB.Create(other).Error)
+		recorder = send(http.MethodPost, "/auth/login", `{"email":"`+other.Email+`","password":"Wrong-Passw0rd!"}`, bad, "")
 		assert.Equal(t, http.StatusUnauthorized, recorder.Code)
 		row := newRow(t)
 		assert.Equal(t, "", row.RequestID, "request id %q is not stored", bad)
 		assert.Equal(t, "invalid_credentials", row.Reason)
+		require.NotNil(t, row.UserID)
+		assert.Equal(t, other.ID, *row.UserID)
 	}
 
 	// #550: a password change, a reset request for a known and an unknown

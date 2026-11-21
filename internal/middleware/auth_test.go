@@ -382,6 +382,11 @@ type recordedAPIKeyFailure struct {
 
 func (r *recordingAudit) Record(context.Context, service.AuthAuditEntry) uint { r.other++; return 1 }
 
+func (r *recordingAudit) RecordAggregated(context.Context, service.AuthAuditEntry) uint {
+	r.other++
+	return 1
+}
+
 func (r *recordingAudit) RecordPassword(context.Context, *service.AuthTokens, error) uint {
 	r.other++
 	return 1

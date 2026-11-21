@@ -39,6 +39,11 @@ func (r *recordingAuthAudit) Record(ctx context.Context, _ service.AuthAuditEntr
 	return 1
 }
 
+func (r *recordingAuthAudit) RecordAggregated(ctx context.Context, _ service.AuthAuditEntry) uint {
+	r.calls = append(r.calls, recordedAuthAudit{kind: "record_aggregated", ctx: ctx})
+	return 1
+}
+
 func (r *recordingAuthAudit) RecordPassword(ctx context.Context, tokens *service.AuthTokens, err error) uint {
 	r.calls = append(r.calls, recordedAuthAudit{kind: "password", ctx: ctx, tokens: tokens, err: err})
 	return 1

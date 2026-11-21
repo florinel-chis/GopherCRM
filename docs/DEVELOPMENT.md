@@ -346,9 +346,10 @@ generic 401 (#453). Rows are deleted one day after their creation by the stale b
 sweep (`service.PruneOIDCLoginAttempts`), not by the sign-in. The same sweep deletes sign-in
 audit rows (`auth_audit_log`, #454) older than `AUTH_AUDIT_RETENTION_DAYS` (default 90,
 `service.PruneAuthAuditLog`, chunks of 500); `Callback` writes one such row per call after its
-transaction and logs `audit_id` with the outcome, as `POST /auth/login` and `POST /auth/refresh`
-do; a refused `ApiKey` adds to its minute's aggregated row instead (`attempts`, one row per
-reason, account, client network and UTC minute, #466; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
+transaction and logs `audit_id` with the outcome. A successful `POST /auth/login` or
+`POST /auth/refresh` writes one such row too; a refused one (#553), and a refused `ApiKey`
+(#466), adds to the row of its bucket (`attempts`, one row per method, reason, account, client
+network and UTC minute; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
 timeout, follows no redirect and ignores `HTTP(S)_PROXY`; tests trust their TLS issuer through
 `WithOIDCRootCAs`, and there is no option that replaces the client. After the code exchange
 (PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
@@ -383,8 +384,8 @@ either gets a 429 in the SCIM error shape with no audit row; then the three disc
 `internal/handler/scim_handler.go`). Tokens live in `scim_tokens` as `utils.HashAPIKeyHMAC`
 hashes (`internal/service/scim_token.go`); the lookup is by hash and the row is accepted only
 when `hmac.Equal` holds, because MySQL and MariaDB compare `token_hash` case-insensitively. Each
-refusal writes one `auth_audit_log` row with method `scim` (`token_missing`, `token_invalid`,
-`token_revoked`); neither a token nor a hash is logged. The admin API
+refusal adds 1 to the `auth_audit_log` row of its reason, client network and UTC minute
+(method `scim`; `token_missing`, `token_invalid`, `token_revoked`; #553); neither a token nor a hash is logged. The admin API
 (`/settings/scim/tokens`, `settings.scim_manage`) is routed from `internal/handler/scim_routes.go`.
 Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired`, `TestSCIMTokenTierWired`
 (`cmd`), `TestSCIMAuth`, `TestSCIMRateLimits` (`internal/middleware`), `TestLoad_SCIMRateLimit`,

@@ -1251,7 +1251,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   in any table.
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `userinfo_groups_mapped`, `userinfo_groups_absent`, `userinfo_not_called`, `userinfo_subject_mismatch`, `userinfo_unavailable`, `userinfo_token_privacy` (and `group_overage`, `graph_overage_match` for the zero-request checks)
 
-### TC-AUTH-060 — Every sign-in outcome writes one audit row with its reason
+### TC-AUTH-060 — Every sign-in outcome is recorded in the audit log with its reason
 - **Priority:** P1
 - **Type:** security
 - **Preconditions:** A sales account with a password; a second account that is deactivated, one
@@ -1259,10 +1259,14 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   key; single sign-on on with a role mapping.
 - **Steps:**
   1. Sign in with the right password, a wrong password, an unknown email, and as each of the
-     locked, deactivated and linked accounts.
+     locked, deactivated and linked accounts. A repeat refused sign-in of the same reason,
+     account and network in the same UTC minute adds 1 to that row's `attempts` instead of a row
+     (#553); run each refusal once, or a minute apart.
   2. Refresh with a live refresh token, an unknown one, and one whose owner was deactivated or
      erased meanwhile; then present the first, already exchanged token again, and after it the
-     successor it was exchanged for (#547).
+     successor it was exchanged for (#547). The successor's `token_invalid` refusal with no
+     account shares the bucket of the unknown token's (#553): send it a minute later, or expect
+     `attempts` 2 on that row.
   3. Call a protected route with `ApiKey` and an unknown, a revoked, an expired key and the key
      of a deactivated or erased owner; then with a bad `Bearer` token. A repeat refusal of the
      same reason, account and network in the same UTC minute adds 1 to that row's `attempts`
@@ -1283,7 +1287,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
 - **Expected:** Every answer is the same as before (200, the generic 401, 503 for an operational
   refresh failure; 400, 409 `SESSION_STALE` and 401 for the password change, the same 200 for
   every reset request, 400 `Invalid or expired reset token` for each refused confirmation). Each
-  step 1–4, 6 and 7 request that reaches the service adds exactly one `auth_audit_log` row: `password`
+  step 1–4, 6 and 7 request that reaches the service adds one `auth_audit_log` row, or, for a
+  refused `password`, `refresh` or `api_key` outcome, adds 1 to the `attempts` of its bucket's
+  row when that row already exists (#466, #553); successes have `attempts` 1. The rows: `password`
   `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
   account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
   `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`, `token_reuse` with the
@@ -1368,8 +1374,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   their `attempts` add up to the number of 401s. Step 3: 200 and no new row. Step 4: one row with
   `attempts` 500 and the first refusal's request id, 501 after the last millisecond, a new row
   with `attempts` 1 in the next minute, and a row of its own for the other `/24`, for the `/48`
-  (`attempts` 2) and for each reason and account. Password, refresh and single sign-on outcomes
-  still write one row each with `attempts` 1.
+  (`attempts` 2) and for each reason and account. Refused password sign-ins and refreshes are
+  counted the same way, one row per method, reason, account, network and minute (#553);
+  successful ones and single sign-on outcomes are one row each with `attempts` 1.
 - **Automation:** automated — Go: `TestAuthAuditAPIKeyFailuresBounded`, `TestAuthAuditAPIKeyAggregation{SQLite,MySQL}`, `TestAuthAuditLogAttemptsMigrationFiles`, `TestAuthAuditLogAttemptsMigration`
 
 ## SCIM 2.0 provider (FEATURES 1.15 to 1.20)
@@ -1387,7 +1394,7 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
 `/Schemas/{id}`, `/ResourceTypes/{id}` and a SCIM-shaped 404 for unknown paths are later slices. See the *SCIM provisioning* section of
 `docs/AUTHORIZATION.md`.
 
-### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and one audit row
+### TC-AUTH-065 — Every refused SCIM authentication is the same 401 and is counted in the audit log
 - **Priority:** P0
 - **Type:** security
 - **Preconditions:** A fresh server; an admin with a password and an API key; one SCIM token and
@@ -1401,9 +1408,10 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   4. Call `GET /api/v1/users` with the valid SCIM token as `Bearer`.
 - **Expected:** Steps 1 and 2: each 401 with content type `application/scim+json` and the body
   `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication failed"}`,
-  byte for byte the same. Step 3: one row per request, method `scim`, outcome `refused`,
-  `user_id` NULL, `attempts` 1, reasons `token_missing`, `token_invalid`, `token_revoked`,
-  `token_invalid`, `token_invalid` (and `token_invalid` for both step 2 variants); no log line
+  byte for byte the same. Step 3: rows of method `scim`, outcome `refused`, `user_id` NULL, one
+  per reason, client `/24` and UTC minute (#553), whose `attempts` add up to the requests of that
+  reason: `token_missing` 1, `token_revoked` 1 and `token_invalid` 5 (the unknown token, the
+  JWT, the API key and both step 2 variants); no log line
   holds a presented token or the hash of a stored one. Step 4: 401 — a SCIM token is not a
   credential of the API.
 - **Automation:** automated — Go: `TestSCIMRoutesWired`, `TestSCIMAuth`, `TestSCIMTokenStore{SQLite,MySQL}`
@@ -1419,7 +1427,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   3. From the same address send `GET /scim/v2/ServiceProviderConfig` with the valid token.
 - **Expected:** Requests 1 to 5 are 401; the sixth is 429 with content type
   `application/scim+json` and body status `"429"` (the SCIM refusal limit, 10 a minute, burst 5,
-  per client address). Step 2: five rows; the 429 added none. Step 3: 200, because accepted
+  per client address). Step 2: the `attempts` of the `scim` rows add up to 5, in one
+  `token_missing` row per UTC minute (#553); the 429 added none. Step 3: 200, because accepted
   requests count against the SCIM token limit of their token (default 600 a minute, burst 60),
   not the address. The `/auth`, moderate and generous tiers answer as before.
 - **Automation:** automated — Go: `TestSCIMStrictTierWired`, `TestSCIMTokenTierWired`, `TestSCIMRateLimits`

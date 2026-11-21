@@ -175,10 +175,12 @@ func assertAuditRow(t *testing.T, row models.AuthAuditLog, method, outcome, reas
 	assert.Nil(t, row.SubjectRef)
 	assert.Nil(t, row.AttemptID)
 	assert.EqualValues(t, 1, row.Attempts, "one outcome")
-	if method == AuthAuditMethodAPIKey {
-		assert.NotNil(t, row.AggregateKey, "an API-key refusal is counted in its bucket (#466)")
-	} else {
-		assert.Nil(t, row.AggregateKey, "a password, refresh or oidc row is not aggregated")
+	switch {
+	case outcome == AuthAuditOutcomeRefused && (method == AuthAuditMethodAPIKey || method == AuthAuditMethodPassword ||
+		method == AuthAuditMethodRefresh || method == AuthAuditMethodSCIM):
+		assert.NotNil(t, row.AggregateKey, "a refused api_key, password, refresh or scim outcome is counted in its bucket (#466, #553)")
+	default:
+		assert.Nil(t, row.AggregateKey, "a success row and every other method's row is not aggregated")
 	}
 	assert.WithinDuration(t, time.Now().UTC(), row.CreatedAt.UTC(), time.Minute, "created_at is now, in UTC")
 }
@@ -354,6 +356,15 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 			assert.NotContains(t, logged, secretValue, "the log carries no token, hash or family id")
 		}
 
+		// The successor's refusal is token_invalid with no user, the bucket
+		// refresh_token_invalid counted in (#553): it goes into the next
+		// minute, which no earlier subtest reached, so it writes a row of its
+		// own.
+		audit := e.audit.(*authAuditService)
+		previousNow := audit.now
+		t.Cleanup(func() { audit.now = previousNow })
+		nextMinute := time.Now().UTC().Truncate(time.Minute).Add(time.Minute)
+		audit.now = func() time.Time { return nextMinute }
 		before = e.maxAuditID(t)
 		_, err = refresh(t, rotated.RefreshToken, "req-rf-reuse-successor")
 		require.ErrorIs(t, err, ErrInvalidRefreshToken)
@@ -1065,7 +1076,8 @@ func TestAuthAuditWriteFailure(t *testing.T) {
 	require.NotNil(t, refused)
 	require.Contains(t, refused, "audit_id")
 	assert.Equal(t, float64(0), refused["audit_id"], "no row, audit_id 0")
-	assert.Equal(t, 4, failing.creates)
+	assert.Equal(t, 3, failing.creates, "the two successes and the single sign-on refusal are plain inserts")
+	assert.Equal(t, 1, failing.aggregates, "the refused login is an aggregated write (#553)")
 
 	// #466: a refused API key's aggregated write fails the same way.
 	from = output.Len()
@@ -1074,8 +1086,8 @@ func TestAuthAuditWriteFailure(t *testing.T) {
 	assert.Zero(t, audit.RecordAPIKeyFailure(authAuditCtx("req-wf-ak"), err))
 	assert.Equal(t, "invalid API key", err.Error(), "the refusal is unchanged")
 	assert.Equal(t, 1, failedLines(from), "one audit_write_failed line")
-	assert.Equal(t, 1, failing.aggregates)
-	assert.Equal(t, 4, failing.creates, "no plain insert for an API key")
+	assert.Equal(t, 2, failing.aggregates)
+	assert.Equal(t, 3, failing.creates, "no plain insert for an API key")
 	assert.Zero(t, f.count(t, "auth_audit_log", ""))
 }
 

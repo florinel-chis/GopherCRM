@@ -496,9 +496,11 @@ confirm and the gaps of the re-check.
   service without a transaction manager (`NewAuthService`) keeps the legacy unlocked statements. A
   non-retryable failure of the refresh insert rolls back to its savepoint and the login answers an
   access token only; a signing failure rolls the whole transaction back. The sign-in audit row
-  (#454) is not part of it: the handler writes one `auth_audit_log` row per `POST /auth/login`
-  that reaches `LoginWithTokens`, as its own `INSERT` on the root handle after the transaction
-  has committed or rolled back (never one per replay), and a failed audit insert changes nothing.
+  (#454) is not part of it: for a `POST /auth/login` that reaches `LoginWithTokens` the handler
+  writes, on the root handle after the transaction has committed or rolled back (never once per
+  replay), one `auth_audit_log` `INSERT` for a success, or for a refusal the aggregated upsert
+  that adds 1 to the row of its method, reason, account, network and UTC minute (#553); a failed
+  audit write changes nothing.
 - **Retry:** `WithTransactionAndRetry` with `loginMaxRetries` 3
   (`internal/service/auth_service.go:398`, `:250` in the same file) replays the whole root on a
   deadlock, lock wait timeout or SQLite busy/locked, including one raised by the refresh insert
@@ -522,8 +524,9 @@ confirm and the gaps of the re-check.
   (`internal/service/auth_service.go:1149`) → users (`FOR UPDATE`) → refresh_tokens
   (`RevokeFamily`), still users → refresh_tokens. A request that lost the claim to a concurrent
   rotation never takes this path: it passed the live lookup and is refused at the claim.
-- **Transaction:** the sign-in audit row (#454) is one `auth_audit_log` `INSERT` on the root
-  handle that the handler writes after the rotation returned, outside its transaction.
+- **Transaction:** the sign-in audit row (#454) is written by the handler on the root handle
+  after the rotation returned, outside its transaction: one `auth_audit_log` `INSERT` for a
+  success, or for a refusal the aggregated upsert into the row of its bucket (#553).
   `WithTransaction` (`internal/service/auth_service.go:966`); the reuse path commits its family
   revocation in the same transaction and returns the generic refusal.
 - **Retry:** none today. Target (C2): the #183 retry rule.
