@@ -12,9 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"regexp"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -422,27 +419,15 @@ func (failingClaim) Claim(string, time.Time) (*models.OIDCLoginAttempt, error) {
 	return nil, errors.New("connection refused")
 }
 
-// TestAuthAuditOIDCReasonCoverage: every oidcRefuse/oidcRefuseWith code in
-// the sign-in sources, recorded through the step Callback finishes with,
+// TestAuthAuditOIDCReasonCoverage: every registry constant an
+// oidcRefuse/oidcRefuseWith site passes (the writer scan of
+// auth_audit_vocabulary_test.go), recorded through the step Callback finishes with,
 // yields a row with exactly that reason and a refusal log line naming the
 // row; the 503s, sso_disabled and internal_error are driven through Callback
 // itself.
 func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
-	pattern := regexp.MustCompile(`oidcRefuse(?:With)?\("([a-z_]+)"`)
-	codes := map[string]bool{}
-	for _, file := range []string{"auth_oidc.go", "user_governed_writes.go"} {
-		source, err := os.ReadFile(file)
-		require.NoError(t, err)
-		for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
-			codes[match[1]] = true
-		}
-	}
-	require.NotEmpty(t, codes, "the refusal codes were parsed")
-	parsed := make([]string, 0, len(codes))
-	for code := range codes {
-		parsed = append(parsed, code)
-	}
-	sort.Strings(parsed)
+	parsed := authAuditOIDCRefusalCodes(t)
+	require.Len(t, parsed, 25, "the refusal codes come from the writer scan")
 	t.Logf("parsed %d refusal codes: %s", len(parsed), strings.Join(parsed, " "))
 
 	db, competitor := openOIDCTestSQLite(t)

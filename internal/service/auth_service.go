@@ -443,20 +443,20 @@ func (s *authService) loginInTransaction(
 	owner, err := userRepo.GetByID(userID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return refuse("account_erased", errLoginInvalidCredentials)
+			return refuse(AuthAuditReasonAccountErased, errLoginInvalidCredentials)
 		}
 		return nil, fmt.Errorf("login owner lookup failed: %w", err)
 	}
 	// bcrypt verified the password against verifiedHash; a password change or
 	// reset committed since makes that verification obsolete.
 	if owner.Password != verifiedHash {
-		return refuse("password_changed", errLoginInvalidCredentials)
+		return refuse(AuthAuditReasonPasswordChanged, errLoginInvalidCredentials)
 	}
 	if !owner.IsActive {
-		return refuse("account_inactive", errLoginInvalidCredentials)
+		return refuse(AuthAuditReasonAccountInactive, errLoginInvalidCredentials)
 	}
 	if owner.LockedUntil != nil && owner.LockedUntil.After(now) {
-		return refuse("account_locked", errLoginAccountLocked)
+		return refuse(AuthAuditReasonAccountLocked, errLoginAccountLocked)
 	}
 	// An account linked to single sign-on, while security.sso.allow_password
 	// is off (#457): a plain read of user_identities after the owner lock and
@@ -468,7 +468,7 @@ func (s *authService) loginInTransaction(
 			return nil, fmt.Errorf("login identity lookup failed: %w", err)
 		}
 		if linked {
-			return refuse("sso_account", errLoginInvalidCredentials)
+			return refuse(AuthAuditReasonSSOAccount, errLoginInvalidCredentials)
 		}
 	}
 
@@ -480,7 +480,7 @@ func (s *authService) loginInTransaction(
 	}
 	if err := userRepo.UpdateFields(owner.ID, fields); err != nil {
 		if apperrors.IsNotFound(err) {
-			return refuse("account_erased", errLoginInvalidCredentials)
+			return refuse(AuthAuditReasonAccountErased, errLoginInvalidCredentials)
 		}
 		return nil, fmt.Errorf("failed to record login: %w", err)
 	}

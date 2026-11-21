@@ -1074,6 +1074,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Sign-in audit vocabulary in one place (#549).** The five methods, two outcomes and 41 reason
+  codes of the sign-in audit log are declared once, in `internal/service/auth_audit_vocabulary.go`.
+  The code that writes audit rows (password, refresh, API key, single sign-on and SCIM) passes these
+  constants, and the `GET /audit/sign-ins` filter accepts exactly the registered values.
+  `TestAuthAuditWritersUseRegisteredValues` fails when a writer passes a value that is not
+  registered or a declared constant is missing from the registry. No behaviour change: stored
+  values, answers and the documented filter values are the same.
 - **Settings > Configuration (#565).** Edit and Reset show only to users who hold
   `settings.update`; a refused save or reset shows the server's message. JSON and free-form list
   values are typed as text and checked on Save (`Enter valid JSON`, `Enter a JSON array`), and a
