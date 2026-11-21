@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Browser headers on the web app and the backend's form pages (#564).** Every page and asset of
+  the web app, error answers included, now carries a content policy (`Content-Security-Policy`,
+  same-origin scripts, styles, images, fonts and API calls only; no framing), `X-Frame-Options:
+  DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. They are set in the
+  Docker image's nginx config (`gocrm-ui/docker/nginx.conf`), in the nginx site of
+  `docs/SERVER_PROVISIONING.md` and in `vite preview`, so the release browser tests run with them
+  on; the proxied API keeps the backend's own headers, and the dev server is unchanged. The
+  backend's form confirmation pages send a content policy of their own with the same companion
+  headers, and the hosted form page (`GET /forms/public/{key}/view`) sends a content policy that
+  allows reCAPTCHA, `nosniff` and `Referrer-Policy: strict-origin-when-cross-origin`, and stays
+  frameable. Images on other sites that an AEO answer links in its markdown no longer load in the
+  answer view. A UI built with `VITE_API_BASE_URL` on another origin must add that origin to
+  `connect-src` in `gocrm-ui/docker/nginx.conf`.
+
 - **Role audit rows for account activation, deactivation, erasure and email change, and a Role
   audit screen (#552).** `role_audit_log` gains the actions `user_activated`, `user_deactivated`,
   `user_erased` and `user_email_changed`, each written in the transaction of the change with the

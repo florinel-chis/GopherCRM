@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Response } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
 
@@ -78,4 +78,100 @@ test('the web app under test is the production build', async ({ page, context })
   expect(bundleScripts.length, 'scripts loaded from /assets/*.js').toBeGreaterThan(0);
   expect(new URL(registrationResponse.url()).origin, 'API origin').toBe(UI_BASE_URL);
   expect(registrationResponse.status()).toBe(200);
+});
+
+// The header set `vite preview` sends under `make e2e`, the same values as the
+// production nginx config (gocrm-ui/docker/nginx.conf, gocrm-ui/vite.config.ts).
+const webAppHeaders: Record<string, string> = {
+  'content-security-policy':
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'same-origin',
+};
+
+test('the web app is served with its browser headers', async ({ page, context }) => {
+  test.skip(!process.env.E2E_UI_PORT, 'manual runs use the dev server');
+  test.setTimeout(120_000);
+  await context.clearCookies();
+
+  // Every content policy violation of every document in this tab is reported
+  // here, across full navigations.
+  const violations: { directive: string; blocked: string; page: string }[] = [];
+  await page.exposeFunction(
+    '__reportPolicyViolation',
+    (violation: { directive: string; blocked: string; page: string }) => {
+      violations.push(violation);
+    },
+  );
+  await page.addInitScript(() => {
+    const target = window as unknown as {
+      __policyListener?: boolean;
+      __reportPolicyViolation?: (v: { directive: string; blocked: string; page: string }) => void;
+    };
+    document.addEventListener(
+      'securitypolicyviolation',
+      (event) => {
+        target.__reportPolicyViolation?.({
+          directive: event.effectiveDirective,
+          blocked: event.blockedURI,
+          page: location.pathname,
+        });
+      },
+      true,
+    );
+    target.__policyListener = true;
+  });
+
+  const expectHeaders = (response: Response | null, what: string) => {
+    expect(response, `response of ${what}`).not.toBeNull();
+    const headers = response?.headers() ?? {};
+    for (const [name, value] of Object.entries(webAppHeaders)) {
+      expect(headers[name], `${what} ${name}`).toBe(value);
+    }
+  };
+
+  const asset = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).origin === UI_BASE_URL &&
+      /^\/assets\/[^/]+\.js$/.test(new URL(response.url()).pathname),
+    { timeout: 30_000 },
+  );
+  expectHeaders(await page.goto('/'), '/');
+  expectHeaders(await asset, 'asset script');
+  expectHeaders(await page.goto('/auth/callback'), '/auth/callback');
+
+  // Self-check: the listener is installed and does see a blocked request.
+  await page.goto('/login');
+  await expect(page.getByRole('heading', { name: 'Sign In', exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __policyListener?: boolean }).__policyListener,
+    ),
+    'violation listener installed',
+  ).toBe(true);
+  await page.evaluate(() => {
+    const probe = document.createElement('img');
+    probe.src = 'https://example.invalid/probe.png';
+    document.body.appendChild(probe);
+  });
+  await expect
+    .poll(() => violations.map((v) => v.blocked).join(' '), { timeout: 15_000 })
+    .toContain('example.invalid');
+  violations.length = 0;
+
+  await new AdminAuthHelper(page).ensureAdminLoggedIn();
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.waitForLoadState('networkidle');
+  await page.goto('/leads');
+  await expect(page.getByRole('heading', { name: 'Leads', exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await page.waitForLoadState('networkidle');
+  expect(violations, 'content policy violations').toEqual([]);
 });

@@ -488,6 +488,17 @@ func TestServerProvisioningGuideNginx(t *testing.T) {
 	}
 	spa := nginxBlock(t, tls, "location / {")
 	assertNginxDirective(t, spa, regexp.QuoteMeta("try_files $uri $uri/ /index.html;"), "SPA fallback")
+
+	// The web app locations send the browser header set of the Docker image's
+	// nginx config; the proxied locations and the server level send none.
+	assertUIBrowserHeaders(t, spa, "TLS location /")
+	assertUIBrowserHeaders(t, nginxBlock(t, tls, "location = /quote-response {"), "TLS location = /quote-response")
+	assertNoAddHeaders(t, nginxBlock(t, tls, "location /api/v1/ {"), "TLS location /api/v1/")
+	assertNoAddHeaders(t, nginxBlock(t, tls, "location = /health {"), "TLS location = /health")
+	tlsOutside := nginxOutsideLocations(t, tls)
+	require.NotContains(t, tlsOutside, "try_files", "every TLS location removed")
+	assertNoAddHeaders(t, tlsOutside, "TLS server level")
+	assertNoAddHeaders(t, httpSite.body, "HTTP site")
 }
 
 var provisioningGuideHeadings = []string{

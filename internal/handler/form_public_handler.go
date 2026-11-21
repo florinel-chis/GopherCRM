@@ -241,6 +241,9 @@ func (h *FormPublicHandler) Submit(c *gin.Context) {
 // @Param key path string true "Public form identifier (the form's public_id)"
 // @Success 200 {string} string "HTML page (text/html; charset=utf-8)"
 // @Header 200 {string} Cache-Control "no-store"
+// @Header 200 {string} Content-Security-Policy "default-src 'self'; script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; frame-src https://www.google.com/recaptcha/ https://recaptcha.google.com/recaptcha/; connect-src 'self' https://www.google.com/recaptcha/; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'"
+// @Header 200 {string} X-Content-Type-Options "nosniff"
+// @Header 200 {string} Referrer-Policy "strict-origin-when-cross-origin"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS (JSON envelope) - generous tier: 240 requests/min, burst 40, per client IP, one bucket shared by GET embed.js, GET {key} and GET {key}/view; error.details.retry_after is '60s'; no Retry-After header"
 // @Router /forms/public/{key}/view [get]
 func (h *FormPublicHandler) ViewPage(c *gin.Context) {
@@ -257,7 +260,7 @@ func (h *FormPublicHandler) ViewPage(c *gin.Context) {
 	}
 
 	c.Header("Cache-Control", formHostedViewCacheControl)
-	c.Data(http.StatusOK, formPageContentType,
+	writeHostedFormPage(c,
 		formHostedViewPage(h.apiPrefix+"/forms/public/embed.js", c.Param("key"), idempotencyKey))
 }
 
@@ -274,16 +277,20 @@ func (h *FormPublicHandler) ViewPage(c *gin.Context) {
 // @Produce html,json
 // @Param token query string false "Confirmation token from the mailed link"
 // @Success 200 {string} string "HTML page: the confirmation button, or the invalid-link page when the token is missing (text/html; charset=utf-8)"
+// @Header 200 {string} Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+// @Header 200 {string} X-Frame-Options "DENY"
+// @Header 200 {string} X-Content-Type-Options "nosniff"
+// @Header 200 {string} Referrer-Policy "same-origin"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS (JSON envelope) - strict tier: 10 requests/min, burst 5, per client IP, one bucket shared by public submissions and both confirmation routes (lifted by DISABLE_RATE_LIMIT=true); error.details.retry_after is '60s'; no Retry-After header"
 // @Router /forms/public/confirm [get]
 func (h *FormPublicHandler) ConfirmPage(c *gin.Context) {
 	token := c.Query("token")
 	if strings.TrimSpace(token) == "" {
-		c.Data(http.StatusOK, formPageContentType, formInvalidLinkPage())
+		writeFormPage(c, formInvalidLinkPage())
 		return
 	}
 
-	c.Data(http.StatusOK, formPageContentType,
+	writeFormPage(c,
 		formConfirmPage(h.apiPrefix+"/forms/public/confirm", token))
 }
 
@@ -310,6 +317,10 @@ type confirmRequest struct {
 // @Produce html,json
 // @Param token formData string false "Confirmation token (form-encoded; a JSON body with a token field is accepted too)"
 // @Success 200 {string} string "HTML page: 'Email confirmed' on success, otherwise the generic invalid-link page (text/html; charset=utf-8)"
+// @Header 200 {string} Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+// @Header 200 {string} X-Frame-Options "DENY"
+// @Header 200 {string} X-Content-Type-Options "nosniff"
+// @Header 200 {string} Referrer-Policy "same-origin"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS (JSON envelope) - strict tier: 10 requests/min, burst 5, per client IP, one bucket shared by public submissions and both confirmation routes (lifted by DISABLE_RATE_LIMIT=true); error.details.retry_after is '60s'; no Retry-After header"
 // @Router /forms/public/confirm [post]
 func (h *FormPublicHandler) Confirm(c *gin.Context) {
@@ -324,7 +335,7 @@ func (h *FormPublicHandler) Confirm(c *gin.Context) {
 	}
 	if strings.TrimSpace(token) == "" {
 		logger.Warn("Form confirmation attempted without a token")
-		c.Data(http.StatusOK, formPageContentType, formInvalidLinkPage())
+		writeFormPage(c, formInvalidLinkPage())
 		return
 	}
 
@@ -334,12 +345,12 @@ func (h *FormPublicHandler) Confirm(c *gin.Context) {
 		} else {
 			logger.WithError(utils.LogError(err)).Error("Form confirmation failed")
 		}
-		c.Data(http.StatusOK, formPageContentType, formInvalidLinkPage())
+		writeFormPage(c, formInvalidLinkPage())
 		return
 	}
 
 	logger.Info("Form submission confirmed")
-	c.Data(http.StatusOK, formPageContentType, formConfirmedPage())
+	writeFormPage(c, formConfirmedPage())
 }
 
 // respondError maps the service's errors onto the JSON routes. Field-level
