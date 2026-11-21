@@ -3945,10 +3945,17 @@ Endpoint pause (#569): `TestWebhookEndpointPause{SQLite,MySQL}`
 `TRANSACTION_SOURCES` and asserted by `scripts/ci/tests/test_go_checks.py`), the three circuit
 subtests of `TestWebhookRepository{SQLite,MySQL}`, `TestWebhookSchemaSQLite` and `TestWebhookJSON`
 (the new columns and keys), `TestWebhookEndpointPauseSQLiteUpgrade` (`internal/models`), and
-`TestWebhookEndpointPauseMigrationFiles` (it holds the newest-migration assertion since #569, moved
-from `TestRefreshTokenSessionMigrationFiles`) and `TestWebhookEndpointPauseMigration`
-(`cmd/migrate`); the migration and SQLite-upgrade roots are required by the migrations workflow,
-`scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`.
+`TestWebhookEndpointPauseMigrationFiles` (it held the newest-migration assertion from #569 until
+#551) and `TestWebhookEndpointPauseMigration` (`cmd/migrate`); the migration and SQLite-upgrade
+roots are required by the migrations workflow, `scripts/ci/check-go.py migration` and
+`scripts/release/check-sql-tests.py`.
+API key rows of the sign-in audit log (#551): migration `20261129120006_auth_audit_log_api_key_id`
+adds `auth_audit_log.api_key_id`. `TestAuthAuditLogAPIKeyIDMigrationFiles` (it holds the
+newest-migration assertion since #551, moved from `TestWebhookEndpointPauseMigrationFiles`) and
+`TestAuthAuditLogAPIKeyIDMigration` (`cmd/migrate`) are required by the migrations workflow,
+`scripts/ci/check-go.py migration` and `scripts/release/check-sql-tests.py`;
+`TestAuthAuditLogMigration` and `TestAuthAuditLogAttemptsMigration` leave the new column out of
+their comparisons.
 
 ### Form retention purge
 

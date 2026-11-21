@@ -37,7 +37,14 @@ import (
 // the service returns: success with the account's user id, or refused with
 // the reason of the service's error and the user id when the account is
 // known (a reset request for an unknown email, and a reset completion whose
-// token is unknown, spent or expired, carry none). A row is pseudonymous: the method, the outcome, a
+// token is unknown, spent or expired, carry none). Creating an API key,
+// revoking one (DELETE /api-keys/:id, or PUT /api-keys/:id with is_active
+// false) and a refused attempt to switch a revoked key on again (#551) each
+// write one row of their own, methods api_key_create, api_key_revoke and
+// api_key_enable, attempts 1, after the service returns: the caller's user id
+// and the key's numeric id in api_key_id, success for a create or a
+// revocation and refused with key_revoked for the re-enable. The key, its
+// prefix, its hash and its name are never stored. A row is pseudonymous: the method, the outcome, a
 // stable reason code, the user id when the account is known, the sign-in
 // attempt id, the request id (only when it matches
 // ^[A-Za-z0-9._:-]{1,64}$), an HMAC reference of a refused single sign-on
@@ -79,6 +86,9 @@ type AuthAuditEntry struct {
 	// UserID and AttemptID are 0 when unknown (stored as NULL).
 	UserID    uint
 	AttemptID uint
+	// APIKeyID is the api_keys row an api_key_create, api_key_revoke or
+	// api_key_enable row concerns (#551); 0 otherwise (stored as NULL).
+	APIKeyID uint
 	// SubjectRef is empty unless a verified single sign-on identity was
 	// refused (stored as NULL).
 	SubjectRef string
@@ -112,6 +122,15 @@ type AuthAuditService interface {
 	// RecordLogout records the outcome of Logout for the caller userID
 	// (#550).
 	RecordLogout(ctx context.Context, userID uint, err error) uint
+	// RecordAPIKeyCreate records that userID created the API key keyID
+	// (#551).
+	RecordAPIKeyCreate(ctx context.Context, userID, keyID uint) uint
+	// RecordAPIKeyRevoke records that userID revoked the API key keyID
+	// (#551).
+	RecordAPIKeyRevoke(ctx context.Context, userID, keyID uint) uint
+	// RecordAPIKeyEnableRefused records that switching the revoked API key
+	// keyID of userID on again was refused (#551).
+	RecordAPIKeyEnableRefused(ctx context.Context, userID, keyID uint) uint
 }
 
 type authAuditService struct {
@@ -191,6 +210,7 @@ func (s *authAuditService) row(ctx context.Context, entry AuthAuditEntry) *model
 		Reason:          truncateUTF8(entry.Reason, models.AuthAuditReasonMaxLength),
 		UserID:          optionalID(entry.UserID),
 		AttemptID:       optionalID(entry.AttemptID),
+		APIKeyID:        optionalID(entry.APIKeyID),
 		RequestID:       utils.SafeRequestID(utils.RequestIDFromContext(ctx)),
 		ClientNetwork:   utils.ClientNetwork(info.IP),
 		UserAgentFamily: utils.UserAgentFamily(info.UserAgent),
@@ -251,6 +271,40 @@ func (s *authAuditService) RecordPasswordResetConfirm(ctx context.Context, userI
 // RecordLogout records one logout of userID: success, or internal_error.
 func (s *authAuditService) RecordLogout(ctx context.Context, userID uint, err error) uint {
 	return s.Record(ctx, withEntryUser(outcomeEntry(AuthAuditMethodLogout, nil, err, AuthAuditReasonInternalError), userID))
+}
+
+// RecordAPIKeyCreate records one API key creation: success, the caller and
+// the new key's id.
+func (s *authAuditService) RecordAPIKeyCreate(ctx context.Context, userID, keyID uint) uint {
+	return s.Record(ctx, AuthAuditEntry{
+		Method:   AuthAuditMethodAPIKeyCreate,
+		Outcome:  AuthAuditOutcomeSuccess,
+		UserID:   userID,
+		APIKeyID: keyID,
+	})
+}
+
+// RecordAPIKeyRevoke records one API key revocation: success, the caller and
+// the key's id.
+func (s *authAuditService) RecordAPIKeyRevoke(ctx context.Context, userID, keyID uint) uint {
+	return s.Record(ctx, AuthAuditEntry{
+		Method:   AuthAuditMethodAPIKeyRevoke,
+		Outcome:  AuthAuditOutcomeSuccess,
+		UserID:   userID,
+		APIKeyID: keyID,
+	})
+}
+
+// RecordAPIKeyEnableRefused records one refused re-enable of a revoked API
+// key: refused with key_revoked, the caller and the key's id.
+func (s *authAuditService) RecordAPIKeyEnableRefused(ctx context.Context, userID, keyID uint) uint {
+	return s.Record(ctx, AuthAuditEntry{
+		Method:   AuthAuditMethodAPIKeyEnable,
+		Outcome:  AuthAuditOutcomeRefused,
+		Reason:   AuthAuditReasonKeyRevoked,
+		UserID:   userID,
+		APIKeyID: keyID,
+	})
 }
 
 // withEntryUser gives entry userID when it names no account yet.

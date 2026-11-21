@@ -24,6 +24,7 @@ const entry = (overrides: Partial<SignInAuditEntry>): SignInAuditEntry => ({
   reason: '',
   user_id: 1,
   attempt_id: null,
+  api_key_id: null,
   request_id: '',
   subject_ref: null,
   claim_roles: null,

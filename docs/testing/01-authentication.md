@@ -1276,6 +1276,10 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   7. Request a password reset for the sales account, an unknown email, the deactivated account
      and the linked account; confirm a reset link, an unknown token, the same link a second time
      and the link of an account deactivated after it was sent; log out.
+  8. From a fresh session (#551), create an API key, revoke it with `DELETE /api-keys/{id}`, then
+     send `PUT /api-keys/{id}` with `{"is_active":true}`; create a second key and send `PUT` with
+     `{"is_active":false}`; rename a live key, send `{"is_active":true}` on a live key, read the
+     keys, and revoke a key of another account.
 - **Expected:** Every answer is the same as before (200, the generic 401, 503 for an operational
   refresh failure; 400, 409 `SESSION_STALE` and 401 for the password change, the same 200 for
   every reset request, 400 `Invalid or expired reset token` for each refused confirmation). Each
@@ -1292,11 +1296,15 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   `account_erased`, each with the caller's id; `reset_request` `success` with the user id,
   `account_unknown` with `user_id` NULL, `account_inactive`, `sso_account`; `reset_confirm`
   `success` with the user id, `token_invalid` with `user_id` NULL for the unknown and the spent
-  token, `account_inactive` with the owner's id; `logout` `success` with the user id. The two
-  step-6 400s and the bad Bearer token add no row. Every row carries the request id and the client's `/24`; the
+  token, `account_inactive` with the owner's id; `logout` `success` with the user id;
+  `api_key_create` `success`, `api_key_revoke` `success` for the `DELETE` and for the `PUT` with
+  `is_active` false, and `api_key_enable` `refused` `key_revoked` for the 409 (#551), each with the
+  caller's id and the key's id in `api_key_id` and no key material or key name. The two
+  step-6 400s, the bad Bearer token, and in step 8 the rename, `is_active` true on a live key, the
+  reads and the 403 for another account's key add no row. Every row carries the request id and the client's `/24`; the
   request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
   `audit_id`.
-- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}` (incl. the #547 `refresh_token_reuse` and the #550 `password_change_*`, `reset_request_*`, `reset_confirm_*` and `logout_success` subtests), `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuthHandlerAudit`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
+- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}` (incl. the #547 `refresh_token_reuse` and the #550 `password_change_*`, `reset_request_*`, `reset_confirm_*` and `logout_success` subtests), `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuthHandlerAudit`, `TestAuthAuditAPIKeyChanges` (#551), the `api_key_change_rows` subtest of `TestAuthAuditOutcomes{SQLite,MySQL}`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
 
 ### TC-AUTH-061 — The audit log and its log lines hold no personal or secret values
 - **Priority:** P0

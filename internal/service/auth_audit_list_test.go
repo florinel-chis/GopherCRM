@@ -133,7 +133,7 @@ func TestAuthAuditReasonVocabulary(t *testing.T) {
 	assert.False(t, IsAuthAuditMethod("password "))
 	assert.False(t, IsAuthAuditMethod("PASSWORD"))
 	assert.False(t, IsAuthAuditOutcome("Refused"))
-	assert.Equal(t, []string{"api_key", "logout", "oidc", "password", "password_change", "refresh", "reset_confirm", "reset_request", "scim"}, AuthAuditMethods())
+	assert.Equal(t, []string{"api_key", "api_key_create", "api_key_enable", "api_key_revoke", "logout", "oidc", "password", "password_change", "refresh", "reset_confirm", "reset_request", "scim"}, AuthAuditMethods())
 	assert.Equal(t, []string{"refused", "success"}, AuthAuditOutcomes())
 
 	// The swagger enums of GET /audit/sign-ins (what the SPA's selects offer)

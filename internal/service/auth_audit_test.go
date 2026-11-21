@@ -632,6 +632,35 @@ func runAuthAuditOutcomes(t *testing.T, db *gorm.DB) {
 		row := e.onlyNewRow(t, before)
 		assert.Equal(t, row.ID, lastID)
 		assertAuditRow(t, row, AuthAuditMethodLogout, AuthAuditOutcomeSuccess, "", user.ID, "req-lo-ok")
+		assert.Nil(t, row.APIKeyID, "a row of another method names no API key")
+	})
+
+	// API key management (#551): one row each, with the caller and the key
+	// id in api_key_id, read back from the database.
+	t.Run("api_key_change_rows", func(t *testing.T) {
+		user := e.seedUser(t, "ak-change-0551@crm.example.test")
+		const keyID = uint(4242)
+		cases := []struct {
+			record    func(ctx context.Context, userID, keyID uint) uint
+			method    string
+			outcome   string
+			reason    string
+			requestID string
+		}{
+			{e.audit.RecordAPIKeyCreate, AuthAuditMethodAPIKeyCreate, AuthAuditOutcomeSuccess, "", "req-ak-create"},
+			{e.audit.RecordAPIKeyRevoke, AuthAuditMethodAPIKeyRevoke, AuthAuditOutcomeSuccess, "", "req-ak-revoke"},
+			{e.audit.RecordAPIKeyEnableRefused, AuthAuditMethodAPIKeyEnable, AuthAuditOutcomeRefused, "key_revoked", "req-ak-enable"},
+		}
+		for _, tc := range cases {
+			before := e.maxAuditID(t)
+			id := tc.record(authAuditCtx(tc.requestID), user.ID, keyID)
+			row := e.onlyNewRow(t, before)
+			assert.Equal(t, row.ID, id, "the method returns the row id")
+			assertAuditRow(t, row, tc.method, tc.outcome, tc.reason, user.ID, tc.requestID)
+			if assert.NotNil(t, row.APIKeyID, "api_key_id is set") {
+				assert.Equal(t, keyID, *row.APIKeyID)
+			}
+		}
 	})
 }
 

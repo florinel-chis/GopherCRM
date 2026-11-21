@@ -118,7 +118,10 @@ func TestAuthAuditLogMigration(t *testing.T) {
 	require.NoError(t, reference.m.Migrate(authAuditLogPreviousVersion))
 	assert.NotContains(t, listTables(t, reference.sql, reference.name), authAuditLogTable)
 	runMigrateDatabase(t, reference.dsn)
-	wantModel := snapshotTable(t, reference, authAuditLogTable)
+	// api_key_id (#551) belongs to a later migration: it is left out of both
+	// shapes, so this root checks only the table #454 created and what #466
+	// added.
+	wantModel := withoutAuthAuditAPIKeyID(snapshotTable(t, reference, authAuditLogTable))
 	want := withoutAuthAuditAttempts(wantModel)
 	assert.Contains(t, want.Indexes, "idx_auth_audit_log_created_at (created_at) non_unique=1")
 	assert.Contains(t, want.Indexes, "idx_auth_audit_log_user_id (user_id) non_unique=1")
@@ -134,7 +137,7 @@ func TestAuthAuditLogMigration(t *testing.T) {
 	}
 	assertModelShape := func(t *testing.T, tdb *migrationTestDB) {
 		t.Helper()
-		assert.Equal(t, wantModel, snapshotTable(t, tdb, authAuditLogTable), "auth_audit_log as MigrateDatabase creates it")
+		assert.Equal(t, wantModel, withoutAuthAuditAPIKeyID(snapshotTable(t, tdb, authAuditLogTable)), "auth_audit_log as MigrateDatabase creates it")
 	}
 
 	t.Run("Fresh", func(t *testing.T) {

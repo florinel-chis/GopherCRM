@@ -5189,6 +5189,11 @@ definitions:
     type: object
   internal_handler.AuthAuditEntryResponse:
     properties:
+      api_key_id:
+        description: The API key an api_key_create, api_key_revoke or api_key_enable
+          row concerns; null otherwise.
+        example: 12
+        type: integer
       attempt_id:
         description: The single sign-on login attempt of a callback; null otherwise.
         example: 3
@@ -5227,7 +5232,8 @@ definitions:
       method:
         description: |-
           How the caller tried to sign in, or the password change, password reset
-          step or logout the row records.
+          step, logout or API key creation, revocation or re-enable the row
+          records.
         enum:
         - password
         - oidc
@@ -5238,6 +5244,9 @@ definitions:
         - reset_request
         - reset_confirm
         - logout
+        - api_key_create
+        - api_key_revoke
+        - api_key_enable
         example: password
         type: string
       outcome:
@@ -10391,7 +10400,7 @@ paths:
       consumes:
       - application/json
       description: |-
-        Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
+        Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased. A 201 writes one sign-in audit row (method api_key_create, outcome success) with the caller's user id and the new key's id in api_key_id, and never the key, its prefix or its name.
         expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future and at most one year from now; omitted or empty, the key expires one year from now. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
       parameters:
       - description: Key name and optional expiry
@@ -10480,7 +10489,10 @@ paths:
         Marks the key inactive and stamps revoked_at; the row is kept, not deleted,
         and revocation is final: the key cannot be switched on again. Idempotent:
         revoking a revoked key succeeds again and keeps the first revoked_at. Requests
-        already authenticated with the key are not affected; later ones are rejected.'
+        already authenticated with the key are not affected; later ones are rejected.
+        Every 200, a repeat on a revoked key included, writes one sign-in audit row
+        (method api_key_revoke, outcome success) with the caller''s user id and the
+        key''s id in api_key_id.'
       parameters:
       - description: API key ID
         in: path
@@ -10659,7 +10671,11 @@ paths:
         Revocation is final: is_active true on a revoked key is 409 CONFLICT and changes
         nothing, the name included; on a live key it changes nothing. is_active true
         from a request authenticated with an API key is 403. Expiry is not affected:
-        an expired key stays unusable whatever is_active says.'
+        an expired key stays unusable whatever is_active says. A 200 with is_active
+        false writes one sign-in audit row (method api_key_revoke, outcome success),
+        and the 409 for a revoked key writes one (method api_key_enable, outcome refused,
+        reason key_revoked), each with the caller''s user id and the key''s id in
+        api_key_id; a rename alone writes none.'
       parameters:
       - description: API key ID
         in: path
@@ -10765,7 +10781,7 @@ paths:
   /audit/sign-ins:
     get:
       description: |-
-        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion or logout, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+        One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion, logout, API key creation, API key revocation or refused re-enable of a revoked API key, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the API key id, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
         Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
         Permission: audit.sign_ins_view (among the system roles, admin only).
       parameters:
@@ -10785,6 +10801,9 @@ paths:
       - description: 'Only rows of this method (unknown value: 400)'
         enum:
         - api_key
+        - api_key_create
+        - api_key_enable
+        - api_key_revoke
         - logout
         - oidc
         - password

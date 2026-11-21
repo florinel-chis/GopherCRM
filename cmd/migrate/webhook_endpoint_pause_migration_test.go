@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -32,8 +31,7 @@ var webhookEndpointPauseColumns = []string{"consecutive_failures", "paused_until
 // TestWebhookEndpointPauseMigrationFiles needs no database: the pair exists
 // with its headers, the up half adds exactly the two columns, each behind an
 // INFORMATION_SCHEMA probe, the down half drops only them, the model declares
-// the same, and it is the newest migration of the directory, which
-// latestMigrationVersion names.
+// the same, and it follows the previous migration.
 func TestWebhookEndpointPauseMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, webhookEndpointPauseMigrationName+".up.sql"))
@@ -86,21 +84,9 @@ func TestWebhookEndpointPauseMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "", tag, "a nullable datetime with no default and no index")
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestRefreshTokenSessionMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, webhookEndpointPauseMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, webhookEndpointPauseVersion, version)
-	assert.Equal(t, webhookEndpointPauseVersion, latestMigrationVersion)
+	// The newest-migration assertions moved to
+	// TestAuthAuditLogAPIKeyIDMigrationFiles (#551).
+	assert.Less(t, webhookEndpointPauseVersion, latestMigrationVersion)
 	assert.Equal(t, webhookEndpointPausePreviousVersion+1, webhookEndpointPauseVersion)
 }
 
