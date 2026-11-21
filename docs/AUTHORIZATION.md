@@ -1393,10 +1393,11 @@ person's groups from Microsoft Graph:
   role mapping with at least one `groups` entry, after the ID token, nonce, subject and issuer
   checks have passed. Without a `groups` entry the overage is ignored and no Graph call is made.
 - For such a configuration `POST /auth/oidc/start` adds the scope
-  `https://graph.microsoft.com/GroupMember.Read.All` (once, after the configured scopes; it is not
-  stored in the settings). That is the delegated Microsoft Graph permission
-  `GroupMember.Read.All`, which needs admin consent in the tenant: add it to the app registration
-  and grant consent, or users of an overflowing group set cannot sign in.
+  `https://graph.microsoft.com/User.Read` (once, after the configured scopes; it is not stored in
+  the settings). That is the delegated Microsoft Graph permission `User.Read`, which Microsoft
+  names as the least-privileged permission for `/me/getMemberObjects`: keep it granted on the app
+  registration, or users of an overflowing group set cannot sign in. No other Graph permission is
+  needed for it; one that a deployment granted earlier for this lookup can be removed (#631).
 - The callback sends `POST /v1.0/me/getMemberObjects` to `https://graph.microsoft.com` with
   `{"securityEnabledOnly": true}`, so only security groups count, and follows `@odata.nextLink`
   only to `https` URLs on that same host. Only the returned object ids are used, never group

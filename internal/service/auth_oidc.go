@@ -132,8 +132,9 @@ const (
 	// oidcGraphTimeout is ONE deadline over every Graph page of a sign-in.
 	oidcGraphTimeout = 5 * time.Second
 	// oidcGraphScope is the delegated permission Start adds for an Entra ID
-	// issuer whose role mapping uses groups.
-	oidcGraphScope           = "https://graph.microsoft.com/GroupMember.Read.All"
+	// issuer whose role mapping uses groups: User.Read, the least-privileged
+	// permission for /me/getMemberObjects.
+	oidcGraphScope           = "https://graph.microsoft.com/User.Read"
 	oidcGraphMemberObjects   = "/v1.0/me/getMemberObjects"
 	oidcGraphPageMaxBytes    = 1 << 20
 	oidcGraphMemberObjectsIn = `{"securityEnabledOnly":true}`
@@ -389,7 +390,7 @@ func (s *oidcService) oauthConfig(provider *oidc.Provider, cfg EffectiveSSOConfi
 }
 
 // requestScopes are the configured scopes, plus the Microsoft Graph
-// GroupMember.Read.All scope (once) when the issuer is Entra ID and the role
+// User.Read scope (once) when the issuer is Entra ID and the role
 // mapping uses groups, so a group overage can be resolved. The added scope is
 // never stored.
 func (s *oidcService) requestScopes(cfg EffectiveSSOConfig) []string {

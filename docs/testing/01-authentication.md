@@ -1205,7 +1205,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
 - **Preconditions:** Single sign-on on with an Entra ID issuer
   (`https://login.microsoftonline.com/<tenant>/v2.0`) and a role mapping with a `groups` entry for
   a security group's object id; the app registration has the delegated Microsoft Graph permission
-  `GroupMember.Read.All` with admin consent.
+  `User.Read` granted.
 - **Steps:**
   1. `POST /api/v1/auth/oidc/start`; repeat with a mapping of only `roles` entries, and with a
      `groups` mapping on another issuer.
@@ -1217,7 +1217,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
      host, or redirects.
   5. Sign in with an overage token while the mapping has only `roles` entries, and with a
      `groups` claim and no overage.
-- **Expected:** Step 1: the `scope` carries `https://graph.microsoft.com/GroupMember.Read.All`
+- **Expected:** Step 1: the `scope` carries `https://graph.microsoft.com/User.Read`
   once, after the configured scopes, only for the Entra ID issuer with a `groups` mapping; the
   other two scopes are the configured ones. Step 2: signed in with the mapped role; each Graph page
   was a `POST` with `{"securityEnabledOnly":true}` and the access token of that code exchange,
