@@ -1086,6 +1086,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A refresh token presented again after its exchange ends its session (#547).** When
+  `POST /auth/refresh` receives a token that a committed refresh already exchanged for a
+  successor, it still answers the same 401 `Invalid or expired refresh token`, and it now also
+  revokes every refresh token of that sign-in session (the token's `family_id`), the successors
+  included, in a transaction that commits. The sign-in audit log records the refusal with method
+  `refresh`, outcome `refused`, the new reason code `token_reuse` and the account's user id; the
+  reason filter of `GET /audit/sign-ins` and Settings > Sign-in audit accept it (44 codes). A
+  request that only lost a concurrent exchange of the same token is refused as before and ends
+  nothing; a token revoked by logout, a password change or a deactivation, and a token with no
+  recorded session, are refused as before as well. Access tokens already issued keep working until
+  they expire.
 - **Refresh tokens record their session (#546).** `refresh_tokens` gains `family_id` (shared by
   every token of one rotation chain, indexed by `idx_refresh_tokens_family_id`), `sign_in_method`
   (`password` or `oidc`) and `session_started_at` (when that sign-in happened). A password sign-in,

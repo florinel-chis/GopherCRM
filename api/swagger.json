@@ -3403,6 +3403,7 @@
                             "token_exchange_failed",
                             "token_invalid",
                             "token_missing",
+                            "token_reuse",
                             "token_revoked",
                             "unavailable",
                             "userinfo_subject_mismatch"
@@ -4363,7 +4364,7 @@
         },
         "/auth/refresh": {
             "post": {
-                "description": "Strict rotation: the presented refresh token is spent and a new access token, a new refresh token and the user are returned, the same shape as login. Clients must keep the replacement from every response; presenting a spent token fails. Of several concurrent refreshes of one token exactly one succeeds.\nEvery rejection of the token (unknown, expired, revoked, already spent, or owned by a deactivated or erased account) is the same 401; the reason is never disclosed. A refresh whose owner turns out to be deactivated or erased also revokes the token. An operational failure (database, signing) is 503 SESSION_REFRESH_UNAVAILABLE: when it happened before the commit the rotation was rolled back and the presented token is still usable, so the client keeps it and retries; when the COMMIT itself failed the outcome is ambiguous and the retry may answer 401.\nRate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.",
+                "description": "Strict rotation: the presented refresh token is spent and a new access token, a new refresh token and the user are returned, the same shape as login. Clients must keep the replacement from every response; presenting a spent token fails. Of several concurrent refreshes of one token exactly one succeeds.\nEvery rejection of the token (unknown, expired, revoked, already spent, or owned by a deactivated or erased account) is the same 401; the reason is never disclosed. A refresh whose owner turns out to be deactivated or erased also revokes the token. Presenting a token that was already exchanged for a successor also revokes every refresh token of its session, the successors included, with the same 401 (a request that only lost a concurrent exchange of the same token revokes nothing). An operational failure (database, signing) is 503 SESSION_REFRESH_UNAVAILABLE: when it happened before the commit the rotation was rolled back and the presented token is still usable, so the client keeps it and retries; when the COMMIT itself failed the outcome is ambiguous and the retry may answer 401.\nRate limit: the strict /auth tier, 10 requests per minute with a burst of 5 per client IP, shared by every unauthenticated /auth route.",
                 "consumes": [
                     "application/json"
                 ],

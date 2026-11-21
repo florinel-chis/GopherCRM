@@ -283,8 +283,16 @@ that fails for a database reason aborts before the claim. A failure of the
 successor insert or of the signing rolls the claim back with it, so the presented token stays
 usable, no extra row exists and no credentials are returned; the same token succeeds once the
 fault is gone. Two requests presenting one token therefore commit exactly one successor: the loser's
-claim finds nothing to revoke and is rejected before it could insert anything, and a later replay
-cannot invalidate the winner. The one rejection that commits is a dead owner: when the locking read
+claim finds nothing to revoke and is rejected before it could insert anything, and ends nothing
+else, because it passed the live lookup. A token presented after a committed rotation is a reuse
+(#547): when the live lookup misses, `GetRevokedByTokenHash` reads the revoked row in the same
+transaction, and when `HasLaterInFamily` finds a later row of its user and `family_id` (only a
+rotation adds one), the owner is locked as above and `RevokeFamily` revokes every live token of the
+family, the winner's successor included; the refusal is the same generic one, audited as
+`token_reuse` with the owner's id. A revoked token that is the newest of its family (logout,
+password change, deactivation, containment) or has an empty `family_id` is the plain refusal and
+writes nothing. Access JWTs already issued are not ended by a reuse. The rejections that commit
+are a reuse and a dead owner: when the locking read
 finds the account inactive, erased or missing, the claim stands as the containment revocation of
 that token and the caller still receives the generic `ErrInvalidRefreshToken`. The locking read is
 what makes a deactivation committed by another connection after the token lookup visible on MySQL;

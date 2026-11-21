@@ -16,6 +16,8 @@ package service
 // seam of the service under test. All waits are bounded.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -57,8 +59,11 @@ const (
 type rotationHooks struct {
 	mu               sync.Mutex
 	afterTokenLookup func(tx *gorm.DB, token *models.RefreshToken) error
-	beforeClaim      func(id uint) error
-	beforeCreate     func(token *models.RefreshToken) error
+	// afterRevokedLookup fires when the lookup of a token that is not live
+	// returned its revoked row.
+	afterRevokedLookup func(tx *gorm.DB, token *models.RefreshToken) error
+	beforeClaim        func(id uint) error
+	beforeCreate       func(token *models.RefreshToken) error
 }
 
 func (h *rotationHooks) install(fn func(h *rotationHooks)) {
@@ -70,6 +75,7 @@ func (h *rotationHooks) install(fn func(h *rotationHooks)) {
 func (h *rotationHooks) clear() {
 	h.install(func(h *rotationHooks) {
 		h.afterTokenLookup = nil
+		h.afterRevokedLookup = nil
 		h.beforeClaim = nil
 		h.beforeCreate = nil
 	})
@@ -79,6 +85,12 @@ func (h *rotationHooks) tokenLookup() func(*gorm.DB, *models.RefreshToken) error
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.afterTokenLookup
+}
+
+func (h *rotationHooks) revokedLookup() func(*gorm.DB, *models.RefreshToken) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.afterRevokedLookup
 }
 
 func (h *rotationHooks) claim() func(uint) error {
@@ -111,6 +123,19 @@ func (r *rotationRefreshTokenRepository) GetByTokenHash(hash string) (*models.Re
 		return nil, err
 	}
 	if hook := r.hooks.tokenLookup(); hook != nil {
+		if err := hook(r.db, token); err != nil {
+			return nil, err
+		}
+	}
+	return token, nil
+}
+
+func (r *rotationRefreshTokenRepository) GetRevokedByTokenHash(hash string) (*models.RefreshToken, error) {
+	token, err := r.RefreshTokenRepository.GetRevokedByTokenHash(hash)
+	if err != nil {
+		return nil, err
+	}
+	if hook := r.hooks.revokedLookup(); hook != nil {
 		if err := hook(r.db, token); err != nil {
 			return nil, err
 		}
@@ -153,6 +178,10 @@ var (
 	// rotationRotatedOwner is the same account after one committed rotation:
 	// the presented token revoked, the sibling and exactly one successor live.
 	rotationRotatedOwner = rotationState{exists: true, active: true, sessions: 3, liveSessions: 2}
+	// rotationReusedOwner is the account after one committed rotation and a
+	// second presentation of the rotated token: the presented token and its
+	// successor revoked, only the sibling live.
+	rotationReusedOwner = rotationState{exists: true, active: true, sessions: 3, liveSessions: 1}
 	// rotationContainedOwner is a disabled account whose presented token was
 	// revoked as containment, with no successor; the sibling is untouched.
 	rotationContainedOwner = rotationState{exists: true, active: false, sessions: 2, liveSessions: 1}
@@ -234,12 +263,25 @@ func (f *rotationFixture) createUser(t *testing.T, email string) *models.User {
 	return user
 }
 
+// createSession seeds a live token that starts a family of its own, as a
+// sign-in does.
 func (f *rotationFixture) createSession(t *testing.T, userID uint, raw string) {
+	t.Helper()
+	buf := make([]byte, 16)
+	_, err := rand.Read(buf)
+	require.NoError(t, err)
+	f.createSessionInFamily(t, userID, raw, hex.EncodeToString(buf))
+}
+
+// createSessionInFamily seeds a live token with the given family id; an
+// empty one is a row that carries no family.
+func (f *rotationFixture) createSessionInFamily(t *testing.T, userID uint, raw, familyID string) {
 	t.Helper()
 	require.NoError(t, f.refreshRepo.Create(&models.RefreshToken{
 		UserID:    userID,
 		TokenHash: hashOpaqueToken(raw, rotationTestSecret),
 		ExpiresAt: time.Now().Add(24 * time.Hour),
+		FamilyID:  familyID,
 	}))
 }
 
@@ -362,13 +404,36 @@ func (f *rotationFixture) assertContained(t *testing.T, s rotationSeed, expected
 	f.assertBystanderIntact(t, s)
 }
 
-// assertReplayRejected presents the spent token again and checks that the
-// committed state did not move.
+// assertRefused checks a refusal: no credentials, the generic error and
+// message, and the audit reason and user id the refusal carries.
+func assertRefused(t *testing.T, tokens *AuthTokens, err error, reason string, userID uint) {
+	t.Helper()
+	assert.Nil(t, tokens, "a refused presentation returns no credentials")
+	require.ErrorIs(t, err, ErrInvalidRefreshToken)
+	gotReason, gotUser := AuthAuditReason(err)
+	assert.Equal(t, reason, gotReason, "audit reason")
+	assert.Equal(t, userID, gotUser, "audit user id")
+}
+
+// assertReplayRejected presents a token that is revoked but not rotated (the
+// newest of its family) again and checks that it is the generic refusal and
+// that the committed state did not move.
 func (f *rotationFixture) assertReplayRejected(t *testing.T, s rotationSeed, expected rotationState) {
 	t.Helper()
 	replayed, err := f.svc.RefreshAccessToken(s.token)
-	assert.Nil(t, replayed)
-	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+	assertRefused(t, replayed, err, AuthAuditReasonTokenInvalid, 0)
+	assert.Equal(t, expected, f.state(t, s.owner.ID))
+}
+
+// assertReuseRejected presents the already rotated token again and checks
+// that it is refused as a reuse of the owner's session and that the committed
+// state is then expected: every token of the presented token's family
+// revoked, no row inserted.
+func (f *rotationFixture) assertReuseRejected(t *testing.T, s rotationSeed, expected rotationState) {
+	t.Helper()
+	replayed, err := f.svc.RefreshAccessToken(s.token)
+	assertRefused(t, replayed, err, AuthAuditReasonTokenReuse, s.owner.ID)
+	assert.EqualError(t, err, "refresh token rejected: invalid refresh token")
 	assert.Equal(t, expected, f.state(t, s.owner.ID))
 }
 
@@ -407,8 +472,7 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 		s := f.seed(t)
 		for _, token := range []string{"", "never-issued"} {
 			tokens, err := f.svc.RefreshAccessToken(token)
-			assert.Nil(t, tokens)
-			assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+			assertRefused(t, tokens, err, AuthAuditReasonTokenInvalid, 0)
 		}
 		f.assertUntouched(t, s)
 	})
@@ -418,8 +482,7 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 		require.NoError(t, f.refreshRepo.RevokeByTokenHash(hashOpaqueToken(s.token, rotationTestSecret)))
 
 		tokens, err := f.svc.RefreshAccessToken(s.token)
-		assert.Nil(t, tokens)
-		assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+		assertRefused(t, tokens, err, AuthAuditReasonTokenInvalid, 0)
 
 		expected := rotationSeededOwner
 		expected.liveSessions = 1
@@ -625,7 +688,6 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 		rotated, err := f.svc.RefreshAccessToken(s.token)
 		require.NoError(t, err)
 		f.assertRotated(t, s, rotated)
-		f.assertReplayRejected(t, s, rotationRotatedOwner)
 
 		// Logout with the spent token is a no-op success; with a token of
 		// another user it is ignored; with the successor it revokes exactly
@@ -645,13 +707,117 @@ func runRefreshRotationValidationScenarios(t *testing.T, db *gorm.DB, connection
 		assert.Equal(t, afterLogout, f.state(t, s.owner.ID))
 
 		loggedOut, err := f.svc.RefreshAccessToken(rotated.RefreshToken)
-		assert.Nil(t, loggedOut)
-		assert.ErrorIs(t, err, ErrInvalidRefreshToken, "a logged-out successor cannot be rotated")
+		assertRefused(t, loggedOut, err, AuthAuditReasonTokenInvalid, 0)
+		assert.Equal(t, afterLogout, f.state(t, s.owner.ID), "a logged-out successor cannot be rotated")
+
+		// The spent token presented again is still a reuse of the session,
+		// whose tokens are all revoked already; nothing else changes.
+		f.assertReuseRejected(t, s, afterLogout)
+		assert.True(t, f.live(t, rotationSibling))
 
 		// Logout without a token ends every session of the owner only.
 		require.NoError(t, f.svc.Logout(s.owner.ID, ""))
 		afterLogout.liveSessions = 0
 		assert.Equal(t, afterLogout, f.state(t, s.owner.ID))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("a rotated token presented again ends every token of its session", func(t *testing.T) {
+		s := f.seed(t)
+		rotated, err := f.svc.RefreshAccessToken(s.token)
+		require.NoError(t, err)
+		f.assertRotated(t, s, rotated)
+
+		f.assertReuseRejected(t, s, rotationReusedOwner)
+		assert.True(t, f.revoked(t, s.token))
+		assert.True(t, f.revoked(t, rotated.RefreshToken), "the successor is revoked with its session")
+		assert.True(t, f.live(t, rotationSibling), "the owner's other session stays live")
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("a rotated token presented again after it expired still ends its session", func(t *testing.T) {
+		s := f.seed(t)
+		rotated, err := f.svc.RefreshAccessToken(s.token)
+		require.NoError(t, err)
+		f.assertRotated(t, s, rotated)
+		f.exec(t, "UPDATE refresh_tokens SET expires_at = ? WHERE token_hash = ?",
+			time.Now().Add(-time.Second), hashOpaqueToken(s.token, rotationTestSecret))
+
+		f.assertReuseRejected(t, s, rotationReusedOwner)
+		assert.True(t, f.revoked(t, rotated.RefreshToken))
+		assert.True(t, f.live(t, rotationSibling))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("the successor of a reused token is refused once the reuse committed", func(t *testing.T) {
+		s := f.seed(t)
+		rotated, err := f.svc.RefreshAccessToken(s.token)
+		require.NoError(t, err)
+		f.assertReuseRejected(t, s, rotationReusedOwner)
+
+		// The successor is now the newest, revoked token of its family: the
+		// generic refusal, and no row is inserted.
+		next, err := f.svc.RefreshAccessToken(rotated.RefreshToken)
+		assertRefused(t, next, err, AuthAuditReasonTokenInvalid, 0)
+		assert.Equal(t, rotationReusedOwner, f.state(t, s.owner.ID))
+		assert.True(t, f.live(t, rotationSibling))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("a rotated token of an inactive owner presented again still ends its session", func(t *testing.T) {
+		s := f.seed(t)
+		rotated, err := f.svc.RefreshAccessToken(s.token)
+		require.NoError(t, err)
+		f.exec(t, "UPDATE users SET is_active = ? WHERE id = ?", false, s.owner.ID)
+
+		inactive := rotationReusedOwner
+		inactive.active = false
+		f.assertReuseRejected(t, s, inactive)
+		assert.True(t, f.revoked(t, rotated.RefreshToken))
+		assert.True(t, f.live(t, rotationSibling))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("the newest token of a session revoked by logout is refused and nothing else changes", func(t *testing.T) {
+		s := f.seed(t)
+		require.NoError(t, f.svc.Logout(s.owner.ID, s.token))
+		loggedOut := rotationSeededOwner
+		loggedOut.liveSessions = 1
+		require.Equal(t, loggedOut, f.state(t, s.owner.ID))
+
+		f.assertReplayRejected(t, s, loggedOut)
+		assert.True(t, f.live(t, rotationSibling))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("a contained token of a deactivated owner presented again is refused and nothing else changes", func(t *testing.T) {
+		s := f.seed(t)
+		f.exec(t, "UPDATE users SET is_active = ? WHERE id = ?", false, s.owner.ID)
+		tokens, err := f.svc.RefreshAccessToken(s.token)
+		assertRefused(t, tokens, err, AuthAuditReasonAccountInactive, s.owner.ID)
+		f.assertContained(t, s, rotationContainedOwner)
+
+		f.assertReplayRejected(t, s, rotationContainedOwner)
+		assert.True(t, f.live(t, rotationSibling))
+		f.assertBystanderIntact(t, s)
+	})
+
+	t.Run("a rotated token without a family presented again is refused and ends nothing", func(t *testing.T) {
+		f.reset(t)
+		owner := f.createUser(t, "owner@example.com")
+		bystander := f.createUser(t, "bystander@example.com")
+		f.createSessionInFamily(t, owner.ID, rotationPresented, "")
+		f.createSessionInFamily(t, owner.ID, rotationSibling, "")
+		f.createSession(t, bystander.ID, rotationBystander)
+		s := rotationSeed{owner: owner, bystander: bystander, token: rotationPresented}
+
+		rotated, err := f.svc.RefreshAccessToken(s.token)
+		require.NoError(t, err)
+		f.assertRotated(t, s, rotated)
+
+		f.assertReplayRejected(t, s, rotationRotatedOwner)
+		assert.True(t, f.live(t, rotated.RefreshToken), "a row without a family is never treated as one")
+		assert.True(t, f.live(t, rotationSibling))
 		f.assertBystanderIntact(t, s)
 	})
 
@@ -739,7 +905,11 @@ func runRefreshRotationAtomicityScenarios(t *testing.T, db *gorm.DB) {
 			rotated, err := f.svc.RefreshAccessToken(s.token)
 			require.NoError(t, err)
 			f.assertRotated(t, s, rotated)
-			f.assertReplayRejected(t, s, rotationRotatedOwner)
+			// Presenting the rotated token again ends its session.
+			f.assertReuseRejected(t, s, rotationReusedOwner)
+			assert.True(t, f.revoked(t, rotated.RefreshToken), "the successor ends with its session")
+			assert.True(t, f.live(t, rotationSibling))
+			f.assertBystanderIntact(t, s)
 		})
 	}
 
@@ -749,7 +919,6 @@ func runRefreshRotationAtomicityScenarios(t *testing.T, db *gorm.DB) {
 		first, err := f.svc.RefreshAccessToken(s.token)
 		require.NoError(t, err)
 		f.assertRotated(t, s, first)
-		f.assertReplayRejected(t, s, rotationRotatedOwner)
 
 		// The successor rotates in turn; the chain keeps exactly one live
 		// successor and the sibling is never touched.
@@ -770,6 +939,14 @@ func runRefreshRotationAtomicityScenarios(t *testing.T, db *gorm.DB) {
 		assert.True(t, f.revoked(t, rotationSibling))
 		assert.True(t, f.live(t, sibling.RefreshToken))
 		assert.True(t, f.live(t, second.RefreshToken))
+		f.assertBystanderIntact(t, s)
+
+		// Presenting the first token again ends its own session, the newest
+		// successor included, and leaves the sibling's session alone.
+		chained.liveSessions = 1
+		f.assertReuseRejected(t, s, chained)
+		assert.True(t, f.revoked(t, second.RefreshToken))
+		assert.True(t, f.live(t, sibling.RefreshToken))
 		f.assertBystanderIntact(t, s)
 	})
 
@@ -794,11 +971,13 @@ func runRefreshRotationAtomicityScenarios(t *testing.T, db *gorm.DB) {
 // runRefreshRotationConcurrentScenarios races several requests presenting one
 // refresh token. With several connections every competitor is held after its
 // lookup until all of them have read the token as live, so the claim alone
-// decides the winner. On the one-connection SQLite pool that barrier cannot be
-// used — the second request cannot even begin until the first has ended — so
-// the competitors start together and the pool serialises them; the outcome is
-// the same and just as deterministic: one commit, one successor, every other
-// request rejected without credentials.
+// decides the winner and the losers lost the claim: they are refused and end
+// nothing. On the one-connection SQLite pool that barrier cannot be used — the
+// second request cannot even begin until the first has ended — so the
+// competitors start together and the pool serialises them: every loser
+// presents the token after the winner's rotation committed, which is a reuse
+// that ends the winner's session. Both outcomes are deterministic: one commit,
+// one successor, every other request rejected without credentials.
 func runRefreshRotationConcurrentScenarios(t *testing.T, db *gorm.DB, connections int) {
 	f := newRotationFixture(t, db)
 
@@ -850,7 +1029,10 @@ func runRefreshRotationConcurrentScenarios(t *testing.T, db *gorm.DB, connection
 		}
 		close(start)
 
-		var winners []*AuthTokens
+		var (
+			winners   []*AuthTokens
+			loserErrs []error
+		)
 		losers := 0
 		deadline := time.After(resetTimeout)
 		for i := 0; i < rotationCompetitors; i++ {
@@ -861,6 +1043,7 @@ func runRefreshRotationConcurrentScenarios(t *testing.T, db *gorm.DB, connection
 					winners = append(winners, r.tokens)
 				case errors.Is(r.err, ErrInvalidRefreshToken):
 					losers++
+					loserErrs = append(loserErrs, r.err)
 					assert.Nil(t, r.tokens, "a losing request must not return credentials")
 				default:
 					t.Errorf("a competitor failed with something other than a rejection: %v", r.err)
@@ -875,24 +1058,113 @@ func runRefreshRotationConcurrentScenarios(t *testing.T, db *gorm.DB, connection
 		require.Len(t, winners, 1, "exactly one competitor rotates the token")
 		assert.Equal(t, rotationCompetitors-1, losers, "every other competitor is told the token is no longer valid")
 		winner := winners[0]
-		f.assertRotated(t, s, winner)
-
-		// A later replay of the presented token is rejected and cannot alter
-		// the committed outcome: the winner's successor stays live and usable.
-		f.assertReplayRejected(t, s, rotationRotatedOwner)
-		assert.True(t, f.live(t, winner.RefreshToken), "the losers and the replay must not invalidate the winner")
 		authenticated, err := f.svc.ValidateToken(winner.AccessToken)
 		require.NoError(t, err)
 		assert.Equal(t, s.owner.ID, authenticated.ID)
 
-		next, err := f.svc.RefreshAccessToken(winner.RefreshToken)
-		require.NoError(t, err, "the winner's successor must rotate normally")
-		chained := rotationRotatedOwner
-		chained.sessions = 4
-		assert.Equal(t, chained, f.state(t, s.owner.ID))
-		assert.True(t, f.revoked(t, winner.RefreshToken))
-		f.assertCredentials(t, s, next)
+		if connections > 1 {
+			// Every loser passed the live lookup and lost the claim: the
+			// generic refusal, and the winner's session is left alone.
+			for _, err := range loserErrs {
+				reason, userID := AuthAuditReason(err)
+				assert.Equal(t, AuthAuditReasonTokenInvalid, reason, "a lost claim is not a reuse")
+				assert.Equal(t, s.owner.ID, userID, "a lost claim names the owner the live lookup found")
+			}
+			f.assertRotated(t, s, winner)
+
+			next, err := f.svc.RefreshAccessToken(winner.RefreshToken)
+			require.NoError(t, err, "the winner's successor must rotate normally")
+			chained := rotationRotatedOwner
+			chained.sessions = 4
+			assert.Equal(t, chained, f.state(t, s.owner.ID))
+			assert.True(t, f.revoked(t, winner.RefreshToken))
+			f.assertCredentials(t, s, next)
+
+			// A presentation of the original token after those commits is a
+			// reuse and ends the whole chain.
+			chained.liveSessions = 1
+			f.assertReuseRejected(t, s, chained)
+			assert.True(t, f.revoked(t, next.RefreshToken))
+		} else {
+			// The pool ran every loser after the winner's commit: each one
+			// presented a token already exchanged for a successor.
+			for _, err := range loserErrs {
+				reason, userID := AuthAuditReason(err)
+				assert.Equal(t, AuthAuditReasonTokenReuse, reason, "a presentation after the commit is a reuse")
+				assert.Equal(t, s.owner.ID, userID)
+			}
+			assert.Equal(t, rotationReusedOwner, f.state(t, s.owner.ID))
+			assert.True(t, f.revoked(t, s.token))
+			assert.True(t, f.revoked(t, winner.RefreshToken), "the reuse ends the winner's successor")
+			next, err := f.svc.RefreshAccessToken(winner.RefreshToken)
+			assertRefused(t, next, err, AuthAuditReasonTokenInvalid, 0)
+			assert.Equal(t, rotationReusedOwner, f.state(t, s.owner.ID), "no successor after the session ended")
+		}
 		assert.True(t, f.live(t, rotationSibling), "the sibling session is untouched by the race")
 		f.assertBystanderIntact(t, s)
 	})
+
+	if connections > 1 {
+		t.Run("a reuse held after its lookups still ends a successor minted meanwhile on another connection", func(t *testing.T) {
+			s := f.seed(t)
+			first, err := f.svc.RefreshAccessToken(s.token)
+			require.NoError(t, err)
+			f.assertRotated(t, s, first)
+
+			arrived := make(chan struct{}, 1)
+			release := make(chan struct{})
+			var once sync.Once
+			releaseOnce := func() { once.Do(func() { close(release) }) }
+			defer releaseOnce()
+			f.hooks.install(func(h *rotationHooks) {
+				h.afterRevokedLookup = func(*gorm.DB, *models.RefreshToken) error {
+					arrived <- struct{}{}
+					select {
+					case <-release:
+						return nil
+					case <-time.After(resetTimeout):
+						return errors.New("held reuse was never released")
+					}
+				}
+			})
+
+			type outcome struct {
+				tokens *AuthTokens
+				err    error
+			}
+			replay := make(chan outcome, 1)
+			go func() {
+				tokens, err := f.svc.RefreshAccessToken(s.token)
+				replay <- outcome{tokens: tokens, err: err}
+			}()
+			select {
+			case <-arrived:
+			case <-time.After(resetTimeout):
+				t.Fatal("the reuse never reached its revoked lookup")
+			}
+
+			// While the reuse is held, the successor rotates and commits on
+			// another connection.
+			third, err := f.svc.RefreshAccessToken(first.RefreshToken)
+			require.NoError(t, err, "the held reuse must not block a rotation of the successor")
+			assert.True(t, f.live(t, third.RefreshToken))
+			releaseOnce()
+
+			var r outcome
+			select {
+			case r = <-replay:
+			case <-time.After(resetTimeout):
+				t.Fatal("the held reuse did not finish within the deadline")
+			}
+			f.hooks.clear()
+			assertRefused(t, r.tokens, r.err, AuthAuditReasonTokenReuse, s.owner.ID)
+
+			assert.True(t, f.revoked(t, first.RefreshToken))
+			assert.True(t, f.revoked(t, third.RefreshToken), "the successor minted during the reuse ends too")
+			assert.Equal(t, rotationState{exists: true, active: true, sessions: 4, liveSessions: 1}, f.state(t, s.owner.ID),
+				"only the sibling session stays live")
+			assert.True(t, f.live(t, rotationSibling))
+			f.assertBystanderIntact(t, s)
+		})
+	}
 }

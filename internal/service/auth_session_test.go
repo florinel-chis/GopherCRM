@@ -203,13 +203,39 @@ func TestAuthService_RefreshAccessToken_UnknownRevokedOrExpired(t *testing.T) {
 	d.expectTransactionBoundRepos()
 	hash := hashOpaqueToken("dead-token", sessionTestSecret)
 	d.refreshRepo.On("GetByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
+	// A token that is not live is looked up as a revoked row; an unknown or
+	// expired-but-live-filtered one is not found there either.
+	d.refreshRepo.On("GetRevokedByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
 
 	tokens, err := d.svc.RefreshAccessToken("dead-token")
 
 	assert.Nil(t, tokens)
 	assert.ErrorIs(t, err, ErrInvalidRefreshToken)
+	reason, userID := AuthAuditReason(err)
+	assert.Equal(t, AuthAuditReasonTokenInvalid, reason)
+	assert.Zero(t, userID)
+	d.refreshRepo.AssertNotCalled(t, "HasLaterInFamily", mock.Anything)
+	d.refreshRepo.AssertNotCalled(t, "RevokeFamily", mock.Anything, mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "ClaimForRotation", mock.Anything)
 	d.refreshRepo.AssertNotCalled(t, "Create", mock.Anything)
+}
+
+func TestAuthService_RefreshAccessToken_RevokedLookupFailureAbortsWithoutWrites(t *testing.T) {
+	d := newSessionAuthService(t)
+	d.expectTransactionBoundRepos()
+	hash := hashOpaqueToken("dead-token", sessionTestSecret)
+	d.refreshRepo.On("GetByTokenHash", hash).Return(nil, gorm.ErrRecordNotFound)
+	stored := &models.RefreshToken{BaseModel: models.BaseModel{ID: 7}, UserID: 42, FamilyID: "00112233445566778899aabbccddeeff", Revoked: true}
+	d.refreshRepo.On("GetRevokedByTokenHash", hash).Return(stored, nil)
+	d.refreshRepo.On("HasLaterInFamily", stored).Return(true, nil)
+	d.userRepo.On("GetByID", uint(42)).Return(nil, errors.New("connection reset"))
+
+	tokens, err := d.svc.RefreshAccessToken("dead-token")
+
+	assert.Nil(t, tokens)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrInvalidRefreshToken, "an operational failure is not a refusal")
+	d.refreshRepo.AssertNotCalled(t, "RevokeFamily", mock.Anything, mock.Anything)
 }
 
 func TestAuthService_RefreshAccessToken_LostClaimIsRejectedBeforeAnySuccessor(t *testing.T) {

@@ -393,8 +393,11 @@ or the full user agent. Neither are they logged.
   `account_locked`, `account_inactive`, `account_erased`, `password_changed` (the password
   changed between the check and the owner lock), `sso_account` (an account linked to single
   sign-on while `allow_password` is off), `internal_error`.
-- `refresh`: `token_invalid` (unknown, revoked, expired or already spent), `account_inactive`,
-  `account_erased`, `unavailable` (the 503 `SESSION_REFRESH_UNAVAILABLE` path).
+- `refresh`: `token_invalid` (unknown, revoked, expired, or a claim lost to a concurrent
+  rotation of the same token), `token_reuse` (#547: a token already exchanged for a successor,
+  presented again; every refresh token of its family is revoked, the row carries the owner's
+  `user_id`), `account_inactive`, `account_erased`, `unavailable` (the 503
+  `SESSION_REFRESH_UNAVAILABLE` path).
 - `api_key`: `key_invalid` (no live key with that hash), `key_revoked` (a revoked key,
   `is_active` false, recorded with the owner's `user_id`), `key_expired` (past `expires_at`, or,
   for a key stored without one, more than one year after `created_at`), `account_inactive`,
@@ -515,6 +518,7 @@ keeps its own, narrower revocation.
 |---|---|---|---|
 | Logout (`POST /auth/logout`) | Every earlier one ends | The presented one, or every one without a `refresh_token` | Not affected |
 | Refresh rotation (`POST /auth/refresh`) | None end; the replaced one stays valid until it expires | The presented one is spent and replaced | Not affected |
+| Refresh token presented again after its exchange (`POST /auth/refresh`, reason `token_reuse`) | None end; those already issued stay valid until they expire | Every one of the presented token's session (its family), the successors included; other sessions are not affected | Not affected |
 | Password change (`POST /auth/change-password`) | Every earlier one ends, the caller's included; the renewed session's new token works | Every one, except the renewed session's successor | Every one, for good, the key that made the request included |
 | Password reset (`POST /auth/password-reset/confirm`) | Every earlier one ends | Every one | Every one, for good |
 | Administrator deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active` false) | Every earlier one ends | Every one | Every one, for good |

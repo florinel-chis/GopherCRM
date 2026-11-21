@@ -61,6 +61,7 @@ export const SIGN_IN_AUDIT_REASONS = [
   'token_exchange_failed',
   'token_invalid',
   'token_missing',
+  'token_reuse',
   'token_revoked',
   'unavailable',
   'userinfo_subject_mismatch',

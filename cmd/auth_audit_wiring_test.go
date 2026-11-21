@@ -108,6 +108,23 @@ func TestAuthAuditWired(t *testing.T) {
 	recorder = send(http.MethodPost, "/auth/refresh", `{"refresh_token":"`+login.Data.RefreshToken+`"}`, "req-454", "")
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assertRow(t, newRow(t), "refresh", "success", "", user.ID)
+	var rotated struct {
+		Data struct {
+			RefreshToken string `json:"refresh_token"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &rotated))
+	require.NotEmpty(t, rotated.Data.RefreshToken)
+
+	// #547: the exchanged token presented again is the usual 401 and a
+	// token_reuse row with its owner; the successor is then refused too.
+	recorder = send(http.MethodPost, "/auth/refresh", `{"refresh_token":"`+login.Data.RefreshToken+`"}`, "req-454", "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	assert.Contains(t, recorder.Body.String(), "Invalid or expired refresh token")
+	assertRow(t, newRow(t), "refresh", "refused", "token_reuse", user.ID)
+	recorder = send(http.MethodPost, "/auth/refresh", `{"refresh_token":"`+rotated.Data.RefreshToken+`"}`, "req-454", "")
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "refresh", "refused", "token_invalid", 0)
 
 	recorder = send(http.MethodGet, "/leads", "", "req-454", "ApiKey bogus")
 	assert.Equal(t, http.StatusUnauthorized, recorder.Code, recorder.Body.String())

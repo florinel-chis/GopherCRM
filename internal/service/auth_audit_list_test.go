@@ -122,7 +122,7 @@ func runAuthAuditList(t *testing.T, db *gorm.DB) {
 
 func TestAuthAuditReasonVocabulary(t *testing.T) {
 	reasons := AuthAuditReasons()
-	assert.Len(t, reasons, 43)
+	assert.Len(t, reasons, 44)
 	assert.True(t, sort.StringsAreSorted(reasons))
 	for _, reason := range reasons {
 		assert.True(t, IsAuthAuditReason(reason), reason)
