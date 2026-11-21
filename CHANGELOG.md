@@ -1103,6 +1103,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **SCIM requests with a valid provider token are limited per token (#555).** Requests on
+  `/scim/v2` whose SCIM provider token is accepted are counted per token instead of per client
+  address: by default 600 a minute with a burst of 60, set by `SCIM_RATE_LIMIT_PER_MINUTE`
+  (maximum 6000) and `SCIM_RATE_LIMIT_BURST` (maximum 1000); an unset, unparseable or below-1
+  value takes the default. A full provisioning cycle from an identity provider's shared
+  addresses is no longer throttled. Requests without a valid token keep the limit of 10 a minute,
+  burst 5, per client address, whatever the HTTP method; above it they get the SCIM 429 and
+  write no sign-in audit row. `DISABLE_RATE_LIMIT=true` and the functional-test switch lift both
+  limits. `.env.example`, the SCIM guides and the developer docs describe the two limits.
+
 - **Webhook deliveries wait instead of failing when the endpoint's signing secret cannot be read
   (#559).** Before every pass the sender opens the current signing secret of each active endpoint
   with the configured key (`API_KEY_SECRET`, or `JWT_SECRET` without it). The due deliveries of an

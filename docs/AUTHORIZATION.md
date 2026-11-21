@@ -456,8 +456,9 @@ that `/24` or `/48` and however many replicas they reach: a burst of bogus keys 
 writes at most one `key_invalid` row a minute, and its `attempts` still counts every refusal.
 Password, refresh and single sign-on rows stay one per request; their number is bounded by the
 strict tier on `/auth` (10 requests a minute, burst 5, per client address, applied before the
-handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded the same
-way by the strict SCIM tier on `/scim/v2`. Password change, reset request, reset completion and
+handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded by the SCIM
+refusal limit on `/scim/v2` (10 a minute, burst 5, per client address; a refusal over it is
+answered 429 and writes nothing). Password change, reset request, reset completion and
 logout rows (#550) are one per request as well: the strict `/auth` tier bounds the two reset
 routes, the authenticated tier bounds `POST /auth/change-password` and `POST /auth/logout`.
 `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
@@ -583,11 +584,20 @@ changes the answer) and writes no audit row. Every refusal is the same 401 whate
 and writes one sign-in audit row with method `scim` and reason `token_missing`, `token_invalid`
 or `token_revoked` (see [Sign-in audit log](#sign-in-audit-log)). No token or hash is logged.
 
-**Rate limit.** `/scim/v2` has its own strict tier, charged before the authentication: 10
-requests a minute, burst 5, per client address, per process. A throttled request is answered
-429 without a token lookup or an audit row. `DISABLE_RATE_LIMIT=true` and the `gophercrm_e2e`
-build switch lift it as they lift the `/auth` tier (the server refuses to start in production
-mode with either one set).
+**Rate limit.** `/scim/v2` has two limits, applied inside the token authentication, per process,
+whatever the HTTP method (#555). The SCIM token limit counts every request whose token is
+accepted per token id, whatever the client address: `SCIM_RATE_LIMIT_PER_MINUTE` a minute
+(default 600, maximum 6000) with a burst of `SCIM_RATE_LIMIT_BURST` (default 60, maximum 1000);
+an unset, unparseable or below-1 value takes the default. Over it the request is answered 429,
+reaches no handler and writes no audit row; accepted requests never count against the client
+address. The SCIM refusal limit counts every refused request (missing, invalid or revoked token)
+per client address: 10 requests a minute, burst 5. Within it a refusal is the 401 below with its
+audit row; over it the answer is 429 and no audit row is written. Refusals never count against a
+token. The refusal limit is judged after the token lookup, so a throttled refusal still costs one
+indexed lookup; in exchange, refusals from an address a provider shares never hold back a valid
+token. Both 429s use the SCIM error shape. `DISABLE_RATE_LIMIT=true` and the `gophercrm_e2e`
+build switch lift both limits as they lift the `/auth` tier (the server refuses to start in
+production mode with either one set).
 
 **Errors.** Errors of the SCIM group use the RFC 7644 §3.12 shape with the content type
 `application/scim+json`, for example
@@ -625,7 +635,7 @@ directly.
 
 ### Users read (#469)
 
-Two routes, behind the same strict tier and token authentication, answer with
+Two routes, behind the same rate limits and token authentication, answer with
 `application/scim+json`:
 
 - `GET /scim/v2/Users/{id}` answers 200 with one User resource, or 404 with the SCIM error body
@@ -692,7 +702,7 @@ Regression roots of the read: see the end of the next section.
 
 ### Users create and replace (#470)
 
-Two more routes behind the same strict tier and token authentication:
+Two more routes behind the same rate limits and token authentication:
 
 - `POST /scim/v2/Users` creates a staff or custom account linked to the identity provider and
   answers 201 with the User resource, a `Location` header equal to its `meta.location`, and
@@ -784,7 +794,7 @@ MySQL roots also on MariaDB) and by `TestSCIMUsersWired`, `TestSCIMUserPatchWire
 
 ### Users patch (#471)
 
-`PATCH /scim/v2/Users/{id}`, behind the same strict tier and token authentication, applies an
+`PATCH /scim/v2/Users/{id}`, behind the same rate limits and token authentication, applies an
 RFC 7644 §3.5.2 PatchOp to a managed account and answers 200 with the User resource and
 `application/scim+json`.
 
@@ -857,7 +867,7 @@ Regression roots: see the end of the previous section.
 
 ### Users delete (#504)
 
-`DELETE /scim/v2/Users/{id}`, behind the same strict tier and token authentication, deactivates a
+`DELETE /scim/v2/Users/{id}`, behind the same rate limits and token authentication, deactivates a
 managed account the way a patch with `active` false does, and never erases it. The request body is
 not read.
 

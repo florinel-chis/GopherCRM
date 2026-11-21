@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/scim"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -32,9 +34,12 @@ const (
 	//
 	// A record's reclaim time is the later of last-seen + rateLimitIdleTimeout
 	// and the time its bucket refills to burst. Every live tier refills to
-	// burst well within this timeout (strict 30 s, moderate 15 s, generous
-	// 10 s), so the idle term dominates and the earliest reclaim time is the
-	// least recently active client. Eviction relies on that order.
+	// burst well within this timeout (strict and the SCIM refusal limit 30 s,
+	// moderate 15 s, generous 10 s, the SCIM token limit 6 s at its defaults),
+	// so the idle term dominates and the earliest reclaim time is the least
+	// recently active client. Eviction relies on that order. The SCIM token
+	// limit keys on token ids, far fewer than the capacity, so eviction never
+	// runs on it.
 	rateLimitIdleTimeout = 5 * time.Minute
 	// rateLimitReclaimPerRequest bounds the cleanup work done by one request.
 	// Cleanup is opportunistic: there is no background goroutine to stop.
@@ -205,7 +210,7 @@ func respondAPIRateLimited(c *gin.Context) {
 		})
 }
 
-// respondSCIMRateLimited is the 429 of the SCIM tier: the RFC 7644 error body.
+// respondSCIMRateLimited is the 429 of the SCIM limits: the RFC 7644 error body.
 func respondSCIMRateLimited(c *gin.Context) {
 	scim.WriteError(c, http.StatusTooManyRequests, "Too many requests. Please try again later.")
 }
@@ -300,16 +305,80 @@ func RateLimitStrict() gin.HandlerFunc {
 	return RateLimit(10.0/60.0, 5)
 }
 
-// RateLimitStrictSCIM is the strict tier of /scim/v2 (#468): 10 requests per
-// minute with burst of 5 per client address, its own instance, bypassed by
-// DISABLE_RATE_LIMIT=true and by the e2e build switch like RateLimitStrict.
-// It runs before the SCIM authentication, so a throttled request writes no
-// audit row, and it answers 429 with the SCIM error body.
-func RateLimitStrictSCIM() gin.HandlerFunc {
+// SCIM refusal limit: 10 requests per minute with burst of 5 per client
+// address, the numbers of RateLimitStrict.
+const (
+	scimRefusalRPS   = 10.0 / 60.0
+	scimRefusalBurst = 5
+)
+
+// SCIMRateLimits holds the two limits of /scim/v2 (#555), applied inside
+// SCIMAuth. The SCIM token limit counts every request a provider token
+// authenticates, per token id, at the configured rate and burst, whatever the
+// client address: a provider's provisioning traffic often comes from a few
+// shared addresses. The SCIM refusal limit counts every refused request
+// (missing, invalid or revoked token) per client address at 10 a minute with
+// burst of 5. Neither limit looks at the HTTP method. A nil *SCIMRateLimits
+// applies no limit.
+type SCIMRateLimits struct {
+	refusals *rateLimiter
+	tokens   *rateLimiter
+}
+
+// NewSCIMRateLimits builds the SCIM token limit (perMinute requests a minute,
+// burst burst, per token) and the SCIM refusal limit. Both numbers pass
+// through config.NormalizeSCIMRateLimits, so a value below 1 takes the
+// default and a value above the maximum takes the maximum. It returns nil, no
+// limiting, when DISABLE_RATE_LIMIT=true or, in the functional-test build,
+// GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true; the switches are read here, once.
+func NewSCIMRateLimits(perMinute, burst int) *SCIMRateLimits {
 	if os.Getenv("DISABLE_RATE_LIMIT") == "true" || e2eRateLimitDisabled() {
-		return func(c *gin.Context) { c.Next() }
+		return nil
 	}
-	return newRateLimiter(10.0/60.0, 5, rateLimitVisitorCapacity, time.Now).middlewareWith(respondSCIMRateLimited)
+	return newSCIMRateLimits(perMinute, burst, time.Now)
+}
+
+// newSCIMRateLimits is NewSCIMRateLimits with an injected clock, shared by
+// both limiters, and without the switches.
+func newSCIMRateLimits(perMinute, burst int, now func() time.Time) *SCIMRateLimits {
+	perMinute, burst = config.NormalizeSCIMRateLimits(perMinute, burst)
+	return &SCIMRateLimits{
+		refusals: newRateLimiter(scimRefusalRPS, scimRefusalBurst, rateLimitVisitorCapacity, now),
+		tokens:   newRateLimiter(float64(perMinute)/60.0, burst, rateLimitVisitorCapacity, now),
+	}
+}
+
+// admitToken charges an accepted request to the bucket of its token. When it
+// is over the SCIM token limit it logs the token id (never the header, the
+// token or its hash), answers the SCIM 429 and returns false.
+func (l *SCIMRateLimits) admitToken(c *gin.Context, tokenID uint) bool {
+	if l == nil {
+		return true
+	}
+	if l.tokens.admit("scim_token:"+strconv.FormatUint(uint64(tokenID), 10)) == rateLimitAllowed {
+		return true
+	}
+	utils.GetLogger(c).WithField("scim_token_id", tokenID).Warn("Rate limit exceeded")
+	respondSCIMRateLimited(c)
+	c.Abort()
+	return false
+}
+
+// admitRefusal charges a refused request to the bucket of its client address.
+// When it is over the SCIM refusal limit it logs the address, answers the
+// SCIM 429 and returns false.
+func (l *SCIMRateLimits) admitRefusal(c *gin.Context) bool {
+	if l == nil {
+		return true
+	}
+	ip := c.ClientIP()
+	if l.refusals.admit(rateLimitClientKey(ip)) == rateLimitAllowed {
+		return true
+	}
+	utils.GetLogger(c).WithField("client_ip", ip).Warn("Rate limit exceeded")
+	respondSCIMRateLimited(c)
+	c.Abort()
+	return false
 }
 
 // RateLimitModerate returns a moderate rate limit middleware for general API endpoints.

@@ -11,8 +11,9 @@ import (
 // (#471) and its delete, a deactivation (#504), and the Groups resource
 // (#506): its read, its members patch and a 405 for POST and DELETE (the
 // groups are the role mapping's values; PUT is not routed), on the /scim/v2
-// group, which carries its own strict rate tier and the SCIM token
-// authentication, outside the API prefix. groups is optional so the Users
+// group, which carries the SCIM token authentication with its two limits
+// (the SCIM token limit per token, the SCIM refusal limit per client address),
+// outside the API prefix. groups is optional so the Users
 // handler tests can mount the routes without it; the server passes one, and
 // only the first is used.
 func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMUserHandler, groups ...*SCIMGroupHandler) {

@@ -1,9 +1,10 @@
 package main
 
 // Issue #468 through the router production uses: setupRouter mounts
-// /scim/v2 outside the API prefix, behind its own strict rate tier and the
-// SCIM token authentication, which records every refusal in the sign-in audit
-// log with method scim. A user's JWT or API key is not a SCIM token, and a
+// /scim/v2 outside the API prefix, behind the SCIM token authentication and
+// its two limits (#555: the SCIM token limit per token, the SCIM refusal limit
+// per client address), and the authentication records every refusal in the
+// sign-in audit log with method scim. A user's JWT or API key is not a SCIM token, and a
 // SCIM token is not a credential of the API. Issue #469 adds GET /Users and
 // /Users/:id, with externalId taken from the identities under the effective
 // single sign-on issuer (ssoSettings). Issue #470 adds POST /Users and
@@ -30,8 +31,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -79,7 +82,7 @@ func scimWiredSend(router *gin.Engine, method, path, body, remote, authorization
 }
 
 func TestSCIMRoutesWired(t *testing.T) {
-	// The strict SCIM tier stays live: every request below comes from its own
+	// The SCIM limits stay live: every request below comes from its own
 	// client address, so none is throttled.
 	t.Setenv("DISABLE_RATE_LIMIT", "")
 	router, boot := scimWiredRouter(t)
@@ -207,12 +210,12 @@ func TestSCIMRoutesWired(t *testing.T) {
 	}
 }
 
-// TestSCIMStrictTierWired: from one client address the sixth rapid request is
-// answered 429 with the SCIM error body by the strict tier, before the
-// authentication, so it adds no audit row.
+// TestSCIMStrictTierWired: from one client address the sixth rapid refusal is
+// answered 429 with the SCIM error body by the SCIM refusal limit and adds no
+// audit row, while a valid token from that address is still answered.
 func TestSCIMStrictTierWired(t *testing.T) {
 	t.Setenv("DISABLE_RATE_LIMIT", "")
-	router, _ := scimWiredRouter(t)
+	router, boot := scimWiredRouter(t)
 
 	count := func() int64 {
 		var n int64
@@ -231,6 +234,70 @@ func TestSCIMStrictTierWired(t *testing.T) {
 	assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"429","detail":"Too many requests. Please try again later."}`,
 		recorder.Body.String())
 	assert.EqualValues(t, 5, count(), "the 429 adds no audit row")
+
+	// The SCIM refusal limit of the address never holds back a valid token.
+	tokens := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), boot.cfg.API.APIKeySecret)
+	valid, _, err := tokens.Create(context.Background(), "Entra")
+	require.NoError(t, err)
+	recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.7:1234", "Bearer "+valid)
+	assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.EqualValues(t, 5, count())
+
+	// The shipped router routes no OPTIONS under /scim/v2: without an Origin
+	// and a token the request never reaches the SCIM authentication. Exactly
+	// 404, so a router answering 405 later shows up here.
+	recorder = scimWiredSend(router, http.MethodOptions, "/scim/v2/Users", "", "203.0.113.8:1234", "")
+	assert.Equal(t, http.StatusNotFound, recorder.Code, recorder.Body.String())
+	assert.EqualValues(t, 5, count(), "the OPTIONS request adds no audit row")
+}
+
+// TestSCIMTokenTierWired pins the SCIM token limit of the shipped router
+// (#555): accepted requests are counted per token at the configured numbers.
+func TestSCIMTokenTierWired(t *testing.T) {
+	t.Setenv("DISABLE_RATE_LIMIT", "")
+	scimCount := func(t *testing.T) int64 {
+		t.Helper()
+		var n int64
+		require.NoError(t, models.DB.Model(&models.AuthAuditLog{}).Where("method = ?", "scim").Count(&n).Error)
+		return n
+	}
+	newToken := func(t *testing.T, boot *automationBoot, name string) string {
+		t.Helper()
+		tokens := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), boot.cfg.API.APIKeySecret)
+		token, _, err := tokens.Create(context.Background(), name)
+		require.NoError(t, err)
+		return token
+	}
+
+	t.Run("the default limit admits a burst from one address", func(t *testing.T) {
+		router, boot := scimWiredRouter(t)
+		token := newToken(t, boot, "Entra")
+		for i := 0; i < 30; i++ {
+			recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.20:1234", "Bearer "+token)
+			require.Equal(t, http.StatusOK, recorder.Code, "request %d: %s", i+1, recorder.Body.String())
+		}
+	})
+
+	t.Run("the configured limit counts per token", func(t *testing.T) {
+		router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {
+			boot.cfg.SCIM = config.SCIMConfig{RateLimitPerMinute: 1, RateLimitBurst: 3}
+		})
+		first := newToken(t, boot, "Entra")
+		second := newToken(t, boot, "Okta")
+		before := scimCount(t)
+		for i := 0; i < 3; i++ {
+			recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.21:1234", "Bearer "+first)
+			require.Equal(t, http.StatusOK, recorder.Code, "request %d: %s", i+1, recorder.Body.String())
+		}
+		recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.22:1234", "Bearer "+first)
+		assert.Equal(t, http.StatusTooManyRequests, recorder.Code, recorder.Body.String())
+		assert.True(t, strings.HasPrefix(recorder.Header().Get("Content-Type"), "application/scim+json"))
+		assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"429","detail":"Too many requests. Please try again later."}`,
+			recorder.Body.String())
+		recorder = scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.21:1234", "Bearer "+second)
+		assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+		assert.Equal(t, before, scimCount(t), "the throttled request adds no audit row")
+	})
 }
 
 type scimWiredUser struct {
@@ -261,7 +328,7 @@ type scimWiredList struct {
 }
 
 func TestSCIMUsersWired(t *testing.T) {
-	// The strict SCIM tier stays live: every request below comes from its own
+	// The SCIM limits stay live: every request below comes from its own
 	// client address, so none is throttled.
 	t.Setenv("DISABLE_RATE_LIMIT", "")
 	router, boot := scimWiredRouterWith(t, func(boot *automationBoot) {

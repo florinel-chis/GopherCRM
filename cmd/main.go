@@ -624,12 +624,15 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		handler.SetupQuotePublicRoutes(public, quotePublicHandler)
 	}
 
-	// SCIM 2.0 provider (#468, #469, #470, #471, #504, #506) on /scim/v2, outside the API prefix: the strict
-	// tier first, so a throttled request writes no audit row, then the SCIM
-	// token authentication, which records every refusal with method scim.
+	// SCIM 2.0 provider (#468, #469, #470, #471, #504, #506) on /scim/v2, outside the API prefix, behind
+	// the SCIM token authentication, which records every refusal with method
+	// scim, and its two limits (#555): the SCIM token limit counts accepted
+	// requests per token (SCIM_RATE_LIMIT_PER_MINUTE, SCIM_RATE_LIMIT_BURST),
+	// the SCIM refusal limit counts refusals per client address (10/min,
+	// burst 5), and a refusal over it answers 429 without an audit row.
 	scimTokenService := service.NewSCIMTokenService(repository.NewSCIMTokenRepository(models.DB), cfg.API.APIKeySecret)
-	scimGroup.Use(middleware.RateLimitStrictSCIM())
-	scimGroup.Use(middleware.SCIMAuth(scimTokenService, authAudit))
+	scimGroup.Use(middleware.SCIMAuth(scimTokenService, authAudit,
+		middleware.NewSCIMRateLimits(cfg.SCIM.RateLimitPerMinute, cfg.SCIM.RateLimitBurst)))
 	// The Users read (#469) takes externalId from the identities under the
 	// effective single sign-on issuer. The create, replace and patch (#470,
 	// #471) are governed user writes with the role from the roles mapping;

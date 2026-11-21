@@ -1400,17 +1400,21 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   credential of the API.
 - **Automation:** automated — Go: `TestSCIMRoutesWired`, `TestSCIMAuth`, `TestSCIMTokenStore{SQLite,MySQL}`
 
-### TC-AUTH-066 — The strict SCIM tier answers 429 before the authentication
+### TC-AUTH-066 — SCIM refusals over the per-address limit answer 429 and write no audit row
 - **Priority:** P1
 - **Type:** security
-- **Preconditions:** A fresh server (the tier is per process); `DISABLE_RATE_LIMIT` unset.
+- **Preconditions:** A fresh server (the SCIM limits are per process); `DISABLE_RATE_LIMIT` unset;
+  a valid SCIM token.
 - **Steps:**
   1. From one client address send six rapid `GET /scim/v2/ServiceProviderConfig` without a token.
   2. Read the `scim` rows of `auth_audit_log`.
+  3. From the same address send `GET /scim/v2/ServiceProviderConfig` with the valid token.
 - **Expected:** Requests 1 to 5 are 401; the sixth is 429 with content type
-  `application/scim+json` and body status `"429"`. Step 2: five rows; the 429 added none. The
-  `/auth`, moderate and generous tiers answer as before.
-- **Automation:** automated — Go: `TestSCIMStrictTierWired`, `TestSCIMAuth` (subtest `the strict SCIM tier answers before the authentication`)
+  `application/scim+json` and body status `"429"` (the SCIM refusal limit, 10 a minute, burst 5,
+  per client address). Step 2: five rows; the 429 added none. Step 3: 200, because accepted
+  requests count against the SCIM token limit of their token (default 600 a minute, burst 60),
+  not the address. The `/auth`, moderate and generous tiers answer as before.
+- **Automation:** automated — Go: `TestSCIMStrictTierWired`, `TestSCIMTokenTierWired`, `TestSCIMRateLimits`
 
 ### TC-AUTH-067 — With a valid token the three discovery documents follow RFC 7643
 - **Priority:** P1
