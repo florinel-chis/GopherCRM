@@ -363,7 +363,10 @@ blocked until the page is built.
   `deals.default_currency`, Integration (16) the `integration.aeo.*` keys, models and base URLs,
   and none under Tickets (`security.session_timeout_hours` and `tickets.auto_assign_support` were
   retired in #224; startup deletes them). A warning banner sits above the tabs. If the request fails the page
-  shows the snackbar "Failed to load configurations" and an empty shell.
+  shows an error alert with the server's message (or `Failed to load configurations`) and a `Retry`
+  button, and no tabs: no "No configurations found for ..." text appears. Retry issues
+  `GET /configurations` again and shows the tables once it succeeds (`ConfigurationSettings.test.tsx`
+  "shows an error with Retry instead of empty tabs, and loads again on Retry").
 - **Automation:** automated — `gocrm-ui/e2e/screenshots/08-settings.spec.ts` "configuration settings
   page"
 
@@ -458,18 +461,18 @@ blocked until the page is built.
   2. Type `25` into the number field and click "Save".
 - **Expected:** `PUT /configurations/{key}` returns **400** with
   `Invalid value for configuration` (`ErrConfigurationInvalidValue`, raised by `IsValidValue`
-  against `[1, 8, 24, 48, 72, 168]`). The dialog stays open and the snackbar shows the page's own
-  generic text `Failed to update configuration`. The stored value is unchanged; `24` saves fine.
+  against `[1, 8, 24, 48, 72, 168]`). The dialog stays open and the snackbar shows the API's message
+  `Invalid value for configuration` (`handleSaveEdit` falls back to `Failed to update configuration`
+  only when the error carries no message). The stored value is unchanged; `24` saves fine.
 - **Known issue:** the edit dialog switches on `type` before `valid_values`
-  (`ConfigurationSettings.tsx` `renderEditField`), so an *integer* entry with an allowlist gets a
+  (`ConfigValueEditor.tsx` `ConfigValueEditor`), so an *integer* entry with an allowlist gets a
   free-form number field while a *string* entry with an allowlist gets a dropdown. The constraint is
-  only visible as the "Valid values:" line of text, and the rejection reason from the API is
-  discarded in favour of a generic message (`handleSaveEdit` ignores the error body).
+  only visible as the "Valid values:" line of text.
 - **Automation:** blocked — no seeded entry is an integer since #224 retired
   `security.session_timeout_hours`; backend coverage in `tests/configuration_integration_test.go`
   `ConfigurationIntegrationTestSuite.TestSetConfiguration_InvalidValue` (a test-only `test.choice.integer` entry)
 
-### TC-SET-023 — Clear the integer field and observe the null rejection
+### TC-SET-023 — Clear the integer field and get an inline field error
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Seeded admin logged in.
@@ -477,15 +480,17 @@ blocked until the page is built.
   1. Edit an integer entry.
   2. Select the field contents and delete them, leaving it empty.
   3. Click "Save".
-- **Expected:** The number field's `onChange` runs `parseInt('', 10)`, which is `NaN`; `NaN`
-  serialises to JSON `null`, so the request body is `{"value":null}` and the handler answers **400**
-  `Configuration value cannot be null` (the explicit null check in `ConfigurationHandler.Set`, since
-  no configuration type can hold a null). The snackbar again shows the generic
-  `Failed to update configuration` and the value is untouched.
-- **Known issue:** the dialog performs no client-side validation before sending, so an empty numeric
-  field produces a server round-trip and an unhelpful message rather than an inline field error.
-- **Automation:** blocked — no seeded entry is an integer since #224 retired
-  `security.session_timeout_hours`
+- **Expected:** No request is sent. Number fields keep the typed text until Save, which refuses an
+  empty or non-finite entry with the inline field error `Enter a number` (and a fractional entry for
+  an integer with `Enter a whole number`); the dialog stays open and the value is untouched. JSON and
+  free-form array fields work the same way: the text shows exactly what was typed, and Save refuses
+  invalid JSON with `Enter valid JSON`, or a non-array for an `array` entry with `Enter a JSON array`.
+  At the API a body of `{"value":null}` is still answered **400** `Configuration value cannot be null`
+  (`ConfigurationHandler.Set`).
+- **Automation:** blocked in the browser — no seeded entry is an integer since #224 retired
+  `security.session_timeout_hours`; the dialog is covered by `ConfigurationSettings.test.tsx`
+  "refuses an empty number", "refuses incomplete JSON with a field error and sends nothing" and
+  "saves a typed array and refuses a non-array for an array setting"
 
 ### TC-SET-024 — Confirm values are type-checked, never coerced
 - **Priority:** P0
@@ -515,8 +520,8 @@ blocked until the page is built.
   2. Click "Cancel".
   3. Reopen the same entry.
 - **Expected:** No request is issued, no snackbar appears, and the table still shows the original
-  value. Reopening the dialog shows the stored value again, because `handleEdit` re-seeds
-  `editValue` from the configuration each time it opens.
+  value. Reopening the dialog shows the stored value again, because `handleEdit` re-seeds the
+  editor from the configuration each time it opens.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
 
 ---
@@ -531,16 +536,19 @@ blocked until the page is built.
   `default_value=["qualified"]`.
 - **Steps:**
   1. Leads tab, click the reset (circular arrow) action on `leads.conversion.allowed_statuses`.
-  2. Observe the row.
-- **Expected:** `POST /configurations/leads.conversion.allowed_statuses/reset` returns **200**; the
+  2. In the `Reset to default?` dialog, click `Reset`.
+  3. Observe the row.
+- **Expected:** The click opens a confirmation dialog naming the key and its default value and
+  sends nothing; `Cancel` closes it with no request. `Reset` sends
+  `POST /configurations/leads.conversion.allowed_statuses/reset`, which returns **200**; the
   snackbar reads `Configuration reset to default`, the list reloads and the Current Value cell drops
-  the `contacted` chip. There is **no** confirmation dialog — a single click overwrites the current
-  value with `default_value`.
+  the `contacted` chip.
 - **Known issue:** the seeded row ships with a value that differs from its own default
   (`models.DefaultConfigurations()`), so "reset" visibly changes behaviour on a system nobody has
-  edited, and the unconfirmed single click makes that easy to trigger by accident. A spec that resets
-  this key must restore `["qualified", "contacted"]` afterwards, or later runs start from a different state.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`
+  edited. A spec that resets this key must restore `["qualified", "contacted"]` afterwards, or later
+  runs start from a different state.
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts`; the confirmation step
+  is covered by `ConfigurationSettings.test.tsx` "asks before resetting and resets only on Confirm"
 
 ### TC-SET-027 — Reject a reset for an unknown key
 - **Priority:** P2
@@ -584,8 +592,10 @@ blocked until the page is built.
   1. Insert a read-only configuration row.
   2. Open `/settings/configuration` and find it.
   3. Attempt to edit and to reset it, both from the UI and through the API.
-- **Expected:** The row shows a warning "Read-Only" chip and both action `IconButton`s are
-  `disabled`, so the UI cannot start either operation. At the API, `PUT /configurations/{key}` and
+- **Expected:** The row shows a warning "Read-Only" chip and, for a caller holding
+  `settings.update`, both action `IconButton`s are `disabled`, so the UI cannot start either
+  operation. A caller without `settings.update` sees no Edit or Reset button on any row
+  (`ConfigurationSettings.test.tsx` "shows no Edit or Reset to a caller who may only view settings"). At the API, `PUT /configurations/{key}` and
   `POST /configurations/{key}/reset` both return **400** `Configuration is read-only`
   (`ErrConfigurationReadOnly`, raised in `configurationService.Set` and `.Reset`).
 - **Automation:** blocked — no seeded read-only configuration exists to drive the UI path; the API

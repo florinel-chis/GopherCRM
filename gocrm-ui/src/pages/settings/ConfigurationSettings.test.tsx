@@ -1,25 +1,66 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@/test/test-utils';
+import userEvent from '@testing-library/user-event';
+import { AxiosError, AxiosHeaders } from 'axios';
+import { render, screen, waitFor, fireEvent, within } from '@/test/test-utils';
 import { Component as ConfigurationSettings } from './ConfigurationSettings';
 import { configurationsApi } from '@/api/endpoints/configurations';
 import type { Configuration } from '@/api/endpoints/configurations';
+import type { Permission } from '@/types';
+import { createMockUser } from '@/test/factories';
+import { customPermissions, permissionsForRole } from '@/test/permissions';
 
 const showSuccess = vi.fn();
 const showError = vi.fn();
+const mockUseAuth = vi.fn();
+
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => mockUseAuth(),
+}));
+
+const signInWith = (permissions: Permission[]) =>
+  mockUseAuth.mockReturnValue({
+    user: createMockUser({ id: 1, role: 'admin' }),
+    permissions,
+    isLoading: false,
+    isAuthenticated: true,
+    login: vi.fn(),
+    register: vi.fn(),
+    logout: vi.fn(),
+    refreshUser: vi.fn(),
+  });
 
 vi.mock('@/hooks/useSnackbar', () => ({
   useSnackbar: () => ({ showSuccess, showError, showWarning: vi.fn(), showInfo: vi.fn() }),
 }));
 
-vi.mock('@/api/endpoints/configurations', () => ({
-  configurationsApi: {
-    getAll: vi.fn(),
-    getUIConfigurations: vi.fn(),
-    set: vi.fn(),
-    reset: vi.fn(),
-    getValue: vi.fn((config: Configuration) => config.value),
-  },
-}));
+// getValue is the real parser, so json/array/number rows are seeded the way
+// production seeds them.
+vi.mock('@/api/endpoints/configurations', async () => {
+  const actual = await vi.importActual<typeof import('@/api/endpoints/configurations')>(
+    '@/api/endpoints/configurations',
+  );
+  return {
+    configurationsApi: {
+      getAll: vi.fn(),
+      getUIConfigurations: vi.fn(),
+      set: vi.fn(),
+      reset: vi.fn(),
+      getValue: actual.configurationsApi.getValue,
+    },
+  };
+});
+
+const apiError = (status: number, message: string): AxiosError => {
+  const error = new AxiosError('request failed');
+  error.response = {
+    status,
+    statusText: '',
+    data: { message },
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+  };
+  return error;
+};
 
 // The app-wide copy of GET /configurations/ui that pages such as the lead
 // conversion dialog follow; a save or reset here must refresh it.
@@ -73,6 +114,7 @@ const openIntegrationTab = async () => {
 describe('ConfigurationSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    signInWith(permissionsForRole('admin'));
     vi.mocked(configurationsApi.getAll).mockResolvedValue([baseConfig({}), sensitive]);
     vi.mocked(configurationsApi.set).mockResolvedValue(sensitive);
   });
@@ -165,6 +207,7 @@ describe('ConfigurationSettings', () => {
     render(<ConfigurationSettings />);
 
     fireEvent.click(await screen.findByTitle('Reset to default'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset' }));
 
     await waitFor(() => expect(refreshConfigurations).toHaveBeenCalledTimes(1));
   });
@@ -189,5 +232,190 @@ describe('ConfigurationSettings', () => {
       expect(screen.getByDisplayValue('GopherCRM')).toBeInTheDocument();
     });
     expect(screen.queryByLabelText('New value')).not.toBeInTheDocument();
+  });
+
+  describe('permissions', () => {
+    it('shows no Edit or Reset to a caller who may only view settings', async () => {
+      signInWith(customPermissions('settings.view'));
+      render(<ConfigurationSettings />);
+
+      expect(await screen.findByText('general.company_name')).toBeInTheDocument();
+      expect(screen.queryByTitle('Edit configuration')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Reset to default')).not.toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument();
+    });
+
+    it('shows Edit and Reset to an admin on a writable row', async () => {
+      render(<ConfigurationSettings />);
+
+      expect(await screen.findByRole('button', { name: 'Edit general.company_name' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Reset general.company_name' })).toBeEnabled();
+      expect(screen.getByTitle('Edit configuration')).toBeInTheDocument();
+      expect(screen.getByTitle('Reset to default')).toBeInTheDocument();
+    });
+
+    it('shows the server message when a save is refused', async () => {
+      vi.mocked(configurationsApi.set).mockRejectedValue(apiError(403, 'Insufficient permissions'));
+      render(<ConfigurationSettings />);
+
+      fireEvent.click(await screen.findByTitle('Edit configuration'));
+      fireEvent.click(await screen.findByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(showError).toHaveBeenCalledWith('Insufficient permissions'));
+      expect(showError).not.toHaveBeenCalledWith('Failed to update configuration');
+      expect(screen.getByRole('dialog', { name: /Edit Configuration/ })).toBeInTheDocument();
+    });
+  });
+
+  describe('typed values', () => {
+    const jsonConfig = baseConfig({ id: 10, key: 'general.extra', type: 'json', value: '{}', default_value: '{}' });
+    const arrayConfig = baseConfig({ id: 11, key: 'general.tags', type: 'array', value: '[]', default_value: '[]' });
+    const intConfig = baseConfig({ id: 12, key: 'general.page_size', type: 'integer', value: '20', default_value: '20' });
+
+    // Each case lists one row; the field is found by role so a missing label
+    // is reported by the closing label assertion, not by the lookup.
+    const openEditor = async (role: 'textbox' | 'spinbutton' = 'textbox') => {
+      fireEvent.click(await screen.findByTitle('Edit configuration'));
+      const dialog = await screen.findByRole('dialog', { name: /Edit Configuration/ });
+      return within(dialog).getByRole(role);
+    };
+
+    it('takes a JSON value typed one key at a time and saves the parsed object', async () => {
+      const user = userEvent.setup();
+      vi.mocked(configurationsApi.getAll).mockResolvedValue([jsonConfig]);
+      vi.mocked(configurationsApi.set).mockResolvedValue({ ...jsonConfig, value: '{"a":1}' });
+      render(<ConfigurationSettings />);
+
+      const field = await openEditor();
+      expect(field).toHaveValue('{}');
+      await user.clear(field);
+      await user.type(field, '{{"a": 1}');
+      expect(field).toHaveValue('{"a": 1}');
+
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() =>
+        expect(configurationsApi.set).toHaveBeenCalledWith('general.extra', { value: { a: 1 } }),
+      );
+      expect(field).toHaveAccessibleName('Value');
+    });
+
+    it('refuses incomplete JSON with a field error and sends nothing', async () => {
+      const user = userEvent.setup();
+      vi.mocked(configurationsApi.getAll).mockResolvedValue([jsonConfig]);
+      render(<ConfigurationSettings />);
+
+      const field = await openEditor();
+      await user.clear(field);
+      await user.type(field, '{{"a": 1');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      expect(await screen.findByText('Enter valid JSON')).toBeInTheDocument();
+      expect(field).toHaveValue('{"a": 1');
+      expect(screen.getByRole('dialog', { name: /Edit Configuration/ })).toBeInTheDocument();
+      expect(configurationsApi.set).not.toHaveBeenCalled();
+    });
+
+    it('saves a typed array and refuses a non-array for an array setting', async () => {
+      const user = userEvent.setup();
+      vi.mocked(configurationsApi.getAll).mockResolvedValue([arrayConfig]);
+      vi.mocked(configurationsApi.set).mockResolvedValue(arrayConfig);
+      render(<ConfigurationSettings />);
+
+      let field = await openEditor();
+      expect(field).toHaveValue('[]');
+      await user.clear(field);
+      await user.type(field, '{{}');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      expect(await screen.findByText('Enter a JSON array')).toBeInTheDocument();
+      expect(configurationsApi.set).not.toHaveBeenCalled();
+
+      field = within(screen.getByRole('dialog', { name: /Edit Configuration/ })).getByRole('textbox');
+      await user.clear(field);
+      await user.type(field, '[["x", "y"]');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() =>
+        expect(configurationsApi.set).toHaveBeenCalledWith('general.tags', { value: ['x', 'y'] }),
+      );
+    });
+
+    it('refuses an empty number', async () => {
+      const user = userEvent.setup();
+      vi.mocked(configurationsApi.getAll).mockResolvedValue([intConfig]);
+      render(<ConfigurationSettings />);
+
+      const field = await openEditor('spinbutton');
+      expect(field).toHaveValue(20);
+      await user.clear(field);
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      expect(await screen.findByText('Enter a number')).toBeInTheDocument();
+      expect(configurationsApi.set).not.toHaveBeenCalled();
+      expect(field).toHaveAccessibleName('Value');
+    });
+
+    it('opens the editor of a row whose list of allowed values is malformed', async () => {
+      vi.mocked(configurationsApi.getAll).mockResolvedValue([
+        baseConfig({ id: 13, key: 'general.mode', valid_values: '[oops' }),
+      ]);
+      render(<ConfigurationSettings />);
+
+      const field = await openEditor();
+      expect(field).toHaveValue('GopherCRM');
+      expect(screen.getByRole('dialog', { name: /Edit Configuration/ })).toBeInTheDocument();
+    });
+  });
+
+  describe('reset', () => {
+    it('asks before resetting and resets only on Confirm', async () => {
+      vi.mocked(configurationsApi.reset).mockResolvedValue(baseConfig({}));
+      render(<ConfigurationSettings />);
+
+      fireEvent.click(await screen.findByTitle('Reset to default'));
+      expect(configurationsApi.reset).not.toHaveBeenCalled();
+      const dialog = await screen.findByRole('dialog', { name: 'Reset to default?' });
+      expect(dialog).toHaveTextContent('Reset general.company_name to its default value "GoCRM"?');
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Reset to default?' })).not.toBeInTheDocument(),
+      );
+      expect(configurationsApi.reset).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByTitle('Reset to default'));
+      const again = await screen.findByRole('dialog', { name: 'Reset to default?' });
+      fireEvent.click(within(again).getByRole('button', { name: 'Reset' }));
+
+      await waitFor(() => expect(refreshConfigurations).toHaveBeenCalledTimes(1));
+      expect(configurationsApi.reset).toHaveBeenCalledTimes(1);
+      expect(configurationsApi.reset).toHaveBeenCalledWith('general.company_name');
+    });
+  });
+
+  describe('load error', () => {
+    it('shows an error with Retry instead of empty tabs, and loads again on Retry', async () => {
+      vi.mocked(configurationsApi.getAll).mockRejectedValueOnce(new Error('offline'));
+      render(<ConfigurationSettings />);
+
+      expect(await screen.findByRole('heading', { name: 'Configuration Settings' })).toBeInTheDocument();
+      expect(screen.queryByText(/No configurations found/)).not.toBeInTheDocument();
+      expect(screen.getByText('Failed to load configurations')).toBeInTheDocument();
+      expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+      expect(await screen.findByText('general.company_name')).toBeInTheDocument();
+      expect(configurationsApi.getAll).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows the server message of a failed load', async () => {
+      vi.mocked(configurationsApi.getAll).mockRejectedValueOnce(apiError(503, 'Database unavailable'));
+      render(<ConfigurationSettings />);
+
+      expect(await screen.findByText('Database unavailable')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
   });
 });

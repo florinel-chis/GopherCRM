@@ -1074,6 +1074,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Settings > Configuration (#565).** Edit and Reset show only to users who hold
+  `settings.update`; a refused save or reset shows the server's message. JSON and free-form list
+  values are typed as text and checked on Save (`Enter valid JSON`, `Enter a JSON array`), and a
+  number field refuses an empty or non-numeric entry (`Enter a number`) instead of sending it; a
+  malformed list of allowed values no longer breaks the editor. Reset asks for confirmation first. A
+  settings list that fails to load shows an error with a Retry button instead of empty
+  "No configurations found" tabs. Frontend only (`ConfigurationSettings.tsx`, new
+  `ConfigValueEditor.tsx`), covered by `ConfigurationSettings.test.tsx`.
 - **Database retries decide from the driver's typed error (#567).** One helper,
   `utils.RetryReasonOf` (`internal/utils/retryable.go`), classifies MySQL/MariaDB errors 1213
   (deadlock), 1205 (lock wait timeout) and MariaDB 1020 (record has changed since it was read,

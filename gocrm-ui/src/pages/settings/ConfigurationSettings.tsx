@@ -13,18 +13,11 @@ import {
   TableRow,
   IconButton,
   Chip,
-  TextField,
-  Switch,
-  FormControlLabel,
   Button,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  MenuItem,
-  Select,
-  FormControl,
-  InputLabel,
   Alert,
 } from '@mui/material';
 import {
@@ -38,12 +31,11 @@ import { configurationsApi } from '@/api/endpoints/configurations';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { useConfiguration } from '@/hooks/useConfiguration';
 import { Loading } from '@/components/Loading';
-
-function isConfigurationValue(value: unknown): value is ConfigurationValue {
-  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return true;
-  if (Array.isArray(value)) return value.every(isConfigurationValue);
-  return typeof value === 'object' && Object.values(value).every(isConfigurationValue);
-}
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { usePermissions } from '@/hooks/usePermissions';
+import { getAPIError } from '@/utils/apiError';
+import { ConfigValueEditor } from './ConfigValueEditor';
+import { initialDraft, isConfigurationValue, parseDraft, usesDraft } from './configValueDraft';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -82,10 +74,19 @@ const CATEGORIES = [
 const ConfigurationSettings: React.FC = () => {
   const [configurations, setConfigurations] = useState<Configuration[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const [editingConfig, setEditingConfig] = useState<Configuration | null>(null);
   const [editValue, setEditValue] = useState<ConfigurationValue>('');
+  // JSON, free-form array and number editors hold the typed text until Save.
+  const [editDraft, setEditDraft] = useState('');
+  const [editError, setEditError] = useState<string | undefined>(undefined);
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [resetTarget, setResetTarget] = useState<Configuration | null>(null);
+  // PUT /configurations/:key and POST /configurations/:key/reset need
+  // settings.update; the page itself opens with settings.view.
+  const { can } = usePermissions();
+  const canUpdate = can('settings.update');
   const { showSuccess, showError } = useSnackbar();
   // The app-wide UI configuration (company name, lead-conversion rules, ...)
   // is cached per session; a saved or reset setting must reach it.
@@ -96,12 +97,15 @@ const ConfigurationSettings: React.FC = () => {
       setLoading(true);
       const configs = await configurationsApi.getAll();
       setConfigurations(configs);
-    } catch {
-      showError('Failed to load configurations');
+      setLoadError(null);
+    } catch (error) {
+      // An empty list would read as "No configurations found" in every tab.
+      setConfigurations([]);
+      setLoadError(getAPIError(error)?.message || 'Failed to load configurations');
     } finally {
       setLoading(false);
     }
-  }, [showError]);
+  }, []);
 
   useEffect(() => {
     loadConfigurations();
@@ -112,6 +116,7 @@ const ConfigurationSettings: React.FC = () => {
   };
 
   const handleEdit = (config: Configuration) => {
+    if (!canUpdate) return;
     setEditingConfig(config);
     // A sensitive value is never sent back by the API, so the editor starts
     // empty: the operator either types a new value or saves an empty one to
@@ -122,34 +127,52 @@ const ConfigurationSettings: React.FC = () => {
       return;
     }
     setEditValue(value);
+    setEditDraft(usesDraft(config) ? initialDraft(config, value) : '');
+    setEditError(undefined);
     setShowEditDialog(true);
   };
 
   const handleSaveEdit = async () => {
-    if (!editingConfig) return;
+    if (!editingConfig || !canUpdate) return;
+
+    let value: ConfigurationValue = editValue;
+    if (usesDraft(editingConfig)) {
+      const parsed = parseDraft(editingConfig, editDraft);
+      if ('error' in parsed) {
+        setEditError(parsed.error);
+        return;
+      }
+      value = parsed.value;
+    }
 
     try {
-      if (editValue === null) throw new Error('A configuration value is required');
-      await configurationsApi.set(editingConfig.key, { value: editValue });
-      showSuccess('Configuration updated successfully');
-      void refreshConfigurations();
-      await loadConfigurations();
-      setShowEditDialog(false);
-      setEditingConfig(null);
-    } catch {
-      showError('Failed to update configuration');
+      if (value === null) throw new Error('A configuration value is required');
+      await configurationsApi.set(editingConfig.key, { value });
+    } catch (error) {
+      showError(getAPIError(error)?.message || 'Failed to update configuration');
+      return;
     }
+    showSuccess('Configuration updated successfully');
+    setShowEditDialog(false);
+    setEditingConfig(null);
+    void refreshConfigurations();
+    await loadConfigurations();
   };
 
-  const handleReset = async (config: Configuration) => {
+  const handleConfirmReset = async () => {
+    const config = resetTarget;
+    setResetTarget(null);
+    if (!config || !canUpdate) return;
+
     try {
       await configurationsApi.reset(config.key);
-      showSuccess('Configuration reset to default');
-      void refreshConfigurations();
-      await loadConfigurations();
-    } catch {
-      showError('Failed to reset configuration');
+    } catch (error) {
+      showError(getAPIError(error)?.message || 'Failed to reset configuration');
+      return;
     }
+    showSuccess('Configuration reset to default');
+    void refreshConfigurations();
+    await loadConfigurations();
   };
 
   const getConfigurationsByCategory = (category: string) => {
@@ -199,154 +222,6 @@ const ConfigurationSettings: React.FC = () => {
     }
   };
 
-  const renderEditField = () => {
-    if (!editingConfig) return null;
-
-    if (editingConfig.is_sensitive) {
-      return (
-        <TextField
-          fullWidth
-          type="password"
-          autoComplete="new-password"
-          label="New value"
-          placeholder="enter new value"
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          helperText="Stored encrypted and never shown again. Save an empty value to clear it."
-        />
-      );
-    }
-
-    const validValues = editingConfig.valid_values ?
-      JSON.parse(editingConfig.valid_values) : null;
-
-    switch (editingConfig.type) {
-      case 'boolean':
-        return (
-          <FormControlLabel
-            control={
-              <Switch
-                checked={editValue === true}
-                onChange={(e) => setEditValue(e.target.checked)}
-              />
-            }
-            label={editValue ? 'True' : 'False'}
-          />
-        );
-      
-      case 'integer':
-        return (
-          <TextField
-            fullWidth
-            type="number"
-            value={editValue}
-            onChange={(e) => setEditValue(parseInt(e.target.value, 10))}
-            inputProps={{ step: 1 }}
-          />
-        );
-      
-      case 'float':
-        return (
-          <TextField
-            fullWidth
-            type="number"
-            value={editValue}
-            onChange={(e) => setEditValue(parseFloat(e.target.value))}
-            inputProps={{ step: 0.1 }}
-          />
-        );
-      
-      case 'array':
-        if (validValues && Array.isArray(validValues)) {
-          return (
-            <FormControl fullWidth>
-              <InputLabel>Select Values</InputLabel>
-              <Select
-                multiple
-                value={Array.isArray(editValue) ? editValue : []}
-                onChange={(e) => setEditValue(e.target.value)}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {(selected as string[]).map((value) => (
-                      <Chip key={value} label={value} size="small" />
-                    ))}
-                  </Box>
-                )}
-              >
-                {validValues.map((option) => (
-                  <MenuItem key={option} value={option}>
-                    {option}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          );
-        } else {
-          return (
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              value={Array.isArray(editValue) ? JSON.stringify(editValue, null, 2) : ''}
-              onChange={(e) => {
-                try {
-                  setEditValue(JSON.parse(e.target.value));
-                } catch {
-                  // Keep the string value for editing
-                }
-              }}
-              placeholder="Enter JSON array"
-            />
-          );
-        }
-      
-      case 'json':
-        return (
-          <TextField
-            fullWidth
-            multiline
-            rows={4}
-            value={typeof editValue === 'object' ? JSON.stringify(editValue, null, 2) : editValue}
-            onChange={(e) => {
-              try {
-                setEditValue(JSON.parse(e.target.value));
-              } catch {
-                // Keep the string value for editing
-              }
-            }}
-            placeholder="Enter JSON"
-          />
-        );
-      
-      default:
-        if (validValues && Array.isArray(validValues)) {
-          return (
-            <FormControl fullWidth>
-              <InputLabel>Select Value</InputLabel>
-              <Select
-                value={editValue}
-                onChange={(e) => setEditValue(e.target.value)}
-              >
-                {validValues.map((option) => (
-                  <MenuItem key={option} value={option}>
-                    {option}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-          );
-        } else {
-          return (
-            <TextField
-              fullWidth
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-            />
-          );
-        }
-    }
-  };
-
   const renderConfigurationsTable = (categoryConfigs: Configuration[]) => (
     <TableContainer component={Paper}>
       <Table>
@@ -389,22 +264,28 @@ const ConfigurationSettings: React.FC = () => {
                 {config.is_read_only && <Chip label="Read-Only" size="small" color="warning" />}
               </TableCell>
               <TableCell align="right">
-                <IconButton
-                  size="small"
-                  onClick={() => handleEdit(config)}
-                  disabled={config.is_read_only}
-                  title="Edit configuration"
-                >
-                  <EditIcon />
-                </IconButton>
-                <IconButton
-                  size="small"
-                  onClick={() => handleReset(config)}
-                  disabled={config.is_read_only}
-                  title="Reset to default"
-                >
-                  <RefreshIcon />
-                </IconButton>
+                {canUpdate && (
+                  <>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleEdit(config)}
+                      disabled={config.is_read_only}
+                      title="Edit configuration"
+                      aria-label={`Edit ${config.key}`}
+                    >
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => setResetTarget(config)}
+                      disabled={config.is_read_only}
+                      title="Reset to default"
+                      aria-label={`Reset ${config.key}`}
+                    >
+                      <RefreshIcon />
+                    </IconButton>
+                  </>
+                )}
               </TableCell>
             </TableRow>
           ))}
@@ -415,6 +296,26 @@ const ConfigurationSettings: React.FC = () => {
 
   if (loading) {
     return <Loading />;
+  }
+
+  if (loadError) {
+    return (
+      <Box>
+        <Typography variant="h4" gutterBottom>
+          Configuration Settings
+        </Typography>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" size="small" onClick={() => void loadConfigurations()}>
+              Retry
+            </Button>
+          }
+        >
+          {loadError}
+        </Alert>
+      </Box>
+    );
   }
 
   return (
@@ -483,7 +384,17 @@ const ConfigurationSettings: React.FC = () => {
                 </Typography>
               )}
               
-              {renderEditField()}
+              <ConfigValueEditor
+                config={editingConfig}
+                value={editValue}
+                onValueChange={setEditValue}
+                draft={editDraft}
+                onDraftChange={(draft) => {
+                  setEditDraft(draft);
+                  setEditError(undefined);
+                }}
+                error={editError}
+              />
             </Box>
           )}
         </DialogContent>
@@ -503,6 +414,19 @@ const ConfigurationSettings: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={resetTarget !== null}
+        title="Reset to default?"
+        message={
+          resetTarget
+            ? `Reset ${resetTarget.key} to its default value "${resetTarget.default_value}"?`
+            : ''
+        }
+        confirmText="Reset"
+        onConfirm={() => void handleConfirmReset()}
+        onCancel={() => setResetTarget(null)}
+      />
     </Box>
   );
 };
