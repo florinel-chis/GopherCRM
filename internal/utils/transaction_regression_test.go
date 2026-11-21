@@ -524,7 +524,7 @@ func runTransactionNestedScenarios(t *testing.T, db *gorm.DB) {
 
 func runTransactionCancellationRetryScenarios(t *testing.T, db *gorm.DB) {
 	tm := NewTransactionManager(db)
-	retryable := errors.New("Deadlock found when trying to get lock; try restarting transaction")
+	retryable := &mysqldriver.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 
 	t.Run("a cancelled context fails before any attempt runs", func(t *testing.T) {
 		clearRecords(t, db)

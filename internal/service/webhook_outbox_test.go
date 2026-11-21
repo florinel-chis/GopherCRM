@@ -2,12 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -122,7 +122,7 @@ func runWebhookOutboxAtomicity(t *testing.T, db *gorm.DB) {
 	t.Run("a conversion replayed after a retryable failure commits one row set", func(t *testing.T) {
 		// The first attempt writes its rows and then fails with a deadlock: the
 		// retry helper rolls the attempt back and replays it.
-		deadlock := errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+		deadlock := &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 		env.wire(newFailingWebhookRepository(env.repo, deadlock, 1))
 		lead := env.seedLead()
 		customer, err := env.leads.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
@@ -220,7 +220,7 @@ func runWebhookOutboxFanOut(t *testing.T, db *gorm.DB) {
 	})
 
 	t.Run("conversion retries leave exactly one row set", func(t *testing.T) {
-		deadlock := errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+		deadlock := &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 		env.wire(newFailingWebhookRepository(env.repo, deadlock, 1))
 		defer env.wire(env.repo)
 		lead := env.seedLead()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -126,7 +127,7 @@ func TestTransactionManager_WithTransactionAndRetry(t *testing.T) {
 	t.Run("successful transaction after retries", func(t *testing.T) {
 		ctx := context.Background()
 		attempts := 0
-		deadlockErr := errors.New("Deadlock found when trying to get lock")
+		deadlockErr := &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"}
 
 		err := tm.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 			attempts++
@@ -143,7 +144,7 @@ func TestTransactionManager_WithTransactionAndRetry(t *testing.T) {
 	t.Run("failure after max retries", func(t *testing.T) {
 		ctx := context.Background()
 		attempts := 0
-		deadlockErr := errors.New("Deadlock found when trying to get lock")
+		deadlockErr := &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock"}
 
 		err := tm.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
 			attempts++
@@ -196,34 +197,4 @@ func TestGetTxFromContext(t *testing.T) {
 		assert.False(t, ok)
 		assert.Nil(t, tx)
 	})
-}
-
-func TestIsRetryableError(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{"nil error", nil, false},
-		{"deadlock error", errors.New("Deadlock found when trying to get lock"), true},
-		{"lock timeout error", errors.New("Lock wait timeout exceeded"), true},
-		{"mysql deadlock code", errors.New("Error 1213: Deadlock"), true},
-		{"mysql lock timeout code", errors.New("Error 1205: Lock wait timeout"), true},
-		{"generic deadlock", errors.New("deadlock detected"), true},
-		{"sqlite busy", errors.New("database is locked (5) (SQLITE_BUSY)"), true},
-		{"sqlite table locked", errors.New("database table is locked: leads"), true},
-		{"sqlite busy code only", errors.New("sqlite_busy"), true},
-		{"sqlite locked code only", errors.New("SQLITE_LOCKED"), true},
-		{"sqlite mixed case message", errors.New("Database Is Locked"), true},
-		{"validation error", errors.New("validation failed"), false},
-		{"connection error", errors.New("connection refused"), false},
-		{"sqlite constraint error", errors.New("UNIQUE constraint failed: users.email"), false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isRetryableError(tt.err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }

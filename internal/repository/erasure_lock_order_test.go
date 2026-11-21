@@ -17,7 +17,6 @@ package repository
 // unreachable.
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -30,6 +29,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -732,7 +732,7 @@ func runErasureGraphChanged(t *testing.T, useMySQL bool) {
 
 // errInjectedDeadlock is what a hook returns in place of the engine: the text
 // the transaction manager recognises as a deadlock.
-var errInjectedDeadlock = errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+var errInjectedDeadlock error = &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 
 // TestErasureRetryBoundSQLite makes the first lock stage of each root fail
 // with a deadlock: always (the transaction is replayed erasureMaxRetries times

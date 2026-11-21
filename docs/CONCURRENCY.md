@@ -166,12 +166,15 @@ The rule is `WithTransactionAndRetry` in `internal/utils/transaction.go:176`:
 - Each attempt is a fresh root transaction (`runRoot`, `internal/utils/transaction.go:244`). Only a
   root transaction is replayed, and only after a clean rollback: a failed `COMMIT` or `ROLLBACK`
   is ambiguous and is returned as it is (`internal/utils/transaction.go:196-198`).
-- An attempt is replayed only for a retryable error: MySQL error 1213 (deadlock) or 1205 (lock wait
-  timeout), SQLite busy or locked (`isRetryableError`, `internal/utils/transaction.go:473`).
+- An attempt is replayed only for a retryable error, classified from the driver's typed error and
+  never from its message text (`RetryReasonOf` in `internal/utils/retryable.go`): MySQL/MariaDB
+  error 1213 (deadlock), 1205 (lock wait timeout) or MariaDB 1020 (record changed since it was
+  read, raised under `innodb_snapshot_isolation`; the server rolls the transaction back as on a
+  deadlock), and SQLite busy or locked (primary result code 5 or 6, extended codes included).
 - Replays stop after `maxRetries` replays and as soon as the context is done; a negative
   `maxRetries` is refused before the callback runs.
 - Inside an active transaction the callback runs once under a savepoint, and a retryable failure is
-  returned tagged `ErrNestedRetryDeferred` (`internal/utils/transaction.go:60`, `:181-187` in the
+  returned tagged `ErrNestedRetryDeferred` (`internal/utils/transaction.go:59`, `:181-187` in the
   same file): a deadlock has already destroyed the enclosing transaction, so only the enclosing
   root may replay the whole unit.
 

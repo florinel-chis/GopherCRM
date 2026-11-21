@@ -32,6 +32,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -53,7 +54,7 @@ const (
 
 // errECODeadlock is what a hook returns in place of the engine: the text the
 // transaction manager recognises as a deadlock.
-var errECODeadlock = errors.New("Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+var errECODeadlock error = &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 
 // ecoSeed gives the fixture's owner a live refresh token, a spendable reset
 // token and an API key.

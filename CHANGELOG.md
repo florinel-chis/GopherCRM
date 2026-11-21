@@ -1074,6 +1074,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Database retries decide from the driver's typed error (#567).** One helper,
+  `utils.RetryReasonOf` (`internal/utils/retryable.go`), classifies MySQL/MariaDB errors 1213
+  (deadlock), 1205 (lock wait timeout) and MariaDB 1020 (record has changed since it was read,
+  raised under `innodb_snapshot_isolation`), and SQLite busy/locked (primary result code 5 or 6),
+  through `errors.As` on `*mysql.MySQLError` and the SQLite driver's error, also when wrapped. The
+  message text is no longer read, so an unrelated error that mentions a deadlock is not replayed.
+  `WithTransactionAndRetry` and the AEO run claim both use it; the claim treats 1020 like a
+  deadlock (replayed, at most three attempts, then "run in progress"). Retry counts, the flows that
+  retry, public errors and status codes are unchanged. `TestRetryReasonOf` and
+  `TestTransactionRetryableError{SQLite,MySQL}` prove the classification against real errors on
+  SQLite, MySQL 8 and MariaDB 10.11.
+
 - **A SCIM group patch sets the account's state from the groups it is left in (#530).** An active
   managed account that `PATCH /scim/v2/Groups/{id}` leaves in no mapped group is deactivated in the
   patch's transaction: `is_active` false, its role kept, no `user_role_changed` row, and every

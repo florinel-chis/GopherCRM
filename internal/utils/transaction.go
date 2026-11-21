@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -161,7 +160,8 @@ func (tm *TransactionManager) WithTransaction(ctx context.Context, fn func(ctx c
 }
 
 // WithTransactionAndRetry executes fn within a transaction with retry logic
-// for retryable errors (deadlocks, lock waits, SQLite busy/locked).
+// for retryable errors (deadlocks, lock waits, MariaDB record changed, SQLite
+// busy/locked), as classified by IsRetryable.
 //
 // Each attempt is a fresh root transaction, so a failed attempt leaves no
 // writes behind. An attempt is replayed only when its rollback completed
@@ -180,7 +180,7 @@ func (tm *TransactionManager) WithTransactionAndRetry(ctx context.Context, fn fu
 
 	if tx := activeTransaction(ctx); tx != nil {
 		err := tm.runNested(ctx, tx, fn)
-		if err != nil && isRetryableError(err) {
+		if err != nil && IsRetryable(err) {
 			return fmt.Errorf("%w: %w", ErrNestedRetryDeferred, err)
 		}
 		return err
@@ -193,7 +193,7 @@ func (tm *TransactionManager) WithTransactionAndRetry(ctx context.Context, fn fu
 		if err == nil {
 			return nil
 		}
-		if !replayable || !isRetryableError(err) {
+		if !replayable || !IsRetryable(err) {
 			return err
 		}
 		if attempts > maxRetries {
@@ -467,31 +467,4 @@ func rollbackTx(tx *gorm.DB) error {
 
 func rollbackToSavepoint(tx *gorm.DB, name string) error {
 	return tx.Exec("ROLLBACK TO SAVEPOINT " + name).Error
-}
-
-// isRetryableError checks if an error is retryable (e.g., deadlocks, lock timeouts)
-func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errMsg := strings.ToLower(err.Error())
-	retryablePatterns := []string{
-		// MySQL
-		"deadlock",
-		"lock wait timeout",
-		"error 1213",
-		"error 1205",
-		// SQLite: write contention surfaces as SQLITE_BUSY/SQLITE_LOCKED, which
-		// clears once the holding connection commits, so it is worth retrying.
-		"database is locked",
-		"database table is locked",
-		"sqlite_busy",
-		"sqlite_locked",
-	}
-	for _, pattern := range retryablePatterns {
-		if strings.Contains(errMsg, pattern) {
-			return true
-		}
-	}
-	return false
 }

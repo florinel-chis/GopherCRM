@@ -605,8 +605,8 @@ func countAEOSlotRows(t *testing.T, db *gorm.DB, slot string) int64 {
 	return count
 }
 
-// #371: lock contention on the claim INSERT (MySQL/MariaDB 1213 and 1205) is
-// classified instead of returned. The driver error is injected, so both
+// #371: lock contention on the claim INSERT (MySQL/MariaDB 1213 and 1205,
+// MariaDB 1020) is classified instead of returned. The driver error is injected, so both
 // databases run the same rule; every row assertion is a COUNT on the table.
 func runAEORunClaimContention(t *testing.T, db *gorm.DB) {
 	repo := NewAEORepository(db)
@@ -620,6 +620,7 @@ func runAEORunClaimContention(t *testing.T, db *gorm.DB) {
 	}{
 		{"deadlock 1213", 1213},
 		{"lock wait timeout 1205", 1205},
+		{"record changed 1020", 1020},
 	}
 	claimKinds := []struct {
 		name string
@@ -732,6 +733,26 @@ func runAEORunClaimContention(t *testing.T, db *gorm.DB) {
 				assert.ErrorIs(t, err, apperrors.ErrRunInProgress)
 				var driverErr *mysqldriver.MySQLError
 				assert.False(t, errors.As(err, &driverErr), "the raw deadlock is never returned")
+				assert.Equal(t, 3, fault.attempts)
+				assert.Zero(t, countAEORuns(t, db))
+				assert.Zero(t, run.ID)
+				assert.Nil(t, run.HeartbeatAt)
+				assert.Nil(t, run.RunningLock)
+			})
+		}
+	})
+
+	t.Run("record changed on every attempt answers run in progress", func(t *testing.T) {
+		for _, kind := range claimKinds {
+			t.Run(kind.name, func(t *testing.T) {
+				resetAEORuns(t, db)
+				fault := injectAEOClaimFault(t, db, 1020, every)
+
+				run := ownedRun("owner-a", now, kind.slot)
+				err := repo.ClaimRun(run)
+				assert.ErrorIs(t, err, apperrors.ErrRunInProgress)
+				var driverErr *mysqldriver.MySQLError
+				assert.False(t, errors.As(err, &driverErr), "the raw 1020 is never returned")
 				assert.Equal(t, 3, fault.attempts)
 				assert.Zero(t, countAEORuns(t, db))
 				assert.Zero(t, run.ID)

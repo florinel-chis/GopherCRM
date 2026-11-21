@@ -1027,11 +1027,13 @@ type AEORepository interface {
 	// nothing and returns apperrors.ErrAEOScheduleSlotTaken.
 	//
 	// MySQL/MariaDB lock contention on the INSERT (#371) follows the same
-	// answers for scheduled and slot-less claims: on error 1213 (deadlock) or
-	// 1205 (lock wait timeout) a slot claim whose slot is held returns
+	// answers for scheduled and slot-less claims: on error 1213 (deadlock),
+	// MariaDB 1020 (record changed since it was read) or 1205 (lock wait
+	// timeout) a slot claim whose slot is held returns
 	// apperrors.ErrAEOScheduleSlotTaken; otherwise the INSERT is replayed, at
-	// most 3 attempts in total, each classified as above. A deadlock on the
-	// last attempt returns apperrors.ErrRunInProgress, never the raw 1213. A
+	// most 3 attempts in total, each classified as above. A deadlock or a 1020
+	// on the last attempt returns apperrors.ErrRunInProgress, never the raw
+	// 1213 or 1020. A
 	// lock wait timeout is replayed once and a second one is returned
 	// unchanged, so the worst case is two lock waits (2 x
 	// innodb_lock_wait_timeout). A failed attempt was rolled back whole, and

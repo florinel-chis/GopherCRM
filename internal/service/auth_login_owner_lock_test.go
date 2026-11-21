@@ -35,6 +35,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -797,15 +798,16 @@ func runLoginOwnerLockDecisions(t *testing.T, f *llFixture, connections int) {
 // --------------------------------------------------------- AC-2 atomicity ---
 
 func TestLoginOwnerLockAtomicitySQLite(t *testing.T) {
-	runLoginOwnerLockAtomicity(t, newLLFixture(t, openResetTestSQLite(t)), "database is locked (5) (SQLITE_BUSY)")
+	runLoginOwnerLockAtomicity(t, newLLFixture(t, openResetTestSQLite(t)),
+		&mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"})
 }
 
 func TestLoginOwnerLockAtomicityMySQL(t *testing.T) {
 	runLoginOwnerLockAtomicity(t, newLLFixture(t, openMigratedTestMySQL(t, 2)),
-		"Error 1213 (40001): Deadlock found when trying to get lock; try restarting transaction")
+		&mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"})
 }
 
-func runLoginOwnerLockAtomicity(t *testing.T, f *llFixture, retryable string) {
+func runLoginOwnerLockAtomicity(t *testing.T, f *llFixture, retryable error) {
 	injected := errors.New("injected failure")
 
 	fallbacks := map[string]func(h *llHookSet){
@@ -855,7 +857,7 @@ func runLoginOwnerLockAtomicity(t *testing.T, f *llFixture, retryable string) {
 		f.loginHooks.install(func(h *llHookSet) {
 			h.beforeCreate = func(*models.RefreshToken) error {
 				if calls.Add(1) == 1 {
-					return errors.New(retryable)
+					return retryable
 				}
 				return nil
 			}
@@ -878,7 +880,7 @@ func runLoginOwnerLockAtomicity(t *testing.T, f *llFixture, retryable string) {
 		s := f.seed(t)
 		before := f.account(t, s.owner.ID)
 		f.loginHooks.install(func(h *llHookSet) {
-			h.beforeCreate = func(*models.RefreshToken) error { return errors.New(retryable) }
+			h.beforeCreate = func(*models.RefreshToken) error { return retryable }
 		})
 		tokens, err := f.login.LoginWithTokens(llOwnerEmail, llPassword)
 		assert.Nil(t, tokens)
@@ -1106,7 +1108,7 @@ func TestLoginOwnerLockLogsOmitPersonalData(t *testing.T) {
 	f.loginHooks.install(func(h *llHookSet) {
 		h.beforeCreate = func(*models.RefreshToken) error {
 			if calls.Add(1) == 1 {
-				return errors.New("database is locked (5) (SQLITE_BUSY)")
+				return &mysql.MySQLError{Number: 1213, Message: "Deadlock found when trying to get lock; try restarting transaction"}
 			}
 			return nil
 		}
