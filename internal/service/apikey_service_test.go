@@ -543,3 +543,81 @@ func TestAPIKeyService_List(t *testing.T) {
 
 	mockAPIKeyRepo.AssertExpectations(t)
 }
+
+// TestAPIKeyService_Generate_DefaultExpiry: without an expiry the key gets
+// models.APIKeyExpiryCap(now) (#532).
+func TestAPIKeyService_Generate_DefaultExpiry(t *testing.T) {
+	d := newAPIKeyGenerateDeps(t, apiKeyTestOwner())
+	d.keys.On("Create", mock.Anything).Return(nil).Run(func(mock.Arguments) {
+		d.calls = append(d.calls, "api_keys.Create")
+	})
+
+	before := models.APIKeyExpiryCap(time.Now())
+	_, apiKey, err := d.svc.Generate(1, "Default expiry", nil)
+	after := models.APIKeyExpiryCap(time.Now())
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, apiKey.ExpiresAt) {
+		assert.False(t, apiKey.ExpiresAt.Before(before.Truncate(time.Second)), "expiry %v before %v", apiKey.ExpiresAt, before)
+		assert.False(t, apiKey.ExpiresAt.After(after), "expiry %v after %v", apiKey.ExpiresAt, after)
+	}
+	d.assertExpectations(t)
+}
+
+// TestAPIKeyService_Generate_ExpiryCap: an expiry later than one year from
+// now is refused before any write; one just inside the year is accepted
+// (#532).
+func TestAPIKeyService_Generate_ExpiryCap(t *testing.T) {
+	t.Run("one minute past the cap is refused", func(t *testing.T) {
+		keys := &mocks.APIKeyRepository{}
+		users := &mocks.UserRepository{}
+		tm := &mocks.TransactionManager{}
+		svc := NewAPIKeyService(keys, users, tm, "test-api-key-secret")
+
+		tooLate := models.APIKeyExpiryCap(time.Now()).Add(time.Minute)
+		key, apiKey, err := svc.Generate(1, "Too long", &tooLate)
+
+		assert.ErrorIs(t, err, ErrAPIKeyExpiryTooLate)
+		assert.Empty(t, key)
+		assert.Nil(t, apiKey)
+		tm.AssertNotCalled(t, "WithTransactionAndRetry", mock.Anything, mock.Anything, mock.Anything)
+		keys.AssertNotCalled(t, "Create", mock.Anything)
+		users.AssertNotCalled(t, "GetByID", mock.Anything)
+	})
+
+	t.Run("one minute inside the cap is accepted", func(t *testing.T) {
+		d := newAPIKeyGenerateDeps(t, apiKeyTestOwner())
+		inside := models.APIKeyExpiryCap(time.Now()).Add(-time.Minute)
+		d.keys.On("Create", mock.MatchedBy(func(k *models.APIKey) bool {
+			return k.ExpiresAt != nil && k.ExpiresAt.Equal(inside)
+		})).Return(nil).Run(func(mock.Arguments) {
+			d.calls = append(d.calls, "api_keys.Create")
+		})
+
+		_, apiKey, err := d.svc.Generate(1, "Almost a year", &inside)
+
+		assert.NoError(t, err)
+		assert.True(t, apiKey.ExpiresAt.Equal(inside))
+		d.assertExpectations(t)
+	})
+}
+
+// TestAPIKeyService_Generate_CustomerOwner: an owner that is a customer
+// account when read under the owner lock is refused, and nothing is inserted
+// (#532).
+func TestAPIKeyService_Generate_CustomerOwner(t *testing.T) {
+	owner := apiKeyTestOwner()
+	owner.Role = models.RoleCustomer
+	d := newAPIKeyGenerateDeps(t, owner)
+
+	key, apiKey, err := d.svc.Generate(owner.ID, "Customer key", nil)
+
+	assert.ErrorIs(t, err, ErrAPIKeyCustomerAccount)
+	assert.False(t, errors.Is(err, ErrAccountUnavailable))
+	assert.Empty(t, key)
+	assert.Nil(t, apiKey)
+	d.keys.AssertNotCalled(t, "Create", mock.Anything)
+	d.tm.AssertExpectations(t)
+	d.users.AssertExpectations(t)
+	assert.Equal(t, []string{"users.WithTx", "users.GetByID"}, d.calls, "refused after the owner lock, before the insert")
+}

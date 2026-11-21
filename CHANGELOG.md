@@ -1086,6 +1086,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while a handover to another active account still passes. A failed revocation rolls the whole
   patch back.
 
+- **API keys expire after at most one year, customer accounts hold none, and creating a key needs
+  a recent sign-in (#532).** `POST /api-keys` without `expires_at` gives the key an expiry one year
+  from now; an `expires_at` later than one year from now is 400 `expires_at must be at most one year
+  from now`. A key stored without an expiry counts as expiring one year after its `created_at`.
+  Migration `20261129120003_api_key_lifetime`, and the same step at every startup on every driver,
+  gives every existing key without an expiry, or with a later one, an expiry one year from the
+  upgrade (earlier expiries are unchanged) and revokes every key of a customer account; its down
+  half changes nothing. Customer accounts cannot create keys (403 `FORBIDDEN` "Customer accounts
+  cannot hold API keys", also when the role changes while the key is issued), and a key owned by a
+  customer account is refused at authentication with the sign-in audit reason
+  `customer_login_role`. Creating a key needs a sign-in (password or single sign-on) within the
+  last 15 minutes: access tokens from a sign-in carry a new `auth_time` claim (the sign-in time),
+  tokens from `POST /auth/refresh` carry none, and a missing or older sign-in time is 403
+  `REAUTHENTICATION_REQUIRED` "Sign in again to create an API key: creating a key needs a sign-in
+  within the last 15 minutes", before the body is read. Settings > API Keys offers at most one year
+  ahead, says that an empty expiry means one year, and shows the sign-in-again message in the create
+  dialog. Renaming, listing and revoking keys are unchanged; no schema, route or setting is added.
+
 - **A password change, a password reset and a deactivation end every credential of the account in
   one step (#526).** `POST /auth/change-password`, `POST /auth/password-reset/confirm`, an
   administrator's deactivation (`POST /users/{id}/deactivate`, `PUT /users/{id}` with `is_active`

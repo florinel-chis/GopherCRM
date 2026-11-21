@@ -42,6 +42,8 @@ def check(output, root, *, migrations_only=False):
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAdminOnlyPermissionsMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyRevokedAtMigrationFiles'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyRevokedAtMigration'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyLifetimeMigrationFiles'),
+        ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestAPIKeyLifetimeMigration'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityAllowList'),
         ('github.com/florinel-chis/gophercrm/cmd/migrate', 'TestSchemaParityMigration'),
     }
@@ -67,6 +69,8 @@ def check(output, root, *, migrations_only=False):
             'TestSystemRoleSeedMySQL',
             'TestAdminOnlyPermissionStripSQLite',
             'TestAdminOnlyPermissionStripMySQL',
+            'TestAPIKeyLifetimeStepSQLite',
+            'TestAPIKeyLifetimeStepMySQL',
         ))
     else:
         for path in (root / 'internal/integration').glob('*_test.go'):

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -32,8 +31,8 @@ var apiKeyRevokedAtColumns = []string{"revoked_at"}
 // TestAPIKeyRevokedAtMigrationFiles needs no database: the pair exists with
 // its headers, the up half adds exactly revoked_at behind an
 // INFORMATION_SCHEMA probe and writes no row, the down half drops only it,
-// the model declares the column without a type override, and it is the
-// newest migration of the directory, which latestMigrationVersion names.
+// the model declares the column without a type override, and a newer
+// migration follows it.
 func TestAPIKeyRevokedAtMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, apiKeyRevokedAtMigrationName+".up.sql"))
@@ -77,21 +76,9 @@ func TestAPIKeyRevokedAtMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "", tag)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestAdminOnlyPermissionsMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, apiKeyRevokedAtMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, apiKeyRevokedAtVersion, version)
-	assert.Equal(t, apiKeyRevokedAtVersion, latestMigrationVersion)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestAPIKeyLifetimeMigrationFiles (#532).
+	assert.Less(t, apiKeyRevokedAtVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, apiKeyRevokedAtPreviousVersion+1, apiKeyRevokedAtVersion)
 }
 

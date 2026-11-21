@@ -148,7 +148,7 @@ blocked until the page is built.
   2. Submit and inspect the created key in the list.
 - **Expected:** `POST /api-keys` with `expires_at` as an RFC3339 timestamp (for example
   `2026-12-31T23:59:59Z`) returns **201** and the stored record carries that `expires_at`. Omitting
-  the field leaves `expires_at` null and the key never expires. Expiry cannot be lifted afterwards:
+  the field gives `expires_at` one year from now (#532). Expiry cannot be lifted afterwards:
   `PUT /api-keys/{id}` only accepts `name` and `is_active`.
 - **Automation:** blocked — no create form; covered by
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_WithFutureExpiresAt` and
@@ -162,7 +162,8 @@ blocked until the page is built.
   1. Submit the generate form with `expires_at` set to a timestamp in the past.
   2. Repeat with a non-RFC3339 string such as `31-12-2026`.
 - **Expected:** Both are **400** with distinct messages from `APIKeyHandler.Create`: `expires_at must
-  be in the future` and `expires_at must be an RFC3339 timestamp`. No key is minted in either case —
+  be in the future` and `expires_at must be an RFC3339 timestamp`. An expiry more than one year ahead
+  is **400** `expires_at must be at most one year from now` (#532). No key is minted in either case —
   the handler deliberately refuses to issue a credential that could never authenticate.
 - **Automation:** blocked — no create form; covered by
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_PastExpiresAt` /

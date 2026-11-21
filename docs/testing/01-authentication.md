@@ -1254,8 +1254,9 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
   account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
   `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`; `api_key`
-  `key_invalid`, `key_revoked`, `key_expired`, `account_inactive`, `account_erased` (the
-  account's `user_id` when the key was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
+  `key_invalid`, `key_revoked`, `key_expired`, `account_inactive`, `account_erased`,
+  `customer_login_role` (a key of a customer account, #532) (the account's `user_id` when the key
+  was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
   bad Bearer token adds no row. Every row carries the request id and the client's `/24`; the
   request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
   `audit_id`.

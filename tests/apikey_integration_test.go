@@ -76,7 +76,7 @@ func (suite *APIKeyIntegrationTestSuite) SetupSuite() {
 		Email:     "testuser@example.com",
 		FirstName: "Test",
 		LastName:  "User",
-		Role:      models.RoleCustomer,
+		Role:      models.RoleSales,
 	}
 	err = suite.userService.Register(suite.testUser, "password123")
 	suite.NoError(err)
@@ -255,7 +255,7 @@ func (suite *APIKeyIntegrationTestSuite) TestRevokeAPIKey() {
 		Email:     "other@example.com",
 		FirstName: "Other",
 		LastName:  "User",
-		Role:      models.RoleCustomer,
+		Role:      models.RoleSales,
 	}
 	err = suite.userService.Register(otherUser, "password123")
 	suite.NoError(err)
@@ -366,6 +366,20 @@ func (suite *APIKeyIntegrationTestSuite) TestAPIKeySessionOnlyRules() {
 		w = send(http.MethodPost, "/api/v1/api-keys", `{"name":"second key"}`, "Bearer "+suite.authToken)
 		assert.Equal(suite.T(), http.StatusCreated, w.Code, "a signed-in session still creates keys")
 		assert.Equal(suite.T(), before+1, count())
+	})
+
+	suite.Run("a customer account cannot create a key", func() {
+		customer := &models.User{Email: "session-rule-customer@example.com", FirstName: "Cora", LastName: "Customer",
+			Role: models.RoleCustomer}
+		suite.Require().NoError(suite.userService.Register(customer, "password123"))
+		token, err := suite.authService.GenerateJWT(customer)
+		suite.Require().NoError(err)
+		before := count()
+		w := send(http.MethodPost, "/api/v1/api-keys", `{"name":"customer key"}`, "Bearer "+token)
+		assert.Equal(suite.T(), http.StatusForbidden, w.Code)
+		assert.Equal(suite.T(), "FORBIDDEN", errorCode(w))
+		assert.Contains(suite.T(), w.Body.String(), "Customer accounts cannot hold API keys")
+		assert.Equal(suite.T(), before, count(), "nothing is written")
 	})
 
 	suite.Run("switch on with an API key is forbidden", func() {
@@ -507,7 +521,7 @@ func (suite *APIKeyIntegrationTestSuite) TestGetAPIKey() {
 		Email:     "get-stranger@example.com",
 		FirstName: "Get",
 		LastName:  "Stranger",
-		Role:      models.RoleCustomer,
+		Role:      models.RoleSales,
 	}
 	suite.NoError(suite.userService.Register(stranger, "password123"))
 	_, strangerKey, err := suite.apiKeyService.Generate(stranger.ID, "Stranger Key", nil)
@@ -560,7 +574,7 @@ func (suite *APIKeyIntegrationTestSuite) TestUpdateAPIKey() {
 		Email:     "update-stranger@example.com",
 		FirstName: "Update",
 		LastName:  "Stranger",
-		Role:      models.RoleCustomer,
+		Role:      models.RoleSales,
 	}
 	suite.NoError(suite.userService.Register(stranger, "password123"))
 	_, strangerKey, err := suite.apiKeyService.Generate(stranger.ID, "Stranger Key 2", nil)

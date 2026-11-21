@@ -2667,7 +2667,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Any authenticated role, from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey \u003ckey\u003e`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.\nexpires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future; omitted or empty, the key never expires. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.",
+                "description": "Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey \u003ckey\u003e`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.\nexpires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future and at most one year from now; omitted or empty, the key expires one year from now. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2709,7 +2709,7 @@
                         }
                     },
                     "400": {
-                        "description": "VALIDATION_ERROR: name missing or not 3 to 100 characters (details maps Name to a message). BAD_REQUEST: malformed JSON (Invalid request format), expires_at must be an RFC3339 timestamp, or expires_at must be in the future",
+                        "description": "VALIDATION_ERROR: name missing or not 3 to 100 characters (details maps Name to a message). BAD_REQUEST: malformed JSON (Invalid request format), expires_at must be an RFC3339 timestamp, expires_at must be in the future, or expires_at must be at most one year from now",
                         "schema": {
                             "allOf": [
                                 {
@@ -2745,7 +2745,7 @@
                         }
                     },
                     "403": {
-                        "description": "FORBIDDEN: API keys can be created only from a signed-in session (the request was authenticated with an API key); nothing is written",
+                        "description": "FORBIDDEN: API keys can be created only from a signed-in session (the request was authenticated with an API key), or Customer accounts cannot hold API keys. REAUTHENTICATION_REQUIRED: the session's sign-in is more than 15 minutes old, or the token carries no sign-in time (a token from POST /auth/refresh). The body is not read first, and nothing is written",
                         "schema": {
                             "allOf": [
                                 {
@@ -30685,7 +30685,7 @@
                     "readOnly": true
                 },
                 "expires_at": {
-                    "description": "Expiry time (RFC 3339); requests with the key are rejected from this\ninstant on. Absent when the key never expires. Set only at creation.",
+                    "description": "Expiry time (RFC 3339); requests with the key are rejected from this\ninstant on. Set at creation: one year by default and at most one year\nahead; a key without one (older rows) expires one year after\ncreated_at.",
                     "type": "string",
                     "example": "2026-12-31T23:59:59Z"
                 },
@@ -35058,7 +35058,7 @@
                     "example": "Jx3k9QeV0m2b5sT8wY1zA4cD7fG0hJ3kL6nP9qR2tU5"
                 },
                 "token": {
-                    "description": "Access token: an HS256-signed JWT (claims user_id, email, role,\ntoken_version, exp) valid for JWT_EXPIRY_HOURS (24 hours by default), or\nuntil a logout, a password change or a password reset of its account ends\nit earlier. Send it as `Authorization: Bearer \u003ctoken\u003e`.",
+                    "description": "Access token: an HS256-signed JWT (claims user_id, email, role,\ntoken_version, exp, and auth_time, the sign-in time in Unix seconds:\npresent on tokens from a sign-in, absent on tokens from POST\n/auth/refresh) valid for JWT_EXPIRY_HOURS (24 hours by default), or\nuntil a logout, a password change or a password reset of its account ends\nit earlier. Send it as `Authorization: Bearer \u003ctoken\u003e`.",
                     "type": "string",
                     "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0Mn0.c2lnbmF0dXJl"
                 },
@@ -35739,7 +35739,7 @@
             ],
             "properties": {
                 "expires_at": {
-                    "description": "Optional expiry as an RFC 3339 timestamp, which must lie in the future.\nOmitted or empty: the key never expires.",
+                    "description": "Optional expiry as an RFC 3339 timestamp, which must lie in the future\nand at most one year from now. Omitted or empty: the key expires one\nyear from now.",
                     "type": "string",
                     "format": "date-time",
                     "example": "2026-12-31T23:59:59Z"

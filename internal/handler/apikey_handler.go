@@ -20,8 +20,22 @@ func sessionCaller(c *gin.Context) bool {
 	return c.GetString(service.AuthMethodContextKey) == service.AuthMethodBearer
 }
 
+// apiKeyCreateSignInWindow is how recent the sign-in of the session that
+// creates an API key must be (#532). A sign-in exactly this old is accepted.
+const apiKeyCreateSignInWindow = 15 * time.Minute
+
 type APIKeyHandler struct {
 	apiKeyService service.APIKeyService
+	// now is an instance-local clock for the sign-in window; nil uses
+	// time.Now.
+	now func() time.Time
+}
+
+func (h *APIKeyHandler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
 }
 
 func NewAPIKeyHandler(apiKeyService service.APIKeyService) *APIKeyHandler {
@@ -32,13 +46,14 @@ func NewAPIKeyHandler(apiKeyService service.APIKeyService) *APIKeyHandler {
 type CreateAPIKeyRequest struct {
 	// Label for the key, 3 to 100 characters. Names need not be unique.
 	Name string `json:"name" binding:"required,min=3,max=100" minLength:"3" maxLength:"100" example:"CI pipeline"`
-	// ExpiresAt is an optional RFC3339 timestamp. Left empty the key never
-	// expires. It is taken as a string rather than a time.Time so a malformed
-	// value produces a plain 400 with a message naming the field, instead of the
-	// opaque unmarshal error the time codec would raise.
+	// ExpiresAt is an optional RFC3339 timestamp. Left empty the key expires
+	// in one year. It is taken as a string rather than a time.Time so a
+	// malformed value produces a plain 400 with a message naming the field,
+	// instead of the opaque unmarshal error the time codec would raise.
 
-	// Optional expiry as an RFC 3339 timestamp, which must lie in the future.
-	// Omitted or empty: the key never expires.
+	// Optional expiry as an RFC 3339 timestamp, which must lie in the future
+	// and at most one year from now. Omitted or empty: the key expires one
+	// year from now.
 	ExpiresAt string `json:"expires_at" format:"date-time" example:"2026-12-31T23:59:59Z"`
 }
 
@@ -66,8 +81,8 @@ type UpdateAPIKeyRequest struct {
 
 // Create godoc
 // @Summary Create an API key
-// @Description Any authenticated role, from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
-// @Description expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future; omitted or empty, the key never expires. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
+// @Description Staff accounts only (admin, sales, support or a custom role), from a signed-in session (a bearer token from a password or single sign-on sign-in) only: a request authenticated with an API key is 403, and so is a customer account. The session's sign-in must be at most 15 minutes old: a bearer token from POST /auth/refresh carries no sign-in time, so after a refresh the user signs in again to create a key. The key always belongs to the caller. The plaintext key (gcrm_ followed by 64 hexadecimal characters) is returned only in this response: only an HMAC of it is stored, so it can never be shown again. Use it as `Authorization: ApiKey <key>`; the gcrm_ prefix may be sent or left off. The key acts with the owner's role and stops working when it is revoked, when it expires, or when the owner is deactivated or erased.
+// @Description expires_at is optional: an RFC 3339 timestamp (for example 2026-12-31T23:59:59Z) that must lie in the future and at most one year from now; omitted or empty, the key expires one year from now. Expiry cannot be changed afterwards. There is no limit on the number of keys per user.
 // @Tags api-keys
 // @Accept json
 // @Produce json
@@ -75,9 +90,9 @@ type UpdateAPIKeyRequest struct {
 // @Security ApiKeyAuth
 // @Param request body CreateAPIKeyRequest true "Key name and optional expiry"
 // @Success 201 {object} utils.APIResponse{data=CreateAPIKeyResponse} "Key created; key holds the plaintext, shown only this once"
-// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: name missing or not 3 to 100 characters (details maps Name to a message). BAD_REQUEST: malformed JSON (Invalid request format), expires_at must be an RFC3339 timestamp, or expires_at must be in the future"
+// @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR: name missing or not 3 to 100 characters (details maps Name to a message). BAD_REQUEST: malformed JSON (Invalid request format), expires_at must be an RFC3339 timestamp, expires_at must be in the future, or expires_at must be at most one year from now"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: missing or malformed Authorization header, or an invalid, expired or revoked credential, or a deactivated or erased account"
-// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: API keys can be created only from a signed-in session (the request was authenticated with an API key); nothing is written"
+// @Failure 403 {object} utils.APIResponse{error=utils.APIError} "FORBIDDEN: API keys can be created only from a signed-in session (the request was authenticated with an API key), or Customer accounts cannot hold API keys. REAUTHENTICATION_REQUIRED: the session's sign-in is more than 15 minutes old, or the token carries no sign-in time (a token from POST /auth/refresh). The body is not read first, and nothing is written"
 // @Failure 429 {object} utils.APIResponse{error=utils.APIError} "TOO_MANY_REQUESTS: authenticated tier exceeded (120 per minute, burst 30, per client IP); details.retry_after is 60s and no Retry-After header is sent"
 // @Failure 500 {object} utils.APIResponse{error=utils.APIError} "INTERNAL_ERROR: the key could not be generated or stored"
 // @Router /api-keys [post]
@@ -88,6 +103,23 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 		logger.WithField("user_id", c.GetUint("user_id")).WithField("error_code", "session_required").
 			Warn("API key not created: not a signed-in session")
 		utils.RespondForbidden(c, "API keys can be created only from a signed-in session")
+		return
+	}
+
+	if customerAccount(c) {
+		logger.WithField("user_id", c.GetUint("user_id")).WithField("error_code", "customer_account").
+			Warn("API key not created: customer account")
+		utils.RespondForbidden(c, "Customer accounts cannot hold API keys")
+		return
+	}
+
+	signedInAt, ok := c.Get(service.SignedInAtContextKey)
+	signInTime, isTime := signedInAt.(time.Time)
+	if !ok || !isTime || h.clock().Sub(signInTime) > apiKeyCreateSignInWindow {
+		logger.WithField("user_id", c.GetUint("user_id")).WithField("error_code", "reauthentication_required").
+			Warn("API key not created: no recent sign-in")
+		utils.RespondError(c, http.StatusForbidden, "REAUTHENTICATION_REQUIRED",
+			"Sign in again to create an API key: creating a key needs a sign-in within the last 15 minutes", nil)
 		return
 	}
 
@@ -124,6 +156,18 @@ func (h *APIKeyHandler) Create(c *gin.Context) {
 			logger.WithField("user_id", userID).WithField("error_code", "account_unavailable").
 				Warn("API key not issued: owner unavailable")
 			utils.RespondUnauthorized(c, "Unauthorized")
+			return
+		}
+		if errors.Is(err, service.ErrAPIKeyExpiryTooLate) {
+			utils.RespondBadRequest(c, "expires_at must be at most one year from now")
+			return
+		}
+		// The owner became a customer account after the request
+		// authenticated: refused under the owner lock (#532).
+		if errors.Is(err, service.ErrAPIKeyCustomerAccount) {
+			logger.WithField("user_id", userID).WithField("error_code", "customer_account").
+				Warn("API key not issued: customer account")
+			utils.RespondForbidden(c, "Customer accounts cannot hold API keys")
 			return
 		}
 		logger.WithError(utils.LogError(err)).Error("Failed to generate API key")

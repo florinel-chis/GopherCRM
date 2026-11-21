@@ -200,6 +200,8 @@ class ReleaseTests(unittest.TestCase):
                    'TestAdminOnlyPermissionsMigration',
                    'TestAPIKeyRevokedAtMigrationFiles',
                    'TestAPIKeyRevokedAtMigration',
+                   'TestAPIKeyLifetimeMigrationFiles',
+                   'TestAPIKeyLifetimeMigration',
                    'TestSchemaParityAllowList',
                    'TestSchemaParityMigration']]
         events.extend({'Action': 'pass', 'Package': 'github.com/florinel-chis/gophercrm/' + package}

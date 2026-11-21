@@ -43,6 +43,15 @@ const revokedKey: APIKey = {
   created_at: '2025-11-01T09:00:00Z',
 };
 
+/** A local date `days` from today, as the date input takes it (`yyyy-MM-dd`). */
+const localDate = (days: number, years = 0): string => {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() + years);
+  date.setDate(date.getDate() + days);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
 const listing = (keys: APIKey[]) => ({
   data: keys,
   total: keys.length,
@@ -137,15 +146,64 @@ describe('APIKeys', () => {
 
     await user.click(screen.getByRole('button', { name: /create api key/i }));
     await user.type(await screen.findByLabelText(/^name/i), 'Expiring key');
-    await user.type(screen.getByLabelText(/expires on/i), '2027-12-31');
+    const chosen = localDate(30);
+    await user.type(screen.getByLabelText(/expires on/i), chosen);
     await user.click(screen.getByRole('button', { name: /^create$/i }));
 
     await waitFor(() => {
       expect(apiKeysApi.createAPIKey).toHaveBeenCalledWith({
         name: 'Expiring key',
-        expires_at: new Date('2027-12-31T23:59:59').toISOString(),
+        expires_at: new Date(`${chosen}T23:59:59`).toISOString(),
       });
     });
+  });
+
+  it('explains the one-year limit and offers at most one year from today', async () => {
+    const user = userEvent.setup();
+    render(<APIKeys />);
+    await screen.findByText('CI pipeline');
+
+    await user.click(screen.getByRole('button', { name: /create api key/i }));
+    const expiry = await screen.findByLabelText(/expires on/i);
+    expect(
+      screen.getByText('Optional. Leave empty for a key that expires in one year; at most one year from today.')
+    ).toBeInTheDocument();
+    expect(expiry).toHaveAttribute('max', localDate(-1, 1));
+  });
+
+  it('refuses an expiry later than one year from today without sending a request', async () => {
+    const user = userEvent.setup();
+    render(<APIKeys />);
+    await screen.findByText('CI pipeline');
+
+    await user.click(screen.getByRole('button', { name: /create api key/i }));
+    await user.type(await screen.findByLabelText(/^name/i), 'Long key');
+    await user.type(screen.getByLabelText(/expires on/i), localDate(0, 1));
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    expect(await screen.findByText('Expiry can be at most one year from today')).toBeInTheDocument();
+    expect(apiKeysApi.createAPIKey).not.toHaveBeenCalled();
+  });
+
+  it('shows the sign-in-again refusal in the open create dialog', async () => {
+    const user = userEvent.setup();
+    const message =
+      'Sign in again to create an API key: creating a key needs a sign-in within the last 15 minutes';
+    vi.mocked(apiKeysApi.createAPIKey).mockRejectedValue({
+      response: { status: 403, data: { code: 'REAUTHENTICATION_REQUIRED', message } },
+    });
+
+    render(<APIKeys />);
+    await screen.findByText('CI pipeline');
+
+    await user.click(screen.getByRole('button', { name: /create api key/i }));
+    await user.type(await screen.findByLabelText(/^name/i), 'Stale session key');
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /create api key/i });
+    expect(await within(dialog).findByText(message)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/^name/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('generated-api-key')).not.toBeInTheDocument();
   });
 
   it('revokes a key after confirmation', async () => {

@@ -33,12 +33,13 @@ func Auth(authService service.AuthService, opts ...AuthOption) gin.HandlerFunc {
 		var user *models.User
 		var err error
 		var method string
+		var bearerToken string
 
 		// Check for Bearer token
 		authHeader := c.GetHeader("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
-			token := strings.TrimPrefix(authHeader, "Bearer ")
-			user, err = authService.ValidateToken(token)
+			bearerToken = strings.TrimPrefix(authHeader, "Bearer ")
+			user, err = authService.ValidateToken(bearerToken)
 			method = service.AuthMethodBearer
 		} else if strings.HasPrefix(authHeader, "ApiKey ") {
 			// Check for API Key
@@ -70,6 +71,13 @@ func Auth(authService service.AuthService, opts ...AuthOption) gin.HandlerFunc {
 		// request authenticated: an API-key caller must never be handed a
 		// browser session (refresh token or JWT).
 		c.Set(service.AuthMethodContextKey, method)
+		// The sign-in time of a Bearer token, for the routes that need a
+		// recent sign-in (#532). A token from a refresh carries none.
+		if method == service.AuthMethodBearer {
+			if signedInAt, ok := authService.SignedInAt(bearerToken); ok {
+				c.Set(service.SignedInAtContextKey, signedInAt)
+			}
+		}
 		// The effective permissions, resolved on every request, for Bearer
 		// and ApiKey alike: a role change applies to the very next request.
 		publishPermissions(c, permissions.ForUser(user))

@@ -170,6 +170,9 @@ func (a webhookAuth) ValidateToken(token string) (*models.User, error) { return 
 
 func (a webhookAuth) ValidateAPIKey(key string) (*models.User, error) { return a.userFor(key) }
 
+// SignedInAt reports no sign-in time: the webhook routes do not read it.
+func (webhookAuth) SignedInAt(string) (time.Time, bool) { return time.Time{}, false }
+
 func newWebhookRouter(t *testing.T, fake *fakeWebhookService) *gin.Engine {
 	t.Helper()
 	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))

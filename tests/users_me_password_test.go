@@ -234,6 +234,11 @@ func TestUpdateMePasswordRefusedWithoutCurrentPassword(t *testing.T) {
 		for _, role := range []models.UserRole{
 			models.RoleAdmin, models.RoleSales, models.RoleSupport, models.RoleCustomer,
 		} {
+			if credential == "api_key" && role == models.RoleCustomer {
+				// Customer accounts cannot hold API keys (#532): the api_key
+				// credential runs for the staff roles only.
+				continue
+			}
 			t.Run(credential+"/"+string(role), func(t *testing.T) {
 				user := stack.register(t, "missing-"+strings.ReplaceAll(credential, "_", "-")+"-"+string(role), role)
 				access, refresh := stack.login(t, user.Email, usersMeOldPassword)

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
@@ -55,6 +56,8 @@ func TestAPIKeyCreateOwnerUnavailableMapping(t *testing.T) {
 				c.Set("request_id", "test-request-id")
 				c.Set("user_id", uint(7))
 				c.Set(service.AuthMethodContextKey, service.AuthMethodBearer)
+				// A fresh sign-in, so the request reaches the service (#532).
+				c.Set(service.SignedInAtContextKey, time.Now())
 				c.Next()
 			})
 			router.POST("/api-keys", NewAPIKeyHandler(svc).Create)

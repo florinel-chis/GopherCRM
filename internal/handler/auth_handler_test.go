@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -58,6 +59,18 @@ func (m *MockAuthService) ValidateAPIKey(key string) (*models.User, error) {
 func (m *MockAuthService) GenerateJWT(user *models.User) (string, error) {
 	args := m.Called(user)
 	return args.String(0), args.Error(1)
+}
+
+// SignedInAt returns the expectation's time and flag when one is set up, and
+// (zero, false) otherwise, so tests that do not care need no expectation.
+func (m *MockAuthService) SignedInAt(token string) (time.Time, bool) {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == "SignedInAt" {
+			args := m.Called(token)
+			return args.Get(0).(time.Time), args.Bool(1)
+		}
+	}
+	return time.Time{}, false
 }
 
 func (m *MockAuthService) GenerateTokens(user *models.User) (*service.AuthTokens, error) {

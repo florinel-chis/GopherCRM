@@ -44,6 +44,8 @@ func TestHandlerLoggingPrivacy_APIKeyPayload(t *testing.T) {
 				c.Set("request_id", "handler-privacy-request")
 				c.Set("user_id", uint(12))
 				c.Set(service.AuthMethodContextKey, service.AuthMethodBearer)
+				// A fresh sign-in, so the request reaches the service (#532).
+				c.Set(service.SignedInAtContextKey, time.Now())
 				c.Next()
 			})
 			router.POST("/api-keys", NewAPIKeyHandler(svc).Create)
