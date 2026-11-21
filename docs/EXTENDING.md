@@ -133,8 +133,9 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 - A unique column wraps the driver error into a sentinel through `duplicate_key.go`. GORM's
   `ErrDuplicatedKey` never fires here (DEVELOPMENT.md, [Gotchas](DEVELOPMENT.md#gotchas), "Do not rely on
   `gorm.ErrDuplicatedKey`").
-- Tests: `internal/repository/<entity>_repository_test.go` on SQLite, covering filters, sort,
-  rejection of an unknown sort column and soft-delete hiding (copy
+- Tests: `internal/repository/<entity>_repository_test.go` on SQLite, opened with
+  `testsupport.OpenSQLite`, covering filters, sort, rejection of an unknown sort column and
+  soft-delete hiding (copy
   `TestProductRepository_ListRejectsUnknownSortColumns`). If the entity has a paginated list, add
   it to the fixtures of `TestPaginationDeterminism{SQLite,MySQL}`
   (`internal/repository/pagination_determinism_test.go`).

@@ -1,23 +1,17 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // #218: ListByFilter and CountByFilter share whereTicketListFilter. These roots
@@ -31,55 +25,19 @@ import (
 // without the variable and fails when it is unreachable.
 
 func TestTicketListFilterRepositorySQLite(t *testing.T) {
-	runTicketListFilterRepository(t, openTicketListFilterDB(t, false))
+	runTicketListFilterRepository(t, testsupport.Open(t, testsupport.SQLite, "ticket_list_filter", ticketListFilterDB))
 }
 
 func TestTicketListFilterRepositoryMySQL(t *testing.T) {
-	runTicketListFilterRepository(t, openTicketListFilterDB(t, true))
+	runTicketListFilterRepository(t, testsupport.Open(t, testsupport.MySQL, "ticket_list_filter", ticketListFilterDB))
 }
 
-func openTicketListFilterDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "ticket_list_filter.db") + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_ticket_list_filter_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}, &models.Ticket{}, &models.TicketComment{}))
-	return db
-}
+// ticketListFilterDB is a file-backed SQLite database with one connection, or a uniquely
+// named disposable schema on the TEST_MYSQL_DSN server.
+var ticketListFilterDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("ticket_list_filter.db", testsupport.BusyTimeout)),
+	testsupport.Models(&models.User{}, &models.Company{}, &models.Customer{}, &models.Ticket{}, &models.TicketComment{}),
+)
 
 // filterFixture is the in-memory copy of one seeded ticket.
 type filterFixture struct {

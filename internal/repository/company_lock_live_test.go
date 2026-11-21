@@ -12,11 +12,8 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,11 +22,9 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -38,53 +33,19 @@ const lockOrderRepoTimeout = 20 * time.Second
 
 var lockOrderRepoSeq atomic.Uint64
 
-// openLockOrderRepoDB opens a file-backed SQLite database with one pooled
-// connection, or a disposable MySQL schema with maxConns connections, and
-// migrates the tables of the lock order.
-func openLockOrderRepoDB(t *testing.T, useMySQL bool, maxConns int) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard, DisableForeignKeyConstraintWhenMigrating: true}
-	var db *gorm.DB
-	if !useMySQL {
-		dsn := filepath.Join(t.TempDir(), fmt.Sprintf("lock_order_%d.db", lockOrderRepoSeq.Add(1))) +
-			"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
-		var err error
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 60*time.Second, 60*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_lock_order_%d_%d", time.Now().UnixNano(), lockOrderRepoSeq.Add(1))
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(maxConns)
-		sqlDB.SetMaxIdleConns(maxConns)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}))
-	return db
+// lockOrderRepoDB opens a file-backed SQLite database with one pooled
+// connection, or a disposable MySQL schema, and migrates the tables of the
+// lock order. The MySQL pool size is given per root (lockOrderRepoPool).
+var lockOrderRepoDB = testsupport.Group(
+	testsupport.DisableForeignKeyConstraintWhenMigrating(),
+	testsupport.OnSQLite(testsupport.File("lock_order.db", testsupport.BusyTimeout, testsupport.WAL)),
+	testsupport.OnMySQL(testsupport.Timeouts(60*time.Second, 60*time.Second)),
+	testsupport.Models(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}),
+)
+
+// lockOrderRepoPool gives the MySQL pool n open and n idle connections.
+func lockOrderRepoPool(n int) testsupport.Option {
+	return testsupport.OnMySQL(testsupport.MaxOpenConns(n), testsupport.MaxIdleConns(n))
 }
 
 // lockOrderRecorder captures every statement a session runs.
@@ -190,7 +151,7 @@ func seedLockLiveCompanies(t *testing.T, db *gorm.DB) (live, deleted models.Comp
 }
 
 func TestCompanyRepositoryLockLiveSQLite(t *testing.T) {
-	db := openLockOrderRepoDB(t, false, 1)
+	db := testsupport.Open(t, testsupport.SQLite, "lock_order", lockOrderRepoDB)
 	live, deleted := seedLockLiveCompanies(t, db)
 
 	recorder := newLockOrderRecorder()
@@ -212,7 +173,7 @@ func TestCompanyRepositoryLockLiveSQLite(t *testing.T) {
 
 func TestCompanyRepositoryLockLiveMySQL(t *testing.T) {
 	// One connection per transaction, one for the probe and the setup.
-	db := openLockOrderRepoDB(t, true, 4)
+	db := testsupport.Open(t, testsupport.MySQL, "lock_order", lockOrderRepoDB, lockOrderRepoPool(4))
 	live, deleted := seedLockLiveCompanies(t, db)
 
 	t.Run("captured statement and not-found", func(t *testing.T) {

@@ -1,22 +1,17 @@
 package repository
 
 import (
-	"database/sql"
 	"fmt"
-	"os"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // Regression roots for #110: every paginated list and search over leads,
@@ -44,72 +39,19 @@ const paginationPageSize = 3
 var paginationCreatedAt = time.Date(2026, time.March, 3, 10, 0, 0, 0, time.UTC)
 
 func TestPaginationDeterminismSQLite(t *testing.T) {
-	runPaginationDeterminism(t, openPaginationDB(t, false))
+	runPaginationDeterminism(t, testsupport.Open(t, testsupport.SQLite, "pagination_determinism", testsupport.Models(paginationModels...)))
 }
 
 func TestPaginationDeterminismMySQL(t *testing.T) {
-	runPaginationDeterminism(t, openPaginationDB(t, true))
+	runPaginationDeterminism(t, testsupport.Open(t, testsupport.MySQL, "pagination_determinism", testsupport.Models(paginationModels...)))
 }
 
+// paginationModels go into a private SQLite database, or a uniquely named
+// disposable schema on the TEST_MYSQL_DSN server. The MySQL root skips without
+// the variable and fails when the variable names an unreachable server.
 var paginationModels = []interface{}{
 	&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{},
 	&models.Label{}, &models.Task{}, &models.Ticket{}, &models.TicketComment{},
-}
-
-// openPaginationDB opens a private SQLite database, or a uniquely named
-// disposable schema on the TEST_MYSQL_DSN server. The MySQL root skips without
-// the variable and fails when the variable names an unreachable server.
-func openPaginationDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	return openDisposableDB(t, "pagination_determinism", useMySQL, paginationModels...)
-}
-
-// openDisposableDB opens a private named in-memory SQLite database, or a
-// uniquely named disposable schema on the TEST_MYSQL_DSN server, and
-// AutoMigrates the given models into it.
-func openDisposableDB(t *testing.T, name string, useMySQL bool, migrate ...interface{}) *gorm.DB {
-	t.Helper()
-	if !useMySQL {
-		db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-			Logger: logger.Discard,
-		})
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-		require.NoError(t, db.AutoMigrate(migrate...))
-		return db
-	}
-
-	raw := os.Getenv("TEST_MYSQL_DSN")
-	if raw == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
-	cfg, err := mysqldriver.ParseDSN(raw)
-	require.NoError(t, err)
-	cfg.DBName = ""
-	cfg.ParseTime = true
-	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-	server, err := sql.Open("mysql", cfg.FormatDSN())
-	require.NoError(t, err)
-	schema := fmt.Sprintf("gocrm_%s_%d", name, time.Now().UnixNano())
-	t.Cleanup(func() {
-		_, _ = server.Exec("DROP DATABASE IF EXISTS `" + schema + "`")
-		_ = server.Close()
-	})
-	_, err = server.Exec("CREATE DATABASE `" + schema + "`")
-	require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-	cfg.DBName = schema
-	db, err := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
-	require.NoError(t, db.AutoMigrate(migrate...))
-	return db
 }
 
 // pageSort is one requested ordering. An empty by is "no sort requested".

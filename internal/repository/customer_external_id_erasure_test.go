@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -24,14 +24,12 @@ import (
 // when the server is unreachable.
 
 func TestCustomerExternalIDErasureSQLite(t *testing.T) {
-	runCustomerExternalIDErasure(t, openIdentityErasureDB(t, false))
+	runCustomerExternalIDErasure(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestCustomerExternalIDErasureMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
-	runCustomerExternalIDErasure(t, openIdentityErasureDB(t, true))
+	testsupport.MySQLFromEnv(t)
+	runCustomerExternalIDErasure(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 // externalIDPerson is one person stored as a customer, a lead converted into
@@ -208,7 +206,7 @@ func runCustomerExternalIDErasure(t *testing.T, db *gorm.DB) {
 func TestCustomerExternalIDErasureWithoutTable(t *testing.T) {
 	// Tickets and their comments are in the subset because a login's erasure
 	// redacts the comments it wrote.
-	db := openBusinessTextSubsetDB(t, &models.Ticket{}, &models.TicketComment{})
+	db := testsupport.OpenSQLite(t, businessTextSubsetDB, testsupport.Models(&models.Ticket{}, &models.TicketComment{}))
 	require.False(t, db.Migrator().HasTable(&models.CustomerExternalID{}), "the fixture must not have the table")
 	tag := nextIdentityTag()
 	owner := seedIdentityStaff(t, db, tag, models.RoleSales)

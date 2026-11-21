@@ -9,14 +9,11 @@ package repository
 // roots skip without the variable and fail when it is unreachable.
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"sync"
@@ -25,59 +22,20 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func openAEORunOwnershipDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "aeo_run_ownership.db") +
-			"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_aeo_run_owner_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(12)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.AEORun{}))
-	return db
-}
+// aeoRunOwnershipDB is a file-backed SQLite database with one connection, or a
+// disposable MySQL schema with twelve.
+var aeoRunOwnershipDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("aeo_run_ownership.db", testsupport.BusyTimeout, testsupport.WAL)),
+	testsupport.OnMySQL(testsupport.MaxOpenConns(12)),
+	testsupport.Models(&models.AEORun{}),
+)
 
 // ownedRun builds a run a service would claim.
 func ownedRun(owner string, startedAt time.Time, slot string) *models.AEORun {
@@ -129,43 +87,43 @@ func insertAEORunRow(t *testing.T, db *gorm.DB, status, owner string, startedAt 
 func ownershipNow() time.Time { return time.Now().UTC().Truncate(time.Second) }
 
 func TestAEORunClaimSQLite(t *testing.T) {
-	runAEORunClaim(t, openAEORunOwnershipDB(t, false), false)
+	runAEORunClaim(t, testsupport.Open(t, testsupport.SQLite, "aeo_run_owner", aeoRunOwnershipDB), false)
 }
 
 func TestAEORunClaimMySQL(t *testing.T) {
-	runAEORunClaim(t, openAEORunOwnershipDB(t, true), true)
+	runAEORunClaim(t, testsupport.Open(t, testsupport.MySQL, "aeo_run_owner", aeoRunOwnershipDB), true)
 }
 
 func TestAEORunFinishSQLite(t *testing.T) {
-	runAEORunFinish(t, openAEORunOwnershipDB(t, false))
+	runAEORunFinish(t, testsupport.Open(t, testsupport.SQLite, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 func TestAEORunFinishMySQL(t *testing.T) {
-	runAEORunFinish(t, openAEORunOwnershipDB(t, true))
+	runAEORunFinish(t, testsupport.Open(t, testsupport.MySQL, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 func TestAEORunHeartbeatSQLite(t *testing.T) {
-	runAEORunHeartbeat(t, openAEORunOwnershipDB(t, false))
+	runAEORunHeartbeat(t, testsupport.Open(t, testsupport.SQLite, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 func TestAEORunHeartbeatMySQL(t *testing.T) {
-	runAEORunHeartbeat(t, openAEORunOwnershipDB(t, true))
+	runAEORunHeartbeat(t, testsupport.Open(t, testsupport.MySQL, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 func TestAEORunAbandonedSweepSQLite(t *testing.T) {
-	runAEORunAbandonedSweep(t, openAEORunOwnershipDB(t, false), false)
+	runAEORunAbandonedSweep(t, testsupport.Open(t, testsupport.SQLite, "aeo_run_owner", aeoRunOwnershipDB), false)
 }
 
 func TestAEORunAbandonedSweepMySQL(t *testing.T) {
-	runAEORunAbandonedSweep(t, openAEORunOwnershipDB(t, true), true)
+	runAEORunAbandonedSweep(t, testsupport.Open(t, testsupport.MySQL, "aeo_run_owner", aeoRunOwnershipDB), true)
 }
 
 func TestAEORunClaimContentionSQLite(t *testing.T) {
-	runAEORunClaimContention(t, openAEORunOwnershipDB(t, false))
+	runAEORunClaimContention(t, testsupport.Open(t, testsupport.SQLite, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 func TestAEORunClaimContentionMySQL(t *testing.T) {
-	runAEORunClaimContention(t, openAEORunOwnershipDB(t, true))
+	runAEORunClaimContention(t, testsupport.Open(t, testsupport.MySQL, "aeo_run_owner", aeoRunOwnershipDB))
 }
 
 // AC-3: the claim inserts a running row with its owner, heartbeat_at =

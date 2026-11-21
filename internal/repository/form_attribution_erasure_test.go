@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,9 +27,7 @@ func TestFormAttributionErasedWithLeadSQLite(t *testing.T) {
 }
 
 func TestFormAttributionErasedWithLeadMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runFormAttributionErasedWithLead(t, true)
 }
 
@@ -118,7 +116,7 @@ func attributionColumns(s models.FormSubmission) []string {
 }
 
 func runFormAttributionErasedWithLead(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 
 	t.Run("an erasure that rolls back leaves the attribution", func(t *testing.T) {
 		f := seedAttributionErasure(t, db)

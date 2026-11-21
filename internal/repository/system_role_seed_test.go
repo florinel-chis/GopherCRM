@@ -8,11 +8,10 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // #344 (#259 AC-3): every start on SQLite and MySQL leaves exactly the four
@@ -20,11 +19,11 @@ import (
 // already exist.
 
 func TestSystemRoleSeedSQLite(t *testing.T) {
-	runSystemRoleSeed(t, openRoleDB(t, "system_role_seed", false), false)
+	runSystemRoleSeed(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "system_role_seed", roleDB)), false)
 }
 
 func TestSystemRoleSeedMySQL(t *testing.T) {
-	runSystemRoleSeed(t, openRoleDB(t, "system_role_seed", true), true)
+	runSystemRoleSeed(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "system_role_seed", roleDB)), true)
 }
 
 // systemRoleRow is a system row with the columns a rerun must not change.
@@ -102,7 +101,7 @@ func runSystemRoleSeed(t *testing.T, db *gorm.DB, useMySQL bool) {
 	capture := installRoleSQLCapture(t, db, "system_role_seed")
 	roles := NewRoleRepository(db)
 
-	// The first MigrateDatabase (in openRoleDB) seeded the four rows.
+	// The first MigrateDatabase (in migrateRoleDB) seeded the four rows.
 	seeded := readSystemRoleRows(t, db, useMySQL)
 	assertSeededSystemRoles(t, seeded)
 
@@ -179,16 +178,10 @@ func runSystemRoleSeed(t *testing.T, db *gorm.DB, useMySQL bool) {
 
 	t.Run("two replicas booting at once end with the four rows", func(t *testing.T) {
 		require.NoError(t, db.Exec("DELETE FROM roles WHERE system_key IS NOT NULL").Error)
-		mysqlDialector, ok := db.Dialector.(*gormmysql.Dialector)
-		require.True(t, ok)
+		schema := db.Migrator().CurrentDatabase()
 		pools := make([]*gorm.DB, 2)
 		for i := range pools {
-			pool, err := gorm.Open(gormmysql.Open(mysqlDialector.DSN), &gorm.Config{Logger: logger.Discard})
-			require.NoError(t, err)
-			sqlDB, err := pool.DB()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = sqlDB.Close() })
-			pools[i] = pool
+			pools[i] = testsupport.OpenMySQLSchema(t, schema)
 		}
 
 		start := make(chan struct{})

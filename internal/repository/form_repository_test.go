@@ -6,36 +6,22 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-// setupFormTestDB gives each test its own in-memory schema, with the pool
-// pinned to a single connection: with the ":memory:" DSN a second pooled
-// connection would open a second, empty database.
-func setupFormTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-
-	require.NoError(t, db.AutoMigrate(
+// formTestDB gives each test its own in-memory database, foreign keys off,
+// with the pool pinned to a single connection.
+var formTestDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.Models(
 		&models.Form{},
 		&models.FormSubmission{},
 		&models.FormConfirmationToken{},
-	))
-	return db
-}
+	),
+)
 
 func makeForm(t *testing.T, db *gorm.DB, name, publicID string, status models.FormStatus) *models.Form {
 	t.Helper()
@@ -76,7 +62,7 @@ func makeConfirmationToken(t *testing.T, db *gorm.DB, submissionID uint, hash st
 }
 
 func TestFormRepositoryCRUDRoundTrip(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	form := &models.Form{
@@ -117,14 +103,14 @@ func TestFormRepositoryCRUDRoundTrip(t *testing.T) {
 }
 
 func TestFormRepositoryDeleteMissingIsNotFound(t *testing.T) {
-	repo := NewFormRepository(setupFormTestDB(t))
+	repo := NewFormRepository(testsupport.OpenSQLite(t, formTestDB))
 	assert.ErrorIs(t, repo.Delete(4242), gorm.ErrRecordNotFound)
 }
 
 // A form is found by its public id whatever its status: hiding an unpublished
 // form is the service's decision, not the repository's.
 func TestFormRepositoryGetByPublicID(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	makeForm(t, db, "Draft form", "pub-draft", models.FormStatusDraft)
 
@@ -137,7 +123,7 @@ func TestFormRepositoryGetByPublicID(t *testing.T) {
 }
 
 func TestFormRepositoryListFiltersAndCounts(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	makeForm(t, db, "Alpha", "pub-a", models.FormStatusPublished)
@@ -165,7 +151,7 @@ func TestFormRepositoryListFiltersAndCounts(t *testing.T) {
 }
 
 func TestFormRepositoryListRejectsUnknownSortColumn(t *testing.T) {
-	repo := NewFormRepository(setupFormTestDB(t))
+	repo := NewFormRepository(testsupport.OpenSQLite(t, formTestDB))
 
 	_, _, err := repo.List(0, 20, "", "evil;DROP TABLE forms", "asc")
 	require.Error(t, err)
@@ -176,7 +162,7 @@ func TestFormRepositoryListRejectsUnknownSortColumn(t *testing.T) {
 }
 
 func TestFormRepositorySubmissionCounts(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	first := makeForm(t, db, "First", "pub-1", models.FormStatusPublished)
@@ -200,7 +186,7 @@ func TestFormRepositorySubmissionCounts(t *testing.T) {
 }
 
 func TestFormRepositorySubmissionLifecycle(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
 
@@ -236,7 +222,7 @@ func TestFormRepositorySubmissionLifecycle(t *testing.T) {
 }
 
 func TestFormRepositoryListSubmissions(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
@@ -264,7 +250,7 @@ func TestFormRepositoryListSubmissions(t *testing.T) {
 
 // Used, expired and unknown tokens must be indistinguishable to the caller.
 func TestFormRepositoryConfirmationTokenLookupOnlySpendable(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
 	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
@@ -291,7 +277,7 @@ func TestFormRepositoryConfirmationTokenLookupOnlySpendable(t *testing.T) {
 // claim of the same token, a claim of an expired one and a claim of an unknown
 // id are all not-found, and none of them writes anything.
 func TestFormRepositoryMarkConfirmationTokenUsed(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
 	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
@@ -332,7 +318,7 @@ func TestFormRepositoryMarkConfirmationTokenUsed(t *testing.T) {
 // A claim rolled back with its transaction leaves the token spendable: the
 // stamp is part of the unit of work, not a separate write.
 func TestFormRepositoryMarkConfirmationTokenUsedRollsBackWithTheTransaction(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
 	submission := makeSubmission(t, db, form.ID, "visitor@example.com", models.FormSubmissionPending)
@@ -357,7 +343,7 @@ func TestFormRepositoryMarkConfirmationTokenUsedRollsBackWithTheTransaction(t *t
 // Re-submitting the same address must leave exactly one working link, and must
 // not touch the tokens of another form or another address.
 func TestFormRepositoryInvalidatePendingTokens(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
@@ -386,7 +372,7 @@ func TestFormRepositoryInvalidatePendingTokens(t *testing.T) {
 }
 
 func TestFormRepositoryInvalidatePendingTokensWithNoMatchIsNoOp(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 	form := makeForm(t, db, "Contact", "pub-contact", models.FormStatusPublished)
 
@@ -394,7 +380,7 @@ func TestFormRepositoryInvalidatePendingTokensWithNoMatchIsNoOp(t *testing.T) {
 }
 
 func TestFormRepositoryWithTxSharesTheTransaction(t *testing.T) {
-	db := setupFormTestDB(t)
+	db := testsupport.OpenSQLite(t, formTestDB)
 	repo := NewFormRepository(db)
 
 	err := db.Transaction(func(tx *gorm.DB) error {

@@ -15,13 +15,13 @@ package repository
 import (
 	"context"
 	"errors"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,9 +33,7 @@ func TestErasureCancellationSQLite(t *testing.T) {
 }
 
 func TestErasureCancellationMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runErasureCancellation(t, true)
 }
 
@@ -177,7 +175,7 @@ func runErasureCancellation(t *testing.T, useMySQL bool) {
 	for _, root := range cancellationRoots() {
 		root := root
 		t.Run(root.name, func(t *testing.T) {
-			db := openIdentityErasureDB(t, useMySQL)
+			db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 
 			t.Run("completes_when_not_cancelled", func(t *testing.T) {
 				g := seedIdentityGraph(t, db)

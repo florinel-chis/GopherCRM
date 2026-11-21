@@ -6,32 +6,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
-// setupDealDB gives each test a private schema on the shared in-memory DSN,
-// with foreign keys on, the way the company repository tests do.
-func setupDealDB(t *testing.T) *gorm.DB {
+// migrateDealTables drops and recreates the deal tables on db, a private
+// in-memory database with foreign keys on and the driver's default pool, the
+// way the company repository tests do.
+func migrateDealTables(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-
 	require.NoError(t, db.Migrator().DropTable(&models.DealStageChange{}, &models.Deal{}, &models.Lead{}, &models.Customer{}, &models.Company{}, &models.User{}))
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Lead{}, &models.Customer{}, &models.Deal{}, &models.DealStageChange{}))
-
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
 	return db
 }
 
@@ -63,7 +52,7 @@ func dealTitles(deals []models.Deal) []string {
 }
 
 func TestDealRepository_GetByIDPreloadsTheAssociations(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
 	company := &models.Company{Name: "Acme"}
@@ -103,7 +92,7 @@ func TestDealRepository_GetByIDPreloadsTheAssociations(t *testing.T) {
 // Update is a full save: clearing closed_at, lost_reason and a link has to
 // reach the database as NULL and "", not be skipped as zero values.
 func TestDealRepository_UpdateWritesClearedValues(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
 	company := &models.Company{Name: "Acme"}
@@ -135,7 +124,7 @@ func TestDealRepository_UpdateWritesClearedValues(t *testing.T) {
 }
 
 func TestDealRepository_ListFiltersSortsAndPaginates(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	alice := createDealTestUser(t, db, "alice@example.com")
 	bob := createDealTestUser(t, db, "bob@example.com")
@@ -225,7 +214,7 @@ func TestDealRepository_ListFiltersSortsAndPaginates(t *testing.T) {
 }
 
 func TestDealRepository_ListRejectsUnknownSortColumns(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 
 	for _, sortBy := range []string{"owner_id", "currency", "title; DROP TABLE deals", "notes"} {
@@ -239,7 +228,7 @@ func TestDealRepository_ListRejectsUnknownSortColumns(t *testing.T) {
 }
 
 func TestDealRepository_DeleteIsSoftAndKeepsTheHistory(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
 	deal := createDeal(t, db, &models.Deal{Title: "Doomed", Probability: 10, OwnerID: owner.ID})
@@ -260,7 +249,7 @@ func TestDealRepository_DeleteIsSoftAndKeepsTheHistory(t *testing.T) {
 }
 
 func TestDealRepository_StageChangesAreListedOldestFirstWithTheUser(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	alice := createDealTestUser(t, db, "alice@example.com")
 	bob := createDealTestUser(t, db, "bob@example.com")
@@ -297,7 +286,7 @@ func TestDealRepository_StageChangesAreListedOldestFirstWithTheUser(t *testing.T
 
 // The company side of deals: the count on a company and the unlink on delete.
 func TestCompanyRepository_DealCountAndUnlinkDeals(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	companies := NewCompanyRepository(db)
 	deals := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
@@ -348,7 +337,7 @@ func pipelineIndex(rows []models.DealPipelineRow) map[string]models.DealPipeline
 // currencies; the weighted sum is Σ amount × probability, still unrounded;
 // stages without deals yield no group; a soft-deleted deal is not counted.
 func TestDealRepository_PipelineGroupsByStageAndCurrency(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
 
@@ -378,7 +367,7 @@ func TestDealRepository_PipelineGroupsByStageAndCurrency(t *testing.T) {
 func TestDealRepository_PipelineAggregatesTheMaximumAmount(t *testing.T) {
 	const maxAmount = int64(1_000_000_000_000)
 	const deals = 5
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "max@example.com")
 
@@ -393,7 +382,7 @@ func TestDealRepository_PipelineAggregatesTheMaximumAmount(t *testing.T) {
 }
 
 func TestDealRepository_PipelineOwnerAndCompanyFilters(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	alice := createDealTestUser(t, db, "alice@example.com")
 	bob := createDealTestUser(t, db, "bob@example.com")
@@ -451,7 +440,7 @@ func stampClosedAt(t *testing.T, db *gorm.DB, deal *models.Deal, closedAt time.T
 // closed_at is text, so this is the test that the bound-parameter predicate
 // orders the stored format correctly at both ends of the month.
 func TestDealRepository_WonBetweenMonthBoundaries(t *testing.T) {
-	db := setupDealDB(t)
+	db := migrateDealTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewDealRepository(db)
 	owner := createDealTestUser(t, db, "owner@example.com")
 	other := createDealTestUser(t, db, "other@example.com")

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -20,14 +20,12 @@ import (
 // the server is unreachable).
 
 func TestProductExternalIDRepositorySQLite(t *testing.T) {
-	runProductExternalIDRepository(t, openIdentityErasureDB(t, false))
+	runProductExternalIDRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestProductExternalIDRepositoryMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
-	runProductExternalIDRepository(t, openIdentityErasureDB(t, true))
+	testsupport.MySQLFromEnv(t)
+	runProductExternalIDRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 func seedExternalIDProduct(t *testing.T, db *gorm.DB, label string, active bool) *models.Product {

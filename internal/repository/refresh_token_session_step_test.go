@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -22,11 +23,11 @@ import (
 // a second run changes nothing.
 
 func TestRefreshTokenSessionStepSQLite(t *testing.T) {
-	runRefreshTokenSessionStep(t, openRoleDB(t, "refresh_token_session", false))
+	runRefreshTokenSessionStep(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "refresh_token_session", roleDB)))
 }
 
 func TestRefreshTokenSessionStepMySQL(t *testing.T) {
-	runRefreshTokenSessionStep(t, openRoleDB(t, "refresh_token_session", true))
+	runRefreshTokenSessionStep(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "refresh_token_session", roleDB)))
 }
 
 // sessionTokenRow is every column the step may write, plus updated_at.

@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // #109 follow-up: ExistsByDomain compares the stored domain with plain
@@ -21,11 +22,11 @@ import (
 // would, run the startup migration and require the duplicate check to see it.
 
 func TestCompanyDomainNormalizationSQLite(t *testing.T) {
-	runCompanyDomainNormalization(t, openDisposableDB(t, "company_domain_normalization", false))
+	runCompanyDomainNormalization(t, testsupport.Open(t, testsupport.SQLite, "company_domain_normalization"))
 }
 
 func TestCompanyDomainNormalizationMySQL(t *testing.T) {
-	runCompanyDomainNormalization(t, openDisposableDB(t, "company_domain_normalization", true))
+	runCompanyDomainNormalization(t, testsupport.Open(t, testsupport.MySQL, "company_domain_normalization"))
 }
 
 func runCompanyDomainNormalization(t *testing.T, db *gorm.DB) {
@@ -120,7 +121,7 @@ func runCompanyDomainNormalization(t *testing.T, db *gorm.DB) {
 // TestCompanyDomainNormalizationChunksSQLite: more mixed-case rows than one
 // chunk are written in bounded primary-key batches, every one of them.
 func TestCompanyDomainNormalizationChunksSQLite(t *testing.T) {
-	db := openDisposableDB(t, "company_domain_normalization_chunks", false)
+	db := testsupport.Open(t, testsupport.SQLite, "company_domain_normalization_chunks")
 	previous := models.DB
 	t.Cleanup(func() { models.DB = previous })
 	models.DB = db

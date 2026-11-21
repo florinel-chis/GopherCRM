@@ -1,23 +1,16 @@
 package repository
 
 import (
-	"database/sql"
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // #324: UpdateTotals writes the five totals (subtotal, discount, net total,
@@ -29,55 +22,21 @@ import (
 // variable and failing when it is unreachable.
 
 func TestQuoteRepositoryUpdateTotalsWithTaxSQLite(t *testing.T) {
-	runQuoteRepositoryUpdateTotalsWithTax(t, openQuoteTaxRepoDB(t, false))
+	runQuoteRepositoryUpdateTotalsWithTax(t, testsupport.Open(t, testsupport.SQLite, "quote_tax_repo", quoteTaxRepoDB))
 }
 
 func TestQuoteRepositoryUpdateTotalsWithTaxMySQL(t *testing.T) {
-	runQuoteRepositoryUpdateTotalsWithTax(t, openQuoteTaxRepoDB(t, true))
+	runQuoteRepositoryUpdateTotalsWithTax(t, testsupport.Open(t, testsupport.MySQL, "quote_tax_repo", quoteTaxRepoDB))
 }
 
-func openQuoteTaxRepoDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard, DisableForeignKeyConstraintWhenMigrating: true}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "quote_tax.db") + "?_pragma=busy_timeout(5000)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_quote_tax_repo_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.Quote{}, &models.QuoteLine{}))
-	return db
-}
+// quoteTaxRepoDB migrates the quote tables without their relations: a
+// file-backed SQLite database with one connection and foreign keys off, or a
+// uniquely named disposable schema on the TEST_MYSQL_DSN server.
+var quoteTaxRepoDB = testsupport.Group(
+	testsupport.DisableForeignKeyConstraintWhenMigrating(),
+	testsupport.OnSQLite(testsupport.File("quote_tax.db", testsupport.BusyTimeout), testsupport.WithoutForeignKeys()),
+	testsupport.Models(&models.Quote{}, &models.QuoteLine{}),
+)
 
 // quoteTaxRow is the committed quote row rendered for comparison.
 func quoteTaxRow(t *testing.T, db *gorm.DB, id uint) string {

@@ -12,28 +12,26 @@ package repository
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func TestTicketDeleteCancelsAutomationSQLite(t *testing.T) {
-	runTicketDeleteCancelsAutomation(t, openIdentityErasureDB(t, false))
+	runTicketDeleteCancelsAutomation(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 	t.Run("absent automation tables are skipped", runTicketDeleteWithoutAutomationTables)
 }
 
 func TestTicketDeleteCancelsAutomationMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runTicketDeleteCancelsAutomation(t, openIdentityErasureDB(t, true))
+	runTicketDeleteCancelsAutomation(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 // ticketAutomationFixture is one ticket with every kind of row the delete
@@ -285,14 +283,8 @@ func (c *countingCalls) Load() int32 {
 // has neither the automation tables nor the notifications nor the mail
 // deliveries: the probes skip them.
 func runTicketDeleteWithoutAutomationTables(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "subset.db")
-	db, err := gorm.Open(sqlite.Open("file:"+path+"?_pragma=foreign_keys(1)"), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}, &models.Ticket{}, &models.TicketComment{}))
+	db := testsupport.OpenSQLite(t, testsupport.File("subset.db"),
+		testsupport.Models(&models.User{}, &models.Company{}, &models.Customer{}, &models.Ticket{}, &models.TicketComment{}))
 	for _, model := range []interface{}{&models.AutomationRun{}, &models.Notification{}, &models.TicketMailDelivery{}} {
 		require.False(t, db.Migrator().HasTable(model), "the fixture must not have %T", model)
 	}

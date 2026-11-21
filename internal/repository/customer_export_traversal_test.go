@@ -2,22 +2,17 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // Regression roots for #105: ListAllForExport used to combine the requested
@@ -78,66 +73,21 @@ type exportTraversalFixture struct {
 }
 
 func TestCustomerExportTraversalSQLite(t *testing.T) {
-	runCustomerExportTraversal(t, openCustomerExportTraversalDB(t, false))
+	runCustomerExportTraversal(t, testsupport.Open(t, testsupport.SQLite, "customer_export", customerExportTraversalDB))
 }
 
 func TestCustomerExportTraversalMySQL(t *testing.T) {
-	runCustomerExportTraversal(t, openCustomerExportTraversalDB(t, true))
+	runCustomerExportTraversal(t, testsupport.Open(t, testsupport.MySQL, "customer_export", customerExportTraversalDB))
 }
 
-// openCustomerExportTraversalDB opens a private SQLite database, or a uniquely
-// named disposable schema on the TEST_MYSQL_DSN server. MySQL is opt-in: the
-// root skips without the variable and fails, rather than skipping, when the
-// variable names a server that cannot be reached.
-func openCustomerExportTraversalDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	if !useMySQL {
-		db, err := gorm.Open(sqlite.Open("file:customer_export_traversal?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-			Logger: logger.Discard,
-		})
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		// One connection, as the production SQLite pool has.
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-		require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
-			// The erasure closure: deleting a customer erases the whole person.
-			&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
-		return db
-	}
-
-	raw := os.Getenv("TEST_MYSQL_DSN")
-	if raw == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
-	cfg, err := mysqldriver.ParseDSN(raw)
-	require.NoError(t, err)
-	cfg.DBName = ""
-	cfg.ParseTime = true
-	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-	server, err := sql.Open("mysql", cfg.FormatDSN())
-	require.NoError(t, err)
-	name := fmt.Sprintf("gocrm_customer_export_%d", time.Now().UnixNano())
-	t.Cleanup(func() {
-		_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-		_ = server.Close()
-	})
-	_, err = server.Exec("CREATE DATABASE `" + name + "`")
-	require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-	cfg.DBName = name
-	db, err := gorm.Open(gormmysql.Open(cfg.FormatDSN()), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
-		// The erasure closure: deleting a customer erases the whole person.
-		&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
-	return db
-}
+// customerExportTraversalDB is a private SQLite database with one connection,
+// as the production SQLite pool has, or a uniquely named disposable schema on
+// the TEST_MYSQL_DSN server. MySQL is opt-in: the root skips without the
+// variable and fails, rather than skipping, when the variable names a server
+// that cannot be reached.
+var customerExportTraversalDB = testsupport.Models(&models.User{}, &models.Company{}, &models.Customer{},
+	// The erasure closure: deleting a customer erases the whole person.
+	&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{})
 
 // seedExportTraversal inserts the adversarial fixture and returns the live rows
 // as the database stores them.

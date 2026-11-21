@@ -3,21 +3,18 @@ package repository
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/florinel-chis/gophercrm/internal/config"
-	"github.com/florinel-chis/gophercrm/internal/database"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	mysqldriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 // #344 (#259 AC-9): role persistence behaves the same on SQLite and MySQL.
@@ -27,27 +24,20 @@ import (
 // built by models.MigrateDatabase, so the schema and the seeded system roles
 // are the application's own.
 
-// openRoleDB opens the database and runs models.MigrateDatabase on it, with
-// the global handle pointed at it for the test.
-func openRoleDB(t *testing.T, name string, useMySQL bool) *gorm.DB {
+// roleDB is what database.Open gives the application on SQLite: the file
+// <name>.db with busy_timeout, WAL and foreign keys, one open and one idle
+// connection and GORM's clock in UTC. On MySQL it is a disposable schema. No
+// models: models.MigrateDatabase (migrateRoleDB) builds the schema.
+var roleDB = testsupport.OnSQLite(
+	testsupport.File("", testsupport.BusyTimeout, testsupport.WAL),
+	testsupport.MaxOpenConns(1), testsupport.MaxIdleConns(1),
+	testsupport.NowUTC(),
+)
+
+// migrateRoleDB runs models.MigrateDatabase on db, with the global handle
+// pointed at it for the test.
+func migrateRoleDB(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	var db *gorm.DB
-	if useMySQL {
-		db = openDisposableDB(t, name, true)
-	} else {
-		var err error
-		db, err = database.Open(&config.DatabaseConfig{
-			Driver: config.DriverSQLite,
-			Path:   filepath.Join(t.TempDir(), name+".db"),
-		})
-		require.NoError(t, err)
-		db.Logger = logger.Discard
-		t.Cleanup(func() {
-			if sqlDB, err := db.DB(); err == nil {
-				_ = sqlDB.Close()
-			}
-		})
-	}
 	previous := models.DB
 	t.Cleanup(func() { models.DB = previous })
 	models.DB = db
@@ -92,11 +82,11 @@ func (c *roleSQLCapture) all() []string {
 }
 
 func TestRoleRepositorySQLite(t *testing.T) {
-	runRoleRepository(t, openRoleDB(t, "role_repository", false), false)
+	runRoleRepository(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "role_repository", roleDB)), false)
 }
 
 func TestRoleRepositoryMySQL(t *testing.T) {
-	runRoleRepository(t, openRoleDB(t, "role_repository", true), true)
+	runRoleRepository(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "role_repository", roleDB)), true)
 }
 
 // roleRow is a role as stored, read without the repository.

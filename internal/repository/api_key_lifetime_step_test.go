@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,11 +19,11 @@ import (
 // changes nothing.
 
 func TestAPIKeyLifetimeStepSQLite(t *testing.T) {
-	runAPIKeyLifetimeStep(t, openRoleDB(t, "api_key_lifetime", false))
+	runAPIKeyLifetimeStep(t, migrateRoleDB(t, testsupport.Open(t, testsupport.SQLite, "api_key_lifetime", roleDB)))
 }
 
 func TestAPIKeyLifetimeStepMySQL(t *testing.T) {
-	runAPIKeyLifetimeStep(t, openRoleDB(t, "api_key_lifetime", true))
+	runAPIKeyLifetimeStep(t, migrateRoleDB(t, testsupport.Open(t, testsupport.MySQL, "api_key_lifetime", roleDB)))
 }
 
 // lifetimeKeyRow is every column the step may write.

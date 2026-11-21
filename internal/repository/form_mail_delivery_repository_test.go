@@ -11,17 +11,14 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func openFormMailRepoDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	db := openAutomationRepoDB(t, useMySQL, 2)
-	require.NoError(t, db.AutoMigrate(&models.FormMailDelivery{}))
-	return db
-}
+// formMailRepoDB is the automation database plus the mail delivery table.
+var formMailRepoDB = testsupport.Group(automationRepoDB, automationRepoPool(2), testsupport.Models(&models.FormMailDelivery{}))
 
 // seedDelivery writes one row with the given status and updated_at.
 func seedDelivery(t *testing.T, db *gorm.DB, submission *models.FormSubmission, kind, status string, updatedAt time.Time) *models.FormMailDelivery {
@@ -46,11 +43,11 @@ func loadDelivery(t *testing.T, db *gorm.DB, id uint) models.FormMailDelivery {
 }
 
 func TestFormMailDeliveryRepositorySQLite(t *testing.T) {
-	runFormMailDeliveryRepository(t, openFormMailRepoDB(t, false))
+	runFormMailDeliveryRepository(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", formMailRepoDB))
 }
 
 func TestFormMailDeliveryRepositoryMySQL(t *testing.T) {
-	runFormMailDeliveryRepository(t, openFormMailRepoDB(t, true))
+	runFormMailDeliveryRepository(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", formMailRepoDB))
 }
 
 func runFormMailDeliveryRepository(t *testing.T, db *gorm.DB) {

@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // #343: the repository stores a line quantity as integer thousandths in
@@ -17,11 +18,11 @@ import (
 // when it is unreachable). A freshly migrated schema has no legacy quantity.
 
 func TestQuoteLineQuantityStorageSQLite(t *testing.T) {
-	runQuoteLineQuantityStorage(t, openQuoteTaxRepoDB(t, false))
+	runQuoteLineQuantityStorage(t, testsupport.Open(t, testsupport.SQLite, "quote_tax_repo", quoteTaxRepoDB))
 }
 
 func TestQuoteLineQuantityStorageMySQL(t *testing.T) {
-	runQuoteLineQuantityStorage(t, openQuoteTaxRepoDB(t, true))
+	runQuoteLineQuantityStorage(t, testsupport.Open(t, testsupport.MySQL, "quote_tax_repo", quoteTaxRepoDB))
 }
 
 func runQuoteLineQuantityStorage(t *testing.T, db *gorm.DB) {

@@ -5,29 +5,21 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func setupConfigurationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Configuration{}))
-
-	t.Cleanup(func() {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	})
-	return db
-}
+// configurationDB is a private in-memory database, foreign keys off, with the
+// driver's default pool.
+var configurationDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.DriverDefaultMaxOpenConns(),
+	testsupport.Models(&models.Configuration{}),
+)
 
 func TestInitializeDefaultsSeedsMissingEntries(t *testing.T) {
-	repo := NewConfigurationRepository(setupConfigurationDB(t))
+	repo := NewConfigurationRepository(testsupport.OpenSQLite(t, configurationDB))
 
 	require.NoError(t, repo.InitializeDefaults())
 
@@ -43,7 +35,7 @@ func TestInitializeDefaultsSeedsMissingEntries(t *testing.T) {
 // values alone: resetting them would undo an administrator's settings, and for
 // a sensitive entry it would silently drop a stored secret on restart.
 func TestInitializeDefaultsKeepsConfiguredValues(t *testing.T) {
-	repo := NewConfigurationRepository(setupConfigurationDB(t))
+	repo := NewConfigurationRepository(testsupport.OpenSQLite(t, configurationDB))
 	require.NoError(t, repo.InitializeDefaults())
 
 	secret, err := repo.GetByKey("integration.aeo.gemini_api_key")
@@ -83,7 +75,7 @@ func TestInitializeDefaultsKeepsConfiguredValues(t *testing.T) {
 // Metadata, unlike the value, is refreshed: an entry that predates a flag picks
 // it up on the next boot instead of needing a migration.
 func TestInitializeDefaultsRefreshesMetadata(t *testing.T) {
-	db := setupConfigurationDB(t)
+	db := testsupport.OpenSQLite(t, configurationDB)
 	repo := NewConfigurationRepository(db)
 
 	stale := models.Configuration{
@@ -109,7 +101,7 @@ func TestInitializeDefaultsRefreshesMetadata(t *testing.T) {
 // MySQL under NO_ZERO_DATE (Error 1292), which aborted the whole seeding
 // transaction on boot and left every default unrefreshed.
 func TestInitializeDefaultsRepairsMissingCreatedAt(t *testing.T) {
-	db := setupConfigurationDB(t)
+	db := testsupport.OpenSQLite(t, configurationDB)
 	repo := NewConfigurationRepository(db)
 
 	legacy := models.Configuration{
@@ -136,7 +128,7 @@ func TestInitializeDefaultsRepairsMissingCreatedAt(t *testing.T) {
 // metadata gets the corrected list on the next boot, and the statuses an
 // administrator chose stay exactly as they were.
 func TestInitializeDefaultsCorrectsLeadConversionStatusMetadata(t *testing.T) {
-	db := setupConfigurationDB(t)
+	db := testsupport.OpenSQLite(t, configurationDB)
 	repo := NewConfigurationRepository(db)
 
 	seeded := models.Configuration{
@@ -189,7 +181,7 @@ func TestLeadConversionStatusMetadataMatchesTheLeadEnum(t *testing.T) {
 // live or soft-deleted. Booting must remove both, hard, and seed no
 // replacement.
 func TestInitializeDefaultsRemovesRetiredEntries(t *testing.T) {
-	db := setupConfigurationDB(t)
+	db := testsupport.OpenSQLite(t, configurationDB)
 	repo := NewConfigurationRepository(db)
 
 	require.NotEmpty(t, models.RetiredConfigurationKeys)

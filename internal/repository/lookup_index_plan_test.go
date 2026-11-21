@@ -5,13 +5,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
 // #109: the lead lookups by email, classification and external id, and the
@@ -60,15 +59,7 @@ func sqlitePlan(t *testing.T, db *gorm.DB, statement capturedStatement) string {
 }
 
 func TestLookupIndexesServeLookupsSQLite(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:lookup_index_plan?mode=memory&cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{}, &models.Lead{}))
+	db := testsupport.OpenSQLite(t, testsupport.Models(&models.User{}, &models.Company{}, &models.Customer{}, &models.Lead{}))
 
 	owner := models.User{Email: "owner@plan.test", Password: "x", FirstName: "o", LastName: "o", Role: models.RoleSales}
 	require.NoError(t, db.Create(&owner).Error)

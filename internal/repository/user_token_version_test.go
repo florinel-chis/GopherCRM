@@ -1,25 +1,18 @@
 package repository
 
 import (
-	"database/sql"
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 // #236: users.token_version is written through UpdateFields, the only user
@@ -30,55 +23,19 @@ import (
 // and fails when it is unreachable.
 
 func TestUserRepositoryTokenVersionSQLite(t *testing.T) {
-	runUserRepositoryTokenVersion(t, openUserTokenVersionDB(t, false))
+	runUserRepositoryTokenVersion(t, testsupport.Open(t, testsupport.SQLite, "user_token_version", userTokenVersionDB))
 }
 
 func TestUserRepositoryTokenVersionMySQL(t *testing.T) {
-	runUserRepositoryTokenVersion(t, openUserTokenVersionDB(t, true))
+	runUserRepositoryTokenVersion(t, testsupport.Open(t, testsupport.MySQL, "user_token_version", userTokenVersionDB))
 }
 
-func openUserTokenVersionDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "user_token_version.db") + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_user_token_version_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.User{}))
-	return db
-}
+// userTokenVersionDB is a file-backed SQLite database with one connection, or a uniquely
+// named disposable schema on the TEST_MYSQL_DSN server.
+var userTokenVersionDB = testsupport.Group(
+	testsupport.OnSQLite(testsupport.File("user_token_version.db", testsupport.BusyTimeout)),
+	testsupport.Models(&models.User{}),
+)
 
 // statementCapture records the SQL of every UPDATE the handle runs.
 type statementCapture struct {

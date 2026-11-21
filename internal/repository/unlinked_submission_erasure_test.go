@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,9 +32,7 @@ func TestUnlinkedSubmissionErasureSQLite(t *testing.T) {
 }
 
 func TestUnlinkedSubmissionErasureMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runUnlinkedSubmissionErasure(t, true)
 }
 
@@ -277,7 +275,9 @@ func assertUnlinkedSeeded(t *testing.T, db *gorm.DB, f *unlinkedFixture) {
 }
 
 func runUnlinkedSubmissionErasure(t *testing.T, useMySQL bool) {
-	dbs := newErasureTestDBs(t, useMySQL, openIdentityErasureDB)
+	dbs := newErasureTestDBs(t, useMySQL, func(t *testing.T, useMySQL bool) *gorm.DB {
+		return migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
+	})
 	for _, root := range unlinkedRoots() {
 		root := root
 		t.Run(root.name+"_erasure_scrubs_matching_unlinked_submissions", func(t *testing.T) {

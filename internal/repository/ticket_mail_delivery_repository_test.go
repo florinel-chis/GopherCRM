@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -21,36 +21,34 @@ import (
 
 func requireTicketMailMySQL(t *testing.T) {
 	t.Helper()
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 }
 
 func TestTicketMailDeliveryRepositorySQLite(t *testing.T) {
-	runTicketMailDeliveryRepository(t, openIdentityErasureDB(t, false))
+	runTicketMailDeliveryRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestTicketMailDeliveryRepositoryMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runTicketMailDeliveryRepository(t, openIdentityErasureDB(t, true))
+	runTicketMailDeliveryRepository(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 func TestTicketDeletePurgesMailDeliveriesSQLite(t *testing.T) {
-	runTicketDeletePurgesMailDeliveries(t, openIdentityErasureDB(t, false))
+	runTicketDeletePurgesMailDeliveries(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestTicketDeletePurgesMailDeliveriesMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runTicketDeletePurgesMailDeliveries(t, openIdentityErasureDB(t, true))
+	runTicketDeletePurgesMailDeliveries(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 func TestTicketMailDeliveryErasureSQLite(t *testing.T) {
-	runTicketMailDeliveryErasure(t, openIdentityErasureDB(t, false))
+	runTicketMailDeliveryErasure(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestTicketMailDeliveryErasureMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runTicketMailDeliveryErasure(t, openIdentityErasureDB(t, true))
+	runTicketMailDeliveryErasure(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 func countTicketMailDeliveries(t *testing.T, db *gorm.DB, where string, args ...interface{}) int64 {
@@ -358,7 +356,7 @@ func runTicketMailDeliveryErasure(t *testing.T, db *gorm.DB) {
 // TestTicketMailDeliveryErasureWithoutTable erases on a schema that has no
 // ticket_mail_deliveries table: the migrator probe skips the purge.
 func TestTicketMailDeliveryErasureWithoutTable(t *testing.T) {
-	db := openBusinessTextSubsetDB(t, &models.Ticket{}, &models.TicketComment{})
+	db := testsupport.OpenSQLite(t, businessTextSubsetDB, testsupport.Models(&models.Ticket{}, &models.TicketComment{}))
 	require.False(t, db.Migrator().HasTable(&models.TicketMailDelivery{}), "the fixture must not have the table")
 	owner := seedIdentityStaff(t, db, nextIdentityTag(), models.RoleSales)
 

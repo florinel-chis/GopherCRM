@@ -8,76 +8,32 @@ package repository
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
-	mysqldriver "github.com/go-sql-driver/mysql"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func openAEOExportDB(t *testing.T, useMySQL bool) *gorm.DB {
-	t.Helper()
-	cfg := &gorm.Config{Logger: logger.Discard, NowFunc: func() time.Time { return time.Now().UTC() }}
-	var db *gorm.DB
-	if !useMySQL {
-		var err error
-		dsn := filepath.Join(t.TempDir(), "aeo_export.db") +
-			"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
-		db, err = gorm.Open(sqlite.Open(dsn), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(1)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	} else {
-		raw := os.Getenv("TEST_MYSQL_DSN")
-		if raw == "" {
-			t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-		}
-		dsnCfg, err := mysqldriver.ParseDSN(raw)
-		require.NoError(t, err)
-		dsnCfg.DBName = ""
-		dsnCfg.ParseTime = true
-		dsnCfg.Loc = time.UTC
-		dsnCfg.Timeout, dsnCfg.ReadTimeout, dsnCfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
-		server, err := sql.Open("mysql", dsnCfg.FormatDSN())
-		require.NoError(t, err)
-		name := fmt.Sprintf("gocrm_aeo_export_%d", time.Now().UnixNano())
-		t.Cleanup(func() {
-			_, _ = server.Exec("DROP DATABASE IF EXISTS `" + name + "`")
-			_ = server.Close()
-		})
-		_, err = server.Exec("CREATE DATABASE `" + name + "`")
-		require.NoError(t, err, "TEST_MYSQL_DSN is configured but the server is unavailable")
-		dsnCfg.DBName = name
-		db, err = gorm.Open(gormmysql.Open(dsnCfg.FormatDSN()), cfg)
-		require.NoError(t, err)
-		sqlDB, err := db.DB()
-		require.NoError(t, err)
-		sqlDB.SetMaxOpenConns(4)
-		t.Cleanup(func() { _ = sqlDB.Close() })
-	}
-	require.NoError(t, db.AutoMigrate(&models.AEOPrompt{}, &models.AEORun{}, &models.AEOAnswer{}, &models.AEOCitation{}))
-	return db
-}
+// aeoExportDB opens the export tables with GORM's clock in UTC: a file-backed
+// SQLite database with one connection, or a disposable MySQL schema with four.
+var aeoExportDB = testsupport.Group(
+	testsupport.NowUTC(),
+	testsupport.OnSQLite(testsupport.File("aeo_export.db", testsupport.BusyTimeout, testsupport.WAL)),
+	testsupport.OnMySQL(testsupport.MaxOpenConns(4)),
+	testsupport.Models(&models.AEOPrompt{}, &models.AEORun{}, &models.AEOAnswer{}, &models.AEOCitation{}),
+)
 
 func TestAEOExportRepositorySQLite(t *testing.T) {
-	runAEOExportRepositoryChecks(t, openAEOExportDB(t, false))
+	runAEOExportRepositoryChecks(t, testsupport.Open(t, testsupport.SQLite, "aeo_export", aeoExportDB))
 }
 
 func TestAEOExportRepositoryMySQL(t *testing.T) {
-	runAEOExportRepositoryChecks(t, openAEOExportDB(t, true))
+	runAEOExportRepositoryChecks(t, testsupport.Open(t, testsupport.MySQL, "aeo_export", aeoExportDB))
 }
 
 func runAEOExportRepositoryChecks(t *testing.T, db *gorm.DB) {

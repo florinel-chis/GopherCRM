@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -62,11 +63,11 @@ type leadExportTraversalFixture struct {
 }
 
 func TestLeadExportTraversalSQLite(t *testing.T) {
-	runLeadExportTraversal(t, openDisposableDB(t, "lead_export_traversal", false, leadExportTraversalModels...))
+	runLeadExportTraversal(t, testsupport.Open(t, testsupport.SQLite, "lead_export_traversal", testsupport.Models(leadExportTraversalModels...)))
 }
 
 func TestLeadExportTraversalMySQL(t *testing.T) {
-	runLeadExportTraversal(t, openDisposableDB(t, "lead_export_traversal", true, leadExportTraversalModels...))
+	runLeadExportTraversal(t, testsupport.Open(t, testsupport.MySQL, "lead_export_traversal", testsupport.Models(leadExportTraversalModels...)))
 }
 
 // seedLeadExportTraversal inserts the fixture and returns the live rows as the

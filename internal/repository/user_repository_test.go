@@ -5,27 +5,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 )
 
-func setupUserRepoDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
-	require.NoError(t, db.AutoMigrate(&models.User{}))
-	return db
-}
+// userRepoDB is a private in-memory database, foreign keys off, with one
+// connection.
+var userRepoDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.Models(&models.User{}),
+)
 
 func createUserRepoTestUser(t *testing.T, db *gorm.DB, email string) *models.User {
 	t.Helper()
@@ -40,7 +34,7 @@ func createUserRepoTestUser(t *testing.T, db *gorm.DB, email string) *models.Use
 // how a stale struct used to resurrect an erased account.
 func TestUserRepository_UpdateFields(t *testing.T) {
 	t.Run("writes only the named columns", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 		user := createUserRepoTestUser(t, db, "fields@example.com")
 		// A concurrent writer changed the password after our read.
@@ -59,7 +53,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 	})
 
 	t.Run("a soft-deleted row is not found and not resurrected", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 		user := createUserRepoTestUser(t, db, "erased@example.com")
 		require.NoError(t, db.Delete(&models.User{}, user.ID).Error)
@@ -77,7 +71,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 	})
 
 	t.Run("a missing row is not found and nothing is inserted", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 
 		err := repo.UpdateFields(4242, map[string]interface{}{"first_name": "Ghost"})
@@ -88,7 +82,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 	})
 
 	t.Run("an unlisted column is refused", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 		user := createUserRepoTestUser(t, db, "allowlist@example.com")
 
@@ -97,7 +91,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 	})
 
 	t.Run("a duplicate email maps to the sentinel", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 		createUserRepoTestUser(t, db, "taken@example.com")
 		user := createUserRepoTestUser(t, db, "mine@example.com")
@@ -107,7 +101,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 	})
 
 	t.Run("UpdateLastLogin refuses an erased row", func(t *testing.T) {
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		repo := NewUserRepository(db)
 		user := createUserRepoTestUser(t, db, "lastlogin@example.com")
 		require.NoError(t, repo.UpdateLastLogin(user.ID))
@@ -122,7 +116,7 @@ func TestUserRepository_UpdateFields(t *testing.T) {
 func TestUpdateFieldsEmailSpendsResetTokens(t *testing.T) {
 	setup := func(t *testing.T) (*gorm.DB, *models.User, *models.User) {
 		t.Helper()
-		db := setupUserRepoDB(t)
+		db := testsupport.OpenSQLite(t, userRepoDB)
 		require.NoError(t, db.AutoMigrate(&models.PasswordResetToken{}))
 		owner := createUserRepoTestUser(t, db, "reset-owner@example.com")
 		other := createUserRepoTestUser(t, db, "reset-other@example.com")

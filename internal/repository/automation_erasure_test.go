@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -24,11 +25,11 @@ import (
 // is added for it.
 
 func TestAutomationErasureSQLite(t *testing.T) {
-	runAutomationErasure(t, openAutomationRepoDB(t, false, 1))
+	runAutomationErasure(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB))
 }
 
 func TestAutomationErasureMySQL(t *testing.T) {
-	runAutomationErasure(t, openAutomationRepoDB(t, true, 4))
+	runAutomationErasure(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(4)))
 }
 
 func seedNotification(t *testing.T, db *gorm.DB, userID uint, entityType string, entityID uint) *models.Notification {

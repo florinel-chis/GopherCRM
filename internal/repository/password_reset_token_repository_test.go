@@ -6,25 +6,22 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func setupResetTokenDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.PasswordResetToken{}))
-	return db
-}
+// resetTokenDB is a private in-memory database, foreign keys off, with the
+// driver's default pool.
+var resetTokenDB = testsupport.Group(
+	testsupport.WithoutForeignKeys(),
+	testsupport.DriverDefaultMaxOpenConns(),
+	testsupport.Models(&models.User{}, &models.PasswordResetToken{}),
+)
 
 func TestPasswordResetTokenRepository_CreateAndGet(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	token := &models.PasswordResetToken{
@@ -41,7 +38,7 @@ func TestPasswordResetTokenRepository_CreateAndGet(t *testing.T) {
 }
 
 func TestPasswordResetTokenRepository_GetByTokenHash_ExcludesExpired(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.PasswordResetToken{
@@ -56,7 +53,7 @@ func TestPasswordResetTokenRepository_GetByTokenHash_ExcludesExpired(t *testing.
 }
 
 func TestPasswordResetTokenRepository_MarkUsed_EnforcesSingleUse(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	token := &models.PasswordResetToken{
@@ -82,7 +79,7 @@ func TestPasswordResetTokenRepository_MarkUsed_EnforcesSingleUse(t *testing.T) {
 // second claim of the same token, a claim of an expired one and a claim of an
 // unknown id are all not-found, and none of them writes anything.
 func TestPasswordResetTokenRepository_MarkUsed_ClaimsOnlySpendableTokens(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	// Each read goes into a fresh struct: GORM adds a populated primary key
@@ -119,7 +116,7 @@ func TestPasswordResetTokenRepository_MarkUsed_ClaimsOnlySpendableTokens(t *test
 // A claim rolled back with its transaction leaves the token spendable: the
 // stamp is part of the unit of work, not a separate write.
 func TestPasswordResetTokenRepository_MarkUsed_RollsBackWithTheTransaction(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	token := &models.PasswordResetToken{UserID: 1, TokenHash: "hash-live", ExpiresAt: time.Now().Add(time.Hour)}
@@ -142,7 +139,7 @@ func TestPasswordResetTokenRepository_MarkUsed_RollsBackWithTheTransaction(t *te
 }
 
 func TestPasswordResetTokenRepository_InvalidateAllForUser(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.PasswordResetToken{
@@ -163,7 +160,7 @@ func TestPasswordResetTokenRepository_InvalidateAllForUser(t *testing.T) {
 }
 
 func TestPasswordResetTokenRepository_DeleteExpired(t *testing.T) {
-	db := setupResetTokenDB(t)
+	db := testsupport.OpenSQLite(t, resetTokenDB)
 	repo := NewPasswordResetTokenRepository(db)
 
 	require.NoError(t, repo.Create(&models.PasswordResetToken{

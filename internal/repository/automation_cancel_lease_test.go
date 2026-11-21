@@ -19,18 +19,19 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestAutomationCancelReleasesLeaseSQLite(t *testing.T) {
-	runAutomationCancelReleasesLease(t, openIdentityErasureDB(t, false))
+	runAutomationCancelReleasesLease(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB)))
 }
 
 func TestAutomationCancelReleasesLeaseMySQL(t *testing.T) {
 	requireTicketMailMySQL(t)
-	runAutomationCancelReleasesLease(t, openIdentityErasureDB(t, true))
+	runAutomationCancelReleasesLease(t, migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB)))
 }
 
 const (

@@ -6,34 +6,21 @@ import (
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/glebarez/sqlite"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func setupCustomerExportDB(t *testing.T) *gorm.DB {
+// migrateCustomerExportTables drops and recreates the customer tables on db,
+// a private in-memory database with foreign keys on and the driver's default
+// pool, so no rows carry over between tests.
+func migrateCustomerExportTables(t *testing.T, db *gorm.DB) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared&_pragma=foreign_keys(1)"), &gorm.Config{
-		Logger: logger.Discard,
-	})
-	require.NoError(t, err)
-
-	// A private schema per test: the shared-cache DSN above is reused, so the
-	// tables are dropped and recreated rather than accumulating rows between
-	// tests.
 	require.NoError(t, db.Migrator().DropTable(&models.Customer{}, &models.User{}))
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Company{}, &models.Customer{},
 		// The erasure closure: deleting a customer erases the whole person.
 		&models.Lead{}, &models.APIKey{}, &models.RefreshToken{}, &models.PasswordResetToken{}, &models.Ticket{}, &models.TicketComment{}, &models.Form{}, &models.FormSubmission{}, &models.FormConfirmationToken{}))
-
-	t.Cleanup(func() {
-		sqlDB, err := db.DB()
-		if err == nil {
-			_ = sqlDB.Close()
-		}
-	})
 	return db
 }
 
@@ -45,7 +32,7 @@ func setupCustomerExportDB(t *testing.T) *gorm.DB {
 // file. Sorted traversals of the same size, where the old batching lost rows
 // (#105), are covered by customer_export_traversal_test.go.
 func TestListAllForExport_ReturnsEveryRowRegardlessOfPageSize(t *testing.T) {
-	db := setupCustomerExportDB(t)
+	db := migrateCustomerExportTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCustomerRepository(db)
 
 	const total = 1250
@@ -76,7 +63,7 @@ func TestListAllForExport_ReturnsEveryRowRegardlessOfPageSize(t *testing.T) {
 // An erased customer has already exercised its right to be forgotten. It must
 // not reappear in an export.
 func TestListAllForExport_ExcludesSoftDeletedRows(t *testing.T) {
-	db := setupCustomerExportDB(t)
+	db := migrateCustomerExportTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCustomerRepository(db)
 
 	live := &models.Customer{FirstName: "Live", LastName: "Customer", Email: "live@example.com"}
@@ -92,7 +79,7 @@ func TestListAllForExport_ExcludesSoftDeletedRows(t *testing.T) {
 }
 
 func TestListAllForExport_HonoursSearch(t *testing.T) {
-	db := setupCustomerExportDB(t)
+	db := migrateCustomerExportTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCustomerRepository(db)
 
 	require.NoError(t, db.Create(&models.Customer{FirstName: "John", LastName: "Doe", Email: "john@acme.test", Company: "Acme Corp"}).Error)
@@ -105,7 +92,7 @@ func TestListAllForExport_HonoursSearch(t *testing.T) {
 }
 
 func TestListAllForExport_HonoursSortOrder(t *testing.T) {
-	db := setupCustomerExportDB(t)
+	db := migrateCustomerExportTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCustomerRepository(db)
 
 	for _, email := range []string{"b@example.com", "a@example.com", "c@example.com"} {
@@ -122,7 +109,7 @@ func TestListAllForExport_HonoursSortOrder(t *testing.T) {
 // The sort column is the SQL-injection surface. An unvalidated column must be
 // refused rather than interpolated.
 func TestListAllForExport_RejectsUnknownSortColumn(t *testing.T) {
-	db := setupCustomerExportDB(t)
+	db := migrateCustomerExportTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	repo := NewCustomerRepository(db)
 
 	require.NoError(t, db.Create(&models.Customer{FirstName: "X", LastName: "Y", Email: "x@example.com"}).Error)

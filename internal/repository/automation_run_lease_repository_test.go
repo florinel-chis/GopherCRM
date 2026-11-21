@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -20,11 +21,11 @@ import (
 // the owner-blind writers are gone.
 
 func TestAutomationRunLeaseRepositorySQLite(t *testing.T) {
-	runAutomationRunLeaseRepository(t, openAutomationRepoDB(t, false, 1))
+	runAutomationRunLeaseRepository(t, testsupport.Open(t, testsupport.SQLite, "automation_repo", automationRepoDB))
 }
 
 func TestAutomationRunLeaseRepositoryMySQL(t *testing.T) {
-	runAutomationRunLeaseRepository(t, openAutomationRepoDB(t, true, 2))
+	runAutomationRunLeaseRepository(t, testsupport.Open(t, testsupport.MySQL, "automation_repo", automationRepoDB, automationRepoPool(2)))
 }
 
 const (

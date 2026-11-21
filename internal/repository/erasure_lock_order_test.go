@@ -10,7 +10,7 @@ package repository
 // for one of them.
 //
 // The roots use the production schema with its foreign keys
-// (openIdentityErasureDB). Interleavings are forced through the instance-local
+// (migrateIdentityErasureDB). Interleavings are forced through the instance-local
 // ErasureHooks and observed through information_schema.PROCESSLIST
 // (awaitLockOrderWait); nothing sleeps. The MySQL roots use a disposable
 // TEST_MYSQL_DSN schema, skip without it at the root only and fail when it is
@@ -19,7 +19,6 @@ package repository
 import (
 	"context"
 	"fmt"
-	"os"
 	"reflect"
 	"regexp"
 	"sort"
@@ -30,6 +29,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/testsupport"
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,16 +199,14 @@ func TestErasureLockOrderSQLite(t *testing.T) {
 }
 
 func TestErasureLockOrderMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runErasureLockOrder(t, true)
 }
 
 // runErasureLockOrder erases a person stored as one login, two customers and
 // three converted leads from each root and reads the order of the statements.
 func runErasureLockOrder(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 
 	for _, root := range lockOrderRoots() {
 		t.Run(root.name, func(t *testing.T) {
@@ -526,10 +524,8 @@ func awaitErasure(t *testing.T, who string, done <-chan error) error {
 // Both calls return nil (so neither is the victim of a deadlock that reaches
 // the caller) and the person is erased.
 func TestErasureCrossRootMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
-	db := openIdentityErasureDB(t, true)
+	testsupport.MySQLFromEnv(t)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.MySQL, "identity_erasure", identityErasureDB))
 	f := newCrossRootFixture(t, db)
 
 	parked := func(t *testing.T, holder, waiter crossRootSide) {
@@ -629,9 +625,7 @@ func TestErasureGraphChangedSQLite(t *testing.T) {
 }
 
 func TestErasureGraphChangedMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" {
-		t.Skip("TEST_MYSQL_DSN is required for the disposable MySQL regression suite")
-	}
+	testsupport.MySQLFromEnv(t)
 	runErasureGraphChanged(t, true)
 }
 
@@ -639,7 +633,7 @@ func TestErasureGraphChangedMySQL(t *testing.T) {
 // its locks. The MySQL root adds the two cases that need a second connection
 // while the erasure is in flight.
 func runErasureGraphChanged(t *testing.T, useMySQL bool) {
-	db := openIdentityErasureDB(t, useMySQL)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.DialectFor(useMySQL), "identity_erasure", identityErasureDB))
 	f := newCrossRootFixture(t, db)
 
 	t.Run("(1) a conversion commits after the discovery of a lead-rooted erasure", func(t *testing.T) {
@@ -746,7 +740,7 @@ var errInjectedDeadlock error = &mysql.MySQLError{Number: 1213, Message: "Deadlo
 // on one discovery and the error surfaces, nothing kept) and once (the replay
 // erases the person).
 func TestErasureRetryBoundSQLite(t *testing.T) {
-	db := openIdentityErasureDB(t, false)
+	db := migrateIdentityErasureDB(t, testsupport.Open(t, testsupport.SQLite, "identity_erasure", identityErasureDB))
 
 	roots := []struct {
 		name  string
