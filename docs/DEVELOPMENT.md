@@ -3791,7 +3791,8 @@ commits. Code: `internal/models/webhook.go`,
   paused_until = NULL WHERE id = ? AND (consecutive_failures <> 0 OR paused_until IS NOT NULL)`) or
   `RecordEndpointFailure` (one `UPDATE … SET consecutive_failures = consecutive_failures + 1,
   paused_until = ? WHERE id = ? AND consecutive_failures = ?`, fenced on the count `attempt` read
-  with the endpoint; zero rows is a lost race and not an error). Neither touches `updated_at`, opens
+  with the endpoint; zero rows is a lost race and not an error, and `RecordEndpointFailure` reports
+  whether it updated the row, #586). Neither touches `updated_at`, opens
   a transaction or takes a locking read; a write error is one Warn
   (`operation=webhook_endpoint_health`) that never fails the pass. From the
   `WebhookEndpointPauseAfter` (3rd) consecutive failure `paused_until` = the finish time +
@@ -3805,7 +3806,9 @@ commits. Code: `internal/models/webhook.go`,
   endpoint past `r.now()`: the rest of the group is neither claimed nor touched and keeps its
   `attempts` and `next_attempt_at`. A pause logs one Info "Webhook endpoint paused" with
   `operation=webhook_endpoint_pause`, `endpoint_id`, `consecutive_failures` and `paused_until`
-  only. The test ping neither reads nor writes the circuit, a redelivered row of a paused endpoint
+  only. The pause log line and the group stop happen only when the failure write updated the row:
+  a lost fence (another replica's reset or failure won it) logs nothing and does not stop the
+  group (#586). The test ping neither reads nor writes the circuit, a redelivered row of a paused endpoint
   (`RequeueDelivery`) waits for the pause, and a `PUT` on the endpoint (a URL change or a
   reactivation) does not clear it, deliberately; `webhookEndpointColumns` stays `url`,
   `event_types`, `is_active`.

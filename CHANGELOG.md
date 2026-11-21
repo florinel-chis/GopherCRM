@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`consecutive_failures`, `paused_until`); one log line "Webhook endpoint paused" carries the
   endpoint id, the count and the pause end only. Migration `20261129120005_webhook_endpoint_pause`
   adds the two columns on MySQL and MariaDB; SQLite gets them from AutoMigrate. The per-delivery
-  retry schedule and attempt cap are unchanged.
+  retry schedule and attempt cap are unchanged. A failure write that loses its fence to another
+  replica neither logs the pause nor stops the pass for that endpoint (#586).
 - **Sign-in audit rows for password changes, password resets and logouts (#550).**
   `POST /auth/change-password`, `POST /auth/password-reset`, `POST /auth/password-reset/confirm`
   and `POST /auth/logout` each write one `auth_audit_log` row once the request reaches the
