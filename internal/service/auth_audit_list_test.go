@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"testing"
 	"time"
@@ -121,22 +120,6 @@ func runAuthAuditList(t *testing.T, db *gorm.DB) {
 	})
 }
 
-// authAuditReasonPatterns are the call shapes that carry a reason code in the
-// non-test sources of this package. Each must match at least once, or the
-// scan has gone vacuous. authRefusal takes a literal or an AuthAuditReason*
-// constant; the closure refuse in auth_service.go and the code: fields take
-// literals.
-var authAuditReasonPatterns = map[string]*regexp.Regexp{
-	"oidcRefuse":     regexp.MustCompile(`\boidcRefuse\("([^"]*)"`),
-	"oidcRefuseWith": regexp.MustCompile(`\boidcRefuseWith\("([^"]*)"`),
-	"ssoUnavailable": regexp.MustCompile(`\bssoUnavailable\("([^"]*)"`),
-	"refuse":         regexp.MustCompile(`\brefuse\("([^"]*)"`),
-	"code:":          regexp.MustCompile(`\bcode:\s*"([^"]*)"`),
-	"authRefusal":    regexp.MustCompile(`\bauthRefusal\((?:"([^"]*)"|(AuthAuditReason[A-Za-z]+))`),
-}
-
-var authAuditReasonConstant = regexp.MustCompile(`\b(AuthAuditReason[A-Za-z]+)\s*=\s*"([^"]*)"`)
-
 func TestAuthAuditReasonVocabulary(t *testing.T) {
 	reasons := AuthAuditReasons()
 	assert.Len(t, reasons, 41)
@@ -152,57 +135,6 @@ func TestAuthAuditReasonVocabulary(t *testing.T) {
 	assert.False(t, IsAuthAuditOutcome("Refused"))
 	assert.Equal(t, []string{"api_key", "oidc", "password", "refresh", "scim"}, AuthAuditMethods())
 	assert.Equal(t, []string{"refused", "success"}, AuthAuditOutcomes())
-
-	files, err := filepath.Glob("*.go")
-	require.NoError(t, err)
-	sources := map[string]string{}
-	for _, file := range files {
-		if regexp.MustCompile(`_test\.go$`).MatchString(file) {
-			continue
-		}
-		body, err := os.ReadFile(file)
-		require.NoError(t, err)
-		sources[file] = string(body)
-	}
-	require.NotEmpty(t, sources)
-
-	constants := map[string]string{}
-	for _, body := range sources {
-		for _, m := range authAuditReasonConstant.FindAllStringSubmatch(body, -1) {
-			constants[m[1]] = m[2]
-		}
-	}
-	require.NotEmpty(t, constants, "no AuthAuditReason* constant found")
-	for name, value := range constants {
-		assert.True(t, IsAuthAuditReason(value), "%s = %q is not in the reason set", name, value)
-	}
-
-	written := map[string]bool{}
-	for name, pattern := range authAuditReasonPatterns {
-		hits := 0
-		for file, body := range sources {
-			for _, m := range pattern.FindAllStringSubmatch(body, -1) {
-				hits++
-				code := m[1]
-				if len(m) > 2 && m[2] != "" {
-					var ok bool
-					code, ok = constants[m[2]]
-					require.True(t, ok, "%s: %s(%s) names an unknown constant", file, name, m[2])
-				}
-				written[code] = true
-				assert.True(t, IsAuthAuditReason(code), "%s: %s(%q) is not in the reason set", file, name, code)
-			}
-		}
-		assert.Positive(t, hits, "pattern %s matched nothing: the scan is vacuous", name)
-	}
-	for _, value := range constants {
-		written[value] = true
-	}
-	// Every code in the set is written somewhere: the set is exactly the
-	// sources' vocabulary.
-	for _, reason := range reasons {
-		assert.True(t, written[reason], "%s is in the reason set but no source writes it", reason)
-	}
 
 	// The swagger enums of GET /audit/sign-ins (what the SPA's selects offer)
 	// equal the Go sets.

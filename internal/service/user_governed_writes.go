@@ -517,7 +517,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 		if identity != nil && (identity.Issuer != in.issuer || identity.Subject != in.subject) {
 			// The PAD SPACE collation of MySQL/MariaDB matched a value that
 			// differs in trailing spaces: never the same identity.
-			return oidcRefuse("identity_mismatch")
+			return oidcRefuse(AuthAuditReasonIdentityMismatch)
 		}
 
 		// signInExisting signs in as the linked account userID: it locks the
@@ -531,10 +531,10 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			}
 			target := users[userID]
 			if target == nil {
-				return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
+				return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
 			}
 			if !target.IsActive {
-				return nil, oidcRefusalForUser(oidcRefuse("account_inactive"), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountInactive), target.ID)
 			}
 			mapped := in.roleID
 			roles, err := tx.lockRoles(target.RoleID, &mapped)
@@ -546,10 +546,10 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				return nil, err
 			}
 			if role == models.RoleCustom && target.Role == models.RoleCustomer {
-				return nil, oidcRefusalForUser(oidcRefuseWith("customer_login_role", apperrors.ErrCustomerLoginRole), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonCustomerAccount, apperrors.ErrCustomerLoginRole), target.ID)
 			}
 			if role != models.RoleAdmin && isLastActiveAdmin(admins, target) {
-				return nil, oidcRefusalForUser(oidcRefuseWith("last_admin", apperrors.ErrLastAdmin), target.ID)
+				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonLastAdmin, apperrors.ErrLastAdmin), target.ID)
 			}
 			if role != target.Role || !sameRoleID(roleID, target.RoleID) {
 				fields := map[string]interface{}{"role": role, "role_id": nil}
@@ -558,7 +558,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 				}
 				if err := tx.users.UpdateFields(target.ID, fields); err != nil {
 					if isNotFound(err) {
-						return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
+						return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
 					}
 					return nil, err
 				}
@@ -572,7 +572,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			user, err := tx.users.GetByID(target.ID)
 			if err != nil {
 				if isNotFound(err) {
-					return nil, oidcRefusalForUser(oidcRefuse("account_erased"), userID)
+					return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
 				}
 				return nil, err
 			}
@@ -610,13 +610,13 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			if err := identities.Create(&models.UserIdentity{UserID: user.ID, Issuer: in.issuer, Subject: in.subject,
 				Source: models.UserIdentitySourceOIDC}); err != nil {
 				if errors.Is(err, repository.ErrUserIdentityTaken) {
-					return oidcRefusalForUser(oidcRefuseWith("identity_taken", err), user.ID)
+					return oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonIdentityTaken, err), user.ID)
 				}
 				return err
 			}
 		} else {
 			if in.email == "" || len(in.email) > oidcEmailMaxBytes {
-				return oidcRefuse("email_missing")
+				return oidcRefuse(AuthAuditReasonEmailMissing)
 			}
 			mapped := in.roleID
 			roles, err := tx.lockRoles(&mapped)
@@ -633,7 +633,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			}
 			if taken {
 				// Never linked to the existing account, live or erased.
-				return oidcRefuse("email_taken")
+				return oidcRefuse(AuthAuditReasonEmailTaken)
 			}
 			if in.beforeInsert != nil {
 				in.beforeInsert()
@@ -650,14 +650,14 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			}
 			if err := tx.users.Create(created); err != nil {
 				if errors.Is(err, apperrors.ErrDuplicateEmail) {
-					return oidcRefuseWith("email_taken", err)
+					return oidcRefuseWith(AuthAuditReasonEmailTaken, err)
 				}
 				return err
 			}
 			if err := identities.Create(&models.UserIdentity{UserID: created.ID, Issuer: in.issuer, Subject: in.subject,
 				Source: models.UserIdentitySourceOIDC}); err != nil {
 				if errors.Is(err, repository.ErrUserIdentityTaken) {
-					return oidcRefuseWith("identity_taken", err)
+					return oidcRefuseWith(AuthAuditReasonIdentityTaken, err)
 				}
 				return err
 			}
@@ -689,12 +689,12 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 // its id. A missing row refuses the sign-in.
 func oidcMappedRole(row *models.Role) (models.UserRole, *uint, *models.Role, error) {
 	if row == nil {
-		return "", nil, nil, oidcRefuse("role_missing")
+		return "", nil, nil, oidcRefuse(AuthAuditReasonRoleMissing)
 	}
 	if row.SystemKey != nil {
 		role := models.UserRole(*row.SystemKey)
 		if !role.IsValid() || role == models.RoleCustom {
-			return "", nil, nil, oidcRefuse("role_missing")
+			return "", nil, nil, oidcRefuse(AuthAuditReasonRoleMissing)
 		}
 		return role, nil, nil, nil
 	}

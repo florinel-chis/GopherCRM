@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -152,6 +154,31 @@ func TestAuthAuditLogHandler(t *testing.T) {
 		w := authAuditGet(newAuthAuditLogTestRouter(svc, asSystemRole("admin")), "?method=scim")
 		require.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, "scim", svc.filter.Method)
+	})
+
+	t.Run("every registered method, outcome and reason is accepted (#549)", func(t *testing.T) {
+		cases := []struct {
+			param  string
+			values []string
+			got    func(repository.AuthAuditFilter) string
+		}{
+			{"reason", service.AuthAuditReasons(), func(f repository.AuthAuditFilter) string { return f.Reason }},
+			{"method", service.AuthAuditMethods(), func(f repository.AuthAuditFilter) string { return f.Method }},
+			{"outcome", service.AuthAuditOutcomes(), func(f repository.AuthAuditFilter) string { return f.Outcome }},
+		}
+		require.Len(t, cases[0].values, 41)
+		require.Len(t, cases[1].values, 5)
+		require.Len(t, cases[2].values, 2)
+		for _, tc := range cases {
+			for _, value := range tc.values {
+				svc := &fakeAuthAuditLogService{}
+				query := "?" + tc.param + "=" + url.QueryEscape(value)
+				w := authAuditGet(newAuthAuditLogTestRouter(svc, asSystemRole("admin")), query)
+				require.Equal(t, http.StatusOK, w.Code, "%s: %s", query, w.Body.String())
+				require.Equal(t, 1, svc.calls, query)
+				assert.Equal(t, value, tc.got(svc.filter), query)
+			}
+		}
 	})
 
 	t.Run("no filter and empty values filter nothing", func(t *testing.T) {

@@ -47,45 +47,8 @@ import (
 // AUTH_AUDIT_RETENTION_DAYS are pruned by the stale bulk operation sweep
 // (PruneAuthAuditLog).
 
-// Methods of an auth_audit_log row.
-const (
-	AuthAuditMethodPassword = "password"
-	AuthAuditMethodOIDC     = "oidc"
-	AuthAuditMethodRefresh  = "refresh"
-	AuthAuditMethodAPIKey   = "api_key"
-	AuthAuditMethodSCIM     = "scim"
-)
-
-// Outcomes of an auth_audit_log row.
-const (
-	AuthAuditOutcomeSuccess = "success"
-	AuthAuditOutcomeRefused = "refused"
-)
-
-// Reason codes that are not single sign-on refusal codes. The single sign-on
-// refusals carry the error_code of oidcRefuse; its 503s carry
-// not_configured, discovery_failed or token_exchange_failed.
-const (
-	AuthAuditReasonInvalidCredentials = "invalid_credentials"
-	AuthAuditReasonAccountLocked      = "account_locked"
-	AuthAuditReasonAccountInactive    = "account_inactive"
-	AuthAuditReasonAccountErased      = "account_erased"
-	AuthAuditReasonPasswordChanged    = "password_changed"
-	AuthAuditReasonSSOAccount         = "sso_account"
-	AuthAuditReasonInternalError      = "internal_error"
-	AuthAuditReasonTokenInvalid       = "token_invalid"
-	AuthAuditReasonUnavailable        = "unavailable"
-	AuthAuditReasonKeyInvalid         = "key_invalid"
-	AuthAuditReasonKeyRevoked         = "key_revoked"
-	AuthAuditReasonKeyExpired         = "key_expired"
-	AuthAuditReasonSSODisabled        = "sso_disabled"
-	// A key owned by a customer account (#532); the same code as the single
-	// sign-on refusal of a customer login.
-	AuthAuditReasonCustomerAccount = "customer_login_role"
-	// SCIM refusals (#468); a bad SCIM token reuses token_invalid.
-	AuthAuditReasonTokenMissing = "token_missing"
-	AuthAuditReasonTokenRevoked = "token_revoked"
-)
+// Methods, outcomes and reason codes are declared in
+// auth_audit_vocabulary.go.
 
 // Bounds of the stored claim values.
 const (

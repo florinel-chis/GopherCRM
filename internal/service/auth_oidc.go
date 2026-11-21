@@ -373,7 +373,7 @@ func (s *oidcService) discover(ctx context.Context, issuer string, attemptID uin
 	provider, err := oidc.NewProvider(ctx, issuer)
 	if err != nil {
 		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
-		return nil, nil, ssoUnavailable("discovery_failed")
+		return nil, nil, ssoUnavailable(AuthAuditReasonDiscoveryFailed)
 	}
 	return ctx, provider, nil
 }
@@ -449,7 +449,7 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	}
 	if !ssoConfigured(cfg) {
 		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, ssoUnavailable("not_configured")
+		return nil, ssoUnavailable(AuthAuditReasonNotConfigured)
 	}
 	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, 0)
 	if err != nil {
@@ -591,7 +591,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	attempt, err := s.attempts.Claim(hashOpaqueToken(state, s.auth.sessionTokenSecret()), s.now().UTC())
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, facts, oidcRefuse("state_invalid")
+			return nil, facts, oidcRefuse(AuthAuditReasonStateInvalid)
 		}
 		return nil, facts, fmt.Errorf("claim the single sign-on attempt: %w", err)
 	}
@@ -601,17 +601,17 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	// bound to this attempt. Checked after the claim, so a refused callback
 	// still spends its attempt and its audit row names it.
 	if binding == "" {
-		return nil, facts, oidcRefuse("binding_missing")
+		return nil, facts, oidcRefuse(AuthAuditReasonBindingMissing)
 	}
 	if subtle.ConstantTimeCompare([]byte(binding), []byte(state)) != 1 {
-		return nil, facts, oidcRefuse("binding_mismatch")
+		return nil, facts, oidcRefuse(AuthAuditReasonBindingMismatch)
 	}
 	if attempt.Issuer != cfg.IssuerURL {
-		return nil, facts, oidcRefuse("issuer_changed")
+		return nil, facts, oidcRefuse(AuthAuditReasonIssuerChanged)
 	}
 	if !ssoConfigured(cfg) {
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, facts, ssoUnavailable("not_configured")
+		return nil, facts, ssoUnavailable(AuthAuditReasonNotConfigured)
 	}
 	ctx, provider, err := s.discover(ctx, cfg.IssuerURL, attempt.ID)
 	if err != nil {
@@ -621,24 +621,24 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	token, err := s.oauthConfig(provider, cfg).Exchange(ctx, code, oauth2.VerifierOption(attempt.CodeVerifier))
 	if err != nil {
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
-		return nil, facts, ssoUnavailable("token_exchange_failed")
+		return nil, facts, ssoUnavailable(AuthAuditReasonTokenExchangeFailed)
 	}
 	rawIDToken, _ := token.Extra("id_token").(string)
 	if rawIDToken == "" {
-		return nil, facts, oidcRefuse("id_token_missing")
+		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenMissing)
 	}
 	idToken, err := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}).Verify(ctx, rawIDToken)
 	if err != nil {
-		return nil, facts, oidcRefuse("id_token_invalid")
+		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenInvalid)
 	}
 	if idToken.Nonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(attempt.Nonce)) != 1 {
-		return nil, facts, oidcRefuse("nonce_mismatch")
+		return nil, facts, oidcRefuse(AuthAuditReasonNonceMismatch)
 	}
 	facts.verified, facts.issuer, facts.subject = true, idToken.Issuer, idToken.Subject
 
 	var claims oidcClaims
 	if err := idToken.Claims(&claims); err != nil {
-		return nil, facts, oidcRefuse("claims_invalid")
+		return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
 	}
 	// Distributed claims: an issuer that moved groups out of the token (a
 	// group overage). Without a groups mapping the overage does not matter;
@@ -650,22 +650,22 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if len(claims.ClaimNames) > 0 {
 		var names map[string]json.RawMessage
 		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
-			return nil, facts, oidcRefuse("claims_invalid")
+			return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
 		}
 		if _, overage := names[SSOClaimGroups]; overage && mappingUsesGroups(cfg.RoleMapping) {
 			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-				return nil, facts, oidcRefuse("group_overage")
+				return nil, facts, oidcRefuse(AuthAuditReasonGroupOverage)
 			}
 			resolveGroups = true
 		}
 	}
 	groups, ok := oidcStringArray(claims.Groups)
 	if !ok {
-		return nil, facts, oidcRefuse("groups_malformed")
+		return nil, facts, oidcRefuse(AuthAuditReasonGroupsMalformed)
 	}
 	roles, ok := oidcStringArray(claims.Roles)
 	if !ok {
-		return nil, facts, oidcRefuse("roles_malformed")
+		return nil, facts, oidcRefuse(AuthAuditReasonRolesMalformed)
 	}
 	facts.roles = oidcClaimValues(roles)
 	if !resolveGroups && !(mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0) {
@@ -673,15 +673,15 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	}
 	subject := idToken.Subject
 	if !validOIDCSubject(subject) {
-		return nil, facts, oidcRefuse("subject_invalid")
+		return nil, facts, oidcRefuse(AuthAuditReasonSubjectInvalid)
 	}
 	if len(idToken.Issuer) > oidcIssuerMaxBytes {
-		return nil, facts, oidcRefuse("issuer_invalid")
+		return nil, facts, oidcRefuse(AuthAuditReasonIssuerInvalid)
 	}
 	if resolveGroups {
 		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
 		if err != nil {
-			return nil, facts, oidcRefuse("groups_unavailable")
+			return nil, facts, oidcRefuse(AuthAuditReasonGroupsUnavailable)
 		}
 		groups = resolved
 		facts.groups = oidcClaimValues(groups)
@@ -689,9 +689,9 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
 		if err != nil {
 			if errors.Is(err, errUserInfoSubject) {
-				return nil, facts, oidcRefuse("userinfo_subject_mismatch")
+				return nil, facts, oidcRefuse(AuthAuditReasonUserInfoSubjectMismatch)
 			}
-			return nil, facts, oidcRefuse("groups_unavailable")
+			return nil, facts, oidcRefuse(AuthAuditReasonGroupsUnavailable)
 		}
 		groups = resolved
 		facts.groups = oidcClaimValues(groups)
@@ -699,7 +699,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 
 	roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, roles)
 	if !matched {
-		return nil, facts, oidcRefuse("no_mapping_match")
+		return nil, facts, oidcRefuse(AuthAuditReasonNoMappingMatch)
 	}
 
 	// The oid links to a SCIM-created account only under an Entra ID issuer
