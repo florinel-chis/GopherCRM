@@ -1,8 +1,10 @@
 package main
 
 // Issue #454 through the router production uses: setupRouter wires the sign-in
-// audit writer into POST /auth/login, POST /auth/refresh, the OIDC callback
-// and the ApiKey branch of the authentication middleware, so every outcome
+// audit writer into POST /auth/login, POST /auth/refresh, the OIDC callback,
+// the ApiKey branch of the authentication middleware and (#550)
+// POST /auth/change-password, /auth/password-reset,
+// /auth/password-reset/confirm and /auth/logout, so every outcome
 // below leaves exactly the row it should, with the request id of the request
 // and the client's /24. Over a SQLite file opened by the real connector.
 
@@ -143,6 +145,54 @@ func TestAuthAuditWired(t *testing.T) {
 		assert.Equal(t, "", row.RequestID, "request id %q is not stored", bad)
 		assert.Equal(t, "invalid_credentials", row.Reason)
 	}
+
+	// #550: a password change, a reset request for a known and an unknown
+	// email, a confirmation with an unknown token and a logout each leave
+	// their own row.
+	type session struct {
+		Data struct {
+			Token        string `json:"token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"data"`
+	}
+	recorder = send(http.MethodPost, "/auth/login", `{"email":"`+email+`","password":"`+password+`"}`, "req-454", "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "password", "success", "", user.ID)
+	var signedIn session
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &signedIn))
+	require.NotEmpty(t, signedIn.Data.Token)
+
+	const changed = "Wired-Changed-Passw0rd!-0550"
+	recorder = send(http.MethodPost, "/auth/change-password",
+		`{"current_password":"`+password+`","new_password":"`+changed+`","refresh_token":"`+signedIn.Data.RefreshToken+`"}`,
+		"req-454", "Bearer "+signedIn.Data.Token)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "password_change", "success", "", user.ID)
+	var renewed session
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &renewed))
+	require.NotEmpty(t, renewed.Data.Token)
+
+	recorder = send(http.MethodPost, "/auth/password-reset", `{"email":"`+email+`"}`, "req-454", "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "reset_request", "success", "", user.ID)
+	knownBody := recorder.Body.String()
+	var stored int64
+	require.NoError(t, models.DB.Model(&models.PasswordResetToken{}).Where("user_id = ? AND used_at IS NULL", user.ID).Count(&stored).Error)
+	assert.EqualValues(t, 1, stored, "the log-only mailer's server stores the link")
+
+	recorder = send(http.MethodPost, "/auth/password-reset", `{"email":"nobody-0550@crm.example.test"}`, "req-454", "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal(t, knownBody, recorder.Body.String(), "the same answer for an unknown email")
+	assertRow(t, newRow(t), "reset_request", "refused", "account_unknown", 0)
+
+	recorder = send(http.MethodPost, "/auth/password-reset/confirm",
+		`{"token":"unknown-reset-token-0550","new_password":"Wired-Reset-Passw0rd!-0550"}`, "req-454", "")
+	assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "reset_confirm", "refused", "token_invalid", 0)
+
+	recorder = send(http.MethodPost, "/auth/logout", "", "req-454", "Bearer "+renewed.Data.Token)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assertRow(t, newRow(t), "logout", "success", "", user.ID)
 }
 
 // TestSignInAuditRouteWired is #455 through the production router: setupRouter

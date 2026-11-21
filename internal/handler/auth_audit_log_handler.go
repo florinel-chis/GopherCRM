@@ -40,9 +40,10 @@ type AuthAuditEntryResponse struct {
 	ID uint `json:"id" example:"42"`
 	// UTC time of the outcome (RFC 3339).
 	CreatedAt time.Time `json:"created_at" example:"2026-11-18T09:00:00Z"`
-	// How the caller tried to sign in.
-	Method string `json:"method" enums:"password,oidc,refresh,api_key,scim" example:"password"`
-	// Whether the sign-in succeeded.
+	// How the caller tried to sign in, or the password change, password reset
+	// step or logout the row records.
+	Method string `json:"method" enums:"password,oidc,refresh,api_key,scim,password_change,reset_request,reset_confirm,logout" example:"password"`
+	// Whether the sign-in or the recorded request succeeded.
 	Outcome string `json:"outcome" enums:"success,refused" example:"refused"`
 	// The stable reason code of a refusal; empty on success.
 	Reason string `json:"reason" example:"invalid_credentials"`
@@ -50,7 +51,7 @@ type AuthAuditEntryResponse struct {
 	UserID *uint `json:"user_id" example:"7"`
 	// The single sign-on login attempt of a callback; null otherwise.
 	AttemptID *uint `json:"attempt_id" example:"3"`
-	// The request id of the sign-in request; empty when none was usable.
+	// The request id of the recorded request; empty when none was usable.
 	RequestID string `json:"request_id" example:"3f2a9c1e-5b7d-4e2a-9c1e-5b7d4e2a9c1e"`
 	// hex(HMAC-SHA256) of a refused single sign-on issuer and subject; null otherwise.
 	SubjectRef *string `json:"subject_ref" example:"9b74c9897bac770ffc029102a200c5de"`
@@ -80,7 +81,7 @@ func decodeAuthAuditClaims(stored *string) []string {
 
 // ListSignIns godoc
 // @Summary List the sign-in audit log
-// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication or successful SCIM user create, replace or patch, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
+// @Description One page of the sign-in audit log, newest first (created_at descending, then id descending). Each row is one password login, single sign-on callback, refresh, refused SCIM authentication, successful SCIM user create, replace or patch, password change, password reset request, password reset completion or logout, or the failed API-key authentications of one reason, account, client network and UTC minute counted in attempts: ids, the method, the outcome, the reason code, the request id, the HMAC subject reference, the claim values used for the role mapping, the client network, the user-agent family and attempts. No email and no name is joined. Rows are pruned after AUTH_AUDIT_RETENTION_DAYS.
 // @Description Filters: method, outcome, reason, user_id, from (inclusive) and to (exclusive); an absent or empty value is ignored, values are matched exactly and not trimmed. Pagination: offset (default 0) and limit (default 20, capped at 100; non-positive or unparseable values fall back to the default).
 // @Description Permission: audit.sign_ins_view (among the system roles, admin only).
 // @Tags users
@@ -89,9 +90,9 @@ func decodeAuthAuditClaims(stored *string) []string {
 // @Security ApiKeyAuth
 // @Param offset query int false "Pagination offset" default(0) minimum(0)
 // @Param limit query int false "Page size, capped at 100" default(20) minimum(1) maximum(100)
-// @Param method query string false "Only rows of this method (unknown value: 400)" Enums(api_key, oidc, password, refresh, scim)
+// @Param method query string false "Only rows of this method (unknown value: 400)" Enums(api_key, logout, oidc, password, password_change, refresh, reset_confirm, reset_request, scim)
 // @Param outcome query string false "Only rows with this outcome (unknown value: 400)" Enums(refused, success)
-// @Param reason query string false "Only rows with this reason code (unknown value, case included: 400)" Enums(account_erased, account_inactive, account_locked, binding_mismatch, binding_missing, claims_invalid, customer_login_role, discovery_failed, email_missing, email_taken, group_overage, groups_malformed, groups_unavailable, id_token_invalid, id_token_missing, identity_mismatch, identity_taken, internal_error, invalid_credentials, issuer_changed, issuer_invalid, key_expired, key_invalid, key_revoked, last_admin, no_mapping_match, nonce_mismatch, not_configured, password_changed, role_missing, roles_malformed, sso_account, sso_disabled, state_invalid, subject_invalid, token_exchange_failed, token_invalid, token_missing, token_revoked, unavailable, userinfo_subject_mismatch)
+// @Param reason query string false "Only rows with this reason code (unknown value, case included: 400)" Enums(account_erased, account_inactive, account_locked, account_unknown, binding_mismatch, binding_missing, claims_invalid, customer_login_role, discovery_failed, email_missing, email_taken, group_overage, groups_malformed, groups_unavailable, id_token_invalid, id_token_missing, identity_mismatch, identity_taken, internal_error, invalid_credentials, issuer_changed, issuer_invalid, key_expired, key_invalid, key_revoked, last_admin, no_mapping_match, nonce_mismatch, not_configured, password_changed, role_missing, roles_malformed, session_stale, sso_account, sso_disabled, state_invalid, subject_invalid, token_exchange_failed, token_invalid, token_missing, token_revoked, unavailable, userinfo_subject_mismatch)
 // @Param user_id query int false "Only rows of this user (positive integer; otherwise 400)" minimum(1)
 // @Param from query string false "Only rows created at or after this RFC 3339 date-time (otherwise 400)" format(date-time)
 // @Param to query string false "Only rows created before this RFC 3339 date-time; must be after from (otherwise 400)" format(date-time)

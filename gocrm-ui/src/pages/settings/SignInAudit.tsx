@@ -57,8 +57,10 @@ const userIdParam = (value: string): number | undefined =>
 
 /**
  * The sign-in audit log (#455): one row per password login, single sign-on
- * callback, refresh or failed API-key authentication, in the order the API
- * returns (newest first). Only the stored, pseudonymous columns are shown.
+ * callback, refresh or failed API-key authentication, and (#550) per password
+ * change, password reset request, password reset completion or logout, in the
+ * order the API returns (newest first). Only the stored, pseudonymous columns
+ * are shown.
  */
 export const SignInAudit: React.FC = () => {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
@@ -110,9 +112,9 @@ export const SignInAudit: React.FC = () => {
         Sign-in audit
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Password logins, single sign-on callbacks, refreshes and refused API keys, newest first.
-        Rows hold ids, a reason code, the client network and the browser family; never an email or a
-        name.
+        Password logins, single sign-on callbacks, refreshes, refused API keys, password changes,
+        password reset requests and completions, and logouts, newest first. Rows hold ids, a reason
+        code, the client network and the browser family; never an email or a name.
       </Typography>
 
       <Paper sx={{ mb: 2, p: 2 }}>

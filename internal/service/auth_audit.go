@@ -31,7 +31,13 @@ import (
 // token_revoked; they are not aggregated, because the strict rate tier in
 // front of the SCIM authentication bounds them. A successful SCIM user create,
 // replace or patch (#470, #471) writes one row, method scim, outcome success, with the
-// account's user id. A row is pseudonymous: the method, the outcome, a
+// account's user id. A password change, a password reset request, a reset
+// completion and a logout (#550) each write one row of their own, methods
+// password_change, reset_request, reset_confirm and logout, attempts 1, after
+// the service returns: success with the account's user id, or refused with
+// the reason of the service's error and the user id when the account is
+// known (a reset request for an unknown email, and a reset completion whose
+// token is unknown, spent or expired, carry none). A row is pseudonymous: the method, the outcome, a
 // stable reason code, the user id when the account is known, the sign-in
 // attempt id, the request id (only when it matches
 // ^[A-Za-z0-9._:-]{1,64}$), an HMAC reference of a refused single sign-on
@@ -94,6 +100,18 @@ type AuthAuditService interface {
 	// RecordAPIKeyFailure counts a failed ValidateAPIKey in the aggregated
 	// row of its reason, user id, client network and UTC minute (#466).
 	RecordAPIKeyFailure(ctx context.Context, err error) uint
+	// RecordPasswordChange records the outcome of ChangePassword for the
+	// caller userID (#550).
+	RecordPasswordChange(ctx context.Context, userID uint, err error) uint
+	// RecordPasswordResetRequest records the outcome of IssuePasswordReset;
+	// userID is the id it returned (#550).
+	RecordPasswordResetRequest(ctx context.Context, userID uint, err error) uint
+	// RecordPasswordResetConfirm records the outcome of
+	// CompletePasswordReset; userID is the id it returned (#550).
+	RecordPasswordResetConfirm(ctx context.Context, userID uint, err error) uint
+	// RecordLogout records the outcome of Logout for the caller userID
+	// (#550).
+	RecordLogout(ctx context.Context, userID uint, err error) uint
 }
 
 type authAuditService struct {
@@ -209,6 +227,40 @@ func (s *authAuditService) RecordAPIKeyFailure(ctx context.Context, err error) u
 	return s.recordAggregated(ctx, outcomeEntry(AuthAuditMethodAPIKey, nil, err, AuthAuditReasonKeyInvalid))
 }
 
+// RecordPasswordChange records one password change: success, or the refusal
+// reason AuthAuditReason finds; the row carries the refusal's user id, else
+// userID.
+func (s *authAuditService) RecordPasswordChange(ctx context.Context, userID uint, err error) uint {
+	return s.Record(ctx, withEntryUser(outcomeEntry(AuthAuditMethodPasswordChange, nil, err, AuthAuditReasonInternalError), userID))
+}
+
+// RecordPasswordResetRequest records one password reset request: success
+// with the owner of the stored link, or the refusal (account_unknown with no
+// user id for an email that has no account).
+func (s *authAuditService) RecordPasswordResetRequest(ctx context.Context, userID uint, err error) uint {
+	return s.Record(ctx, withEntryUser(outcomeEntry(AuthAuditMethodResetRequest, nil, err, AuthAuditReasonInternalError), userID))
+}
+
+// RecordPasswordResetConfirm records one reset completion: success with the
+// token's owner, or the refusal (token_invalid with no user id for a token
+// that is unknown, spent or expired).
+func (s *authAuditService) RecordPasswordResetConfirm(ctx context.Context, userID uint, err error) uint {
+	return s.Record(ctx, withEntryUser(outcomeEntry(AuthAuditMethodResetConfirm, nil, err, AuthAuditReasonInternalError), userID))
+}
+
+// RecordLogout records one logout of userID: success, or internal_error.
+func (s *authAuditService) RecordLogout(ctx context.Context, userID uint, err error) uint {
+	return s.Record(ctx, withEntryUser(outcomeEntry(AuthAuditMethodLogout, nil, err, AuthAuditReasonInternalError), userID))
+}
+
+// withEntryUser gives entry userID when it names no account yet.
+func withEntryUser(entry AuthAuditEntry, userID uint) AuthAuditEntry {
+	if entry.UserID == 0 {
+		entry.UserID = userID
+	}
+	return entry
+}
+
 // outcomeEntry is the row of a sign-in result; fallback replaces
 // internal_error for a method that names its operational failure otherwise.
 func outcomeEntry(method string, tokens *AuthTokens, err error, fallback string) AuthAuditEntry {
@@ -287,8 +339,8 @@ func AuthAuditSubjectRef(secret, issuer, subject string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// authRefusalError is a refusal of a password sign-in, a refresh or an API
-// key with its audit reason and the account it concerns (0 when unknown). Its
+// authRefusalError is a refusal of a password sign-in, a refresh, an API
+// key, a password change or a password reset with its audit reason and the account it concerns (0 when unknown). Its
 // message is the wrapped error's, and errors.Is/As see the wrapped error, so
 // every answer and message stays what it was.
 type authRefusalError struct {

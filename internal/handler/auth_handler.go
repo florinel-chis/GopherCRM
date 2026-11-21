@@ -15,7 +15,9 @@ import (
 type AuthHandler struct {
 	authService service.AuthService
 	userService service.UserService
-	// audit, when set, records every login and refresh outcome (#454).
+	// audit, when set, records every login and refresh outcome (#454) and
+	// every password change, password reset request, reset completion and
+	// logout that reaches the service (#550).
 	audit service.AuthAuditService
 }
 
@@ -26,8 +28,10 @@ func NewAuthHandler(authService service.AuthService, userService service.UserSer
 	}
 }
 
-// WithAudit makes Login and Refresh write one sign-in audit row per call that
-// reaches the service (#454). The answers do not change.
+// WithAudit makes Login and Refresh (#454), ChangePassword,
+// RequestPasswordReset, ConfirmPasswordReset and Logout (#550) write one
+// sign-in audit row per call that reaches the service. The answers do not
+// change.
 func (h *AuthHandler) WithAudit(audit service.AuthAuditService) *AuthHandler {
 	h.audit = audit
 	return h
@@ -374,7 +378,11 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		}
 	}
 
-	if err := h.authService.Logout(userID, req.RefreshToken); err != nil {
+	err := h.authService.Logout(userID, req.RefreshToken)
+	if h.audit != nil {
+		h.audit.RecordLogout(auditContext(c), userID, err)
+	}
+	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Logout failed")
 		utils.RespondInternalError(c)
 		return
@@ -431,6 +439,9 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	}
 
 	tokens, err := h.authService.ChangePassword(userID, req.CurrentPassword, req.NewPassword, refreshToken)
+	if h.audit != nil {
+		h.audit.RecordPasswordChange(auditContext(c), userID, err)
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrInvalidCurrentPassword):
@@ -479,10 +490,11 @@ func (h *AuthHandler) RequestPasswordReset(c *gin.Context) {
 		return
 	}
 
-	// The service swallows every account-dependent failure by design, so this
-	// response is identical for existing and unknown accounts.
-	if err := h.authService.RequestPasswordReset(req.Email); err != nil {
-		logger.WithError(utils.LogError(err)).Error("Unexpected password reset failure")
+	// The service logs every outcome itself; the result only feeds the audit
+	// row, so this response is identical for existing and unknown accounts.
+	userID, err := h.authService.IssuePasswordReset(req.Email)
+	if h.audit != nil {
+		h.audit.RecordPasswordResetRequest(auditContext(c), userID, err)
 	}
 
 	response := MessageResponse{Message: "If an account exists for that email, a password reset link has been sent"}
@@ -517,7 +529,11 @@ func (h *AuthHandler) ConfirmPasswordReset(c *gin.Context) {
 		return
 	}
 
-	if err := h.authService.ConfirmPasswordReset(req.Token, req.NewPassword); err != nil {
+	userID, err := h.authService.CompletePasswordReset(req.Token, req.NewPassword)
+	if h.audit != nil {
+		h.audit.RecordPasswordResetConfirm(auditContext(c), userID, err)
+	}
+	if err != nil {
 		if errors.Is(err, service.ErrInvalidResetToken) {
 			utils.RespondBadRequest(c, "Invalid or expired reset token")
 			return

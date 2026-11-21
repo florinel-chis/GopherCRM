@@ -6,7 +6,17 @@ import type { ApiResponseWithMeta } from '../client';
 // accepts as filters; signInAudit.test.ts holds them equal to the API
 // specification.
 
-export const SIGN_IN_AUDIT_METHODS = ['api_key', 'oidc', 'password', 'refresh', 'scim'] as const;
+export const SIGN_IN_AUDIT_METHODS = [
+  'api_key',
+  'logout',
+  'oidc',
+  'password',
+  'password_change',
+  'refresh',
+  'reset_confirm',
+  'reset_request',
+  'scim',
+] as const;
 
 export const SIGN_IN_AUDIT_OUTCOMES = ['refused', 'success'] as const;
 
@@ -14,6 +24,7 @@ export const SIGN_IN_AUDIT_REASONS = [
   'account_erased',
   'account_inactive',
   'account_locked',
+  'account_unknown',
   'binding_mismatch',
   'binding_missing',
   'claims_invalid',
@@ -42,6 +53,7 @@ export const SIGN_IN_AUDIT_REASONS = [
   'password_changed',
   'role_missing',
   'roles_malformed',
+  'session_stale',
   'sso_account',
   'sso_disabled',
   'state_invalid',

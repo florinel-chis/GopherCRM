@@ -166,8 +166,8 @@ func TestAuthAuditLogHandler(t *testing.T) {
 			{"method", service.AuthAuditMethods(), func(f repository.AuthAuditFilter) string { return f.Method }},
 			{"outcome", service.AuthAuditOutcomes(), func(f repository.AuthAuditFilter) string { return f.Outcome }},
 		}
-		require.Len(t, cases[0].values, 41)
-		require.Len(t, cases[1].values, 5)
+		require.Len(t, cases[0].values, 43)
+		require.Len(t, cases[1].values, 9)
 		require.Len(t, cases[2].values, 2)
 		for _, tc := range cases {
 			for _, value := range tc.values {

@@ -1130,13 +1130,13 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, 
 	user, err := s.userRepo.GetByID(userID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, ErrAccountUnavailable
+			return nil, authRefusal(AuthAuditReasonAccountErased, userID, ErrAccountUnavailable)
 		}
 		return nil, fmt.Errorf("failed to load user: %w", err)
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword)); err != nil {
 		utils.Logger.WithField("user_id", userID).Warn("Password change rejected - wrong current password")
-		return nil, ErrInvalidCurrentPassword
+		return nil, authRefusal(AuthAuditReasonInvalidCredentials, userID, ErrInvalidCurrentPassword)
 	}
 	if err := utils.ValidatePasswordComplexity(newPassword); err != nil {
 		return nil, err
@@ -1195,35 +1195,35 @@ func (s *authService) changePasswordInTransaction(
 	owner, err := userRepo.GetByID(userID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, ErrAccountUnavailable
+			return nil, authRefusal(AuthAuditReasonAccountErased, userID, ErrAccountUnavailable)
 		}
 		return nil, fmt.Errorf("password change owner lookup failed: %w", err)
 	}
 	if !owner.IsActive {
-		return nil, ErrAccountUnavailable
+		return nil, authRefusal(AuthAuditReasonAccountInactive, userID, ErrAccountUnavailable)
 	}
 	// The current password was verified against verifiedHash outside the
 	// transaction. If the locked row carries another hash, a concurrent
 	// change committed first and the caller's "current" password is no
 	// longer current.
 	if owner.Password != verifiedHash {
-		return nil, ErrInvalidCurrentPassword
+		return nil, authRefusal(AuthAuditReasonInvalidCredentials, userID, ErrInvalidCurrentPassword)
 	}
 
 	if presentedHash != "" {
 		stored, err := refreshRepo.GetByTokenHash(presentedHash)
 		if err != nil {
 			if apperrors.IsNotFound(err) {
-				return nil, ErrSessionStale
+				return nil, authRefusal(AuthAuditReasonSessionStale, userID, ErrSessionStale)
 			}
 			return nil, fmt.Errorf("password change session lookup failed: %w", err)
 		}
 		if stored.UserID != userID {
-			return nil, ErrSessionStale
+			return nil, authRefusal(AuthAuditReasonSessionStale, userID, ErrSessionStale)
 		}
 		if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
 			if apperrors.IsNotFound(err) {
-				return nil, ErrSessionStale
+				return nil, authRefusal(AuthAuditReasonSessionStale, userID, ErrSessionStale)
 			}
 			return nil, fmt.Errorf("failed to claim the current session: %w", err)
 		}
@@ -1233,7 +1233,7 @@ func (s *authService) changePasswordInTransaction(
 		"password": newHash,
 	}); err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, ErrAccountUnavailable
+			return nil, authRefusal(AuthAuditReasonAccountErased, userID, ErrAccountUnavailable)
 		}
 		return nil, fmt.Errorf("failed to update password: %w", err)
 	}
@@ -1297,12 +1297,12 @@ func lockLiveCredentialOwner(userRepo repository.UserRepository, userID uint) (*
 	owner, err := userRepo.GetByID(userID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return nil, &credentialOwnerRefusal{code: "account_erased"}
+			return nil, &credentialOwnerRefusal{code: AuthAuditReasonAccountErased}
 		}
 		return nil, fmt.Errorf("credential owner lookup failed: %w", err)
 	}
 	if !owner.IsActive {
-		return nil, &credentialOwnerRefusal{code: "account_inactive"}
+		return nil, &credentialOwnerRefusal{code: AuthAuditReasonAccountInactive}
 	}
 	return owner, nil
 }
@@ -1330,35 +1330,54 @@ func lockLiveCredentialOwner(userRepo repository.UserRepository, userID uint) (*
 // lock therefore issues nothing, and one that commits after it ends the token
 // it issued (the erasure deletes it, the confirmation refuses an inactive
 // owner). Without a transaction manager nothing is written or sent.
+//
+// RequestPasswordReset is IssuePasswordReset with its result dropped.
 func (s *authService) RequestPasswordReset(email string) error {
+	_, _ = s.IssuePasswordReset(email)
+	return nil
+}
+
+// errPasswordResetNotIssued is the refusal IssuePasswordReset reports when no
+// reset link was stored; its authRefusal carries the audit reason.
+var errPasswordResetNotIssued = errors.New("password reset not issued")
+
+// IssuePasswordReset is the reset flow RequestPasswordReset describes, with
+// its result (#550): the owner's id and nil once the token transaction has
+// committed, whether or not the mail was delivered; otherwise an authRefusal
+// around errPasswordResetNotIssued with the audit reason (unavailable,
+// account_unknown, account_inactive, account_erased, sso_account or
+// internal_error) and the account's id when it is known, 0 otherwise. Every
+// outcome is logged here as before; the caller answers the same way whatever
+// it returns.
+func (s *authService) IssuePasswordReset(email string) (uint, error) {
 	logger := utils.Logger.WithField("operation", "RequestPasswordReset")
 
 	if s.resetTokenRepo == nil || s.mailer == nil || s.txManager == nil {
 		logger.WithField("error_code", "reset_unwired").Warn("Password reset requested but the reset flow is not wired")
-		return nil
+		return 0, authRefusal(AuthAuditReasonUnavailable, 0, errPasswordResetNotIssued)
 	}
 
 	user, err := s.userRepo.GetByEmail(email)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
 			logger.WithField("error_code", "unknown_account").Info("Password reset requested for unknown email")
-		} else {
-			logger.WithError(utils.LogError(err)).WithField("error_code", "lookup_failed").
-				Error("Password reset user lookup failed")
+			return 0, authRefusal(AuthAuditReasonAccountUnknown, 0, errPasswordResetNotIssued)
 		}
-		return nil
+		logger.WithError(utils.LogError(err)).WithField("error_code", "lookup_failed").
+			Error("Password reset user lookup failed")
+		return 0, authRefusal(AuthAuditReasonInternalError, 0, errPasswordResetNotIssued)
 	}
 	logger = logger.WithField("user_id", user.ID)
 	if !user.IsActive {
 		logger.WithField("error_code", "account_inactive").Info("Password reset requested for inactive account; ignored")
-		return nil
+		return user.ID, authRefusal(AuthAuditReasonAccountInactive, user.ID, errPasswordResetNotIssued)
 	}
 
 	raw, err := generateOpaqueToken()
 	if err != nil {
 		logger.WithError(utils.LogError(err)).WithField("error_code", "token_generation_failed").
 			Error("Failed to generate reset token")
-		return nil
+		return user.ID, authRefusal(AuthAuditReasonInternalError, user.ID, errPasswordResetNotIssued)
 	}
 	tokenHash := hashOpaqueToken(raw, s.sessionTokenSecret())
 
@@ -1394,7 +1413,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 				return fmt.Errorf("identity lookup failed: %w", err)
 			}
 			if linked {
-				return &credentialOwnerRefusal{code: "sso_account"}
+				return &credentialOwnerRefusal{code: AuthAuditReasonSSOAccount}
 			}
 		}
 		resetRepo := s.resetTokenRepo.WithTx(tx)
@@ -1418,11 +1437,11 @@ func (s *authService) RequestPasswordReset(email string) error {
 		var refusal *credentialOwnerRefusal
 		if errors.As(err, &refusal) {
 			logger.WithField("error_code", refusal.code).Info("Password reset refused under the owner lock")
-		} else {
-			logger.WithError(utils.LogError(err)).WithField("error_code", "reset_token_rolled_back").
-				Error("Password reset issuing transaction rolled back")
+			return user.ID, authRefusal(refusal.code, user.ID, errPasswordResetNotIssued)
 		}
-		return nil
+		logger.WithError(utils.LogError(err)).WithField("error_code", "reset_token_rolled_back").
+			Error("Password reset issuing transaction rolled back")
+		return user.ID, authRefusal(AuthAuditReasonInternalError, user.ID, errPasswordResetNotIssued)
 	}
 
 	resetURL := s.appBaseURL + "/reset-password?token=" + url.QueryEscape(raw)
@@ -1433,7 +1452,7 @@ func (s *authService) RequestPasswordReset(email string) error {
 		// Already logged (redacted) by the mailer; swallow to stay uniform.
 		logger.WithField("error_code", "mail_failed").Warn("Password reset mail delivery failed")
 	}
-	return nil
+	return user.ID, nil
 }
 
 // resetConfirmMaxRetries is how often the password-reset confirming
@@ -1475,23 +1494,39 @@ const resetConfirmMaxRetries = 3
 // spent, or its owner erased, ends in ErrInvalidResetToken like any other
 // refusal. When the bound is exhausted the last error is returned as it is
 // and nothing is written; the link is still valid then.
+//
+// ConfirmPasswordReset is CompletePasswordReset without the owner's id.
 func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
+	_, err := s.CompletePasswordReset(token, newPassword)
+	return err
+}
+
+// CompletePasswordReset is the confirmation ConfirmPasswordReset describes
+// and returns the owner's id on success (#550). Each refusal still matches
+// ErrInvalidResetToken with the same message, and carries the audit reason
+// (unavailable, token_invalid, account_erased, account_inactive or
+// sso_account) and the owner's id once a stored token was found: an unknown,
+// spent or expired token is a lookup miss and names no account.
+func (s *authService) CompletePasswordReset(token, newPassword string) (uint, error) {
 	// Every dependency of the transactional flow is required. Running the old
 	// sequence of separate writes when one is missing would reintroduce the
 	// burnt-link and double-spend failures this flow exists to prevent.
-	if s.resetTokenRepo == nil || s.refreshTokenRepo == nil || s.apiKeyRepo == nil || s.txManager == nil || token == "" {
-		return fmt.Errorf("reset not available: %w", ErrInvalidResetToken)
+	if s.resetTokenRepo == nil || s.refreshTokenRepo == nil || s.apiKeyRepo == nil || s.txManager == nil {
+		return 0, authRefusal(AuthAuditReasonUnavailable, 0, fmt.Errorf("reset not available: %w", ErrInvalidResetToken))
+	}
+	if token == "" {
+		return 0, authRefusal(AuthAuditReasonTokenInvalid, 0, fmt.Errorf("reset not available: %w", ErrInvalidResetToken))
 	}
 
 	// A weak password must NOT spend the token: the user retries with the
 	// same link instead of having to request a new one.
 	if err := utils.ValidatePasswordComplexity(newPassword); err != nil {
-		return err
+		return 0, err
 	}
 	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		// bcrypt refuses inputs over 72 bytes; nothing has been written.
-		return fmt.Errorf("failed to hash password: %w", err)
+		return 0, fmt.Errorf("failed to hash password: %w", err)
 	}
 
 	hash := hashOpaqueToken(token, s.sessionTokenSecret())
@@ -1523,12 +1558,12 @@ func (s *authService) ConfirmPasswordReset(token, newPassword string) error {
 		return err
 	}, resetConfirmMaxRetries)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	utils.Logger.WithField("user_id", userID).WithField("operation", "ConfirmPasswordReset").
 		Info("Password reset completed; all sessions, earlier access tokens and API keys ended")
-	return nil
+	return userID, nil
 }
 
 // confirmPasswordResetInTransaction performs the reset on transaction-bound
@@ -1549,14 +1584,14 @@ func (s *authService) confirmPasswordResetInTransaction(
 	stored, err := resetRepo.GetByTokenHash(hash)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+			return 0, authRefusal(AuthAuditReasonTokenInvalid, 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 		}
 		return 0, fmt.Errorf("reset token lookup failed: %w", err)
 	}
 
 	// Defence in depth in case a repository implementation stops filtering.
 	if stored.UsedAt != nil || !stored.ExpiresAt.After(time.Now()) {
-		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		return 0, authRefusal(AuthAuditReasonTokenInvalid, stored.UserID, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 	}
 
 	// Claim the token before reading anything else. The claim is the one
@@ -1566,7 +1601,7 @@ func (s *authService) confirmPasswordResetInTransaction(
 	// the lookup and this statement.
 	if err := resetRepo.MarkUsed(stored.ID); err != nil {
 		if apperrors.IsNotFound(err) {
-			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+			return 0, authRefusal(AuthAuditReasonTokenInvalid, stored.UserID, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 		}
 		return 0, fmt.Errorf("failed to mark reset token used: %w", err)
 	}
@@ -1584,12 +1619,12 @@ func (s *authService) confirmPasswordResetInTransaction(
 	user, err := userRepo.GetByID(stored.UserID)
 	if err != nil {
 		if apperrors.IsNotFound(err) {
-			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+			return 0, authRefusal(AuthAuditReasonAccountErased, stored.UserID, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 		}
 		return 0, fmt.Errorf("reset token owner lookup failed: %w", err)
 	}
 	if !user.IsActive {
-		return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+		return 0, authRefusal(AuthAuditReasonAccountInactive, stored.UserID, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 	}
 	// An account linked to single sign-on, while security.sso.allow_password
 	// is off (#444, #457); a plain read after the owner lock. The rollback
@@ -1600,7 +1635,7 @@ func (s *authService) confirmPasswordResetInTransaction(
 			return 0, fmt.Errorf("reset token owner identity lookup failed: %w", err)
 		}
 		if linked {
-			return 0, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken)
+			return 0, authRefusal(AuthAuditReasonSSOAccount, stored.UserID, fmt.Errorf("reset token rejected: %w", ErrInvalidResetToken))
 		}
 	}
 

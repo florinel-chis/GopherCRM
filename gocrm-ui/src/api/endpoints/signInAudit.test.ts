@@ -58,7 +58,7 @@ describe('sign-in audit lists against the API specification', () => {
   });
 
   it('SIGN_IN_AUDIT_REASONS equals the reason enum of GET /audit/sign-ins', () => {
-    expect(SIGN_IN_AUDIT_REASONS).toHaveLength(41);
+    expect(SIGN_IN_AUDIT_REASONS).toHaveLength(43);
     expect([...SIGN_IN_AUDIT_REASONS].sort()).toEqual(documentedEnum('reason'));
   });
 });

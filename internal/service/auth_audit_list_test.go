@@ -122,7 +122,7 @@ func runAuthAuditList(t *testing.T, db *gorm.DB) {
 
 func TestAuthAuditReasonVocabulary(t *testing.T) {
 	reasons := AuthAuditReasons()
-	assert.Len(t, reasons, 41)
+	assert.Len(t, reasons, 43)
 	assert.True(t, sort.StringsAreSorted(reasons))
 	for _, reason := range reasons {
 		assert.True(t, IsAuthAuditReason(reason), reason)
@@ -133,7 +133,7 @@ func TestAuthAuditReasonVocabulary(t *testing.T) {
 	assert.False(t, IsAuthAuditMethod("password "))
 	assert.False(t, IsAuthAuditMethod("PASSWORD"))
 	assert.False(t, IsAuthAuditOutcome("Refused"))
-	assert.Equal(t, []string{"api_key", "oidc", "password", "refresh", "scim"}, AuthAuditMethods())
+	assert.Equal(t, []string{"api_key", "logout", "oidc", "password", "password_change", "refresh", "reset_confirm", "reset_request", "scim"}, AuthAuditMethods())
 	assert.Equal(t, []string{"refused", "success"}, AuthAuditOutcomes())
 
 	// The swagger enums of GET /audit/sign-ins (what the SPA's selects offer)

@@ -998,7 +998,9 @@ one day ago are pruned by the stale bulk operation sweep (at boot and every 15 m
 One pseudonymous row per sign-in outcome (#454): a password sign-in, a single sign-on callback,
 a refresh, a refused SCIM authentication (#468, one row each) or a successful SCIM user create,
 replace or patch (#470, #471, method `scim`, outcome `success`, the account's `user_id`), or one
-such row per member a successful SCIM group patch added or removed (#506); refused API keys are counted in one row per reason, `user_id`, client network and UTC
+such row per member a successful SCIM group patch added or removed (#506), or a password change,
+password reset request, password reset completion or logout that reached the service (#550, one
+row each, written after the service returns); refused API keys are counted in one row per reason, `user_id`, client network and UTC
 minute (`attempts`, #466, migration `20261125120000_auth_audit_log_attempts`). Written after the sign-in's transaction, on the root handle. No
 foreign key, no soft delete; erasure does not touch it. Rows older than
 `AUTH_AUDIT_RETENTION_DAYS` (default 90) are pruned by the stale bulk operation sweep (at boot and
@@ -1009,7 +1011,7 @@ subject, a token, a code, a state, a nonce, a password, a full IP address or a f
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Written in UTC; index `idx_auth_audit_log_created_at` (the prune) |
-| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key` or `scim` (#468) |
+| method | varchar(16) | No | - | `password`, `oidc`, `refresh`, `api_key`, `scim` (#468), `password_change`, `reset_request`, `reset_confirm` or `logout` (#550) |
 | outcome | varchar(16) | No | - | `success` or `refused` |
 | reason | varchar(64) | No | - | Stable reason code of a refusal (see [AUTHORIZATION.md](AUTHORIZATION.md#sign-in-audit-log)); `''` on success |
 | user_id | bigint unsigned | Yes | NULL | The account, when the account row was found; index `idx_auth_audit_log_user_id`; no foreign key |

@@ -355,14 +355,19 @@ SCIM tier in front of the authentication bounds them. Since #470 a successful SC
 or replace, since #471 a successful patch and since #504 a delete that deactivates, writes one row (method `scim`, outcome `success`, reason empty, `user_id` the account),
 after its transaction; since #506 a successful group patch writes one such row per account added
 to or removed from the group; a refused one (400 or 409), and a delete of an already inactive account,
-writes none. Any other successful API-key or
+writes none. Since #550 each `POST /auth/change-password`, `POST /auth/password-reset`,
+`POST /auth/password-reset/confirm` and `POST /auth/logout` that reaches the service writes one
+row of its own (methods `password_change`, `reset_request`, `reset_confirm` and `logout`,
+`attempts` 1) after the service returns: a request refused by the authentication middleware or
+a rate tier, a binding 400 or a new password refused by the length or complexity check writes
+none. Any other successful API-key or
 SCIM request writes nothing, and neither does a refused Bearer token on the API, a 400,
 `POST /auth/oidc/start` or a rate-limited request. A failed write is logged once
 (`component` `auth_audit`, `error_code` `audit_write_failed`) and never changes the answer.
 Answers, status codes and messages are the same as before.
 
 **Columns.** `id`; `created_at` (UTC, milliseconds); `method` (`password`, `oidc`, `refresh`,
-`api_key`, `scim`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
+`api_key`, `scim`, `password_change`, `reset_request`, `reset_confirm`, `logout`); `outcome` (`success` or `refused`); `reason` (empty on success); `user_id` (the
 account, when the account row was found, else NULL); `attempt_id` (the `oidc_login_attempts` row
 a callback claimed, else NULL); `request_id` (the request's `X-Request-ID`, stored only when it
 matches `^[A-Za-z0-9._:-]{1,64}$`, else empty); `subject_ref` (see below, else NULL);
@@ -410,6 +415,20 @@ or the full user agent. Neither are they logged.
   `token_exchange_failed`, `sso_disabled` (404) and `internal_error` (500). A refusal of a
   linked account (`account_erased`, `account_inactive`, `customer_login_role`, `last_admin`)
   carries that account's `user_id`.
+- `password_change` (#550, always the caller's `user_id`): `invalid_credentials` (a wrong
+  current password, or one changed concurrently), `session_stale` (the `refresh_token` is not a
+  live session of the caller; 409 `SESSION_STALE`), `account_inactive`, `account_erased`,
+  `internal_error`.
+- `reset_request` (#550, the answer is the same 200 in every case): success with the account's
+  `user_id` once a link was stored, whether or not the mail was delivered; `account_unknown` (no
+  account has that email, `user_id` NULL), `account_inactive`, `account_erased`, `sso_account`
+  (an account linked to single sign-on while `allow_password` is off), `unavailable` (the reset
+  flow is not wired, `user_id` NULL) and `internal_error`.
+- `reset_confirm` (#550): `token_invalid`, `account_inactive`, `account_erased`, `sso_account`,
+  `unavailable` and `internal_error`. An unknown, spent or expired token carries no `user_id`;
+  `token_invalid` names the owner only when a stored token was found but another confirmation
+  claimed it first. The owner refusals carry the owner's `user_id`.
+- `logout` (#550, the caller's `user_id`): success, or `internal_error` (the 500).
 
 **Subject reference.** A single sign-on refusal decided after the ID token verified and its nonce
 matched stores `subject_ref`, the hex HMAC-SHA256 under `API_KEY_SECRET` (or `JWT_SECRET` when it
@@ -435,7 +454,10 @@ writes at most one `key_invalid` row a minute, and its `attempts` still counts e
 Password, refresh and single sign-on rows stay one per request; their number is bounded by the
 strict tier on `/auth` (10 requests a minute, burst 5, per client address, applied before the
 handler, so a 429 writes nothing); SCIM refusals are one row per request too, bounded the same
-way by the strict SCIM tier on `/scim/v2`. `DISABLE_RATE_LIMIT=true` lifts the strict tier and a
+way by the strict SCIM tier on `/scim/v2`. Password change, reset request, reset completion and
+logout rows (#550) are one per request as well: the strict `/auth` tier bounds the two reset
+routes, the authenticated tier bounds `POST /auth/change-password` and `POST /auth/logout`.
+`DISABLE_RATE_LIMIT=true` lifts the strict tier and a
 `gophercrm_e2e` build with `GOPHERCRM_E2E_DISABLE_RATE_LIMIT=true` lifts every tier; both are
 test-only. With `DISABLE_RATE_LIMIT` or the e2e switch set, `SERVER_MODE=production` stops startup.
 

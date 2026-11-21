@@ -1249,18 +1249,31 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   4. Finish a single sign-on that succeeds, one with an unknown state and one whose groups match
      no mapping entry.
   5. Send one request with an `X-Request-ID` of 100 characters or with a space.
+  6. Change the password (#550) with the right current password and the current refresh token,
+     with a wrong current password, with a refresh token of another account, as a deactivated
+     and as an erased account; then once with malformed JSON and once with a weak new password.
+  7. Request a password reset for the sales account, an unknown email, the deactivated account
+     and the linked account; confirm a reset link, an unknown token, the same link a second time
+     and the link of an account deactivated after it was sent; log out.
 - **Expected:** Every answer is the same as before (200, the generic 401, 503 for an operational
-  refresh failure). Each step 1–4 request adds exactly one `auth_audit_log` row: `password`
+  refresh failure; 400, 409 `SESSION_STALE` and 401 for the password change, the same 200 for
+  every reset request, 400 `Invalid or expired reset token` for each refused confirmation). Each
+  step 1–4, 6 and 7 request that reaches the service adds exactly one `auth_audit_log` row: `password`
   `success`, or `refused` with `invalid_credentials` (`user_id` NULL for the unknown email, the
   account's id for the wrong password), `account_locked`, `account_inactive`, `sso_account`;
   `refresh` `success`, `token_invalid`, `account_inactive`, `account_erased`; `api_key`
   `key_invalid`, `key_revoked`, `key_expired`, `account_inactive`, `account_erased`,
   `customer_login_role` (a key of a customer account, #532) (the account's `user_id` when the key
-  was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`. The
-  bad Bearer token adds no row. Every row carries the request id and the client's `/24`; the
+  was found); `oidc` `success` with the user id, `state_invalid`, `no_mapping_match`;
+  `password_change` `success`, `invalid_credentials`, `session_stale`, `account_inactive`,
+  `account_erased`, each with the caller's id; `reset_request` `success` with the user id,
+  `account_unknown` with `user_id` NULL, `account_inactive`, `sso_account`; `reset_confirm`
+  `success` with the user id, `token_invalid` with `user_id` NULL for the unknown and the spent
+  token, `account_inactive` with the owner's id; `logout` `success` with the user id. The two
+  step-6 400s and the bad Bearer token add no row. Every row carries the request id and the client's `/24`; the
   request id of step 5 is stored empty. The `Single sign-on refused` log line names the row in
   `audit_id`.
-- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}`, `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
+- **Automation:** automated — Go: `TestAuthAuditOutcomes{SQLite,MySQL}` (incl. the #550 `password_change_*`, `reset_request_*`, `reset_confirm_*` and `logout_success` subtests), `TestAuthAuditOIDCReasonCoverage`, `TestOIDCSignIn{SQLite,MySQL}` (`assertRefused`, `audit_success_row`, `audit_refusal_row`, `audit_linked_user_refusal`, `audit_id_on_refusal_log`), `TestAuthAuditWired`, `TestAuthHandlerAudit`, `TestAuth_RecordsAPIKeyFailure`, `TestAuth_DoesNotRecordBearerFailure`
 
 ### TC-AUTH-061 — The audit log and its log lines hold no personal or secret values
 - **Priority:** P0
@@ -1269,10 +1282,13 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   Chrome on Windows user agent.
 - **Steps:**
   1. Run a single sign-on that succeeds and one refused after the ID token verified, a password
-     sign-in with a wrong password, a refresh and a request with an unknown API key.
+     sign-in with a wrong password, a refresh and a request with an unknown API key; then (#550)
+     a password reset request for the account and for an unknown email, the confirmation of the
+     mailed link, a password change that presents the refresh token, and a logout, with a mailer
+     that does not log its recipient.
   2. Read every column of every `auth_audit_log` row and the server log of those requests.
-- **Expected:** Neither holds the email, the password, the subject, the access or refresh token,
-  the API key, the code, the state, the nonce, the full IP address or the full user agent. The
+- **Expected:** Neither holds the email, the password (old or new), the subject, the access or
+  refresh token, the reset token or link, the API key, the code, the state, the nonce, the full IP address or the full user agent. The
   rows hold `198.51.100.0/24` and `Chrome on Windows`. A failed audit write is logged once as
   `audit_write_failed` and the sign-in answers as without the audit.
 - **Automation:** automated — Go: `TestAuthAuditPrivacy{SQLite,MySQL}`, `TestAuthAuditWriteFailure`

@@ -16,6 +16,12 @@ const (
 	AuthAuditMethodRefresh  = "refresh"
 	AuthAuditMethodAPIKey   = "api_key"
 	AuthAuditMethodSCIM     = "scim"
+	// Credential flows (#550): POST /auth/change-password,
+	// /auth/password-reset, /auth/password-reset/confirm and /auth/logout.
+	AuthAuditMethodPasswordChange = "password_change"
+	AuthAuditMethodResetRequest   = "reset_request"
+	AuthAuditMethodResetConfirm   = "reset_confirm"
+	AuthAuditMethodLogout         = "logout"
 )
 
 // Outcomes of an auth_audit_log row.
@@ -24,7 +30,8 @@ const (
 	AuthAuditOutcomeRefused = "refused"
 )
 
-// Reason codes of password sign-ins, refreshes, API keys and SCIM tokens.
+// Reason codes of password sign-ins, refreshes, API keys, SCIM tokens,
+// password changes, password resets and logouts.
 const (
 	AuthAuditReasonInvalidCredentials = "invalid_credentials"
 	AuthAuditReasonAccountLocked      = "account_locked"
@@ -45,6 +52,11 @@ const (
 	// SCIM refusals (#468); a bad SCIM token reuses token_invalid.
 	AuthAuditReasonTokenMissing = "token_missing"
 	AuthAuditReasonTokenRevoked = "token_revoked"
+	// A password change whose refresh_token is not a live session of the
+	// caller (#550).
+	AuthAuditReasonSessionStale = "session_stale"
+	// A password reset requested for an email with no account (#550).
+	AuthAuditReasonAccountUnknown = "account_unknown"
 )
 
 // Single sign-on refusal codes (oidcRefuse, oidcRefuseWith). They are also
@@ -89,6 +101,10 @@ var authAuditMethodList = []string{
 	AuthAuditMethodRefresh,
 	AuthAuditMethodAPIKey,
 	AuthAuditMethodSCIM,
+	AuthAuditMethodPasswordChange,
+	AuthAuditMethodResetRequest,
+	AuthAuditMethodResetConfirm,
+	AuthAuditMethodLogout,
 }
 
 // authAuditOutcomeList is every outcome, once.
@@ -115,6 +131,8 @@ var authAuditReasonList = []string{
 	AuthAuditReasonCustomerAccount,
 	AuthAuditReasonTokenMissing,
 	AuthAuditReasonTokenRevoked,
+	AuthAuditReasonSessionStale,
+	AuthAuditReasonAccountUnknown,
 	AuthAuditReasonBindingMismatch,
 	AuthAuditReasonBindingMissing,
 	AuthAuditReasonClaimsInvalid,
@@ -158,7 +176,7 @@ func authAuditSet(values []string) map[string]bool {
 	return set
 }
 
-// IsAuthAuditMethod reports whether value is one of the five methods.
+// IsAuthAuditMethod reports whether value is one of the nine methods.
 func IsAuthAuditMethod(value string) bool { return authAuditMethods[value] }
 
 // IsAuthAuditOutcome reports whether value is success or refused.
