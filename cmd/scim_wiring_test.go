@@ -304,7 +304,7 @@ func TestSCIMTokenTierWired(t *testing.T) {
 	t.Run("the default limit admits a burst from one address", func(t *testing.T) {
 		router, boot := scimWiredRouter(t)
 		token := newToken(t, boot, "Entra")
-		for i := 0; i < 30; i++ {
+		for i := 0; i < 100; i++ {
 			recorder := scimWiredSend(router, http.MethodGet, "/scim/v2/ServiceProviderConfig", "", "203.0.113.20:1234", "Bearer "+token)
 			require.Equal(t, http.StatusOK, recorder.Code, "request %d: %s", i+1, recorder.Body.String())
 		}

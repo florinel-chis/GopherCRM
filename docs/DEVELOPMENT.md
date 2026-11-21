@@ -386,7 +386,7 @@ mapping, overage, subject whitespace, JIT, erasure) are in
 the API prefix (`scimGroup`, passed to `setupDependencies`) behind `middleware.SCIMAuth`, which
 takes the two SCIM limits of `middleware.NewSCIMRateLimits` (#555): the SCIM token limit counts
 accepted requests per token id (`cfg.SCIM`, from `SCIM_RATE_LIMIT_PER_MINUTE` and
-`SCIM_RATE_LIMIT_BURST`, defaults 600 and 60, capped at 6000 and 1000 by
+`SCIM_RATE_LIMIT_BURST`, defaults 1500 and 150, capped at 6000 and 1000 by
 `config.NormalizeSCIMRateLimits`, which the constructor applies too), the SCIM refusal limit
 counts refusals per client address (10/min, burst 5), every method counts, and a request over
 either gets a 429 in the SCIM error shape with no audit row; then the three discovery documents (`internal/scim`,

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -304,7 +305,9 @@ func TestSCIMRateLimits(t *testing.T) {
 		group.OPTIONS("/Users", handle)
 		return fixture{router: router, audit: audit, reached: &reached, clock: clock}
 	}
-	defaults := func(now func() time.Time) *SCIMRateLimits { return newSCIMRateLimits(600, 60, now) }
+	defaults := func(now func() time.Time) *SCIMRateLimits {
+		return newSCIMRateLimits(config.DefaultSCIMRateLimitPerMinute, config.DefaultSCIMRateLimitBurst, now)
+	}
 	send := func(f fixture, method, token, remote string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "/scim/v2/Users", nil)
 		request.RemoteAddr = remote
@@ -327,7 +330,8 @@ func TestSCIMRateLimits(t *testing.T) {
 
 	t.Run("a provisioning cycle from one address", func(t *testing.T) {
 		f := setup(t, defaults)
-		for i := 0; i < 60; i++ {
+		const burst, sustained = 150, 1500
+		for i := 0; i < burst; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "198.51.100.5:1234").Code, "request %d", i+1)
 		}
 		before := *f.reached
@@ -335,16 +339,17 @@ func TestSCIMRateLimits(t *testing.T) {
 		assert.Equal(t, before, *f.reached, "a throttled request reaches no handler")
 		assert.Empty(t, f.audit.taken(), "a throttled request writes no audit row")
 		f.clock.Advance(time.Second)
-		for i := 0; i < 600; i++ {
+		// 25 requests a second for a minute.
+		for i := 0; i < sustained; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "198.51.100.5:1234").Code, "follow-up request %d", i+1)
-			f.clock.Advance(100 * time.Millisecond)
+			f.clock.Advance(time.Second / 25)
 		}
-		assert.Equal(t, 660, *f.reached)
+		assert.Equal(t, burst+sustained, *f.reached)
 	})
 
 	t.Run("counted per token", func(t *testing.T) {
 		f := setup(t, defaults)
-		for i := 0; i < 60; i++ {
+		for i := 0; i < 150; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "198.51.100.5:1234").Code)
 		}
 		assertThrottled(t, send(f, http.MethodGet, tokenA, "198.51.100.5:1234"))
@@ -389,7 +394,7 @@ func TestSCIMRateLimits(t *testing.T) {
 
 	t.Run("accepted requests do not spend the refusal budget", func(t *testing.T) {
 		f := setup(t, defaults)
-		for i := 0; i < 50; i++ {
+		for i := 0; i < 150; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "192.0.2.30:1234").Code)
 		}
 		for i := 0; i < 5; i++ {
@@ -400,20 +405,22 @@ func TestSCIMRateLimits(t *testing.T) {
 
 	t.Run("the switches lift both limits", func(t *testing.T) {
 		t.Setenv("DISABLE_RATE_LIMIT", "true")
-		require.Nil(t, NewSCIMRateLimits(600, 60))
-		f := setup(t, func(func() time.Time) *SCIMRateLimits { return NewSCIMRateLimits(600, 60) })
+		require.Nil(t, NewSCIMRateLimits(config.DefaultSCIMRateLimitPerMinute, config.DefaultSCIMRateLimitBurst))
+		f := setup(t, func(func() time.Time) *SCIMRateLimits {
+			return NewSCIMRateLimits(config.DefaultSCIMRateLimitPerMinute, config.DefaultSCIMRateLimitBurst)
+		})
 		for i := 0; i < 6; i++ {
 			require.Equal(t, http.StatusUnauthorized, send(f, http.MethodGet, unknown, "192.0.2.50:1234").Code, "refusal %d", i+1)
 		}
 		assert.Len(t, f.audit.taken(), 6)
-		for i := 0; i < 61; i++ {
+		for i := 0; i < 151; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "192.0.2.50:1234").Code, "request %d", i+1)
 		}
 	})
 
 	t.Run("out-of-range values take the defaults and caps", func(t *testing.T) {
 		f := setup(t, func(now func() time.Time) *SCIMRateLimits { return newSCIMRateLimits(0, 0, now) })
-		for i := 0; i < 60; i++ {
+		for i := 0; i < 150; i++ {
 			require.Equal(t, http.StatusOK, send(f, http.MethodGet, tokenA, "192.0.2.60:1234").Code, "request %d", i+1)
 		}
 		assertThrottled(t, send(f, http.MethodGet, tokenA, "192.0.2.60:1234"))

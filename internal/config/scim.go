@@ -17,8 +17,8 @@ type SCIMConfig struct {
 
 // Defaults and maximums of the SCIM token limit.
 const (
-	DefaultSCIMRateLimitPerMinute = 600
-	DefaultSCIMRateLimitBurst     = 60
+	DefaultSCIMRateLimitPerMinute = 1500
+	DefaultSCIMRateLimitBurst     = 150
 	MaxSCIMRateLimitPerMinute     = 6000
 	MaxSCIMRateLimitBurst         = 1000
 )
