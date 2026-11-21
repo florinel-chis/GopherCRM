@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,10 +17,12 @@ import (
 // describes: its structure, the status and the key facts of every flow, the
 // lock chains, the retry rule, the #175 failure modes, every cited path and
 // line, the flow -> ticket map, and the links that point to it from
-// EXTENDING, DEVELOPMENT, ROADMAP, README and CHANGELOG. Where a fact is a
-// property of the code (a lock that is or is not taken, a helper that is or is
-// not used) the code is read too, so the document and the code cannot drift
-// apart silently.
+// EXTENDING, DEVELOPMENT, ROADMAP, README and CHANGELOG. Every citation of
+// internal/service/auth_service.go is pinned to its enclosing function and a
+// text fragment of the cited line (#581); citations of other files are only
+// checked to lie inside their file. Where a fact is a property of the code (a
+// lock that is or is not taken, a helper that is or is not used) the code is
+// read too, so the document and the code cannot drift apart silently.
 
 const concurrencyDocFile = "docs/CONCURRENCY.md"
 
@@ -920,6 +923,165 @@ func TestConcurrencyDocCitationsResolve(t *testing.T) {
 			assert.True(t, start >= 1 && start <= end && end <= count,
 				"%s:%s lies outside the file's %d lines", rel, lines, count)
 		}
+	}
+}
+
+// concurrencyDocAuthServiceCitation matches a `internal/service/auth_service.go:N`
+// span and, when it is followed by "`, `:M` in the same file", that bare
+// continuation too. Bare spans after other files are not matched.
+var concurrencyDocAuthServiceCitation = regexp.MustCompile(
+	"`internal/service/auth_service\\.go:([0-9]+)`(?:,\\s+`:([0-9]+)`\\s+in\\s+the\\s+same\\s+file)?")
+
+// concurrencyDocAuthServicePin pins one auth_service.go citation of the
+// document: the cited line must contain fragment and lie inside the function
+// whose declaration starts with signature. An empty signature marks a
+// top-level declaration, whose fragment must occur exactly once in the file.
+type concurrencyDocAuthServicePin struct {
+	signature string
+	fragment  string
+}
+
+const (
+	pinAuthenticate          = "func (s *authService) authenticate("
+	pinLoginInTransaction    = "func (s *authService) loginInTransaction("
+	pinRecordLoginFailure    = "func recordLoginFailureInTransaction("
+	pinRefreshAccessToken    = "func (s *authService) RefreshAccessToken("
+	pinRotateInTransaction   = "func (s *authService) rotateRefreshTokenInTransaction("
+	pinRefuseRevoked         = "func (s *authService) refuseRevokedRefreshToken("
+	pinLogout                = "func (s *authService) Logout("
+	pinChangePassword        = "func (s *authService) ChangePassword("
+	pinChangePasswordInTx    = "func (s *authService) changePasswordInTransaction("
+	pinLockLiveOwner         = "func lockLiveCredentialOwner("
+	pinIssuePasswordReset    = "func (s *authService) IssuePasswordReset("
+	pinCompletePasswordReset = "func (s *authService) CompletePasswordReset("
+	pinConfirmResetInTx      = "func (s *authService) confirmPasswordResetInTransaction("
+)
+
+// concurrencyDocAuthServicePins lists, in document order, one pin per
+// auth_service.go citation of docs/CONCURRENCY.md (#581).
+var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
+	// Retry rule: the login, request and confirm roots.
+	{pinAuthenticate, "WithTransactionAndRetry("},
+	{pinIssuePasswordReset, "WithTransactionAndRetry("},
+	{pinCompletePasswordReset, "WithTransactionAndRetry("},
+	// Login.
+	{pinAuthenticate, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinLoginInTransaction, "userRepo.GetByID(userID)"},
+	{pinLoginInTransaction, "userRepo.UpdateFields(owner.ID, fields)"},
+	{pinLoginInTransaction, "identities.ExistsForUser(owner.ID)"},
+	{pinLoginInTransaction, "s.issueRefreshToken("},
+	{pinAuthenticate, "s.userRepo.GetByEmail(email)"},
+	{pinAuthenticate, "checkIdentity := s.checkSSOIdentity()"},
+	{pinLoginInTransaction, "WithTransactionAndRetry(ctx, func(spCtx context.Context) error {"},
+	{pinLoginInTransaction, "s.accessTokenFor(owner)"},
+	{pinAuthenticate, "WithTransactionAndRetry("},
+	{pinRecordLoginFailure, pinRecordLoginFailure},
+	{pinLoginInTransaction, pinLoginInTransaction},
+	{pinAuthenticate, "WithTransactionAndRetry("},
+	{"", "const loginMaxRetries = 3"},
+	// Refresh rotation.
+	{pinRefreshAccessToken, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinRotateInTransaction, "userRepo.GetByID(stored.UserID)"},
+	{pinRotateInTransaction, "refreshRepo.ClaimForRotation(stored.ID)"},
+	{pinRotateInTransaction, "s.issueRefreshToken(refreshRepo, user.ID, session)"},
+	{pinRefuseRevoked, "userRepo.GetByID(stored.UserID)"},
+	{pinRefuseRevoked, "refreshRepo.RevokeFamily(stored.UserID, stored.FamilyID)"},
+	{pinRotateInTransaction, "refreshRepo.GetByTokenHash(hash)"},
+	{pinRotateInTransaction, "// Lock the owner before claiming the token."},
+	{pinRefuseRevoked, "refreshRepo.GetRevokedByTokenHash(hash)"},
+	{pinRefuseRevoked, "refreshRepo.HasLaterInFamily(stored)"},
+	{pinRefreshAccessToken, "s.txManager.WithTransaction(context.Background(),"},
+	// Logout and change password.
+	{pinLogout, pinLogout},
+	{pinChangePassword, pinChangePassword},
+	{pinChangePasswordInTx, "revokeAllCredentials(credentialStores{"},
+	// Password-reset request.
+	{pinIssuePasswordReset, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinLockLiveOwner, "userRepo.GetByID(userID)"},
+	{pinIssuePasswordReset, "s.identities.WithTx(tx).ExistsForUser(owner.ID)"},
+	{pinIssuePasswordReset, "checkIdentity := s.checkSSOIdentity()"},
+	{pinIssuePasswordReset, "resetRepo.InvalidateAllForUser(owner.ID)"},
+	{pinIssuePasswordReset, "resetRepo.Create(token)"},
+	{pinIssuePasswordReset, "s.userRepo.GetByEmail(email)"},
+	{pinIssuePasswordReset, "s.mailer.SendPasswordReset("},
+	{pinIssuePasswordReset, "WithTransactionAndRetry("},
+	{"", "const resetRequestMaxRetries = 3"},
+	// Password-reset confirm.
+	{pinConfirmResetInTx, "resetRepo.MarkUsed(stored.ID)"},
+	{pinCompletePasswordReset, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinConfirmResetInTx, "userRepo.GetByID(stored.UserID)"},
+	{pinConfirmResetInTx, "userRepo.UpdateFields(user.ID,"},
+	{pinConfirmResetInTx, "revokeAllCredentials(credentialStores{"},
+	{pinConfirmResetInTx, "identities.ExistsForUser(user.ID)"},
+	{pinCompletePasswordReset, "checkIdentity := s.checkSSOIdentity()"},
+	{pinConfirmResetInTx, "resetRepo.GetByTokenHash(hash)"},
+	{pinCompletePasswordReset, "WithTransactionAndRetry("},
+	{"", "const resetConfirmMaxRetries = 3"},
+	// How the #175 failure modes are avoided.
+	{pinRotateInTransaction, "// Lock the owner before claiming the token."},
+}
+
+func TestConcurrencyDocAuthServiceCitationsPinned(t *testing.T) {
+	const rel = "internal/service/auth_service.go"
+	text := concurrencyDocText(t)
+	src := readRepositoryFile(t, rel)
+	lines := strings.Split(src, "\n")
+
+	type citation struct {
+		docLine int
+		label   string
+		line    int
+	}
+	var citations []citation
+	for _, loc := range concurrencyDocAuthServiceCitation.FindAllStringSubmatchIndex(text, -1) {
+		for _, g := range []int{2, 4} {
+			if loc[g] < 0 {
+				continue
+			}
+			n, err := strconv.Atoi(text[loc[g]:loc[g+1]])
+			require.NoError(t, err)
+			label := rel + ":" + text[loc[g]:loc[g+1]]
+			if g == 4 {
+				label = "`:" + text[loc[g]:loc[g+1]] + "` (same file)"
+			}
+			citations = append(citations, citation{
+				docLine: strings.Count(text[:loc[g]], "\n") + 1,
+				label:   label,
+				line:    n,
+			})
+		}
+	}
+	require.Len(t, citations, len(concurrencyDocAuthServicePins),
+		"%s cites %s %d times; pin every citation in concurrencyDocAuthServicePins",
+		concurrencyDocFile, rel, len(citations))
+
+	for i, c := range citations {
+		pin := concurrencyDocAuthServicePins[i]
+		where := fmt.Sprintf("%s line %d cites %s", concurrencyDocFile, c.docLine, c.label)
+		if !assert.True(t, c.line >= 1 && c.line <= len(lines), "%s, outside the file", where) {
+			continue
+		}
+		actual := lines[c.line-1]
+		assert.Contains(t, actual, pin.fragment,
+			"%s: expected a line containing %q, got %q", where, pin.fragment, strings.TrimSpace(actual))
+		if pin.signature == "" {
+			assert.Equal(t, 1, strings.Count(src, pin.fragment),
+				"%s: top-level fragment %q must occur exactly once in %s", where, pin.fragment, rel)
+			continue
+		}
+		idx := strings.Index(src, pin.signature)
+		if !assert.GreaterOrEqual(t, idx, 0, "%s: %s declares %q", where, rel, pin.signature) {
+			continue
+		}
+		end := strings.Index(src[idx:], "\n}\n")
+		if !assert.GreaterOrEqual(t, end, 0, "%s: end of %q", where, pin.signature) {
+			continue
+		}
+		first := strings.Count(src[:idx], "\n") + 1
+		last := strings.Count(src[:idx+end+1], "\n") + 1
+		assert.True(t, c.line >= first && c.line <= last,
+			"%s: expected inside %q (lines %d-%d), got line %d %q",
+			where, pin.signature, first, last, c.line, strings.TrimSpace(actual))
 	}
 }
 
