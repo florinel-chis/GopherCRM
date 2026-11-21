@@ -310,6 +310,11 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 		assert.Equal(t, WebhookRequestTimeout, env.runtime(nil).RequestTimeout())
 		assert.Equal(t, 250*time.Millisecond, env.runtime(nil, WithWebhookPollInterval(250*time.Millisecond)).Interval())
 		assert.NoError(t, env.runtime(nil).Stop(context.Background()), "a runtime never started stops at once")
+		assert.Equal(t, 4, WebhookWorkers)
+		assert.Equal(t, 1, env.runtime(nil).Workers(), "without the option the pass is sequential")
+		assert.Equal(t, 3, env.runtime(nil, WithWebhookWorkers(3)).Workers())
+		assert.Equal(t, 1, env.runtime(nil, WithWebhookWorkers(0)).Workers(), "a non-positive size keeps the default")
+		assert.Equal(t, 1, env.runtime(nil, WithWebhookWorkers(-2)).Workers())
 	})
 
 	t.Run("the injected interval drives the passes", func(t *testing.T) {
@@ -389,6 +394,82 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 		for runtime.NumGoroutine() > baseline {
 			if time.Now().After(deadline) {
 				t.Fatalf("a stopped runtime holds no goroutine: %d running, %d before", runtime.NumGoroutine(), baseline)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("Stop drains every attempt in flight of a pool", func(t *testing.T) {
+		env := webhookRuntimeEnv(t)
+		pool := newWebhookConsumer(t)
+		now := time.Now().UTC().Truncate(time.Second)
+		endpointA := env.endpoint(pool.url("/a"), true, models.WebhookEventLeadCreated)
+		endpointB := env.endpoint(pool.url("/b"), true, models.WebhookEventLeadCreated)
+		recordID := env.seedLead().ID
+		a1 := seedPoolDelivery(t, env, endpointA.ID, recordID, now.Add(-2*time.Minute))
+		a2 := seedPoolDelivery(t, env, endpointA.ID, recordID, now.Add(-time.Minute))
+		b1 := seedPoolDelivery(t, env, endpointB.ID, recordID, now.Add(-2*time.Minute))
+		require.Less(t, a1.ID, a2.ID)
+
+		baseline := runtime.NumGoroutine()
+		entered := make(chan string, 4)
+		release := make(chan struct{})
+		var once sync.Once
+		releaseAll := func() { once.Do(func() { close(release) }) }
+		t.Cleanup(releaseAll)
+		pool.setHandler(func(w http.ResponseWriter, r *http.Request) {
+			entered <- r.URL.Path
+			<-release
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		ticks := make(chan time.Time, 1)
+		rt := env.runtime(pool.guard(nil), WithWebhookWorkers(2), WithWebhookClock(func() time.Time { return now }),
+			WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
+		rt.Start(context.Background())
+		seen := map[string]bool{}
+		wait := time.After(5 * time.Second)
+		for len(seen) < 2 {
+			select {
+			case path := <-entered:
+				seen[path] = true
+			case <-wait:
+				releaseAll()
+				t.Fatalf("both endpoints were not in flight at once: %v", seen)
+			}
+		}
+		assert.Equal(t, map[string]bool{"/a": true, "/b": true}, seen)
+
+		short, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		defer cancel()
+		err := rt.Stop(short)
+		require.Error(t, err, "Stop does not return nil while attempts are in flight")
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+
+		releaseAll()
+		bounded, cancelBounded := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelBounded()
+		require.NoError(t, rt.Stop(bounded))
+		assert.Equal(t, models.WebhookDeliverySucceeded, env.delivery(a1.ID).Status, "A's attempt in flight was drained")
+		assert.Equal(t, models.WebhookDeliverySucceeded, env.delivery(b1.ID).Status, "B's attempt in flight was drained")
+		queued := env.delivery(a2.ID)
+		assert.Equal(t, models.WebhookDeliveryPending, queued.Status, "no worker claims after Stop cancels")
+		assert.Equal(t, 0, queued.Attempts)
+
+		later := seedPoolDelivery(t, env, endpointB.ID, recordID, now.Add(-time.Minute))
+		select {
+		case ticks <- time.Now():
+		default:
+		}
+		time.Sleep(200 * time.Millisecond)
+		after := env.delivery(later.ID)
+		assert.Equal(t, models.WebhookDeliveryPending, after.Status, "nothing is written after Stop returned nil")
+		assert.Equal(t, 0, after.Attempts)
+
+		deadline := time.Now().Add(10 * time.Second)
+		for runtime.NumGoroutine() > baseline {
+			if time.Now().After(deadline) {
+				t.Fatalf("a stopped pool holds no goroutine: %d running, %d before", runtime.NumGoroutine(), baseline)
 			}
 			time.Sleep(20 * time.Millisecond)
 		}

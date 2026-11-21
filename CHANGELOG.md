@@ -1086,6 +1086,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Webhook deliveries are sent by a small worker pool (#568).** A delivery pass used to send its
+  due rows one after another, so one slow endpoint held up every other endpoint until its request
+  timed out. The runtime now hands each endpoint's due rows to one of 4 workers
+  (`service.WebhookWorkers`, set in `cmd/main.go` with `service.WithWebhookWorkers`), which sends
+  them one at a time in id order, oldest first; the other endpoints keep moving. Each row is still
+  claimed just before its send, claims, fences and the 2-minute lease are unchanged, and `Stop`
+  waits for every attempt in flight before it returns. Delivery stays at least once: a retry or a
+  second replica can still reorder an endpoint's events, so consumers deduplicate on `webhook-id`.
+  Discovery (`WebhookRepository.ListDueDeliveries`, which replaces the id-only method) now
+  returns each due row's `endpoint_id` with its id; the query is otherwise the same plain SELECT.
 - **A refresh token presented again after its exchange ends its session (#547).** When
   `POST /auth/refresh` receives a token that a committed refresh already exchanged for a
   successor, it still answers the same 401 `Invalid or expired refresh token`, and it now also

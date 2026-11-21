@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -21,19 +22,29 @@ import (
 //
 // It delivers committed outbox rows only: every WebhookPollInterval it
 // recovers expired leases, discovers due rows (status pending and
-// next_attempt_at <= now) with a plain SELECT, claims each by primary key with
-// a conditional UPDATE (pending -> sending, attempts + 1, last_attempt_at,
-// lease_until), POSTs once through the public-only egress client, and finishes
-// with a conditional UPDATE fenced on status sending and the claimed attempts.
+// next_attempt_at <= now) with a plain SELECT of id and endpoint_id, and hands
+// them to a bounded pool of workers (WebhookWorkers in production, set with
+// WithWebhookWorkers; 1 without the option). The rows of one endpoint go to a
+// single worker, sorted by ascending id (discovery orders by next_attempt_at,
+// so a retried row can come back after newer ones), and that worker sends them
+// one at a time: a slow endpoint holds only its own worker. Each row is
+// claimed just before its send, by primary key with a conditional UPDATE
+// (pending -> sending, attempts + 1, last_attempt_at, lease_until), so the
+// lease covers only the row being sent; it is POSTed once through the
+// public-only egress client and finished with a conditional UPDATE fenced on
+// status sending and the claimed attempts. The id order holds within one
+// runtime's pass only: a retry, or a second replica, can still reorder an
+// endpoint's events.
 // A failure below WebhookMaxAttempts returns the row to pending at now +
 // min(WebhookRetryBase * 2^(attempts-1), WebhookRetryMax); the attempt that
 // reaches the cap stores failed. Finished rows older than
 // WebhookDeliveryRetention are pruned at most once per WebhookPruneInterval.
 //
-// Stop cancels the loop: no further claim starts, and an attempt already
-// claimed runs to its end (its request is bounded by the request timeout and
-// its finish write by webhookFinishTimeout) before the goroutine joins, so
-// nothing is written after Stop returns nil.
+// Stop cancels the loop: no worker starts a further claim, and every attempt
+// in flight runs to its end (its request is bounded by the request timeout and
+// its finish write by webhookFinishTimeout). A pass joins its workers before
+// it returns and the loop goroutine joins after the pass, so nothing is
+// written after Stop returns nil.
 //
 // Log lines carry operation, endpoint_id, delivery_id, event_type, record_id,
 // attempts, status, http_status and error_code only: never the URL, its host,
@@ -58,6 +69,9 @@ const (
 	WebhookDeliveryRetention = 30 * 24 * time.Hour
 	// WebhookPruneInterval is the least time between two prunes.
 	WebhookPruneInterval = time.Hour
+	// WebhookWorkers is the production size of the sender pool: at most this
+	// many endpoints are sent to at the same time by one runtime.
+	WebhookWorkers = 4
 )
 
 const (
@@ -136,6 +150,16 @@ func WithWebhookRequestTimeout(timeout time.Duration) WebhookRuntimeOption {
 	}
 }
 
+// WithWebhookWorkers sets the size of the sender pool; a non-positive value
+// keeps the default of 1 (the sequential pass).
+func WithWebhookWorkers(n int) WebhookRuntimeOption {
+	return func(r *WebhookRuntime) {
+		if n > 0 {
+			r.workers = n
+		}
+	}
+}
+
 // WithWebhookLogger replaces utils.Logger.
 func WithWebhookLogger(logger *logrus.Logger) WebhookRuntimeOption {
 	return func(r *WebhookRuntime) { r.logger = logger }
@@ -153,6 +177,7 @@ type WebhookRuntime struct {
 	newTicker func(time.Duration) (<-chan time.Time, func())
 	interval  time.Duration
 	timeout   time.Duration
+	workers   int
 
 	// passMu serialises passes (the loop and direct RunOnce calls).
 	passMu    sync.Mutex
@@ -176,6 +201,7 @@ func NewWebhookRuntime(repo repository.WebhookRepository, clients WebhookClientF
 		now:      time.Now,
 		interval: WebhookPollInterval,
 		timeout:  WebhookRequestTimeout,
+		workers:  1,
 		newTicker: func(interval time.Duration) (<-chan time.Time, func()) {
 			ticker := time.NewTicker(interval)
 			return ticker.C, ticker.Stop
@@ -192,6 +218,9 @@ func (r *WebhookRuntime) Interval() time.Duration { return r.interval }
 
 // RequestTimeout bounds one POST.
 func (r *WebhookRuntime) RequestTimeout() time.Duration { return r.timeout }
+
+// Workers is the size of the sender pool.
+func (r *WebhookRuntime) Workers() int { return r.workers }
 
 func (r *WebhookRuntime) log() *logrus.Logger {
 	if r.logger != nil {
@@ -210,8 +239,9 @@ type WebhookPassResult struct {
 	Pruned    int64
 }
 
-// RunOnce runs one pass: lease recovery, discovery, one attempt per due row,
-// and the prune when it is due. It stops claiming once ctx is done.
+// RunOnce runs one pass: lease recovery, discovery, one attempt per due row
+// through the worker pool, and the prune when it is due. It stops claiming
+// once ctx is done and returns only after every worker has joined.
 func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error) {
 	r.passMu.Lock()
 	defer r.passMu.Unlock()
@@ -229,29 +259,13 @@ func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error)
 			Info("Webhook deliveries with an expired lease were recovered")
 	}
 
-	ids, err := r.repo.ListDueDeliveryIDs(ctx, now, webhookDiscoveryBatch)
+	due, err := r.repo.ListDueDeliveries(ctx, now, webhookDiscoveryBatch)
 	if err != nil {
 		r.logPassError(ctx, "webhook_discover", err)
 		return result, err
 	}
-	for _, id := range ids {
-		if ctx.Err() != nil {
-			break
-		}
-		outcome, attempted := r.deliver(ctx, id)
-		if !attempted {
-			continue
-		}
-		result.Attempted++
-		switch outcome {
-		case models.WebhookDeliverySucceeded:
-			result.Succeeded++
-		case models.WebhookDeliveryPending:
-			result.Retried++
-		case models.WebhookDeliveryFailed:
-			result.Failed++
-		}
-	}
+	sent := r.sendGroups(ctx, groupDueDeliveries(due))
+	result.Attempted, result.Succeeded, result.Retried, result.Failed = sent.Attempted, sent.Succeeded, sent.Retried, sent.Failed
 
 	if ctx.Err() == nil && (r.lastPrune.IsZero() || !r.now().Before(r.lastPrune.Add(WebhookPruneInterval))) {
 		pruneAt := r.now()
@@ -267,6 +281,82 @@ func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error)
 		}
 	}
 	return result, nil
+}
+
+// groupDueDeliveries splits the discovered rows per endpoint, each group in
+// ascending id order, the groups in the order their endpoint was first
+// discovered.
+func groupDueDeliveries(due []repository.WebhookDueDelivery) [][]uint {
+	index := make(map[uint]int)
+	var groups [][]uint
+	for _, row := range due {
+		i, ok := index[row.EndpointID]
+		if !ok {
+			i = len(groups)
+			index[row.EndpointID] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], row.ID)
+	}
+	for _, group := range groups {
+		sort.Slice(group, func(a, b int) bool { return group[a] < group[b] })
+	}
+	return groups
+}
+
+// sendGroups runs the groups on at most r.workers goroutines (never more than
+// there are groups); one worker works through a whole group, one row at a
+// time, and checks ctx before every claim. It returns after every worker has
+// joined, with the counters of every attempt.
+func (r *WebhookRuntime) sendGroups(ctx context.Context, groups [][]uint) WebhookPassResult {
+	workers := r.workers
+	if workers > len(groups) {
+		workers = len(groups)
+	}
+	queue := make(chan []uint, len(groups))
+	for _, group := range groups {
+		queue <- group
+	}
+	close(queue)
+
+	results := make([]WebhookPassResult, workers)
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(own *WebhookPassResult) {
+			defer wg.Done()
+			for group := range queue {
+				for _, id := range group {
+					if ctx.Err() != nil {
+						return
+					}
+					outcome, attempted := r.deliver(ctx, id)
+					if !attempted {
+						continue
+					}
+					own.Attempted++
+					switch outcome {
+					case models.WebhookDeliverySucceeded:
+						own.Succeeded++
+					case models.WebhookDeliveryPending:
+						own.Retried++
+					case models.WebhookDeliveryFailed:
+						own.Failed++
+					}
+				}
+			}
+		}(&results[w])
+	}
+	wg.Wait()
+
+	var total WebhookPassResult
+	for _, part := range results {
+		total.Attempted += part.Attempted
+		total.Succeeded += part.Succeeded
+		total.Retried += part.Retried
+		total.Failed += part.Failed
+	}
+	return total
 }
 
 func (r *WebhookRuntime) logPassError(ctx context.Context, operation string, err error) {
@@ -513,8 +603,8 @@ func (r *WebhookRuntime) loop(ctx context.Context, ticks <-chan time.Time, stopT
 	}
 }
 
-// Stop cancels the loop and waits for the goroutine, an attempt in flight
-// included, or for ctx to end. Once it returns nil the runtime writes
+// Stop cancels the loop and waits for the goroutine, every attempt in flight
+// of the pool included, or for ctx to end. Once it returns nil the runtime writes
 // nothing. A repeated Stop after the join returns nil even on an ended ctx.
 func (r *WebhookRuntime) Stop(ctx context.Context) error {
 	r.mu.Lock()

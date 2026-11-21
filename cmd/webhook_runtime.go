@@ -23,10 +23,11 @@ type webhookBackground struct {
 
 // newWebhookBackground builds the runtime with the real public-only egress
 // guard (no AEO allowlist or local exception applies to it) and the secret
-// box of the endpoint secrets.
-func newWebhookBackground(repo repository.WebhookRepository, box *utils.SecretBox) *webhookBackground {
+// box of the endpoint secrets; opts (the worker pool size) pass through to
+// service.NewWebhookRuntime.
+func newWebhookBackground(repo repository.WebhookRepository, box *utils.SecretBox, opts ...service.WebhookRuntimeOption) *webhookBackground {
 	guard := aeo.NewEgressGuard(config.AEOEgressPolicy{})
-	runtime := service.NewWebhookRuntime(repo, guard, box)
+	runtime := service.NewWebhookRuntime(repo, guard, box, opts...)
 	if webhookRuntimeBuilt != nil {
 		webhookRuntimeBuilt(runtime)
 	}
@@ -39,7 +40,7 @@ func (b *webhookBackground) start(ctx context.Context) {
 	b.runtime.Start(ctx)
 }
 
-// Stop cancels the loop and joins it, an attempt in flight included.
+// Stop cancels the loop and joins it, every attempt in flight included.
 func (b *webhookBackground) Stop(ctx context.Context) error {
 	return b.runtime.Stop(ctx)
 }

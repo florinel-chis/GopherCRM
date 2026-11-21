@@ -210,11 +210,23 @@ func runWebhookRepository(t *testing.T, db *gorm.DB) {
 		later := seedWebhookDelivery(t, db, endpoint.ID, webhookRowSpec{status: models.WebhookDeliveryPending, next: timePtr(now.Add(time.Hour))})
 
 		statements, stop := captureWebhookStatements(t, db, "webhook_repo_discovery")
-		ids, err := repo.ListDueDeliveryIDs(ctx, now, 100)
+		discovered, err := repo.ListDueDeliveries(ctx, now, 100)
 		require.NoError(t, err)
 		stop()
+		var ids []uint
+		for _, row := range discovered {
+			ids = append(ids, row.ID)
+			var stored models.WebhookDelivery
+			require.NoError(t, db.Select("endpoint_id").Where("id = ?", row.ID).Take(&stored).Error)
+			assert.Equal(t, stored.EndpointID, row.EndpointID, "discovery returns the endpoint of each row")
+		}
 		assert.Contains(t, ids, due.ID)
 		assert.NotContains(t, ids, later.ID, "a row not due yet is not discovered")
+		for _, row := range discovered {
+			if row.ID == due.ID {
+				assert.Equal(t, endpoint.ID, row.EndpointID)
+			}
+		}
 		captured := statements()
 		require.NotEmpty(t, captured)
 		for _, statement := range captured {
