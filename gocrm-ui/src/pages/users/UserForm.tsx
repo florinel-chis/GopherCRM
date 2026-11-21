@@ -112,7 +112,7 @@ export const Component: React.FC = () => {
   const { id } = useParams();
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, refreshUser } = useAuth();
   const { can } = usePermissions();
   const isEditMode = !!id;
   // The role has its own key on the API; without it the picker is not shown
@@ -194,6 +194,8 @@ export const Component: React.FC = () => {
       showSuccess('User updated successfully');
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['user', id] });
+      // Saving your own account can change your role: reload the signed-in user.
+      if (Number(id) === currentUser?.id) void refreshUser();
       navigate('/users');
     },
     onError: (error: unknown) => onSaveError(error, 'Failed to update user'),

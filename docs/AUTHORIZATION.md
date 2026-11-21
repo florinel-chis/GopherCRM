@@ -26,7 +26,9 @@ Phase 2 (#261) is single sign-on and provisioning.
 | Phase 2 | #261 | Single sign-on, identity linking and provisioning (see the design note below) | Open: the SSO settings (`/settings/sso`, `settings.sso_manage`) delivered by #434; the backend OIDC sign-in (`POST /auth/oidc/start`, `POST /auth/oidc/callback`) delivered by #435; the SPA login button, the `/auth/callback` page and Settings > Single sign-on delivered by #436; the first SCIM 2.0 slice (provider tokens, `/scim/v2` authentication and discovery, `settings.scim_manage`) delivered by #468; the SCIM user read (`GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`) delivered by #469; the SCIM user create and replace (`POST /scim/v2/Users`, `PUT /scim/v2/Users/{id}`) delivered by #470; the SCIM user patch (`PATCH /scim/v2/Users/{id}`) delivered by #471; the SCIM user delete, a deactivation (`DELETE /scim/v2/Users/{id}`), delivered by #504; the SCIM Groups read and members patch (`GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/{id}`) delivered by #506 |
 
 Since #380 the SPA reads the permissions of `GET /users/me` and shows routes, navigation entries
-and buttons by permission key, so a user on a custom role sees what its role grants. Since #381
+and buttons by permission key, so a user on a custom role sees what its role grants. It reads
+`GET /users/me` again when the window regains focus, after a role is saved in the role editor
+and after the signed-in user's own account is saved in the user form (#566). Since #381
 custom roles are created, cloned, edited and deleted in Settings > Roles (`/settings/roles`,
 shown with `roles.view`, written with `roles.manage`) and assigned in the user form, whose role
 picker lists the roles of `GET /roles`; the role API stays available for the same operations.
