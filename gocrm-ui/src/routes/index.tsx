@@ -649,6 +649,20 @@ export const router = createBrowserRouter([
         ],
       },
       {
+        // The role audit log (#552).
+        element: (
+          <ProtectedRoute requiredPermission="roles.audit_view">
+            <Outlet />
+          </ProtectedRoute>
+        ),
+        children: [
+          {
+            path: 'settings/role-audit',
+            lazy: () => import('@/pages/settings/RoleAudit'),
+          },
+        ],
+      },
+      {
         // The SCIM provider tokens (#490).
         element: (
           <ProtectedRoute requiredPermission="settings.scim_manage">

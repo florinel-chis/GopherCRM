@@ -49,6 +49,7 @@ import {
   AutoMode,
   Rule,
   History,
+  ManageHistory,
   VpnKey,
   Sync,
 } from '@mui/icons-material';
@@ -250,6 +251,14 @@ const navItems: NavItem[] = [
         path: '/settings/sign-in-audit',
         icon: <History />,
         permission: 'audit.sign_ins_view',
+      },
+      {
+        // Role changes and account activation, deactivation, erasure and
+        // email changes (#552).
+        title: 'Role audit',
+        path: '/settings/role-audit',
+        icon: <ManageHistory />,
+        permission: 'roles.audit_view',
       },
       {
         // Bearer tokens for an identity provider's SCIM client (#490).

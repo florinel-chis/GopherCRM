@@ -1620,12 +1620,14 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   3. Sign the sales account in twice, then `PUT` it with `"active":false`.
   4. `PUT` to an unknown, the erased, the customer id and `abc`.
   5. `PUT` with `userName` `ann@x.test`.
-- **Expected:** Step 1: 200; the row holds the new names, email and role `support`; one
-  `role_audit_log` row (`auth_method` `scim`, `actor_user_id` NULL, before `{role: sales}`, after
-  `{role: support}`) and one `auth_audit_log` success row; `externalId` stays `sub-sam` (an
-  `externalId` in the body is ignored). Step 2: no `role_audit_log` row, one `auth_audit_log` row, names cleared. Step 3:
+- **Expected:** Step 1: 200; the row holds the new names, email and role `support`; two
+  `role_audit_log` rows (`auth_method` `scim`, `actor_user_id` NULL): `user_email_changed` (no
+  state, no address) and then `user_role_changed` (before `{role: sales}`, after
+  `{role: support}`); and one `auth_audit_log` success row; `externalId` stays `sub-sam` (an
+  `externalId` in the body is ignored). Step 2 (the stored `userName` kept): no `role_audit_log` row, one `auth_audit_log` row, names cleared. Step 3:
   `is_active` false, `token_version` one higher and both `refresh_tokens` rows revoked in the
-  same transaction (#471); after a reactivating `PUT` the earlier access and refresh tokens are
+  same transaction (#471), with one `user_deactivated` role audit row (#552); a reactivating `PUT`
+  writes one `user_activated` row, and the earlier access and refresh tokens are
   still refused. Step 4: 404 `User not found`. Step 5: 409 `uniqueness`, nothing written.
 - **Automation:** automated — Go: `TestSCIMUserWrites{SQLite,MySQL}` (`replace changes role`, `replace keeps role`, `replace deactivates`, `replace not visible`, `replace email taken`), `TestSCIMUserWritesWired`
 
@@ -1659,8 +1661,9 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   1. `PATCH /scim/v2/Users/<id>` with
      `{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"Replace","path":"active","value":"False"}]}`.
 - **Expected:** 200 `application/scim+json` with `active` false; the row is inactive, its other
-  columns unchanged; no `role_audit_log` row and one `auth_audit_log` row (method `scim`, outcome
-  `success`, the account's `user_id`).
+  columns unchanged; one `role_audit_log` row `user_deactivated` (`auth_method` `scim`, NULL
+  `actor_user_id`, before `{"is_active":true}`, after `{"is_active":false}`; #552) and one
+  `auth_audit_log` row (method `scim`, outcome `success`, the account's `user_id`).
 - **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`entra deactivate`), `TestSCIMUserPatchHandler`, `TestSCIMUserPatchWired`
 
 ### TC-AUTH-082 — A SCIM patch in Okta's path-less form deactivates and reactivates
@@ -1672,7 +1675,9 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   2. `PATCH` the now inactive account with `"active":false` again.
   3. `PATCH` with `{"Operations":[{"op":"replace","value":{"active":true}}]}`.
 - **Expected:** Steps 1 and 3: 200 with `active` false, then true. Each `active` false moves
-  `token_version` up by one (also on the already inactive row); `active` true does not.
+  `token_version` up by one (also on the already inactive row); `active` true does not. Step 1
+  writes one `user_deactivated` role audit row and step 3 one `user_activated` row (`scim`, NULL
+  actor; #552); step 2 writes none.
 - **Automation:** automated — Go: `TestSCIMUserPatch{SQLite,MySQL}` (`okta deactivate`, `reactivate`), `TestSCIMUserPatchWired`
 
 ### TC-AUTH-083 — A SCIM deactivation ends every session at once; reactivation brings none back
@@ -1688,7 +1693,9 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   4. `PATCH` `active` true; repeat step 3 with the first access token and the second refresh
      token; sign in again.
 - **Expected:** Step 2: every row is revoked, every API key of the account is revoked
-  (`is_active` false, `revoked_at` set; #526) and `token_version` is one higher. Step 3: both 401,
+  (`is_active` false, `revoked_at` set; #526) and `token_version` is one higher; the patch wrote
+  one `user_deactivated` role audit row, and the step 4 patch writes one `user_activated` row
+  (#552). Step 3: both 401,
   and so is an API key of the account. Step 4: the old access token, the unused refresh token and
   the API key stay 401 (the account is active, so only the generation refuses the access token and
   the revocation the key); the new sign-in succeeds and its tokens work.
@@ -1744,7 +1751,7 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   answers 204 with an empty body: `is_active` false, `token_version` + 1, every refresh token
   revoked before any refresh call, every API key of the account revoked (#526); email, names, role, `role_id`, the `user_identities` row and a
   NULL `deleted_at` are unchanged; one `auth_audit_log` row (method `scim`, outcome `success`) and
-  no `role_audit_log` row. Step 3 answers 401 twice. Step 4 answers 204 and writes nothing (no
+  one `role_audit_log` row `user_deactivated` (`scim`, NULL actor; #552). Step 3 answers 401 twice. Step 4 answers 204 and writes nothing (no
   audit row, same `token_version`). Step 5: the last admin is 400 `invalidValue` ("The last active
   admin must stay an active admin") with nothing written; every other id is the SCIM 404 `User not
   found` with nothing written.
@@ -1816,8 +1823,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   sales again with one more audit row; the sales role lacks permissions the admin role had, so U's
   sessions end at once (`token_version` + 1, every refresh token revoked) while U's API key keeps
   working with the sales role. Step 3 leaves U in no mapped group: U is deactivated (`is_active`
-  false, role kept), every access token, refresh token and API key of U ends, no role audit row is
-  written and one sign-in audit row is. The same removal of an already deactivated account writes no
+  false, role kept), every access token, refresh token and API key of U ends, one role audit row
+  `user_deactivated` (`scim`, NULL actor; #552) and one sign-in audit row are written. The same removal of an already deactivated account writes no
   `users` change and ends nothing.
 - **Automation:** automated — Go: `TestSCIMGroups{SQLite,MySQL}` (`add makes admin`, `remove
   recomputes from the remaining groups`, `removing the only group deactivates`, `removing an

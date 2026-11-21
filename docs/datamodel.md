@@ -116,20 +116,21 @@ The four system rows (`models.SystemRoleSeeds`, the same literal values as the S
 
 ### role_audit_log
 
-Append-only; nothing writes it in this slice. No column has a foreign key, so an audit row never
-blocks a role or user delete.
+Append-only, written in the transaction of the change it records by the role service, the
+governed user writes, the OpenID Connect sign-in and the SCIM writes. No column has a foreign key,
+so an audit row never blocks a role or user delete.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
 | id | bigint unsigned | No | auto | Primary key |
 | created_at | datetime(3) | No | - | Index `idx_role_audit_log_created_at` |
 | actor_user_id | bigint unsigned | Yes | NULL | NULL for a SCIM write (#470), which no user performs |
-| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace or patch (#470, #471) or a SCIM group patch that changes a member's role (#506), or `migration` for a startup or migration data step (#524); `actor_user_id` is NULL for `scim` and `migration` |
-| action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed` |
+| auth_method | varchar(20) | No | '' | `bearer`, `api_key`, `oidc` for the role an OpenID Connect sign-in applied (#435), or `scim` for a SCIM user create, replace, patch or delete (#470, #471, #504, #552) or a SCIM group patch (#506), or `migration` for a startup or migration data step (#524); `actor_user_id` is NULL for `scim` and `migration` |
+| action | varchar(40) | No | - | `role_created`, `role_updated`, `role_deleted`, `user_role_changed`, and since #552 the account rows `user_activated`, `user_deactivated`, `user_erased`, `user_email_changed` (role_id NULL, role_name '', the account in target_user_id) |
 | role_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_role_id` |
 | role_name | varchar(100) | No | '' | Snapshot of the name |
 | target_user_id | bigint unsigned | Yes | NULL | Index `idx_role_audit_log_target_user_id` |
-| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data: the writers store a role's name, description and permissions, or a user's `role` and `role_id`. That is why the erasure does not touch the table |
+| before_state, after_state | text | Yes | NULL | Ids, role names, permission keys and scopes only, never personal data: the writers store a role's name, description and permissions, a user's `role` and `role_id`, or `{"is_active": …}` on an activation or deactivation row; the erasure and email-change rows store NULL and never an address. That is why the erasure does not touch the table |
 
 ### Schema sources
 

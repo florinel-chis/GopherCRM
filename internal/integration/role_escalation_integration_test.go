@@ -141,12 +141,14 @@ func TestRoleEscalationRefused(t *testing.T) {
 		assert.Equal(t, state, env.userState(seller.ID), "the sales user's row is unchanged")
 		assert.Equal(t, audits, env.auditCount())
 
+		roleChanges := env.auditCountOf(models.RoleAuditUserRoleChanged)
 		login := env.user("login", models.RoleCustomer)
 		for _, write := range userWrites {
 			requireAnswer(t, env.do(keeper, write.method, userRoutePath(login.ID)+write.suffix, write.body), write.status, "")
 		}
 		assert.Contains(t, env.userState(login.ID), "erased=true")
-		assert.Equal(t, audits, env.auditCount(), "no role changed")
+		assert.Equal(t, roleChanges, env.auditCountOf(models.RoleAuditUserRoleChanged), "no role changed")
+		assert.Equal(t, audits+3, env.auditCount(), "the deactivation, activation and erasure rows")
 	})
 
 	t.Run("role_above_the_manager_is_not_editable", func(t *testing.T) {
@@ -358,10 +360,11 @@ func runRoleEscalationConcurrent(t *testing.T, useMySQL bool) {
 			require.NoError(t, env.db.First(&stored, target.ID).Error)
 			if scenario.status == http.StatusOK {
 				assert.False(t, stored.IsActive, "the committed row is deactivated")
+				assert.Equal(t, audits+1, env.auditCount(), "the user_deactivated row")
 			} else {
 				assert.True(t, stored.IsActive, "the refused request wrote nothing")
+				assert.Equal(t, audits, env.auditCount())
 			}
-			assert.Equal(t, audits, env.auditCount())
 		})
 	}
 }

@@ -491,6 +491,25 @@ func (g *ecoGoverned) auditRows() int64 {
 	return n
 }
 
+// requireOneErasureRow asserts that exactly one user_erased role audit row
+// names the login, with the actor, no role and NULL states (#552).
+func (g *ecoGoverned) requireOneErasureRow() {
+	g.t.Helper()
+	var rows []models.RoleAuditEntry
+	require.NoError(g.t, g.db.Where("action = ?", models.RoleAuditUserErased).Order("id").Find(&rows).Error)
+	require.Len(g.t, rows, 1, "exactly one user_erased row")
+	row := rows[0]
+	require.NotNil(g.t, row.TargetUserID)
+	assert.Equal(g.t, g.login.ID, *row.TargetUserID)
+	require.NotNil(g.t, row.ActorUserID)
+	assert.Equal(g.t, g.actor.UserID, *row.ActorUserID)
+	assert.Equal(g.t, g.actor.AuthMethod, row.AuthMethod)
+	assert.Nil(g.t, row.RoleID)
+	assert.Empty(g.t, row.RoleName)
+	assert.Nil(g.t, row.BeforeState, "SQL NULL")
+	assert.Nil(g.t, row.AfterState, "SQL NULL")
+}
+
 // requireErased asserts the committed end state of the whole person.
 func (g *ecoGoverned) requireErased() {
 	g.t.Helper()
@@ -566,6 +585,7 @@ func TestGovernedWriteReplaysErasureGraphChange(t *testing.T) {
 		require.NoError(t, g.users.DeleteAs(ctx, g.actor, g.login.ID))
 		assert.EqualValues(t, 2, attempts.Load(), "the failed root and its restart")
 		g.requireErased()
+		g.requireOneErasureRow()
 	})
 
 	t.Run("(b) the graph changes on every attempt: the error reaches the caller after the bound", func(t *testing.T) {
@@ -585,6 +605,7 @@ func TestGovernedWriteReplaysErasureGraphChange(t *testing.T) {
 		require.NoError(t, g.users.DeleteAs(ctx, g.actor, g.login.ID))
 		assert.EqualValues(t, 2, attempts.Load(), "the failed transaction and its replay")
 		g.requireErased()
+		g.requireOneErasureRow()
 	})
 }
 

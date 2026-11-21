@@ -13,6 +13,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -158,6 +159,35 @@ func (f *scimWritesFixture) assertRefused(t *testing.T, want error, record *SCIM
 	assert.Nil(t, record)
 	assert.ErrorIs(t, err, want)
 	assert.Equal(t, before, f.counts(t), "a refusal writes nothing")
+}
+
+// assertSCIMAccountRow checks an account row of a SCIM write (#552): the
+// action, method scim, no actor, no role, and the is_active states (both NULL
+// when wantBefore is "").
+func assertSCIMAccountRow(t *testing.T, row models.RoleAuditEntry, action models.RoleAuditAction, wantBefore, wantAfter string) {
+	t.Helper()
+	assert.Equal(t, action, row.Action)
+	assert.Equal(t, AuthMethodSCIM, row.AuthMethod)
+	assert.Nil(t, row.ActorUserID)
+	assert.Nil(t, row.RoleID)
+	assert.Empty(t, row.RoleName)
+	if wantBefore == "" {
+		assert.Nil(t, row.BeforeState, "SQL NULL")
+		assert.Nil(t, row.AfterState, "SQL NULL")
+		return
+	}
+	require.NotNil(t, row.BeforeState)
+	require.NotNil(t, row.AfterState)
+	assert.JSONEq(t, wantBefore, *row.BeforeState)
+	assert.JSONEq(t, wantAfter, *row.AfterState)
+}
+
+// stateText is a nullable audit state as text, "" for NULL.
+func stateText(state *string) string {
+	if state == nil {
+		return ""
+	}
+	return *state
 }
 
 // roleAudits returns the role_audit_log rows of target, id ascending.
@@ -350,6 +380,18 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 				assert.Equal(t, before, f.counts(t), name)
 			}
 		}},
+		{"create writes no account row", func(t *testing.T) {
+			for _, active := range []bool{true, false} {
+				in := scimInput(fmt.Sprintf("new-%t@x.test", active), fmt.Sprintf("sub-new-%t", active), scimRoleSales)
+				in.Active = &active
+				record, err := f.svc.Create(ctx, in)
+				require.NoError(t, err)
+				assert.Equal(t, active, f.user(t, record.User.ID).IsActive)
+				audits := f.roleAudits(t, record.User.ID)
+				require.Len(t, audits, 1, "creation is not an activation: the role row only")
+				assert.Equal(t, models.RoleAuditUserRoleChanged, audits[0].Action)
+			}
+		}},
 		{"replace changes role", func(t *testing.T) {
 			sam := f.seedUser(t, "sam@x.test", models.RoleSales, true, "")
 			f.link(t, sam.ID, "sub-sam")
@@ -365,15 +407,22 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Equal(t, models.RoleSupport, stored.Role)
 			assert.True(t, stored.IsActive, "absent active leaves is_active")
 
+			// The userName changed too: its row first, then the role row.
 			audits := f.roleAudits(t, sam.ID)
-			require.Len(t, audits, 1)
-			assert.Equal(t, models.RoleAuditUserRoleChanged, audits[0].Action)
-			assert.Equal(t, AuthMethodSCIM, audits[0].AuthMethod)
-			assert.Nil(t, audits[0].ActorUserID)
-			require.NotNil(t, audits[0].BeforeState)
-			require.NotNil(t, audits[0].AfterState)
-			assert.JSONEq(t, `{"role":"sales","role_id":null}`, *audits[0].BeforeState)
-			assert.JSONEq(t, `{"role":"support","role_id":null}`, *audits[0].AfterState)
+			require.Len(t, audits, 2)
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserEmailChanged, "", "")
+			assert.Equal(t, models.RoleAuditUserRoleChanged, audits[1].Action)
+			assert.Equal(t, AuthMethodSCIM, audits[1].AuthMethod)
+			assert.Nil(t, audits[1].ActorUserID)
+			require.NotNil(t, audits[1].BeforeState)
+			require.NotNil(t, audits[1].AfterState)
+			assert.JSONEq(t, `{"role":"sales","role_id":null}`, *audits[1].BeforeState)
+			assert.JSONEq(t, `{"role":"support","role_id":null}`, *audits[1].AfterState)
+			for _, row := range audits {
+				for _, column := range []string{row.RoleName, stateText(row.BeforeState), stateText(row.AfterState)} {
+					assert.NotContains(t, column, "@", "no address in any column")
+				}
+			}
 			f.assertSuccessAudit(t, sam.ID)
 			assert.Equal(t, int64(1), f.identities(t), "no identity is written")
 		}},
@@ -407,7 +456,9 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			assert.Equal(t, version+1, stored.TokenVersion, "the deactivation ends every access token (#471)")
 			assert.Zero(t, f.liveRefreshTokens(t, dan.ID), "the deactivation revokes every refresh token (#471)")
 			assert.Equal(t, int64(2), f.refreshTokens(t, dan.ID), "revoked, not deleted")
-			assert.Empty(t, f.roleAudits(t, dan.ID))
+			audits := f.roleAudits(t, dan.ID)
+			require.Len(t, audits, 1, "the deactivation row only")
+			assertSCIMAccountRow(t, audits[0], models.RoleAuditUserDeactivated, `{"is_active":true}`, `{"is_active":false}`)
 			f.assertSuccessAudit(t, dan.ID)
 
 			active := true
@@ -415,6 +466,12 @@ func runSCIMUserWrites(t *testing.T, base *oidcFixture, mysql bool) {
 			require.NoError(t, err)
 			stored = f.user(t, dan.ID)
 			assert.True(t, stored.IsActive, "active true reactivates")
+			audits = f.roleAudits(t, dan.ID)
+			require.Len(t, audits, 2, "the activation row")
+			assertSCIMAccountRow(t, audits[1], models.RoleAuditUserActivated, `{"is_active":false}`, `{"is_active":true}`)
+			_, err = f.svc.Replace(ctx, uintString(dan.ID), SCIMUserInput{UserName: "dan@x.test", Active: &active, Roles: []string{scimRoleSales}})
+			require.NoError(t, err)
+			assert.Len(t, f.roleAudits(t, dan.ID), 2, "an unchanged active writes no row")
 			assert.Equal(t, version+1, stored.TokenVersion, "a reactivation does not change the generation")
 			_, err = f.auth.ValidateToken(first.AccessToken)
 			assert.Error(t, err, "the old access token stays refused")

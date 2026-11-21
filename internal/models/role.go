@@ -33,6 +33,13 @@ const (
 	RoleAuditRoleUpdated     RoleAuditAction = "role_updated"
 	RoleAuditRoleDeleted     RoleAuditAction = "role_deleted"
 	RoleAuditUserRoleChanged RoleAuditAction = "user_role_changed"
+	// The account changes (#552): an activation or deactivation, an erasure
+	// and a change of the login email. Their rows have role_id NULL and
+	// role_name '' and name the account in target_user_id.
+	RoleAuditUserActivated    RoleAuditAction = "user_activated"
+	RoleAuditUserDeactivated  RoleAuditAction = "user_deactivated"
+	RoleAuditUserErased       RoleAuditAction = "user_erased"
+	RoleAuditUserEmailChanged RoleAuditAction = "user_email_changed"
 )
 
 // Role is a named set of permissions. The four system rows (system_key admin,
@@ -71,8 +78,10 @@ type RolePermission struct {
 
 // RoleAuditEntry is one append-only row of role_audit_log, written by the
 // role service and the governed user writes in the transaction of the change
-// it records. By contract a row holds ids, role names, permission keys and
-// scopes only, never personal data: the writers keep names, emails and other
+// it records: role changes, and account activations, deactivations, erasures
+// and login-email changes. By contract a row holds ids, role names,
+// permission keys, scopes and the is_active flag only, never personal data
+// (an email change stores neither address): the writers keep names, emails and other
 // personal text out of BeforeState and AfterState, which is why the erasure
 // does not touch the table. No column carries a foreign key, so an audit row
 // never blocks a role or user delete.

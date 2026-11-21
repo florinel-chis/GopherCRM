@@ -1527,13 +1527,16 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 	}
 
 	// The SCIM delete (#504) is the same deactivation without a role write:
-	// admin set → users → refresh_tokens → api_keys, a prefix-compatible
-	// subsequence.
+	// admin set → users → refresh_tokens → api_keys → role_audit_log, a
+	// prefix-compatible subsequence; its user_deactivated row (#552) comes
+	// after the revocation.
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Rows locked"]), "scimUserService.Delete")
+	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Order"]),
+		"admin set → users → refresh_tokens → api_keys → role_audit_log")
 	body = concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Delete(")
 	last = -1
 	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "isLastActiveAdmin(",
-		"tx.users.UpdateFields(", "revokeAllCredentials(", "s.writes.recordSuccess("} {
+		"tx.users.UpdateFields(", "revokeAllCredentials(", "tx.record(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
 			assert.Greater(t, at, last, "%q comes after the statement before it", statement)

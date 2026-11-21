@@ -112,6 +112,14 @@ func (e *permissionEnv) auditCount() int64 {
 	return count
 }
 
+// auditCountOf is the number of audit rows with this action.
+func (e *permissionEnv) auditCountOf(action models.RoleAuditAction) int64 {
+	e.t.Helper()
+	var count int64
+	require.NoError(e.t, e.db.Model(&models.RoleAuditEntry{}).Where("action = ?", action).Count(&count).Error)
+	return count
+}
+
 func (e *permissionEnv) auditRows() []models.RoleAuditEntry {
 	e.t.Helper()
 	var rows []models.RoleAuditEntry

@@ -40,7 +40,8 @@ import (
 // sign-in's first-match rule on its groups after the change (the groups claim
 // only, never roles). An affected managed account left in no mapped group is
 // deactivated when it is active: is_active false, its role and role_id kept,
-// no user_role_changed row, and every credential ended through
+// no user_role_changed row but a user_deactivated one (#552), and every
+// credential ended through
 // revokeAllCredentials (token_version, refresh tokens, API keys); an account
 // already inactive gets no users write. A mapping to a missing role row or to
 // customer refuses the patch with ErrSCIMInvalidValue. A role write whose new
@@ -371,7 +372,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 		// The users writes and the credentials they end, account by account,
 		// before any role_audit_log row (the lock order).
 		stores := s.writes.credentialStores(tx)
-		var roleChanged []uint
+		var audited []uint
 		for _, id := range affectedManaged {
 			r := results[id]
 			if r.deactivate {
@@ -381,6 +382,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				if err := revokeAllCredentials(stores, r.user, time.Now()); err != nil {
 					return fmt.Errorf("revoke the credentials of scim user %d: %w", id, err)
 				}
+				audited = append(audited, id)
 				continue
 			}
 			if r.role == r.user.Role && sameRoleID(r.roleID, r.user.RoleID) {
@@ -398,11 +400,21 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 					return fmt.Errorf("end the sessions of scim user %d: %w", id, err)
 				}
 			}
-			roleChanged = append(roleChanged, id)
+			audited = append(audited, id)
 		}
-		for _, id := range roleChanged {
+		// The role_audit_log rows last, in the order of the users writes: a
+		// user_deactivated row per deactivated account (#552), a
+		// user_role_changed row per role change.
+		for _, id := range audited {
 			r := results[id]
 			targetID := id
+			if r.deactivate {
+				if err := tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserDeactivated, nil, "", &targetID,
+					userActiveAuditState{IsActive: true}, userActiveAuditState{IsActive: false}); err != nil {
+					return fmt.Errorf("record the deactivation of scim user %d: %w", id, err)
+				}
+				continue
+			}
 			if err := tx.record(Actor{AuthMethod: AuthMethodSCIM}, models.RoleAuditUserRoleChanged,
 				r.roleID, assignedRoleName(r.role, r.custom), &targetID,
 				userRoleAuditState{Role: r.user.Role, RoleID: r.user.RoleID},
