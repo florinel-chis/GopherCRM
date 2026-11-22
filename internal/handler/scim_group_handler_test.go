@@ -71,7 +71,7 @@ func TestSCIMGroupHandler(t *testing.T) {
 	const base = "https://crm.example.test"
 	setup := func(stub *stubSCIMGroups) *gin.Engine {
 		router := gin.New()
-		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(nil, base), NewSCIMGroupHandler(stub, base+"/"))
+		setupSCIMTestRoutes(router.Group("/scim/v2"), &stubSCIMUsers{}, stub, base+"/")
 		return router
 	}
 	send := func(router *gin.Engine, method, path, body string) *httptest.ResponseRecorder {
@@ -360,6 +360,7 @@ func TestSCIMGroupHandler(t *testing.T) {
 			logged := buf.String()
 			assert.Contains(t, logged, "scim_groups", tc.path)
 			assert.Contains(t, logged, "SCIM group request failed", tc.path)
+			assert.Contains(t, logged, `"request_id":"req-649"`, tc.path)
 			for _, secret := range []string{secretID, secretGroup, "424242", "Secret-Display", "Secret-External-630"} {
 				assert.NotContains(t, logged, secret, tc.path)
 			}

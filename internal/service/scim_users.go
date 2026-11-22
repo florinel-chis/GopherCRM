@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit"
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim/server"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
@@ -148,8 +151,9 @@ func (s *scimUserService) List(ctx context.Context, userName *string, startIndex
 	return &SCIMUserPage{Total: total, StartIndex: startIndex, Users: records}, nil
 }
 
-// withExternalIDs pairs users with their externalId: the subject of the
-// lowest-id user_identities row whose issuer equals issuer byte for byte.
+// withExternalIDs pairs users with their externalId: server.ExternalID over
+// the user's user_identities rows in ascending id order, so the subject of
+// the lowest-id row whose issuer equals issuer byte for byte.
 // The caller passes the issuer it already read, so one request judges and
 // pairs under the same value; when it is empty no identity is read and every
 // externalId is omitted. The returned slice is never nil.
@@ -172,22 +176,35 @@ func (s *scimUserService) withExternalIDs(issuer string, users []models.User) ([
 	if err != nil {
 		return nil, fmt.Errorf("read scim user identities: %w", err)
 	}
-	subjects := make(map[uint]string, len(identities))
-	lowest := make(map[uint]uint, len(identities))
+	// The column compares under utf8mb4_bin PAD SPACE on MySQL/MariaDB, so
+	// an issuer with a trailing space comes back too: the package judge
+	// decides, over each user's rows in ascending id order.
+	perUser := make(map[uint][]models.UserIdentity, len(users))
 	for _, identity := range identities {
-		// The column compares under utf8mb4_bin PAD SPACE on MySQL/MariaDB,
-		// so an issuer with a trailing space comes back too: judge it here.
-		if identity.Issuer != issuer {
-			continue
-		}
-		if seen, ok := lowest[identity.UserID]; ok && seen < identity.ID {
-			continue
-		}
-		lowest[identity.UserID] = identity.ID
-		subjects[identity.UserID] = identity.Subject
+		perUser[identity.UserID] = append(perUser[identity.UserID], identity)
+	}
+	subjects := make(map[uint]string, len(perUser))
+	for userID, rows := range perUser {
+		sort.Slice(rows, func(i, j int) bool { return rows[i].ID < rows[j].ID })
+		subjects[userID] = server.ExternalID(issuer, idkitIdentities(rows))
 	}
 	for i := range records {
 		records[i].ExternalID = subjects[records[i].User.ID]
 	}
 	return records, nil
+}
+
+// idkitIdentities converts user_identities rows, in the given order, to the
+// identities the SCIM server's managed-accounts judges take.
+func idkitIdentities(rows []models.UserIdentity) []idkit.Identity {
+	identities := make([]idkit.Identity, len(rows))
+	for i, row := range rows {
+		identities[i] = idkit.Identity{
+			AccountID: strconv.FormatUint(uint64(row.UserID), 10),
+			Issuer:    row.Issuer,
+			Subject:   row.Subject,
+			Source:    row.Source,
+		}
+	}
+	return identities
 }

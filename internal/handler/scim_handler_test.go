@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,18 @@ var (
 	scimReturned   = map[string]bool{"always": true, "never": true, "default": true, "request": true}
 	scimUniqueness = map[string]bool{"none": true, "server": true, "global": true}
 )
+
+// setupSCIMTestRoutes mounts NewSCIMServer over the stubs the way
+// cmd/main.go does, after a middleware that sets the request id as the
+// RequestID middleware would.
+func setupSCIMTestRoutes(group *gin.RouterGroup, users service.SCIMUserService, groups service.SCIMGroupService, base string) {
+	scimServer, err := NewSCIMServer(users, groups, base)
+	if err != nil {
+		panic(err)
+	}
+	group.Use(func(c *gin.Context) { c.Set("request_id", "req-649") })
+	SetupSCIMRoutes(group, scimServer)
+}
 
 func getSCIMDocument(t *testing.T, router *gin.Engine, path string) map[string]any {
 	t.Helper()
@@ -90,7 +103,7 @@ func TestSCIMDiscoveryDocuments(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	const base = "https://crm.example.test"
 	router := gin.New()
-	SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base+"/"), NewSCIMUserHandler(nil, base))
+	setupSCIMTestRoutes(router.Group("/scim/v2"), &stubSCIMUsers{}, &stubSCIMGroups{}, base+"/")
 
 	t.Run("ServiceProviderConfig", func(t *testing.T) {
 		doc := getSCIMDocument(t, router, "/scim/v2/ServiceProviderConfig?attributes=patch")

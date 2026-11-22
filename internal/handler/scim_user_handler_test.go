@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,7 +17,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
+	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,7 +88,7 @@ func TestSCIMUserHandler(t *testing.T) {
 	const base = "https://crm.example.test"
 	setup := func(stub *stubSCIMUsers) *gin.Engine {
 		router := gin.New()
-		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		setupSCIMTestRoutes(router.Group("/scim/v2"), stub, &stubSCIMGroups{}, base+"/")
 		return router
 	}
 	get := func(router *gin.Engine, path string) *httptest.ResponseRecorder {
@@ -211,6 +214,50 @@ func TestSCIMUserHandler(t *testing.T) {
 			assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"500","detail":"Internal server error"}`, w.Body.String(), path)
 		}
 	})
+
+	t.Run("service error is a SCIM 500 and logs no request value", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := logrus.New()
+		logger.SetOutput(&buf)
+		logger.SetFormatter(&logrus.JSONFormatter{})
+		previous := utils.Logger
+		utils.Logger = logger
+		t.Cleanup(func() { utils.Logger = previous })
+
+		const (
+			secretID    = "424242"
+			secretName  = "secret-649@x.test"
+			secretEmail = "secret-mail-649@x.test"
+		)
+		body := `{"userName":"` + secretName + `","emails":[{"value":"` + secretEmail + `"}],"name":{"givenName":"Secret"}}`
+		patch := `{"Operations":[{"op":"replace","path":"userName","value":"` + secretName + `"}]}`
+		for _, tc := range []struct{ method, path, body string }{
+			{http.MethodGet, "/scim/v2/Users/" + secretID, ""},
+			{http.MethodGet, "/scim/v2/Users?filter=" + url.QueryEscape(`userName eq "`+secretName+`"`), ""},
+			{http.MethodPost, "/scim/v2/Users", body},
+			{http.MethodPut, "/scim/v2/Users/" + secretID, body},
+			{http.MethodPatch, "/scim/v2/Users/" + secretID, patch},
+			{http.MethodDelete, "/scim/v2/Users/" + secretID, ""},
+		} {
+			buf.Reset()
+			stub := &stubSCIMUsers{err: errors.New("driver: connection refused")}
+			w := httptest.NewRecorder()
+			setup(stub).ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+			assert.Equal(t, http.StatusInternalServerError, w.Code, tc.path)
+			assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"500","detail":"Internal server error"}`, w.Body.String(), tc.path)
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			require.Len(t, lines, 1, tc.path)
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry), tc.path)
+			assert.Equal(t, "error", entry["level"], tc.path)
+			assert.Equal(t, "SCIM user request failed", entry["msg"], tc.path)
+			assert.Equal(t, "scim_users", entry["component"], tc.path)
+			assert.Equal(t, "req-649", entry["request_id"], tc.path)
+			for _, secret := range []string{secretID, secretName, secretEmail, "Secret"} {
+				assert.NotContains(t, lines[0], secret, tc.path)
+			}
+		}
+	})
 }
 
 func TestSCIMUserWriteHandler(t *testing.T) {
@@ -219,7 +266,7 @@ func TestSCIMUserWriteHandler(t *testing.T) {
 	const secretName, secretSub = "secret-jane@x.test", "secret-sub-470"
 	setup := func(stub *stubSCIMUsers) *gin.Engine {
 		router := gin.New()
-		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		setupSCIMTestRoutes(router.Group("/scim/v2"), stub, &stubSCIMGroups{}, base+"/")
 		return router
 	}
 	send := func(router *gin.Engine, method, path, body, contentType string) *httptest.ResponseRecorder {
@@ -353,7 +400,7 @@ func TestSCIMUserPatchHandler(t *testing.T) {
 	const secret = "secret-471"
 	setup := func(stub *stubSCIMUsers) *gin.Engine {
 		router := gin.New()
-		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		setupSCIMTestRoutes(router.Group("/scim/v2"), stub, &stubSCIMGroups{}, base+"/")
 		return router
 	}
 	send := func(router *gin.Engine, body string) *httptest.ResponseRecorder {
@@ -510,7 +557,7 @@ func TestSCIMUserDeleteHandler(t *testing.T) {
 	const secret = "secret-504"
 	setup := func(stub *stubSCIMUsers) *gin.Engine {
 		router := gin.New()
-		SetupSCIMRoutes(router.Group("/scim/v2"), NewSCIMHandler(base), NewSCIMUserHandler(stub, base+"/"))
+		setupSCIMTestRoutes(router.Group("/scim/v2"), stub, &stubSCIMGroups{}, base+"/")
 		return router
 	}
 	send := func(router *gin.Engine, path string) *httptest.ResponseRecorder {

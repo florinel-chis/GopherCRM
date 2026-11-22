@@ -18,6 +18,13 @@
 // and the callback, the token and claim checks, the role mapping and the
 // rule that decides which account an identity signs in as.
 //
+// Package scim/server is the SCIM 2.0 provider over net/http on the
+// protocol package scim: the routes, the lenient body reading, the mapping of
+// its error sentinels to SCIM answers and the rule that decides which
+// accounts the provider manages (Manages, ExternalID). The host implements
+// its Users, Groups and Logger interfaces, authenticates requests in front
+// of it and mounts it as an http.Handler.
+//
 // Two test kits sit next to the layer: oidctest, an in-process OpenID
 // Connect issuer, and scim/scimtest, a SCIM client; only tests import them.
 package idkit

@@ -1290,6 +1290,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts. The sign-in audit check also scans `internal/idkit/sso`. Answers, audit rows, role
   audit rows, refusal codes, log lines and the lock order are unchanged, and the sign-in golden
   file is byte-identical.
+- **SCIM server in the identity package (#649).** The SCIM 2.0 HTTP layer moved from the gin
+  handlers into the new `net/http` package `internal/idkit/scim/server`: `server.New` builds a
+  `Server` over the host's `server.Users`, `server.Groups` and `server.Logger`, `server.Routes`
+  lists its 14 routes under `/scim/v2`, and the package owns the error sentinels
+  (`ErrNotFound`, `ErrInvalidValue`, `ErrUniqueness`, `ErrLastAdmin`) and their SCIM answers, the
+  lenient body reading (any Content-Type, one JSON object of at most 64 KiB, unknown attributes
+  ignored) and the managed-accounts rule (`server.Manages`, `server.ExternalID`), which the SCIM
+  user service now calls. GopherCRM implements the interfaces in `internal/handler/scim_server.go`
+  (`NewSCIMServer`) and `SetupSCIMRoutes` mounts the server with `gin.WrapH` on the same routes
+  behind the unchanged SCIM token authentication. Answers, audit rows and log lines are
+  unchanged, and the provisioning-cycle golden file is byte-identical.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

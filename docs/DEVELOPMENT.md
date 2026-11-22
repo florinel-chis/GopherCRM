@@ -466,8 +466,8 @@ accepted requests per token id (`cfg.SCIM`, from `SCIM_RATE_LIMIT_PER_MINUTE` an
 `SCIM_RATE_LIMIT_BURST`, defaults 1500 and 150, capped at 6000 and 1000 by
 `config.NormalizeSCIMRateLimits`, which the constructor applies too), the SCIM refusal limit
 counts refusals per client address (10/min, burst 5), every method counts, and a request over
-either gets a 429 in the SCIM error shape with no audit row; then the three discovery documents (`internal/idkit/scim`,
-`internal/handler/scim_handler.go`). Tokens live in `scim_tokens` as `utils.HashAPIKeyHMAC`
+either gets a 429 in the SCIM error shape with no audit row; then the three discovery documents (`internal/idkit/scim`, built once by
+`server.New` in `internal/idkit/scim/server`). Tokens live in `scim_tokens` as `utils.HashAPIKeyHMAC`
 hashes (`internal/service/scim_token.go`); the lookup is by hash and the row is accepted only
 when `hmac.Equal` holds, because MySQL and MariaDB compare `token_hash` case-insensitively. Each
 refusal adds 1 to the `auth_audit_log` row of its reason, client network and UTC minute
@@ -487,17 +487,38 @@ required by the migrations workflow, `scripts/ci/check-go.py migration` and
 `scripts/release/check-sql-tests.py`. The rules are in the *SCIM provisioning* section of
 [AUTHORIZATION.md](AUTHORIZATION.md#scim-provisioning).
 
+**SCIM HTTP layer (#649)** — the SCIM 2.0 answers come from `internal/idkit/scim/server`, a
+`net/http` package that imports only the standard library, `internal/idkit` and
+`internal/idkit/scim`. `server.New` builds a `Server` from the host's `Users`, `Groups` and
+`Logger`; `Routes` lists its 14 routes; `ServeHTTP` routes on the method and the decoded path
+under `scim.BasePath`. The package owns the body reading (any Content-Type, one JSON object of at
+most `MaxBodyBytes`, unknown attributes ignored, else 400 `invalidSyntax` without a host call), the
+mapping of `ErrNotFound`, `ErrInvalidValue`, `ErrUniqueness` and `ErrLastAdmin` to SCIM answers,
+the `Location` header, and the managed-accounts rule, `Manages` and `ExternalID` (byte-exact
+issuer). GopherCRM implements the interfaces in `internal/handler/scim_server.go`
+(`NewSCIMServer`, over `SCIMUserService` and `SCIMGroupService`; it translates the service
+sentinels, `errors.Is(err, apperrors.ErrNotFound)` included, and logs through `utils.Logger`), and
+`SetupSCIMRoutes` mounts it with `gin.WrapH` on the same literal routes after a middleware that
+puts the request id and client facts on the request context, which the write audit rows read. The
+host keeps the token authentication (`middleware.SCIMAuth` with its limits and refusal audit),
+`PUBLIC_BASE_URL`, the SQL narrowing and the governed writes. Regression roots: `TestServerRoutes`,
+`TestServerErrorMapping`, `TestServerBodies`, `TestServerLogging`, `TestManagedJudges` and
+`TestNewRefusesMissingProviders` (`internal/idkit/scim/server`), `TestSCIMRoutesMatchServer`
+(`internal/handler`) and `TestIDKitImportBoundary` (`internal/idkit`).
+
 **SCIM user read (#469)** — `GET /scim/v2/Users` and `/Users/:id` are mounted by the same
-`SetupSCIMRoutes` (`internal/handler/scim_routes.go`); `internal/handler/scim_user_handler.go` does
+`SetupSCIMRoutes` (`internal/handler/scim_routes.go`); `internal/idkit/scim/server` does
 the query parsing, the status mapping and the `application/scim+json` answer. `internal/service/scim_users.go` (`SCIMUserService`) applies the
 userName judge, pages a filtered set in Go and takes `externalId` from the identities under the
-effective issuer of the SSO settings service, compared byte for byte; the reads are in
+effective issuer of the SSO settings service with `server.ExternalID` in `withExternalIDs`, over each
+user's rows in ascending id order; the reads are in
 `internal/repository/scim_user_repository.go` (`SCIMUserRepository`: managed accounts only, that
 is live, non-customer users with a `user_identities` row whose issuer equals the effective issuer
 exactly, any `source`, applied in SQL by `whereManagedBy` with a `LENGTH` guard against the PAD SPACE
 collation, shared with `SCIMGroupMemberRepository` (#529); identities of a page in one
 `issuer = ? AND user_id IN ?` query). The replace, patch and delete and the group patch refuse an
-account that is not managed like an unknown id, judged right after the users lock. `internal/idkit/scim` holds the User
+account that is not managed like an unknown id, judged by `server.Manages` in `requireManaged` right
+after the users lock. `internal/idkit/scim` holds the User
 resource, `ParseUserFilter`, `ParsePaging`, `WriteErrorType` and `UserNameMatches`, the
 ASCII-only judge: never replace it with `strings.EqualFold`, whose Unicode folding matches
 U+212A and U+017F the way `utf8mb4_unicode_ci` does. Regression roots: `TestSCIMUsersSQLite` and
@@ -507,11 +528,12 @@ MariaDB too), `TestSCIMUserHandler` (`internal/handler`), `TestParseUserFilter`,
 (`internal/idkit/scim`) and `TestSCIMUsersWired` (`cmd`).
 
 **SCIM user writes (#470)** — `POST /scim/v2/Users` and `PUT /scim/v2/Users/:id` are mounted by
-`SetupSCIMRoutes`; `internal/handler/scim_user_handler.go` reads the body itself
+`SetupSCIMRoutes`; `internal/idkit/scim/server` reads the body
 (`http.MaxBytesReader` at 64 KiB, one JSON object, no trailing data, typed attributes, else 400
-`invalidSyntax` without calling the service) and maps `service.ErrSCIMInvalidValue` (400
-`invalidValue`, `ErrSCIMLastAdmin` among them), `service.ErrSCIMUniqueness` (409 `uniqueness`)
-and `apperrors.ErrNotFound` (404). `internal/service/scim_user_writes.go` holds `Create` and
+`invalidSyntax` without calling the service), and `NewSCIMServer` translates
+`service.ErrSCIMLastAdmin` (400 `invalidValue`, checked first), `service.ErrSCIMInvalidValue` (400
+`invalidValue`), `service.ErrSCIMUniqueness` (409 `uniqueness`) and `apperrors.ErrNotFound` (404)
+to the server's sentinels. `internal/service/scim_user_writes.go` holds `Create` and
 `Replace`, enabled by `service.WithSCIMUserWrites` on `NewSCIMUserService` (wired in
 `cmd/main.go` with the user, role, role-audit and identity repositories, the refresh token
 repository (#471), the transaction manager and the sign-in audit writer; without the option both
@@ -529,11 +551,11 @@ discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUse
 [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
 
 **SCIM user patch (#471)** — `PATCH /scim/v2/Users/:id` is mounted by `SetupSCIMRoutes`;
-`SCIMUserHandler.Patch` reads the body as the writes do (64 KiB, one JSON object, no trailing
+the server reads the body as the writes do (64 KiB, one JSON object, no trailing
 data) and parses it with `scim.ParseUserPatch` (`internal/idkit/scim/patch.go`, pure), which returns a
 `scim.UserPatch` of pointers (nil = untouched) or a `*scim.PatchError` whose `ScimType`
-(`invalidSyntax`, `invalidPath`, `noTarget`, `invalidValue`) the handler answers with a fixed
-detail that never echoes the path or value; service refusals go through `failWrite`. Paths and
+(`invalidSyntax`, `invalidPath`, `noTarget`, `invalidValue`) the server answers with a fixed
+detail that never echoes the path or value; service refusals map as for the writes. Paths and
 path-less keys match with ASCII-only folding (`asciiEqualFold`, never `strings.EqualFold`).
 Since #629 a second table (`ignoredPatchNames`, `ignoredPatchMultiValued`, `enterpriseUserURN`,
 checked by `isIgnoredPatchPath`) names the User attributes the CRM does not store, whose
@@ -559,8 +581,8 @@ discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUse
 `TestConcurrencyDocSCIMUserPatch` (`internal/config`). The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
 
-**SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (`SCIMUserHandler.Delete`, no body
-read, 204 on success, refusals through `failWrite`) calls `scimUserService.Delete`, which runs
+**SCIM user delete (#504)** — `DELETE /scim/v2/Users/:id` (no body
+read, 204 on success, refusals mapped as for the writes) calls `scimUserService.Delete`, which runs
 `admin set → users → refresh_tokens → api_keys → role_audit_log` in `roleGovernance.run` (no `roles` lock, no role
 write): an active visible target gets `is_active` false, then `revokeAllCredentials`, then its
 `user_deactivated` role audit row (#552), an
@@ -574,8 +596,9 @@ auth checker; run the MySQL root on MariaDB too), `TestSCIMUserDeleteHandler`
 **SCIM groups (#506)** — `GET /scim/v2/Groups`, `GET`/`PATCH /scim/v2/Groups/:id` (204 on success),
 the create `POST /Groups` that resolves a mapping value to its existing group (#630) and the
 DELETE 405 are mounted by `SetupSCIMRoutes` from the
-`SCIMGroupHandler` (`internal/handler/scim_group_handler.go`; its patch error switch tests
-`ErrSCIMGroupLastAdmin`, answered 400 `mutability`, before `ErrSCIMInvalidValue`). The groups are
+server's Groups half (`internal/idkit/scim/server/groups.go`; `NewSCIMServer` translates
+`ErrSCIMGroupLastAdmin` to `server.ErrLastAdmin`, answered 400 `mutability` before
+`server.ErrInvalidValue`). The groups are
 the distinct `groups`-claim values of the effective role mapping (`internal/service/scim_groups.go`,
 `SCIMGroupService`); the id is `scim.GroupID` (unpadded base64url), and `internal/idkit/scim/groups.go`
 and `group_patch.go` hold the Group resource, `ParseGroupFilter`, `ParseGroupCreate`,
