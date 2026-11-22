@@ -1261,6 +1261,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `entra.EffectiveMaxPages`). The strict string-array decoder that the Graph and userinfo group
   reads share is now `oidc.StrictStringArray`. Answers, audit rows and refusal codes are
   unchanged.
+- **Identity host interfaces (#646).** `internal/idkit/host.go` declares the interfaces the
+  identity layer needs from its host: `idkit.IdentityStore`, `idkit.AttemptStore`,
+  `idkit.SessionIssuer`, `idkit.AuditSink`, `idkit.ConfigSource`, `idkit.TxRunner`, `idkit.Clock`
+  and `idkit.Logger`, with the neutral types and errors they use. Each one states whether it joins
+  the caller's transaction (identities, sessions) or runs only outside one (sign-in attempts,
+  audit, configuration). `internal/service/auth_oidc_host.go` holds GopherCRM's implementations
+  over the existing repositories and services, with contract tests. Nothing uses them yet.
+  Behaviour is unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.
