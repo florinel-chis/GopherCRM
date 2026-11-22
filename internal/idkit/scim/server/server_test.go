@@ -381,11 +381,25 @@ func TestServerBodies(t *testing.T) {
 	})
 
 	t.Run("unreadable bodies are invalidSyntax without a provider call", func(t *testing.T) {
-		big := `{"userName":"` + strings.Repeat("a", MaxBodyBytes) + `"}`
-		big = big[:MaxBodyBytes+1]
+		// Well-formed JSON objects one byte past the limit: only the size
+		// refuses them.
+		pad := func(prefix, suffix string) string {
+			return prefix + strings.Repeat("a", MaxBodyBytes+1-len(prefix)-len(suffix)) + suffix
+		}
+		bigCreate := pad(`{"userName":"a@x.test","x":"`, `"}`)
+		bigPatch := pad(`{"Operations":[{"op":"replace","path":"active","value":false}],"x":"`, `"}`)
+		bigGroupPatch := pad(`{"Operations":[{"op":"add","path":"members","value":[{"value":"7"}]}],"x":"`, `"}`)
+		for _, body := range []string{bigCreate, bigPatch, bigGroupPatch} {
+			if len(body) != MaxBodyBytes+1 || !json.Valid([]byte(body)) {
+				t.Fatalf("oversized fixture: %d bytes, valid %v", len(body), json.Valid([]byte(body)))
+			}
+		}
 		for _, tc := range []struct{ name, method, path, body, detail string }{
-			{"oversized create", "POST", "/Users", big, "The request body is not a valid SCIM User"},
-			{"oversized patch", "PATCH", "/Users/7", big, "The request body is not a valid SCIM PatchOp"},
+			{"oversized create", "POST", "/Users", bigCreate, "The request body is not a valid SCIM User"},
+			{"oversized replace", "PUT", "/Users/7", bigCreate, "The request body is not a valid SCIM User"},
+			{"oversized patch", "PATCH", "/Users/7", bigPatch, "The request body is not a valid SCIM PatchOp"},
+			{"oversized group create", "POST", "/Groups", pad(`{"displayName":"Sales","x":"`, `"}`), "The request body is not a valid SCIM Group"},
+			{"oversized group patch", "PATCH", "/Groups/" + scim.GroupID("Sales"), bigGroupPatch, "The request body is not a valid SCIM PatchOp"},
 			{"array", "POST", "/Users", `[{"userName":"a@x.test"}]`, "The request body is not a valid SCIM User"},
 			{"trailing data", "PUT", "/Users/7", `{"userName":"a@x.test"} {}`, "The request body is not a valid SCIM User"},
 			{"role without a string value", "POST", "/Users", `{"userName":"a@x.test","roles":[{"display":"x"}]}`, "The request body is not a valid SCIM User"},
