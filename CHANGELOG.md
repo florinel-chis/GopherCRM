@@ -1156,6 +1156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **End-to-end tests assert the outcome their titles name (#622).** The customer, user,
+  registration, lead search and sorting, and cross-entity browser tests wait on the API response
+  and the rendered rows instead of fixed delays, and assert the result: every create answers 201
+  and the record is found by a value unique to it; duplicate customer and user emails answer 409
+  and the snackbar shows "customer with this email already exists" / "user with this email already
+  exists"; an empty form is stopped by the browser's own check and, with that check switched off,
+  shows the exact field messages and sends no request; the registration loading state and
+  network-error message are checked. The leads, customers and dashboard page objects address
+  elements by role, label or test id rather than styling classes or parent walks, and the app bar's
+  account button has the accessible name "Account menu". Three tests are renamed to say what they
+  check: "admin can create several records of each entity", "admin can create a user for each
+  role" and "should sort by Created column ascending on the first click".
 - **Table row action buttons have names (#688).** The view, edit and delete buttons of a table row
   are named View, Edit and Delete, followed by the record's name where the list shows it ("Edit
   Acme Ltd"), so screen readers announce them and the browser tests find them by name.

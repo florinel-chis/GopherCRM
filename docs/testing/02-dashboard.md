@@ -164,8 +164,8 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
 - **Steps:**
   1. Intercept the `GET /dashboard/stats` response body.
   2. Navigate to `/` and wait for the skeletons to be replaced.
-  3. Read each card's `h4` value via `DashboardPage.getTotalLeads()`, `getTotalCustomers()`,
-     `getOpenTickets()`, `getPendingTasks()` and `getConversionRate()`.
+  3. Read each card's value, finding the card by its title (the page object has no stat-card
+     readers yet; add them addressed by role or test id).
 - **Expected:** the cards titled "Total Leads", "Total Customers", "Open Tickets", "Pending Tasks"
   and "Conversion Rate" show `total_leads`, `total_customers`, `open_tickets`, `pending_tasks` and
   `conversion_rate` from the intercepted payload. The conversion rate is rendered with exactly one

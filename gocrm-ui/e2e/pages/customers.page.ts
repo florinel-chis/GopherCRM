@@ -225,9 +225,9 @@ export class CustomersPage {
     await this.deleteDialog.waitFor({ state: 'hidden' });
   }
 
+  /** Types the search term; callers assert the narrowed rows with retrying expectations. */
   async searchCustomers(searchTerm: string) {
     await this.searchInput.fill(searchTerm);
-    await this.page.waitForTimeout(500);
   }
 
   async getRowCount(): Promise<number> {
@@ -239,13 +239,8 @@ export class CustomersPage {
     }
   }
 
-  async getErrorMessage(): Promise<string | null> {
-    const alert = this.page.locator('.MuiAlert-message');
-    try {
-      await alert.waitFor({ state: 'visible', timeout: 5000 });
-      return await alert.textContent();
-    } catch {
-      return null;
-    }
+  /** The snackbar alert carrying `text` (the form shows the server's message there). */
+  alertWithText(text: string): Locator {
+    return this.page.getByRole('alert').filter({ hasText: text });
   }
 }

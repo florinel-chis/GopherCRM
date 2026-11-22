@@ -414,6 +414,7 @@ export const MainLayout: React.FC = () => {
           <IconButton
             onClick={handleMenuOpen}
             color="inherit"
+            aria-label="Account menu"
             sx={{ ml: 2 }}
           >
             <Avatar sx={{ width: 32, height: 32 }}>

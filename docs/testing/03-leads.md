@@ -625,7 +625,8 @@ the frontend gating.
   re-render. `LeadList.handleSort` maps the column id through `fieldMap` before sending
   (`handleSort` in `gocrm-ui/src/pages/leads/LeadList.tsx`).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should sort by
-  Created column descending"
+  Created column ascending on the first click" (asserts `sort_by=created_at`, `sort_order=asc` and
+  `aria-sort="ascending"` on the header)
 
 ### TC-LEAD-035 — Clicking a header twice toggles the sort direction
 - **Priority:** P1

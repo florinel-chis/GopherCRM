@@ -1,4 +1,4 @@
-import { Page, Locator, expect } from '@playwright/test';
+import { Page, expect } from '@playwright/test';
 
 export class DashboardPage {
   readonly page: Page;
@@ -12,8 +12,9 @@ export class DashboardPage {
     return this.page.locator('h4:has-text("Dashboard")');
   }
 
+  /** The app bar button that opens the account menu, addressed by its accessible name. */
   get userAvatar() {
-    return this.page.locator('button:has(> .MuiAvatar-root)').last();
+    return this.page.getByRole('button', { name: 'Account menu' });
   }
 
   get userMenu() {
@@ -26,23 +27,6 @@ export class DashboardPage {
 
   get profileMenuItem() {
     return this.page.locator('[role="menuitem"]:has-text("Profile")');
-  }
-
-  // Stat cards
-  get totalLeadsCard() {
-    return this.page.locator('text=Total Leads').locator('..').locator('..');
-  }
-
-  get totalCustomersCard() {
-    return this.page.locator('text=Total Customers').locator('..').locator('..');
-  }
-
-  get openTicketsCard() {
-    return this.page.locator('text=Open Tickets').locator('..').locator('..');
-  }
-
-  get pendingTasksCard() {
-    return this.page.locator('text=Pending Tasks').locator('..').locator('..');
   }
 
   // Deal widgets (admin and sales)
@@ -60,10 +44,6 @@ export class DashboardPage {
     await expect(this.pageTitle).toBeVisible();
     await expect(this.wonThisMonthCount).toHaveText(/^\d+$/);
     return parseInt((await this.wonThisMonthCount.textContent()) ?? '', 10);
-  }
-
-  get conversionRateCard() {
-    return this.page.locator('text=Conversion Rate').locator('..').locator('..');
   }
 
   // Quick action buttons
@@ -116,36 +96,6 @@ export class DashboardPage {
     await this.logoutMenuItem.click();
   }
 
-  async getStatValue(statCard: Locator): Promise<string> {
-    const valueElement = statCard.locator('h4');
-    return await valueElement.textContent() || '';
-  }
-
-  async getTotalLeads(): Promise<number> {
-    const value = await this.getStatValue(this.totalLeadsCard);
-    return parseInt(value, 10);
-  }
-
-  async getTotalCustomers(): Promise<number> {
-    const value = await this.getStatValue(this.totalCustomersCard);
-    return parseInt(value, 10);
-  }
-
-  async getOpenTickets(): Promise<number> {
-    const value = await this.getStatValue(this.openTicketsCard);
-    return parseInt(value, 10);
-  }
-
-  async getPendingTasks(): Promise<number> {
-    const value = await this.getStatValue(this.pendingTasksCard);
-    return parseInt(value, 10);
-  }
-
-  async getConversionRate(): Promise<string> {
-    const value = await this.getStatValue(this.conversionRateCard);
-    return value;
-  }
-
   async navigateToLeads() {
     await this.sidebarLeadsLink.click();
     await this.page.waitForURL('**/leads');
@@ -154,38 +104,5 @@ export class DashboardPage {
   async navigateToCustomers() {
     await this.sidebarCustomersLink.click();
     await this.page.waitForURL('**/customers');
-  }
-
-  async getUserDisplayName(): Promise<string | null> {
-    try {
-      // The user avatar contains the first letter of first name only
-      // Look for the avatar button in the AppBar
-      const avatarButton = this.page.locator('button:has(.MuiAvatar-root)').last();
-      await avatarButton.waitFor({ state: 'visible', timeout: 5000 });
-      const avatar = avatarButton.locator('.MuiAvatar-root');
-      const avatarText = await avatar.textContent();
-      return avatarText?.trim() || null;
-    } catch {
-      return null;
-    }
-  }
-
-  async getUserFullName(): Promise<string | null> {
-    try {
-      // Open the user menu to see the full name
-      await this.openUserMenu();
-      
-      // The first menu item shows the full name
-      const nameElement = this.userMenu.locator('.MuiMenuItem-root').first();
-      await nameElement.waitFor({ state: 'visible', timeout: 2000 });
-      const fullName = await nameElement.textContent();
-      
-      // Close the menu
-      await this.page.keyboard.press('Escape');
-      
-      return fullName?.trim() || null;
-    } catch {
-      return null;
-    }
   }
 }

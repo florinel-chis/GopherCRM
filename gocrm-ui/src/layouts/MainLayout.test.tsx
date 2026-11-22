@@ -117,4 +117,13 @@ describe('MainLayout', () => {
     expect(navigation().getByText('Companies')).toBeInTheDocument();
     expect(navigation().queryByText('Users')).not.toBeInTheDocument();
   }, 30000);
+
+  it('names the app bar account button and opens the menu with Logout', async () => {
+    mockUseAuth.mockReturnValue(authState(createMockUser({ role: 'admin' })));
+    render(<MainLayout />);
+
+    const accountButton = screen.getByRole('button', { name: 'Account menu' });
+    await userEvent.click(accountButton);
+    expect(await screen.findByRole('menuitem', { name: 'Logout' })).toBeInTheDocument();
+  }, 30000);
 });

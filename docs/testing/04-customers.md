@@ -173,9 +173,10 @@ depend on that are flagged.
 - **Steps:**
   1. `/customers` → "Add Customer".
   2. Click "Create Customer" with every field empty.
-- **Expected:** No HTTP request is made. Field errors appear: "Company name is required", "Contact
-  name is required", "Invalid email address", "Phone number is required". The URL stays
-  `/customers/new`.
+- **Expected:** No HTTP request is made. The browser's own check stops the submit first (the
+  required inputs carry `required`); with that check switched off, the form's field errors appear:
+  "Company name is required", "Contact name is required", "Invalid email address", "Phone number is
+  required". The URL stays `/customers/new`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin sees validation errors for invalid customer data"
 
 ### TC-CUST-009 — A malformed Website value is rejected client-side
@@ -191,7 +192,7 @@ depend on that are flagged.
   lead conversion apply these rules, and the API independently validates them.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (new)
 
-### TC-CUST-010 — Duplicate email on create returns 409 but the UI shows a generic message
+### TC-CUST-010 — Duplicate email on create returns 409 and the snackbar shows the server's message
 - **Priority:** P0
 - **Type:** negative
 - **Preconditions:** Admin logged in; one customer already created by the test with a known email.
@@ -201,13 +202,10 @@ depend on that are flagged.
   3. Click "Create Customer".
 - **Expected:** `POST /api/v1/customers` returns **409** with
   `error.message` "customer with this email already exists" (no driver text — see
-  `internal/handler/customer_handler.go` `CustomerHandler.Create`). The UI stays on `/customers/new` and shows an error snackbar
-  reading exactly **"Failed to create customer"**.
-- **Known issue:** the `createMutation` `onError` in `gocrm-ui/src/pages/customers/CustomerForm.tsx` discards the server message and always renders the same
-  generic string, so the user is not told the email is the problem. FEATURES.md row 4.2 records only
-  the backend half ("Duplicate email now returns 409"). The existing E2E assertion passes on its URL
-  branch, not on the message branch.
-- **Automation:** automated (partially) — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can handle duplicate customer email validation"; extend it to pin the 409 status and the exact snackbar text
+  `internal/handler/customer_handler.go` `CustomerHandler.Create`). The UI stays on `/customers/new` and the error snackbar
+  shows the server's message, "customer with this email already exists" (the `createMutation`
+  `onError` in `gocrm-ui/src/pages/customers/CustomerForm.tsx` passes it through `apiErrorMessage`).
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can handle duplicate customer email validation" (asserts the 409 and the snackbar text)
 
 ### TC-CUST-011 — A single-word contact name is rejected by the backend as a missing last name
 - **Priority:** P2
@@ -551,7 +549,7 @@ depend on that are flagged.
   `search` to `customerService.Search`, which covers first_name, last_name, email, company, phone and
   notes). Only matching rows render and the pagination total reflects the filtered count. The page
   index resets to 1.
-- **Automation:** automated (partially) — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can search customers"; that test performs the search but asserts nothing — extend it to assert the row count and the request parameters
+- **Automation:** automated — `gocrm-ui/e2e/tests/admin-customers.spec.ts` "admin can search customers" (asserts the `search` request, a one-customer response and exactly one rendered row carrying the company name)
 
 ### TC-CUST-028 — Searching for a term with no matches yields an empty table
 - **Priority:** P2

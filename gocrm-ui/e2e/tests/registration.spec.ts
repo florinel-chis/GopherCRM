@@ -1,9 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Route } from '@playwright/test';
 import { RegisterPage } from '../pages/register.page';
 import { DashboardPage } from '../pages/dashboard.page';
 import { generateTestUser, testPasswords } from '../fixtures/test-data';
 import { setPublicRegistration } from '../helpers/registration-config';
 import { API_BASE_URL } from '../helpers/env';
+import { apiResponse, LOADED } from '../helpers/api';
 
 test.describe('Registration Flow', () => {
   let registerPage: RegisterPage;
@@ -18,24 +19,13 @@ test.describe('Registration Flow', () => {
   test('successful registration redirects to dashboard', async ({ page }) => {
     const user = generateTestUser();
 
-    // Fill form and submit
     await registerPage.fillForm(user);
-    await page.waitForTimeout(500);
 
-    // Set up response listener before submit
-    const responsePromise = page.waitForResponse(
-      response => response.url().includes('/auth/register') && response.request().method() === 'POST'
-    );
+    const responsePromise = apiResponse(page, /\/auth\/register$/, 'POST');
     await registerPage.submit();
+    expect((await responsePromise).status()).toBe(201);
 
-    // Wait for either: the response we catch, or redirect to dashboard
-    await Promise.race([
-      responsePromise.then(r => expect(r.status()).toBe(201)),
-      page.waitForURL('/', { timeout: 15000 }),
-    ]);
-
-    // Ensure we're on the dashboard
-    await page.waitForURL('/', { timeout: 10000 });
+    await expect(page).toHaveURL('/', LOADED);
 
     // Verify token is stored
     const token = await page.evaluate(() => localStorage.getItem('gophercrm_token'));
@@ -55,7 +45,7 @@ test.describe('Registration Flow', () => {
     expect(await registerPage.isFieldInvalid('first_name')).toBe(true);
   });
 
-  test('shows React Hook Form validation for invalid data', async ({ page }) => {
+  test('shows React Hook Form validation for invalid data', async () => {
     // Fill in fields with invalid data to bypass HTML5 required validation
     await registerPage.firstNameInput.fill('Test');
     await registerPage.lastNameInput.fill('User');
@@ -65,15 +55,13 @@ test.describe('Registration Flow', () => {
     
     // Submit to trigger React Hook Form validation
     await registerPage.submit();
-    await page.waitForTimeout(1000);
     
     // Check for custom error messages
-    expect(await registerPage.getErrorMessage('email')).toBe('Invalid email address');
-    const passwordError = await registerPage.getErrorMessage('password');
-    expect(passwordError).toContain('at least 10 characters');
+    await expect(registerPage.fieldError('email')).toHaveText('Invalid email address');
+    await expect(registerPage.fieldError('password')).toContainText('at least 10 characters');
   });
 
-  test('validates email format', async ({ page }) => {
+  test('validates email format', async () => {
     // Fill required fields first to bypass HTML5 required validation
     await registerPage.firstNameInput.fill('Test');
     await registerPage.lastNameInput.fill('User');
@@ -83,43 +71,42 @@ test.describe('Registration Flow', () => {
     // Test invalid email format
     await registerPage.emailInput.fill('invalid-email');
     await registerPage.submit();
-    await page.waitForTimeout(500);
-    
-    const error = await registerPage.getErrorMessage('email');
-    expect(error).toBe('Invalid email address');
+
+    await expect(registerPage.fieldError('email')).toHaveText('Invalid email address');
   });
 
   test('validates password requirements', async () => {
     const user = generateTestUser();
+    const passwordError = registerPage.fieldError('password');
     
     // Test too short password (the policy requires 10 characters)
     await registerPage.fillForm({ ...user, password: 'Short1!' });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('at least 10 characters');
+    await expect(passwordError).toContainText('at least 10 characters');
 
     // Test missing uppercase
     await registerPage.clearForm();
     await registerPage.fillForm({ ...user, password: testPasswords.noUppercase });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('one uppercase letter');
+    await expect(passwordError).toContainText('one uppercase letter');
     
     // Test missing lowercase
     await registerPage.clearForm();
     await registerPage.fillForm({ ...user, password: testPasswords.noLowercase });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('one lowercase letter');
+    await expect(passwordError).toContainText('one lowercase letter');
     
     // Test missing number
     await registerPage.clearForm();
     await registerPage.fillForm({ ...user, password: testPasswords.noNumber });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('one number');
+    await expect(passwordError).toContainText('one number');
 
     // Test missing special character
     await registerPage.clearForm();
     await registerPage.fillForm({ ...user, password: 'TestPassword123' });
     await registerPage.submit();
-    expect(await registerPage.getErrorMessage('password')).toContain('one special character');
+    await expect(passwordError).toContainText('one special character');
   });
 
   test('validates password confirmation match', async () => {
@@ -130,7 +117,7 @@ test.describe('Registration Flow', () => {
     });
     await registerPage.submit();
     
-    expect(await registerPage.getErrorMessage('confirmPassword')).toBe("Passwords don't match");
+    await expect(registerPage.fieldError('confirmPassword')).toHaveText("Passwords don't match");
   });
 
   test('shows error for duplicate email registration', async ({ page }) => {
@@ -188,15 +175,36 @@ test.describe('Registration Flow', () => {
   test('shows loading state during submission', async ({ page }) => {
     const user = generateTestUser();
     await registerPage.fillForm(user);
-    
-    // Submit form
-    await registerPage.submit();
-    
-    // The button should change to loading state (might be very quick)
-    // We're not asserting this strictly as it might be too fast to catch
-    
-    // Wait for successful navigation
-    await expect(page).toHaveURL('/', { timeout: 10000 });
+
+    // Hold the registration request until the loading state has been checked.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let held!: () => void;
+    const requestHeld = new Promise<void>((resolve) => {
+      held = resolve;
+    });
+    const handler = async (route: Route) => {
+      held();
+      await released;
+      await route.continue();
+    };
+    await page.route('**/auth/register', handler);
+
+    try {
+      await registerPage.submit();
+      await requestHeld;
+
+      const loadingButton = page.getByRole('button', { name: 'Creating account...' });
+      await expect(loadingButton).toBeVisible();
+      await expect(loadingButton).toBeDisabled();
+    } finally {
+      release();
+    }
+
+    await expect(page).toHaveURL('/', LOADED);
+    await page.unroute('**/auth/register', handler);
   });
 
   test('preserves form data on validation error', async () => {
@@ -210,11 +218,12 @@ test.describe('Registration Flow', () => {
     });
     
     await registerPage.submit();
+    await expect(registerPage.fieldError('password')).toContainText('at least 10 characters');
     
     // Check that other fields are preserved
-    expect(await registerPage.firstNameInput.inputValue()).toBe(user.firstName);
-    expect(await registerPage.lastNameInput.inputValue()).toBe(user.lastName);
-    expect(await registerPage.emailInput.inputValue()).toBe(user.email);
+    await expect(registerPage.firstNameInput).toHaveValue(user.firstName);
+    await expect(registerPage.lastNameInput).toHaveValue(user.lastName);
+    await expect(registerPage.emailInput).toHaveValue(user.email);
   });
 
   test('can navigate to login page', async ({ page }) => {
@@ -222,7 +231,7 @@ test.describe('Registration Flow', () => {
     await expect(page).toHaveURL('/login');
   });
 
-  test('clears error messages when field is edited', async ({ page }) => {
+  test('clears error messages when field is edited', async () => {
     // First, fill form with invalid data to trigger React Hook Form errors
     await registerPage.firstNameInput.fill('A');
     await registerPage.lastNameInput.fill('B');
@@ -232,40 +241,33 @@ test.describe('Registration Flow', () => {
     
     // Submit to trigger validation
     await registerPage.submit();
-    await page.waitForTimeout(1000);
     
     // Verify email error is shown
-    const emailError = await registerPage.getErrorMessage('email');
-    expect(emailError).toBe('Invalid email address');
+    await expect(registerPage.fieldError('email')).toHaveText('Invalid email address');
     
     // Verify password error is shown
-    const passwordError = await registerPage.getErrorMessage('password');
-    expect(passwordError).toContain('at least 10 characters');
+    await expect(registerPage.fieldError('password')).toContainText('at least 10 characters');
 
     // Verify confirm password error
-    const confirmError = await registerPage.getErrorMessage('confirmPassword');
-    expect(confirmError).toBe("Passwords don't match");
+    await expect(registerPage.fieldError('confirmPassword')).toHaveText("Passwords don't match");
     
     // Fix the email - error should clear
     await registerPage.emailInput.clear();
     await registerPage.emailInput.fill('valid@example.com');
-    await page.waitForTimeout(500);
-    expect(await registerPage.getErrorMessage('email')).toBeNull();
+    await expect(registerPage.fieldError('email')).toBeHidden();
     
     // Fix the password - error should clear
     await registerPage.passwordInput.clear();
     await registerPage.passwordInput.fill(testPasswords.allRequirements);
-    await page.waitForTimeout(500);
-    expect(await registerPage.getErrorMessage('password')).toBeNull();
+    await expect(registerPage.fieldError('password')).toBeHidden();
 
     // Fix confirm password - error should clear
     await registerPage.confirmPasswordInput.clear();
     await registerPage.confirmPasswordInput.fill(testPasswords.allRequirements);
-    await page.waitForTimeout(500);
-    expect(await registerPage.getErrorMessage('confirmPassword')).toBeNull();
+    await expect(registerPage.fieldError('confirmPassword')).toBeHidden();
   });
 
-  test('handles network error gracefully', async ({ context }) => {
+  test('handles network error gracefully', async ({ page, context }) => {
     const user = generateTestUser();
     
     // Block the registration API endpoint
@@ -275,9 +277,9 @@ test.describe('Registration Flow', () => {
     await registerPage.fillForm(user);
     await registerPage.submit();
     
-    // Should show an error message
-    const error = await registerPage.getGeneralError();
-    expect(error).toBeTruthy();
+    // The form shows its own message for a request that never got an answer.
+    await expect(page.getByRole('alert')).toHaveText('Registration failed. Please try again.', LOADED);
+    await expect(page).toHaveURL(/\/register$/);
   });
 
   test('successful registration with all valid data', async ({ page }) => {
@@ -285,25 +287,19 @@ test.describe('Registration Flow', () => {
 
     await registerPage.fillForm(user);
 
-    const responsePromise = page.waitForResponse(
-      response => response.url().includes('/auth/register') && response.request().method() === 'POST'
-    );
+    const responsePromise = apiResponse(page, /\/auth\/register$/, 'POST');
     await registerPage.submit();
 
-    // Wait for either: response or redirect
-    await Promise.race([
-      responsePromise.then(async r => {
-        expect(r.status()).toBe(201);
-        const body = await r.json();
-        expect(body.success).toBe(true);
-        expect(body.data.user.email).toBe(user.email);
-      }),
-      page.waitForURL('/', { timeout: 15000 }),
-    ]);
+    const response = await responsePromise;
+    expect(response.status()).toBe(201);
+    const body = await response.json();
+    expect(body.success).toBe(true);
+    expect(body.data.user.email).toBe(user.email);
 
-    await page.waitForURL('/', { timeout: 10000 });
+    await expect(page).toHaveURL('/', LOADED);
   });
 });
+
 // The switch itself: security.allow_public_registration ships disabled, and
 // global-setup enables it for the rest of the suite. These tests restore the
 // shipped state, verify the closed surface end to end, and reopen it in
