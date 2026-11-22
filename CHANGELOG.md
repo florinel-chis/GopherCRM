@@ -1169,6 +1169,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Lead route descriptions name the route guard (#698).** The `POST /leads` and
+  `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
+  route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.
+  Behaviour is unchanged.
 - **Services decide from the caller's permission scope (#681).** A service call governed by a
   permission key now receives the caller's id and the scope (`all`, `own` or not held) of that one
   key, and `CanViewLead`, `CanViewDeal`, the automation run history, the lead CSV export, the deal
