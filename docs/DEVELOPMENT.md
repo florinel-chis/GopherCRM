@@ -94,7 +94,14 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   tenant checks (`entra.IsIssuer`, `entra.Tenant`), the oid/tid link hint (`entra.LinkHint`) and
   the Microsoft Graph group-overage resolution with its paging, origin, page-size, page-count and
   deadline limits (`entra.GroupResolver`, `entra.EffectiveMaxPages`); it trusts one tenant, the
-  configured issuer's, and likewise defines no refusal codes and logs nothing.
+  configured issuer's, and likewise defines no refusal codes and logs nothing. The interfaces the
+  host provides to the identity layer are declared in `internal/idkit/host.go`: `IdentityStore`,
+  `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `AuditSink`, `ConfigSource`,
+  `TxRunner`, `Clock` and `Logger`. `IdentityStore` and `SessionIssuer` join a transaction carried
+  by ctx; `AttemptStore`, `AuditSink` and `ConfigSource` run only outside one. GopherCRM's adapters
+  (`NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
+  `NewIDKitAuditSink`, `NewIDKitConfigSource`, `NewIDKitLogger`, and the transaction manager as
+  the `TxRunner`) are not wired in yet: the OIDC service still uses the repositories directly.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint

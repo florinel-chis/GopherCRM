@@ -175,11 +175,21 @@ const refreshFamilyIDBytes = 16
 // (models.RefreshTokenSignInPassword or models.RefreshTokenSignInOIDC): a new
 // random family id and the current time as its start.
 func newRefreshSession(method string) (refreshSession, error) {
+	familyID, err := newRefreshFamilyID()
+	if err != nil {
+		return refreshSession{}, err
+	}
+	return refreshSession{FamilyID: familyID, SignInMethod: method, StartedAt: time.Now()}, nil
+}
+
+// newRefreshFamilyID returns a new random family id: 32 lowercase hex
+// characters.
+func newRefreshFamilyID() (string, error) {
 	buf := make([]byte, refreshFamilyIDBytes)
 	if _, err := rand.Read(buf); err != nil {
-		return refreshSession{}, fmt.Errorf("failed to generate refresh token family: %w", err)
+		return "", fmt.Errorf("failed to generate refresh token family: %w", err)
 	}
-	return refreshSession{FamilyID: hex.EncodeToString(buf), SignInMethod: method, StartedAt: time.Now()}, nil
+	return hex.EncodeToString(buf), nil
 }
 
 // issueRefreshToken mints, hashes and persists a refresh token for the user

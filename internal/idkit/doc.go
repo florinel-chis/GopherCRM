@@ -7,4 +7,10 @@
 // internal/models, internal/repository, internal/utils (the global
 // utils.Logger) or logrus, directly or through other packages;
 // TestIDKitImportBoundary enforces this.
+//
+// host.go declares those interfaces: IdentityStore, AttemptStore,
+// SessionIssuer, AuditSink, ConfigSource, TxRunner, Clock and Logger, with the
+// types and errors they use. IdentityStore and SessionIssuer join a
+// transaction carried by ctx; AttemptStore, AuditSink and ConfigSource run
+// only outside one.
 package idkit
