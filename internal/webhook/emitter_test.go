@@ -174,14 +174,14 @@ func TestEmitter(t *testing.T) {
 
 	t.Run("an unregistered entity is refused and writes nothing", func(t *testing.T) {
 		env.reset(t)
-		env.endpoint(t, true, "company.created", "company.deleted")
+		env.endpoint(t, true, "quote.created", "quote.deleted")
 		err := env.emit(t, emitter, func(ctx context.Context, tx webhook.TxEmitter) error {
-			return tx.Created(ctx, "company", 3)
+			return tx.Created(ctx, "quote", 3)
 		})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not registered")
 		require.Error(t, env.emit(t, emitter, func(ctx context.Context, tx webhook.TxEmitter) error {
-			return tx.Deleted(ctx, "company", 3)
+			return tx.Deleted(ctx, "quote", 3)
 		}))
 		assert.Empty(t, env.rows(t))
 	})

@@ -132,14 +132,14 @@ func runDealWebhookFanOut(t *testing.T, db *gorm.DB) {
 	env.wire(env.repo)
 	admin := env.owner.ID
 	all := webhook.AllEventTypes()
-	require.Len(t, all, 15)
+	require.Len(t, all, 18)
 	var others []string
 	for _, eventType := range all {
 		if eventType[:5] != "deal." {
 			others = append(others, eventType)
 		}
 	}
-	require.Len(t, others, 12)
+	require.Len(t, others, 15)
 	// a: everything. b: the deal types only. c: every type but the deal
 	// ones. d: inactive with everything.
 	a := env.endpoint("https://example.com/a", true, all...)

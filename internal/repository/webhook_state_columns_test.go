@@ -144,7 +144,7 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	require.NoError(t, db.Create(owner).Error)
 	other := &models.User{Email: "state-other@example.com", Password: "x", FirstName: "Other", LastName: "Two", Role: models.RoleSupport, IsActive: true}
 	require.NoError(t, db.Create(other).Error)
-	company := &models.Company{Name: "State Co", Domain: "state.example"}
+	company := &models.Company{Name: "State Co", Domain: "state.example", OwnerID: &owner.ID}
 	require.NoError(t, db.Create(company).Error)
 	customer := &models.Customer{FirstName: "Cus", LastName: "Tomer", Email: "state-customer@example.com", CompanyID: &company.ID}
 	require.NoError(t, db.Create(customer).Error)
@@ -168,12 +168,14 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	ticketState := webhookStateColumns(t, db, &models.Ticket{}, models.TicketWebhookState{})
 	dealState := webhookStateColumns(t, db, &models.Deal{}, models.DealWebhookState{})
 	taskState := webhookStateColumns(t, db, &models.Task{}, models.TaskWebhookState{})
+	companyState := webhookStateColumns(t, db, &models.Company{}, models.CompanyWebhookState{})
 
 	leads := captureUpdateColumns(t, db, "leads")
 	customers := captureUpdateColumns(t, db, "customers")
 	tickets := captureUpdateColumns(t, db, "tickets")
 	deals := captureUpdateColumns(t, db, "deals")
 	tasks := captureUpdateColumns(t, db, "tasks")
+	companies := captureUpdateColumns(t, db, "companies")
 
 	t.Run("leadRepository.Update writes exactly the lead state", func(t *testing.T) {
 		stored, err := NewLeadRepository(db).GetByID(lead.ID)
@@ -215,6 +217,16 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 		stored.Description = "changed"
 		require.NoError(t, NewTaskRepository(db).Update(stored))
 		assertNoWebhookStateDrift(t, "taskRepository.Update", tasks.take(), taskState, true)
+	})
+
+	t.Run("companyRepository.Update writes exactly the company state", func(t *testing.T) {
+		// Read back with its owner and counts, as the service hands it.
+		stored, err := NewCompanyRepository(db).GetByID(company.ID)
+		require.NoError(t, err)
+		require.NotNil(t, stored.Owner)
+		stored.Notes = "changed"
+		require.NoError(t, NewCompanyRepository(db).Update(stored))
+		assertNoWebhookStateDrift(t, "companyRepository.Update", companies.take(), companyState, true)
 	})
 
 	t.Run("leadRepository.ConvertToCustomer writes only lead state columns", func(t *testing.T) {

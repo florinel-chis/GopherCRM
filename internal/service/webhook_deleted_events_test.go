@@ -129,7 +129,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	env.wire(env.repo)
 	ctx := context.Background()
 	allTypes := webhook.AllEventTypes()
-	require.Len(t, allTypes, 15)
+	require.Len(t, allTypes, 18)
 	announcing := append(append([]string{}, webhookCreatedTypes...), webhookUpdatedTypes...)
 	// a: everything. b: the deleted types only, so it never receives a
 	// created or updated event, yet receives every deleted event. c: not

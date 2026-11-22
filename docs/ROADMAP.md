@@ -278,10 +278,11 @@ candidate follow-up, not an accident:
   `PUT /customers/{id}`, `PUT /tickets/{id}` and the lead and ticket bulk status endpoints (#616
   adds lead assignment, lead conversion and the automation assign-owner step), and
   #437 adds `lead.deleted`, `customer.deleted` and `ticket.deleted` for deletes and erasures, and
-  #515 adds `deal.created`, `deal.updated` and `deal.deleted`, and #516 adds `task.created`,
-  `task.updated` and `task.deleted`; still
+  #515 adds `deal.created`, `deal.updated` and `deal.deleted`, #516 adds `task.created`,
+  `task.updated` and `task.deleted`, and #517 adds `company.created`, `company.updated` and
+  `company.deleted`; still
   open: a submission event of its own, events of other entities (users,
-  companies, quotes), updated events for customer assignment, a repeat form enquiry or a company
+  quotes), updated events for customer assignment, a repeat form enquiry or a company
   delete, secret rotation
   and retry jitter (the registry and the delivery log have a screen since #409).
 - **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing

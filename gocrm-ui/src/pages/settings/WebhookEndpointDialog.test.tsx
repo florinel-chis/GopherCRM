@@ -91,6 +91,15 @@ describe('WebhookEndpointDialog', () => {
     }
   });
 
+  it('offers the company events', () => {
+    setup();
+
+    const events = within(screen.getByRole('group', { name: 'Events' }));
+    for (const eventType of ['company.created', 'company.updated', 'company.deleted']) {
+      expect(events.getByRole('checkbox', { name: eventType })).not.toBeChecked();
+    }
+  });
+
   it('creates with the URL, the ticked events and the active flag and hands the answer over', async () => {
     const created = { ...stored, event_types: ['lead.created', 'ticket.updated'], secret: 'whsec_once' };
     vi.mocked(webhooksApi.createEndpoint).mockResolvedValue(created);
@@ -177,7 +186,7 @@ describe('WebhookEndpointDialog', () => {
   });
 
   it('shows the event_types detail of a refusal under the checkboxes', async () => {
-    const rule = 'must list 1 to 15 known event types';
+    const rule = 'must list 1 to 18 known event types';
     vi.mocked(webhooksApi.updateEndpoint).mockRejectedValue(validationError({ event_types: rule }));
     setup(stored);
 

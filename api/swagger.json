@@ -6907,7 +6907,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a company. Roles: admin and sales.\nValidation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.\nOwner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.\nThe response is the stored company re-read with its owner and counts (all 0 for a new company).",
+                "description": "Create a company. Roles: admin and sales.\nValidation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.\nOwner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.\nA company.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the company.\nThe response is the stored company re-read with its owner and counts (all 0 for a new company).",
                 "consumes": [
                     "application/json"
                 ],
@@ -7224,7 +7224,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.\nThe response is the company re-read with its owner and counts.",
+                "description": "Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.\nWhen the update changed at least one stored value of the company (compared with the row read under lock in the update's transaction), a company.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none. A company deleted after the handler's read and before that lock answers 404 NOT_FOUND with nothing written.\nThe response is the company re-read with its owner and counts.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7409,7 +7409,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company.",
+                "description": "Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company. A company.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the company) is written in the same transaction; no lead.updated, customer.updated or deal.updated event is written for the unlinked leads, customers and deals.",
                 "produces": [
                     "application/json"
                 ],
@@ -28349,7 +28349,10 @@
                             "deal.deleted",
                             "task.created",
                             "task.updated",
-                            "task.deleted"
+                            "task.deleted",
+                            "company.created",
+                            "company.updated",
+                            "company.deleted"
                         ],
                         "type": "string",
                         "description": "Only rows of this event type (unknown value: 400)",
@@ -28834,7 +28837,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.\nFrom then on every lead, customer, ticket, deal or task created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step) and every lead, customer, ticket, deal or task changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
+                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.\nFrom then on every lead, customer, ticket, deal, task or company created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step; for a company, POST /companies) and every lead, customer, ticket, deal, task or company changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), PUT /companies/{id}, the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, a company deleted by DELETE /companies/{id} (company.deleted only: clearing company_id on its leads, customers and deals enqueues no updated event), and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -34378,7 +34381,10 @@
                         "deal.deleted",
                         "task.created",
                         "task.updated",
-                        "task.deleted"
+                        "task.deleted",
+                        "company.created",
+                        "company.updated",
+                        "company.deleted"
                     ],
                     "readOnly": true,
                     "example": "lead.created"
@@ -34417,7 +34423,7 @@
                     "example": "2026-11-20T09:30:00.123Z"
                 },
                 "record_id": {
-                    "description": "Id of the created, updated or deleted lead, customer, ticket, deal or task: the only record datum sent.",
+                    "description": "Id of the created, updated or deleted lead, customer, ticket, deal, task or company: the only record datum sent.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 42
@@ -34464,6 +34470,9 @@
                     "items": {
                         "type": "string",
                         "enum": [
+                            "company.created",
+                            "company.deleted",
+                            "company.updated",
                             "customer.created",
                             "customer.deleted",
                             "customer.updated",
@@ -34547,6 +34556,9 @@
                     "items": {
                         "type": "string",
                         "enum": [
+                            "company.created",
+                            "company.deleted",
+                            "company.updated",
                             "customer.created",
                             "customer.deleted",
                             "customer.updated",
@@ -34635,6 +34647,9 @@
                     "items": {
                         "type": "string",
                         "enum": [
+                            "company.created",
+                            "company.deleted",
+                            "company.updated",
                             "customer.created",
                             "customer.deleted",
                             "customer.updated",
@@ -38861,7 +38876,7 @@
             ],
             "properties": {
                 "event_types": {
-                    "description": "Event types to subscribe to: 1 to 15 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated and task.deleted; duplicates collapse.",
+                    "description": "Event types to subscribe to: 1 to 18 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated and company.deleted; duplicates collapse.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -38880,7 +38895,10 @@
                             "deal.deleted",
                             "task.created",
                             "task.updated",
-                            "task.deleted"
+                            "task.deleted",
+                            "company.created",
+                            "company.updated",
+                            "company.deleted"
                         ]
                     },
                     "example": [
@@ -38905,7 +38923,7 @@
             "type": "object",
             "properties": {
                 "event_types": {
-                    "description": "New subscribed subset: 1 to 15 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated and task.deleted.",
+                    "description": "New subscribed subset: 1 to 18 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated and company.deleted.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -38924,7 +38942,10 @@
                             "deal.deleted",
                             "task.created",
                             "task.updated",
-                            "task.deleted"
+                            "task.deleted",
+                            "company.created",
+                            "company.updated",
+                            "company.deleted"
                         ]
                     },
                     "example": [
@@ -39033,7 +39054,7 @@
             "name": "forms"
         },
         {
-            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals and tasks (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted).",
+            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks and companies (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted).",
             "name": "webhooks"
         },
         {

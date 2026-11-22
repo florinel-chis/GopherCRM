@@ -31,7 +31,8 @@ import (
 // and form ticket intake with outcome created (ticket.created),
 // DealService.Create (deal.created, #515), and TaskService.Create and
 // CreateWithLabels and the automation create_task step (task.created, #516, the
-// latter in the step transaction).
+// latter in the step transaction), and CompanyService.Create (company.created,
+// #517).
 //
 // The update paths (#408): LeadService.Update and LeadService.Assign
 // (lead.updated), LeadService.ConvertToCustomer (lead.updated next to
@@ -42,7 +43,9 @@ import (
 // deal run (lead.updated / ticket.updated / deal.updated, in the step
 // transaction), TaskService.Update and UpdateWithLabels (task.updated, #516,
 // the row read through TaskLockingReader, and a changed label set read through
-// TaskLockingReader.GetLabelIDsForUpdate counts as a change), and
+// TaskLockingReader.GetLabelIDsForUpdate counts as a change),
+// CompanyService.Update (company.updated, #517, the row read through
+// CompanyLockingReader), and
 // BulkSetLeadStatus / BulkSetTicketStatus / BulkSetTaskStatus (one
 // lead.updated / ticket.updated / task.updated per record in one call, so the
 // endpoints are read once per batch). An updated event is written only when the write
@@ -53,17 +56,23 @@ import (
 // made before the transaction, so a write that reverts a column another
 // request committed in between is a change and emits an event.
 // CustomerService.Assign, delete, ticket comments and the other automation
-// steps emit no updated event. Neither do a company delete, which unlinks the
-// company's leads, customers and deals (companyRepository.UnlinkDeals among
-// them), the erasure scrub of the text of the deals an erased customer or lead
-// reaches (scrubReachedDeals), nor a label hard delete, whose labelRepository
-// purge of task_labels changes the label set of every task that carried it.
+// steps emit no updated event. Neither do a company delete, which writes
+// company.deleted and nothing else: clearing company_id on the company's
+// leads, customers and deals (UnlinkLeads, UnlinkCustomers, UnlinkDeals) emits
+// no lead.updated, customer.updated or deal.updated; the startup lower-casing
+// of stored company domains in models.MigrateDatabase, a migration rather than
+// a request write, which emits nothing; the erasure scrub of the text of the
+// deals an erased customer or lead reaches (scrubReachedDeals); nor a label
+// hard delete, whose labelRepository purge of task_labels changes the label
+// set of every task that carried it.
 //
 // The deleted paths (#437): TicketService.Delete (ticket.deleted, in one
 // transaction with the soft delete when the service is wired),
 // DealService.Delete (deal.deleted, #515, likewise), TaskService.Delete
 // (task.deleted, #516, likewise, after a locking read of the live task inside
-// the transaction, so a delete that lost a race emits nothing), and every
+// the transaction, so a delete that lost a race emits nothing),
+// CompanyService.Delete (company.deleted, #517, in the delete transaction
+// after LockLive, the unlinks and the soft delete), and every
 // erasure unit of the lead, customer and user repositories (lead.deleted and
 // customer.deleted for each lead and customer the unit found live and erased,
 // cascades included), through the listener of NewErasureListener at the end

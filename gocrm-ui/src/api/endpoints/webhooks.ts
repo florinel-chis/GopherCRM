@@ -8,6 +8,9 @@ import { toListResult, withoutUnset, type ListResult } from '../list';
 // The event types an endpoint may subscribe to. This is the one list the
 // screens read; webhooks.test.ts holds it equal to the API specification.
 export const WEBHOOK_EVENT_TYPES = [
+  'company.created',
+  'company.deleted',
+  'company.updated',
   'customer.created',
   'customer.deleted',
   'customer.updated',

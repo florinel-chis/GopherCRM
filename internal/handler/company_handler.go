@@ -123,6 +123,7 @@ func (req *CompanyRequest) apply(company *models.Company) {
 // @Description Create a company. Roles: admin and sales.
 // @Description Validation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.
 // @Description Owner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.
+// @Description A company.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the company.
 // @Description The response is the stored company re-read with its owner and counts (all 0 for a new company).
 // @Tags companies
 // @Accept json
@@ -266,6 +267,7 @@ func (h *CompanyHandler) Get(c *gin.Context) {
 // Update godoc
 // @Summary Replace a company
 // @Description Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.
+// @Description When the update changed at least one stored value of the company (compared with the row read under lock in the update's transaction), a company.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none. A company deleted after the handler's read and before that lock answers 404 NOT_FOUND with nothing written.
 // @Description The response is the company re-read with its owner and counts.
 // @Tags companies
 // @Accept json
@@ -344,7 +346,7 @@ func (h *CompanyHandler) Update(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a company
-// @Description Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company.
+// @Description Soft-delete a company. Role: admin. In the same transaction company_id is set to NULL on every lead, customer and deal that pointed at it; those records and their free-text company field are otherwise untouched. Companies hold no personal data, so this is not an erasure. A deleted company's domain becomes free for a new company. A company.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the company) is written in the same transaction; no lead.updated, customer.updated or deal.updated event is written for the unlinked leads, customers and deals.
 // @Tags companies
 // @Produce json
 // @Security BearerAuth

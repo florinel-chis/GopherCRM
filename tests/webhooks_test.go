@@ -341,15 +341,20 @@ func TestWebhookAPISQLite(t *testing.T) {
 		assert.Contains(t, details, "event_types", raw)
 	})
 
-	t.Run("the fifteen event types, tasks included (#516)", func(t *testing.T) {
-		unsorted := []string{"task.updated", "ticket.deleted", "deal.updated", "lead.created", "customer.updated", "task.created",
-			"deal.created", "ticket.created", "lead.deleted", "customer.created", "deal.deleted", "task.deleted", "ticket.updated",
-			"lead.updated", "customer.deleted"}
-		sorted := []interface{}{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated",
-			"lead.created", "lead.deleted", "lead.updated", "task.created", "task.deleted", "task.updated",
-			"ticket.created", "ticket.deleted", "ticket.updated"}
+	t.Run("the eighteen event types, tasks (#516) and companies (#517) included", func(t *testing.T) {
+		// The subscription is every type of the catalogue, sent shuffled.
+		all := webhook.AllEventTypes()
+		require.Len(t, all, 18)
+		unsorted := append([]string{}, all...)
+		for i, j := 0, len(unsorted)-1; i < j; i, j = i+2, j-2 {
+			unsorted[i], unsorted[j] = unsorted[j], unsorted[i]
+		}
+		require.NotEqual(t, all, unsorted)
+		sorted := []interface{}{"company.created", "company.deleted", "company.updated", "customer.created", "customer.deleted",
+			"customer.updated", "deal.created", "deal.deleted", "deal.updated", "lead.created", "lead.deleted", "lead.updated",
+			"task.created", "task.deleted", "task.updated", "ticket.created", "ticket.deleted", "ticket.updated"}
 		status, envelope, raw := do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
-			"url": "https://example.com:" + port + "/fifteen", "event_types": unsorted})
+			"url": "https://example.com:" + port + "/eighteen", "event_types": unsorted})
 		require.Equal(t, http.StatusCreated, status, raw)
 		data := envelope.Data.(map[string]interface{})
 		assert.Equal(t, sorted, data["event_types"])
@@ -359,7 +364,9 @@ func TestWebhookAPISQLite(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, raw)
 		assert.Equal(t, sorted, envelope.Data.(map[string]interface{})["event_types"])
 
-		status, _, raw = do("admin", http.MethodGet, "/webhooks/deliveries?event_type=task.deleted", nil)
-		assert.Equal(t, http.StatusOK, status, raw)
+		for _, eventType := range []string{"task.deleted", "company.created", "company.updated", "company.deleted"} {
+			status, _, raw = do("admin", http.MethodGet, "/webhooks/deliveries?event_type="+eventType, nil)
+			assert.Equal(t, http.StatusOK, status, eventType+": "+raw)
+		}
 	})
 }

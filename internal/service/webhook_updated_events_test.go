@@ -319,7 +319,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		require.NoError(t, err, "20 raw entries are accepted")
 		stored, err := env.endpoints.GetEndpoint(ctx, created.ID)
 		require.NoError(t, err)
-		assert.Equal(t, models.WebhookEventTypes{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated",
+		assert.Equal(t, models.WebhookEventTypes{"company.created", "company.deleted", "company.updated", "customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated",
 			"lead.created", "lead.deleted", "lead.updated", "task.created", "task.deleted", "task.updated",
 			"ticket.created", "ticket.deleted", "ticket.updated"}, stored.EventTypes)
 		require.NoError(t, env.endpoints.DeleteEndpoint(ctx, created.ID))
