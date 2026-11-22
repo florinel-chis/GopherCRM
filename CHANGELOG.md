@@ -1156,6 +1156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The automation engine service file is split by responsibility (#619): `automation_engine.go` keeps
+  the engine type and its constructor, and the lifecycle, dispatch, schedule, run-lease, step,
+  email-step and stale-run recovery code moves unchanged into `automation_lifecycle.go`,
+  `automation_dispatch.go`, `automation_schedule.go`, `automation_run_lease.go`,
+  `automation_steps.go`, `automation_email_step.go` and `automation_recovery.go` under
+  `internal/service/`. No behaviour change.
 - **Customer create and update always run as one transaction on the request context (#615).**
   Services get one shared helper that runs a write in a single transaction and gives the callback
   the repositories and the webhook and automation outlets bound to that transaction. The customer

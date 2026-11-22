@@ -26,8 +26,10 @@ Priorities: 22 P0, 17 P1, 2 P2.
 - `internal/models/automation.go`, `internal/models/notification.go`, `internal/models/database.go`
 - `internal/handler/automation_handler.go`, `internal/handler/notification_handler.go`,
   `internal/handler/routes.go` (`SetupAutomationRoutes`, `SetupNotificationRoutes`)
-- `internal/service/automation_service.go`, `automation_validation.go`, `automation_engine.go`, `automation_condition.go`,
-  `automation_dry_run.go`, `automation_runtime.go`, `automation_events.go`,
+- `internal/service/automation_service.go`, `automation_validation.go`, `automation_engine.go`,
+  `automation_lifecycle.go`, `automation_dispatch.go`, `automation_schedule.go`,
+  `automation_run_lease.go`, `automation_steps.go`, `automation_email_step.go`,
+  `automation_recovery.go`, `automation_condition.go`, `automation_dry_run.go`, `automation_runtime.go`, `automation_events.go`,
   `notification_service.go`; the event hooks in `lead_service.go`, `lead_conversion.go`, `deal_service.go`,
   `form_public.go`, `form_confirmation.go`, `form_lead_link.go` and `bulk_status_service.go`
 - `internal/repository/automation_repository.go`, `notification_repository.go`, `erasure.go`,
