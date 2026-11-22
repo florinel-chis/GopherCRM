@@ -102,6 +102,11 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   (`NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
   `NewIDKitAuditSink`, `NewIDKitConfigSource`, `NewIDKitLogger`, and the transaction manager as
   the `TxRunner`) are not wired in yet: the OIDC service still uses the repositories directly.
+  Two test kits sit next to the layer, and only tests import them: `internal/idkit/oidctest`,
+  an in-process TLS OpenID Connect issuer (`internal/idkit/oidctest/issuer.go` `oidctest.New`)
+  with no provider-specific code, and `internal/idkit/scim/scimtest`, a SCIM client over an
+  `http.Handler` that sends the bearer token and the SCIM media type and decodes SCIM error bodies
+  (`internal/idkit/scim/scimtest/client.go` `scimtest.Client`).
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
@@ -407,8 +412,9 @@ the options, and every sign-in shares it. Tests trust their TLS issuer through
 one discovered issuer (`oidc.ProviderCache`, `internal/idkit/oidc/provider.go`) for
 `oidc.ProviderCacheTTL` (24 h), keyed by issuer,
 app-key mode (`OIDC_ENTRA_APP_SIGNING_KEYS` on an Entra ID issuer) and, in that mode, client id;
-a failed discovery is never kept and the mutex is held while a miss fetches. The fake issuer of
-`internal/service/auth_oidc_test.go` counts discovery and JWKS requests: the subtests
+a failed discovery is never kept and the mutex is held while a miss fetches. The test issuer
+`internal/idkit/oidctest/issuer.go` `oidctest.Issuer`, used by the fixture of
+`internal/service/auth_oidc_test.go`, counts discovery and JWKS requests: the subtests
 `provider_cache_daily_refresh`, `provider_cache_unknown_kid`, `provider_cache_refetch` and
 `entra_app_signing_keys` under `TestOIDCSignIn{SQLite,MySQL}` assert exact counts, and the
 fixture's `reset` clears the cache and the counters. After the code exchange
@@ -425,8 +431,9 @@ the lockout counters are untouched. Refusals are `ErrSSOSignInFailed` (401) and 
 logged. Every `oidc_sign_in` line carries `request_id` (the handler passes it on the context,
 `utils.WithRequestID`) and `attempt_id` (the attempt row, `0` before Start created it or the
 callback claimed it) (#453). Regression roots: `TestOIDCSignInSQLite` and `TestOIDCSignInMySQL`
-(`internal/service/auth_oidc_test.go`, one shared subtest table against an in-process TLS issuer
-that checks the PKCE verifier and the redirect URI; the MySQL root skips without
+(`internal/service/auth_oidc_test.go`, one shared subtest table against the in-process TLS issuer
+`internal/idkit/oidctest/issuer.go` `oidctest.Issuer`, which checks the PKCE verifier and the
+redirect URI; the Microsoft Graph fake and the second host stay in that test file; the MySQL root skips without
 `TEST_MYSQL_DSN` and is discovered by the auth checker), `TestOIDCHTTPClient`
 (`internal/idkit/oidc`), `TestOIDCEntraTenant` and `TestOIDCResolveEntraGroups`
 (`internal/idkit/entra`),
@@ -2637,7 +2644,8 @@ replays the busy write and signs in. The `scim_oid_concurrent_link_before_insert
 
 **SCIM provisioning cycle golden.** `cmd/scim_cycle_golden_test.go` `TestSCIMProvisioningCycleGolden`
 sends 20 requests in Microsoft Entra ID's documented shapes through `setupRouter` over a fresh
-SQLite file: the user lookup, create, repeated create, read, patch with and without a path,
+SQLite file, each through the SCIM test client `internal/idkit/scim/scimtest/client.go`
+`scimtest.Client` (bearer token, `application/scim+json`, its own client address): the user lookup, create, repeated create, read, patch with and without a path,
 replace, the group lookup, create, member add, read, member remove and delete (answered 405), a
 missing user, an unparsable filter, a malformed patch body, the deactivation, the delete and a read
 after it. `cmd/testdata/scim_provisioning_cycle.json` records each request and its status, the

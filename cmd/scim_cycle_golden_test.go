@@ -6,7 +6,8 @@ package main
 // create, read, patch, replace, the group sequence, error answers,
 // deactivation and delete) over a fresh SQLite file and compares each answer's
 // status, Content-Type, Location and ETag headers and body with
-// testdata/scim_provisioning_cycle.json (-update-scim-cycle rewrites it).
+// testdata/scim_provisioning_cycle.json (-update-scim-cycle rewrites it). The
+// cycle's requests go through internal/idkit/scim/scimtest.
 // Only meta.created and meta.lastModified are replaced, after they are
 // checked; ids and locations are kept as served. TestSCIMProvisioningCycleGoldenCompare
 // checks that the comparison reports a changed status, a missing body field
@@ -31,6 +32,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim/scimtest"
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
@@ -221,29 +223,36 @@ func scimCycleRecord(t *testing.T) (scimCycleGolden, string) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
 	require.NotEmpty(t, created.Data.Token)
 
+	// The cycle itself goes through the SCIM test client; each request still
+	// comes from its own client address.
+	client := scimtest.New(router, created.Data.Token)
+	client.Prepare = func(request *http.Request) {
+		request.RemoteAddr = nextRemote()
+		request.Header.Set("X-Request-ID", "req-468")
+	}
 	var golden scimCycleGolden
 	userID := ""
 	for _, request := range scimCycleRequests() {
 		method, path, body := request.build(userID)
-		recorder := scimWiredSend(router, method, path, body, nextRemote(), "Bearer "+created.Data.Token)
-		require.NotContains(t, []int{http.StatusUnauthorized, http.StatusTooManyRequests}, recorder.Code,
-			"step %s: the harness is refused: %s", request.name, recorder.Body.String())
+		response := client.Do(method, path, body)
+		require.NotContains(t, []int{http.StatusUnauthorized, http.StatusTooManyRequests}, response.Status,
+			"step %s: the harness is refused: %s", request.name, response.Body)
 		if request.name == "users_create" {
-			require.Equal(t, http.StatusCreated, recorder.Code, "step %s: %s", request.name, recorder.Body.String())
+			require.Equal(t, http.StatusCreated, response.Status, "step %s: %s", request.name, response.Body)
 			var user struct {
 				ID string `json:"id"`
 			}
-			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &user))
+			require.NoError(t, response.Decode(&user))
 			require.NotEmpty(t, user.ID)
 			userID = user.ID
 		}
 		golden.Steps = append(golden.Steps, scimCycleStep{
 			Name: request.name, Method: method, Path: path, RequestBody: body,
-			Status:      recorder.Code,
-			ContentType: recorder.Header().Get("Content-Type"),
-			Location:    recorder.Header().Get("Location"),
-			ETag:        recorder.Header().Get("ETag"),
-			Body:        scimCycleBody(t, request.name, recorder.Body.Bytes()),
+			Status:      response.Status,
+			ContentType: response.Header.Get("Content-Type"),
+			Location:    response.Header.Get("Location"),
+			ETag:        response.Header.Get("ETag"),
+			Body:        scimCycleBody(t, request.name, response.Body),
 		})
 	}
 	return golden, created.Data.Token
