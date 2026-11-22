@@ -4489,6 +4489,9 @@ definitions:
         - deal.created
         - deal.updated
         - deal.deleted
+        - task.created
+        - task.updated
+        - task.deleted
         example: lead.created
         readOnly: true
         type: string
@@ -4522,8 +4525,8 @@ definitions:
         readOnly: true
         type: string
       record_id:
-        description: 'Id of the created, updated or deleted lead, customer, ticket
-          or deal: the only record datum sent.'
+        description: 'Id of the created, updated or deleted lead, customer, ticket,
+          deal or task: the only record datum sent.'
         example: 42
         readOnly: true
         type: integer
@@ -4578,6 +4581,9 @@ definitions:
           - lead.created
           - lead.deleted
           - lead.updated
+          - task.created
+          - task.deleted
+          - task.updated
           - ticket.created
           - ticket.deleted
           - ticket.updated
@@ -4655,6 +4661,9 @@ definitions:
           - lead.created
           - lead.deleted
           - lead.updated
+          - task.created
+          - task.deleted
+          - task.updated
           - ticket.created
           - ticket.deleted
           - ticket.updated
@@ -4737,6 +4746,9 @@ definitions:
           - lead.created
           - lead.deleted
           - lead.updated
+          - task.created
+          - task.deleted
+          - task.updated
           - ticket.created
           - ticket.deleted
           - ticket.updated
@@ -8816,10 +8828,10 @@ definitions:
   internal_handler.WebhookEndpointCreateRequest:
     properties:
       event_types:
-        description: 'Event types to subscribe to: 1 to 12 of lead.created, lead.updated,
+        description: 'Event types to subscribe to: 1 to 15 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
-          ticket.updated, ticket.deleted, deal.created, deal.updated and deal.deleted;
-          duplicates collapse.'
+          ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted,
+          task.created, task.updated and task.deleted; duplicates collapse.'
         example:
         - lead.created
         - ticket.created
@@ -8837,6 +8849,9 @@ definitions:
           - deal.created
           - deal.updated
           - deal.deleted
+          - task.created
+          - task.updated
+          - task.deleted
           type: string
         type: array
       is_active:
@@ -8857,9 +8872,10 @@ definitions:
   internal_handler.WebhookEndpointUpdateRequest:
     properties:
       event_types:
-        description: 'New subscribed subset: 1 to 12 of lead.created, lead.updated,
+        description: 'New subscribed subset: 1 to 15 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
-          ticket.updated, ticket.deleted, deal.created, deal.updated and deal.deleted.'
+          ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted,
+          task.created, task.updated and task.deleted.'
         example:
         - lead.created
         items:
@@ -8876,6 +8892,9 @@ definitions:
           - deal.created
           - deal.updated
           - deal.deleted
+          - task.created
+          - task.updated
+          - task.deleted
           type: string
         type: array
       is_active:
@@ -23994,9 +24013,11 @@ paths:
         beside a lead or a customer. The checks run in this order: role, body binding,
         self-assignment, assignee (exists, active), lead, customer, lead-and-customer
         conflict, deal, labels. No automation event and no notification is produced.
-        lead_id and lead are omitted whenever the caller may not see the linked lead
-        (admins see every lead, sales users only the leads they own, every other role
-        none), decided again on every read.'
+        A task.created webhook event (one delivery per active endpoint subscribed
+        to it) is written in the same transaction as the task and its labels. lead_id
+        and lead are omitted whenever the caller may not see the linked lead (admins
+        see every lead, sales users only the leads they own, every other role none),
+        decided again on every read.'
       parameters:
       - description: Task to create
         in: body
@@ -24091,7 +24112,11 @@ paths:
       description: 'Soft-delete a task. Roles: admin only; the role check runs before
         the id is parsed, so non-admins always receive 403. The task''s label links
         stay in the join table but the task no longer appears anywhere (and no longer
-        counts towards a label''s task_count).'
+        counts towards a label''s task_count). A task.deleted webhook event (one delivery
+        per active endpoint subscribed to it, including endpoints that never received
+        an event for the task) is written in the same transaction as the soft delete,
+        after the task row is re-read under lock; a delete that loses a race with
+        another delete of the same task answers 404 and writes no event.'
       parameters:
       - description: Task ID
         in: path
@@ -24282,10 +24307,14 @@ paths:
         matches no label rejects the whole request. The order of checks: id, body
         binding, task lookup, ownership, reassignment permission, then assignee, lead,
         customer, conflict, completed status, deal, labels; any failure leaves the
-        task unchanged. No automation event is produced. lead_id and lead are omitted
-        whenever the caller may not see the linked lead (admins see every lead, sales
-        users only the leads they own, every other role none), decided again on every
-        read.'
+        task unchanged. No automation event is produced. When the update changed at
+        least one stored value of the task, or label_ids named another set of labels
+        than the stored one (order and repeats do not matter), a task.updated webhook
+        event (one delivery per active endpoint subscribed to it) is written in the
+        same transaction; an update that sends only the stored values writes none.
+        lead_id and lead are omitted whenever the caller may not see the linked lead
+        (admins see every lead, sales users only the leads they own, every other role
+        none), decided again on every read.'
       parameters:
       - description: Task ID
         in: path
@@ -24392,8 +24421,11 @@ paths:
         is missing (404, error.details.missing_ids), not assigned to a non-admin caller
         (403, error.details.forbidden_ids) or completed while the target status is
         not completed (400, error.details.completed_ids), nothing is written; the
-        checks report in that order. No automation event is recorded; once the id,
-        status and role checks have passed, an audit row is written to the bulk operation
+        checks report in that order. No automation event is recorded. Each listed
+        task whose stored status differed from the new one gets a task.updated webhook
+        event (one delivery per active endpoint subscribed to it) in the same transaction;
+        a task already in that status and a refused batch get none. Once the id, status
+        and role checks have passed, an audit row is written to the bulk operation
         log and marked completed or failed.'
       parameters:
       - description: Task IDs and the status to set
@@ -26547,6 +26579,9 @@ paths:
         - deal.created
         - deal.updated
         - deal.deleted
+        - task.created
+        - task.updated
+        - task.deleted
         in: query
         name: event_type
         type: string
@@ -26830,7 +26865,7 @@ paths:
       - application/json
       description: |-
         Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
-        From then on every lead, customer, ticket or deal created (through the API, a lead conversion or a form) and every lead, customer, ticket or deal changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, the lead and ticket bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
+        From then on every lead, customer, ticket, deal or task created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step) and every lead, customer, ticket, deal or task changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
         The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
         Roles: admin.
       parameters:
@@ -27401,9 +27436,9 @@ tags:
   name: forms
 - description: 'Outbound webhooks (admin): endpoint registry with signing secrets,
     and the delivery log of the created, updated and deleted events of leads, customers,
-    tickets and deals (lead.created, lead.updated, lead.deleted, customer.created,
+    tickets, deals and tasks (lead.created, lead.updated, lead.deleted, customer.created,
     customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted,
-    deal.created, deal.updated, deal.deleted).'
+    deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted).'
   name: webhooks
 - description: 'Unauthenticated endpoints reached by visitors of the sites a form
     is embedded on: definition, submission, embed script, view page and double opt-in

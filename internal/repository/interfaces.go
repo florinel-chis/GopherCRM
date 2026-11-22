@@ -346,9 +346,13 @@ type TicketLockingReader interface {
 // and the write. The production taskRepository implements it (FOR UPDATE on
 // MySQL/MariaDB, a plain read on SQLite); it is kept apart from TaskRepository
 // so the hand-written mocks need no change. A soft-deleted or missing task is
-// gorm.ErrRecordNotFound.
+// gorm.ErrRecordNotFound. With webhooks wired (#516) the delete re-reads the
+// task through GetByIDForUpdate in its transaction too, and an update that
+// replaces the label set reads the stored label ids through
+// GetLabelIDsForUpdate (ascending, locked) for the task.updated comparison.
 type TaskLockingReader interface {
 	GetByIDForUpdate(id uint) (*models.Task, error)
+	GetLabelIDsForUpdate(taskID uint) ([]uint, error)
 }
 
 // DealLockingReader is the locking read of a deal write (#515): dealService

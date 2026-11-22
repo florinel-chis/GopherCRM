@@ -110,7 +110,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets and deals (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted).
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals and tasks (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -390,9 +390,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		service.WithTicketWebhooks(webhookEmitter, txManager))
 	// A task update locks its task row in one transaction before the
 	// completed-task re-check and the write, the row the bulk task status
-	// batch locks too (#558).
+	// batch locks too (#558). The task writes enqueue task.created,
+	// task.updated and task.deleted in their transaction (#516).
 	taskService := service.NewTaskService(taskRepo, userRepo, leadRepo, customerRepo, labelRepo, dealRepo,
-		service.WithTaskRowLock(txManager))
+		service.WithTaskRowLock(txManager), service.WithTaskWebhooks(webhookEmitter, txManager))
 	labelService := service.NewLabelService(labelRepo)
 	// A key is issued only inside one transaction that locks its owner's users
 	// row first (#342), so the service takes the shared userRepo and txManager.

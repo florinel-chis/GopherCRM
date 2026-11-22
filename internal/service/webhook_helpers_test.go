@@ -276,6 +276,7 @@ type webhookEnv struct {
 	customers CustomerService
 	tickets   TicketService
 	deals     DealService
+	tasks     TaskService
 	forms     FormService
 	bulk      BulkStatusService
 	// users erases users ungoverned (Delete); governedUsers through the role
@@ -340,6 +341,14 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, e.txManager, customerOpts...)
 	e.tickets = NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo, ticketOpts...)
 	e.deals = NewDealService(repository.NewDealRepository(db), companyRepo, customerRepo, leadRepo, userRepo, nil, e.txManager, dealOpts...)
+	// The task service as cmd/main.go builds it (#516): the row lock always,
+	// the webhooks when hooks are wired.
+	taskOpts := []TaskServiceOption{WithTaskRowLock(e.txManager)}
+	if hooks != nil {
+		taskOpts = append(taskOpts, WithTaskWebhooks(emitter, e.txManager))
+	}
+	e.tasks = NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db),
+		repository.NewDealRepository(db), taskOpts...)
 	e.users = NewUserService(userRepo)
 	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),
 		repository.NewRoleAuditRepository(db), e.txManager))

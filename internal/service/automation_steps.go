@@ -215,7 +215,9 @@ func (e *AutomationEngine) planStep(ctx context.Context, tx *gorm.DB, r reposito
 				return err
 			}
 			plan.details["task_id"] = task.ID
-			return nil
+			// task.created (#516) in the step transaction; a dry run runs no
+			// effect and writes neither the task nor the row.
+			return e.webhooks.Bind(tx).Created(ctx, webhook.Task, task.ID)
 		}
 	case models.AutomationStepAssignOwner:
 		plan.advance = nextAdvance(stepCount, pos+1, now)

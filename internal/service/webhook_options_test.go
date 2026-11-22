@@ -70,4 +70,32 @@ func TestWebhookOptionsNilArguments(t *testing.T) {
 		assert.Equal(t, live, s.webhooks)
 		assert.True(t, s.webhooksWired())
 	})
+
+	t.Run("the task service holds Nop by default and with a nil emitter or manager, else the emitter", func(t *testing.T) {
+		live := webhook.NewEmitter(repository.NewWebhookRepository(nil))
+		require.NotEqual(t, webhook.Nop, live)
+
+		s := NewTaskService(nil, nil, nil, nil, nil, nil).(*taskService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+
+		s = NewTaskService(nil, nil, nil, nil, nil, nil, WithTaskWebhooks(nil, tm)).(*taskService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.Same(t, tm, s.txManager, "a non-nil manager is still stored")
+		assert.False(t, s.webhooksWired())
+
+		s = NewTaskService(nil, nil, nil, nil, nil, nil, WithTaskWebhooks(live, nil)).(*taskService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.Nil(t, s.txManager)
+		assert.False(t, s.webhooksWired())
+
+		s = NewTaskService(nil, nil, nil, nil, nil, nil, WithTaskRowLock(tm), WithTaskWebhooks(live, nil)).(*taskService)
+		assert.Equal(t, webhook.Nop, s.webhooks, "a manager from another option is not enough")
+		assert.False(t, s.webhooksWired())
+
+		s = NewTaskService(nil, nil, nil, nil, nil, nil, WithTaskWebhooks(live, tm)).(*taskService)
+		assert.Equal(t, live, s.webhooks)
+		assert.Same(t, tm, s.txManager)
+		assert.True(t, s.webhooksWired())
+	})
 }

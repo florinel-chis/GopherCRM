@@ -52,6 +52,24 @@ func (r *taskRepository) GetByIDForUpdate(id uint) (*models.Task, error) {
 	return &task, nil
 }
 
+// GetLabelIDsForUpdate is the locking read of a task's label set (#516): the
+// label ids of its task_labels rows in ascending order, with `FOR UPDATE` on
+// MySQL/MariaDB through a fresh Session (LockingRead), so under REPEATABLE
+// READ the read is current rather than the transaction's snapshot; a plain
+// read on SQLite. It implements TaskLockingReader. A task without labels, or
+// with no row at all, yields an empty slice.
+func (r *taskRepository) GetLabelIDsForUpdate(taskID uint) ([]uint, error) {
+	ids := []uint{}
+	err := LockingRead(r.db).Table("task_labels").
+		Where("task_id = ?", taskID).
+		Order("label_id ASC").
+		Pluck("label_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func (r *taskRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Task{}, id).Error
 }

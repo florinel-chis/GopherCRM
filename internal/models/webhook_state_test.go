@@ -42,6 +42,15 @@ func TestWebhookStateNullableIDs(t *testing.T) {
 					t.Errorf("deal states equal = %v, want %v", got, tc.equal)
 				}
 			}
+			for _, pair := range [][2]*Task{
+				{{LeadID: tc.a}, {LeadID: tc.b}},
+				{{CustomerID: tc.a}, {CustomerID: tc.b}},
+				{{DealID: tc.a}, {DealID: tc.b}},
+			} {
+				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
+					t.Errorf("task states equal = %v, want %v", got, tc.equal)
+				}
+			}
 		})
 	}
 }
@@ -78,6 +87,11 @@ func TestWebhookStateTicketDueAt(t *testing.T) {
 				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
 					t.Errorf("deal states equal = %v, want %v", got, tc.equal)
 				}
+			}
+			// So does the task's due date.
+			taskA, taskB := &Task{DueDate: tc.a}, &Task{DueDate: tc.b}
+			if got := taskA.WebhookState() == taskB.WebhookState(); got != tc.equal {
+				t.Errorf("task states equal = %v, want %v", got, tc.equal)
 			}
 		})
 	}

@@ -28,8 +28,10 @@ import (
 // The create paths: LeadService.Create and the form create_lead path for a new
 // lead (lead.created), CustomerService.Create and LeadService.ConvertToCustomer
 // (customer.created, the latter inside each retry attempt), TicketService.Create
-// and form ticket intake with outcome created (ticket.created), and
-// DealService.Create (deal.created, #515).
+// and form ticket intake with outcome created (ticket.created),
+// DealService.Create (deal.created, #515), and TaskService.Create and
+// CreateWithLabels and the automation create_task step (task.created, #516, the
+// latter in the step transaction).
 //
 // The update paths (#408): LeadService.Update and LeadService.Assign
 // (lead.updated), LeadService.ConvertToCustomer (lead.updated next to
@@ -38,24 +40,30 @@ import (
 // and DealService.ChangeStage (deal.updated, #515, the row read through
 // DealLockingReader), the automation assign_owner step on a lead, ticket or
 // deal run (lead.updated / ticket.updated / deal.updated, in the step
-// transaction), and BulkSetLeadStatus / BulkSetTicketStatus (one
-// lead.updated / ticket.updated per record in one call, so the endpoints are
-// read once per batch). An updated event is written only when the write
+// transaction), TaskService.Update and UpdateWithLabels (task.updated, #516,
+// the row read through TaskLockingReader, and a changed label set read through
+// TaskLockingReader.GetLabelIDsForUpdate counts as a change), and
+// BulkSetLeadStatus / BulkSetTicketStatus / BulkSetTaskStatus (one
+// lead.updated / ticket.updated / task.updated per record in one call, so the
+// endpoints are read once per batch). An updated event is written only when the write
 // changed the record's WebhookState() (internal/models), the rule of the
 // event: the state of the row read under lock inside the writing transaction
 // is compared with the state written (updated_at excluded), so an update that
 // sends the stored values writes no row. The caller's values come from a read
 // made before the transaction, so a write that reverts a column another
 // request committed in between is a change and emits an event.
-// CustomerService.Assign, delete, ticket comments, the other automation steps
-// and bulk task status emit no updated event. Neither do a company delete,
-// which unlinks the company's leads, customers and deals
-// (companyRepository.UnlinkDeals among them), nor the erasure scrub of the
-// text of the deals an erased customer or lead reaches (scrubReachedDeals).
+// CustomerService.Assign, delete, ticket comments and the other automation
+// steps emit no updated event. Neither do a company delete, which unlinks the
+// company's leads, customers and deals (companyRepository.UnlinkDeals among
+// them), the erasure scrub of the text of the deals an erased customer or lead
+// reaches (scrubReachedDeals), nor a label hard delete, whose labelRepository
+// purge of task_labels changes the label set of every task that carried it.
 //
 // The deleted paths (#437): TicketService.Delete (ticket.deleted, in one
 // transaction with the soft delete when the service is wired),
-// DealService.Delete (deal.deleted, #515, likewise), and every
+// DealService.Delete (deal.deleted, #515, likewise), TaskService.Delete
+// (task.deleted, #516, likewise, after a locking read of the live task inside
+// the transaction, so a delete that lost a race emits nothing), and every
 // erasure unit of the lead, customer and user repositories (lead.deleted and
 // customer.deleted for each lead and customer the unit found live and erased,
 // cascades included), through the listener of NewErasureListener at the end
