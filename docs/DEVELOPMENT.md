@@ -2623,7 +2623,7 @@ never edited by hand.
 `internal/service/auth_scim_user_writes_test.go` `TestSCIMUserWritesMySQL`,
 `internal/integration/role_last_admin_integration_test.go` `TestLastAdminInvariantMySQL` and
 `internal/integration/role_last_admin_integration_test.go` `TestLastAdminConcurrentMySQL`. On
-SQLite, four roots: `internal/service/auth_last_admin_guard_test.go` `TestIsLastActiveAdmin`,
+SQLite, four roots: `internal/service/auth_last_admin_guard_test.go` `TestLastAdminGuard`,
 `internal/integration/role_last_admin_integration_test.go` `TestLastAdminInvariantSQLite`,
 `internal/integration/role_last_admin_integration_test.go` `TestLastAdminConcurrentSQLite` and
 `internal/integration/role_last_admin_integration_test.go` `TestLastAdminAPISQLite`.
@@ -2634,7 +2634,7 @@ check that they ran):
 ```bash
 timeout 540 go test -count=1 -run '^TestOIDCSignInGolden(SQLite|MySQL|Compare)$' ./internal/service
 timeout 300 go test -count=1 -run '^TestSCIMProvisioningCycleGolden(Compare)?$' ./cmd
-timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestIsLastActiveAdmin)$' ./internal/service
+timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestLastAdminGuard)$' ./internal/service
 timeout 540 go test -count=1 -run '^TestOIDCSignInMySQL$' ./internal/service
 timeout 540 go test -count=1 -run '^TestLastAdmin' ./internal/integration
 ```
@@ -2644,7 +2644,7 @@ it:
 
 ```bash
 TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestOIDCSignInGoldenMySQL$' ./internal/service
-TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestIsLastActiveAdmin)$' ./internal/service
+TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestLastAdminGuard)$' ./internal/service
 TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestOIDCSignInMySQL$' ./internal/service
 TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestLastAdmin' ./internal/integration
 ```

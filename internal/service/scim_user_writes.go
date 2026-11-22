@@ -250,7 +250,7 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 
 	var created *models.User
 	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
-		if _, err := tx.userRoles.LockActiveAdmins(); err != nil {
+		if _, err := lockAdminSet(tx); err != nil {
 			return err
 		}
 		roles, err := tx.lockRoles(&mapped)
@@ -354,7 +354,7 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 
 	var result *models.User
 	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -377,7 +377,9 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		if err != nil {
 			return err
 		}
-		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target) {
+		admins.include(target)
+		if errors.Is(admins.checkAfter(map[uint]userChange{id: {role: role, active: resultingActive(target.IsActive, in.Active)}}),
+			apperrors.ErrLastAdmin) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 
@@ -487,7 +489,7 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 
 	var result *models.User
 	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -532,7 +534,9 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 		if err := checkSCIMProfile(after); err != nil {
 			return err
 		}
-		if (role != models.RoleAdmin || deactivates) && isLastActiveAdmin(admins, target) {
+		admins.include(target)
+		if errors.Is(admins.checkAfter(map[uint]userChange{id: {role: role, active: resultingActive(target.IsActive, p.Active)}}),
+			apperrors.ErrLastAdmin) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 
@@ -643,7 +647,7 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 	issuer := cfg.IssuerURL
 	changed := true
 	err = s.writes.users.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -662,7 +666,8 @@ func (s *scimUserService) Delete(ctx context.Context, rawID string) error {
 			changed = false
 			return nil
 		}
-		if isLastActiveAdmin(admins, target) {
+		admins.include(target)
+		if errors.Is(admins.checkAfter(map[uint]userChange{id: {role: target.Role, active: false}}), apperrors.ErrLastAdmin) {
 			return fmt.Errorf("user %d: %w", id, ErrSCIMLastAdmin)
 		}
 		if err := tx.users.UpdateFields(id, map[string]interface{}{"is_active": false}); err != nil {

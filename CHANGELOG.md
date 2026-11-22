@@ -1156,6 +1156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One last-admin guard (#638).** The rule that keeps at least one active admin is written once, in
+  `internal/service/last_admin_guard.go`: it locks the active admin set, counts the locked rows of
+  the accounts a write touches, and judges the state after the write, counting accounts that gain
+  the admin role as well as those that lose it. User updates, activation, deactivation and erasure,
+  the OIDC sign-in, the SCIM user writes and the SCIM group patch all use it. Behaviour, error
+  responses and lock order are unchanged.
 - **One helper for locking reads (#637).** `repository.LockingRead(tx)` is the one place that builds
   the `FOR UPDATE` handle on a fresh `Session`; the services (sign-in, refresh, password reset,
   password change, logout, API-key create, lead owner and lead checks, SCIM group membership,

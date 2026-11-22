@@ -652,8 +652,8 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 - **Rows locked:** a governed user write (`POST /users`, every `PUT /users/{id}` on another
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
-  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:284`, and
-  `CreateAs`, `internal/service/user_governed_writes.go:145`) locks the `users` rows of the active
+  `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:259`, and
+  `CreateAs`, `internal/service/user_governed_writes.go:120`) locks the `users` rows of the active
   admins (`LockActiveAdmins`, `internal/repository/user_repository.go:303`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
@@ -707,7 +707,7 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `internal/service/role_governance.go:129`) through the `WithTx` repositories; the audit row
   (`role_audit_log`) is inserted in it, so a failed insert rolls the change back. The erasure of
   `DELETE /users/{id}` runs inside it as its savepoint-bracketed unit
-  (`internal/service/user_governed_writes.go:358`), once and without a retry of its own. By then
+  (`internal/service/user_governed_writes.go:338`), once and without a retry of its own. By then
   the write holds the target's `users` row, so the nested erasure takes leads and customers after
   users, the one inversion of the erasure order (#385); `governedWrite` is not reordered.
 - **Retry:** `WithTransactionAndRetry` (the #183 rule) with `roleWriteMaxRetries` 3

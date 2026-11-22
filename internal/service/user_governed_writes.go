@@ -117,31 +117,6 @@ func assignedRoleName(role models.UserRole, custom *models.Role) string {
 	return string(role)
 }
 
-// isLastActiveAdmin reports whether target is the only active admin before a
-// write that touches this one account, so the write would leave none.
-//
-// The active admin set before the write is admins plus target when target's
-// own locked row is an active admin. LockActiveAdmins discovers its ids with a
-// consistent read, so on MySQL/MariaDB REPEATABLE READ an admin promoted by a
-// transaction that committed while this one waited on the lock (a SCIM group
-// handover, #506) is missing from admins; only the locking read of lockUsers
-// sees that row. Counting it can only make the guard refuse more often during
-// such a race, never less.
-func isLastActiveAdmin(admins []models.User, target *models.User) bool {
-	if target == nil {
-		return false
-	}
-	before := make(map[uint]struct{}, len(admins)+1)
-	for _, a := range admins {
-		before[a.ID] = struct{}{}
-	}
-	if target.Role == models.RoleAdmin && target.IsActive && !target.DeletedAt.Valid {
-		before[target.ID] = struct{}{}
-	}
-	_, counted := before[target.ID]
-	return counted && len(before) == 1
-}
-
 func (s *userService) CreateAs(ctx context.Context, actor Actor, user *models.User, password string) error {
 	if s.governance == nil {
 		return s.Register(user, password)
@@ -159,7 +134,7 @@ func (s *userService) CreateAs(ctx context.Context, actor Actor, user *models.Us
 		user.ID = 0
 		user.Password = string(hashedPassword)
 
-		if _, err := tx.userRoles.LockActiveAdmins(); err != nil {
+		if _, err := lockAdminSet(tx); err != nil {
 			return err
 		}
 		users, err := tx.lockUsers(actor.UserID)
@@ -285,7 +260,7 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 	deactivates := !change.erase && change.isActive != nil && !*change.isActive
 	var result *models.User
 	err := s.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -344,10 +319,15 @@ func (s *userService) governedWrite(ctx context.Context, actor Actor, id uint, c
 
 		// The last-admin invariant: the write must not empty the active
 		// admin set, which this transaction holds locked.
-		leavesAdmins := change.erase ||
-			(change.role != nil && *change.role != models.RoleAdmin) ||
-			(change.isActive != nil && !*change.isActive)
-		if leavesAdmins && isLastActiveAdmin(admins, target) {
+		admins.include(target)
+		after := userChange{role: target.Role, active: target.IsActive, erased: change.erase}
+		if change.role != nil {
+			after.role = *change.role
+		}
+		if change.isActive != nil {
+			after.active = *change.isActive
+		}
+		if errors.Is(admins.checkAfter(map[uint]userChange{id: after}), apperrors.ErrLastAdmin) {
 			return fmt.Errorf("user %d: %w", id, apperrors.ErrLastAdmin)
 		}
 
@@ -529,7 +509,7 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 	}
 	var tokens *AuthTokens
 	err := s.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -572,7 +552,8 @@ func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*Auth
 			if role == models.RoleCustom && target.Role == models.RoleCustomer {
 				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonCustomerAccount, apperrors.ErrCustomerLoginRole), target.ID)
 			}
-			if role != models.RoleAdmin && isLastActiveAdmin(admins, target) {
+			admins.include(target)
+			if errors.Is(admins.checkAfter(map[uint]userChange{target.ID: {role: role, active: target.IsActive}}), apperrors.ErrLastAdmin) {
 				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonLastAdmin, apperrors.ErrLastAdmin), target.ID)
 			}
 			if role != target.Role || !sameRoleID(roleID, target.RoleID) {

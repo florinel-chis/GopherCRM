@@ -599,9 +599,12 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	}
 	for _, signature := range []string{"func (s *userService) governedWrite(", "func (s *userService) CreateAs("} {
 		body := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", signature)
-		inOrder(body, "s.governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(", "tx.actor(",
+		inOrder(body, "s.governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(", "tx.lockRoles(", "tx.actor(",
 			"acting.requireKeys(", "checkEscalation(")
 	}
+	// #638: every governed write takes the admin set through the one guard.
+	inOrder(concurrencyDocFuncBody(t, "internal/service/last_admin_guard.go", "func lockAdminSet("),
+		"tx.userRoles.LockActiveAdmins()")
 	governed := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) governedWrite(")
 	inOrder(governed, "checkEscalation(", "apperrors.ErrCustomerLoginRole", "apperrors.ErrLastAdmin", "tx.users.Delete(ctx, id)",
 		"tx.users.UpdateFields(id, fields)", "tx.record(")
@@ -1489,7 +1492,7 @@ func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 	callback := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) callback(")
 	inOrder(callback, "s.attempts.Claim(", ".Exchange(", "s.users.ApplyOIDCSignIn(")
 	apply := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) ApplyOIDCSignIn(")
-	inOrder(apply, "s.governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "identities.GetByIssuerSubject(",
+	inOrder(apply, "s.governance.run(ctx,", "lockAdminSet(tx)", "identities.GetByIssuerSubject(",
 		"tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(", "in.issue(tx.handle")
 }
 
@@ -1514,11 +1517,11 @@ func TestConcurrencyDocSCIMUserWrites(t *testing.T) {
 	}
 	const file = "internal/service/scim_user_writes.go"
 	create := concurrencyDocFuncBody(t, file, "func (s *scimUserService) Create(")
-	inOrder(create, "governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockRoles(",
+	inOrder(create, "governance.run(ctx,", "lockAdminSet(tx)", "tx.lockRoles(",
 		"tx.users.EmailExistsFoldedUnscoped(", "identities.GetByIssuerSubject(", "tx.users.Create(",
 		"identities.Create(", "tx.record(", "s.writes.recordSuccess(")
 	replace := concurrencyDocFuncBody(t, file, "func (s *scimUserService) Replace(")
-	inOrder(replace, "governance.run(ctx,", "tx.userRoles.LockActiveAdmins()", "tx.lockUsers(",
+	inOrder(replace, "governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(",
 		"tx.lockRoles(", "EmailTakenByOther(", "tx.users.UpdateFields(", "tx.record(", "s.writes.recordSuccess(")
 }
 
@@ -1533,7 +1536,7 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 
 	body := concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Patch(")
 	last := -1
-	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
+	for _, statement := range []string{"governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(", "tx.lockRoles(",
 		"tx.users.UpdateFields(", "revokeAllCredentials(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
@@ -1551,7 +1554,7 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 		"admin set → users → refresh_tokens → api_keys → role_audit_log")
 	body = concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Delete(")
 	last = -1
-	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "isLastActiveAdmin(",
+	for _, statement := range []string{"governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(", ".checkAfter(",
 		"tx.users.UpdateFields(", "revokeAllCredentials(", "tx.record(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
@@ -1575,7 +1578,7 @@ func TestConcurrencyDocSCIMGroupPatch(t *testing.T) {
 
 	body := concurrencyDocFuncBody(t, "internal/service/scim_group_writes.go", "func (s *scimGroupService) Patch(")
 	last := -1
-	for _, statement := range []string{"governance.run(ctx,", "LockActiveAdmins()", "tx.lockUsers(", "tx.lockRoles(",
+	for _, statement := range []string{"governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(", "tx.lockRoles(",
 		"members.Remove(", "members.Add(", "revokeAllCredentials(", "endSessions(", "tx.record(", "s.writes.audit.Record("} {
 		at := strings.Index(body, statement)
 		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
