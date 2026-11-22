@@ -35,6 +35,18 @@ class AEOSelectionTests(unittest.TestCase):
         selected = v.plan(paths + ['scripts/ci/check-go.py'], **proof)
         self.assertIn(('make', 'verify-runner'), v.core_commands([], selected))
 
+    def test_split_service_files_select_the_aeo_profile(self):
+        # The files split out of aeo_service.go (#651) are AEO runtime paths too.
+        for name in ('aeo_profile', 'aeo_prompts', 'aeo_prompt_generation', 'aeo_runs', 'aeo_reports',
+                     'aeo_normalize'):
+            path = f'internal/service/{name}.go'
+            with self.subTest(path=path):
+                selected = v.plan([path], aeo_roots=True)
+                self.assertEqual(selected['profile'], 'aeo')
+                self.assertEqual(set(selected['specs']), v.AEO_SPECS)
+                self.assertEqual(v.plan([path])['profile'], 'full')
+                self.assertEqual(v.plan([path, 'internal/service/aeo_service.go'], aeo_roots=True)['profile'], 'aeo')
+
     def test_main_proof_and_required_roots_use_actual_git_candidates(self):
         # Reproduce the application fix in the live checkout. The proof matrix
         # must keep using its frozen input even after the application evolves.
