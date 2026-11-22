@@ -452,243 +452,6 @@ func (tx *governedTx) keysFor(target *models.User, change governedChange) ([]str
 	return append(keys, permissions.CustomersUpdate), nil
 }
 
-// oidcSignIn is what one OpenID Connect sign-in (#435) asks the governed
-// write for: the verified (issuer, subject) pair, the role the first matching
-// mapping entry names, the profile of a first sign-in, and the two halves the
-// user service does not own (the identity table and the session issuing).
-type oidcSignIn struct {
-	issuer, subject string
-	roleID          uint
-	// email, firstName and lastName are used by a first sign-in only.
-	email, firstName, lastName string
-	// passwordHash is the bcrypt hash of discarded random bytes, so the
-	// provisioned account has no usable password.
-	passwordHash string
-	identities   repository.UserIdentityRepository
-	// issue issues the session on the transaction handle from the row as the
-	// transaction wrote it.
-	issue func(handle *gorm.DB, user *models.User) (*AuthTokens, error)
-	// beforeInsert is a test seam that runs on a first sign-in after the
-	// identity lookup and the email check and before the users insert; nil
-	// in production.
-	beforeInsert func()
-	// scimSubject is the Entra ID oid of the token, set by the callback only
-	// when the issuer is Entra ID and the token's tid equals the configured
-	// issuer's tenant segment; empty otherwise. An unknown (iss, sub) whose
-	// (iss, scimSubject) is an identity SCIM created signs in as that account
-	// and links (iss, sub) to it.
-	scimSubject string
-	// beforeSCIMLink is a test seam that runs when the SCIM identity matched,
-	// after the plain reads and before the users lock; nil in production.
-	beforeSCIMLink func()
-}
-
-// ApplyOIDCSignIn is the one transaction of an OIDC sign-in. It takes the
-// governed lock order and continues it:
-//
-//	admin set → users → roles → user_identities → refresh_tokens
-//
-// The identity is read first with a plain read (it names the users row to
-// lock). A known identity re-applies the mapped role with the rules of
-// governedWrite minus the actor-key and escalation checks (the mapping is the
-// administrator's grant): ErrCustomerLoginRole and ErrLastAdmin refuse, and a
-// changed role commits its user_role_changed audit row with auth_method oidc.
-// An unknown identity whose Entra ID oid (scimSubject) is the subject of a
-// source=scim identity under the same issuer takes the known-identity steps
-// for that account and then inserts its (iss, sub) link; that second plain
-// read also names the users row to lock. Any other unknown identity
-// provisions an active user with the mapped role, its identity row and its
-// audit row, refused when any user, erased ones included, holds the address
-// in any letter case. Email never links an account. The session is issued last,
-// inside the same transaction. Every refusal is ErrSSOSignInFailed (through
-// oidcRefuse) and writes nothing; a refusal of a linked account names its
-// user for the audit row (#454).
-func (s *userService) ApplyOIDCSignIn(ctx context.Context, in oidcSignIn) (*AuthTokens, error) {
-	if s.governance == nil {
-		return nil, errRoleGovernanceUnavailable
-	}
-	var tokens *AuthTokens
-	err := s.governance.run(ctx, func(tx *governedTx) error {
-		admins, err := lockAdminSet(tx)
-		if err != nil {
-			return err
-		}
-		identities := in.identities.WithTx(tx.handle)
-		identity, err := identities.GetByIssuerSubject(in.issuer, in.subject)
-		if err != nil && !apperrors.IsNotFound(err) {
-			return err
-		}
-		if identity != nil && (identity.Issuer != in.issuer || identity.Subject != in.subject) {
-			// The PAD SPACE collation of MySQL/MariaDB matched a value that
-			// differs in trailing spaces: never the same identity.
-			return oidcRefuse(AuthAuditReasonIdentityMismatch)
-		}
-
-		// signInExisting signs in as the linked account userID: it locks the
-		// users row, refuses an erased or deactivated account, re-applies the
-		// mapped role with its audit row and reads the row back. A known
-		// identity and a SCIM-created identity found by its oid share it.
-		signInExisting := func(userID uint) (*models.User, error) {
-			users, err := tx.lockUsers(userID)
-			if err != nil {
-				return nil, err
-			}
-			target := users[userID]
-			if target == nil {
-				return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
-			}
-			if !target.IsActive {
-				return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountInactive), target.ID)
-			}
-			mapped := in.roleID
-			roles, err := tx.lockRoles(target.RoleID, &mapped)
-			if err != nil {
-				return nil, err
-			}
-			role, roleID, custom, err := oidcMappedRole(roles[mapped])
-			if err != nil {
-				return nil, err
-			}
-			if role == models.RoleCustom && target.Role == models.RoleCustomer {
-				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonCustomerAccount, apperrors.ErrCustomerLoginRole), target.ID)
-			}
-			admins.include(target)
-			if errors.Is(admins.checkAfter(map[uint]userChange{target.ID: {role: role, active: target.IsActive}}), apperrors.ErrLastAdmin) {
-				return nil, oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonLastAdmin, apperrors.ErrLastAdmin), target.ID)
-			}
-			if role != target.Role || !sameRoleID(roleID, target.RoleID) {
-				fields := map[string]interface{}{"role": role, "role_id": nil}
-				if roleID != nil {
-					fields["role_id"] = *roleID
-				}
-				if err := tx.users.UpdateFields(target.ID, fields); err != nil {
-					if isNotFound(err) {
-						return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
-					}
-					return nil, err
-				}
-				if err := tx.record(Actor{UserID: target.ID, AuthMethod: AuthMethodOIDC}, models.RoleAuditUserRoleChanged,
-					roleID, assignedRoleName(role, custom), &target.ID,
-					userRoleAuditState{Role: target.Role, RoleID: target.RoleID},
-					userRoleAuditState{Role: role, RoleID: roleID}); err != nil {
-					return nil, err
-				}
-			}
-			user, err := tx.users.GetByID(target.ID)
-			if err != nil {
-				if isNotFound(err) {
-					return nil, oidcRefusalForUser(oidcRefuse(AuthAuditReasonAccountErased), userID)
-				}
-				return nil, err
-			}
-			return user, nil
-		}
-
-		// scimLink is the identity SCIM created for this person under the
-		// same issuer, found by the Entra ID oid the callback vetted. Only a
-		// byte-exact source=scim row counts; anything else falls through to
-		// provisioning below.
-		var scimLink *models.UserIdentity
-		if identity == nil && in.scimSubject != "" {
-			row, err := identities.GetByIssuerSubject(in.issuer, in.scimSubject)
-			if err != nil && !apperrors.IsNotFound(err) {
-				return err
-			}
-			if row != nil && row.Issuer == in.issuer && row.Subject == in.scimSubject &&
-				row.Source == models.UserIdentitySourceSCIM {
-				scimLink = row
-			}
-		}
-
-		var user *models.User
-		if identity != nil {
-			if user, err = signInExisting(identity.UserID); err != nil {
-				return err
-			}
-		} else if scimLink != nil {
-			if in.beforeSCIMLink != nil {
-				in.beforeSCIMLink()
-			}
-			if user, err = signInExisting(scimLink.UserID); err != nil {
-				return err
-			}
-			if err := identities.Create(&models.UserIdentity{UserID: user.ID, Issuer: in.issuer, Subject: in.subject,
-				Source: models.UserIdentitySourceOIDC}); err != nil {
-				if errors.Is(err, repository.ErrUserIdentityTaken) {
-					return oidcRefusalForUser(oidcRefuseWith(AuthAuditReasonIdentityTaken, err), user.ID)
-				}
-				return err
-			}
-		} else {
-			if in.email == "" || len(in.email) > oidcEmailMaxBytes {
-				return oidcRefuse(AuthAuditReasonEmailMissing)
-			}
-			mapped := in.roleID
-			roles, err := tx.lockRoles(&mapped)
-			if err != nil {
-				return err
-			}
-			role, roleID, custom, err := oidcMappedRole(roles[mapped])
-			if err != nil {
-				return err
-			}
-			taken, err := tx.users.EmailExistsFoldedUnscoped(in.email)
-			if err != nil {
-				return err
-			}
-			if taken {
-				// Never linked to the existing account, live or erased.
-				return oidcRefuse(AuthAuditReasonEmailTaken)
-			}
-			if in.beforeInsert != nil {
-				in.beforeInsert()
-			}
-			// A replayed attempt inserts a fresh row.
-			created := &models.User{
-				Email:     in.email,
-				Password:  in.passwordHash,
-				FirstName: in.firstName,
-				LastName:  in.lastName,
-				Role:      role,
-				RoleID:    roleID,
-				IsActive:  true,
-			}
-			if err := tx.users.Create(created); err != nil {
-				if errors.Is(err, apperrors.ErrDuplicateEmail) {
-					return oidcRefuseWith(AuthAuditReasonEmailTaken, err)
-				}
-				return err
-			}
-			if err := identities.Create(&models.UserIdentity{UserID: created.ID, Issuer: in.issuer, Subject: in.subject,
-				Source: models.UserIdentitySourceOIDC}); err != nil {
-				if errors.Is(err, repository.ErrUserIdentityTaken) {
-					return oidcRefuseWith(AuthAuditReasonIdentityTaken, err)
-				}
-				return err
-			}
-			if err := tx.record(Actor{UserID: created.ID, AuthMethod: AuthMethodOIDC}, models.RoleAuditUserRoleChanged,
-				roleID, assignedRoleName(role, custom), &created.ID,
-				nil, userRoleAuditState{Role: role, RoleID: roleID}); err != nil {
-				return err
-			}
-			if user, err = tx.users.GetByID(created.ID); err != nil {
-				return err
-			}
-		}
-
-		issued, err := in.issue(tx.handle, user)
-		if err != nil {
-			return err
-		}
-		tokens = issued
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return tokens, nil
-}
-
 // oidcMappedRole resolves the locked role row a mapping entry names: a system
 // role is assigned by its key with role_id NULL, a custom role as custom with
 // its id. A missing row refuses the sign-in.
@@ -705,4 +468,47 @@ func oidcMappedRole(row *models.Role) (models.UserRole, *uint, *models.Role, err
 	}
 	id := row.ID
 	return models.RoleCustom, &id, row, nil
+}
+
+// runWithContext is run for a flow whose steps take the transaction's ctx
+// (the OIDC sign-in, whose identity and session writes join it through
+// utils.InTransaction): fn gets that ctx next to the bound repositories. The
+// deadlock replay and the whole-root restart are run's.
+func (g *roleGovernance) runWithContext(ctx context.Context, fn func(ctx context.Context, tx *governedTx) error) error {
+	for restarts := 0; ; restarts++ {
+		err := g.txManager.WithTransactionAndRetry(ctx, func(ctx context.Context) error {
+			handle, ok := utils.GetTxFromContext(ctx)
+			if !ok {
+				return utils.ErrNoTransaction
+			}
+			tx, err := g.bind(handle)
+			if err != nil {
+				return err
+			}
+			return fn(ctx, tx)
+		}, roleWriteMaxRetries)
+		if !shouldRestartGovernedWrite(ctx, err) {
+			return err
+		}
+		if restarts >= roleWriteGraphMaxRestarts {
+			return fmt.Errorf("governed write abandoned after %d attempts: %w", restarts+1, err)
+		}
+	}
+}
+
+// bind returns the governed repositories bound to handle, one transaction
+// of runWithContext.
+func (g *roleGovernance) bind(handle *gorm.DB) (*governedTx, error) {
+	users := g.users.WithTx(handle)
+	userRoles, ok := users.(repository.UserRoleMaintenance)
+	if !ok {
+		return nil, errRoleGovernanceUnavailable
+	}
+	return &governedTx{
+		handle:    handle,
+		users:     users,
+		userRoles: userRoles,
+		roles:     g.roles.WithTx(handle),
+		audit:     g.audit.WithTx(handle),
+	}, nil
 }

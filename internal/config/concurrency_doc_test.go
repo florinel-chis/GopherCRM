@@ -1509,7 +1509,9 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 // TestConcurrencyDocOIDCSignIn pins the OIDC sign-in flow (#435) to the code:
 // the attempt claim is its own statement before the code exchange and the
 // governed transaction, which takes admin set → users → roles before it writes
-// the identity and the refresh token.
+// the identity and the refresh token. The steps are split across the sign-in
+// (internal/idkit/sso: the callback and the link rule) and GopherCRM's
+// transaction runner and account store (internal/service/auth_oidc_host.go).
 func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	assert.Contains(t, concurrencyDocNormalize(fields["OIDC sign-in"]["Order"]),
@@ -1527,15 +1529,25 @@ func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 			}
 		}
 	}
-	callback := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) callback(")
-	inOrder(callback, "s.attempts.Claim(", "s.exchangeCode(", "s.users.ApplyOIDCSignIn(")
+	callback := concurrencyDocFuncBody(t, "internal/idkit/sso/callback.go", "func (s *Service) callback(")
+	inOrder(callback, "s.Attempts.Claim(", "s.exchangeCode(", "s.Tx.WithTransaction(", "s.signInAccount(ctx")
 	// The code exchange itself lives in exchangeCode, which adds the client
 	// assertion when a certificate is in force.
-	exchange := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) exchangeCode(")
+	exchange := concurrencyDocFuncBody(t, "internal/idkit/sso/service.go", "func (s *Service) exchangeCode(")
 	inOrder(exchange, ".Exchange(")
-	apply := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) ApplyOIDCSignIn(")
-	inOrder(apply, "s.governance.run(ctx,", "lockAdminSet(tx)", "identities.GetByIssuerSubject(",
-		"tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(", "in.issue(tx.handle")
+	// The transaction: the governed root, whose first statement locks the
+	// admin set, before the sign-in's steps run.
+	runner := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (r *oidcSignInRunner) WithTransaction(")
+	inOrder(runner, "r.governance.runWithContext(ctx,", "lockAdminSet(tx)", "return fn(")
+	// The link rule: the plain identity reads, then the account, then the
+	// identity link, and the session last.
+	link := concurrencyDocFuncBody(t, "internal/idkit/sso/link.go", "func (s *Service) signInAccount(")
+	inOrder(link, "s.Identities.Get(", "s.Accounts.SignIn(", "s.Accounts.Provision(", "s.Identities.Create(", "s.Sessions.Issue(")
+	// The account: users, then roles, the last-admin rule and the role audit.
+	signIn := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (s *oidcAccountStore) SignIn(")
+	inOrder(signIn, "tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(")
+	provision := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (s *oidcAccountStore) Provision(")
+	inOrder(provision, "tx.lockRoles(", "tx.users.EmailExistsFoldedUnscoped(", "tx.users.Create(", "tx.record(")
 }
 
 // TestConcurrencyDocSCIMUserWrites pins the SCIM user create and replace flow

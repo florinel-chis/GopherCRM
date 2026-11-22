@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/idkit"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -735,6 +736,32 @@ func (failingClaim) Claim(string, time.Time) (*models.OIDCLoginAttempt, error) {
 	return nil, errors.New("connection refused")
 }
 
+// oidcAttemptWithID claims through the attempt store and reports the claimed
+// attempt under id.
+type oidcAttemptWithID struct {
+	idkit.AttemptStore
+	id uint
+}
+
+func (a oidcAttemptWithID) Claim(ctx context.Context, stateHash string, now time.Time) (*idkit.Attempt, error) {
+	attempt, err := a.AttemptStore.Claim(ctx, stateHash, now)
+	if attempt != nil {
+		attempt.ID = formatIDKitID(a.id)
+	}
+	return attempt, err
+}
+
+// oidcRefusingAccounts refuses every sign-in and provisioning with err.
+type oidcRefusingAccounts struct {
+	err error
+}
+
+func (a oidcRefusingAccounts) SignIn(context.Context, string, uint) error { return a.err }
+
+func (a oidcRefusingAccounts) Provision(context.Context, idkit.Profile, uint) (string, error) {
+	return "", a.err
+}
+
 // TestAuthAuditOIDCReasonCoverage: every registry constant an
 // oidcRefuse/oidcRefuseWith site passes (the writer scan of
 // auth_audit_vocabulary_test.go), recorded through the step Callback finishes with,
@@ -768,7 +795,11 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 			f.reset(t)
 			from := output.Len()
 			attemptID := uint(4540 + i)
-			_, err := f.svc.finishCallback(context.Background(), nil, oidcCallbackFacts{attemptID: attemptID}, oidcRefuse(code))
+			// The refusal reaches the step Callback finishes with from the
+			// account store, on an attempt claimed under attemptID.
+			f.svc.signin.Attempts = oidcAttemptWithID{f.svc.signin.Attempts, attemptID}
+			f.svc.signin.Accounts = oidcRefusingAccounts{oidcRefuse(code)}
+			_, err := f.signIn(t, oidcValid(fmt.Sprintf("subject-cov-refusal-%d", i), fmt.Sprintf("cov-refusal-%d@idp.example.test", i)))
 			require.ErrorIs(t, err, ErrSSOSignInFailed)
 			row := f.lastAudit(t)
 			assert.Equal(t, AuthAuditMethodOIDC, row.Method)
@@ -838,7 +869,7 @@ func TestAuthAuditOIDCReasonCoverage(t *testing.T) {
 	})
 	t.Run("internal_error", func(t *testing.T) {
 		f.reset(t)
-		f.svc.attempts = failingClaim{f.svc.attempts}
+		f.svc.signin.Attempts = NewIDKitAttemptStore(failingClaim{repository.NewOIDCLoginAttemptRepository(db)})
 		_, err := f.svc.Callback(context.Background(), "code-cov-internal", "state-cov-internal", "state-cov-internal")
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, ErrSSOSignInFailed)
@@ -1032,7 +1063,7 @@ func TestAuthAuditWriteFailure(t *testing.T) {
 	output := captureAuthAuditLogs(t)
 	failing := &failingAuditRepo{}
 	audit := NewAuthAuditService(failing)
-	f.svc.audit = audit
+	f.svc.signin.Audit = NewIDKitAuditSink(audit)
 	e := &authAuditEnv{db: db, auth: f.auth, audit: audit}
 	failedLines := func(from int) int {
 		n := 0

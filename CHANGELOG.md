@@ -1276,6 +1276,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   media type and decodes SCIM error bodies. The single sign-on service tests and the SCIM
   provisioning-cycle golden test now use them; only tests import either kit. Behaviour is
   unchanged and both golden files are byte-identical.
+- **Single sign-on in the identity package (#648).** The OpenID Connect sign-in moved from
+  `internal/service/auth_oidc.go` into the new package `internal/idkit/sso`, which runs the start
+  and the callback over the host interfaces only (`sso.Service`): the attempt claim, the code
+  exchange, the token and claim checks, the Graph and userinfo group reads, the role mapping, one
+  transaction, the audit event and the log lines. The account link rule moved with it: the exact
+  (issuer, subject) pair, the Entra ID oid and tid link only to an identity SCIM created under the
+  same issuer, and email never links. `internal/idkit/host.go` adds `idkit.AccountStore` (sign in
+  an existing account with the mapped role, provision a new one) and `idkit.Profile`; GopherCRM
+  implements it with the governed role write and the provisioning in
+  `internal/service/auth_oidc_host.go`, and `NewOIDCService` now wires the #646 adapters into the
+  sign-in. The sign-in audit check also scans `internal/idkit/sso`. Answers, audit rows, role
+  audit rows, refusal codes, log lines and the lock order are unchanged, and the sign-in golden
+  file is byte-identical.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

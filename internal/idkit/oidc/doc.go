@@ -5,7 +5,7 @@
 // code exchange, the claim extraction and subject and name rules, and the
 // stable error types of a sign-in.
 //
-// The package logs nothing and defines no refusal codes: the host chooses the
-// codes it puts into a RefusalError or an UnavailableError and does its own
-// logging.
+// The package logs nothing and defines no refusal codes: its caller (the
+// sign-in of package sso, or the host) chooses the codes it puts into a
+// RefusalError or an UnavailableError and does its own logging.
 package oidc

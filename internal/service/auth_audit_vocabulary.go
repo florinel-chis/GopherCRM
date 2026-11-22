@@ -70,9 +70,12 @@ const (
 	AuthAuditReasonTokenReuse = "token_reuse"
 )
 
-// Single sign-on refusal codes (oidcRefuse, oidcRefuseWith). They are also
-// the error_code of the refusal's log line. An erased, inactive or customer
-// account reuses account_erased, account_inactive and customer_login_role.
+// Single sign-on refusal codes: the ones the sign-in decides are declared
+// again, with the same values, as the Code constants of internal/idkit/sso;
+// the account refusals are oidcRefuse and oidcRefuseWith sites of this
+// package. They are also the error_code of the refusal's log line. An
+// erased, inactive or customer account reuses account_erased,
+// account_inactive and customer_login_role.
 const (
 	AuthAuditReasonBindingMismatch         = "binding_mismatch"
 	AuthAuditReasonBindingMissing          = "binding_missing"
@@ -98,7 +101,8 @@ const (
 	AuthAuditReasonUserInfoSubjectMismatch = "userinfo_subject_mismatch"
 )
 
-// Single sign-on 503 codes (ssoUnavailable).
+// Single sign-on 503 codes (declared again as the Code constants of
+// internal/idkit/sso).
 const (
 	AuthAuditReasonNotConfigured       = "not_configured"
 	AuthAuditReasonDiscoveryFailed     = "discovery_failed"

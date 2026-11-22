@@ -35,12 +35,15 @@ import (
 	"testing"
 	"time"
 
+	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/database"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit"
 	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/idkit/oidctest"
+	"github.com/florinel-chis/gophercrm/internal/idkit/sso"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -495,14 +498,15 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.issuer.setTokenStatus(0)
 	f.issuer.setDiscoveryRedirect(false)
 	f.issuer.setPath("")
-	f.svc.beforeJITInsert = nil
-	f.svc.beforeSCIMLink = nil
-	f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db)
-	f.svc.audit = f.audit
-	f.svc.entraIssuerHost = entra.IssuerHost
-	f.svc.graphBaseURL = entra.GraphBaseURL
-	f.svc.graphTimeout = entra.GraphTimeout
-	f.svc.userinfoTimeout = oidcUserInfoTimeout
+	f.svc.accounts.beforeInsert = nil
+	f.svc.signin.BeforeSCIMLink = nil
+	f.svc.signin.Attempts = NewIDKitAttemptStore(repository.NewOIDCLoginAttemptRepository(f.db))
+	f.svc.signin.Audit = NewIDKitAuditSink(f.audit)
+	f.svc.signin.Accounts = f.svc.accounts
+	f.svc.signin.EntraIssuerHost = entra.IssuerHost
+	f.svc.signin.GraphBaseURL = entra.GraphBaseURL
+	f.svc.signin.GraphTimeout = entra.GraphTimeout
+	f.svc.signin.UserInfoTimeout = sso.UserInfoTimeout
 	f.clearProviderCache()
 	f.issuer.resetFetches()
 	require.Nil(t, f.cachedProvider(), "the provider cache is empty")
@@ -516,18 +520,18 @@ func (f *oidcFixture) reset(t *testing.T) {
 	cfg, err := f.sso.SSOConfig(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, f.issuer.URL(), cfg.IssuerURL, "the configured issuer carries no tenant path")
-	require.Nil(t, f.svc.beforeSCIMLink, "the SCIM link seam is cleared")
+	require.Nil(t, f.svc.signin.BeforeSCIMLink, "the SCIM link seam is cleared")
 }
 
 // clearProviderCache drops the cached discovery, so the next call
 // discovers again.
 func (f *oidcFixture) clearProviderCache() {
-	f.svc.providers.Clear()
+	f.svc.signin.Providers().Clear()
 }
 
 // cachedProvider is the cached discovery, nil when there is none.
 func (f *oidcFixture) cachedProvider() *idkitoidc.Discovery {
-	return f.svc.providers.Cached()
+	return f.svc.signin.Providers().Cached()
 }
 
 // assertFetches checks the issuer's discovery and JWKS request totals.
@@ -541,7 +545,7 @@ func (f *oidcFixture) assertFetches(t *testing.T, discovery, jwks int, msg strin
 // useSSO swaps the settings service of the fixture and of the sign-in.
 func (f *oidcFixture) useSSO(sso SSOSettingsService) {
 	f.sso = sso
-	f.svc.sso = sso
+	f.svc.configs.inner = NewIDKitConfigSource(sso)
 }
 
 // entra makes the test issuer count as Entra ID and points Microsoft Graph at
@@ -550,9 +554,9 @@ func (f *oidcFixture) entra(t *testing.T) {
 	t.Helper()
 	parsed, err := url.Parse(f.issuer.URL())
 	require.NoError(t, err)
-	f.svc.entraIssuerHost = parsed.Hostname()
-	f.svc.graphBaseURL = f.issuer.URL() + "/graph"
-	f.svc.graphTimeout = 300 * time.Millisecond
+	f.svc.signin.EntraIssuerHost = parsed.Hostname()
+	f.svc.signin.GraphBaseURL = f.issuer.URL() + "/graph"
+	f.svc.signin.GraphTimeout = 300 * time.Millisecond
 }
 
 // entraTenant is entra plus a tenant-specific issuer
@@ -1023,7 +1027,7 @@ var oidcSignInCases = []struct {
 	{"concurrent_first_sign_in_order", func(t *testing.T, f *oidcFixture) {
 		const email = "race@idp.example.test"
 		var once sync.Once
-		f.svc.beforeJITInsert = func() {
+		f.svc.accounts.beforeInsert = func() {
 			// A competing first sign-in commits the same address after this
 			// one's lookup and email check, before its insert.
 			once.Do(func() {
@@ -1108,7 +1112,7 @@ var oidcSignInCases = []struct {
 	}},
 	{"scim_oid_non_entra_issuer", func(t *testing.T, f *oidcFixture) {
 		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(*oidcTokenSpec) {
-			f.svc.entraIssuerHost = entra.IssuerHost
+			f.svc.signin.EntraIssuerHost = entra.IssuerHost
 		})
 	}},
 	{"scim_oid_matches_oidc_row", func(t *testing.T, f *oidcFixture) {
@@ -1162,7 +1166,7 @@ var oidcSignInCases = []struct {
 		owner := f.seedUser(t, "scim.person@crm.example.test", models.RoleSales, true, "")
 		f.linkSource(t, owner.ID, oidcTestSCIMOID, models.UserIdentitySourceSCIM)
 		var once sync.Once
-		f.svc.beforeSCIMLink = func() {
+		f.svc.signin.BeforeSCIMLink = func() {
 			// A competing first sign-in of the same person commits the
 			// (iss, sub) link after this one's reads, before its insert.
 			once.Do(func() {
@@ -1309,7 +1313,7 @@ var oidcSignInCases = []struct {
 		t.Run("not_entra", func(t *testing.T) {
 			f.reset(t)
 			f.useSSO(f.newSSO(config.SSOConfig{EntraAppSigningKeys: true}))
-			require.Equal(t, entra.IssuerHost, f.svc.entraIssuerHost)
+			require.Equal(t, entra.IssuerHost, f.svc.signin.EntraIssuerHost)
 			tokens, err := f.signIn(t, appKeySpec("subject-app-not-entra"))
 			f.assertRefused(t, "id_token_invalid", tokens, err, 0, 0)
 			assertQueries(t, "")
@@ -1403,7 +1407,7 @@ var oidcSignInCases = []struct {
 		f.useSSO(f.newSSO(config.SSOConfig{GraphMaxPages: 2}))
 		f.entra(t)
 		f.configure(t, f.graphMapping())
-		cfg, err := f.svc.sso.SSOConfig(context.Background())
+		cfg, err := f.sso.SSOConfig(context.Background())
 		require.NoError(t, err)
 		require.Equal(t, 2, cfg.GraphMaxPages, "the sign-in reads the bound of 2")
 		f.issuer.setGraph(graphModeEndless)
@@ -1470,7 +1474,7 @@ var oidcSignInCases = []struct {
 		f.configure(t, []SSORoleMapping{{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]}})
 		assert.Equal(t, configured, scope(), "an Entra issuer without a groups mapping")
 
-		f.svc.entraIssuerHost = entra.IssuerHost
+		f.svc.signin.EntraIssuerHost = entra.IssuerHost
 		f.configure(t, f.graphMapping())
 		assert.Equal(t, configured, scope(), "a groups mapping on another issuer")
 	}},
@@ -1595,7 +1599,7 @@ var oidcSignInCases = []struct {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				f.reset(t)
-				f.svc.userinfoTimeout = 300 * time.Millisecond
+				f.svc.signin.UserInfoTimeout = 300 * time.Millisecond
 				f.issuer.setUserInfo(tc.info)
 				sub := "subject-ui-" + strings.ReplaceAll(tc.name, "_", "-")
 				started := time.Now()
@@ -1611,12 +1615,15 @@ var oidcSignInCases = []struct {
 		// The empty access token: the oauth2 exchange itself refuses a token
 		// response without access_token, so the guard is driven directly.
 		f.reset(t)
-		cfg, err := f.svc.sso.SSOConfig(context.Background())
+		cfg, err := f.sso.SSOConfig(context.Background())
 		require.NoError(t, err)
-		ctx, discovered, err := f.svc.discover(context.Background(), cfg, 0)
+		client := idkitoidc.NewHTTPClient(f.issuer.rootCAs())
+		ctx := gooidc.ClientContext(context.Background(), client)
+		discovered, err := f.svc.signin.Providers().Get(ctx, idkitoidc.ProviderKey{Issuer: cfg.IssuerURL})
 		require.NoError(t, err)
-		_, err = f.svc.resolveUserInfoGroups(ctx, discovered.Provider, "", "subject-ui-no-access")
-		assert.ErrorIs(t, err, errUserInfoNoAccessToken)
+		resolver := sso.UserInfoResolver{Timeout: f.svc.signin.UserInfoTimeout, Client: client}
+		_, err = resolver.Groups(ctx, discovered.Provider, "", "subject-ui-no-access")
+		assert.ErrorIs(t, err, sso.ErrUserInfoNoAccessToken)
 		assert.Empty(t, f.issuer.userInfoRequests(), "no request without an access token")
 	}},
 	{"userinfo_token_privacy", func(t *testing.T, f *oidcFixture) {
@@ -1803,11 +1810,11 @@ var oidcSignInCases = []struct {
 		var competing *models.OIDCLoginAttempt
 		var competingErr error
 		var once sync.Once
-		f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db, repository.WithOIDCClaimAfterRead(func() {
+		f.svc.signin.Attempts = NewIDKitAttemptStore(repository.NewOIDCLoginAttemptRepository(f.db, repository.WithOIDCClaimAfterRead(func() {
 			// A second callback with the same state claims the row between
 			// this claim's read and its update.
 			once.Do(func() { competing, competingErr = competitor.Claim(hash, f.now().UTC()) })
-		}))
+		})))
 		tokens, err := f.svc.Callback(context.Background(), code, state, state)
 		f.assertRefused(t, "state_invalid", tokens, err, 0, 0)
 		require.NoError(t, competingErr, "the competing claim succeeded")
@@ -2080,9 +2087,9 @@ func TestOIDCSignInMySQL(t *testing.T) {
 
 func TestOIDCGraphDefaults(t *testing.T) {
 	svc := NewOIDCService(nil, nil, nil, nil, nil, nil, nil, nil, nil, "").(*oidcService)
-	assert.Equal(t, "login.microsoftonline.com", svc.entraIssuerHost)
-	assert.Equal(t, "https://graph.microsoft.com", svc.graphBaseURL)
-	assert.Equal(t, 5*time.Second, svc.graphTimeout)
+	assert.Equal(t, "login.microsoftonline.com", svc.signin.EntraIssuerHost)
+	assert.Equal(t, "https://graph.microsoft.com", svc.signin.GraphBaseURL)
+	assert.Equal(t, 5*time.Second, svc.signin.GraphTimeout)
 
 	for raw, want := range map[int]int{0: 10, -1: 10, 51: 10, 1: 1, 50: 50, 7: 7} {
 		assert.Equal(t, want, effectiveGraphMaxPages(raw), "OIDC_GRAPH_MAX_PAGES=%d", raw)
@@ -2093,8 +2100,8 @@ func TestOIDCGraphDefaults(t *testing.T) {
 
 	groups := []SSORoleMapping{{Claim: SSOClaimGroups, Value: "g", RoleID: 1}}
 	assert.Equal(t, "https://graph.microsoft.com/User.Read", entra.GraphScope)
-	entraConfig := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", entra.GraphScope}, RoleMapping: groups}
-	assert.Equal(t, []string{"openid", entra.GraphScope}, svc.requestScopes(entraConfig), "not added when already configured")
+	entraConfig := idkit.Config{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", entra.GraphScope}, RoleMapping: groups}
+	assert.Equal(t, []string{"openid", entra.GraphScope}, svc.signin.RequestScopes(entraConfig), "not added when already configured")
 }
 
 // TestOIDCClaimExpiredClearFails: when blanking the nonce and verifier of an
