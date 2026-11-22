@@ -96,14 +96,14 @@ func runTaskWebhookFanOut(t *testing.T, db *gorm.DB) {
 	ctx := context.Background()
 	admin := env.owner.ID
 	all := webhook.AllEventTypes()
-	require.Len(t, all, 18)
+	require.Len(t, all, 21)
 	var allButDeleted []string
 	for _, eventType := range all {
 		if eventType != "task.deleted" {
 			allButDeleted = append(allButDeleted, eventType)
 		}
 	}
-	require.Len(t, allButDeleted, 17)
+	require.Len(t, allButDeleted, 20)
 	// a: everything. b: task.deleted only, so it never receives a created or
 	// updated event. c: every type but task.deleted. d: inactive, everything.
 	a := env.endpoint("https://example.com/a", true, all...)

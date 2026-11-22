@@ -110,7 +110,7 @@ func (s *quoteService) RespondPublic(token, decision string) (*models.QuotePubli
 	quoteID := row.QuoteID
 	logger = logger.WithFields(map[string]interface{}{"quote_id": quoteID, "status": to})
 
-	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
+	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository, events quoteEvents) error {
 		quote, err := repo.GetByIDForUpdate(quoteID)
 		if err != nil {
 			if isNotFound(err) {
@@ -143,14 +143,19 @@ func (s *quoteService) RespondPublic(token, decision string) (*models.QuotePubli
 			return rejectQuoteResponse(fmt.Sprintf("quote %d is no longer sent", quoteID))
 		}
 		from := models.QuoteStatusSent
-		return repo.CreateStatusChange(&models.QuoteStatusChange{
+		if err := repo.CreateStatusChange(&models.QuoteStatusChange{
 			QuoteID:     quoteID,
 			FromStatus:  &from,
 			ToStatus:    to,
 			ChangedByID: nil,
 			Source:      models.QuoteChangeSourceClient,
 			ChangedAt:   now,
-		})
+		}); err != nil {
+			return err
+		}
+		// quote.updated after the history row (#518): the plain read of the
+		// webhook endpoints comes after the customer read.
+		return events.updated(quoteID)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote response refused")

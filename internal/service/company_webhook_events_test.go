@@ -103,14 +103,14 @@ func runCompanyWebhookFanOut(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
 	env.wire(env.repo)
 	all := webhook.AllEventTypes()
-	require.Len(t, all, 18)
+	require.Len(t, all, 21)
 	var allButDeleted []string
 	for _, eventType := range all {
 		if eventType != "company.deleted" {
 			allButDeleted = append(allButDeleted, eventType)
 		}
 	}
-	require.Len(t, allButDeleted, 17)
+	require.Len(t, allButDeleted, 20)
 	// a: everything. b: company.deleted only, so it never receives a created
 	// or updated event. c: every type but company.deleted. d: inactive,
 	// everything.

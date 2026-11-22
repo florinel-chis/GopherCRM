@@ -3874,8 +3874,9 @@ Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up
 Signed, thin events for `lead.created`, `customer.created` and `ticket.created` (#345), for
 `lead.updated`, `customer.updated` and `ticket.updated` (#408), for `lead.deleted`,
 `customer.deleted` and `ticket.deleted` (#437), for `deal.created`, `deal.updated` and
-`deal.deleted` (#515), for `task.created`, `task.updated` and `task.deleted` (#516) and for
-`company.created`, `company.updated` and `company.deleted` (#517), delivered
+`deal.deleted` (#515), for `task.created`, `task.updated` and `task.deleted` (#516), for
+`company.created`, `company.updated` and `company.deleted` (#517) and for `quote.created`,
+`quote.updated` and `quote.deleted` (#518), delivered
 after the writing transaction commits. Code: `internal/models/webhook.go`,
 `internal/repository/webhook_repository.go`, `internal/webhook/{emitter,runtime,endpoint_service,signing}.go`,
 `internal/handler/webhook_handler.go`, `internal/egress/`, `cmd/webhook_runtime.go`.
@@ -3887,10 +3888,12 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `webhook.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
   characters, and refuses a non-public IP literal (`egress.CheckPublicURL`); a host name is judged at
-  every connection. `event_types` takes any non-empty subset of the eighteen types
-  (`webhook.AllEventTypes`); the raw array may hold at most 20 entries before deduplication
-  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all
-  eighteen are 260 bytes in the `varchar(512)` column, widened from `varchar(255)` by migration
+  every connection. `event_types` takes any non-empty subset of the twenty-one types
+  (`webhook.AllEventTypes`); the raw array may hold at most 32 entries before deduplication
+  (`webhookEventTypesMaxItems`, raised from 20 by #518 so an array listing every type once is
+  accepted; `TestWebhookEventTypesMaxItemsCoversCatalogue` keeps it at least the number of
+  types), is stored canonical (deduplicated, sorted, comma-separated; all
+  twenty-one are 302 bytes in the `varchar(512)` column, widened from `varchar(255)` by migration
   `20261129120007_widen_webhook_event_types`, whose down half refuses while a row is longer than
   255 bytes) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
   and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
@@ -3955,7 +3958,9 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   the messages follow.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e)`,
   `WithTicketWebhooks(e, txManager)`, `WithFormWebhooks(e)`, `WithDealWebhooks(e)`,
-  `WithTaskWebhooks(e, txManager)` and `WithCompanyWebhooks(e)` (#517) take a `webhook.Emitter`;
+  `WithTaskWebhooks(e, txManager)`, `WithCompanyWebhooks(e)` (#517) and `WithQuoteWebhooks(e)`
+  (#518, an option of both `NewQuoteService` and `NewQuoteServiceWithResponseLinks`) take a
+  `webhook.Emitter`;
   `cmd/main.go` builds one `webhook.NewEmitter(webhookRepo)` and passes it, to the ticket and task
   options with the shared `txManager`. Each service holds `webhook.Nop` without the option (a nil
   emitter means `Nop`; `WithTicketWebhooks` sets the emitter and its transactional paths, and
@@ -3975,7 +3980,9 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   and the automation `create_task` step (`task.created`, #516, in the step transaction; a dry run
   writes neither the task nor a row), and `CompanyService.Create` (`company.created`, #517: with
   `WithCompanyWebhooks` the insert and the outbox rows run in one `txManager` transaction, the
-  normalisation and the owner and domain checks before it; a failure resets the company id to 0).
+  normalisation and the owner and domain checks before it; a failure resets the company id to 0),
+  and `QuoteService.Create` / `CreateWithPolicy` (`quote.created`, #518, after the draft history
+  row in the existing quote transaction).
   A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
 - **Updated events (#408).** The same options, `WithBulkWebhooks(e)` (passed to the one
@@ -3998,14 +4005,23 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   (`company.updated`, #517; with `WithCompanyWebhooks` one `txManager` transaction reads the live
   company through `repository.CompanyLockingReader`, `FOR UPDATE` on MySQL/MariaDB, then writes it;
   a company deleted before that read is `apperrors.ErrNotFound` (404) with nothing written, and a
-  repository without the locking read refuses the write), the automation `assign_owner` step (`lead.updated` on a
+  repository without the locking read refuses the write), the quote writes (#518, with
+  `WithQuoteWebhooks`, each in its existing transaction: `QuoteService.Update` compares the quote
+  read under lock by `lockDraft` with the state `UpdateDraft` wrote, the totals, status and stamps
+  taken from the locked row; `AddLine` and `DeleteLine` always emit, after `recomputeTotals`,
+  because the line set changed; `UpdateLine` compares the line's `QuoteLine.WebhookState()` read by
+  `GetLine` under the quote lock with the line it writes, so a patch that repeats the stored values
+  emits nothing; `ChangeStatus` emits for every committed transition, after the history row, and a
+  refused or rolled-back one, such as sent with no lines, writes nothing; `RespondPublic` emits
+  after the client's history row, so its plain read of the endpoints follows the customer read),
+  the automation `assign_owner` step (`lead.updated` on a
   lead run, `ticket.updated` on a ticket run, `deal.updated` on a deal run, in the step
   transaction; a dry run writes none), and `BulkSetLeadStatus` / `BulkSetTicketStatus` /
   `BulkSetTaskStatus` (#516) (one event,
   with its own event id, per record whose locked status differed from the requested one;
   one `Updated` call with every changed id reads the endpoints once per batch and inserts every row in one statement).
   **The rule:** an event is written iff the committed write changed the record's `WebhookState()`
-  (`internal/models`: `Lead`, `Customer`, `Ticket`, `Deal`, `Task` and `Company` each return a struct
+  (`internal/models`: `Lead`, `Customer`, `Ticket`, `Deal`, `Task`, `Company` and `Quote` each return a struct
   compared with `==`), comparing the state of the row read under lock inside the writing
   transaction with the state written. Each state holds exactly the columns the model's
   repository update writes, minus id, created_at, updated_at and deleted_at (lead: first_name,
@@ -4017,7 +4033,12 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   customer_id, lead_id, owner_id; task: title, description, status, priority, due_date as an
   instant, assigned_to_id, lead_id, customer_id, deal_id, with the label set compared apart;
   company: name, domain, website, industry, employee_range, phone, address, city, state, country,
-  postal_code, notes, owner_id, without the owner record and the counts),
+  postal_code, notes, owner_id, without the owner record and the counts; quote: title, currency,
+  valid_until as an instant, notes, deal_id, customer_id, owner_id, the five totals, status,
+  sent_at and closed_at as instants, the columns of `UpdateDraft`, `UpdateTotals` and
+  `ClaimStatus`, without `last_emailed_at`; quote line: product_id, position, description,
+  quantity, unit_price_cents, discount_bp, line_total_cents, tax_rate_bp, tax_cents, the columns
+  `quoteRepository.UpdateLine` saves minus quote_id),
   nullable ids compared by value. `TestWebhookStateCoversUpdateColumns`
   (`internal/repository`) captures the columns of those updates, of `ConvertToCustomer` and of the
   automation `SetLeadOwner` / `SetTicketAssignee` / `SetDealOwner`, and fails when they and the state drift apart: a
@@ -4035,7 +4056,10 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   `UnlinkCustomers`, `UnlinkDeals`; it writes `company.deleted` and nothing else), the startup
   lower-casing of stored company domains in `models.MigrateDatabase` (a migration, not a request
   write), the erasure scrub of the text of linked deals
-  (`scrubReachedDeals`), and a label hard delete, whose `labelRepository` purge of `task_labels`
+  (`scrubReachedDeals`) and quotes (`scrubReachedQuotes`), the startup `gross_total_cents`
+  backfill of stored quotes in `models.MigrateDatabase` (a migration), `QuoteService.Email` (its
+  `last_emailed_at` stamp is a delivery record, not a change to the quote's terms or status), the
+  quote response-token and PDF render-credential writes, and a label hard delete, whose `labelRepository` purge of `task_labels`
   changes the label set of every task that carried the label.
 - **Deleted events (#437, #531).** `TxEmitter.Deleted` (`internal/webhook/emitter.go`)
   de-duplicates the record ids and writes them as `Created` and `Updated` do: one plain read of the active endpoints subscribed to the
@@ -4057,7 +4081,12 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   finds no live row and answers 404 with no soft delete and no event. `CompanyService.Delete`
   with `WithCompanyWebhooks` (#517) emits `company.deleted` inside its existing transaction, after
   `LockLive`, the unlinks of leads, customers and deals and the soft delete; the lock order and
-  the 404s are unchanged, and the unlinked records get no updated event.
+  the 404s are unchanged, and the unlinked records get no updated event. `QuoteService.Delete`
+  with `WithQuoteWebhooks` (#518) runs in one `txManager` transaction: `GetByIDForUpdate` (a
+  missing or deleted quote is `apperrors.ErrQuoteNotFound`, 404), the draft-only check of a sales
+  caller on that locked row (`apperrors.ErrQuoteLocked`, 409), the soft delete and `quote.deleted`;
+  unwired it keeps the plain read before the delete. Like every deleted event it goes to every
+  active endpoint subscribed to it, not only to endpoints that announced the quote.
   Erasure writes `lead.deleted` and `customer.deleted` through a production listener option on
   the three repositories (`repository.WithLeadErasureListener`, `WithCustomerErasureListener`,
   `WithUserErasureListener`, `ErasureListener`/`ErasedRecords` in
@@ -4080,6 +4109,9 @@ after the writing transaction commits. Code: `internal/models/webhook.go`,
   that loses its race; the MySQL roots open their schema with `loc=Local`),
   `internal/service/company_webhook_events_test.go` (`TestCompanyWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
   create, update and delete, the unlinked records' silence included),
+  `internal/service/quote_webhook_events_test.go` (`TestQuoteWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+  every quote write path: create, update, the three line writes, each transition, the client's
+  accept and decline, delete, and the silence of an email and of a refused write),
   `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
 - **Runtime.** `webhook.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`

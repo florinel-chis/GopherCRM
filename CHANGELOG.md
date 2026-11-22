@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Quote webhook events (#518).** Quotes join the webhook catalogue with three thin events, so
+  there are now twenty-one event types. `quote.created` comes from `POST /quotes`. `quote.updated`
+  comes from `PUT /quotes/{id}` only when a stored value changed (compared with the quote row read
+  under lock in the update's transaction), from every line add (`POST /quotes/{id}/lines`) and line
+  removal (`DELETE /quotes/{id}/lines/{lineId}`), from a line edit (`PUT
+  /quotes/{id}/lines/{lineId}`) only when a stored line value changed, and from every committed
+  status transition: `POST /quotes/{id}/status` (sent, accepted, rejected, expired and back to
+  draft) and the client's accept or decline through `POST /quotes/public/response`. A refused or
+  rolled-back transition writes nothing. `quote.deleted` comes from `DELETE /quotes/{id}`, now one
+  transaction with a locking read of the quote and the draft-only check of a sales caller on that
+  row. Like the other deleted events (#531), it goes to every active endpoint subscribed to it,
+  including one that never received an event for the quote; the outbox does not track which
+  endpoints announced a quote. Each event is written in the transaction of the quote write, one
+  pending delivery per active endpoint subscribed to it, and the payload is thin (the quote id).
+  Emailing a quote (its `last_emailed_at` stamp), the response-token and PDF render-credential
+  writes and the erasure scrub of quote text send nothing. All twenty-one event types take 302
+  bytes and fit the existing `varchar(512)` column, so there is no migration; the raw
+  `event_types` array of an endpoint may now hold 32 entries before deduplication (was 20), so an
+  array listing every type once is accepted. Settings > Webhooks offers the three quote events.
 - **Company webhook events (#517).** Companies join the webhook catalogue with three thin events:
   `company.created` (`POST /companies`), `company.updated` (`PUT /companies/{id}` only when a stored
   value changed, compared with the company row read under lock in the update's transaction) and

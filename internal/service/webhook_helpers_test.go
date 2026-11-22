@@ -278,6 +278,7 @@ type webhookEnv struct {
 	deals     DealService
 	tasks     TaskService
 	companies CompanyService
+	quotes    QuoteService
 	forms     FormService
 	bulk      BulkStatusService
 	// users erases users ungoverned (Delete); governedUsers through the role
@@ -356,6 +357,15 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 		companyOpts = append(companyOpts, WithCompanyWebhooks(emitter))
 	}
 	e.companies = NewCompanyService(companyRepo, userRepo, e.txManager, companyOpts...)
+	// The quote service as cmd/main.go builds it (#518): with the client
+	// response links, and the webhooks when hooks are wired.
+	var quoteOpts []QuoteServiceOption
+	if hooks != nil {
+		quoteOpts = append(quoteOpts, WithQuoteWebhooks(emitter))
+	}
+	e.quotes = NewQuoteServiceWithResponseLinks(repository.NewQuoteRepository(db), repository.NewProductRepository(db),
+		repository.NewDealRepository(db), customerRepo, userRepo, nil, e.mailer, e.txManager,
+		repository.NewQuoteResponseTokenRepository(db), quoteResponseTestBaseURL, quoteResponseTestSecret, quoteOpts...)
 	e.users = NewUserService(userRepo)
 	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),
 		repository.NewRoleAuditRepository(db), e.txManager))

@@ -110,7 +110,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks and companies (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted).
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks, companies and quotes (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted, quote.created, quote.updated, quote.deleted).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -418,8 +418,11 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	if quoteTokenSecret == "" {
 		quoteTokenSecret = cfg.JWT.Secret
 	}
+	// The quote writes enqueue quote.created, quote.updated and quote.deleted
+	// in their transaction (#518).
 	quoteService := service.NewQuoteServiceWithResponseLinks(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, configService, appMailer, txManager,
-		repository.NewQuoteResponseTokenRepository(models.DB), cfg.App.BaseURL, quoteTokenSecret)
+		repository.NewQuoteResponseTokenRepository(models.DB), cfg.App.BaseURL, quoteTokenSecret,
+		service.WithQuoteWebhooks(webhookEmitter))
 	// Quote PDF output (#384): a headless Chrome prints APP_BASE_URL/quote-render.
 	// Without QUOTE_PDF_CHROME_PATH, or with a path that is no executable
 	// file, the server runs with PDF output off: text-only quote emails and

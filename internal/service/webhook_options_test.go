@@ -114,4 +114,23 @@ func TestWebhookOptionsNilArguments(t *testing.T) {
 		assert.True(t, s.webhooksWired())
 		assert.False(t, (&companyService{}).webhooksWired(), "a service built without the constructor is unwired")
 	})
+
+	t.Run("the quote service holds Nop by default and with a nil emitter, else the emitter", func(t *testing.T) {
+		s := NewQuoteService(nil, nil, nil, nil, nil, nil, nil, tm).(*quoteService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		s = NewQuoteServiceWithResponseLinks(nil, nil, nil, nil, nil, nil, nil, tm, nil, "", "", WithQuoteWebhooks(nil)).(*quoteService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		live := webhook.NewEmitter(repository.NewWebhookRepository(nil))
+		require.NotEqual(t, webhook.Nop, live)
+		s = NewQuoteService(nil, nil, nil, nil, nil, nil, nil, tm, WithQuoteWebhooks(live)).(*quoteService)
+		assert.Equal(t, live, s.webhooks)
+		assert.Same(t, tm, s.txManager)
+		assert.True(t, s.webhooksWired())
+		s = NewQuoteServiceWithResponseLinks(nil, nil, nil, nil, nil, nil, nil, tm, nil, "", "", WithQuoteWebhooks(live)).(*quoteService)
+		assert.Equal(t, live, s.webhooks)
+		assert.True(t, s.webhooksWired())
+		assert.False(t, (&quoteService{}).webhooksWired(), "a service built without the constructor is unwired")
+	})
 }

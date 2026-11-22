@@ -12,7 +12,9 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 type quoteService struct {
@@ -37,6 +39,60 @@ type quoteService struct {
 	// text-only, RenderPDF answers apperrors.ErrQuotePDFUnavailable and
 	// GetRenderView refuses every credential.
 	pdf *quotePDF
+
+	// webhooks is the outbound webhook emitter (#518), set by
+	// WithQuoteWebhooks: Create emits quote.created; Update, the line writes,
+	// ChangeStatus and RespondPublic quote.updated; Delete quote.deleted, each
+	// in the write's transaction. NewQuoteService sets it to webhook.Nop; with
+	// Nop every path behaves as without webhooks.
+	webhooks webhook.Emitter
+}
+
+// QuoteServiceOption configures NewQuoteService and
+// NewQuoteServiceWithResponseLinks beyond their required dependencies.
+type QuoteServiceOption func(*quoteService)
+
+// WithQuoteWebhooks makes the quote writes emit their webhook events through e
+// (#518), in the write's transaction: Create emits quote.created after the
+// draft history row; Update emits quote.updated when the state written differs
+// from the quote read under lock; AddLine and DeleteLine always emit it;
+// UpdateLine emits it when the line written differs from the line read under
+// the quote lock; ChangeStatus and RespondPublic emit it for every transition
+// that commits; Delete runs in one transaction with a locking read and emits
+// quote.deleted for every active endpoint subscribed to it (#531). Email, the
+// response-token and render-credential writes emit nothing. A nil e keeps
+// webhook.Nop.
+func WithQuoteWebhooks(e webhook.Emitter) QuoteServiceOption {
+	return func(s *quoteService) {
+		if e != nil {
+			s.webhooks = e
+		}
+	}
+}
+
+// webhooksWired reports whether the quote writes emit webhook events. A
+// service built without NewQuoteService (nil emitter) is unwired.
+func (s *quoteService) webhooksWired() bool {
+	return s.webhooks != nil && s.webhooks != webhook.Nop
+}
+
+// quoteEvents writes the quote events of one transaction: the bound emitter,
+// or webhook.NopTx on an unwired service, and the transaction's context.
+type quoteEvents struct {
+	ctx context.Context
+	tx  webhook.TxEmitter
+}
+
+func (e quoteEvents) created(id uint) error { return e.tx.Created(e.ctx, webhook.Quote, id) }
+func (e quoteEvents) updated(id uint) error { return e.tx.Updated(e.ctx, webhook.Quote, id) }
+func (e quoteEvents) deleted(id uint) error { return e.tx.Deleted(e.ctx, webhook.Quote, id) }
+
+// events binds the service's emitter to tx.
+func (s *quoteService) events(ctx context.Context, tx *gorm.DB) quoteEvents {
+	if !s.webhooksWired() {
+		return quoteEvents{ctx: ctx, tx: webhook.NopTx}
+	}
+	return quoteEvents{ctx: ctx, tx: s.webhooks.Bind(tx)}
 }
 
 // NewQuoteService wires the quotes module. currency is the configuration read
@@ -54,8 +110,9 @@ func NewQuoteService(
 	currency DealCurrencySource,
 	m mailer.Mailer,
 	txManager *utils.TransactionManager,
+	opts ...QuoteServiceOption,
 ) QuoteService {
-	return &quoteService{
+	s := &quoteService{
 		quoteRepo:    quoteRepo,
 		productRepo:  productRepo,
 		dealRepo:     dealRepo,
@@ -65,7 +122,12 @@ func NewQuoteService(
 		mailer:       m,
 		txManager:    txManager,
 		now:          time.Now,
+		webhooks:     webhook.Nop,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // NewQuoteServiceWithResponseLinks is NewQuoteService plus the client response
@@ -87,8 +149,9 @@ func NewQuoteServiceWithResponseLinks(
 	tokenRepo repository.QuoteResponseTokenRepository,
 	appBaseURL string,
 	tokenSecret string,
+	opts ...QuoteServiceOption,
 ) QuoteService {
-	svc := NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, currency, m, txManager).(*quoteService)
+	svc := NewQuoteService(quoteRepo, productRepo, dealRepo, customerRepo, userRepo, currency, m, txManager, opts...).(*quoteService)
 	svc.tokenRepo = tokenRepo
 	svc.appBaseURL = strings.TrimRight(strings.TrimSpace(appBaseURL), "/")
 	svc.tokenSecret = tokenSecret
@@ -103,8 +166,9 @@ func (s *quoteService) stamp() time.Time {
 	return s.now().UTC()
 }
 
-// inTransaction runs fn with the repositories bound to one transaction.
-func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, products repository.ProductRepository, customers repository.CustomerRepository, users repository.UserRepository, deals repository.DealRepository) error) error {
+// inTransaction runs fn with the repositories and the quote events bound to
+// one transaction.
+func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, products repository.ProductRepository, customers repository.CustomerRepository, users repository.UserRepository, deals repository.DealRepository, events quoteEvents) error) error {
 	if s.txManager == nil {
 		return utils.ErrNoTransaction
 	}
@@ -113,7 +177,7 @@ func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, pr
 		if !ok {
 			return utils.ErrNoTransaction
 		}
-		return fn(s.quoteRepo.WithTx(tx), s.productRepo.WithTx(tx), s.customerRepo.WithTx(tx), s.userRepo.WithTx(tx), s.dealRepo.WithTx(tx))
+		return fn(s.quoteRepo.WithTx(tx), s.productRepo.WithTx(tx), s.customerRepo.WithTx(tx), s.userRepo.WithTx(tx), s.dealRepo.WithTx(tx), s.events(ctx, tx))
 	})
 }
 
@@ -121,9 +185,9 @@ func (s *quoteService) inTransaction(fn func(repo repository.QuoteRepository, pr
 // token repository bound to one transaction. tokens is nil on a service
 // without response links. Every caller touches the quotes row first, with a
 // locking read, and the token rows after it (quotes → quote_response_tokens).
-func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error) error {
-	return s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, _ repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
-		return fn(repo, tokens)
+func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository, events quoteEvents) error) error {
+	return s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, _ repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository, events quoteEvents) error {
+		return fn(repo, tokens, events)
 	})
 }
 
@@ -132,8 +196,10 @@ func (s *quoteService) inQuoteTokenTransaction(fn func(repo repository.QuoteRepo
 // read the quote's customer with a plain read only, as the first consistent
 // read after the locking read of the quote: the erasure of a customer locks
 // customers before quotes, so a locking customer read under the quote lock
-// would invert that order.
-func (s *quoteService) inQuoteCustomerTokenTransaction(fn func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error) error {
+// would invert that order. events writes the quote's webhook events (#518):
+// a caller emits after its history row, so the plain read of the webhook
+// endpoints comes after the customer read.
+func (s *quoteService) inQuoteCustomerTokenTransaction(fn func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository, events quoteEvents) error) error {
 	if s.txManager == nil {
 		return utils.ErrNoTransaction
 	}
@@ -146,7 +212,7 @@ func (s *quoteService) inQuoteCustomerTokenTransaction(fn func(repo repository.Q
 		if s.tokenRepo != nil {
 			tokens = s.tokenRepo.WithTx(tx)
 		}
-		return fn(s.quoteRepo.WithTx(tx), s.customerRepo.WithTx(tx), tokens)
+		return fn(s.quoteRepo.WithTx(tx), s.customerRepo.WithTx(tx), tokens, s.events(ctx, tx))
 	})
 }
 
@@ -225,18 +291,21 @@ func (s *quoteService) CreateWithPolicy(quote *models.Quote, actorID uint, polic
 	quote.SentAt, quote.ClosedAt, quote.LastEmailedAt = nil, nil, nil
 	quote.Lines = nil
 
-	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository) error {
+	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository, events quoteEvents) error {
 		if err := repo.Create(quote); err != nil {
 			return err
 		}
-		return repo.CreateStatusChange(&models.QuoteStatusChange{
+		if err := repo.CreateStatusChange(&models.QuoteStatusChange{
 			QuoteID:     quote.ID,
 			FromStatus:  nil,
 			ToStatus:    models.QuoteStatusDraft,
 			ChangedByID: &actorID,
 			Source:      models.QuoteChangeSourceStaff,
 			ChangedAt:   s.stamp(),
-		})
+		}); err != nil {
+			return err
+		}
+		return events.created(quote.ID)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -274,7 +343,7 @@ func (s *quoteService) Update(quote *models.Quote) error {
 		return err
 	}
 
-	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, customers repository.CustomerRepository, users repository.UserRepository, deals repository.DealRepository) error {
+	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, customers repository.CustomerRepository, users repository.UserRepository, deals repository.DealRepository, events quoteEvents) error {
 		locked, err := lockDraft(repo, quote.ID)
 		if err != nil {
 			return err
@@ -322,7 +391,12 @@ func (s *quoteService) Update(quote *models.Quote) error {
 		if rows != 1 {
 			return fmt.Errorf("quote %d is no longer a draft: %w", quote.ID, apperrors.ErrQuoteLocked)
 		}
-		return nil
+		// quote.updated only when a stored value changed (#518): the
+		// locked row with the columns UpdateDraft wrote applied.
+		if locked.WebhookState() == draftWritten(locked, quote).WebhookState() {
+			return nil
+		}
+		return events.updated(quote.ID)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote update refused")
@@ -333,8 +407,41 @@ func (s *quoteService) Update(quote *models.Quote) error {
 	return nil
 }
 
+// Delete soft-deletes a quote. With webhooks wired (#518) it runs in one
+// transaction: a locking read of the live quote, the draft-only check on that
+// row, the soft delete and quote.deleted for every active endpoint subscribed
+// to it (#531), so a delete that lost a race to a transition or another
+// delete emits nothing. Unwired, it keeps the plain read before the delete.
 func (s *quoteService) Delete(id uint, draftOnly bool) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("quote_id", id), "QuoteService", "Delete")
+
+	if s.webhooksWired() {
+		err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository, events quoteEvents) error {
+			locked, err := repo.GetByIDForUpdate(id)
+			if err != nil {
+				if isNotFound(err) {
+					return fmt.Errorf("quote %d not found: %w", id, apperrors.ErrQuoteNotFound)
+				}
+				return err
+			}
+			if draftOnly && locked.Status != models.QuoteStatusDraft {
+				return fmt.Errorf("quote %d is %s: %w", id, locked.Status, apperrors.ErrQuoteLocked)
+			}
+			if err := repo.Delete(id); err != nil {
+				if isNotFound(err) {
+					return fmt.Errorf("quote %d not found: %w", id, apperrors.ErrQuoteNotFound)
+				}
+				return err
+			}
+			return events.deleted(id)
+		})
+		if err != nil {
+			logServiceOutcome(logger, err, "Quote delete refused")
+			return err
+		}
+		logger.Info("Quote deleted successfully")
+		return nil
+	}
 
 	quote, err := s.GetByID(id)
 	if err != nil {
@@ -419,7 +526,7 @@ func (s *quoteService) AddLine(quoteID uint, input models.QuoteLineInput) (*mode
 		return nil, err
 	}
 
-	err := s.inTransaction(func(repo repository.QuoteRepository, products repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository) error {
+	err := s.inTransaction(func(repo repository.QuoteRepository, products repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository, events quoteEvents) error {
 		quote, err := lockDraft(repo, quoteID)
 		if err != nil {
 			return err
@@ -473,7 +580,11 @@ func (s *quoteService) AddLine(quoteID uint, input models.QuoteLineInput) (*mode
 		if err := repo.CreateLine(line); err != nil {
 			return err
 		}
-		return recomputeTotals(repo, quoteID)
+		if err := recomputeTotals(repo, quoteID); err != nil {
+			return err
+		}
+		// The line set changed (#518).
+		return events.updated(quoteID)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote line refused")
@@ -498,7 +609,7 @@ func (s *quoteService) UpdateLine(quoteID, lineID uint, patch models.QuoteLinePa
 		return nil, fmt.Errorf("position must be at least 1: %w", apperrors.ErrValidation)
 	}
 
-	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository) error {
+	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository, events quoteEvents) error {
 		if _, err := lockDraft(repo, quoteID); err != nil {
 			return err
 		}
@@ -509,6 +620,7 @@ func (s *quoteService) UpdateLine(quoteID, lineID uint, patch models.QuoteLinePa
 			}
 			return err
 		}
+		before := line.WebhookState()
 		if patch.Quantity != nil {
 			line.Quantity = *patch.Quantity
 		}
@@ -533,7 +645,14 @@ func (s *quoteService) UpdateLine(quoteID, lineID uint, patch models.QuoteLinePa
 		if err := repo.UpdateLine(line); err != nil {
 			return err
 		}
-		return recomputeTotals(repo, quoteID)
+		if err := recomputeTotals(repo, quoteID); err != nil {
+			return err
+		}
+		// quote.updated only when a stored line value changed (#518).
+		if line.WebhookState() == before {
+			return nil
+		}
+		return events.updated(quoteID)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote line update refused")
@@ -550,7 +669,7 @@ func (s *quoteService) DeleteLine(quoteID, lineID uint) (*models.Quote, error) {
 		"line_id":  lineID,
 	}), "QuoteService", "DeleteLine")
 
-	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository) error {
+	err := s.inTransaction(func(repo repository.QuoteRepository, _ repository.ProductRepository, _ repository.CustomerRepository, _ repository.UserRepository, _ repository.DealRepository, events quoteEvents) error {
 		if _, err := lockDraft(repo, quoteID); err != nil {
 			return err
 		}
@@ -560,7 +679,11 @@ func (s *quoteService) DeleteLine(quoteID, lineID uint) (*models.Quote, error) {
 			}
 			return err
 		}
-		return recomputeTotals(repo, quoteID)
+		if err := recomputeTotals(repo, quoteID); err != nil {
+			return err
+		}
+		// The line set changed (#518).
+		return events.updated(quoteID)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote line delete refused")
@@ -592,7 +715,7 @@ func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint
 	}
 
 	var from models.QuoteStatus
-	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository, events quoteEvents) error {
 		quote, err := repo.GetByIDForUpdate(id)
 		if err != nil {
 			if isNotFound(err) {
@@ -640,14 +763,18 @@ func (s *quoteService) ChangeStatus(id uint, to models.QuoteStatus, actorID uint
 				return fmt.Errorf("quote %d has no lines: %w", id, apperrors.ErrQuoteHasNoLines)
 			}
 		}
-		return repo.CreateStatusChange(&models.QuoteStatusChange{
+		if err := repo.CreateStatusChange(&models.QuoteStatusChange{
 			QuoteID:     id,
 			FromStatus:  &from,
 			ToStatus:    to,
 			ChangedByID: &actorID,
 			Source:      models.QuoteChangeSourceStaff,
 			ChangedAt:   now,
-		})
+		}); err != nil {
+			return err
+		}
+		// Every committed transition changes the status (#518).
+		return events.updated(id)
 	})
 	if err != nil {
 		logServiceOutcome(logger, err, "Quote transition refused")
@@ -686,6 +813,22 @@ func lockDraft(repo repository.QuoteRepository, id uint) (*models.Quote, error) 
 		return nil, fmt.Errorf("quote %d is %s: %w", id, quote.Status, apperrors.ErrQuoteLocked)
 	}
 	return quote, nil
+}
+
+// draftWritten is the quote as UpdateDraft leaves it: the locked row with the
+// columns UpdateDraft writes taken from the caller's quote. The totals, the
+// status and the stamps stay the locked row's; the deal link is the locked
+// one already (Update forces it).
+func draftWritten(locked, quote *models.Quote) *models.Quote {
+	written := *locked
+	written.Title = quote.Title
+	written.Currency = quote.Currency
+	written.ValidUntil = quote.ValidUntil
+	written.Notes = quote.Notes
+	written.DealID = quote.DealID
+	written.CustomerID = quote.CustomerID
+	written.OwnerID = quote.OwnerID
+	return &written
 }
 
 // recomputeTotals is the last step of every line write: the lines are re-read

@@ -161,6 +161,17 @@ edge from the erasure order into this one. It closes no cycle: the three quote f
 and a client answer on one token queue on the `quotes` row: the answer commits and stands, or
 the erasure commits and the answer is refused with the generic rejection.
 
+**Quote webhook events (#518).** With `WithQuoteWebhooks` every quote write emits its webhook
+event as the last step of its existing transaction, after the quote lock: `Create` after the
+draft history row, `Update`, `AddLine`, `UpdateLine` and `DeleteLine` after the locking read of
+`lockDraft` and their writes, `ChangeStatus` and `RespondPublic` after their history row, and
+`Delete` (now one transaction when wired: `QuoteRepository.GetByIDForUpdate`, the draft-only
+check on that row, the soft delete) after the soft delete. The emit is a plain read of the active
+`webhook_endpoints` subscribed to the type and one `INSERT` into `webhook_deliveries`; neither table
+is locked and no other row is read, so the quote order above is unchanged. In `RespondPublic` the
+emit follows the history row, so the plain read of the quote's customer stays the first consistent
+read after the quote lock.
+
 **Erasure order (#385).** One order spans the chains for every erasure, whichever row it starts
 from: `automation runs → leads → customers → users → refresh_tokens → password_reset_tokens →
 api_keys`, ids ascending inside each table. The automation runs of every discovered lead are

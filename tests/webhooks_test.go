@@ -148,6 +148,10 @@ func TestWebhookAPISQLite(t *testing.T) {
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager, service.WithCustomerWebhooks(webhook.NewEmitter(failing)))
 	ticketService := service.NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo,
 		service.WithTicketWebhooks(webhook.NewEmitter(webhookRepo), txManager))
+	// The quote service as cmd/main.go wires its webhooks (#518).
+	quoteService := service.NewQuoteService(repository.NewQuoteRepository(db), repository.NewProductRepository(db),
+		repository.NewDealRepository(db), customerRepo, userRepo, nil, nil, txManager,
+		service.WithQuoteWebhooks(webhook.NewEmitter(webhookRepo)))
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -161,6 +165,7 @@ func TestWebhookAPISQLite(t *testing.T) {
 	handler.SetupCustomerRoutes(protected, handler.NewCustomerHandler(customerService))
 	handler.SetupTicketRoutes(protected, handler.NewTicketHandler(ticketService, customerService))
 	handler.SetupWebhookRoutes(protected, handler.NewWebhookHandler(webhook.NewWebhookService(webhookRepo, txManager, box)))
+	handler.SetupQuoteRoutes(protected, handler.NewQuoteHandler(quoteService))
 
 	tokens := map[string]string{}
 	users := map[string]*models.User{}
@@ -341,10 +346,10 @@ func TestWebhookAPISQLite(t *testing.T) {
 		assert.Contains(t, details, "event_types", raw)
 	})
 
-	t.Run("the eighteen event types, tasks (#516) and companies (#517) included", func(t *testing.T) {
+	t.Run("the twenty-one event types, tasks (#516), companies (#517) and quotes (#518) included", func(t *testing.T) {
 		// The subscription is every type of the catalogue, sent shuffled.
 		all := webhook.AllEventTypes()
-		require.Len(t, all, 18)
+		require.Len(t, all, 21)
 		unsorted := append([]string{}, all...)
 		for i, j := 0, len(unsorted)-1; i < j; i, j = i+2, j-2 {
 			unsorted[i], unsorted[j] = unsorted[j], unsorted[i]
@@ -352,9 +357,10 @@ func TestWebhookAPISQLite(t *testing.T) {
 		require.NotEqual(t, all, unsorted)
 		sorted := []interface{}{"company.created", "company.deleted", "company.updated", "customer.created", "customer.deleted",
 			"customer.updated", "deal.created", "deal.deleted", "deal.updated", "lead.created", "lead.deleted", "lead.updated",
-			"task.created", "task.deleted", "task.updated", "ticket.created", "ticket.deleted", "ticket.updated"}
+			"quote.created", "quote.deleted", "quote.updated", "task.created", "task.deleted", "task.updated",
+			"ticket.created", "ticket.deleted", "ticket.updated"}
 		status, envelope, raw := do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
-			"url": "https://example.com:" + port + "/eighteen", "event_types": unsorted})
+			"url": "https://example.com:" + port + "/twenty-one", "event_types": unsorted})
 		require.Equal(t, http.StatusCreated, status, raw)
 		data := envelope.Data.(map[string]interface{})
 		assert.Equal(t, sorted, data["event_types"])
@@ -364,9 +370,45 @@ func TestWebhookAPISQLite(t *testing.T) {
 		require.Equal(t, http.StatusOK, status, raw)
 		assert.Equal(t, sorted, envelope.Data.(map[string]interface{})["event_types"])
 
-		for _, eventType := range []string{"task.deleted", "company.created", "company.updated", "company.deleted"} {
+		for _, eventType := range []string{"task.deleted", "company.created", "company.updated", "company.deleted",
+			"quote.created", "quote.updated", "quote.deleted"} {
 			status, _, raw = do("admin", http.MethodGet, "/webhooks/deliveries?event_type="+eventType, nil)
 			assert.Equal(t, http.StatusOK, status, eventType+": "+raw)
 		}
+	})
+
+	t.Run("a quote PUT that sends back the stored values writes no quote.updated (#518)", func(t *testing.T) {
+		quoteUpdated := func(id uint) int64 {
+			t.Helper()
+			var n int64
+			require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("event_type = ? AND record_id = ?", "quote.updated", id).Count(&n).Error)
+			return n
+		}
+		customer := &models.Customer{FirstName: "Quote", LastName: "Recipient", Email: "quote-recipient@webhooks-api.test"}
+		require.NoError(t, db.Create(customer).Error)
+		status, envelope, raw := do("admin", http.MethodPost, "/quotes", map[string]interface{}{
+			"title": "Round trip", "currency": "EUR", "customer_id": customer.ID, "valid_until": "2099-12-31", "notes": "kept"})
+		require.Equal(t, http.StatusCreated, status, raw)
+		id := uint(envelope.Data.(map[string]interface{})["id"].(float64))
+		var created int64
+		require.NoError(t, db.Model(&models.WebhookDelivery{}).Where("event_type = ? AND record_id = ?", "quote.created", id).Count(&created).Error)
+		assert.NotZero(t, created, "the create wrote quote.created")
+
+		status, envelope, raw = do("admin", http.MethodGet, fmt.Sprintf("/quotes/%d", id), nil)
+		require.Equal(t, http.StatusOK, status, raw)
+		read := envelope.Data.(map[string]interface{})
+		body := map[string]interface{}{}
+		for _, field := range []string{"title", "currency", "valid_until", "notes", "customer_id", "owner_id"} {
+			body[field] = read[field]
+		}
+		require.Equal(t, "2099-12-31", body["valid_until"])
+		status, _, raw = do("admin", http.MethodPut, fmt.Sprintf("/quotes/%d", id), body)
+		require.Equal(t, http.StatusOK, status, raw)
+		assert.Zero(t, quoteUpdated(id), "the stored values are no update")
+
+		body["notes"] = "changed"
+		status, _, raw = do("admin", http.MethodPut, fmt.Sprintf("/quotes/%d", id), body)
+		require.Equal(t, http.StatusOK, status, raw)
+		assert.NotZero(t, quoteUpdated(id), "a changed note is an update")
 	})
 }

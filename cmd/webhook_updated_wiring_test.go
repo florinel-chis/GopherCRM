@@ -4,7 +4,8 @@ package main
 // paths reuse WithLeadWebhooks, WithCustomerWebhooks and WithTicketWebhooks,
 // which TestWebhookProductionWiring pins; this root pins the option on the
 // bulk status service the routes get, the one on the automation engine (the
-// assign_owner and create_task steps), and the deal, task and company options.
+// assign_owner and create_task steps), and the deal, task, company and quote
+// options.
 
 import (
 	"os"
@@ -53,6 +54,12 @@ func TestWebhookUpdatedProductionWiring(t *testing.T) {
 	companyCall := callText(text[start:])
 	require.NotEmpty(t, companyCall, "the end of the NewCompanyService call")
 	assert.Contains(t, companyCall, "service.WithCompanyWebhooks(webhookEmitter)", "the company writes enqueue company.created, company.updated and company.deleted (#517)")
+
+	require.Equal(t, 1, strings.Count(text, "service.NewQuoteServiceWithResponseLinks("), "one quote service")
+	start = strings.Index(text, "service.NewQuoteServiceWithResponseLinks(")
+	quoteCall := callText(text[start:])
+	require.NotEmpty(t, quoteCall, "the end of the NewQuoteServiceWithResponseLinks call")
+	assert.Contains(t, quoteCall, "service.WithQuoteWebhooks(webhookEmitter)", "the quote writes enqueue quote.created, quote.updated and quote.deleted (#518)")
 }
 
 // callText returns the call that opens at the first '(' of source, up to its

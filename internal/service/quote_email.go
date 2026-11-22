@@ -219,7 +219,7 @@ func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, uint,
 		return "", 0, err
 	}
 	token := &models.QuoteResponseToken{QuoteID: id, TokenHash: hashOpaqueToken(plain, s.tokenSecret)}
-	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository) error {
+	err = s.inQuoteCustomerTokenTransaction(func(repo repository.QuoteRepository, customers repository.CustomerRepository, tokens repository.QuoteResponseTokenRepository, _ quoteEvents) error {
 		locked, err := repo.GetByIDForUpdate(id)
 		if err != nil {
 			if isNotFound(err) {
@@ -267,7 +267,7 @@ func (s *quoteService) mintResponseLink(id, latestHistoryID uint) (string, uint,
 // the next successful send.
 func (s *quoteService) invalidateEarlierResponseLinks(id, newestID uint, logger *logrus.Entry) {
 	now := s.stamp()
-	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository) error {
+	err := s.inQuoteTokenTransaction(func(repo repository.QuoteRepository, tokens repository.QuoteResponseTokenRepository, _ quoteEvents) error {
 		if _, err := repo.GetByIDForUpdate(id); err != nil {
 			if isNotFound(err) {
 				return nil

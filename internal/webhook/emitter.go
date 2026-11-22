@@ -31,8 +31,9 @@ import (
 // and form ticket intake with outcome created (ticket.created),
 // DealService.Create (deal.created, #515), and TaskService.Create and
 // CreateWithLabels and the automation create_task step (task.created, #516, the
-// latter in the step transaction), and CompanyService.Create (company.created,
-// #517).
+// latter in the step transaction), CompanyService.Create (company.created,
+// #517), and QuoteService.Create and CreateWithPolicy (quote.created, #518,
+// after the draft history row).
 //
 // The update paths (#408): LeadService.Update and LeadService.Assign
 // (lead.updated), LeadService.ConvertToCustomer (lead.updated next to
@@ -45,7 +46,12 @@ import (
 // the row read through TaskLockingReader, and a changed label set read through
 // TaskLockingReader.GetLabelIDsForUpdate counts as a change),
 // CompanyService.Update (company.updated, #517, the row read through
-// CompanyLockingReader), and
+// CompanyLockingReader), QuoteService.Update, AddLine, UpdateLine,
+// DeleteLine, ChangeStatus and RespondPublic (quote.updated, #518: Update
+// compares the quote read under lock with the state written, AddLine and
+// DeleteLine always change the line set, UpdateLine compares the line read
+// under the quote lock with the line written, and every transition that
+// commits, a client accept or decline included, changes the status), and
 // BulkSetLeadStatus / BulkSetTicketStatus / BulkSetTaskStatus (one
 // lead.updated / ticket.updated / task.updated per record in one call, so the
 // endpoints are read once per batch). An updated event is written only when the write
@@ -62,7 +68,12 @@ import (
 // no lead.updated, customer.updated or deal.updated; the startup lower-casing
 // of stored company domains in models.MigrateDatabase, a migration rather than
 // a request write, which emits nothing; the erasure scrub of the text of the
-// deals an erased customer or lead reaches (scrubReachedDeals); nor a label
+// deals an erased customer or lead reaches (scrubReachedDeals) or of the
+// quotes it reaches (scrubReachedQuotes); the startup gross_total backfill of
+// stored quotes in models.MigrateDatabase, a migration; QuoteService.Email,
+// whose last_emailed_at stamp is a delivery record rather than a change to
+// the quote's terms or status; the quote response-token and render-credential
+// writes; nor a label
 // hard delete, whose labelRepository purge of task_labels changes the label
 // set of every task that carried it.
 //
@@ -72,7 +83,9 @@ import (
 // (task.deleted, #516, likewise, after a locking read of the live task inside
 // the transaction, so a delete that lost a race emits nothing),
 // CompanyService.Delete (company.deleted, #517, in the delete transaction
-// after LockLive, the unlinks and the soft delete), and every
+// after LockLive, the unlinks and the soft delete), QuoteService.Delete
+// (quote.deleted, #518, in one transaction with a locking read of the live
+// quote, the draft-only check on that row and the soft delete), and every
 // erasure unit of the lead, customer and user repositories (lead.deleted and
 // customer.deleted for each lead and customer the unit found live and erased,
 // cascades included), through the listener of NewErasureListener at the end

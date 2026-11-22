@@ -65,7 +65,7 @@ describe('webhook lists against the API specification', () => {
     expect([...WEBHOOK_EVENT_TYPES].sort()).toEqual([...documented].sort());
   });
 
-  it('WEBHOOK_EVENT_TYPES lists the eighteen event types, sorted', () => {
+  it('WEBHOOK_EVENT_TYPES lists the twenty-one event types, sorted', () => {
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([
       'company.created',
       'company.deleted',
@@ -79,6 +79,9 @@ describe('webhook lists against the API specification', () => {
       'lead.created',
       'lead.deleted',
       'lead.updated',
+      'quote.created',
+      'quote.deleted',
+      'quote.updated',
       'task.created',
       'task.deleted',
       'task.updated',

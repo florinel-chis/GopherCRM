@@ -49,11 +49,12 @@ wiring is in `setupDependencies` (`cmd/main.go`).
 Checked by searching the tracked tree on `4dfe404`:
 
 - Outbound webhooks cover the created, updated and deleted events of leads, customers, tickets,
-  deals, tasks and companies (`lead.created`, `lead.updated`, `lead.deleted`, `customer.created`,
+  deals, tasks, companies and quotes (`lead.created`, `lead.updated`, `lead.deleted`, `customer.created`,
   `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`,
   `deal.created`, `deal.updated`, `deal.deleted`, `task.created`, `task.updated`, `task.deleted`,
-  `company.created`, `company.updated`, `company.deleted`; #345, #408, #437, #515, #516 and #517,
-  cuts of #232): users and quotes emit no events. The registry and the delivery log have a screen in
+  `company.created`, `company.updated`, `company.deleted`, `quote.created`, `quote.updated`,
+  `quote.deleted`; #345, #408, #437, #515, #516, #517 and #518, cuts of #232): users emit no
+  events. The registry and the delivery log have a screen in
   Settings > Webhooks (#409).
 - No MCP server.
 - API keys have no scopes of their own (`internal/models/apikey.go` holds only name, hash,
