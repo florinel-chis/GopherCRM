@@ -744,25 +744,31 @@ Neither ordering commits half a unit, and neither party returns the 1213.
 
 ### OIDC sign-in
 
-- **Rows locked:** the callback of `POST /auth/oidc/callback` (`oidcService.Callback`,
-  `internal/service/auth_oidc.go`) first spends its `oidc_login_attempts` row
+- **Rows locked:** the callback of `POST /auth/oidc/callback` (`Service.Callback`,
+  `internal/idkit/sso/service.go`, wired by `NewOIDCService` in `internal/service/auth_oidc.go`)
+  first spends its `oidc_login_attempts` row
   (`OIDCLoginAttemptRepository.Claim`, `internal/repository/oidc_repository.go`): a plain read by
   `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`, which
   also blanks the nonce and verifier), its own committed statement before the transaction and
   before the issuer is contacted. No row is locked by the read; a competing claim between the read
-  and the `UPDATE` leaves zero affected rows and the generic refusal. The governed transaction (`ApplyOIDCSignIn`,
-  `internal/service/user_governed_writes.go`) then locks the `users` rows of the active admins
-  (`LockActiveAdmins`), reads the `user_identities` row of the exact `(issuer, subject)` pair with a
+  and the `UPDATE` leaves zero affected rows and the generic refusal. The unusable password of a first sign-in is hashed with bcrypt before
+  the transaction (`oidcPasswordFirstRunner.WithTransaction`), once per callback, so no lock is
+  held during it. The governed transaction (`oidcSignInRunner.WithTransaction`,
+  `internal/service/auth_oidc_host.go`) then locks the `users` rows of the active admins
+  (`LockActiveAdmins`); the link rule (`Service.signInAccount`, `internal/idkit/sso/link.go`)
+  reads the `user_identities` row of the exact `(issuer, subject)` pair with a
   plain read; when that pair is unknown and the callback vetted an Entra ID `oid` (#505), it
-  plain-reads the `source` `scim` row of `(issuer, oid)`, which names the SCIM-created account. It
+  plain-reads the `source` `scim` row of `(issuer, oid)`, which names the SCIM-created account.
+  The account store (`oidcAccountStore.SignIn`, `internal/service/auth_oidc_host.go`)
   then locks the linked `users` row (`LockLiveByIDs`) and the `roles` rows of the user's current
   custom role and of the mapped role (`RoleRepository.LockByIDs`). The last-admin refusal of a
   re-applied role counts the locked `users` row as an admin before the sign-in when it is an
   active admin, next to the admin set, as every governed write does (#513). It then writes: the
   role change and
   its `role_audit_log` row (for a SCIM-matched account also the `user_identities` insert of the
-  `(issuer, subject)` link), or on a first sign-in the `users` insert, the `user_identities` insert
-  and the audit row, and last the `refresh_tokens` insert.
+  `(issuer, subject)` link), or on a first sign-in (`oidcAccountStore.Provision`) the `users`
+  insert and the audit row and then the `user_identities` insert, and last the `refresh_tokens`
+  insert.
 - **Order:** admin set → users → roles → user_identities → refresh_tokens. The plain identity
   read takes no lock; it only names the `users` row to lock. A first sign-in locks no existing
   `users` row: its new row and its identity row are inserts, and a competing first sign-in of the
@@ -771,7 +777,7 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   subject)` link first makes the link insert fail on the unique index (`identity_taken`, rolled
   back whole) on MySQL/MariaDB, while on SQLite the write after the competing commit is refused as
   busy and the replay finds the committed link directly.
-- **Transaction:** one root transaction (`roleGovernance.run`) through the `WithTx` repositories;
+- **Transaction:** one root transaction (`roleGovernance.runWithContext`, which replays and restarts as `roleGovernance.run` does) through the `WithTx` repositories;
   the role change, the audit row, the provisioned user, its identity and the refresh token commit
   together or not at all, and the access token is signed from the row the transaction wrote. The
   attempt claim is not part of it: a state is spent even when the sign-in is then refused. Nor is

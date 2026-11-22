@@ -21,12 +21,21 @@ import (
 // in auth_audit_vocabulary.go, or a parameter or local variable whose own
 // source is such a site. A variable forwarded into an AuthAuditEntry literal
 // has its single-value assignments in the same function body checked (#577).
+//
+// The sign-in package internal/idkit/sso declares its own code constants: a
+// site there passes one of them, and it counts as the registry constant of
+// the same value (a value the registry lacks is a finding).
 
 const (
 	authAuditVocabularyFile = "internal/service/auth_audit_vocabulary.go"
 	authAuditServiceDir     = "internal/service"
 	// authAuditIDKitOIDCDir is the package of the sign-in error types.
 	authAuditIDKitOIDCDir = "internal/idkit/oidc"
+	// authAuditIDKitDir is the package of idkit.AuditEvent.
+	authAuditIDKitDir = "internal/idkit"
+	// authAuditSSODir is the sign-in package, whose own constants carry the
+	// codes it decides.
+	authAuditSSODir = "internal/idkit/sso"
 )
 
 // authAuditKind is the registry list a site's value must be in.
@@ -41,13 +50,15 @@ const (
 // authAuditSiteKinds are the writer sites the scan of the real sources must
 // each match at least once.
 var authAuditSiteKinds = []string{
-	"authRefusal", "oidcRefuse", "oidcRefuseWith", "ssoUnavailable", "refuse",
+	"authRefusal", "oidcRefuse", "oidcRefuseWith", "refuse",
 	"outcomeEntry.method", "outcomeEntry.fallback",
 	"AuthAuditEntry.Method", "AuthAuditEntry.Outcome",
 	"service.AuthAuditEntry.Method", "service.AuthAuditEntry.Outcome", "service.AuthAuditEntry.Reason",
 	"authRefusalError.reason", "idkitoidc.RefusalError.Code", "idkitoidc.UnavailableError.Code",
 	"AuthAuditReason.return", "Authenticate.return", "ownerRejected",
 	"AuthAuditEntry.Reason.assigned", "service.AuthAuditEntry.Reason.assigned",
+	"sso.refuse", "sso.refuseWith", "sso.unavailable", "sso.auditReason.return",
+	"idkit.AuditEvent.Method", "idkit.AuditEvent.Outcome", "idkit.AuditEvent.Reason",
 }
 
 // authAuditSourceFile is one parsed file and the repository-relative
@@ -68,8 +79,8 @@ type authAuditScan struct {
 	sites map[string]int
 	// used is every registered constant name some site passes.
 	used map[string]bool
-	// oidcCodes is the value of every constant an oidcRefuse or
-	// oidcRefuseWith site passes.
+	// oidcCodes is the value of every constant an oidcRefuse,
+	// oidcRefuseWith, sso.refuse or sso.refuseWith site passes.
 	oidcCodes map[string]bool
 	// declared maps every AuthAudit{Reason,Method,Outcome}* constant of the
 	// service package to the file declaring it.
@@ -181,6 +192,9 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 	// a function) and, for the service package, its string value.
 	consts := map[string]map[string]bool{}
 	serviceValues := map[string]string{}
+	// ssoValues is the string value of every constant of the sign-in
+	// package.
+	ssoValues := map[string]string{}
 	for _, f := range files {
 		if consts[f.dir] == nil {
 			consts[f.dir] = map[string]bool{}
@@ -200,6 +214,13 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 				value := spec.(*ast.ValueSpec)
 				for i, name := range value.Names {
 					consts[f.dir][name.Name] = true
+					if f.dir == authAuditSSODir && i < len(value.Values) {
+						if lit, ok := value.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							if unquoted, err := strconv.Unquote(lit.Value); err == nil {
+								ssoValues[name.Name] = unquoted
+							}
+						}
+					}
 					if f.dir != authAuditServiceDir {
 						continue
 					}
@@ -223,6 +244,21 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			}
 			return true
 		})
+	}
+
+	// registeredByValue is the registry constant of kind whose value is
+	// value, or "".
+	registeredByValue := func(kind authAuditKind, value string) string {
+		var found []string
+		for name := range registry[kind] {
+			if serviceValues[name] == value {
+				found = append(found, name)
+			}
+		}
+		if len(found) != 1 {
+			return ""
+		}
+		return found[0]
 	}
 
 	for _, f := range files {
@@ -252,6 +288,19 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			}
 		}
 
+		// idkitAlias is the name this file imports the package of
+		// idkit.AuditEvent under, resolved from its import path.
+		idkitAlias := ""
+		for _, imp := range f.file.Imports {
+			path, _ := strconv.Unquote(imp.Path.Value)
+			if strings.HasSuffix(path, "/"+authAuditIDKitDir) {
+				idkitAlias = "idkit"
+				if imp.Name != nil {
+					idkitAlias = imp.Name.Name
+				}
+			}
+		}
+
 		// check classifies expr at a site of kind site whose value must be
 		// in the list of kind; allowEmpty admits "".
 		check := func(site string, kind authAuditKind, expr ast.Expr, allowEmpty bool) {
@@ -265,7 +314,8 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 					return
 				}
 				scan.used[name] = true
-				if site == "oidcRefuse" || site == "oidcRefuseWith" {
+				switch site {
+				case "oidcRefuse", "oidcRefuseWith", "sso.refuse", "sso.refuseWith":
 					scan.oidcCodes[serviceValues[name]] = true
 				}
 			}
@@ -285,6 +335,14 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			case *ast.Ident:
 				if f.dir == authAuditServiceDir && consts[f.dir][e.Name] {
 					registered(e.Name)
+				} else if f.dir == authAuditSSODir && consts[f.dir][e.Name] {
+					value, ok := ssoValues[e.Name]
+					name := registeredByValue(kind, value)
+					if !ok || name == "" {
+						fail("constant " + e.Name + " has a value that is not in the " + string(kind) + " list")
+					} else {
+						registered(name)
+					}
 				} else if consts[f.dir][e.Name] {
 					fail("constant " + e.Name + " is not a registry constant")
 				}
@@ -305,9 +363,10 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			}
 		}
 
-		// compositeType is the type name of a composite literal and "service."
-		// or "idkitoidc." when it is qualified by this file's import of the
-		// service package or of the package of the sign-in error types.
+		// compositeType is the type name of a composite literal and
+		// "service.", "idkitoidc." or "idkit." when it is qualified by this
+		// file's import of the service package, of the package of the sign-in
+		// error types or of the package of idkit.AuditEvent.
 		compositeType := func(node *ast.CompositeLit) (typeName, prefix string) {
 			switch typ := node.Type.(type) {
 			case *ast.Ident:
@@ -317,11 +376,18 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 					typeName, prefix = typ.Sel.Name, "service."
 				} else if ok && idkitOIDCAlias != "" && x.Name == idkitOIDCAlias {
 					typeName, prefix = typ.Sel.Name, "idkitoidc."
+				} else if ok && idkitAlias != "" && x.Name == idkitAlias {
+					typeName, prefix = typ.Sel.Name, "idkit."
 				}
 			}
 			return typeName, prefix
 		}
 		auditEntryFields := map[string]authAuditKind{"Method": authAuditKindMethod, "Outcome": authAuditKindOutcome, "Reason": authAuditKindReason}
+		// auditRecord reports whether a composite literal of typeName and
+		// prefix becomes an audit row: AuthAuditEntry, or idkit.AuditEvent.
+		auditRecord := func(typeName, prefix string) bool {
+			return typeName == "AuthAuditEntry" || (prefix == "idkit." && typeName == "AuditEvent")
+		}
 
 		// Forwarded variables (#577): in one function body (a FuncDecl's or a
 		// FuncLit's, without the FuncLits nested in it), an identifier passed as
@@ -359,7 +425,7 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 					return
 				}
 				typeName, prefix := compositeType(node)
-				if typeName != "AuthAuditEntry" {
+				if !auditRecord(typeName, prefix) {
 					return
 				}
 				for _, element := range node.Elts {
@@ -472,8 +538,17 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 				case *ast.SelectorExpr:
 					name = fn.Sel.Name
 				}
+				if f.dir == authAuditSSODir {
+					switch name {
+					case "refuse", "refuseWith", "unavailable":
+						if len(node.Args) > 0 {
+							check("sso."+name, authAuditKindReason, node.Args[0], false)
+						}
+						return true
+					}
+				}
 				switch name {
-				case "authRefusal", "oidcRefuse", "oidcRefuseWith", "ssoUnavailable", "refuse":
+				case "authRefusal", "oidcRefuse", "oidcRefuseWith", "refuse":
 					if len(node.Args) > 0 {
 						check(name, authAuditKindReason, node.Args[0], false)
 					}
@@ -487,7 +562,7 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 				typeName, prefix := compositeType(node)
 				fields := map[string]authAuditKind{}
 				switch {
-				case typeName == "AuthAuditEntry":
+				case auditRecord(typeName, prefix):
 					fields = auditEntryFields
 				case prefix == "" && typeName == "authRefusalError":
 					fields = map[string]authAuditKind{"reason": authAuditKindReason}
@@ -514,6 +589,9 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 				}
 				if fn.Name.Name == "AuthAuditReason" && fn.Recv == nil && len(node.Results) == 2 {
 					check("AuthAuditReason.return", authAuditKindReason, node.Results[0], insideErrNil())
+				}
+				if f.dir == authAuditSSODir && fn.Name.Name == "auditReason" && fn.Recv == nil && len(node.Results) == 2 {
+					check("sso.auditReason.return", authAuditKindReason, node.Results[0], false)
 				}
 				if fn.Name.Name == "Authenticate" && authAuditReceiverIs(fn, "scimTokenService") && len(node.Results) == 2 {
 					// "" only on success, where the token is returned.
@@ -707,6 +785,22 @@ func TestAuthAuditWritersUseRegisteredValues(t *testing.T) {
 				"package service\nimport \"github.com/coreos/go-oidc/v3/oidc\"\nvar e = &oidc.RefusalError{Code: \"made_up\"}\n", 0, nil},
 			{"forwarded reason defined from a literal", authAuditServiceDir,
 				"package service\nfunc f() { reason := \"made_up\"; _ = AuthAuditEntry{Reason: reason} }\n", 1, nil},
+			{"literal code in the sign-in package", authAuditSSODir,
+				"package sso\nfunc f() error { return refuse(\"made_up\") }\n", 1,
+				func(t *testing.T, got authAuditScan) {
+					assert.Equal(t, 1, got.sites["sso.refuse"])
+				}},
+			{"sign-in package constant with an unregistered value", authAuditSSODir,
+				"package sso\nconst CodeMadeUp = \"made_up\"\nfunc f() error { return refuse(CodeMadeUp) }\n", 1, nil},
+			{"sign-in package constant with a registered value", authAuditSSODir,
+				"package sso\nconst CodeNoMappingMatch = \"no_mapping_match\"\nfunc f() error { return refuseWith(CodeNoMappingMatch, nil) }\n", 0,
+				func(t *testing.T, got authAuditScan) {
+					assert.Equal(t, 1, got.sites["sso.refuseWith"])
+					assert.True(t, got.used["AuthAuditReasonNoMappingMatch"])
+					assert.True(t, got.oidcCodes["no_mapping_match"])
+				}},
+			{"literal Method of idkit.AuditEvent", authAuditSSODir,
+				"package sso\nimport \"github.com/florinel-chis/gophercrm/internal/idkit\"\nvar e = idkit.AuditEvent{Method: \"made_up\"}\n", 1, nil},
 		}
 		for _, snippet := range snippets {
 			t.Run(snippet.name, func(t *testing.T) {

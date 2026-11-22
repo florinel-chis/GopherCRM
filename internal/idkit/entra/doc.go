@@ -5,6 +5,7 @@
 // count, a page size, and every request on the Graph origin over https.
 //
 // The package trusts one tenant, the one of the configured issuer. It logs
-// nothing, reads no environment and defines no refusal codes: the host
-// chooses the codes it answers with and does its own logging.
+// nothing, reads no environment and defines no refusal codes: its caller (the
+// sign-in of package sso) chooses the codes it answers with and does its own
+// logging.
 package entra

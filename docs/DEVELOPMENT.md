@@ -89,19 +89,32 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   `internal/idkit/oidc`: the issuer HTTP client, the cached discovered provider, the state, nonce
   and PKCE values, the client secret or certificate code exchange, the claim rules and the
   sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`); it defines no refusal codes
-  and logs nothing, so the codes stay in `internal/service/auth_audit_vocabulary.go` and the
-  logging in the service. The Entra ID rules live in `internal/idkit/entra`: the issuer and
+  and logs nothing. The Entra ID rules live in `internal/idkit/entra`: the issuer and
   tenant checks (`entra.IsIssuer`, `entra.Tenant`), the oid/tid link hint (`entra.LinkHint`) and
   the Microsoft Graph group-overage resolution with its paging, origin, page-size, page-count and
   deadline limits (`entra.GroupResolver`, `entra.EffectiveMaxPages`); it trusts one tenant, the
   configured issuer's, and likewise defines no refusal codes and logs nothing. The interfaces the
   host provides to the identity layer are declared in `internal/idkit/host.go`: `IdentityStore`,
-  `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `AuditSink`, `ConfigSource`,
-  `TxRunner`, `Clock` and `Logger`. `IdentityStore` and `SessionIssuer` join a transaction carried
-  by ctx; `AttemptStore`, `AuditSink` and `ConfigSource` run only outside one. GopherCRM's adapters
-  (`NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
-  `NewIDKitAuditSink`, `NewIDKitConfigSource`, `NewIDKitLogger`, and the transaction manager as
-  the `TxRunner`) are not wired in yet: the OIDC service still uses the repositories directly.
+  `AccountStore`, `AttemptStore`, `SessionIssuer` (`internal/idkit/host.go`), `AuditSink`,
+  `ConfigSource`, `TxRunner`, `Clock` and `Logger`. `IdentityStore`, `AccountStore` and
+  `SessionIssuer` join a transaction carried by ctx; `AttemptStore`, `AuditSink` and
+  `ConfigSource` run only outside one. The OpenID Connect sign-in itself lives in
+  `internal/idkit/sso` and runs over those interfaces only: `sso.Service` (`internal/idkit/sso/service.go`)
+  has the start and the callback (the attempt claim, the code exchange, the token and claim
+  checks, the Graph and userinfo group reads, `rolemap.Match`, `entra.LinkHint`), one `TxRunner`
+  transaction, the audit event after it and the outcome log line; the account link rule is
+  `Service.signInAccount` (`internal/idkit/sso/link.go`): the exact `(issuer, subject)` pair, the
+  Entra ID `oid`+`tid` link only to a `source` `scim` identity under the same issuer, email never
+  links. The package declares the refusal and unavailable codes it decides (`sso.CodeStateInvalid`
+  and the rest, `internal/idkit/sso/codes.go`), with the same values as the registry in
+  `internal/service/auth_audit_vocabulary.go`, and `sso.RefuseAccount` attaches the account a
+  refusal concerns. `NewOIDCService` (`internal/service/auth_oidc.go`) wires GopherCRM's adapters
+  into it: `NewIDKitIdentityStore`, `NewIDKitAttemptStore`, `NewIDKitSessionIssuer` (`internal/service/auth_oidc_host.go`),
+  `NewIDKitAuditSink` (only with `WithOIDCAudit`), `NewIDKitConfigSource`,
+  `NewIDKitLogger` (component `oidc_sign_in`), the account store `oidcAccountStore` (the
+  governed role write of an existing account and the provisioning of a new one) and the governed
+  transaction `oidcSignInRunner` as the `TxRunner`, behind `oidcPasswordFirstRunner`, which
+  hashes the unusable password of a first sign-in before the transaction starts.
   Two test kits sit next to the layer, and only tests import them: `internal/idkit/oidctest`,
   an in-process TLS OpenID Connect issuer (`internal/idkit/oidctest/issuer.go` `oidctest.New`)
   with no provider-specific code, and `internal/idkit/scim/scimtest`, a SCIM client over an
@@ -389,7 +402,8 @@ api_keys). The reset confirm (token first, then owner) inverts the request's ord
 the same order (see [CONCURRENCY.md](CONCURRENCY.md)).
 
 **OpenID Connect sign-in (#435)** — `POST /auth/oidc/start` and `POST /auth/oidc/callback`
-(`internal/service/auth_oidc.go`, `internal/handler/auth_oidc_handler.go`) sign in with the
+(`internal/idkit/sso`, wired by `internal/service/auth_oidc.go`, and
+`internal/handler/auth_oidc_handler.go`) sign in with the
 single sign-on settings of #434, re-read on every call. The single-use token pattern above covers
 the sign-in attempts too: Start stores only the HMAC of the state (`oidc_login_attempts`, keyed
 like the other opaque tokens, ten minutes), and the callback spends the row before it talks to
@@ -407,8 +421,8 @@ transaction and logs `audit_id` with the outcome. A successful `POST /auth/login
 (#466), adds to the row of its bucket (`attempts`, one row per method, reason, account, client
 network and UTC minute; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`oidc.NewHTTPClient`, `internal/idkit/oidc/httpclient.go`) has a 10 s
 timeout, follows no redirect and ignores `HTTP(S)_PROXY`; `NewOIDCService` builds it once, after
-the options, and every sign-in shares it. Tests trust their TLS issuer through
-`WithOIDCRootCAs`, and there is no option that replaces the client. `oidcService.discover` keeps
+the options (`sso.New`), and every sign-in shares it. Tests trust their TLS issuer through
+`WithOIDCRootCAs`, and there is no option that replaces the client. The sign-in's discovery keeps
 one discovered issuer (`oidc.ProviderCache`, `internal/idkit/oidc/provider.go`) for
 `oidc.ProviderCacheTTL` (24 h), keyed by issuer,
 app-key mode (`OIDC_ENTRA_APP_SIGNING_KEYS` on an Entra ID issuer) and, in that mode, client id;
@@ -420,12 +434,15 @@ a failed discovery is never kept and the mutex is held while a miss fetches. The
 fixture's `reset` clears the cache and the counters. After the code exchange
 (PKCE, redirect URI `APP_BASE_URL/auth/callback`) and the ID-token checks (signature, `iss`,
 `aud`, `exp`, nonce compared in constant time), one governed transaction
-(`userService.ApplyOIDCSignIn`, `internal/service/user_governed_writes.go`) takes
-`admin set → users → roles → user_identities → refresh_tokens`: it reads the `(iss, sub)`
-identity, re-applies the mapped role with the governed rules minus the actor-key and escalation
-checks (`ErrLastAdmin` and `ErrCustomerLoginRole` refuse; a change writes a `user_role_changed`
-row with `auth_method` `oidc`), or provisions the user, its identity and its audit row, and then
-inserts the refresh token and signs the access token from the row it wrote. `last_login_at` and
+(`oidcSignInRunner`, `internal/service/auth_oidc_host.go`) takes
+`admin set → users → roles → user_identities → refresh_tokens`: the link rule of
+`internal/idkit/sso` reads the `(iss, sub)` identity, and the account store
+(`idkit.AccountStore`, implemented by `oidcAccountStore`) re-applies the mapped role with the
+governed rules minus the actor-key and escalation checks (`ErrLastAdmin` and
+`ErrCustomerLoginRole` refuse; a change writes a `user_role_changed` row with `auth_method`
+`oidc`), or provisions the user and its audit row, whose identity the link rule then inserts;
+the session issuer last inserts the refresh token and signs the access token from the row it
+reads in the transaction. `last_login_at` and
 the lockout counters are untouched. Refusals are `ErrSSOSignInFailed` (401) and are logged with an
 `error_code` only; the code, state, nonce, verifier, tokens, email, subject and claims are never
 logged. Every `oidc_sign_in` line carries `request_id` (the handler passes it on the context,

@@ -30,6 +30,7 @@ func TestIDKitImportBoundary(t *testing.T) {
 		require.Contains(t, pkgs, module+"/internal/idkit/rolemap", "go list ./internal/idkit/... did not list the rolemap package")
 		require.Contains(t, pkgs, module+"/internal/idkit/oidc", "go list ./internal/idkit/... did not list the oidc package")
 		require.Contains(t, pkgs, module+"/internal/idkit/entra", "go list ./internal/idkit/... did not list the entra package")
+		require.Contains(t, pkgs, module+"/internal/idkit/sso", "go list ./internal/idkit/... did not list the sso package")
 		require.Contains(t, pkgs, module+"/internal/idkit/oidctest", "go list ./internal/idkit/... did not list the oidctest package")
 		require.Contains(t, pkgs, module+"/internal/idkit/scim/scimtest", "go list ./internal/idkit/... did not list the scimtest package")
 		found := violations(module, pkgs)

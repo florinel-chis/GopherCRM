@@ -12,6 +12,7 @@ import (
 	"time"
 
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
+	"github.com/florinel-chis/gophercrm/internal/idkit/sso"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -438,11 +439,6 @@ func authRefusal(reason string, userID uint, err error) error {
 	return &authRefusalError{reason: reason, userID: userID, err: err}
 }
 
-// ssoUnavailable is a 503 of the single sign-on with its reason code
-// (not_configured, discovery_failed or token_exchange_failed), an
-// idkitoidc.UnavailableError. It reads and compares as ErrSSOUnavailable.
-func ssoUnavailable(code string) error { return &idkitoidc.UnavailableError{Code: code} }
-
 // AuthAuditReason is the audit reason of a sign-in error and the user id it
 // carries (0 when unknown): the typed refusals' own codes, sso_disabled for
 // ErrSSODisabled, the bare login and refresh sentinels' codes, and
@@ -457,9 +453,8 @@ func AuthAuditReason(err error) (reason string, userID uint) {
 	}
 	var oidcRefusal *idkitoidc.RefusalError
 	if errors.As(err, &oidcRefusal) {
-		var account *oidcAccountRefusal
-		if errors.As(err, &account) {
-			userID = account.userID
+		if accountID := sso.RefusedAccount(err); accountID != "" {
+			userID, _ = parseIDKitID(accountID)
 		}
 		return oidcRefusal.Code, userID
 	}

@@ -14,9 +14,13 @@ import (
 // strings; the host converts them to its own key type.
 //
 // A ctx handed to a host method may carry a transaction started through
-// TxRunner. IdentityStore and SessionIssuer join it. AttemptStore, AuditSink
-// and ConfigSource run only outside a transaction and refuse a ctx that
-// carries one.
+// TxRunner. IdentityStore, AccountStore and SessionIssuer join it.
+// AttemptStore, AuditSink and ConfigSource run only outside a transaction and
+// refuse a ctx that carries one.
+//
+// The sign-in itself (package sso) runs over these interfaces: it decides
+// which account an identity belongs to, and the host's AccountStore signs
+// that account in or provisions a new one.
 
 // Errors the host implementations return, classified with errors.Is.
 var (
@@ -68,9 +72,10 @@ type Logger interface {
 
 // TxRunner runs fn inside a transaction: it commits when fn returns nil and
 // rolls back when fn returns an error. fn's ctx carries the transaction.
-// IdentityStore and SessionIssuer join a transaction carried by ctx;
-// AttemptStore, AuditSink and ConfigSource run only outside one and refuse a
-// ctx that carries one.
+// IdentityStore, AccountStore and SessionIssuer join a transaction carried by
+// ctx; AttemptStore, AuditSink and ConfigSource run only outside one and
+// refuse a ctx that carries one. A runner may call fn more than once (a
+// replay after a deadlock); every call starts from nothing.
 type TxRunner interface {
 	WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error
 }
@@ -102,6 +107,37 @@ type IdentityStore interface {
 	// issuer and subject pair is already used, and ErrInvalidAccountID for
 	// an AccountID the host cannot store.
 	Create(ctx context.Context, identity Identity) error
+}
+
+// Profile is what a first sign-in knows about the person, for a new
+// account.
+type Profile struct {
+	Email      string
+	GivenName  string
+	FamilyName string
+}
+
+// AccountStore holds the accounts identities sign in as. Both methods join
+// the transaction carried by ctx, and the caller decides which account an
+// identity belongs to before it calls them.
+//
+// A refusal is an oidc.RefusalError whose Code is the reason; a refusal that
+// concerns an existing account carries its id (sso.RefuseAccount). Any other
+// error is a failure of the host.
+type AccountStore interface {
+	// SignIn signs in as the account: it locks it, refuses an erased
+	// (account_erased) or deactivated (account_inactive) one, a custom role
+	// for a customer account (customer_login_role), a role that no longer
+	// exists (role_missing) and a change that would leave no active
+	// administrator (last_admin), and then applies roleID to the account
+	// with its role audit record.
+	SignIn(ctx context.Context, accountID string, roleID uint) error
+	// Provision creates an active account with roleID and its role audit
+	// record and returns its id. It refuses a missing or too long email
+	// (email_missing), a role that no longer exists (role_missing) and an
+	// email that any account, erased ones included, already uses
+	// (email_taken). Email never links to an existing account.
+	Provision(ctx context.Context, profile Profile, roleID uint) (string, error)
 }
 
 // Attempt is one started sign-in: the hash of its state, the nonce and PKCE

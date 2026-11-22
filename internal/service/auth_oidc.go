@@ -4,35 +4,31 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
-	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit"
 	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
-	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
+	"github.com/florinel-chis/gophercrm/internal/idkit/sso"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/oauth2"
-	"gorm.io/gorm"
 )
 
-// OpenID Connect sign-in (#435): the authorization code flow with PKCE
+// OpenID Connect sign-in (#435): the host side of the sign-in in
+// internal/idkit/sso, which runs the authorization code flow with PKCE
 // against the issuer, client and role mapping of the single sign-on settings
-// (#434), which are re-read on every call.
+// (#434), re-read on every call, over the host interfaces of internal/idkit.
+// NewOIDCService wires GopherCRM's adapters (auth_oidc_host.go) into it: the
+// settings, the oidc_login_attempts rows, user_identities, the accounts and
+// the governed role write (idkit.AccountStore), the session issuing, the
+// sign-in audit and the logger.
 //
-// Start writes one single-use oidc_login_attempts row (the HMAC of the state,
+// Start stores one single-use oidc_login_attempts row (the HMAC of the state,
 // the nonce, the PKCE verifier and the issuer) and returns the authorization
 // URL together with the raw state, which the handler also sets as the
 // short-lived sign-in cookie of the browser that called it (#528). Callback
@@ -40,14 +36,13 @@ import (
 // UPDATE by id committed on its own that also blanks the nonce and the
 // verifier, #453), then requires the sign-in cookie sent with the callback to
 // equal the posted state, so a sign-in finishes only in the browser that
-// started it (binding_missing / binding_mismatch, #528), exchanges the code, verifies the ID token (signature, iss, aud, exp and
-// the nonce), maps its groups or roles claim to a role (the first matching
-// entry, in stored order; an Entra ID group overage is read from Microsoft
-// Graph, #450; when a groups mapping meets an ID token without a groups claim
-// and no overage, the groups are read from the issuer's userinfo endpoint,
-// whose sub must equal the token's, #451) and then runs one governed
-// transaction
-// (userService.ApplyOIDCSignIn):
+// started it (binding_missing / binding_mismatch, #528), exchanges the code,
+// verifies the ID token (signature, iss, aud, exp and the nonce), maps its
+// groups or roles claim to a role (the first matching entry, in stored order;
+// an Entra ID group overage is read from Microsoft Graph, #450; when a groups
+// mapping meets an ID token without a groups claim and no overage, the groups
+// are read from the issuer's userinfo endpoint, whose sub must equal the
+// token's, #451) and then runs one governed transaction (oidcSignInRunner):
 //
 //	admin set → users → roles → user_identities → refresh_tokens
 //
@@ -57,23 +52,17 @@ import (
 // identity SCIM created under that issuer signs in as that account and links
 // its (iss, sub) pair (#505). Any other first sign-in provisions a user (JIT)
 // unless any user, erased ones included, already holds its email address in
-// any letter case; email never links to an existing account. Every sign-in re-applies the mapped role through the governed role
-// write, so the last-admin rule and the role audit (auth_method oidc) apply.
-// Success returns the same token pair as a password login.
+// any letter case; email never links to an existing account. Every sign-in
+// re-applies the mapped role through the governed role write
+// (oidcAccountStore), so the last-admin rule and the role audit (auth_method
+// oidc) apply. Success returns the same token pair as a password login.
 //
 // Every log line carries component oidc_sign_in, the request_id of the HTTP
 // request and the attempt_id of the row (0 before the row exists or is
 // claimed), and never a code, state, sign-in cookie value, nonce, verifier,
-// token, email, subject, name or claim. Attempts older than OIDCLoginAttemptRetention are pruned by
-// the stale bulk operation sweep (PruneOIDCLoginAttempts).
-//
-// The generic OpenID Connect client helpers (the issuer HTTP client, the
-// cached provider, the state, nonce and PKCE values, the secret or
-// certificate code exchange, the claim rules and the error types) live in
-// internal/idkit/oidc, and the Entra ID rules (the issuer and tenant checks,
-// the oid/tid link hint and the Microsoft Graph group resolution with its
-// limits) in internal/idkit/entra; this file keeps the host's side: settings,
-// attempts, the userinfo group resolution, auditing and logging.
+// token, email, subject, name or claim. Attempts older than
+// OIDCLoginAttemptRetention are pruned by the stale bulk operation sweep
+// (PruneOIDCLoginAttempts).
 
 // Errors of the OIDC sign-in, classified with errors.Is.
 var (
@@ -119,19 +108,11 @@ const OIDCAttemptTTL = oidcAttemptTTL
 
 // Limits and lifetimes of the OIDC sign-in.
 const (
-	oidcAttemptTTL         = 10 * time.Minute
+	oidcAttemptTTL         = sso.DefaultAttemptTTL
 	oidcIssuerMaxBytes     = models.UserIdentityIssuerMaxLength
 	oidcEmailMaxBytes      = 255
 	oidcCallbackPath       = "/auth/callback"
 	oidcRandomPasswordSize = 32
-)
-
-// Userinfo group resolution of an ID token without a groups claim (#451).
-const (
-	// oidcUserInfoTimeout is the one deadline of the userinfo request.
-	oidcUserInfoTimeout = 5 * time.Second
-	// oidcUserInfoMaxBytes bounds the userinfo response body.
-	oidcUserInfoMaxBytes = 1 << 20
 )
 
 // oidcRefuse and oidcRefuseWith build a refusal with the error_code it is
@@ -141,28 +122,6 @@ func oidcRefuse(code string) error { return &idkitoidc.RefusalError{Code: code} 
 
 func oidcRefuseWith(code string, cause error) error {
 	return &idkitoidc.RefusalError{Code: code, Cause: cause}
-}
-
-// oidcAccountRefusal is a refusal that concerns the account an identity row
-// linked to (the audit row's user_id, #454). It reads and compares as the
-// refusal it wraps.
-type oidcAccountRefusal struct {
-	err    error
-	userID uint
-}
-
-func (e *oidcAccountRefusal) Error() string { return e.err.Error() }
-
-func (e *oidcAccountRefusal) Unwrap() error { return e.err }
-
-// oidcRefusalForUser sets the user a refusal concerns; err is returned as it
-// is when it is not a refusal.
-func oidcRefusalForUser(err error, userID uint) error {
-	var refusal *idkitoidc.RefusalError
-	if errors.As(err, &refusal) {
-		return &oidcAccountRefusal{err: err, userID: userID}
-	}
-	return err
 }
 
 // OIDCServiceOption configures NewOIDCService. Production passes none.
@@ -185,37 +144,21 @@ func WithOIDCRootCAs(pool *x509.CertPool) OIDCServiceOption {
 }
 
 type oidcService struct {
-	sso           SSOSettingsService
-	auth          *authService
-	users         *userService
-	refreshTokens repository.RefreshTokenRepository
-	identities    repository.UserIdentityRepository
-	attempts      repository.OIDCLoginAttemptRepository
-	appBaseURL    string
-	now           func() time.Time
-	rootCAs       *x509.CertPool
-	// client is the issuer client (idkitoidc.NewHTTPClient), built once by
-	// NewOIDCService after the options.
-	client *http.Client
-	// providers keeps the last discovered issuer (see discover).
-	providers *idkitoidc.ProviderCache
-	// beforeJITInsert is a test seam of the first sign-in (see
-	// oidcSignIn.beforeInsert); nil in production.
-	beforeJITInsert func()
-	// beforeSCIMLink is a test seam of the first sign-in that matched a
-	// SCIM-created identity by its oid (see oidcSignIn.beforeSCIMLink); nil
-	// in production.
-	beforeSCIMLink func()
-	// entraIssuerHost, graphBaseURL and graphTimeout drive the Microsoft
-	// Graph resolution of an Entra ID group overage. NewOIDCService sets the
-	// production values; tests in this package replace them directly.
-	entraIssuerHost string
-	graphBaseURL    string
-	graphTimeout    time.Duration
-	// userinfoTimeout is the deadline of the userinfo request (#451).
-	userinfoTimeout time.Duration
+	// auth is the session-issuing auth service, nil when NewOIDCService got
+	// another one: Start and Callback then answer errOIDCNotWired.
+	auth       *authService
+	appBaseURL string
+	now        func() time.Time
+	rootCAs    *x509.CertPool
 	// audit, when set, records every callback (#454).
 	audit AuthAuditService
+	// configs is the settings source of the sign-in.
+	configs *oidcConfigSource
+	// accounts is the account store of the sign-in.
+	accounts *oidcAccountStore
+	// signin is the sign-in itself, built once by NewOIDCService after the
+	// options.
+	signin *sso.Service
 }
 
 // NewOIDCService builds the sign-in from the single sign-on settings, the
@@ -223,7 +166,7 @@ type oidcService struct {
 // the user, role, role-audit, refresh-token, identity and attempt
 // repositories, the transaction manager they share and APP_BASE_URL.
 func NewOIDCService(
-	sso SSOSettingsService,
+	ssoSettings SSOSettingsService,
 	auth AuthService,
 	userRepo repository.UserRepository,
 	roleRepo repository.RoleRepository,
@@ -237,25 +180,47 @@ func NewOIDCService(
 ) OIDCService {
 	issuer, _ := auth.(*authService)
 	s := &oidcService{
-		sso:           sso,
-		auth:          issuer,
-		users:         &userService{userRepo: userRepo, governance: &roleGovernance{users: userRepo, roles: roleRepo, audit: auditRepo, txManager: txManager}},
-		refreshTokens: refreshTokens,
-		identities:    identities,
-		attempts:      attempts,
-		appBaseURL:    strings.TrimRight(appBaseURL, "/"),
-		now:           time.Now,
-
-		entraIssuerHost: entra.IssuerHost,
-		graphBaseURL:    entra.GraphBaseURL,
-		graphTimeout:    entra.GraphTimeout,
-		userinfoTimeout: oidcUserInfoTimeout,
+		auth:       issuer,
+		appBaseURL: strings.TrimRight(appBaseURL, "/"),
+		now:        time.Now,
 	}
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.client = idkitoidc.NewHTTPClient(s.rootCAs)
-	s.providers = idkitoidc.NewProviderCache(s.client, func() time.Time { return s.now() })
+	governance := &roleGovernance{users: userRepo, roles: roleRepo, audit: auditRepo, txManager: txManager}
+	s.configs = &oidcConfigSource{wired: s.auth != nil, inner: NewIDKitConfigSource(ssoSettings)}
+	s.accounts = &oidcAccountStore{}
+	options := sso.Options{
+		Config:          s.configs,
+		Attempts:        NewIDKitAttemptStore(attempts),
+		Identities:      NewIDKitIdentityStore(identities),
+		Accounts:        s.accounts,
+		Tx:              &oidcPasswordFirstRunner{next: &oidcSignInRunner{governance: governance}},
+		Clock:           idkit.ClockFunc(func() time.Time { return s.now() }),
+		Logger:          NewIDKitLogger("oidc_sign_in"),
+		RedirectURL:     s.redirectURI(),
+		RootCAs:         s.rootCAs,
+		EntraIssuerHost: entra.IssuerHost,
+		GraphBaseURL:    entra.GraphBaseURL,
+		GraphTimeout:    entra.GraphTimeout,
+		UserInfoTimeout: sso.UserInfoTimeout,
+		AttemptTTL:      oidcAttemptTTL,
+		IssuerMaxBytes:  oidcIssuerMaxBytes,
+	}
+	if s.audit != nil {
+		options.Audit = NewIDKitAuditSink(s.audit)
+	}
+	if s.auth != nil {
+		// The secret is read on every call, from the auth service in force.
+		options.StateHash = func(state string) string { return hashOpaqueToken(state, s.auth.sessionTokenSecret()) }
+		options.SubjectRef = func(issuer, subject string) string {
+			return AuthAuditSubjectRef(s.auth.sessionTokenSecret(), issuer, subject)
+		}
+		if sessions, err := NewIDKitSessionIssuer(s.auth, userRepo, refreshTokens); err == nil {
+			options.Sessions = &oidcSessionIssuer{inner: sessions.(*idkitSessionIssuer)}
+		}
+	}
+	s.signin = sso.New(options)
 	return s
 }
 
@@ -291,154 +256,17 @@ func PruneOIDCLoginAttempts(ctx context.Context, repo repository.OIDCLoginAttemp
 	}
 }
 
-// oidcLogger is the entry every sign-in log line starts from: the component,
-// the request id the handler put on ctx (a field only, it is client input)
-// and the attempt row id, 0 when there is none yet.
-func oidcLogger(ctx context.Context, attemptID uint) *logrus.Entry {
-	base := utils.Logger
-	if base == nil {
-		base = logrus.StandardLogger()
-	}
-	return base.WithFields(logrus.Fields{
-		"component":  "oidc_sign_in",
-		"request_id": utils.RequestIDFromContext(ctx),
-		"attempt_id": attemptID,
-	})
-}
-
 // redirectURI is the SPA page the issuer sends the browser back to.
 func (s *oidcService) redirectURI() string {
 	return s.appBaseURL + oidcCallbackPath
 }
 
-// usableConfig reads the settings and refuses a configuration that cannot
-// sign anyone in.
-func (s *oidcService) usableConfig(ctx context.Context) (EffectiveSSOConfig, error) {
-	if s.auth == nil {
-		return EffectiveSSOConfig{}, errOIDCNotWired
-	}
-	cfg, err := s.sso.SSOConfig(ctx)
-	if err != nil {
-		return EffectiveSSOConfig{}, fmt.Errorf("read the single sign-on settings: %w", err)
-	}
-	if !cfg.Enabled {
-		return EffectiveSSOConfig{}, ErrSSODisabled
-	}
-	return cfg, nil
-}
-
-func ssoConfigured(cfg EffectiveSSOConfig) bool {
-	return cfg.IssuerURL != "" && cfg.ClientID != "" && len(cfg.IssuerURL) <= oidcIssuerMaxBytes
-}
-
-// providerKey is the cache key of cfg. The application signing keys are used
-// only when OIDC_ENTRA_APP_SIGNING_KEYS is on and the issuer is Entra ID.
-func (s *oidcService) providerKey(cfg EffectiveSSOConfig) idkitoidc.ProviderKey {
-	key := idkitoidc.ProviderKey{Issuer: cfg.IssuerURL}
-	if cfg.EntraAppSigningKeys && entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-		key.AppKeys, key.ClientID = true, cfg.ClientID
-	}
-	return key
-}
-
-// discover returns the configured issuer's provider and the context that
-// carries the issuer client for the code exchange and the userinfo call.
-// The discovery is cached by idkitoidc.ProviderCache for
-// idkitoidc.ProviderCacheTTL per (issuer, app-key mode, client id in app-key
-// mode); a different key replaces the entry, and go-oidc fetches the keys
-// again when a token names an unknown key id. A failed discovery
-// (unreachable, redirect, timeout, an issuer mismatch) is not kept, leaves
-// the cached entry as it was and is ErrSSOUnavailable.
-func (s *oidcService) discover(ctx context.Context, cfg EffectiveSSOConfig, attemptID uint) (context.Context, *idkitoidc.Discovery, error) {
-	ctx = oidc.ClientContext(ctx, s.client)
-	entry, err := s.providers.Get(ctx, s.providerKey(cfg))
-	if err != nil {
-		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
-		return nil, nil, ssoUnavailable(AuthAuditReasonDiscoveryFailed)
-	}
-	return ctx, entry, nil
-}
-
-// oidcClient is the OAuth 2.0 client of the configuration: the client id,
-// the secret or, when one is in force, the client certificate, the SPA
-// callback and the request scopes.
-func (s *oidcService) oidcClient(cfg EffectiveSSOConfig) idkitoidc.Client {
-	client := idkitoidc.Client{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  s.redirectURI(),
-		Scopes:       s.requestScopes(cfg),
-	}
-	if cfg.ClientCertificate != nil {
-		client.Certificate = &idkitoidc.ClientCertificate{
-			Certificate: cfg.ClientCertificate.Certificate,
-			PrivateKey:  cfg.ClientCertificate.PrivateKey,
-		}
-	}
-	return client
-}
-
-// exchangeCode redeems the authorization code with the PKCE verifier. With a
-// client certificate in force the request carries a fresh client assertion;
-// a signing failure fails the exchange.
-func (s *oidcService) exchangeCode(ctx context.Context, provider *oidc.Provider, cfg EffectiveSSOConfig, code, verifier string) (*oauth2.Token, error) {
-	return s.oidcClient(cfg).Exchange(ctx, provider, code, verifier, s.now())
-}
-
-// requestScopes are the configured scopes, plus the Microsoft Graph
-// User.Read scope (once) when the issuer is Entra ID and the role
-// mapping uses groups, so a group overage can be resolved. The added scope is
-// never stored.
-func (s *oidcService) requestScopes(cfg EffectiveSSOConfig) []string {
-	scopes := append([]string(nil), cfg.Scopes...)
-	if !entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) || !rolemap.UsesGroups(cfg.RoleMapping) {
-		return scopes
-	}
-	for _, scope := range scopes {
-		if scope == entra.GraphScope {
-			return scopes
-		}
-	}
-	return append(scopes, entra.GraphScope)
-}
-
 func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
-	cfg, err := s.usableConfig(ctx)
+	authz, err := s.signin.Start(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !ssoConfigured(cfg) {
-		oidcLogger(ctx, 0).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, ssoUnavailable(AuthAuditReasonNotConfigured)
-	}
-	ctx, discovered, err := s.discover(ctx, cfg, 0)
-	if err != nil {
-		return nil, err
-	}
-	provider := discovered.Provider
-
-	request, err := idkitoidc.NewAuthRequest()
-	if err != nil {
-		return nil, err
-	}
-
-	now := s.now().UTC()
-	attempt := &models.OIDCLoginAttempt{
-		StateHash:    hashOpaqueToken(request.State, s.auth.sessionTokenSecret()),
-		Nonce:        request.Nonce,
-		CodeVerifier: request.Verifier,
-		Issuer:       cfg.IssuerURL,
-		ExpiresAt:    now.Add(oidcAttemptTTL),
-	}
-	if err := s.attempts.Create(attempt); err != nil {
-		return nil, fmt.Errorf("store the single sign-on attempt: %w", err)
-	}
-	oidcLogger(ctx, attempt.ID).Info("Single sign-on started")
-	return &OIDCAuthorization{
-		URL:          idkitoidc.AuthCodeURL(s.oidcClient(cfg).OAuth2Config(provider), request),
-		State:        request.State,
-		SecureCookie: s.httpsOnlyCookie(),
-	}, nil
+	return &OIDCAuthorization{URL: authz.URL, State: authz.State, SecureCookie: s.httpsOnlyCookie()}, nil
 }
 
 // httpsOnlyCookie reports whether APP_BASE_URL is https (the scheme compared
@@ -448,332 +276,18 @@ func (s *oidcService) httpsOnlyCookie() bool {
 	return found && strings.EqualFold(scheme, "https")
 }
 
+// Callback runs the sign-in and returns its session as a token pair whose
+// User is the row the session issuing read inside the sign-in transaction.
 func (s *oidcService) Callback(ctx context.Context, code, state, binding string) (*AuthTokens, error) {
-	tokens, facts, err := s.callback(ctx, code, state, binding)
-	return s.finishCallback(ctx, tokens, facts, err)
-}
-
-// finishCallback writes the audit row of a callback and then logs its
-// outcome with the row id (audit_id, 0 when the write failed or there is no
-// audit service).
-func (s *oidcService) finishCallback(ctx context.Context, tokens *AuthTokens, facts oidcCallbackFacts, err error) (*AuthTokens, error) {
-	auditID := s.recordCallback(ctx, tokens, facts, err)
-	if err != nil {
-		if errorCode := idkitoidc.RefusalCode(err); errorCode != "" {
-			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
-				Warn("Single sign-on refused")
-		} else if errorCode := idkitoidc.UnavailableCode(err); errorCode != "" {
-			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
-				Warn("Single sign-on unavailable")
-		}
-		return nil, err
-	}
-	oidcLogger(ctx, facts.attemptID).WithField("user_id", tokens.User.ID).WithField("audit_id", auditID).
-		Info("Signed in through single sign-on")
-	return tokens, nil
-}
-
-// oidcCallbackFacts is what a callback learned before it ended, for the
-// audit row (#454): the claimed attempt, the verified identity, and the
-// claim values the mapping used.
-type oidcCallbackFacts struct {
-	// attemptID is the claimed attempt, 0 when the claim did not succeed.
-	attemptID uint
-	// verified is set once the ID token verified and its nonce matched;
-	// issuer and subject are its iss and sub.
-	verified        bool
-	issuer, subject string
-	// groups and roles are nil until they were read and well formed; groups
-	// is the resolved list once a Graph or userinfo resolution ran.
-	groups, roles []string
-}
-
-// recordCallback writes the audit row of one callback and returns its id, 0
-// without an audit service or when the write failed. subject_ref is set only
-// on a refusal decided after the ID token verified.
-func (s *oidcService) recordCallback(ctx context.Context, tokens *AuthTokens, facts oidcCallbackFacts, err error) uint {
-	if s.audit == nil {
-		return 0
-	}
-	entry := outcomeEntry(AuthAuditMethodOIDC, tokens, err, AuthAuditReasonInternalError)
-	entry.AttemptID = facts.attemptID
-	entry.ClaimGroups = facts.groups
-	entry.ClaimRoles = facts.roles
-	if err != nil && facts.verified && s.auth != nil {
-		entry.SubjectRef = AuthAuditSubjectRef(s.auth.sessionTokenSecret(), facts.issuer, facts.subject)
-	}
-	return s.audit.Record(ctx, entry)
-}
-
-// callback finishes the sign-in and also returns what it learned: the id of
-// the attempt it claimed (0 when the claim did not succeed), for the log line
-// of Callback, and the verified identity and claim values, for the audit row.
-func (s *oidcService) callback(ctx context.Context, code, state, binding string) (*AuthTokens, oidcCallbackFacts, error) {
-	var facts oidcCallbackFacts
-	cfg, err := s.usableConfig(ctx)
-	if err != nil {
-		return nil, facts, err
-	}
-
-	// The claim is its own committed statement: a plain read by the state's
-	// HMAC, then one conditional UPDATE by id that stamps used_at and blanks
-	// the nonce and verifier (an expired row only has them blanked). A state
-	// is spent whatever happens next, so it can never be replayed; the
-	// returned attempt still holds the verifier and nonce in memory.
-	attempt, err := s.attempts.Claim(hashOpaqueToken(state, s.auth.sessionTokenSecret()), s.now().UTC())
-	if err != nil {
-		if apperrors.IsNotFound(err) {
-			return nil, facts, oidcRefuse(AuthAuditReasonStateInvalid)
-		}
-		return nil, facts, fmt.Errorf("claim the single sign-on attempt: %w", err)
-	}
-	facts.attemptID = attempt.ID
-	// The sign-in cookie set by Start holds the raw state, and the attempt
-	// was found by the state's HMAC: a cookie equal to the posted state is
-	// bound to this attempt. Checked after the claim, so a refused callback
-	// still spends its attempt and its audit row names it.
-	if binding == "" {
-		return nil, facts, oidcRefuse(AuthAuditReasonBindingMissing)
-	}
-	if !idkitoidc.BindingMatches(binding, state) {
-		return nil, facts, oidcRefuse(AuthAuditReasonBindingMismatch)
-	}
-	if attempt.Issuer != cfg.IssuerURL {
-		return nil, facts, oidcRefuse(AuthAuditReasonIssuerChanged)
-	}
-	if !ssoConfigured(cfg) {
-		oidcLogger(ctx, attempt.ID).WithField("error_code", "not_configured").Warn("Single sign-on is enabled but not configured")
-		return nil, facts, ssoUnavailable(AuthAuditReasonNotConfigured)
-	}
-	ctx, discovered, err := s.discover(ctx, cfg, attempt.ID)
-	if err != nil {
-		return nil, facts, err
-	}
-	provider := discovered.Provider
-
-	token, err := s.exchangeCode(ctx, provider, cfg, code, attempt.CodeVerifier)
-	if err != nil {
-		oidcLogger(ctx, attempt.ID).WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
-		return nil, facts, ssoUnavailable(AuthAuditReasonTokenExchangeFailed)
-	}
-	rawIDToken, _ := token.Extra("id_token").(string)
-	if rawIDToken == "" {
-		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenMissing)
-	}
-	idToken, err := discovered.Verifier(cfg.ClientID).Verify(ctx, rawIDToken)
-	if err != nil {
-		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenInvalid)
-	}
-	if !idkitoidc.NonceMatches(idToken.Nonce, attempt.Nonce) {
-		return nil, facts, oidcRefuse(AuthAuditReasonNonceMismatch)
-	}
-	facts.verified, facts.issuer, facts.subject = true, idToken.Issuer, idToken.Subject
-
-	var claims idkitoidc.Claims
-	if err := idToken.Claims(&claims); err != nil {
-		return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
-	}
-	// Distributed claims: an issuer that moved groups out of the token (a
-	// group overage). Without a groups mapping the overage does not matter;
-	// on Entra ID the groups are read from Microsoft Graph below, after every
-	// other check; any other issuer fails closed. _claim_sources is never
-	// read. A groups mapping and a token without a groups claim (and no
-	// overage) read the groups from the userinfo endpoint instead.
-	resolveGroups := false
-	if len(claims.ClaimNames) > 0 {
-		var names map[string]json.RawMessage
-		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
-			return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
-		}
-		if _, overage := names[SSOClaimGroups]; overage && rolemap.UsesGroups(cfg.RoleMapping) {
-			if !entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-				return nil, facts, oidcRefuse(AuthAuditReasonGroupOverage)
-			}
-			resolveGroups = true
-		}
-	}
-	groups, ok := idkitoidc.StringArray(claims.Groups)
-	if !ok {
-		return nil, facts, oidcRefuse(AuthAuditReasonGroupsMalformed)
-	}
-	roles, ok := idkitoidc.StringArray(claims.Roles)
-	if !ok {
-		return nil, facts, oidcRefuse(AuthAuditReasonRolesMalformed)
-	}
-	facts.roles = oidcClaimValues(roles)
-	if !resolveGroups && !(rolemap.UsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0) {
-		facts.groups = oidcClaimValues(groups)
-	}
-	subject := idToken.Subject
-	if !idkitoidc.ValidSubject(subject) {
-		return nil, facts, oidcRefuse(AuthAuditReasonSubjectInvalid)
-	}
-	if len(idToken.Issuer) > oidcIssuerMaxBytes {
-		return nil, facts, oidcRefuse(AuthAuditReasonIssuerInvalid)
-	}
-	if resolveGroups {
-		resolver := entra.GroupResolver{BaseURL: s.graphBaseURL, Timeout: s.graphTimeout, Client: idkitoidc.NewHTTPClient(s.rootCAs)}
-		resolved, err := resolver.MemberObjects(ctx, token.AccessToken, cfg.GraphMaxPages)
-		if err != nil {
-			return nil, facts, oidcRefuse(AuthAuditReasonGroupsUnavailable)
-		}
-		groups = resolved
-		facts.groups = oidcClaimValues(groups)
-	} else if rolemap.UsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
-		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
-		if err != nil {
-			if errors.Is(err, errUserInfoSubject) {
-				return nil, facts, oidcRefuse(AuthAuditReasonUserInfoSubjectMismatch)
-			}
-			return nil, facts, oidcRefuse(AuthAuditReasonGroupsUnavailable)
-		}
-		groups = resolved
-		facts.groups = oidcClaimValues(groups)
-	}
-
-	roleID, matched := rolemap.Match(cfg.RoleMapping, groups, roles)
-	if !matched {
-		return nil, facts, oidcRefuse(AuthAuditReasonNoMappingMatch)
-	}
-
-	// The oid links to a SCIM-created account only under an Entra ID issuer
-	// and only when the token's tenant is the configured issuer's tenant,
-	// compared byte for byte; a non-string claim counts as absent.
-	scimSubject := entra.LinkHint(cfg.IssuerURL, s.entraIssuerHost, idkitoidc.String(claims.TID), idkitoidc.String(claims.OID))
-
-	passwordHash, err := oidcUnusablePasswordHash()
-	if err != nil {
-		return nil, facts, err
-	}
-	firstName, lastName := idkitoidc.ProfileNames(idkitoidc.String(claims.GivenName), idkitoidc.String(claims.FamilyName), idkitoidc.String(claims.Name))
-	tokens, err := s.users.ApplyOIDCSignIn(ctx, oidcSignIn{
-		issuer:       idToken.Issuer,
-		subject:      subject,
-		roleID:       roleID,
-		email:        idkitoidc.String(claims.Email),
-		firstName:    firstName,
-		lastName:     lastName,
-		passwordHash: passwordHash,
-		identities:   s.identities,
-		issue:        s.issue,
-		beforeInsert: s.beforeJITInsert,
-
-		scimSubject:    scimSubject,
-		beforeSCIMLink: s.beforeSCIMLink,
-	})
-	return tokens, facts, err
-}
-
-// Failures of the userinfo group resolution. Like the Graph errors
-// (internal/idkit/entra) they never
-// carry a URL, a token, a status text or a response body.
-var (
-	errUserInfoNoAccessToken = errors.New("userinfo: no access token")
-	errUserInfoEndpoint      = errors.New("userinfo: endpoint refused")
-	errUserInfoRequest       = errors.New("userinfo: request failed")
-	errUserInfoStatus        = errors.New("userinfo: unexpected status")
-	errUserInfoContentType   = errors.New("userinfo: not a JSON response")
-	errUserInfoTooLarge      = errors.New("userinfo: response too large")
-	errUserInfoBody          = errors.New("userinfo: malformed response")
-	errUserInfoSubject       = errors.New("userinfo: subject mismatch")
-)
-
-// resolveUserInfoGroups reads the groups member of the issuer's userinfo
-// response (#451) with the access token of the code exchange: one GET to the
-// discovered userinfo_endpoint (an absolute https URL without credentials),
-// through the issuer client (no redirects, no proxy), under one deadline
-// (userinfoTimeout), with a body of at most oidcUserInfoMaxBytes of
-// application/json (signed application/jwt userinfo is not supported). The
-// response's sub must equal the ID token's subject byte for byte; only groups
-// is read, an absent groups member is an empty list. provider.UserInfo is not
-// used: it reads the body without a bound and puts it into its errors. The
-// token is only put into the request header; it is never logged, stored or
-// put into an error.
-func (s *oidcService) resolveUserInfoGroups(ctx context.Context, provider *oidc.Provider, accessToken, subject string) ([]string, error) {
-	if accessToken == "" {
-		return nil, errUserInfoNoAccessToken
-	}
-	endpoint := provider.UserInfoEndpoint()
-	parsed, err := url.Parse(endpoint)
-	if endpoint == "" || err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
-		return nil, errUserInfoEndpoint
-	}
-	ctx, cancel := context.WithTimeout(ctx, s.userinfoTimeout)
-	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, errUserInfoRequest
-	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	response, err := idkitoidc.NewHTTPClient(s.rootCAs).Do(request)
-	if err != nil {
-		return nil, errUserInfoRequest
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, errUserInfoStatus
-	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		return nil, errUserInfoContentType
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, oidcUserInfoMaxBytes+1))
-	if err != nil {
-		return nil, errUserInfoRequest
-	}
-	if len(body) > oidcUserInfoMaxBytes {
-		return nil, errUserInfoTooLarge
-	}
-	if !strings.HasPrefix(strings.TrimSpace(string(body)), "{") {
-		return nil, errUserInfoBody
-	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(body, &members); err != nil {
-		return nil, errUserInfoBody
-	}
-	rawSub, found := members["sub"]
-	var sub string
-	if !found || !strings.HasPrefix(strings.TrimSpace(string(rawSub)), `"`) || json.Unmarshal(rawSub, &sub) != nil || sub != subject {
-		return nil, errUserInfoSubject
-	}
-	rawGroups, found := members["groups"]
-	if !found {
-		return []string{}, nil
-	}
-	groups, ok := idkitoidc.StrictStringArray(rawGroups)
-	if !ok {
-		return nil, errUserInfoBody
-	}
-	return groups, nil
-}
-
-// issue issues the session on the transaction handle exactly as a wired login
-// does: the refresh token through the transaction-bound repository, the
-// access token signed from the row the transaction wrote.
-func (s *oidcService) issue(handle *gorm.DB, user *models.User) (*AuthTokens, error) {
-	session, err := newRefreshSession(models.RefreshTokenSignInOIDC)
+	result := &oidcSignInResult{}
+	session, err := s.signin.Callback(context.WithValue(ctx, oidcSignInResultKey{}, result), code, state, binding)
 	if err != nil {
 		return nil, err
 	}
-	refresh, err := s.auth.issueRefreshToken(s.refreshTokens.WithTx(handle), user.ID, session)
-	if err != nil {
-		return nil, err
+	if result.user == nil || formatIDKitID(result.user.ID) != session.AccountID {
+		return nil, errors.New("single sign-on session without its account")
 	}
-	access, err := s.auth.accessTokenFor(user)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign access token at single sign-on: %w", err)
-	}
-	return &AuthTokens{AccessToken: access, RefreshToken: refresh, User: user}, nil
-}
-
-// oidcClaimValues is a read claim array for the audit row: never nil, so an
-// absent claim is stored as [] and not as NULL.
-func oidcClaimValues(values []string) []string {
-	if values == nil {
-		return []string{}
-	}
-	return values
+	return &AuthTokens{AccessToken: session.AccessToken, RefreshToken: session.RefreshToken, User: result.user}, nil
 }
 
 // oidcUnusablePasswordHash is the bcrypt hash of random bytes that are
