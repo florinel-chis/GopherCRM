@@ -1156,6 +1156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Form builder page split into modules (#626).** `gocrm-ui/src/pages/forms/FormBuilder.tsx` keeps
+  the route component, the form state, the queries and mutations, the Basics and Fields sections and
+  the buttons. The schema and the value conversions moved to `formBuilderSchema.ts`, the chip list
+  editor to `StringListEditor.tsx`, the field editor to `FieldEditor.tsx`, the after-submission,
+  notification, follow-up and spam sections to `FormSettingsSections.tsx` and the submission action
+  with the lead owner picker to `SubmissionActionSection.tsx`, all in the same folder. Frontend only:
+  no behaviour change and no API change.
 - **Auth service split into one file per flow (#639).** `internal/service/auth_service.go` keeps the
   sentinels, the service struct, its options, the constructors and the credential-owner helper; the
   flows moved, unchanged, to `auth_login.go`, `auth_tokens.go`, `auth_apikey.go`, `auth_refresh.go`,

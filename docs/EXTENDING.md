@@ -408,7 +408,7 @@ in `formService.validateValues` (`internal/service/form_validation.go`), called 
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
-`z.enum` of the field schema in `gocrm-ui/src/pages/forms/FormBuilder.tsx`.
+`z.enum` of the field schema in `gocrm-ui/src/pages/forms/formBuilderSchema.ts`.
 Do not reorder the spam layers in `SubmitPublic` and do not change the success-shaped response for
 spam: both are deliberate (`REVIEW.md`, "Skip"). Mapping a field to a new lead column is a schema
 change (section 3).
