@@ -84,11 +84,11 @@ type Lead struct {
 	// leads it owns; an admin may reassign any lead through PUT /leads/{id},
 	// and POST /leads/{id}/assign also lets a sales user hand over its own.
 	OwnerID uint `json:"owner_id" example:"7"`
-	// The owner's account. Always present in the JSON. GET /leads/{id}, the
-	// admin GET /leads (except with the classification filter),
-	// GET /leads?external_id= for admin and sales, GET /companies/{id}/leads and the dashboard fill it in with the User
-	// object (see the User schema); elsewhere (create and update responses, a
-	// sales user's list) it is a zero-valued placeholder (id 0, every string
+	// The owner's account. Always present in the JSON. GET /leads/{id}, every
+	// GET /leads listing (admin and sales, external_id included),
+	// GET /companies/{id}/leads and the dashboard fill it in with the User
+	// object (see the User schema); elsewhere (create, update and assign
+	// responses) it is a zero-valued placeholder (id 0, every string
 	// empty, role "" included), which is not a valid User, so this property is
 	// documented as a plain object. Use owner_id.
 	Owner User `gorm:"foreignKey:OwnerID" json:"owner,omitempty" swaggertype:"object"`

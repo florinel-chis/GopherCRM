@@ -322,39 +322,28 @@ func checkLeadPagination(t *testing.T, db *gorm.DB, f paginationFixture) {
 	repo := NewLeadRepository(db)
 	all := func(models.Lead) bool { return true }
 	matches := func(l models.Lead) bool { return l.Notes == "pager" }
+	walk := func(name string, filter LeadListFilter, want []uint, sortBy, sortOrder string, preloads ...string) {
+		assertPagesWalkTotalOrder(t, name, want,
+			func(o, l int) ([]uint, error) {
+				rows, err := repo.ListByFilter(filter, o, l, sortBy, sortOrder, preloads...)
+				return idsOf(rows, leadID), err
+			}, func() (int64, error) { return repo.CountByFilter(filter) })
+	}
 
-	assertPagesWalkTotalOrder(t, "ListWithPreloads", expectedIDs(f.leads, leadID, all, nil, false),
-		func(o, l int) ([]uint, error) {
-			rows, err := repo.ListWithPreloads(o, l, "Owner")
-			return idsOf(rows, leadID), err
-		}, repo.Count)
+	walk("ListByFilter/all", LeadListFilter{}, expectedIDs(f.leads, leadID, all, nil, false), "", "", "Owner")
 
 	for _, s := range tiedSorts("status") {
 		s := s
-		assertPagesWalkTotalOrder(t, "ListSortedWithPreloads/"+s.String(), expectedIDs(f.leads, leadID, all, leadKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.ListSortedWithPreloads(o, l, s.by, s.order, "Owner")
-				return idsOf(rows, leadID), err
-			}, repo.Count)
-		assertPagesWalkTotalOrder(t, "Search/"+s.String(), expectedIDs(f.leads, leadID, matches, leadKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.Search("pager", o, l, s.by, s.order, "Owner")
-				return idsOf(rows, leadID), err
-			}, func() (int64, error) { return repo.CountSearch("pager") })
+		walk("ListByFilter/sorted/"+s.String(), LeadListFilter{}, expectedIDs(f.leads, leadID, all, leadKey(s.by), s.desc()), s.by, s.order, "Owner")
+		walk("ListByFilter/search/"+s.String(), LeadListFilter{Search: "pager"}, expectedIDs(f.leads, leadID, matches, leadKey(s.by), s.desc()), s.by, s.order, "Owner")
 	}
 
 	owner := f.users[0].ID
-	assertPagesWalkTotalOrder(t, "GetByOwnerID", expectedIDs(f.leads, leadID, func(l models.Lead) bool { return l.OwnerID == owner }, nil, false),
-		func(o, l int) ([]uint, error) {
-			rows, err := repo.GetByOwnerID(owner, o, l)
-			return idsOf(rows, leadID), err
-		}, func() (int64, error) { return repo.CountByOwnerID(owner) })
+	walk("ListByFilter/owner", LeadListFilter{OwnerID: &owner},
+		expectedIDs(f.leads, leadID, func(l models.Lead) bool { return l.OwnerID == owner }, nil, false), "", "")
 
-	assertPagesWalkTotalOrder(t, "GetByClassification", expectedIDs(f.leads, leadID, func(l models.Lead) bool { return l.Classification == models.LeadClassificationLead }, nil, false),
-		func(o, l int) ([]uint, error) {
-			rows, err := repo.GetByClassification(models.LeadClassificationLead, o, l)
-			return idsOf(rows, leadID), err
-		}, func() (int64, error) { return repo.CountByClassification(models.LeadClassificationLead) })
+	walk("ListByFilter/classification", LeadListFilter{Classification: models.LeadClassificationLead},
+		expectedIDs(f.leads, leadID, func(l models.Lead) bool { return l.Classification == models.LeadClassificationLead }, nil, false), "", "")
 }
 
 func customerID(c models.Customer) uint { return c.ID }
@@ -405,44 +394,28 @@ func checkTaskPagination(t *testing.T, db *gorm.DB, f paginationFixture) {
 	repo := NewTaskRepository(db)
 	all := func(models.Task) bool { return true }
 	matches := func(task models.Task) bool { return task.Description == "pager" }
+	walk := func(name string, filter TaskListFilter, want []uint, sortBy, sortOrder string, preloads ...string) {
+		assertPagesWalkTotalOrder(t, name, want,
+			func(o, l int) ([]uint, error) {
+				rows, err := repo.ListByFilter(filter, o, l, sortBy, sortOrder, preloads...)
+				return idsOf(rows, taskID), err
+			}, func() (int64, error) { return repo.CountByFilter(filter) })
+	}
 
-	assertPagesWalkTotalOrder(t, "List", expectedIDs(f.tasks, taskID, all, nil, false),
-		func(o, l int) ([]uint, error) {
-			rows, err := repo.List(o, l)
-			return idsOf(rows, taskID), err
-		}, repo.Count)
+	walk("ListByFilter/all", TaskListFilter{}, expectedIDs(f.tasks, taskID, all, nil, false), "", "", "AssignedTo", "Labels", "Lead", "Deal")
 
 	assignee := f.users[0].ID
-	assertPagesWalkTotalOrder(t, "GetByAssignedToID", expectedIDs(f.tasks, taskID, func(task models.Task) bool { return task.AssignedToID == assignee }, nil, false),
-		func(o, l int) ([]uint, error) {
-			rows, err := repo.GetByAssignedToID(assignee, o, l)
-			return idsOf(rows, taskID), err
-		}, func() (int64, error) { return repo.CountByAssignedToID(assignee) })
+	walk("ListByFilter/assignee", TaskListFilter{AssigneeID: &assignee},
+		expectedIDs(f.tasks, taskID, func(task models.Task) bool { return task.AssignedToID == assignee }, nil, false), "", "", "Labels", "Lead", "Deal")
 
 	labelled := func(task models.Task) bool { return f.taskLabel[task.ID] }
 	labelledMine := func(task models.Task) bool { return f.taskLabel[task.ID] && task.AssignedToID == assignee }
 	for _, s := range tiedSorts("priority") {
 		s := s
-		assertPagesWalkTotalOrder(t, "ListSortedWithPreloads/"+s.String(), expectedIDs(f.tasks, taskID, all, taskKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.ListSortedWithPreloads(o, l, s.by, s.order, "Labels", "Lead")
-				return idsOf(rows, taskID), err
-			}, repo.Count)
-		assertPagesWalkTotalOrder(t, "Search/"+s.String(), expectedIDs(f.tasks, taskID, matches, taskKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.Search("pager", o, l, s.by, s.order, "Labels")
-				return idsOf(rows, taskID), err
-			}, func() (int64, error) { return repo.CountSearch("pager") })
-		assertPagesWalkTotalOrder(t, "ListByLabel/"+s.String(), expectedIDs(f.tasks, taskID, labelled, taskKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.ListByLabel(f.label.ID, nil, o, l, s.by, s.order, "Labels", "Lead")
-				return idsOf(rows, taskID), err
-			}, func() (int64, error) { return repo.CountByLabel(f.label.ID, nil) })
-		assertPagesWalkTotalOrder(t, "ListByLabelAssignee/"+s.String(), expectedIDs(f.tasks, taskID, labelledMine, taskKey(s.by), s.desc()),
-			func(o, l int) ([]uint, error) {
-				rows, err := repo.ListByLabel(f.label.ID, &assignee, o, l, s.by, s.order, "Labels")
-				return idsOf(rows, taskID), err
-			}, func() (int64, error) { return repo.CountByLabel(f.label.ID, &assignee) })
+		walk("ListByFilter/sorted/"+s.String(), TaskListFilter{}, expectedIDs(f.tasks, taskID, all, taskKey(s.by), s.desc()), s.by, s.order, "Labels", "Lead")
+		walk("ListByFilter/search/"+s.String(), TaskListFilter{Search: "pager"}, expectedIDs(f.tasks, taskID, matches, taskKey(s.by), s.desc()), s.by, s.order, "Labels")
+		walk("ListByFilter/label/"+s.String(), TaskListFilter{LabelID: f.label.ID}, expectedIDs(f.tasks, taskID, labelled, taskKey(s.by), s.desc()), s.by, s.order, "Labels", "Lead")
+		walk("ListByFilter/labelAssignee/"+s.String(), TaskListFilter{LabelID: f.label.ID, AssigneeID: &assignee}, expectedIDs(f.tasks, taskID, labelledMine, taskKey(s.by), s.desc()), s.by, s.order, "Labels")
 	}
 }
 

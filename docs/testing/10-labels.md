@@ -447,15 +447,15 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Expected:** Step 1 issues `GET /tasks?...&label_id={id}` and the labelled task is listed. Step 2 removes the chip and empties the Label field. No request is made on clear: the query key returns to the one already fetched on page load, so TanStack Query serves the cached unfiltered page — assert the rendered controls, not the wire.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "the label filter dropdown narrows the list and can be cleared"
 
-### TC-LABEL-040 — The label filter overrides an active search term
+### TC-LABEL-040 — The label filter combines with an active search term on the server
 - **Priority:** P1
 - **Type:** regression
 - **Preconditions:** Admin logged in; a labelled task and at least one other task carrying the same label but not matching the search term.
 - **Steps:**
   1. Navigate to `/tasks` and search for the first task's title.
   2. Click its label chip.
-- **Expected:** The result set is **all** tasks carrying the label, not the intersection with the search term. Applying the label filter empties the search box and disables it, with the helper text "Clear the label filter to search", so the rendered controls never claim a narrowing the server is not applying. Removing the label filter re-enables the box.
-- **Known issue:** `TaskHandler.List` (`internal/handler/task_handler.go`) branches on `label_id` before it looks at `search`, so a request carrying both silently drops the search — the two filters cannot be combined server-side. The precedence is documented in the swagger annotation for the endpoint. The frontend mirrors it rather than contradicting it (`handleLabelFilterChange` in `gocrm-ui/src/pages/tasks/TaskList.tsx`); it is still a server-side limitation, not a feature.
+- **Expected:** The server combines `label_id` with `search` (#618): `GET /tasks?label_id=…&search=…` returns only the labelled tasks matching the term. The page keeps one narrowing at a time by choice: applying the label filter empties the search box and disables it, with the helper text "Clear the label filter to search", so the request it sends carries the label alone and the result set is all tasks carrying the label. Removing the label filter re-enables the box.
+- **Known issue:** none since #618. `TaskHandler.List` (`internal/handler/task_handler.go`) passes both to `TaskService.ListFiltered`, which ANDs them; clearing the search on a label filter is a UI choice (`handleLabelFilterChange` in `gocrm-ui/src/pages/tasks/TaskList.tsx`), not a server limitation.
 - **Automation:** automated — `gocrm-ui/e2e/tests/labels.spec.ts` "clicking a label chip in the list filters the tasks by that label". The search-box half is covered at unit level by `gocrm-ui/src/pages/tasks/TaskList.test.tsx`.
 
 ### TC-LABEL-041 — Applying a label filter returns to page 1
@@ -484,7 +484,7 @@ where the behaviour is surprising a **Known issue** line names it.
 - **Preconditions:** A support account with one labelled task assigned to it, and another user's task carrying the same label.
 - **Steps:**
   1. Log in as the support user, navigate to `/tasks` and filter by the label.
-- **Expected:** Only the support user's own task is listed. The label filter narrows the same list rather than replacing the assignee scoping (`ListByLabelForAssignee`), and it is the one non-admin path that also honours `sort_by`/`sort_order`.
+- **Expected:** Only the support user's own task is listed. The label filter narrows the same list rather than replacing the assignee scoping (`TaskService.ListFiltered` with `AssigneeID` and `LabelID`), and it is the one non-admin path that also honours `sort_by`/`sort_order`.
 - **Automation:** blocked — no sales/support login helper exists (README.md "Lessons learned" item 8). Covered at unit level by `internal/service/task_labels_test.go`.
 
 ## 10.9 Navigation

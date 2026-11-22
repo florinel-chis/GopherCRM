@@ -115,10 +115,10 @@ func runTaskDealLinkRepository(t *testing.T, db *gorm.DB) {
 		require.NotNil(t, got.Deal)
 		assert.Equal(t, deal.ID, got.Deal.ID)
 
-		page, err := repo.GetByAssignedToID(mine.ID, 0, 10)
+		page, err := repo.ListByFilter(TaskListFilter{AssigneeID: &mine.ID}, 0, 10, "", "", "Labels", "Lead", "Deal")
 		require.NoError(t, err)
 		require.Len(t, page, 1)
-		require.NotNil(t, page[0].Deal, "GetByAssignedToID preloads the deal")
+		require.NotNil(t, page[0].Deal, "the assignee list (GET /tasks/my) preloads the deal")
 	})
 
 	t.Run("a task read does not load a soft-deleted deal but keeps deal_id", func(t *testing.T) {
@@ -133,7 +133,7 @@ func runTaskDealLinkRepository(t *testing.T, db *gorm.DB) {
 		require.NotNil(t, got.DealID)
 		assert.Equal(t, gone.ID, *got.DealID)
 
-		page, err := repo.GetByAssignedToID(mine.ID, 0, 10)
+		page, err := repo.ListByFilter(TaskListFilter{AssigneeID: &mine.ID}, 0, 10, "", "", "Labels", "Lead", "Deal")
 		require.NoError(t, err)
 		require.Len(t, page, 1)
 		assert.Nil(t, page[0].Deal)

@@ -207,7 +207,7 @@ func TestErasedLeadCannotBeMatchedByAnyOfItsFormerSearchTerms(t *testing.T) {
 	require.NoError(t, leadRepo.Delete(context.Background(), lead.ID))
 
 	for _, needle := range []string{"Ingrid", "Vasilescu", "searchable@example.com", "+40 722 333 444", "Bucharest expo"} {
-		found, err := leadRepo.Search(needle, 0, 10, "", "")
+		found, err := leadRepo.ListByFilter(repository.LeadListFilter{Search: needle}, 0, 10, "", "")
 		require.NoError(t, err)
 		assert.Empty(t, found, "searching for %q must not turn the erased lead up", needle)
 

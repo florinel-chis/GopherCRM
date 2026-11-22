@@ -314,9 +314,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // List godoc
 // @Summary List leads
 // @Description One page of leads. Roles: admin and sales.
-// @Description status (#426) takes exactly one of new, contacted, qualified, unqualified or converted, matched case-sensitively; an empty status is ignored, a repeated parameter uses its first value, and any other value (lost, Qualified, QUALIFIED, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed status and the value not echoed. With a status, the filter is applied in the query before offset and limit, so leads, total and meta reflect it, and the owner is loaded: for an admin it combines with search, classification and sort_by/sort_order (all ANDed, ascending id order without a sort); for a sales user it narrows only the leads it owns, in ascending id order, and search, classification, sort_by and sort_order stay ignored. external_id still overrides status, which is then not validated.
-// @Description Without external_id or status, a sales user always gets the leads it owns, in ascending id order, and search, classification, sort_by and sort_order are ignored; the owner field is not loaded on that path (all its fields are zero).
-// @Description Without external_id or status, for an admin the parameters do not combine, the first one present wins: search (substring match on first_name, last_name, email, company, phone and notes; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only; honours the sort), then classification (exact match, any value accepted, an unknown one simply matches nothing; ascending id order; owner not loaded), then sort_by, else every lead in ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
+// @Description status (#426) takes exactly one of new, contacted, qualified, unqualified or converted, matched case-sensitively; an empty status is ignored, a repeated parameter uses its first value, and any other value (lost, Qualified, QUALIFIED, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed status and the value not echoed. The status filter is applied in the query before offset and limit, so leads, total and meta reflect it. external_id still overrides status, which is then not validated.
+// @Description Without external_id, every parameter the caller may use is combined (ANDed) in one query, applied before offset and limit, and the owner is loaded on every path. A sales user always gets only the leads it owns, narrowed by status when given, in ascending id order; search, classification, sort_by and sort_order are ignored for that role.
+// @Description For an admin, search, classification, status and sort_by/sort_order all combine: search is a literal substring match on first_name, last_name, email, company, phone and notes (the characters %, _, ! and backslash match only themselves; case-insensitive on MySQL/MariaDB with their default collations, and on SQLite for ASCII letters only), classification is an exact match (any value accepted, an unknown one simply matches nothing), and the rows follow the sort, else ascending id order. An unknown sort_by is ignored silently (ascending id order) and a sort_order other than asc or desc becomes asc. Soft-deleted (erased) leads never appear.
 // @Description external_id, when present and not empty, takes precedence over everything above for every role, including search, classification, sort_by, sort_order, page, offset and limit: the lookup is an SQL equality on the column, byte-exact on SQLite, while on MySQL/MariaDB the column collation decides (utf8mb4_unicode_ci in the migrations: case-insensitive, trailing spaces ignored); the value is not trimmed. external_id is not unique: the result holds every matching live lead the caller may view (admin any lead, sales only the leads it owns, every other role none), in ascending id order, and total is their number (meta.page 1, meta.per_page the parsed limit, which does not cut the list). A lead the caller may not see is left out, never 403 or 404, so a hidden lead reads like an unknown value. At most the first 100 matching leads by id are read before the visibility filter, so with more than 100 leads sharing one value later ones (including a sales user's own) are not returned. The owner is loaded on that path, company_record is not.
 // @Description data is an object {leads, total}; meta carries request_id, page (offset / limit + 1, rounded down), per_page and, when not zero, total and total_pages (both are omitted for an empty result).
 // @Tags leads
@@ -326,9 +326,9 @@ func (h *LeadHandler) Create(c *gin.Context) {
 // @Param page query int false "1-based page number; when greater than 0 it overrides offset (offset = (page-1) x limit). Non-numeric values are ignored"
 // @Param offset query int false "Number of rows to skip; negative or non-numeric values fall back to 0" default(0)
 // @Param limit query int false "Page size; 0, negative or non-numeric values fall back to 20, values above 100 are clamped to 100" default(20)
-// @Param search query string false "Admin only: substring searched in first_name, last_name, email, company, phone and notes"
-// @Param classification query string false "Admin only, ignored when search is present unless status is given (then combined): exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
-// @Param sort_by query string false "Admin only, ignored when classification wins without a status: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
+// @Param search query string false "Admin only: literal substring searched in first_name, last_name, email, company, phone and notes, combined with the other filters"
+// @Param classification query string false "Admin only, combined with search, status and the sort: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
+// @Param sort_by query string false "Admin only, applied together with search, classification and status: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
 // @Param sort_order query string false "Sort direction for sort_by; any other value becomes asc" Enums(asc, desc) default(asc)
 // @Param status query string false "Only leads in this status (exact, case-sensitive match); empty is ignored, any other value is 400. Admin: combined with search, classification and the sort. Sales: narrows only the caller's own leads. Overridden by external_id" Enums(new, contacted, qualified, unqualified, converted)
 // @Param external_id query string false "Exact external_id to look up (at most 255 characters); when present and not empty it overrides every other parameter and returns the matching leads the caller may view" maxlength(255)
@@ -403,41 +403,21 @@ func (h *LeadHandler) List(c *gin.Context) {
 	var err error
 
 	// Scope filtering: only a caller holding leads.view on every lead (admin)
-	// gets the search, the classification filter and the sort; every other
-	// caller (sales, at scope own) sees the leads it owns.
-	// A status filter (#426) goes through ListFiltered: for a caller seeing
-	// only its own leads the owner is forced and only the status narrows it
-	// (search, classification and sort stay ignored, as below); an admin gets
-	// the status combined with search, classification and the sort. Without a
-	// status the existing branches run unchanged.
-	if status != "" {
-		if !hasPermissionOnAll(c, permissions.LeadsView) {
-			ownerID := currentUserID
-			leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
-				OwnerID: &ownerID,
-				Status:  models.LeadStatus(status),
-			}, offset, limit, "", "")
-		} else {
-			leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
-				Search:         search,
-				Classification: models.LeadClassification(classification),
-				Status:         models.LeadStatus(status),
-			}, offset, limit, sortBy, sortOrder)
-		}
-	} else if !hasPermissionOnAll(c, permissions.LeadsView) {
-		leads, total, err = h.leadService.GetByOwner(currentUserID, offset, limit)
-	} else if search != "" {
-		// Search across lead fields
-		leads, total, err = h.leadService.Search(search, offset, limit, sortBy, sortOrder)
-	} else if classification != "" {
-		// Filter by classification
-		leads, total, err = h.leadService.GetByClassification(models.LeadClassification(classification), offset, limit)
-	} else if sortBy != "" {
-		// Sorted list
-		leads, total, err = h.leadService.ListSorted(offset, limit, sortBy, sortOrder)
+	// gets the search, the classification filter and the sort, all ANDed with
+	// the optional status; every other caller (sales, at scope own) sees only
+	// the leads it owns, narrowed by the status alone, in ascending id order.
+	if !hasPermissionOnAll(c, permissions.LeadsView) {
+		ownerID := currentUserID
+		leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
+			OwnerID: &ownerID,
+			Status:  models.LeadStatus(status),
+		}, offset, limit, "", "")
 	} else {
-		// Admin users can see all leads
-		leads, total, err = h.leadService.List(offset, limit)
+		leads, total, err = h.leadService.ListFiltered(repository.LeadListFilter{
+			Search:         search,
+			Classification: models.LeadClassification(classification),
+			Status:         models.LeadStatus(status),
+		}, offset, limit, sortBy, sortOrder)
 	}
 
 	if err != nil {
@@ -954,7 +934,7 @@ var leadExportSortColumns = map[string]bool{
 
 // Export godoc
 // @Summary Export leads as CSV
-// @Description Roles: admin and sales (the /leads group guard, repeated in the handler and the service); support and customer get 403. The rows are exactly the leads the caller may list on GET /leads. An admin gets every live lead under the list's precedence, the first parameter present wins: search (substring match on first_name, last_name, email, company, phone and notes, honouring the sort), then classification (exact match, ascending id order, the sort ignored), then sort_by, else ascending id order. A sales user always gets only the leads it owns, in ascending id order; search, classification, sort_by and sort_order are ignored for that role. external_id, page, offset and limit are not read: the export is never paginated.
+// @Description Roles: admin and sales (the /leads group guard, repeated in the handler and the service); support and customer get 403. The rows are exactly the leads the caller may list on GET /leads. An admin gets every live lead matching the list's combined filters: search (literal substring match on first_name, last_name, email, company, phone and notes; %, _, ! and backslash match only themselves) and classification (exact match) are ANDed, and the rows follow sort_by/sort_order, else ascending id order. A sales user always gets only the leads it owns, in ascending id order; search, classification, sort_by and sort_order are ignored for that role. external_id, page, offset and limit are not read: the export is never paginated.
 // @Description The success body is NOT the JSON envelope: it is the raw CSV, Content-Type text/csv; charset=utf-8 and Content-Disposition attachment; filename=leads-export.csv. Errors raised before the file starts (401, 403, 429, 500) use the JSON envelope. Every row is read by one ordered statement before the first byte is written, so a database failure is a JSON 500, never a truncated file. With a sort column the rows are ordered by that column and then by id in the same direction, so descending is the exact reverse of ascending.
 // @Description Columns, in this order: id, first_name, last_name, email, phone, company, position, source, status, classification, external_id, notes, owner_id, customer_id, company_id, created_at, updated_at. created_at and updated_at are RFC 3339 in UTC (for example 2026-03-14T09:26:53Z). customer_id is empty for an unconverted lead and company_id for a lead without a company link. A text cell starting with =, @, a tab or a carriage return, or with + or - followed by anything other than a plain number, is prefixed with an apostrophe so spreadsheets do not run it as a formula (the customer export's rule). Erased (soft-deleted) leads never appear; converted leads do.
 // @Tags leads
@@ -962,9 +942,9 @@ var leadExportSortColumns = map[string]bool{
 // @Produce json
 // @Security BearerAuth
 // @Security ApiKeyAuth
-// @Param search query string false "Admin only: substring searched in first_name, last_name, email, company, phone and notes"
-// @Param classification query string false "Admin only, ignored when search is present: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
-// @Param sort_by query string false "Admin only, ignored when classification wins: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
+// @Param search query string false "Admin only: literal substring searched in first_name, last_name, email, company, phone and notes, combined with the other filters"
+// @Param classification query string false "Admin only, combined with search and the sort: exact classification to match" Enums(unclassified, test, spam, lead, hot_lead)
+// @Param sort_by query string false "Admin only, applied together with search and classification: sort column; any other value is ignored (no error)" Enums(created_at, updated_at, first_name, last_name, email, company, status, classification, source)
 // @Param sort_order query string false "Sort direction for sort_by; any other value becomes asc" Enums(asc, desc) default(asc)
 // @Success 200 {string} string "The CSV file (raw body, not the JSON envelope)"
 // @Failure 401 {object} utils.APIResponse{error=utils.APIError} "UNAUTHORIZED: the Authorization header is missing or is neither Bearer <jwt> nor ApiKey <key> ('Missing or invalid authorization header'), or the credential is invalid, expired or belongs to a deactivated account ('Invalid credentials')"

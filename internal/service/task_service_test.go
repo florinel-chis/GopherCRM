@@ -9,6 +9,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -435,8 +436,10 @@ func (suite *TaskServiceTestSuite) TestGetByAssignee_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, Title: "Task 2", AssignedToID: 1},
 	}
 
-	suite.mockTaskRepo.On("GetByAssignedToID", uint(1), 0, 10).Return(expectedTasks, nil)
-	suite.mockTaskRepo.On("CountByAssignedToID", uint(1)).Return(int64(2), nil)
+	assignee := uint(1)
+	filter := repository.TaskListFilter{AssigneeID: &assignee}
+	suite.mockTaskRepo.On("ListByFilter", filter, 0, 10, "", "", []string{"Labels", "Lead", "Deal"}).Return(expectedTasks, nil)
+	suite.mockTaskRepo.On("CountByFilter", filter).Return(int64(2), nil)
 
 	tasks, total, err := suite.service.GetByAssignee(1, 0, 10)
 	assert.NoError(suite.T(), err)
@@ -603,10 +606,10 @@ func (suite *TaskServiceTestSuite) TestList_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, Title: "Task 2"},
 	}
 
-	suite.mockTaskRepo.On("List", 0, 10).Return(expectedTasks, nil)
-	suite.mockTaskRepo.On("Count").Return(int64(2), nil)
+	suite.mockTaskRepo.On("ListByFilter", repository.TaskListFilter{}, 0, 10, "", "", []string{"AssignedTo", "Labels", "Lead", "Deal"}).Return(expectedTasks, nil)
+	suite.mockTaskRepo.On("CountByFilter", repository.TaskListFilter{}).Return(int64(2), nil)
 
-	tasks, total, err := suite.service.List(0, 10)
+	tasks, total, err := suite.service.ListFiltered(repository.TaskListFilter{}, 0, 10, "", "")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedTasks, tasks)
 	assert.Equal(suite.T(), int64(2), total)

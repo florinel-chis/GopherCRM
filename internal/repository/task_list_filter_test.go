@@ -159,4 +159,24 @@ func runTaskListFilterRepository(t *testing.T, db *gorm.DB) {
 		_, err := repo.ListByFilter(TaskListFilter{Status: pending}, 0, 20, "title; DROP", "asc")
 		require.Error(t, err)
 	})
+
+	// #618: the search is a literal substring. Each literal row holds one LIKE
+	// metacharacter, and each decoy row holds another character where an
+	// unescaped wildcard would match it. Seeded last, so the subtests above keep
+	// their rows and counts.
+	t.Run("search matches wildcards literally", func(t *testing.T) {
+		underscore := seed("a_b", "", models.TaskStatusPending, models.TaskPriorityLow, user1)
+		seed("axb", "", models.TaskStatusPending, models.TaskPriorityLow, user1)
+		percent := seed("50%", "", models.TaskStatusPending, models.TaskPriorityLow, user1)
+		seed("50x", "", models.TaskStatusPending, models.TaskPriorityLow, user1)
+		bang := seed("plain", "a!b", models.TaskStatusPending, models.TaskPriorityLow, user1)
+		backslash := seed(`a\b`, "", models.TaskStatusPending, models.TaskPriorityLow, user1)
+
+		for _, tc := range []struct {
+			term string
+			want uint
+		}{{"_", underscore}, {"%", percent}, {"!", bang}, {`\`, backslash}} {
+			check(t, TaskListFilter{Search: tc.term}, 0, 20, "", "", []uint{tc.want}, 1)
+		}
+	})
 }

@@ -132,14 +132,49 @@ func TestLeadListStatusFilterHandler(t *testing.T) {
 		})
 	}
 
-	t.Run("an empty status takes the existing branch", func(t *testing.T) {
+	t.Run("an empty status is no status filter", func(t *testing.T) {
 		svc := newStrictLeadService(t)
-		svc.On("List", 0, 20).Return(rows, int64(1), nil).Once()
+		svc.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "", "asc").Return(rows, int64(1), nil).Once()
 		router := newLeadStatusFilterRouter(t, svc, models.RoleAdmin, 1)
 		w, _ := getLeadStatusFilter(t, router, "/leads?status=")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 		svc.AssertExpectations(t)
 	})
+
+	// #618: without a status the parameters a caller may use still combine in
+	// the one list call.
+	combined := []struct {
+		name    string
+		role    models.UserRole
+		userID  uint
+		url     string
+		filter  repository.LeadListFilter
+		sortBy  string
+		sortOrd string
+	}{
+		{"admin search, classification and sort combine", models.RoleAdmin, 1,
+			"/leads?search=tok&classification=spam&sort_by=email&sort_order=desc",
+			repository.LeadListFilter{Search: "tok", Classification: models.LeadClassificationSpam}, "email", "desc"},
+		{"admin classification keeps the sort", models.RoleAdmin, 1,
+			"/leads?classification=spam&sort_by=email",
+			repository.LeadListFilter{Classification: models.LeadClassificationSpam}, "email", "asc"},
+		{"admin without parameters lists every lead", models.RoleAdmin, 1,
+			"/leads", repository.LeadListFilter{}, "", "asc"},
+		{"sales ignores search, classification and sort", models.RoleSales, 3,
+			"/leads?search=tok&classification=spam&sort_by=email",
+			repository.LeadListFilter{OwnerID: leadListOwner(3)}, "", ""},
+	}
+	for _, tc := range combined {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newStrictLeadService(t)
+			svc.On("ListFiltered", tc.filter, 0, 20, tc.sortBy, tc.sortOrd).Return(rows, int64(1), nil).Once()
+			router := newLeadStatusFilterRouter(t, svc, tc.role, tc.userID)
+			w, body := getLeadStatusFilter(t, router, tc.url)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.Equal(t, int64(1), body.Data.Total)
+			svc.AssertExpectations(t)
+		})
+	}
 
 	t.Run("external_id overrides status, which is then not validated", func(t *testing.T) {
 		svc := newStrictLeadService(t)

@@ -121,18 +121,6 @@ func (r *leadRepository) ListByExternalID(externalID string, limit int) ([]model
 	return leads, err
 }
 
-func (r *leadRepository) GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error) {
-	var leads []models.Lead
-	err := orderByID(r.db.Where("owner_id = ?", ownerID), "leads").Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
-func (r *leadRepository) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error) {
-	var leads []models.Lead
-	err := orderByID(r.db.Where("classification = ?", classification), "leads").Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
 func (r *leadRepository) Update(lead *models.Lead) error {
 	return r.db.Save(lead).Error
 }
@@ -178,59 +166,6 @@ func (r *leadRepository) DeleteUnconverted(ctx context.Context, id uint) error {
 	return eraseGraph(ctx, r.db, false, erasureRoot{kind: erasureRootLead, id: id}, r.lockSeams, r.erasureSeams, r.erasureListener)
 }
 
-func (r *leadRepository) ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error) {
-	var leads []models.Lead
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	err := orderByID(query, "leads").Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
-func (r *leadRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error) {
-	var leads []models.Lead
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	query, err := orderPage(query, "leads", sortBy, sortOrder)
-	if err != nil {
-		return nil, err
-	}
-	err = query.Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
-func (r *leadRepository) Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error) {
-	var leads []models.Lead
-	db := r.db
-	for _, preload := range preloads {
-		db = db.Preload(preload)
-	}
-	searchPattern := "%" + query + "%"
-	db = db.Where(
-		"first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?",
-		searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
-	)
-	db, err := orderPage(db, "leads", sortBy, sortOrder)
-	if err != nil {
-		return nil, err
-	}
-	err = db.Offset(offset).Limit(limit).Find(&leads).Error
-	return leads, err
-}
-
-func (r *leadRepository) CountSearch(query string) (int64, error) {
-	var count int64
-	searchPattern := "%" + query + "%"
-	err := r.db.Model(&models.Lead{}).Where(
-		"first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?",
-		searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
-	).Count(&count).Error
-	return count, err
-}
-
 func (r *leadRepository) Count() (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Lead{}).Count(&count).Error
@@ -243,17 +178,13 @@ func (r *leadRepository) CountByClassification(classification models.LeadClassif
 	return count, err
 }
 
-func (r *leadRepository) CountByOwnerID(ownerID uint) (int64, error) {
-	var count int64
-	err := r.db.Model(&models.Lead{}).Where("owner_id = ?", ownerID).Count(&count).Error
-	return count, err
-}
-
-// whereLeadListFilter is the one predicate of ListByFilter and CountByFilter.
-// It ANDs the optional owner, classification and status with the
-// parenthesised search alternatives, so the search OR can never let a row with
+// whereLeadListFilter is the one predicate of ListByFilter, CountByFilter and
+// ListAllForExport. It ANDs the optional owner, classification and status with
+// the parenthesised search alternatives, so the search OR can never let a row with
 // another owner, classification or status through. Columns are qualified with
-// the table name and every value is bound.
+// the table name and every value is bound. The search is a literal substring:
+// containsPattern escapes the LIKE wildcards, so %, _, ! and a backslash match
+// only themselves.
 func whereLeadListFilter(db *gorm.DB, filter LeadListFilter) *gorm.DB {
 	if filter.OwnerID != nil {
 		db = db.Where("leads.owner_id = ?", *filter.OwnerID)
@@ -265,9 +196,9 @@ func whereLeadListFilter(db *gorm.DB, filter LeadListFilter) *gorm.DB {
 		db = db.Where("leads.status = ?", filter.Status)
 	}
 	if filter.Search != "" {
-		searchPattern := "%" + filter.Search + "%"
+		searchPattern := containsPattern(filter.Search)
 		db = db.Where(
-			"(leads.first_name LIKE ? OR leads.last_name LIKE ? OR leads.email LIKE ? OR leads.company LIKE ? OR leads.phone LIKE ? OR leads.notes LIKE ?)",
+			likeAnyClause("leads.first_name", "leads.last_name", "leads.email", "leads.company", "leads.phone", "leads.notes"),
 			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
 		)
 	}
@@ -405,8 +336,8 @@ func (r *leadRepository) WithTx(tx *gorm.DB) LeadRepository {
 type LeadExportFilter struct {
 	// OwnerID restricts the rows to one owner (a sales caller's own leads).
 	OwnerID *uint
-	// Search is a substring matched against first_name, last_name, email,
-	// company, phone and notes, as the lead list search does.
+	// Search is a literal substring matched against first_name, last_name,
+	// email, company, phone and notes, by the lead list's predicate.
 	Search string
 	// Classification is an exact classification match.
 	Classification models.LeadClassification
@@ -428,24 +359,17 @@ type LeadExportFilter struct {
 // duplicate values, NULLs and collation ties deterministic, so a descending
 // export is the exact reverse of the ascending one.
 //
-// Soft-deleted (erased) leads are excluded by GORM's default scope; converted
-// leads are live rows and are included, as in the lead list. An unknown sort
+// The WHERE clause is the lead list's own predicate (whereLeadListFilter), so
+// the export matches exactly the rows the list would. Soft-deleted (erased)
+// leads are excluded by GORM's default scope; converted leads are live rows and
+// are included, as in the lead list. An unknown sort
 // column is returned as an error before any statement runs.
 func (r *leadRepository) ListAllForExport(filter LeadExportFilter) ([]models.Lead, error) {
-	query := r.db.Model(&models.Lead{})
-	if filter.OwnerID != nil {
-		query = query.Where("owner_id = ?", *filter.OwnerID)
-	}
-	if filter.Search != "" {
-		searchPattern := "%" + filter.Search + "%"
-		query = query.Where(
-			"(first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR company LIKE ? OR phone LIKE ? OR notes LIKE ?)",
-			searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern,
-		)
-	}
-	if filter.Classification != "" {
-		query = query.Where("classification = ?", filter.Classification)
-	}
+	query := whereLeadListFilter(r.db.Model(&models.Lead{}), LeadListFilter{
+		OwnerID:        filter.OwnerID,
+		Search:         filter.Search,
+		Classification: filter.Classification,
+	})
 
 	query, err := orderPage(query, "leads", filter.SortBy, filter.SortOrder)
 	if err != nil {

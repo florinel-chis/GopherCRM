@@ -16,6 +16,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -120,7 +121,8 @@ func TestTaskListings_HideLeadsTheCallerMayNotSee(t *testing.T) {
 			return []models.Task{a, b}
 		}
 		svc.On("GetByAssignee", uint(2), 0, 20).Return(rows(), int64(2), nil).Maybe()
-		svc.On("ListByLabelForAssignee", uint(2), uint(4), 0, 20, "", "asc").Return(rows(), int64(2), nil).Maybe()
+		svc.On("ListFiltered", repository.TaskListFilter{AssigneeID: taskListAssignee(2)}, 0, 20, "", "").Return(rows(), int64(2), nil).Maybe()
+		svc.On("ListFiltered", repository.TaskListFilter{AssigneeID: taskListAssignee(2), LabelID: 4}, 0, 20, "", "asc").Return(rows(), int64(2), nil).Maybe()
 		svc.On("GetDueWithinByAssignee", uint(2), mock.Anything, mock.Anything, 100).Return(rows(), nil).Maybe()
 
 		w := serveJSON(newTaskLeadRouter(svc, models.RoleSales, 2), http.MethodGet, path, nil)

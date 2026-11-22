@@ -11,6 +11,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -289,10 +290,10 @@ func (suite *LeadServiceTestSuite) TestList_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
 
-	suite.mockLeadRepo.On("ListWithPreloads", 0, 10, "Owner").Return(expectedLeads, nil)
-	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
+	suite.mockLeadRepo.On("ListByFilter", repository.LeadListFilter{}, 0, 10, "", "", []string{"Owner"}).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByFilter", repository.LeadListFilter{}).Return(int64(2), nil)
 
-	leads, total, err := suite.leadService.List(0, 10)
+	leads, total, err := suite.leadService.ListFiltered(repository.LeadListFilter{}, 0, 10, "", "")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)
@@ -304,10 +305,10 @@ func (suite *LeadServiceTestSuite) TestListSorted_Success() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
 	}
 
-	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "created_at", "desc", "Owner").Return(expectedLeads, nil)
-	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
+	suite.mockLeadRepo.On("ListByFilter", repository.LeadListFilter{}, 0, 10, "created_at", "desc", []string{"Owner"}).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByFilter", repository.LeadListFilter{}).Return(int64(2), nil)
 
-	leads, total, err := suite.leadService.ListSorted(0, 10, "created_at", "desc")
+	leads, total, err := suite.leadService.ListFiltered(repository.LeadListFilter{}, 0, 10, "created_at", "desc")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)
@@ -319,19 +320,19 @@ func (suite *LeadServiceTestSuite) TestListSorted_Ascending() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
 
-	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "created_at", "asc", "Owner").Return(expectedLeads, nil)
-	suite.mockLeadRepo.On("Count").Return(int64(2), nil)
+	suite.mockLeadRepo.On("ListByFilter", repository.LeadListFilter{}, 0, 10, "created_at", "asc", []string{"Owner"}).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByFilter", repository.LeadListFilter{}).Return(int64(2), nil)
 
-	leads, total, err := suite.leadService.ListSorted(0, 10, "created_at", "asc")
+	leads, total, err := suite.leadService.ListFiltered(repository.LeadListFilter{}, 0, 10, "created_at", "asc")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)
 }
 
 func (suite *LeadServiceTestSuite) TestListSorted_RepoError() {
-	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "email", "asc", "Owner").Return([]models.Lead(nil), errors.New("database error"))
+	suite.mockLeadRepo.On("ListByFilter", repository.LeadListFilter{}, 0, 10, "email", "asc", []string{"Owner"}).Return([]models.Lead(nil), errors.New("database error"))
 
-	leads, total, err := suite.leadService.ListSorted(0, 10, "email", "asc")
+	leads, total, err := suite.leadService.ListFiltered(repository.LeadListFilter{}, 0, 10, "email", "asc")
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), leads)
 	assert.Equal(suite.T(), int64(0), total)
@@ -342,10 +343,10 @@ func (suite *LeadServiceTestSuite) TestListSorted_CountError() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
 	}
 
-	suite.mockLeadRepo.On("ListSortedWithPreloads", 0, 10, "status", "desc", "Owner").Return(expectedLeads, nil)
-	suite.mockLeadRepo.On("Count").Return(int64(0), errors.New("count error"))
+	suite.mockLeadRepo.On("ListByFilter", repository.LeadListFilter{}, 0, 10, "status", "desc", []string{"Owner"}).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByFilter", repository.LeadListFilter{}).Return(int64(0), errors.New("count error"))
 
-	leads, total, err := suite.leadService.ListSorted(0, 10, "status", "desc")
+	leads, total, err := suite.leadService.ListFiltered(repository.LeadListFilter{}, 0, 10, "status", "desc")
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), leads)
 	assert.Equal(suite.T(), int64(0), total)
@@ -468,10 +469,12 @@ func (suite *LeadServiceTestSuite) TestGetByOwner_Success() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", OwnerID: 1},
 	}
 
-	suite.mockLeadRepo.On("GetByOwnerID", uint(1), 0, 10).Return(expectedLeads, nil)
-	suite.mockLeadRepo.On("CountByOwnerID", uint(1)).Return(int64(2), nil)
+	ownerID := uint(1)
+	filter := repository.LeadListFilter{OwnerID: &ownerID}
+	suite.mockLeadRepo.On("ListByFilter", filter, 0, 10, "", "", []string{"Owner"}).Return(expectedLeads, nil)
+	suite.mockLeadRepo.On("CountByFilter", filter).Return(int64(2), nil)
 
-	leads, total, err := suite.leadService.GetByOwner(1, 0, 10)
+	leads, total, err := suite.leadService.ListFiltered(filter, 0, 10, "", "")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), expectedLeads, leads)
 	assert.Equal(suite.T(), int64(2), total)

@@ -58,30 +58,6 @@ func (m *MockTaskService) Delete(id uint) error {
 	return args.Error(0)
 }
 
-func (m *MockTaskService) List(offset, limit int) ([]models.Task, int64, error) {
-	args := m.Called(offset, limit)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *MockTaskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	args := m.Called(offset, limit, sortBy, sortOrder)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *MockTaskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	args := m.Called(query, offset, limit, sortBy, sortOrder)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
-}
-
 func (m *MockTaskService) ListFiltered(filter repository.TaskListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
 	args := m.Called(filter, offset, limit, sortBy, sortOrder)
 	if args.Get(0) == nil {
@@ -151,22 +127,6 @@ func (m *MockTaskService) CreateWithLabels(task *models.Task, labelIDs []uint, a
 func (m *MockTaskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error {
 	args := m.Called(task, labelIDs, leadIDSent, dealIDSent, actorID)
 	return args.Error(0)
-}
-
-func (m *MockTaskService) ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	args := m.Called(labelID, offset, limit, sortBy, sortOrder)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
-}
-
-func (m *MockTaskService) ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	args := m.Called(assigneeID, labelID, offset, limit, sortBy, sortOrder)
-	if args.Get(0) == nil {
-		return nil, args.Get(1).(int64), args.Error(2)
-	}
-	return args.Get(0).([]models.Task), args.Get(1).(int64), args.Error(2)
 }
 
 func (m *MockTaskService) ListByDeal(viewer service.LeadViewer, dealID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
@@ -730,7 +690,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_Success() {
 	expectedTasks := []models.Task{task1, task2}
 	totalCount := int64(2)
 
-	suite.mockService.On("List", 0, 20).Return(expectedTasks, totalCount, nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 20, "", "asc").Return(expectedTasks, totalCount, nil)
 
 	req, _ := http.NewRequest("GET", "/tasks", nil)
 	w := httptest.NewRecorder()
@@ -757,7 +717,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_NonAdminGetsOwnTasks() {
 
 	expectedTasks := []models.Task{}
 	totalCount := int64(0)
-	suite.mockService.On("GetByAssignee", uint(1), 0, 20).Return(expectedTasks, totalCount, nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{AssigneeID: taskListAssignee(1)}, 0, 20, "", "").Return(expectedTasks, totalCount, nil)
 
 	req, _ := http.NewRequest("GET", "/tasks", nil)
 	w := httptest.NewRecorder()
@@ -789,7 +749,7 @@ func (suite *TaskHandlerTestSuite) TestMyTasks_ParsePaginationSuccess() {
 // Regression: the frontend sends `limit`, and it used to be ignored because the
 // handler only read `per_page`.
 func (suite *TaskHandlerTestSuite) TestListTasks_LimitIsHonoured() {
-	suite.mockService.On("List", 0, 50).Return([]models.Task{}, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 50, "", "asc").Return([]models.Task{}, int64(0), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?limit=50", nil)
 	w := httptest.NewRecorder()
@@ -799,7 +759,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_LimitIsHonoured() {
 }
 
 func (suite *TaskHandlerTestSuite) TestListTasks_PageConvertsToOffset() {
-	suite.mockService.On("List", 20, 20).Return([]models.Task{}, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 20, 20, "", "asc").Return([]models.Task{}, int64(0), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?page=2&limit=20", nil)
 	w := httptest.NewRecorder()
@@ -816,7 +776,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_PageConvertsToOffset() {
 
 // An oversized limit is clamped to the 100 cap, not discarded back to 20.
 func (suite *TaskHandlerTestSuite) TestListTasks_LimitCappedAtHundred() {
-	suite.mockService.On("List", 0, 100).Return([]models.Task{}, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 100, "", "asc").Return([]models.Task{}, int64(0), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?limit=500", nil)
 	w := httptest.NewRecorder()
@@ -826,7 +786,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_LimitCappedAtHundred() {
 }
 
 func (suite *TaskHandlerTestSuite) TestListTasks_OffsetIsHonoured() {
-	suite.mockService.On("List", 40, 20).Return([]models.Task{}, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 40, 20, "", "asc").Return([]models.Task{}, int64(0), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?offset=40", nil)
 	w := httptest.NewRecorder()
@@ -882,7 +842,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_NonAdminLimitIsHonoured() {
 	})
 	SetupTaskRoutes(suite.router.Group(""), suite.handler)
 
-	suite.mockService.On("GetByAssignee", uint(1), 0, 50).Return([]models.Task{}, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{AssigneeID: taskListAssignee(1)}, 0, 50, "", "").Return([]models.Task{}, int64(0), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?limit=50", nil)
 	w := httptest.NewRecorder()
@@ -898,7 +858,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_SortByCreatedAtDesc() {
 	task2.ID = 1
 	expectedTasks := []models.Task{task1, task2}
 
-	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedTasks, int64(2), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 20, "created_at", "desc").Return(expectedTasks, int64(2), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?sort_by=created_at&sort_order=desc", nil)
 	w := httptest.NewRecorder()
@@ -919,7 +879,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_SortByInvalidColumn() {
 	expectedTasks := []models.Task{task1}
 
 	// Invalid sort_by should fall through to unsorted List
-	suite.mockService.On("List", 0, 20).Return(expectedTasks, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 20, "", "desc").Return(expectedTasks, int64(1), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?sort_by=invalid_column&sort_order=desc", nil)
 	w := httptest.NewRecorder()
@@ -933,7 +893,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_SearchByTitle() {
 	task1.ID = 1
 	expectedTasks := []models.Task{task1}
 
-	suite.mockService.On("Search", "follow up", 0, 20, "", "asc").Return(expectedTasks, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{Search: "follow up"}, 0, 20, "", "asc").Return(expectedTasks, int64(1), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?search=follow+up", nil)
 	w := httptest.NewRecorder()
@@ -953,7 +913,7 @@ func (suite *TaskHandlerTestSuite) TestListTasks_SearchWithSort() {
 	task1.ID = 1
 	expectedTasks := []models.Task{task1}
 
-	suite.mockService.On("Search", "follow", 0, 20, "due_date", "asc").Return(expectedTasks, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{Search: "follow"}, 0, 20, "due_date", "asc").Return(expectedTasks, int64(1), nil)
 
 	req, _ := http.NewRequest("GET", "/tasks?search=follow&sort_by=due_date&sort_order=asc", nil)
 	w := httptest.NewRecorder()
@@ -1090,3 +1050,7 @@ func (suite *TaskHandlerTestSuite) TestGetUpcoming_ServiceErrorIsInternalError()
 
 	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)
 }
+
+// taskListAssignee returns a pointer to id, the AssigneeID a caller narrowed to
+// its own tasks reaches ListFiltered with.
+func taskListAssignee(id uint) *uint { return &id }

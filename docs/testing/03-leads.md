@@ -94,9 +94,10 @@ the frontend gating.
   2. Navigate to `/leads`.
   3. Compare the visible rows against the leads owned by the sales user.
 - **Expected:** 200. Only leads whose `owner_id` is the sales user appear —
-  `internal/handler/lead_handler.go` `LeadHandler.List` routes sales users to `leadService.GetByOwner()`.
-  The search box, the classification dropdown and the column sort headers still send their
-  parameters, but the sales branch is taken before any of them are consulted, so they have no effect at all for this role.
+  `internal/handler/lead_handler.go` `LeadHandler.List` calls `leadService.ListFiltered` with the
+  owner forced to the sales user. The search box, the classification dropdown and the column sort
+  headers still send their parameters, but the handler leaves them out of the filter for this
+  role, so they have no effect at all.
 - **Known issue:** For a sales user, search / classification / sort are silently ignored rather
   than rejected (`internal/handler/lead_handler.go` `LeadHandler.List`); the swagger description on `List` documents this.
 - **Automation:** blocked — needs a sales role-login helper; only
@@ -448,7 +449,7 @@ the frontend gating.
   4. Create a **new** lead reusing the exact same email address.
 - **Expected:** Step 3 returns no rows — the search runs `LIKE` over
   `first_name, last_name, email, company, phone, notes`
-  (`internal/repository/lead_repository.go` `leadRepository.Search`) and the erasure has overwritten all of them with a random
+  (`internal/repository/lead_repository.go` `leadRepository.ListByFilter`) and the erasure has overwritten all of them with a random
   `.invalid` address and placeholder names before soft-deleting the row
   (`erasure_cascade.go`, `erasure.go`). Step 4 returns **201**: the address is reusable because it
   no longer exists anywhere in the table.
@@ -529,7 +530,8 @@ the frontend gating.
 - **Expected:** `GET /api/v1/leads?...&search=<email>` returns 200 and the table shows the matching
   lead. The search is a case-insensitive `LIKE` across first_name, last_name, email, company, phone
   and notes; `total` in the response reflects the filtered count
-  (`internal/repository/lead_repository.go` `leadRepository.CountSearch`).
+  (`internal/repository/lead_repository.go` `leadRepository.CountByFilter`). The term is matched
+  literally: `%`, `_`, `!` and `\` match only themselves (#618).
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search for a
   lead by email"
 
@@ -576,7 +578,7 @@ the frontend gating.
   1. Search for a distinctive word from the lead's notes.
   2. Search for a fragment of the lead's phone number.
 - **Expected:** Both searches return the lead — `notes` and `phone` are in the `LIKE` clause
-  (`internal/repository/lead_repository.go` `leadRepository.Search`), even though neither is presented as a searchable column in the UI.
+  (`internal/repository/lead_repository.go` `leadRepository.ListByFilter`), even though neither is presented as a searchable column in the UI.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (extended)
 
 ### TC-LEAD-032 — Search and sort combine
@@ -586,28 +588,26 @@ the frontend gating.
 - **Steps:**
   1. Search for the shared token.
   2. Click the "Created" column header.
-- **Expected:** The request carries both `search` and `sort_by=created_at`; 200. The search branch
-  of `internal/handler/lead_handler.go` `LeadHandler.List` forwards `sortBy`/`sortOrder` to
-  `leadService.Search`, which builds the ORDER BY through `utils.SafeOrderClause` in
-  `internal/repository/lead_repository.go` `leadRepository.Search`.
+- **Expected:** The request carries both `search` and `sort_by=created_at`; 200.
+  `internal/handler/lead_handler.go` `LeadHandler.List` forwards the search and
+  `sortBy`/`sortOrder` together to `leadService.ListFiltered`, which builds the ORDER BY through
+  `utils.SafeOrderClause` in `internal/repository/lead_repository.go` `leadRepository.ListByFilter`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should search and
   sort together"
 
-### TC-LEAD-033 — Search overrides an active classification filter
+### TC-LEAD-033 — Search combines with an active classification filter
 - **Priority:** P2
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Admin logged in; leads exist in more than one classification.
 - **Steps:**
   1. Set the Classification dropdown to "Spam".
   2. Without clearing it, type a token into the search box that matches leads of other
      classifications.
 - **Expected:** The request contains both `classification=spam` and `search=<token>`, and the
-  response contains leads of *any* classification: the handler's branch chain checks `search`
-  before `classification` (see `internal/handler/lead_handler.go` `LeadHandler.List`), so the classification is dropped. Verified
-  live: `?classification=spam&search=gmail` returned 11 rows while `?classification=spam` alone
-  returned 0.
-- **Known issue:** The two dropdown/search controls appear to compose but do not; the UI still
-  shows "Spam" selected while displaying non-spam rows.
+  response contains only the leads that match the token AND are classified spam (#618):
+  `internal/handler/lead_handler.go` `LeadHandler.List` passes both to
+  `leadService.ListFiltered`, which ANDs them in one query. With no spam lead matching the token
+  the table is empty and `total` is 0.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (new)
 
 ---
@@ -727,28 +727,23 @@ the frontend gating.
   2. Set the Classification dropdown to "Spam".
 - **Expected:** `GET /api/v1/leads?...&classification=spam` returns 200; only leads with that
   classification are listed and `total` is the per-classification count
-  (`leadRepository.GetByClassification` (`internal/repository/lead_repository.go`) and
-  `leadRepository.CountByClassification` (`internal/repository/lead_repository.go`)). With no spam leads present the table is empty and
+  (`leadRepository.ListByFilter` and `leadRepository.CountByFilter`
+  (`internal/repository/lead_repository.go`)). With no spam leads present the table is empty and
   the total is 0 — verified live.
 - **Known issue:** Gap **G17** in `docs/FEATURES.md` — this dropdown has no E2E coverage today.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new; closes G17)
 
-### TC-LEAD-041 — Sorting is dropped while a classification filter is active
+### TC-LEAD-041 — Sorting applies while a classification filter is active
 - **Priority:** P2
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Admin logged in; several leads sharing one classification.
 - **Steps:**
   1. Set the Classification dropdown to the shared value.
   2. Click the "Email" column header.
 - **Expected:** The request carries both `classification=<value>` and `sort_by=email&sort_order=desc`,
-  returns 200, and the rows come back in insertion order, not email order. The
-  classification branch precedes the sort branch (`internal/handler/lead_handler.go` `LeadHandler.List`) and
-  `GetByClassification` accepts no sort arguments. Verified live: with
-  `classification=unclassified&sort_by=email&sort_order=desc` the first emails were
-  `Kitty53@…, Ada26@…, Salvatore.Bernier@…`, while `sort_by=email&sort_order=desc` alone returned
-  `Wilfredo.Kuphal@…, Shannon.Johnston2@…, …`.
-- **Known issue:** Filter and sort do not compose, and the column header still shows an active sort
-  indicator.
+  returns 200, and the rows of that classification come back in email order (descending), ties
+  broken by id (#618): `internal/handler/lead_handler.go` `LeadHandler.List` passes the
+  classification and the sort together to `leadService.ListFiltered`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` (new)
 
 ---
@@ -1035,7 +1030,7 @@ every refusal or failure before the file starts is the JSON envelope.
   `TestLeadExportCSV{SQLite,MySQL}`; `internal/handler/lead_export_test.go`
   `TestLeadExportRecord`
 
-### TC-LEAD-073 — The admin export order follows the list's precedence and is total
+### TC-LEAD-073 — The admin export applies the list's combined filters and a total order
 - **Priority:** P1
 - **Type:** regression
 - **Preconditions:** Admin JWT; more than 1,000 leads whose sort values run against id order,
@@ -1048,7 +1043,8 @@ every refusal or failure before the file starts is the JSON envelope.
   3. Export with an unknown `sort_by` and with `sort_order=sideways`.
 - **Expected:** Step 1: the rows are ordered by the column and then by id in the same direction,
   so `desc` is the exact reverse of `asc`, and no lead is missing or repeated. Step 2: the search
-  wins and keeps the sort; then the classification wins and the rows come in ascending id order.
+  and the classification combine (only matching spam leads) in email order; then the spam leads
+  come in email order (#618).
   Step 3: the unknown column is dropped (ascending id order) and the bad direction becomes `asc`;
   neither is a 400. The rows are read by one statement before the first byte is written, so a
   database failure is a JSON 500, never a truncated file.

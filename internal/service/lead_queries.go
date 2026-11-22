@@ -27,92 +27,6 @@ func (s *leadService) ListByExternalID(externalID string) ([]models.Lead, error)
 	return s.leadRepo.ListByExternalID(externalID, LeadExternalIDLookupLimit)
 }
 
-func (s *leadService) GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error) {
-	// For owner-filtered lists, no need to preload Owner since we already know it
-	leads, err := s.leadRepo.GetByOwnerID(ownerID, offset, limit)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	total, err := s.leadRepo.CountByOwnerID(ownerID)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return leads, total, nil
-}
-
-func (s *leadService) GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "LeadService", "GetByClassification")
-	switch classification {
-	case models.LeadClassificationUnclassified, models.LeadClassificationTest, models.LeadClassificationSpam, models.LeadClassificationLead, models.LeadClassificationHotLead:
-		logger = logger.WithField("classification", classification)
-	}
-
-	leads, err := s.leadRepo.GetByClassification(classification, offset, limit)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to list leads by classification")
-		return nil, 0, err
-	}
-
-	total, err := s.leadRepo.CountByClassification(classification)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count leads by classification")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Leads listed by classification successfully")
-	return leads, total, nil
-}
-
-func (s *leadService) List(offset, limit int) ([]models.Lead, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "LeadService", "List")
-
-	// For general lists, preload Owner for display purposes
-	leads, err := s.leadRepo.ListWithPreloads(offset, limit, "Owner")
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to list leads")
-		return nil, 0, err
-	}
-
-	total, err := s.leadRepo.Count()
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count leads")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Leads listed successfully")
-	return leads, total, nil
-}
-
-func (s *leadService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "LeadService", "ListSorted")
-
-	leads, err := s.leadRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, "Owner")
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to list leads sorted")
-		return nil, 0, err
-	}
-
-	total, err := s.leadRepo.Count()
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count leads")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Leads listed sorted successfully")
-	return leads, total, nil
-}
-
 // ListFiltered lists one page of the leads matching filter, with their owner,
 // and the number of leads the same filter matches before pagination. The log
 // lines carry ids, offsets and counts only: never the search term or the sort,
@@ -143,27 +57,5 @@ func (s *leadService) ListFiltered(filter repository.LeadListFilter, offset, lim
 	}
 
 	logger.WithField("total", total).Info("Filtered leads listed successfully")
-	return leads, total, nil
-}
-
-func (s *leadService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "LeadService", "Search")
-
-	leads, err := s.leadRepo.Search(query, offset, limit, sortBy, sortOrder, "Owner")
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to search leads")
-		return nil, 0, err
-	}
-
-	total, err := s.leadRepo.CountSearch(query)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count search results")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Lead search completed")
 	return leads, total, nil
 }

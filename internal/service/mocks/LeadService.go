@@ -142,43 +142,6 @@ func (_m *LeadService) Create(lead *models.Lead) error {
 	return r0
 }
 
-// GetByClassification provides a mock function with given fields: classification, offset, limit
-func (_m *LeadService) GetByClassification(classification models.LeadClassification, offset int, limit int) ([]models.Lead, int64, error) {
-	ret := _m.Called(classification, offset, limit)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByClassification")
-	}
-
-	var r0 []models.Lead
-	var r1 int64
-	var r2 error
-	if rf, ok := ret.Get(0).(func(models.LeadClassification, int, int) ([]models.Lead, int64, error)); ok {
-		return rf(classification, offset, limit)
-	}
-	if rf, ok := ret.Get(0).(func(models.LeadClassification, int, int) []models.Lead); ok {
-		r0 = rf(classification, offset, limit)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Lead)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(models.LeadClassification, int, int) int64); ok {
-		r1 = rf(classification, offset, limit)
-	} else {
-		r1 = ret.Get(1).(int64)
-	}
-
-	if rf, ok := ret.Get(2).(func(models.LeadClassification, int, int) error); ok {
-		r2 = rf(classification, offset, limit)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
-}
-
 // ListByExternalID provides a mock function with given fields: externalID
 // ExportForActor provides a mock function with given fields: actor, params
 func (_m *LeadService) ExportForActor(actor service.LeadViewer, params service.LeadExportParams) ([]models.Lead, error) {
@@ -345,43 +308,6 @@ func (_m *LeadService) GetByIDContext(ctx context.Context, id uint) (*models.Lea
 	return r0, r1
 }
 
-// GetByOwner provides a mock function with given fields: ownerID, offset, limit
-func (_m *LeadService) GetByOwner(ownerID uint, offset int, limit int) ([]models.Lead, int64, error) {
-	ret := _m.Called(ownerID, offset, limit)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByOwner")
-	}
-
-	var r0 []models.Lead
-	var r1 int64
-	var r2 error
-	if rf, ok := ret.Get(0).(func(uint, int, int) ([]models.Lead, int64, error)); ok {
-		return rf(ownerID, offset, limit)
-	}
-	if rf, ok := ret.Get(0).(func(uint, int, int) []models.Lead); ok {
-		r0 = rf(ownerID, offset, limit)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Lead)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, int, int) int64); ok {
-		r1 = rf(ownerID, offset, limit)
-	} else {
-		r1 = ret.Get(1).(int64)
-	}
-
-	if rf, ok := ret.Get(2).(func(uint, int, int) error); ok {
-		r2 = rf(ownerID, offset, limit)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
-}
-
 // GetCount provides a mock function with no fields
 func (_m *LeadService) GetCount() (int64, error) {
 	ret := _m.Called()
@@ -410,43 +336,6 @@ func (_m *LeadService) GetCount() (int64, error) {
 	return r0, r1
 }
 
-// List provides a mock function with given fields: offset, limit
-func (_m *LeadService) List(offset int, limit int) ([]models.Lead, int64, error) {
-	ret := _m.Called(offset, limit)
-
-	if len(ret) == 0 {
-		panic("no return value specified for List")
-	}
-
-	var r0 []models.Lead
-	var r1 int64
-	var r2 error
-	if rf, ok := ret.Get(0).(func(int, int) ([]models.Lead, int64, error)); ok {
-		return rf(offset, limit)
-	}
-	if rf, ok := ret.Get(0).(func(int, int) []models.Lead); ok {
-		r0 = rf(offset, limit)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Lead)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int) int64); ok {
-		r1 = rf(offset, limit)
-	} else {
-		r1 = ret.Get(1).(int64)
-	}
-
-	if rf, ok := ret.Get(2).(func(int, int) error); ok {
-		r2 = rf(offset, limit)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
-}
-
 // ListFiltered provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder
 func (_m *LeadService) ListFiltered(filter repository.LeadListFilter, offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
 	ret := _m.Called(filter, offset, limit, sortBy, sortOrder)
@@ -460,80 +349,6 @@ func (_m *LeadService) ListFiltered(filter repository.LeadListFilter, offset int
 		r0 = ret.Get(0).([]models.Lead)
 	}
 	return r0, ret.Get(1).(int64), ret.Error(2)
-}
-
-// ListSorted provides a mock function with given fields: offset, limit, sortBy, sortOrder
-func (_m *LeadService) ListSorted(offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
-	ret := _m.Called(offset, limit, sortBy, sortOrder)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ListSorted")
-	}
-
-	var r0 []models.Lead
-	var r1 int64
-	var r2 error
-	if rf, ok := ret.Get(0).(func(int, int, string, string) ([]models.Lead, int64, error)); ok {
-		return rf(offset, limit, sortBy, sortOrder)
-	}
-	if rf, ok := ret.Get(0).(func(int, int, string, string) []models.Lead); ok {
-		r0 = rf(offset, limit, sortBy, sortOrder)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Lead)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int, string, string) int64); ok {
-		r1 = rf(offset, limit, sortBy, sortOrder)
-	} else {
-		r1 = ret.Get(1).(int64)
-	}
-
-	if rf, ok := ret.Get(2).(func(int, int, string, string) error); ok {
-		r2 = rf(offset, limit, sortBy, sortOrder)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
-}
-
-// Search provides a mock function with given fields: query, offset, limit, sortBy, sortOrder
-func (_m *LeadService) Search(query string, offset int, limit int, sortBy string, sortOrder string) ([]models.Lead, int64, error) {
-	ret := _m.Called(query, offset, limit, sortBy, sortOrder)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Search")
-	}
-
-	var r0 []models.Lead
-	var r1 int64
-	var r2 error
-	if rf, ok := ret.Get(0).(func(string, int, int, string, string) ([]models.Lead, int64, error)); ok {
-		return rf(query, offset, limit, sortBy, sortOrder)
-	}
-	if rf, ok := ret.Get(0).(func(string, int, int, string, string) []models.Lead); ok {
-		r0 = rf(query, offset, limit, sortBy, sortOrder)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Lead)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(string, int, int, string, string) int64); ok {
-		r1 = rf(query, offset, limit, sortBy, sortOrder)
-	} else {
-		r1 = ret.Get(1).(int64)
-	}
-
-	if rf, ok := ret.Get(2).(func(string, int, int, string, string) error); ok {
-		r2 = rf(query, offset, limit, sortBy, sortOrder)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
 }
 
 // Update provides a mock function with given fields: id, updates

@@ -1156,6 +1156,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Leads and tasks list through one query path each (#618).** `GET /leads`, `GET /leads/export`
+  and `GET /tasks` build one filter, and the repository answers it with one shared predicate for
+  the rows and the total; the parameters a caller may use are always combined. For admins that
+  means a lead search combines with the classification and the sort (before, the search dropped
+  the classification and a classification dropped the sort), and a task `label_id` combines with
+  `search` (before, `label_id` dropped the search). The lead export follows the list: an admin's
+  search, classification and sort apply together. Sales users still get their own leads in id
+  order with search, classification and sort ignored, and non-admin task callers still get their
+  own tasks without search, sorted only together with `label_id`. The lead `owner` and the task
+  `assigned_to` are now loaded on every `GET /leads` and `GET /tasks` path; `GET /tasks/my` is
+  unchanged. A lead or task search term is matched literally: `%`, `_`, `!` and `\` match only
+  themselves, on SQLite, MySQL and MariaDB (`LIKE ... ESCAPE '!'`). The duplicate list, sort,
+  search, owner, classification and label repository and service methods are removed and their
+  tests run against the shared path.
+
 - **End-to-end tests assert the outcome their titles name (#622).** The customer, user,
   registration, lead search and sorting, and cross-entity browser tests wait on the API response
   and the rendered rows instead of fixed delays, and assert the result: every create answers 201

@@ -15,6 +15,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -247,7 +248,7 @@ func (suite *LeadHandlerTestSuite) TestList_AdminViewsAll() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
 
-	suite.mockService.On("List", 0, 20).Return(expectedLeads, int64(2), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "", "asc").Return(expectedLeads, int64(2), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
@@ -275,7 +276,7 @@ func (suite *LeadHandlerTestSuite) TestList_SalesViewsOwn() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", OwnerID: 2},
 	}
 
-	suite.mockService.On("GetByOwner", uint(2), 0, 20).Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{OwnerID: leadListOwner(2)}, 0, 20, "", "").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
@@ -675,7 +676,7 @@ func (suite *LeadHandlerTestSuite) TestList_SortByCreatedAtDesc() {
 		{BaseModel: models.BaseModel{ID: 1}, FirstName: "John", Email: "john@example.com"},
 	}
 
-	suite.mockService.On("ListSorted", 0, 20, "created_at", "desc").Return(expectedLeads, int64(2), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "created_at", "desc").Return(expectedLeads, int64(2), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc", nil)
 	rec := httptest.NewRecorder()
@@ -699,7 +700,7 @@ func (suite *LeadHandlerTestSuite) TestList_SortByCreatedAtAsc() {
 		{BaseModel: models.BaseModel{ID: 2}, FirstName: "Jane", Email: "jane@example.com"},
 	}
 
-	suite.mockService.On("ListSorted", 0, 20, "created_at", "asc").Return(expectedLeads, int64(2), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "created_at", "asc").Return(expectedLeads, int64(2), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=asc", nil)
 	rec := httptest.NewRecorder()
@@ -717,7 +718,7 @@ func (suite *LeadHandlerTestSuite) TestList_SortByInvalidColumn() {
 	}
 
 	// Invalid sort_by should fall through to unsorted List
-	suite.mockService.On("List", 0, 20).Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "", "desc").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=invalid_column&sort_order=desc", nil)
 	rec := httptest.NewRecorder()
@@ -735,7 +736,7 @@ func (suite *LeadHandlerTestSuite) TestList_SortByInvalidOrder() {
 	}
 
 	// Invalid sort_order should default to "asc"
-	suite.mockService.On("ListSorted", 0, 20, "email", "asc").Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "email", "asc").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=email&sort_order=invalid", nil)
 	rec := httptest.NewRecorder()
@@ -753,7 +754,7 @@ func (suite *LeadHandlerTestSuite) TestList_SortWithPagination() {
 	}
 
 	// page=2, limit=10 → offset=10
-	suite.mockService.On("ListSorted", 10, 10, "created_at", "desc").Return(expectedLeads, int64(15), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 10, 10, "created_at", "desc").Return(expectedLeads, int64(15), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc&page=2&limit=10", nil)
 	rec := httptest.NewRecorder()
@@ -770,7 +771,7 @@ func (suite *LeadHandlerTestSuite) TestList_SearchByEmail() {
 		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Anders", Email: "anders.t@conversio.dk"},
 	}
 
-	suite.mockService.On("Search", "anders.t@conversio.dk", 0, 20, "", "asc").Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{Search: "anders.t@conversio.dk"}, 0, 20, "", "asc").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?search=anders.t%40conversio.dk", nil)
 	rec := httptest.NewRecorder()
@@ -793,7 +794,7 @@ func (suite *LeadHandlerTestSuite) TestList_SearchWithSort() {
 		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Anders", Email: "anders.t@conversio.dk"},
 	}
 
-	suite.mockService.On("Search", "conversio", 0, 20, "created_at", "desc").Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{Search: "conversio"}, 0, 20, "created_at", "desc").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?search=conversio&sort_by=created_at&sort_order=desc", nil)
 	rec := httptest.NewRecorder()
@@ -814,7 +815,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserSeesOnlyOwnLeads() {
 		{BaseModel: models.BaseModel{ID: 5}, FirstName: "Support Lead", OwnerID: 3},
 	}
 
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{OwnerID: leadListOwner(3)}, 0, 20, "", "").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads", nil)
 	rec := httptest.NewRecorder()
@@ -836,7 +837,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSearchSeesOnlyOwnLead
 	}
 
 	// Even with search param, non-admin/non-sales should only see own leads
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{OwnerID: leadListOwner(3)}, 0, 20, "", "").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?search=test", nil)
 	rec := httptest.NewRecorder()
@@ -858,7 +859,7 @@ func (suite *LeadHandlerTestSuite) TestList_SupportUserWithSortSeesOnlyOwnLeads(
 	}
 
 	// Even with sort params, non-admin/non-sales should only see own leads
-	suite.mockService.On("GetByOwner", uint(3), 0, 20).Return(expectedLeads, int64(1), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{OwnerID: leadListOwner(3)}, 0, 20, "", "").Return(expectedLeads, int64(1), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?sort_by=created_at&sort_order=desc", nil)
 	rec := httptest.NewRecorder()
@@ -878,7 +879,7 @@ func (suite *LeadHandlerTestSuite) TestList_CustomerUserWithClassificationSeesOn
 	expectedLeads := []models.Lead{}
 
 	// Even with classification param, customer should only see own leads
-	suite.mockService.On("GetByOwner", uint(4), 0, 20).Return(expectedLeads, int64(0), nil)
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{OwnerID: leadListOwner(4)}, 0, 20, "", "").Return(expectedLeads, int64(0), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/leads?classification=hot_lead", nil)
 	rec := httptest.NewRecorder()
@@ -1066,7 +1067,7 @@ func (suite *LeadHandlerTestSuite) TestList_ExternalID_SharedValueSalesSeesOnlyI
 	suite.Equal([]uint{8}, leadIDs(body.Data.Leads))
 	suite.Equal(int64(1), body.Data.Total)
 	suite.NotContains(rec.Body.String(), "Hidden")
-	suite.mockService.AssertNotCalled(suite.T(), "GetByOwner", mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertNotCalled(suite.T(), "ListFiltered", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (suite *LeadHandlerTestSuite) TestList_ExternalID_SalesGetsNothingForAnotherOwnersLead() {
@@ -1171,9 +1172,13 @@ func (suite *LeadHandlerTestSuite) TestList_ExternalID_WinsOverSearchSortAndPagi
 }
 
 func (suite *LeadHandlerTestSuite) TestList_ExternalID_EmptyValueKeepsTheNormalList() {
-	suite.mockService.On("List", 0, 20).Return([]models.Lead{}, int64(0), nil).Once()
+	suite.mockService.On("ListFiltered", repository.LeadListFilter{}, 0, 20, "", "asc").Return([]models.Lead{}, int64(0), nil).Once()
 
 	rec, _ := suite.getLeadsAs("admin", 1, "/leads?external_id=")
 
 	suite.Equal(http.StatusOK, rec.Code)
 }
+
+// leadListOwner returns a pointer to id, the OwnerID a caller scoped to its own
+// leads reaches ListFiltered with.
+func leadListOwner(id uint) *uint { return &id }

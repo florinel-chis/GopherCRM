@@ -248,9 +248,9 @@ documents as **Known issue** lines. The most consequential:
 - ~~The Profile and API Keys settings pages are heading-only stubs~~ Fixed: both pages are built
   (`gocrm-ui/src/pages/settings/Profile.tsx`, `APIKeys.tsx`) with unit tests (`Profile.test.tsx`,
   `APIKeys.test.tsx`); the cases in 07-users.md and 08-settings.md still record their browser coverage.
-- A task-list request carrying both `label_id` and `search` silently drops the search: the two
-  filters cannot be combined server-side. The UI no longer contradicts that — applying a label
-  filter clears and disables the search box — but the server-side limitation stands (10-labels.md).
+- ~~A task-list request carrying both `label_id` and `search` silently drops the search: the two
+  filters cannot be combined server-side.~~ Fixed (#618): the server ANDs them; the UI still
+  clears and disables the search box while a label filter is active, by choice (10-labels.md).
 
 ## Implementation order
 

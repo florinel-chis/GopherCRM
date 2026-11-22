@@ -33,18 +33,6 @@ func (r *taskRepository) GetByID(id uint) (*models.Task, error) {
 	return &task, nil
 }
 
-// GetByAssignedToID backs GET /tasks/my and the non-admin branch of GET /tasks.
-// Labels are preloaded here even though the assignee is not: a task's labels
-// are part of how it renders in every listing, so leaving them out would make
-// the chips disappear for exactly the callers who see this path. The lead and
-// the deal are preloaded so the handler can decide whether the caller may see
-// them.
-func (r *taskRepository) GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error) {
-	var tasks []models.Task
-	err := orderByID(r.db.Preload("Labels").Preload("Lead").Preload("Deal").Where("assigned_to_id = ?", assignedToID), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
 // Update saves the task's own columns. See Create for why the association is
 // omitted — the handler hands us a task read back with its labels preloaded,
 // and an edit that never mentioned labels must not touch them.
@@ -68,70 +56,9 @@ func (r *taskRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Task{}, id).Error
 }
 
-func (r *taskRepository) List(offset, limit int) ([]models.Task, error) {
-	var tasks []models.Task
-	err := orderByID(r.db.Preload("AssignedTo").Preload("Labels").Preload("Lead").Preload("Deal"), "tasks").Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-func (r *taskRepository) Count() (int64, error) {
-	var count int64
-	err := r.db.Model(&models.Task{}).Count(&count).Error
-	return count, err
-}
-
-func (r *taskRepository) CountByAssignedToID(assignedToID uint) (int64, error) {
-	var count int64
-	err := r.db.Model(&models.Task{}).Where("assigned_to_id = ?", assignedToID).Count(&count).Error
-	return count, err
-}
-
 func (r *taskRepository) CountPending() (int64, error) {
 	var count int64
 	err := r.db.Model(&models.Task{}).Where("status IN ?", []string{"pending", "in_progress"}).Count(&count).Error
-	return count, err
-}
-
-func (r *taskRepository) ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
-	var tasks []models.Task
-	query := r.db
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	query, err := orderPage(query, "tasks", sortBy, sortOrder)
-	if err != nil {
-		return nil, err
-	}
-	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-func (r *taskRepository) Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
-	var tasks []models.Task
-	db := r.db
-	for _, preload := range preloads {
-		db = db.Preload(preload)
-	}
-	searchPattern := "%" + query + "%"
-	db = db.Where(
-		"title LIKE ? OR description LIKE ?",
-		searchPattern, searchPattern,
-	)
-	db, err := orderPage(db, "tasks", sortBy, sortOrder)
-	if err != nil {
-		return nil, err
-	}
-	err = db.Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-func (r *taskRepository) CountSearch(query string) (int64, error) {
-	var count int64
-	searchPattern := "%" + query + "%"
-	err := r.db.Model(&models.Task{}).Where(
-		"title LIKE ? OR description LIKE ?",
-		searchPattern, searchPattern,
-	).Count(&count).Error
 	return count, err
 }
 
@@ -247,53 +174,14 @@ func (r *taskRepository) UpdateWithLabels(task *models.Task, labels []models.Lab
 	})
 }
 
-// ListByLabel returns the tasks carrying one label. A nil assignedToID means
-// every assignee.
-func (r *taskRepository) ListByLabel(labelID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error) {
-	var tasks []models.Task
-	query := r.labelQuery(labelID, assignedToID)
-	for _, preload := range preloads {
-		query = query.Preload(preload)
-	}
-	// The join puts a second table in scope, so both the validated sort column
-	// and the id tie-breaker are qualified with the tasks table. The join can
-	// match a task only once per label id, so the filtered rows stay unique.
-	query, err := orderPage(query, "tasks", sortBy, sortOrder)
-	if err != nil {
-		return nil, err
-	}
-	err = query.Offset(offset).Limit(limit).Find(&tasks).Error
-	return tasks, err
-}
-
-// CountByLabel counts the tasks carrying one label, under the same scoping as
-// ListByLabel.
-func (r *taskRepository) CountByLabel(labelID uint, assignedToID *uint) (int64, error) {
-	var count int64
-	err := r.labelQuery(labelID, assignedToID).Count(&count).Error
-	return count, err
-}
-
-// labelQuery is the shared predicate behind the two label-filtered reads. GORM
-// adds `tasks.deleted_at IS NULL` for the model being queried, so soft-deleted
-// tasks stay out even though the join is hand-written.
-func (r *taskRepository) labelQuery(labelID uint, assignedToID *uint) *gorm.DB {
-	query := r.db.Model(&models.Task{}).
-		Joins("JOIN task_labels ON task_labels.task_id = tasks.id").
-		Where("task_labels.label_id = ?", labelID)
-	if assignedToID != nil {
-		query = query.Where("tasks.assigned_to_id = ?", *assignedToID)
-	}
-	return query
-}
-
 // whereTaskListFilter is the one predicate of ListByFilter and CountByFilter.
 // It joins task_labels only for a label filter, ANDs the optional assignee,
 // status and priority, and keeps the search alternatives in one parenthesised
 // group, so the search OR can never let a row of another assignee, status,
 // priority or label through. Every column is qualified with its table and every
-// value is bound. GORM adds tasks.deleted_at IS NULL for the model, so
-// soft-deleted tasks stay out.
+// value is bound. The search is a literal substring: containsPattern escapes
+// the LIKE wildcards, so %, _, ! and a backslash match only themselves. GORM
+// adds tasks.deleted_at IS NULL for the model, so soft-deleted tasks stay out.
 func whereTaskListFilter(db *gorm.DB, filter TaskListFilter) *gorm.DB {
 	if filter.LabelID != 0 {
 		db = db.Joins("JOIN task_labels ON task_labels.task_id = tasks.id").
@@ -309,8 +197,8 @@ func whereTaskListFilter(db *gorm.DB, filter TaskListFilter) *gorm.DB {
 		db = db.Where("tasks.priority = ?", filter.Priority)
 	}
 	if filter.Search != "" {
-		searchPattern := "%" + filter.Search + "%"
-		db = db.Where("(tasks.title LIKE ? OR tasks.description LIKE ?)", searchPattern, searchPattern)
+		searchPattern := containsPattern(filter.Search)
+		db = db.Where(likeAnyClause("tasks.title", "tasks.description"), searchPattern, searchPattern)
 	}
 	return db
 }

@@ -190,6 +190,14 @@ func (s *taskService) GetByID(id uint) (*models.Task, error) {
 	return task, nil
 }
 
+// taskMyPreloads are the associations GET /tasks/my carries: the labels render
+// as chips, and the lead and the deal are loaded so the handler can decide
+// whether the caller may see them. The assignee is the caller itself and is
+// not loaded.
+var taskMyPreloads = []string{"Labels", "Lead", "Deal"}
+
+// GetByAssignee lists one page of the tasks assigned to assigneeID, in
+// ascending id order, and their total, through the task list query.
 func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]models.Task, int64, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"assignee_id": assigneeID,
@@ -197,13 +205,14 @@ func (s *taskService) GetByAssignee(assigneeID uint, offset, limit int) ([]model
 		"limit":       limit,
 	}), "TaskService", "GetByAssignee")
 
-	tasks, err := s.taskRepo.GetByAssignedToID(assigneeID, offset, limit)
+	filter := repository.TaskListFilter{AssigneeID: &assigneeID}
+	tasks, err := s.taskRepo.ListByFilter(filter, offset, limit, "", "", taskMyPreloads...)
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return nil, 0, err
 	}
 
-	total, err := s.taskRepo.CountByAssignedToID(assigneeID)
+	total, err := s.taskRepo.CountByFilter(filter)
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return nil, 0, err
@@ -493,40 +502,6 @@ func (s *taskService) resolveLabels(labelIDs []uint) ([]models.Label, error) {
 	return nil, fmt.Errorf("unknown label ids %v: %w", missing, apperrors.ErrLabelNotFound)
 }
 
-// ListByLabel returns the tasks carrying one label, across every assignee.
-func (s *taskService) ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	return s.listByLabel(labelID, nil, offset, limit, sortBy, sortOrder)
-}
-
-// ListByLabelForAssignee returns the tasks carrying one label for a single
-// assignee. Every role but admin is narrowed through here.
-func (s *taskService) ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	return s.listByLabel(labelID, &assigneeID, offset, limit, sortBy, sortOrder)
-}
-
-func (s *taskService) listByLabel(labelID uint, assigneeID *uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"label_id": labelID,
-		"offset":   offset,
-		"limit":    limit,
-	}), "TaskService", "ListByLabel")
-
-	tasks, err := s.taskRepo.ListByLabel(labelID, assigneeID, offset, limit, sortBy, sortOrder, taskListPreloads...)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to list tasks by label")
-		return nil, 0, err
-	}
-
-	total, err := s.taskRepo.CountByLabel(labelID, assigneeID)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count tasks by label")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Tasks listed by label")
-	return tasks, total, nil
-}
-
 // ListByDeal returns one page of a deal's live tasks for GET /deals/{id}/tasks.
 // A deal that does not exist or was soft-deleted is ErrDealNotFound; one the
 // viewer may not see is ErrForbidden. An admin gets every task of the deal.
@@ -603,77 +578,6 @@ func (s *taskService) Delete(id uint) error {
 
 	logger.WithField("task_id", id).Info("Task deleted successfully")
 	return nil
-}
-
-func (s *taskService) List(offset, limit int) ([]models.Task, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "TaskService", "List")
-
-	tasks, err := s.taskRepo.List(offset, limit)
-	if err != nil {
-		utils.LogServiceResponse(logger, err)
-		return nil, 0, err
-	}
-
-	total, err := s.taskRepo.Count()
-	if err != nil {
-		utils.LogServiceResponse(logger, err)
-		return nil, 0, err
-	}
-
-	logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-		"total":  total,
-	}).Info("Tasks listed successfully")
-
-	return tasks, total, nil
-}
-
-func (s *taskService) ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "TaskService", "ListSorted")
-
-	tasks, err := s.taskRepo.ListSortedWithPreloads(offset, limit, sortBy, sortOrder, taskListPreloads...)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to list tasks sorted")
-		return nil, 0, err
-	}
-
-	total, err := s.taskRepo.Count()
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count tasks")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Tasks listed sorted successfully")
-	return tasks, total, nil
-}
-
-func (s *taskService) Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error) {
-	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
-		"offset": offset,
-		"limit":  limit,
-	}), "TaskService", "Search")
-
-	tasks, err := s.taskRepo.Search(query, offset, limit, sortBy, sortOrder, taskListPreloads...)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to search tasks")
-		return nil, 0, err
-	}
-
-	total, err := s.taskRepo.CountSearch(query)
-	if err != nil {
-		logger.WithError(utils.LogError(err)).Error("Failed to count search results")
-		return nil, 0, err
-	}
-
-	logger.WithField("total", total).Info("Task search completed")
-	return tasks, total, nil
 }
 
 // ListFiltered lists one page of the tasks matching filter, with their
