@@ -19,7 +19,9 @@ the frontend gating.
   `gocrm-ui/src/contexts/ConfigurationContext.tsx`.
 - Backend: `internal/handler/lead_handler.go`, `internal/handler/routes.go`,
   `internal/handler/bulk_handler.go` (`BulkUpdateLeadStatus`, `BulkLeadStatusRequest`),
-  `internal/service/lead_service.go`, `internal/service/bulk_status_service.go`,
+  `internal/service/lead_service.go`, `internal/service/lead_conversion.go`,
+  `internal/service/lead_queries.go`, `internal/service/lead_export.go`,
+  `internal/service/bulk_status_service.go`,
   `internal/repository/lead_repository.go`, `internal/repository/erasure_cascade.go`,
   `internal/middleware/auth.go` (`RequireRole`), `internal/middleware/error_handler.go`,
   `internal/utils/response.go`, `internal/models/lead.go`, `internal/models/customer.go`,
@@ -768,7 +770,7 @@ the frontend gating.
 - **Expected:** `POST /api/v1/leads/{id}/convert` returns **200** with the new customer object
   (`{id, first_name, last_name, email, …}`). A "Lead converted to customer successfully" snackbar
   shows. The lead's status becomes `converted` and `leads.customer_id` is set
-  (`internal/service/lead_service.go` `leadService.convertAttempt`); the lead row remains in the list with a green "Converted" chip.
+  (`internal/service/lead_conversion.go` `leadService.convertAttempt`); the lead row remains in the list with a green "Converted" chip.
   The browser then navigates to **`/customers/undefined`**, which leaves the customer detail page
   on its loading spinner rather than showing the new customer.
 - **Known issue:** `endpoints/leads.ts convertLead` types the response as `{customer_id: number}`,
@@ -842,8 +844,8 @@ the frontend gating.
      button is hidden once the status is `converted`, per TC-LEAD-043).
 - **Expected:** **400** `{"error":{"code":"BAD_REQUEST","message":"lead already converted"}}`.
   `leadService.ConvertToCustomer` returns `apperrors.ErrLeadConverted` both before and inside the
-  transaction (`internal/service/lead_service.go` `leadService.ConvertToCustomer` and
-  `internal/service/lead_service.go` `leadService.convertAttempt`), and the handler classifies it
+  transaction (`internal/service/lead_conversion.go` `leadService.ConvertToCustomer` and
+  `internal/service/lead_conversion.go` `leadService.convertAttempt`), and the handler classifies it
   with `errors.Is` in `internal/handler/lead_handler.go` `LeadHandler.ConvertToCustomer`. No second customer is created. Driven through the UI the conversion dialog
   stays open and shows the server's message above the form, and the page re-reads the lead (since
   #117; from 1.2.0 a snackbar showed it, before that it read "Failed to convert lead"). The same 400

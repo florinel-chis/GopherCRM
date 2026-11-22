@@ -81,7 +81,7 @@ These caveats apply to every recipe that takes in leads through forms.
   `qualified`, from `DefaultConfigurations` (`internal/models/configuration.go`), so a fresh form lead (status `new`)
   must be worked before it can be converted. `leads.conversion.require_notes` can require notes,
   and `leads.conversion.auto_assign_owner` (on by default) makes the lead's owner the customer's
-  account manager (`leadService.ConvertToCustomer` (`internal/service/lead_service.go`)). The UI offers
+  account manager (`leadService.ConvertToCustomer` (`internal/service/lead_conversion.go`)). The UI offers
   Convert only on the allowed statuses (#192). A lead without an email cannot be converted (400),
   and one whose email already belongs to a customer gets a 409 (`LeadHandler.ConvertToCustomer` (`internal/handler/lead_handler.go`)).
 
@@ -135,7 +135,7 @@ and turns some into deals and quotes.
    `AutomationStepCreateTask` (`internal/models/automation.go`); condition fields in
    `automationConditionFields` (`internal/service/automation_condition.go`)). Dry-run a rule before enabling it
    (`internal/service/automation_dry_run.go`).
-7. Conversion to a customer, then a deal and a quote (`internal/service/lead_service.go`,
+7. Conversion to a customer, then a deal and a quote (`internal/service/lead_conversion.go`,
    `internal/service/deal_service.go`, `internal/service/quote_service.go`).
 8. Optionally, AEO tracking for the agency's **own** brand (see recipe 3).
 
@@ -232,7 +232,7 @@ lost deal.
 2. The lead is worked to `contacted` or `qualified`, then converted under the
    `leads.conversion.*` rules (shared caveats). If the lead links a company record, the link carries
    over to the customer when that company is still live; conversion does not create a company
-   (`leadService.convertAttempt` (`internal/service/lead_service.go`)). Companies are created and linked separately, with
+   (`leadService.convertAttempt` (`internal/service/lead_conversion.go`)). Companies are created and linked separately, with
    normalised, unique domains (`normalizeCompany` (`internal/service/company_service.go`)).
 3. A deal moves through five stages (`qualification`, `proposal`, `negotiation`, `won`, `lost`),
    with a stage-history row per change and a `lost_reason` kept while lost
@@ -328,7 +328,7 @@ engines describe its product against competitors.
 
 - Lead `external_id` is stored (`Lead.ExternalID` (`internal/models/lead.go`)), and
   `LeadService.GetByExternalID` exists
-  (`leadService.GetByExternalID` (`internal/service/lead_service.go`)), but no route calls it: #215.
+  (`leadService.GetByExternalID` (`internal/service/lead_queries.go`)), but no route calls it: #215.
 - AEO results can be exported as CSV or JSON through `GET /aeo/export` (#244) or the export
   buttons on the AEO dashboard and in the prompts answer drawer (#318); there is no threshold
   alerting, and scheduled client reports are a deliberate cut (#320, docs/ROADMAP.md).
@@ -495,7 +495,7 @@ planning around an issue number.
 | Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `APIKey` (`internal/models/apikey.go`) | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
-| Route the lead `external_id` lookup | 3 | `leadService.GetByExternalID` (`internal/service/lead_service.go`) | #215 |
+| Route the lead `external_id` lookup | 3 | `leadService.GetByExternalID` (`internal/service/lead_queries.go`) | #215 |
 | Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `TicketHandler.List` (`internal/handler/ticket_handler.go`); `docs/FEATURES.md` 5.5 | #259 |
 | Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |

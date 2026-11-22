@@ -356,10 +356,20 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	for _, name := range []string{"Lead conversion", "Lead update"} {
 		assert.Contains(t, flow(name), "leadCompanyMaxRestarts", name)
 	}
-	leadService := readRepositoryFile(t, "internal/service/lead_service.go")
-	assert.Contains(t, leadService, "const leadCompanyMaxRestarts = 3")
-	assert.Equal(t, 1, strings.Count(leadService, "WithTransactionAndRetry("),
-		"only lead conversion uses WithTransactionAndRetry in lead_service.go")
+	assert.Contains(t, readRepositoryFile(t, "internal/service/lead_company_lock.go"), "const leadCompanyMaxRestarts = 3")
+	var leadService strings.Builder
+	for _, file := range []string{
+		"internal/service/lead_service.go",
+		"internal/service/lead_company_lock.go",
+		"internal/service/lead_conversion.go",
+		"internal/service/lead_queries.go",
+		"internal/service/lead_stats.go",
+		"internal/service/lead_export.go",
+	} {
+		leadService.WriteString(readRepositoryFile(t, file))
+	}
+	assert.Equal(t, 1, strings.Count(leadService.String(), "WithTransactionAndRetry("),
+		"only lead conversion uses WithTransactionAndRetry in the lead service files")
 
 	// Bulk status: tasks are locked in id order (#558), and the single task
 	// update locks the same row before its completed-task re-check.
@@ -859,10 +869,10 @@ func TestConcurrencyDocRetryLines(t *testing.T) {
 	assert.Contains(t, update, "runLeadCompanyAttempts(")
 	assert.Contains(t, update, "s.txManager.WithTransaction(")
 	assert.NotContains(t, update, "WithTransactionAndRetry")
-	convert := concurrencyDocFuncBody(t, "internal/service/lead_service.go", "func (s *leadService) ConvertToCustomer(")
+	convert := concurrencyDocFuncBody(t, "internal/service/lead_conversion.go", "func (s *leadService) ConvertToCustomer(")
 	assert.Contains(t, convert, "runLeadCompanyAttempts(")
 	assert.Contains(t, convert, "s.txManager.WithTransactionAndRetry(")
-	restart := concurrencyDocFuncBody(t, "internal/service/lead_service.go", "func shouldRestartLeadCompanyAttempt(")
+	restart := concurrencyDocFuncBody(t, "internal/service/lead_company_lock.go", "func shouldRestartLeadCompanyAttempt(")
 	assert.Contains(t, restart, "errLeadCompanyMoved")
 }
 

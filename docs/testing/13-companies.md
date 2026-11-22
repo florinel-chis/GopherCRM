@@ -18,6 +18,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
 - `internal/handler/company_handler.go`, `internal/handler/lead_handler.go`,
   `internal/handler/customer_handler.go`, `internal/handler/routes.go` (`SetupCompanyRoutes`)
 - `internal/service/company_service.go`, `internal/service/lead_service.go`,
+  `internal/service/lead_company_lock.go`,
   `internal/service/customer_service.go`
 - `internal/repository/company_repository.go`, `internal/utils/sort.go`
 - `migrations/20260929120000_add_companies.{up,down}.sql`
