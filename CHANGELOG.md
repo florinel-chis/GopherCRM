@@ -1156,6 +1156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Auth service split into one file per flow (#639).** `internal/service/auth_service.go` keeps the
+  sentinels, the service struct, its options, the constructors and the credential-owner helper; the
+  flows moved, unchanged, to `auth_login.go`, `auth_tokens.go`, `auth_apikey.go`, `auth_refresh.go`,
+  `auth_logout.go`, `auth_password_change.go`, `auth_password_reset.go` and `auth_sso_policy.go`
+  (single sign-on password policy), all under `internal/service/`. Code is only moved: there is no
+  behaviour change. The concurrency guide's citations and their pin test, the docs that name the moved
+  functions and the `auth` validation profile's file list follow the new files.
 - **One last-admin guard (#638).** The rule that keeps at least one active admin is written once, in
   `internal/service/last_admin_guard.go`: it locks the active admin set, counts the locked rows of
   the accounts a write touches, and judges the state after the write, counting accounts that gain

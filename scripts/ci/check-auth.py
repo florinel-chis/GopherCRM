@@ -20,7 +20,7 @@ from gophercrm_runner.validation import ROTATION_ROOTS
 
 SOURCES = {
     # logging_privacy_test.go asserts credentials, hashes and tokens never reach the
-    # Login log output; it exercises auth_service.go directly.
+    # Login log output; it exercises the login code in auth_login.go directly.
     'internal/service': ('auth*_test.go', 'logging_privacy_test.go'),
     'internal/handler': ('auth*_test.go',),
     'internal/middleware': ('auth_test.go', 'registration_test.go'),

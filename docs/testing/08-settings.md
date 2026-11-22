@@ -30,7 +30,7 @@ blocked until the page is built.
 - `internal/handler/apikey_handler.go`, `internal/handler/configuration_handler.go`,
   `internal/handler/routes.go` (`SetupAPIKeyRoutes`, `SetupConfigurationRoutes`), `cmd/main.go`
 - `internal/service/apikey_service.go`, `internal/service/configuration_service.go`,
-  `internal/service/auth_service.go` (`ValidateAPIKey`), `internal/middleware/auth.go` (`RequireRole`)
+  `internal/service/auth_apikey.go` (`ValidateAPIKey`), `internal/middleware/auth.go` (`RequireRole`)
 - `internal/models/configuration.go` (`SetValue`, `IsValidValue`, `DefaultConfigurations`),
   `internal/repository/configuration_repository.go`
 - `internal/handler/apikey_handler_test.go`, `tests/apikey_integration_test.go`,

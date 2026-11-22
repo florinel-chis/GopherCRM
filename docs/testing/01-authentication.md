@@ -18,7 +18,8 @@ file, not by trusting the coverage matrix.
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`
 - `internal/handler/auth_handler.go`, `internal/handler/routes.go`,
-  `internal/service/auth_service.go`, `internal/repository/password_reset_token_repository.go`,
+  `internal/service/auth_service.go`, `internal/service/auth_login.go`, `internal/service/auth_refresh.go`,
+  `internal/service/auth_password_reset.go`, `internal/repository/password_reset_token_repository.go`,
   `internal/repository/refresh_token_repository.go`,
   `internal/service/auth_password_reset_regression_test.go`,
   `internal/service/auth_refresh_rotation_regression_test.go`,
@@ -280,7 +281,7 @@ file, not by trusting the coverage matrix.
 - **Steps:** Submit that email with any password.
 - **Expected:** **401** with the identical `Invalid email or password` message and the identical
   rendered alert as TC-AUTH-018. `authenticate()` always runs a bcrypt comparison against a dummy
-  hash for unknown emails (`internal/service/auth_service.go` `authService.authenticate`), so neither the message nor
+  hash for unknown emails (`internal/service/auth_login.go` `authService.authenticate`), so neither the message nor
   the timing distinguishes the two cases. Do not assert a distinguishable error — indistinguishability
   is the requirement.
 - **Automation:** automated — `gocrm-ui/e2e/tests/login.spec.ts` "login fails with non-existent email"
@@ -343,7 +344,7 @@ file, not by trusting the coverage matrix.
   3. Log in as `u`.
 - **Expected:** **401** with message `Invalid email or password` — byte-identical to the wrong-password
   response. `authenticate()` checks `IsActive` only *after* the bcrypt comparison succeeds and reuses
-  the same error (`internal/service/auth_service.go` `authService.authenticate`, and again under the owner lock,
+  the same error (`internal/service/auth_login.go` `authService.authenticate`, and again under the owner lock,
   TC-AUTH-026b), deliberately so the account's state is
   not disclosed. The login page shows the same alert as any other failure.
 - **Known issue:** None — this is intended anti-enumeration behaviour, documented in the `Login`
@@ -366,7 +367,7 @@ file, not by trusting the coverage matrix.
   2. Submit a sixth time with the **correct** password.
 - **Expected:** All six attempts return **401** with `Invalid email or password`. The fifth failure
   sets `locked_until = now + 15m` and the sixth is rejected by the lock check that runs *before* the
-  password result is examined (`internal/service/auth_service.go` `authService.authenticate`), so a correct password
+  password result is examined (`internal/service/auth_login.go` `authService.authenticate`), so a correct password
   does not unlock the account. The error text never mentions a lock.
 - **Known issue:** The strict tier (10/min, burst 5) sits in front of `/auth/login`, so an
   un-throttled run of six rapid attempts returns **429** ("Too many requests. Please try again
@@ -570,7 +571,7 @@ file, not by trusting the coverage matrix.
 ### TC-AUTH-033a — Refresh rotation is atomic and single-use
 - **Priority:** P0
 - **Type:** regression
-- **Expected:** `POST /auth/refresh` rotates in one transaction (`internal/service/auth_service.go`
+- **Expected:** `POST /auth/refresh` rotates in one transaction (`internal/service/auth_refresh.go`
   `authService.RefreshAccessToken`, `internal/repository/refresh_token_repository.go` `refreshTokenRepository.ClaimForRotation`). The
   presented token is looked up; the owner is re-read with a locking read (the transaction-bound
   `UserRepository`, `FOR UPDATE` on MySQL, a plain read on SQLite) before the token is claimed by
@@ -808,7 +809,7 @@ file, not by trusting the coverage matrix.
   only while the row is unused and strictly unexpired and must affect exactly one row — the owner
   re-check, the password, lockout and `token_version` update (one write; the increment ends every
   earlier access token, #236) and the revocation of every refresh token of the
-  account then run in one transaction (`internal/service/auth_service.go`
+  account then run in one transaction (`internal/service/auth_password_reset.go`
   `authService.ConfirmPasswordReset`, `internal/repository/password_reset_token_repository.go` `passwordResetTokenRepository.MarkUsed`).
   The owner re-check is a locking read (the transaction-bound `UserRepository`, `FOR UPDATE` on MySQL,
   a plain read on SQLite): it sees the account as currently committed, so an owner deactivated or
