@@ -3872,9 +3872,9 @@ Registering the MySQL roots in `scripts/ci/check-go.py` is an operator follow-up
 ### Outbound webhooks (#345)
 
 Signed, thin events for `lead.created`, `customer.created` and `ticket.created` (#345), for
-`lead.updated`, `customer.updated` and `ticket.updated` (#408) and for `lead.deleted`,
-`customer.deleted` and `ticket.deleted` (#437), delivered after the writing transaction
-commits. Code: `internal/models/webhook.go`,
+`lead.updated`, `customer.updated` and `ticket.updated` (#408), for `lead.deleted`,
+`customer.deleted` and `ticket.deleted` (#437) and for `deal.created`, `deal.updated` and
+`deal.deleted` (#515), delivered after the writing transaction commits. Code: `internal/models/webhook.go`,
 `internal/repository/webhook_repository.go`, `internal/webhook/{emitter,runtime,endpoint_service,signing}.go`,
 `internal/handler/webhook_handler.go`, `internal/egress/`, `cmd/webhook_runtime.go`.
 
@@ -3885,10 +3885,12 @@ commits. Code: `internal/models/webhook.go`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `webhook.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
   characters, and refuses a non-public IP literal (`egress.CheckPublicURL`); a host name is judged at
-  every connection. `event_types` takes any non-empty subset of the nine types
+  every connection. `event_types` takes any non-empty subset of the twelve types
   (`webhook.AllEventTypes`); the raw array may hold at most 20 entries before deduplication
-  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all nine
-  are 134 bytes in the `varchar(255)` column) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
+  (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all
+  twelve are 173 bytes in the `varchar(512)` column, widened from `varchar(255)` by migration
+  `20261129120007_widen_webhook_event_types`, whose down half refuses while a row is longer than
+  255 bytes) and answered as an array. Create generates 32 random bytes, returns `whsec_` + base64 once in the 201,
   and stores `utils.NewSecretBox(API_KEY_SECRET, "webhook-endpoint-secret").Seal(secret)`; no other
   answer carries the secret or `secret_sealed` (`json:"-"`). `is_active` has **no GORM default**
   (GORM substitutes a column default for a zero-value bool, so an explicit false would be lost); the
@@ -3937,8 +3939,8 @@ commits. Code: `internal/models/webhook.go`,
   and logs `operation=webhook_endpoint_rotate_secret` and `endpoint_id` only. `UpdateEndpoint`
   still writes only `url`, `event_types` and `is_active`.
 - **Catalogue and emitter.** `internal/webhook/catalog.go` is the one registry of the entities
-  that emit events: `NewCatalogue` and the default catalogue (`Lead`, `Customer`, `Ticket`, in
-  that order) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
+  that emit events: `NewCatalogue` and the default catalogue (`Lead`, `Customer`, `Ticket`,
+  `Deal`, in that order) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
   ping's type is never one), and the two refusal messages (`SubscribeRule`, behind
   `webhook.WebhookEventTypesRule`, and `FilterRule`, used by the handler and by
   `WebhookService.ListDeliveries`). `TestCatalogueSwaggerEnums` keeps the seven event type `enum`
@@ -3950,7 +3952,7 @@ commits. Code: `internal/models/webhook.go`,
   needs one catalogue entry and one emitter call per write path; the event types, the check and
   the messages follow.
 - **Outbox in the creating transaction.** `WithLeadWebhooks(e)`, `WithCustomerWebhooks(e)`,
-  `WithTicketWebhooks(e, txManager)` and `WithFormWebhooks(e)` take a `webhook.Emitter`;
+  `WithTicketWebhooks(e, txManager)`, `WithFormWebhooks(e)` and `WithDealWebhooks(e)` take a `webhook.Emitter`;
   `cmd/main.go` builds one `webhook.NewEmitter(webhookRepo)` and passes it, to the ticket option
   with the shared `txManager`. Each service holds `webhook.Nop` without the option (a nil emitter
   means `Nop`; `WithTicketWebhooks` sets the emitter and its transactional paths only when both
@@ -3964,7 +3966,7 @@ commits. Code: `internal/models/webhook.go`,
   create_lead path for a new lead (never a repeat enquiry), `CustomerService.Create` (always one
   transaction), `LeadService.ConvertToCustomer` (inside each retry attempt, so a replay
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
-  `duplicate`). A failure after the record insert rolls back the record and every row. Without the
+  `duplicate`), and `DealService.Create` (after the stage-history row and the automation event). A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
 - **Updated events (#408).** The same options, `WithBulkWebhooks(e)` (passed to the one
   `NewBulkStatusService` call in `cmd/main.go`) and `WithAutomationWebhooks(e)` (passed to the one
@@ -3974,22 +3976,27 @@ commits. Code: `internal/models/webhook.go`,
   (`lead.updated` when the owner changed), `LeadService.ConvertToCustomer` (`lead.updated` next to
   `customer.created`, inside each retry attempt, so a replayed conversion commits one of each),
   `CustomerService.Update` (`updateLocked`, `customer.updated`), `TicketService.Update`
-  (`updateWithEvents`, `ticket.updated`), the automation `assign_owner` step (`lead.updated` on a
-  lead run, `ticket.updated` on a ticket run, in the step transaction; a deal run and a dry run
-  write none), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
+  (`updateWithEvents`, `ticket.updated`), `DealService.Update` and `DealService.ChangeStage`
+  (`deal.updated`; with `WithDealWebhooks` each first reads the deal row through
+  `repository.DealLockingReader`, `FOR UPDATE` on MySQL/MariaDB, inside its transaction, and a
+  repository without it refuses the write), the automation `assign_owner` step (`lead.updated` on a
+  lead run, `ticket.updated` on a ticket run, `deal.updated` on a deal run, in the step
+  transaction; a dry run writes none), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
   with its own event id, per record whose locked status differed from the requested one;
   one `Updated` call with every changed id reads the endpoints once per batch and inserts every row in one statement).
   **The rule:** an event is written iff the committed write changed the record's `WebhookState()`
-  (`internal/models`: `Lead`, `Customer` and `Ticket` each return a struct
+  (`internal/models`: `Lead`, `Customer`, `Ticket` and `Deal` each return a struct
   compared with `==`), comparing the state of the row read under lock inside the writing
   transaction with the state written. Each state holds exactly the columns the model's
   repository update writes, minus id, created_at, updated_at and deleted_at (lead: first_name,
   last_name, email, phone, company, position, source, status, classification, external_id, notes,
   owner_id, customer_id, company_id; customer: the fifteen columns `customerRepository.Update`
   writes; ticket: title, description, status, priority, customer_id, assigned_to_id, resolution,
-  due_at as an instant), nullable ids compared by value. `TestWebhookStateCoversUpdateColumns`
+  due_at as an instant; deal: title, stage, amount_cents, currency, probability,
+  expected_close_date and closed_at as instants, lost_reason, source, notes, company_id,
+  customer_id, lead_id, owner_id), nullable ids compared by value. `TestWebhookStateCoversUpdateColumns`
   (`internal/repository`) captures the columns of those updates, of `ConvertToCustomer` and of the
-  automation `SetLeadOwner` / `SetTicketAssignee`, and fails when they and the state drift apart: a
+  automation `SetLeadOwner` / `SetTicketAssignee` / `SetDealOwner`, and fails when they and the state drift apart: a
   column added to an update must be added to its state. An update that sends the stored values
   still answers 200 and still records its automation events; it only writes no webhook row, and
   assigning a lead to its current owner writes none either. The handlers do read-modify-write from
@@ -4000,7 +4007,9 @@ commits. Code: `internal/models/webhook.go`,
   returns before any outbox write. Deliberately silent (no updated event): delete and erasure (they
   write the deleted events below instead), `CustomerService.Assign`, ticket comments (the
   first-response stamp included), customer external ids, the form repeat-enquiry note append, the
-  other automation rule steps, a company delete unlinking `company_id`, and bulk task status.
+  other automation rule steps, a company delete unlinking `company_id` (deals included,
+  `companyRepository.UnlinkDeals`), the erasure scrub of the text of linked deals
+  (`scrubReachedDeals`), and bulk task status.
 - **Deleted events (#437, #531).** `TxEmitter.Deleted` (`internal/webhook/emitter.go`)
   de-duplicates the record ids and writes them as `Created` and `Updated` do: one plain read of the active endpoints subscribed to the
   deleted type (`ListActiveEndpointsFor`), then one insert of one `pending` row per (endpoint,
@@ -4011,6 +4020,8 @@ commits. Code: `internal/models/webhook.go`,
   a record whose earlier deliveries were pruned). `TicketService.Delete` with `WithTicketWebhooks` runs
   `ticketRepo.WithTx(tx).Delete` (its own transaction becomes a savepoint) and then the
   `ticket.deleted` emit in one `txManager` transaction; the 404 pre-read stays outside it.
+  `DealService.Delete` with `WithDealWebhooks` runs `dealRepo.WithTx(tx).Delete` and then the
+  `deal.deleted` emit in one `txManager` transaction (#515).
   Erasure writes `lead.deleted` and `customer.deleted` through a production listener option on
   the three repositories (`repository.WithLeadErasureListener`, `WithCustomerErasureListener`,
   `WithUserErasureListener`, `ErasureListener`/`ErasedRecords` in
@@ -4024,8 +4035,10 @@ commits. Code: `internal/models/webhook.go`,
   graph returns before it. A listener error fails the unit; every replayed or restarted attempt
   calls it again inside that attempt, so the commit keeps one row set. The erasure services are
   not wrapped in a transaction (that would turn `eraseGraph` into its one-shot savepoint mode).
-  Users, deals, tasks and other entities get no deleted event. Tests:
+  Users, tasks and other entities get no deleted event. Tests:
   `internal/service/webhook_deleted_events_test.go` (`TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`),
+  `internal/service/deal_webhook_events_test.go` (`TestDealWebhook{FanOut,Atomicity}{SQLite,MySQL}`,
+  every deal write path; the MySQL roots open their schema with `loc=Local`, as production does),
   `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
 - **Runtime.** `webhook.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`

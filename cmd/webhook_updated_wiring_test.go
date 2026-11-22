@@ -34,7 +34,13 @@ func TestWebhookUpdatedProductionWiring(t *testing.T) {
 	start = strings.Index(text, "service.NewAutomationEngine(")
 	engineCall := callText(text[start:])
 	require.NotEmpty(t, engineCall, "the end of the NewAutomationEngine call")
-	assert.Contains(t, engineCall, "service.WithAutomationWebhooks(webhookEmitter)", "the assign_owner step enqueues lead.updated and ticket.updated")
+	assert.Contains(t, engineCall, "service.WithAutomationWebhooks(webhookEmitter)", "the assign_owner step enqueues lead.updated, ticket.updated and deal.updated")
+
+	require.Equal(t, 1, strings.Count(text, "service.NewDealService("), "one deal service")
+	start = strings.Index(text, "service.NewDealService(")
+	dealCall := callText(text[start:])
+	require.NotEmpty(t, dealCall, "the end of the NewDealService call")
+	assert.Contains(t, dealCall, "service.WithDealWebhooks(webhookEmitter)", "the deal writes enqueue deal.created, deal.updated and deal.deleted (#515)")
 }
 
 // callText returns the call that opens at the first '(' of source, up to its

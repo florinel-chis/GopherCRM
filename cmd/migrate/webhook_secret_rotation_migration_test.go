@@ -125,15 +125,15 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 	// leaves, the later columns included.
 	reference := openMigrationTestDB(t, baseDSN, "wsr_ref")
 	require.NoError(t, reference.m.Migrate(webhookSecretRotationPreviousVersion))
-	before := snapshotTable(t, reference, webhookEndpointsTable)
+	before := snapshotEndpointsBeforeWidening(t, reference)
 	runMigrateDatabase(t, reference.dsn)
-	model := snapshotTable(t, reference, webhookEndpointsTable)
+	model := snapshotEndpointsBeforeWidening(t, reference)
 	want := withoutColumns(model, webhookEndpointPauseColumns)
 	require.Len(t, model.Columns, len(want.Columns)+len(webhookEndpointPauseColumns))
 	// at reads the table at this migration's version: what the SQL head of
 	// that version and MigrateDatabase agree on.
 	at := func(tdb *migrationTestDB) tableSchema {
-		return withoutColumns(snapshotTable(t, tdb, webhookEndpointsTable), webhookEndpointPauseColumns)
+		return withoutColumns(snapshotEndpointsBeforeWidening(t, tdb), webhookEndpointPauseColumns)
 	}
 	require.Len(t, want.Columns, len(before.Columns)+2)
 	assert.Equal(t, before, withoutColumns(want, webhookSecretRotationColumns), "the migration owns only the two columns")
@@ -151,14 +151,14 @@ func TestWebhookSecretRotationMigration(t *testing.T) {
 	t.Run("Fresh", func(t *testing.T) {
 		tdb := openMigrationTestDB(t, baseDSN, "wsr_fresh")
 		require.NoError(t, tdb.m.Migrate(webhookSecretRotationVersion), "the up applies on an empty database")
-		assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "a fresh SQL schema carries what MigrateDatabase builds")
+		assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb), "a fresh SQL schema carries what MigrateDatabase builds")
 		id := insertRotationEndpointRow(t, tdb, "https://example.com/fresh")
 		assertRotationEndpointRowKept(t, tdb, id, "https://example.com/fresh")
 
 		require.NoError(t, tdb.m.Steps(-1))
-		assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable), "rollback removes the two columns only")
+		assert.Equal(t, before, snapshotEndpointsBeforeWidening(t, tdb), "rollback removes the two columns only")
 		require.NoError(t, tdb.m.Migrate(webhookSecretRotationVersion))
-		assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+		assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb))
 		require.ErrorIs(t, tdb.m.Migrate(webhookSecretRotationVersion), migrate.ErrNoChange)
 
 		require.NoError(t, tdb.m.Down())

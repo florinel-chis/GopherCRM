@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -12,6 +13,8 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
+	"gorm.io/gorm"
 )
 
 // ConfigDealsDefaultCurrency is the configuration key a new deal's currency
@@ -41,6 +44,12 @@ type dealService struct {
 	// (issue #164) in the same transaction as the deal row and its stage
 	// history. Nil means no automation.
 	automation repository.AutomationRepository
+	// webhooks is the outbound webhook emitter (#515), set by
+	// WithDealWebhooks: Create emits deal.created, Update and ChangeStage
+	// deal.updated when a stored value changed, and Delete deal.deleted, each
+	// in the deal's transaction. NewDealService sets it to webhook.Nop, so it
+	// is never nil; with Nop every path behaves as without webhooks.
+	webhooks webhook.Emitter
 }
 
 // DealServiceOption configures NewDealService beyond its required
@@ -51,6 +60,53 @@ type DealServiceOption func(*dealService)
 // automation events inside the write transaction.
 func WithDealAutomationEvents(repo repository.AutomationRepository) DealServiceOption {
 	return func(s *dealService) { s.automation = repo }
+}
+
+// WithDealWebhooks makes the deal writes emit their webhook events through e
+// (#515), in the write's transaction: Create emits deal.created; Update and
+// ChangeStage lock the deal row first (DealLockingReader) and emit
+// deal.updated when the WebhookState written differs from the locked row's;
+// Delete soft-deletes the deal and emits deal.deleted for every active
+// endpoint subscribed to deal.deleted in one transaction. A nil e keeps
+// webhook.Nop.
+func WithDealWebhooks(e webhook.Emitter) DealServiceOption {
+	return func(s *dealService) {
+		if e != nil {
+			s.webhooks = e
+		}
+	}
+}
+
+// webhooksWired reports whether the deal writes emit webhook events.
+func (s *dealService) webhooksWired() bool {
+	return s.webhooks != webhook.Nop
+}
+
+// errDealLockingReadUnavailable is returned by a wired Update or ChangeStage
+// whose deal repository offers no locking read; nothing is written.
+var errDealLockingReadUnavailable = errors.New("deal repository has no locking read")
+
+// lockDealForWebhook reads the deal row under lock inside the transaction when
+// webhooks are wired, for the deal.updated comparison; unwired it returns nil
+// and reads nothing.
+func (s *dealService) lockDealForWebhook(repo repository.DealRepository, id uint) (*models.Deal, error) {
+	if !s.webhooksWired() {
+		return nil, nil
+	}
+	locker, ok := repo.(repository.DealLockingReader)
+	if !ok {
+		return nil, errDealLockingReadUnavailable
+	}
+	return locker.GetByIDForUpdate(id)
+}
+
+// emitDealUpdated emits deal.updated when the deal written differs from the
+// row locked in the same transaction. locked is nil when webhooks are unwired.
+func (s *dealService) emitDealUpdated(ctx context.Context, tx *gorm.DB, locked, written *models.Deal) error {
+	if locked == nil || locked.WebhookState() == written.WebhookState() {
+		return nil
+	}
+	return s.webhooks.Bind(tx).Updated(ctx, webhook.Deal, written.ID)
 }
 
 func NewDealService(
@@ -72,6 +128,7 @@ func NewDealService(
 		currency:     currency,
 		txManager:    txManager,
 		now:          time.Now,
+		webhooks:     webhook.Nop,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -128,7 +185,10 @@ func (s *dealService) Create(deal *models.Deal, probability *int, actorID uint) 
 			return err
 		}
 		actor := actorID
-		return automationDealCreated(automationTx(s.automation, tx), deal.ID, deal.Stage, models.AutomationOriginUser, &actor)
+		if err := automationDealCreated(automationTx(s.automation, tx), deal.ID, deal.Stage, models.AutomationOriginUser, &actor); err != nil {
+			return err
+		}
+		return s.webhooks.Bind(tx).Created(ctx, webhook.Deal, deal.ID)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -205,13 +265,22 @@ func (s *dealService) Update(deal *models.Deal, probability *int, leadIDSent boo
 			return utils.ErrNoTransaction
 		}
 		repo := s.dealRepo.WithTx(tx)
+		// deal.updated (#515) compares against the row locked here, never
+		// against the stored deal read before the transaction.
+		locked, err := s.lockDealForWebhook(repo, deal.ID)
+		if err != nil {
+			return err
+		}
 		if err := repo.Update(deal); err != nil {
 			return err
 		}
 		actor := actorID
 		events := automationTx(s.automation, tx)
 		if !changed {
-			return automationDealUpdated(events, deal.ID, from, from, models.AutomationOriginUser, &actor)
+			if err := automationDealUpdated(events, deal.ID, from, from, models.AutomationOriginUser, &actor); err != nil {
+				return err
+			}
+			return s.emitDealUpdated(ctx, tx, locked, deal)
 		}
 		if err := repo.CreateStageChange(&models.DealStageChange{
 			DealID:      deal.ID,
@@ -222,7 +291,10 @@ func (s *dealService) Update(deal *models.Deal, probability *int, leadIDSent boo
 		}); err != nil {
 			return err
 		}
-		return automationDealUpdated(events, deal.ID, from, deal.Stage, models.AutomationOriginUser, &actor)
+		if err := automationDealUpdated(events, deal.ID, from, deal.Stage, models.AutomationOriginUser, &actor); err != nil {
+			return err
+		}
+		return s.emitDealUpdated(ctx, tx, locked, deal)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -274,6 +346,10 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 			return utils.ErrNoTransaction
 		}
 		repo := s.dealRepo.WithTx(tx)
+		locked, err := s.lockDealForWebhook(repo, deal.ID)
+		if err != nil {
+			return err
+		}
 		if err := repo.Update(deal); err != nil {
 			return err
 		}
@@ -287,7 +363,10 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 			return err
 		}
 		actor := actorID
-		return automationDealStageChanged(automationTx(s.automation, tx), deal.ID, from, stage, models.AutomationOriginUser, &actor)
+		if err := automationDealStageChanged(automationTx(s.automation, tx), deal.ID, from, stage, models.AutomationOriginUser, &actor); err != nil {
+			return err
+		}
+		return s.emitDealUpdated(ctx, tx, locked, deal)
 	})
 	if err != nil {
 		utils.LogServiceResponse(logger, err)
@@ -301,7 +380,7 @@ func (s *dealService) ChangeStage(id uint, stage models.DealStage, probability *
 func (s *dealService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("deal_id", id), "DealService", "Delete")
 
-	if err := s.dealRepo.Delete(id); err != nil {
+	if err := s.deleteDeal(id); err != nil {
 		if isNotFound(err) {
 			logger.WithError(utils.LogError(err)).Warn("Deal not found")
 			return fmt.Errorf("deal %d not found: %w", id, apperrors.ErrNotFound)
@@ -312,6 +391,25 @@ func (s *dealService) Delete(id uint) error {
 
 	logger.Info("Deal deleted successfully")
 	return nil
+}
+
+// deleteDeal soft-deletes the deal and, with webhooks wired, emits
+// deal.deleted for every active endpoint subscribed to it in the same
+// transaction (#515), after the delete succeeded.
+func (s *dealService) deleteDeal(id uint) error {
+	if !s.webhooksWired() {
+		return s.dealRepo.Delete(id)
+	}
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		if err := s.dealRepo.WithTx(tx).Delete(id); err != nil {
+			return err
+		}
+		return s.webhooks.Bind(tx).Deleted(ctx, webhook.Deal, id)
+	})
 }
 
 func (s *dealService) List(offset, limit int, filter repository.DealListFilter) ([]models.Deal, int64, error) {

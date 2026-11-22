@@ -159,10 +159,10 @@ type AutomationEngine struct {
 type AutomationEngineOption func(*AutomationEngine)
 
 // WithAutomationWebhooks makes the assign_owner step emit lead.updated (lead
-// run) or ticket.updated (ticket run) through e, bound to the step
-// transaction, when the new owner or assignee changed the record's
-// WebhookState (#408). A deal run emits nothing, and a dry run runs no effect
-// and writes no row. A nil e means webhook.Nop.
+// run), ticket.updated (ticket run) or deal.updated (deal run, #515) through
+// e, bound to the step transaction, when the new owner or assignee changed the
+// record's WebhookState (#408). A dry run runs no effect and writes no row. A
+// nil e means webhook.Nop.
 func WithAutomationWebhooks(e webhook.Emitter) AutomationEngineOption {
 	return func(engine *AutomationEngine) {
 		if e == nil {

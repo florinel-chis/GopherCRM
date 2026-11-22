@@ -28,14 +28,17 @@ import (
 // The create paths: LeadService.Create and the form create_lead path for a new
 // lead (lead.created), CustomerService.Create and LeadService.ConvertToCustomer
 // (customer.created, the latter inside each retry attempt), TicketService.Create
-// and form ticket intake with outcome created (ticket.created).
+// and form ticket intake with outcome created (ticket.created), and
+// DealService.Create (deal.created, #515).
 //
 // The update paths (#408): LeadService.Update and LeadService.Assign
 // (lead.updated), LeadService.ConvertToCustomer (lead.updated next to
 // customer.created, inside each retry attempt), CustomerService.Update
-// (customer.updated), TicketService.Update (ticket.updated), the automation
-// assign_owner step on a lead or ticket run (lead.updated / ticket.updated, in
-// the step transaction), and BulkSetLeadStatus / BulkSetTicketStatus (one
+// (customer.updated), TicketService.Update (ticket.updated), DealService.Update
+// and DealService.ChangeStage (deal.updated, #515, the row read through
+// DealLockingReader), the automation assign_owner step on a lead, ticket or
+// deal run (lead.updated / ticket.updated / deal.updated, in the step
+// transaction), and BulkSetLeadStatus / BulkSetTicketStatus (one
 // lead.updated / ticket.updated per record in one call, so the endpoints are
 // read once per batch). An updated event is written only when the write
 // changed the record's WebhookState() (internal/models), the rule of the
@@ -45,10 +48,14 @@ import (
 // made before the transaction, so a write that reverts a column another
 // request committed in between is a change and emits an event.
 // CustomerService.Assign, delete, ticket comments, the other automation steps
-// and bulk task status emit no updated event.
+// and bulk task status emit no updated event. Neither do a company delete,
+// which unlinks the company's leads, customers and deals
+// (companyRepository.UnlinkDeals among them), nor the erasure scrub of the
+// text of the deals an erased customer or lead reaches (scrubReachedDeals).
 //
 // The deleted paths (#437): TicketService.Delete (ticket.deleted, in one
-// transaction with the soft delete when the service is wired), and every
+// transaction with the soft delete when the service is wired),
+// DealService.Delete (deal.deleted, #515, likewise), and every
 // erasure unit of the lead, customer and user repositories (lead.deleted and
 // customer.deleted for each lead and customer the unit found live and erased,
 // cascades included), through the listener of NewErasureListener at the end

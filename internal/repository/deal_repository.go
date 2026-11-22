@@ -6,6 +6,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type dealRepository struct {
@@ -36,6 +37,19 @@ func (r *dealRepository) withPreloads(db *gorm.DB) *gorm.DB {
 func (r *dealRepository) GetByID(id uint) (*models.Deal, error) {
 	var deal models.Deal
 	if err := r.withPreloads(r.db).First(&deal, id).Error; err != nil {
+		return nil, err
+	}
+	return &deal, nil
+}
+
+// GetByIDForUpdate is the locking read of a deal write (#515): the bare live
+// deal row, no associations, with `FOR UPDATE` on MySQL/MariaDB (a plain read
+// on SQLite, where the dialector drops the clause). Called on the repository
+// WithTx returned, it locks the row for the rest of the transaction. A
+// soft-deleted or missing deal is gorm.ErrRecordNotFound.
+func (r *dealRepository) GetByIDForUpdate(id uint) (*models.Deal, error) {
+	var deal models.Deal
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&deal, id).Error; err != nil {
 		return nil, err
 	}
 	return &deal, nil

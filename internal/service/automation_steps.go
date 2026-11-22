@@ -247,11 +247,19 @@ func (e *AutomationEngine) planStep(ctx context.Context, tx *gorm.DB, r reposito
 					err = e.webhooks.Bind(tx).Updated(ctx, webhook.Lead, rec.id)
 				}
 			case models.AutomationEntityDeal:
-				// No webhook: deals are not in the webhook catalogue.
 				if err = r.SetDealOwner(rec.id, target.ID, now); err != nil {
 					return err
 				}
-				err = automationDealUpdated(r, rec.id, rec.deal.Stage, rec.deal.Stage, models.AutomationOriginAutomation, nil)
+				if err = automationDealUpdated(r, rec.id, rec.deal.Stage, rec.deal.Stage, models.AutomationOriginAutomation, nil); err != nil {
+					return err
+				}
+				// deal.updated (#515) when the new owner changed the state of
+				// the deal read under lock in this step.
+				after := *rec.deal
+				after.OwnerID = target.ID
+				if rec.deal.WebhookState() != after.WebhookState() {
+					err = e.webhooks.Bind(tx).Updated(ctx, webhook.Deal, rec.id)
+				}
 			case models.AutomationEntityTicket:
 				// Only assigned_to_id and updated_at are written; the
 				// ticket_updated event carries origin automation, which the

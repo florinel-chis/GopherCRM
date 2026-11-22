@@ -168,7 +168,7 @@ func optionalID(id *uint) *uint {
 // @Description Create a deal. Roles: admin and sales.
 // @Description Validation, in order: binding (title required, stage from its set, amount_cents 0 to 10^12, currency three upper-case letters, probability 0 to 100, owner_id at least 1); title 200, lost_reason 255 and source 100 characters and notes 65535 bytes; expected_close_date YYYY-MM-DD; then the service (blank title after trimming) and the links: owner_id, company_id, customer_id and lead_id must name live rows, and lead_id a lead the caller may see (a hidden lead is reported like a missing one).
 // @Description Defaults and stage rules: stage qualification; currency from the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR); probability from the stage (qualification 10, proposal 40, negotiation 70), won always 100 and lost always 0; closed_at set when the stage is won or lost; lost_reason kept only when lost. owner_id defaults to the caller; a sales user may only name itself.
-// @Description Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage) and the deal_created automation event.
+// @Description Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage), the deal_created automation event and a deal.created webhook event (one delivery per active endpoint subscribed to it).
 // @Description The response is the deal re-read with owner, company, customer and lead loaded; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
@@ -396,7 +396,7 @@ func (h *DealHandler) Get(c *gin.Context) {
 // @Description Replace a deal's fields. Roles: admin (any deal) and sales (only the deals it owns).
 // @Description The body is the new state of title, amount_cents (absent means 0), expected_close_date, lost_reason, source and notes: a field left out is stored empty, 0 or cleared. stage, currency, owner_id absent keep the stored value. company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another id sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when they change, so a deal keeps links to erased records and stays editable; a lead_id that is sent is always checked, even when unchanged, and must name a lead the caller may see; a stored lead link the caller may not see is kept unchecked when lead_id is absent. owner_id: a sales user may only send its own id; an admin any live user (checked only when it changes).
 // @Description A stage different from the stored one follows the rules of POST /deals/{id}/stage (probability defaults to the new stage's unless sent, won 100, lost 0, closed_at set or cleared, lost_reason kept only on lost) and writes a stage-history row. The same stage writes no history row: closed_at stays, probability changes only when sent (still pinned for won and lost), and lost_reason survives only on a lost deal.
-// @Description Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes.
+// @Description Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes. When the update changed at least one stored value of the deal (a stage change always does), a deal.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends only the stored values writes none.
 // @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
@@ -465,7 +465,7 @@ func (h *DealHandler) Update(c *gin.Context) {
 // ChangeStage godoc
 // @Summary Move a deal to another stage
 // @Description Move a deal to a stage. Roles: admin (any deal) and sales (only the deals it owns). probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at to now (also on won to lost); entering an open stage clears it. lost_reason is stored (trimmed) when the new stage is lost, absent keeping the reason already stored, and cleared otherwise. Asking for the stage the deal is already in is a 200 that writes nothing (no history row, no event) and ignores probability and lost_reason.
-// @Description Side effects, in one transaction: one stage-history row and the deal_stage_changed automation event (no deal_updated event).
+// @Description Side effects, in one transaction: one stage-history row, the deal_stage_changed automation event (no deal_updated automation event) and a deal.updated webhook event (one delivery per active endpoint subscribed to it). The same stage again writes no webhook event either.
 // @Description The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
 // @Tags deals
 // @Accept json
@@ -547,7 +547,7 @@ func (h *DealHandler) History(c *gin.Context) {
 
 // Delete godoc
 // @Summary Delete a deal
-// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). This is not an erasure: the deal's title, notes and lost_reason stay on the deleted row. They are overwritten (title [redacted], notes and lost_reason empty) only when the linked customer or lead is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted deals too. No automation event is recorded.
+// @Description Soft-delete a deal. Role: admin. The stage history rows stay, and quotes and tasks keep their deal_id (their deal summary is then omitted). This is not an erasure: the deal's title, notes and lost_reason stay on the deleted row. They are overwritten (title [redacted], notes and lost_reason empty) only when the linked customer or lead is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted deals too. No automation event is recorded. A deal.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the deal) is written in the same transaction as the soft delete.
 // @Tags deals
 // @Produce json
 // @Security BearerAuth

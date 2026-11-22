@@ -153,14 +153,20 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	due := now.Add(48 * time.Hour)
 	ticket := &models.Ticket{Title: "State", Description: "Ticket", CustomerID: customer.ID, AssignedToID: &owner.ID, DueAt: &due}
 	require.NoError(t, db.Create(ticket).Error)
+	closeDate := time.Date(2026, 12, 31, 0, 0, 0, 0, time.Local)
+	deal := &models.Deal{Title: "State deal", Stage: models.DealStageProposal, AmountCents: 1000, Currency: "EUR", Probability: 40,
+		ExpectedCloseDate: &closeDate, CompanyID: &company.ID, CustomerID: &customer.ID, LeadID: &lead.ID, OwnerID: owner.ID}
+	require.NoError(t, db.Create(deal).Error)
 
 	leadState := webhookStateColumns(t, db, &models.Lead{}, models.LeadWebhookState{})
 	customerState := webhookStateColumns(t, db, &models.Customer{}, models.CustomerWebhookState{})
 	ticketState := webhookStateColumns(t, db, &models.Ticket{}, models.TicketWebhookState{})
+	dealState := webhookStateColumns(t, db, &models.Deal{}, models.DealWebhookState{})
 
 	leads := captureUpdateColumns(t, db, "leads")
 	customers := captureUpdateColumns(t, db, "customers")
 	tickets := captureUpdateColumns(t, db, "tickets")
+	deals := captureUpdateColumns(t, db, "deals")
 
 	t.Run("leadRepository.Update writes exactly the lead state", func(t *testing.T) {
 		stored, err := NewLeadRepository(db).GetByID(lead.ID)
@@ -186,6 +192,14 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 		assertNoWebhookStateDrift(t, "ticketRepository.Update", tickets.take(), ticketState, true)
 	})
 
+	t.Run("dealRepository.Update writes exactly the deal state", func(t *testing.T) {
+		stored, err := NewDealRepository(db).GetByID(deal.ID)
+		require.NoError(t, err)
+		stored.Notes = "changed"
+		require.NoError(t, NewDealRepository(db).Update(stored))
+		assertNoWebhookStateDrift(t, "dealRepository.Update", deals.take(), dealState, true)
+	})
+
 	t.Run("leadRepository.ConvertToCustomer writes only lead state columns", func(t *testing.T) {
 		require.NoError(t, NewLeadRepository(db).ConvertToCustomer(lead.ID, customer.ID))
 		assertNoWebhookStateDrift(t, "leadRepository.ConvertToCustomer", leads.take(), leadState, false)
@@ -199,6 +213,11 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	t.Run("automationRepository.SetTicketAssignee writes only ticket state columns", func(t *testing.T) {
 		require.NoError(t, NewAutomationRepository(db).SetTicketAssignee(ticket.ID, other.ID, now))
 		assertNoWebhookStateDrift(t, "automationRepository.SetTicketAssignee", tickets.take(), ticketState, false)
+	})
+
+	t.Run("automationRepository.SetDealOwner writes only deal state columns", func(t *testing.T) {
+		require.NoError(t, NewAutomationRepository(db).SetDealOwner(deal.ID, other.ID, now))
+		assertNoWebhookStateDrift(t, "automationRepository.SetDealOwner", deals.take(), dealState, false)
 	})
 
 	t.Run("extra written column is reported", func(t *testing.T) {

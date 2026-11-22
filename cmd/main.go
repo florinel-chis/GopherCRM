@@ -110,7 +110,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers and tickets (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted).
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets and deals (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -398,7 +398,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// row first (#342), so the service takes the shared userRepo and txManager.
 	apiKeyService := service.NewAPIKeyService(apiKeyRepo, userRepo, txManager, cfg.API.APIKeySecret)
 	dealService := service.NewDealService(dealRepo, companyRepo, customerRepo, leadRepo, userRepo, configService, txManager,
-		service.WithDealAutomationEvents(automationRepo))
+		service.WithDealAutomationEvents(automationRepo), service.WithDealWebhooks(webhookEmitter))
 	// Products take the deals' default currency; quotes email through the
 	// same mailer as the password reset and the forms, and read the product
 	// name of their subject from the same configService (#292).

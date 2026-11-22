@@ -277,8 +277,9 @@ candidate follow-up, not an accident:
   `lead.updated`, `customer.updated` and `ticket.updated` for `PUT /leads/{id}`,
   `PUT /customers/{id}`, `PUT /tickets/{id}` and the lead and ticket bulk status endpoints (#616
   adds lead assignment, lead conversion and the automation assign-owner step), and
-  #437 adds `lead.deleted`, `customer.deleted` and `ticket.deleted` for deletes and erasures; still
-  open: a submission event of its own, events of other entities (deals, tasks,
+  #437 adds `lead.deleted`, `customer.deleted` and `ticket.deleted` for deletes and erasures, and
+  #515 adds `deal.created`, `deal.updated` and `deal.deleted`; still
+  open: a submission event of its own, events of other entities (tasks,
   companies, quotes), updated events for customer assignment, a repeat form enquiry or a company
   delete, secret rotation
   and retry jitter (the registry and the delivery log have a screen since #409).

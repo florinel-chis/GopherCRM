@@ -71,7 +71,7 @@ func assertWebhookSchemaSQLite(t *testing.T) {
 		assert.Equal(t, 1, endpoint[name].NotNull, "%s is NOT NULL", name)
 	}
 	assert.Equal(t, "varchar(2048)", strings.ToLower(endpoint["url"].Type))
-	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["event_types"].Type))
+	assert.Equal(t, "varchar(512)", strings.ToLower(endpoint["event_types"].Type), "widened by #515")
 	assert.Equal(t, "varchar(255)", strings.ToLower(endpoint["secret_sealed"].Type))
 	assert.Nil(t, endpoint["is_active"].Dflt, "is_active has no column default (GORM would substitute it for an explicit false)")
 	// The rotation columns (#503) are nullable with no default.
@@ -273,8 +273,27 @@ func TestWebhookJSON(t *testing.T) {
 		value, err := WebhookEventTypes{"ticket.created", "lead.created", "ticket.created"}.Value()
 		require.NoError(t, err)
 		assert.Equal(t, "lead.created,ticket.created", value)
-		// The type list, the event type check and the 255-byte fit are pinned
+		// The type list, the event type check and the 512-byte fit are pinned
 		// against the catalogue in internal/webhook (TestCatalogue).
 		assert.Equal(t, "webhook.ping", WebhookEventPing)
+	})
+
+	t.Run("the stored list fits varchar(512) and no more", func(t *testing.T) {
+		// Value checks the joined length only; the catalogue check is the
+		// service's. Twelve real types (173 bytes) plus one padding entry.
+		padded := func(width int) WebhookEventTypes {
+			types := WebhookEventTypes{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted",
+				"deal.updated", "lead.created", "lead.deleted", "lead.updated", "ticket.created", "ticket.deleted", "ticket.updated"}
+			joined := strings.Join(types, ",")
+			require.Len(t, joined, 173)
+			return append(types, "z"+strings.Repeat("z", width-len(joined)-2))
+		}
+		fits, err := padded(512).Value()
+		require.NoError(t, err)
+		assert.Len(t, fits, 512)
+		value, err := padded(513).Value()
+		require.Error(t, err)
+		assert.Nil(t, value)
+		assert.Contains(t, err.Error(), "exceed 512 bytes")
 	})
 }
