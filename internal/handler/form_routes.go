@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"github.com/florinel-chis/gophercrm/internal/middleware"
-	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,18 +17,17 @@ import (
 // in this order. The mail delivery routes (#216) sit before it for the same
 // reason; support may read the attention list, retrying is admin and sales.
 func SetupFormRoutes(router *gin.RouterGroup, h *FormHandler) {
-	group := router.Group("/forms")
-	group.Use(middleware.RequireAnyPermission(permissions.GroupKeys("forms")...))
-	write := middleware.RequirePermission(permissions.FormsManage)
+	routes := Protected(router)
+	group := routes.Group("/forms")
 	{
-		group.GET("", middleware.RequirePermission(permissions.FormsView), h.List)
-		group.POST("", write, h.Create)
+		group.GET("", h.List)
+		group.POST("", h.Create)
 		group.GET("/deliveries", h.ListDeliveries)
-		group.POST("/deliveries/:id/retry", write, h.RetryDelivery)
-		group.GET("/submissions/:id", middleware.RequirePermission(permissions.FormsView), h.GetSubmission)
+		group.POST("/deliveries/:id/retry", h.RetryDelivery)
+		group.GET("/submissions/:id", h.GetSubmission)
 		group.GET("/:id", h.Get)
-		group.PUT("/:id", write, h.Update)
-		group.DELETE("/:id", middleware.RequirePermission(permissions.FormsDelete), h.Delete)
-		group.GET("/:id/submissions", middleware.RequirePermission(permissions.FormsView), h.ListSubmissions)
+		group.PUT("/:id", h.Update)
+		group.DELETE("/:id", h.Delete)
+		group.GET("/:id/submissions", h.ListSubmissions)
 	}
 }

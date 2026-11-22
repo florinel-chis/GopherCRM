@@ -1169,6 +1169,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Protected routes register through `handler.Protected` (#680).** The helper in
+  `internal/handler/protected_routes.go` looks every protected route up in
+  `permissions.RouteKeys` or `permissions.SelfServiceRoutes` and builds its guard from that entry;
+  a route with neither entry panics at registration, naming the route. The route files and the
+  protected `/auth` routes in `cmd/main.go` no longer name a permission constant or a permission
+  middleware, and no protected route is registered on the raw gin group. `RouteKey` gains `AllOf`
+  (the two company sub-lists also require `companies.view`) and `CheckedInHandler` (the routes
+  whose handler decides in its first statement). The outer group guards built from
+  `permissions.GroupKeys`, which is removed, are gone: every route under them carries its own
+  guard or handler check from the same group. Every route answers every role with the same status
+  and error code as before, and the OpenAPI spec is unchanged.
+
 - **The outbound-request guard, the webhook runtime and the background lifecycle have their own
   packages (#617).** The dial-time checks, the redirect refusal and the public-only client move
   from `internal/aeo` to `internal/egress`, and the AEO provider guard builds on them. The webhook

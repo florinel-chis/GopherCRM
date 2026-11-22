@@ -36,11 +36,9 @@ func TestCatalogueIsAWellFormedTree(t *testing.T) {
 			found, ok := Leaf(leaf.Key)
 			require.True(t, ok)
 			assert.Equal(t, leaf, found)
-			assert.Contains(t, GroupKeys(group.Key), leaf.Key)
 		}
 	}
 	assert.Len(t, Leaves(), len(seen)-len(Catalogue()), "every leaf sits under exactly one group")
-	assert.Nil(t, GroupKeys("nosuchgroup"))
 }
 
 func TestCatalogueScopes(t *testing.T) {

@@ -170,9 +170,13 @@ release. [FORKING.md](FORKING.md) covers upstream sync in full.
 
 ### 3.7 Routes and wiring
 
-- Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Guard the group with
-  `middleware.RequirePermission(...)` and narrow individual routes where needed
-  (`SetupProductRoutes` (`internal/handler/routes.go`): group admin+sales, writes admin).
+- Add `Setup<Entity>Routes` to `internal/handler/routes.go`. Start it with
+  `routes := Protected(router)` and register every route and sub-group through `routes`
+  (`SetupProductRoutes` (`internal/handler/routes.go`)); the route files name no permission.
+  `handler.Protected` builds each route's guard from its `permissions.RouteKeys` entry
+  (`internal/permissions/routes.go`), so add one entry per route there (products: reads
+  `products.view`, writes `products.create`/`update`/`delete`). A route without an entry panics at
+  registration.
 - In `setupDependencies` (`cmd/main.go`): construct the repository with `models.DB`
   (`repository.NewProductRepository`), the service (`service.NewProductService`), the handler
   (`handler.NewProductHandler`), and register the routes in the `protected` group
@@ -471,10 +475,11 @@ Roles are a string type with five values (`UserRole` (`internal/models/user.go`)
 roles and `custom`, the role of an account on a custom role (`role_id`). They are checked in
 several layers at once:
 
-- group and route guards: `middleware.RequirePermission` and `RequireAnyPermission` in
-  `internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go`; every protected route also needs
-  its entry in `permissions.RouteKeys` (`internal/permissions/routes.go`), or
-  `TestEveryRouteRequiresItsOwnKey` fails;
+- route guards: `handler.Protected` (`internal/handler/protected_routes.go`) builds each protected
+  route's `middleware.RequireAnyPermission` / `RequirePermission` guard from its entry in
+  `permissions.RouteKeys` (`internal/permissions/routes.go`); a route without an entry there or in
+  `permissions.SelfServiceRoutes` panics at registration, and `TestEveryRouteRequiresItsOwnKey`
+  holds the table and the router together;
 - permission and scope checks inside handlers, all through `internal/handler/permission_context.go`
   (tickets: the `TicketHandler` methods in `internal/handler/ticket_handler.go`); a system role is its matrix in
   `internal/permissions/system_roles.go`;

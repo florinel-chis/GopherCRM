@@ -123,7 +123,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Preconditions:** Support user logged in.
 - **Steps:**
   1. Navigate to `/aeo/settings`.
-- **Expected:** The page loads (the group guard admits support) but every form control is disabled and neither **Save profile** nor **Run now** renders (`canManage = admin || sales`). A direct `PUT /api/v1/aeo/profile` as support returns 403.
+- **Expected:** The page loads (the per-route guard built from `RouteKeys` admits support to the reads) but every form control is disabled and neither **Save profile** nor **Run now** renders (`canManage = admin || sales`). A direct `PUT /api/v1/aeo/profile` as support returns 403.
 - **Automation:** blocked — no sales/support login helper; elevated roles only come from an admin-authenticated `POST /users`.
 
 ### TC-AEO-008 — Customer cannot reach the AEO section

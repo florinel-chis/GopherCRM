@@ -9,12 +9,32 @@ type RouteKey struct {
 	// Needs are further keys the handler demands for the plain request the
 	// route-matrix request table sends. Each entry says why next to it.
 	Needs []string
+	// AllOf are keys the route guard requires in addition to one of AnyOf.
+	AllOf []string
+	// CheckedInHandler says the route has no guard because the handler's
+	// first statement decides.
+	CheckedInHandler bool
 }
 
 func key(anyOf ...string) RouteKey { return RouteKey{AnyOf: anyOf} }
 
 func (r RouteKey) needs(keys ...string) RouteKey {
 	r.Needs = append(r.Needs, keys...)
+	return r
+}
+
+// alsoGuards adds keys the route guard requires next to one of AnyOf. They
+// are added to Needs as well, so the route-matrix request holds them too.
+func (r RouteKey) alsoGuards(keys ...string) RouteKey {
+	r.AllOf = append(r.AllOf, keys...)
+	r.Needs = append(r.Needs, keys...)
+	return r
+}
+
+// inHandler marks a route that has no route guard because the handler's
+// first statement checks the keys.
+func (r RouteKey) inHandler() RouteKey {
+	r.CheckedInHandler = true
 	return r
 }
 
@@ -25,15 +45,15 @@ func (r RouteKey) needs(keys ...string) RouteKey {
 // holds the table, the router and the guards to one another, so a route added
 // without an entry fails by name.
 //
-// The guards in the route files and the first-statement checks in the
-// handlers pass the same constants this table names.
+// handler.Protected builds every route guard from this table, and
+// registering a route with no entry panics.
 var RouteKeys = map[string]RouteKey{
 	// users
 	// The request names role sales, which only users.assign_role allows: without it a new account can only be a customer.
 	"POST /users":                key(UsersCreate).needs(UsersAssignRole),
 	"GET /users":                 key(UsersView),
-	"GET /users/:id":             key(UsersView),
-	"PUT /users/:id":             key(UsersUpdate),
+	"GET /users/:id":             key(UsersView).inHandler(),
+	"PUT /users/:id":             key(UsersUpdate).inHandler(),
 	"DELETE /users/:id":          key(UsersDelete),
 	"POST /users/:id/activate":   key(UsersActivate),
 	"POST /users/:id/deactivate": key(UsersActivate),
@@ -63,10 +83,10 @@ var RouteKeys = map[string]RouteKey{
 
 	// customers
 	"POST /customers":                               key(CustomersCreate),
-	"GET /customers":                                key(CustomersView),
+	"GET /customers":                                key(CustomersView).inHandler(),
 	"GET /customers/export":                         key(CustomersExport),
-	"GET /customers/:id":                            key(CustomersView),
-	"PUT /customers/:id":                            key(CustomersUpdate),
+	"GET /customers/:id":                            key(CustomersView).inHandler(),
+	"PUT /customers/:id":                            key(CustomersUpdate).inHandler(),
 	"DELETE /customers/:id":                         key(CustomersDelete),
 	"POST /customers/:id/assign":                    key(CustomersAssign),
 	"GET /customers/:id/deals":                      key(DealsView),
@@ -82,9 +102,9 @@ var RouteKeys = map[string]RouteKey{
 	"PUT /companies/:id":    key(CompaniesUpdate),
 	"DELETE /companies/:id": key(CompaniesDelete),
 	// The customers of a company: the company and its customers are both read.
-	"GET /companies/:id/customers": key(CustomersView).needs(CompaniesView),
+	"GET /companies/:id/customers": key(CustomersView).alsoGuards(CompaniesView),
 	// The leads of a company: the company and its leads are both read.
-	"GET /companies/:id/leads": key(LeadsView).needs(CompaniesView),
+	"GET /companies/:id/leads": key(LeadsView).alsoGuards(CompaniesView),
 	"GET /companies/:id/deals": key(DealsView),
 
 	// deals
@@ -124,25 +144,25 @@ var RouteKeys = map[string]RouteKey{
 	"POST /quotes/:id/email":           key(QuotesUpdate),
 
 	// tickets
-	"POST /tickets":              key(TicketsCreate),
-	"GET /tickets":               key(TicketsView),
-	"GET /tickets/my":            key(TicketsView),
+	"POST /tickets":              key(TicketsCreate).inHandler(),
+	"GET /tickets":               key(TicketsView).inHandler(),
+	"GET /tickets/my":            key(TicketsView).inHandler(),
 	"GET /tickets/:id":           key(TicketsView, TicketsViewOwnCustomer),
-	"PUT /tickets/:id":           key(TicketsUpdate),
-	"DELETE /tickets/:id":        key(TicketsDelete),
+	"PUT /tickets/:id":           key(TicketsUpdate).inHandler(),
+	"DELETE /tickets/:id":        key(TicketsDelete).inHandler(),
 	"GET /tickets/:id/comments":  key(TicketsView, TicketsViewOwnCustomer),
-	"POST /tickets/:id/comments": key(TicketsComment),
-	"POST /tickets/bulk/status":  key(TicketsUpdate),
+	"POST /tickets/:id/comments": key(TicketsComment).inHandler(),
+	"POST /tickets/bulk/status":  key(TicketsUpdate).inHandler(),
 
 	// tasks
 	// The request names another user as assignee, which only tasks.assign_others allows.
-	"POST /tasks":             key(TasksCreate).needs(TasksAssignOthers),
+	"POST /tasks":             key(TasksCreate).needs(TasksAssignOthers).inHandler(),
 	"GET /tasks":              key(TasksView),
 	"GET /tasks/my":           key(TasksView),
 	"GET /tasks/upcoming":     key(TasksView),
-	"GET /tasks/:id":          key(TasksView),
+	"GET /tasks/:id":          key(TasksView).inHandler(),
 	"PUT /tasks/:id":          key(TasksUpdate),
-	"DELETE /tasks/:id":       key(TasksDelete),
+	"DELETE /tasks/:id":       key(TasksDelete).inHandler(),
 	"POST /tasks/bulk/status": key(TasksUpdate),
 
 	// labels
@@ -200,10 +220,10 @@ var RouteKeys = map[string]RouteKey{
 	// forms
 	"GET /forms":                       key(FormsView),
 	"POST /forms":                      key(FormsManage),
-	"GET /forms/deliveries":            key(FormsView),
+	"GET /forms/deliveries":            key(FormsView).inHandler(),
 	"POST /forms/deliveries/:id/retry": key(FormsManage),
 	"GET /forms/submissions/:id":       key(FormsView),
-	"GET /forms/:id":                   key(FormsView),
+	"GET /forms/:id":                   key(FormsView).inHandler(),
 	"PUT /forms/:id":                   key(FormsManage),
 	"DELETE /forms/:id":                key(FormsDelete),
 	"GET /forms/:id/submissions":       key(FormsView),

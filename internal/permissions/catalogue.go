@@ -368,20 +368,3 @@ func (s Set) List() []Grant {
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
 }
-
-// GroupKeys returns the keys of every permission of one catalogue group, for a
-// route group's outer gate: a caller holding none of them has no business on
-// any route of the group. An unknown group has no keys, which admits nobody.
-func GroupKeys(groupKey string) []string {
-	for _, node := range catalogue {
-		if node.Key != groupKey {
-			continue
-		}
-		keys := make([]string, 0, len(node.Children))
-		for _, child := range node.Children {
-			keys = append(keys, child.Key)
-		}
-		return keys
-	}
-	return nil
-}

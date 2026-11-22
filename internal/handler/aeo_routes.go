@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"github.com/florinel-chis/gophercrm/internal/middleware"
-	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,25 +11,24 @@ import (
 // sales, and deleting a prompt — which hides it from every future run — is
 // admin-only.
 func SetupAEORoutes(router *gin.RouterGroup, h *AEOHandler) {
-	group := router.Group("/aeo")
-	group.Use(middleware.RequireAnyPermission(permissions.GroupKeys("aeo")...))
-	write := middleware.RequirePermission(permissions.AEOManage)
+	routes := Protected(router)
+	group := routes.Group("/aeo")
 	{
-		group.GET("/profile", middleware.RequirePermission(permissions.AEOView), h.GetProfile)
-		group.PUT("/profile", write, h.SaveProfile)
-		group.GET("/prompts", middleware.RequirePermission(permissions.AEOView), h.ListPrompts)
-		group.POST("/prompts", write, h.CreatePrompts)
-		group.POST("/prompts/generate", write, h.GeneratePrompts)
-		group.GET("/prompts/:id/answers", middleware.RequirePermission(permissions.AEOView), h.ListPromptAnswers)
-		group.PUT("/prompts/:id", write, h.UpdatePrompt)
-		group.DELETE("/prompts/:id", middleware.RequirePermission(permissions.AEODeletePrompts), h.DeletePrompt)
-		group.POST("/prompts/:id/run", write, h.RunPrompt)
-		group.POST("/runs", write, h.CreateRun)
-		group.GET("/runs", middleware.RequirePermission(permissions.AEOView), h.ListRuns)
-		group.GET("/runs/:id", middleware.RequirePermission(permissions.AEOView), h.GetRun)
-		group.GET("/dashboard", middleware.RequirePermission(permissions.AEOView), h.GetDashboard)
-		group.GET("/citations", middleware.RequirePermission(permissions.AEOView), h.GetCitations)
-		group.GET("/providers", middleware.RequirePermission(permissions.AEOView), h.GetProviders)
-		group.GET("/export", middleware.RequirePermission(permissions.AEOView), h.Export)
+		group.GET("/profile", h.GetProfile)
+		group.PUT("/profile", h.SaveProfile)
+		group.GET("/prompts", h.ListPrompts)
+		group.POST("/prompts", h.CreatePrompts)
+		group.POST("/prompts/generate", h.GeneratePrompts)
+		group.GET("/prompts/:id/answers", h.ListPromptAnswers)
+		group.PUT("/prompts/:id", h.UpdatePrompt)
+		group.DELETE("/prompts/:id", h.DeletePrompt)
+		group.POST("/prompts/:id/run", h.RunPrompt)
+		group.POST("/runs", h.CreateRun)
+		group.GET("/runs", h.ListRuns)
+		group.GET("/runs/:id", h.GetRun)
+		group.GET("/dashboard", h.GetDashboard)
+		group.GET("/citations", h.GetCitations)
+		group.GET("/providers", h.GetProviders)
+		group.GET("/export", h.Export)
 	}
 }

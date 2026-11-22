@@ -330,7 +330,7 @@ func TestQuoteHandler_SalesIsScopedToItsOwnQuotes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, status)
 	admin.AssertExpectations(t)
 
-	// Support and customer are stopped by the group guard.
+	// Support and customer are stopped by the per-route guard built from RouteKeys.
 	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer} {
 		guarded := new(mocks.QuoteService)
 		guardedRouter := newQuoteTestRouter(guarded, 1, role)

@@ -232,7 +232,7 @@ TC-COMP-024 by the forms suite), 9 planned, 6 blocked on the sales/support role-
   1. As support: `POST /api/v1/companies` and `PUT /api/v1/companies/{id}`.
   2. As customer role: `GET /api/v1/companies/{id}`.
 - **Expected:** Step 1: **403** on both (`RequireRole(admin, sales)` on POST and PUT). Step 2:
-  **403** (group guard). The UI hides the Add and Edit buttons from support.
+  **403** (the per-route guard built from `RouteKeys`). The UI hides the Add and Edit buttons from support.
 - **Automation:** blocked — needs a role-login helper. Go:
   `CompanyHandlerTestSuite.TestRoleMatrix` (`internal/handler/company_handler_test.go`) and `CompanyIntegrationTestSuite.TestRoleMatrix` (`test/integration/company_integration_test.go`).
 

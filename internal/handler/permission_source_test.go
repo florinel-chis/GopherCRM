@@ -30,16 +30,65 @@ func ensureTestLogger() {
 	}
 }
 
-// The single-source rule (#259 AC-21): route files guard by permission, and
-// handler code reads the caller's role only through permission_context.go.
-// Both tests read the source.
+// The single-source rule (#259 AC-21): route files take every guard from
+// permissions.RouteKeys through Protected, and handler code reads the caller's
+// role only through permission_context.go. Both tests read the source.
+
+// routeFilesWithoutGuards are the route files that need not register through
+// Protected: the helper itself and the two public route files.
+var routeFilesWithoutGuards = map[string]bool{
+	"protected_routes.go":    true,
+	"form_public_routes.go":  true,
+	"quote_public_routes.go": true,
+}
+
+var (
+	permissionGuard = regexp.MustCompile(`middleware\.Require(Any)?Permission\(`)
+	// rawRouterCall is a registration on the raw gin group a Setup* function
+	// receives, which would bypass the table (#680).
+	rawRouterCall = regexp.MustCompile(`\brouter\.(GET|POST|PUT|DELETE|PATCH|Handle|Group|Use)\(`)
+	// rawProtectedCall is the same bypass on cmd/main.go's protected group.
+	rawProtectedCall = regexp.MustCompile(`\bprotected\.(GET|POST|PUT|DELETE|PATCH|Handle|Group)\(`)
+)
 
 func TestRouteFilesHaveNoRoleGuard(t *testing.T) {
-	for _, name := range []string{"routes.go", "aeo_routes.go", "form_routes.go"} {
+	names, err := filepath.Glob("*routes*.go")
+	require.NoError(t, err)
+	read := 0
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") || routeFilesWithoutGuards[name] {
+			continue
+		}
+		read++
 		source, err := os.ReadFile(name)
 		require.NoError(t, err)
-		assert.NotContains(t, string(source), "RequireRole", "%s still guards by role", name)
-		assert.Regexp(t, `middleware\.Require(Any)?Permission\(`, string(source), "%s guards by permission", name)
+		text := string(source)
+		assert.False(t, strings.Contains(text, "RequireRole"), "%s still guards by role", name)
+		assert.False(t, permissionGuard.MatchString(text), "%s names a permission guard; Protected builds it from permissions.RouteKeys", name)
+		assert.False(t, strings.Contains(text, "permissions."), "%s names a permission; permissions.RouteKeys is the one place", name)
+		// SetupSCIMRoutes is the one setup in these files that is not
+		// protected: its group carries the SCIM token authentication.
+		inSCIM := false
+		for number, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(line, "func SetupSCIMRoutes(") {
+				inSCIM = true
+			}
+			if !inSCIM && rawRouterCall.MatchString(line) {
+				t.Errorf("%s:%d registers on the raw router group, past the permission table: %s", name, number+1, strings.TrimSpace(line))
+			}
+			if inSCIM && line == "}" {
+				inSCIM = false
+			}
+		}
+	}
+	assert.GreaterOrEqual(t, read, 4, "the protected route files were read")
+
+	main, err := os.ReadFile(filepath.Join("..", "..", "cmd", "main.go"))
+	require.NoError(t, err)
+	for number, line := range strings.Split(string(main), "\n") {
+		if rawProtectedCall.MatchString(line) {
+			t.Errorf("cmd/main.go:%d registers on the raw protected group, past the permission table: %s", number+1, strings.TrimSpace(line))
+		}
 	}
 }
 

@@ -233,8 +233,9 @@ fails it, when its bounded write cannot get the connection), `TestRequestCancell
 handler package, `TestConvertToCustomer_CancelledWhileTheOwnershipReadWaits`.
 
 **Authentication** — JWT Bearer tokens and API Key header (`ApiKey`). API keys use HMAC-SHA256
-hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. Use
-`middleware.RequirePermission()` for RBAC on routes. An API key whose owner has been erased or deactivated
+hashing (with a legacy SHA256 fallback for migration). Middleware sets the user context. RBAC on routes
+comes from `handler.Protected`, which builds each protected route's permission guard from its
+`permissions.RouteKeys` entry. An API key whose owner has been erased or deactivated
 is rejected at authentication time, and none is issued to such an owner (#342, see *Credential
 issuance under the owner lock*).
 
@@ -3450,7 +3451,8 @@ the Database migrations workflow is an operator follow-up.
 
 **AEO export (#244).** `GET /aeo/export` (`AEOHandler.Export`, `internal/handler/aeo_export.go`)
 sits in the `/aeo` read group, so admin, sales and support reach it and the customer role gets 403
-from `RequirePermission(aeo.view)` before the handler runs.
+from the `aeo.view` guard `handler.Protected` builds from its `RouteKeys` entry, before the handler
+runs.
 
 - **Parameters.** `format` is `csv` (default) or `json`; `run_id` is a positive integer; `days` is
   checked against `aeoAllowedRangeDays` (7, 30, 90) and, unlike the dashboard's
@@ -3866,7 +3868,8 @@ commits. Code: `internal/models/webhook.go`,
 `internal/handler/webhook_handler.go`, `internal/egress/`, `cmd/webhook_runtime.go`.
 
 - **Registry.** `/webhooks/endpoints` (list, create, read, update, delete, test, rotate-secret) and
-  `/webhooks/deliveries` sit behind `RequirePermission(webhooks.manage)` (admin). The handler validates every input before
+  `/webhooks/deliveries` sit behind the `webhooks.manage` guard (admin) that `handler.Protected`
+  builds from their `RouteKeys` entries. The handler validates every input before
   calling `WebhookService` (400 `VALIDATION_ERROR`, `error.details` keyed by `url`, `event_types`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
   `webhook.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048

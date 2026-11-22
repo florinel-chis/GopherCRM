@@ -1,52 +1,52 @@
 package handler
 
 import (
-	"github.com/florinel-chis/gophercrm/internal/middleware"
-	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/gin-gonic/gin"
 )
 
 func SetupUserRoutes(router *gin.RouterGroup, handler *UserHandler) {
-	users := router.Group("/users")
+	routes := Protected(router)
+	users := routes.Group("/users")
 	{
-		users.POST("", middleware.RequirePermission(permissions.UsersCreate), handler.Create)
-		users.GET("", middleware.RequirePermission(permissions.UsersView), handler.List)
+		users.POST("", handler.Create)
+		users.GET("", handler.List)
 		users.GET("/me", handler.GetMe)
 		users.PUT("/me", handler.UpdateMe)
 		users.GET("/:id", handler.Get)
 		users.PUT("/:id", handler.Update)
-		users.DELETE("/:id", middleware.RequirePermission(permissions.UsersDelete), handler.Delete)
-		users.POST("/:id/activate", middleware.RequirePermission(permissions.UsersActivate), handler.Activate)
-		users.POST("/:id/deactivate", middleware.RequirePermission(permissions.UsersActivate), handler.Deactivate)
+		users.DELETE("/:id", handler.Delete)
+		users.POST("/:id/activate", handler.Activate)
+		users.POST("/:id/deactivate", handler.Deactivate)
 	}
 }
 
 func SetupLeadRoutes(router *gin.RouterGroup, handler *LeadHandler) {
-	leads := router.Group("/leads")
-	leads.Use(middleware.RequireAnyPermission(permissions.GroupKeys("leads")...))
+	routes := Protected(router)
+	leads := routes.Group("/leads")
 	{
-		leads.POST("", middleware.RequirePermission(permissions.LeadsCreate), handler.Create)
-		leads.GET("", middleware.RequirePermission(permissions.LeadsView), handler.List)
-		leads.GET("/export", middleware.RequirePermission(permissions.LeadsExport), handler.Export)
-		leads.GET("/:id", middleware.RequirePermission(permissions.LeadsView), handler.Get)
-		leads.PUT("/:id", middleware.RequirePermission(permissions.LeadsUpdate), handler.Update)
-		leads.DELETE("/:id", middleware.RequirePermission(permissions.LeadsDelete), handler.Delete)
-		leads.POST("/:id/convert", middleware.RequirePermission(permissions.LeadsConvert), handler.ConvertToCustomer)
-		leads.POST("/:id/assign", middleware.RequirePermission(permissions.LeadsUpdate), handler.Assign)
+		leads.POST("", handler.Create)
+		leads.GET("", handler.List)
+		leads.GET("/export", handler.Export)
+		leads.GET("/:id", handler.Get)
+		leads.PUT("/:id", handler.Update)
+		leads.DELETE("/:id", handler.Delete)
+		leads.POST("/:id/convert", handler.ConvertToCustomer)
+		leads.POST("/:id/assign", handler.Assign)
 	}
 }
 
 func SetupCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
-	customers := router.Group("/customers")
+	routes := Protected(router)
+	customers := routes.Group("/customers")
 	{
-		customers.POST("", middleware.RequirePermission(permissions.CustomersCreate), handler.Create)
+		customers.POST("", handler.Create)
 		customers.GET("", handler.List)
 		// Mass PII egress, so admin only — see the handler's GDPR note.
-		customers.GET("/export", middleware.RequirePermission(permissions.CustomersExport), handler.Export)
+		customers.GET("/export", handler.Export)
 		customers.GET("/:id", handler.Get)
 		customers.PUT("/:id", handler.Update)
-		customers.DELETE("/:id", middleware.RequirePermission(permissions.CustomersDelete), handler.Delete)
-		customers.POST("/:id/assign", middleware.RequirePermission(permissions.CustomersAssign), handler.Assign)
+		customers.DELETE("/:id", handler.Delete)
+		customers.POST("/:id/assign", handler.Assign)
 	}
 }
 
@@ -55,16 +55,16 @@ func SetupCustomerRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
 // split as customers. The company's leads are admin and sales only, as the
 // leads endpoints are; the handler narrows sales to their own leads.
 func SetupCompanyRoutes(router *gin.RouterGroup, handler *CompanyHandler) {
-	companies := router.Group("/companies")
-	companies.Use(middleware.RequireAnyPermission(permissions.GroupKeys("companies")...))
+	routes := Protected(router)
+	companies := routes.Group("/companies")
 	{
-		companies.POST("", middleware.RequirePermission(permissions.CompaniesCreate), handler.Create)
-		companies.GET("", middleware.RequirePermission(permissions.CompaniesView), handler.List)
-		companies.GET("/:id", middleware.RequirePermission(permissions.CompaniesView), handler.Get)
-		companies.PUT("/:id", middleware.RequirePermission(permissions.CompaniesUpdate), handler.Update)
-		companies.DELETE("/:id", middleware.RequirePermission(permissions.CompaniesDelete), handler.Delete)
-		companies.GET("/:id/customers", middleware.RequirePermission(permissions.CompaniesView), middleware.RequirePermission(permissions.CustomersView), handler.ListCustomers)
-		companies.GET("/:id/leads", middleware.RequirePermission(permissions.CompaniesView), middleware.RequirePermission(permissions.LeadsView), handler.ListLeads)
+		companies.POST("", handler.Create)
+		companies.GET("", handler.List)
+		companies.GET("/:id", handler.Get)
+		companies.PUT("/:id", handler.Update)
+		companies.DELETE("/:id", handler.Delete)
+		companies.GET("/:id/customers", handler.ListCustomers)
+		companies.GET("/:id/leads", handler.ListLeads)
 	}
 }
 
@@ -74,41 +74,40 @@ func SetupCompanyRoutes(router *gin.RouterGroup, handler *CompanyHandler) {
 // so the SetupCompanyRoutes and SetupCustomerRoutes signatures stay as they
 // are for the suites that mount them.
 func SetupDealRoutes(router *gin.RouterGroup, handler *DealHandler) {
-	guard := middleware.RequirePermission(permissions.DealsView)
-	deals := router.Group("/deals")
-	deals.Use(middleware.RequireAnyPermission(permissions.GroupKeys("deals")...))
+	routes := Protected(router)
+	deals := routes.Group("/deals")
 	{
-		deals.POST("", middleware.RequirePermission(permissions.DealsCreate), handler.Create)
-		deals.GET("", guard, handler.List)
+		deals.POST("", handler.Create)
+		deals.GET("", handler.List)
 		// Static segment next to /:id; registered first so the intent reads
 		// in order (gin's tree prefers the static match either way).
-		deals.GET("/pipeline", guard, handler.Pipeline)
-		deals.GET("/:id", guard, handler.Get)
-		deals.PUT("/:id", middleware.RequirePermission(permissions.DealsUpdate), handler.Update)
-		deals.DELETE("/:id", middleware.RequirePermission(permissions.DealsDelete), handler.Delete)
-		deals.POST("/:id/stage", middleware.RequirePermission(permissions.DealsUpdate), handler.ChangeStage)
-		deals.GET("/:id/history", guard, handler.History)
+		deals.GET("/pipeline", handler.Pipeline)
+		deals.GET("/:id", handler.Get)
+		deals.PUT("/:id", handler.Update)
+		deals.DELETE("/:id", handler.Delete)
+		deals.POST("/:id/stage", handler.ChangeStage)
+		deals.GET("/:id/history", handler.History)
 	}
-	router.GET("/companies/:id/deals", guard, handler.ListByCompany)
-	router.GET("/customers/:id/deals", guard, handler.ListByCustomer)
+	routes.GET("/companies/:id/deals", handler.ListByCompany)
+	routes.GET("/customers/:id/deals", handler.ListByCustomer)
 }
 
 // SetupProductRoutes mounts the catalogue endpoints. Reading is open to admin
 // and sales, the roles that quote; writing is admin only. Support and customer
 // have no access at all.
 func SetupProductRoutes(router *gin.RouterGroup, handler *ProductHandler) {
-	products := router.Group("/products")
-	products.Use(middleware.RequireAnyPermission(permissions.GroupKeys("products")...))
+	routes := Protected(router)
+	products := routes.Group("/products")
 	{
-		products.POST("", middleware.RequirePermission(permissions.ProductsCreate), handler.Create)
-		products.GET("", middleware.RequirePermission(permissions.ProductsView), handler.List)
-		products.GET("/:id", middleware.RequirePermission(permissions.ProductsView), handler.Get)
-		products.PUT("/:id", middleware.RequirePermission(permissions.ProductsUpdate), handler.Update)
-		products.DELETE("/:id", middleware.RequirePermission(permissions.ProductsDelete), handler.Delete)
+		products.POST("", handler.Create)
+		products.GET("", handler.List)
+		products.GET("/:id", handler.Get)
+		products.PUT("/:id", handler.Update)
+		products.DELETE("/:id", handler.Delete)
 		// External-id mappings (#239): admin only, as every product write is.
 		// The lookup is the list route above with source/scope/external_id.
-		products.POST("/:id/external-ids", middleware.RequirePermission(permissions.ProductsUpdate), handler.CreateExternalID)
-		products.DELETE("/:id/external-ids/:mappingId", middleware.RequirePermission(permissions.ProductsUpdate), handler.DeleteExternalID)
+		products.POST("/:id/external-ids", handler.CreateExternalID)
+		products.DELETE("/:id/external-ids/:mappingId", handler.DeleteExternalID)
 	}
 }
 
@@ -117,59 +116,60 @@ func SetupProductRoutes(router *gin.RouterGroup, handler *ProductHandler) {
 // sub-lists live under the deal and customer paths but are registered here,
 // with the same guard, so the other Setup* signatures stay as they are.
 func SetupQuoteRoutes(router *gin.RouterGroup, handler *QuoteHandler) {
-	guard := middleware.RequirePermission(permissions.QuotesView)
-	quotes := router.Group("/quotes")
-	quotes.Use(middleware.RequireAnyPermission(permissions.GroupKeys("quotes")...))
+	routes := Protected(router)
+	quotes := routes.Group("/quotes")
 	{
-		quotes.POST("", middleware.RequirePermission(permissions.QuotesCreate), handler.Create)
-		quotes.GET("", guard, handler.List)
-		quotes.GET("/:id", guard, handler.Get)
-		quotes.PUT("/:id", middleware.RequirePermission(permissions.QuotesUpdate), handler.Update)
-		quotes.DELETE("/:id", middleware.RequirePermission(permissions.QuotesDelete), handler.Delete)
-		quotes.POST("/:id/lines", middleware.RequirePermission(permissions.QuotesUpdate), handler.AddLine)
-		quotes.PUT("/:id/lines/:lineId", middleware.RequirePermission(permissions.QuotesUpdate), handler.UpdateLine)
-		quotes.DELETE("/:id/lines/:lineId", middleware.RequirePermission(permissions.QuotesUpdate), handler.DeleteLine)
-		quotes.POST("/:id/status", middleware.RequirePermission(permissions.QuotesUpdate), handler.ChangeStatus)
-		quotes.GET("/:id/history", guard, handler.History)
-		quotes.GET("/:id/pdf", guard, handler.PDF)
-		quotes.POST("/:id/email", middleware.RequirePermission(permissions.QuotesUpdate), handler.Email)
+		quotes.POST("", handler.Create)
+		quotes.GET("", handler.List)
+		quotes.GET("/:id", handler.Get)
+		quotes.PUT("/:id", handler.Update)
+		quotes.DELETE("/:id", handler.Delete)
+		quotes.POST("/:id/lines", handler.AddLine)
+		quotes.PUT("/:id/lines/:lineId", handler.UpdateLine)
+		quotes.DELETE("/:id/lines/:lineId", handler.DeleteLine)
+		quotes.POST("/:id/status", handler.ChangeStatus)
+		quotes.GET("/:id/history", handler.History)
+		quotes.GET("/:id/pdf", handler.PDF)
+		quotes.POST("/:id/email", handler.Email)
 	}
-	router.GET("/deals/:id/quotes", guard, handler.ListByDeal)
-	router.GET("/customers/:id/quotes", guard, handler.ListByCustomer)
+	routes.GET("/deals/:id/quotes", handler.ListByDeal)
+	routes.GET("/customers/:id/quotes", handler.ListByCustomer)
 }
 
 func SetupTicketRoutes(router *gin.RouterGroup, handler *TicketHandler) {
-	tickets := router.Group("/tickets")
+	routes := Protected(router)
+	tickets := routes.Group("/tickets")
 	{
 		tickets.POST("", handler.Create)
 		tickets.GET("", handler.List)
 		tickets.GET("/my", handler.ListMyTickets)
-		tickets.GET("/:id", middleware.RequireAnyPermission(permissions.TicketsView, permissions.TicketsViewOwnCustomer), handler.Get)
+		tickets.GET("/:id", handler.Get)
 		tickets.PUT("/:id", handler.Update)
 		tickets.DELETE("/:id", handler.Delete)
-		tickets.GET("/:id/comments", middleware.RequireAnyPermission(permissions.TicketsView, permissions.TicketsViewOwnCustomer), handler.ListComments)
+		tickets.GET("/:id/comments", handler.ListComments)
 		tickets.POST("/:id/comments", handler.CreateComment)
 	}
 
 	// Customer-specific ticket routes
-	router.GET("/customers/:id/tickets", middleware.RequireAnyPermission(permissions.TicketsView, permissions.TicketsViewOwnCustomer), handler.ListByCustomer)
+	routes.GET("/customers/:id/tickets", handler.ListByCustomer)
 }
 
 func SetupTaskRoutes(router *gin.RouterGroup, handler *TaskHandler) {
-	tasks := router.Group("/tasks")
+	routes := Protected(router)
+	tasks := routes.Group("/tasks")
 	{
 		tasks.POST("", handler.Create)
-		tasks.GET("", middleware.RequirePermission(permissions.TasksView), handler.List)
-		tasks.GET("/my", middleware.RequirePermission(permissions.TasksView), handler.ListMyTasks)
-		tasks.GET("/upcoming", middleware.RequirePermission(permissions.TasksView), handler.GetUpcoming)
+		tasks.GET("", handler.List)
+		tasks.GET("/my", handler.ListMyTasks)
+		tasks.GET("/upcoming", handler.GetUpcoming)
 		tasks.GET("/:id", handler.Get)
-		tasks.PUT("/:id", middleware.RequirePermission(permissions.TasksUpdate), handler.Update)
+		tasks.PUT("/:id", handler.Update)
 		tasks.DELETE("/:id", handler.Delete)
 	}
 
 	// A sub-list on the deal path, registered here under the deals guard (admin
 	// and sales), as the quotes file does with /deals/:id/quotes.
-	router.GET("/deals/:id/tasks", middleware.RequirePermission(permissions.DealsView), handler.ListByDeal)
+	routes.GET("/deals/:id/tasks", handler.ListByDeal)
 }
 
 // SetupLabelRoutes mounts the task-label endpoints. Reading labels is open to
@@ -177,17 +177,19 @@ func SetupTaskRoutes(router *gin.RouterGroup, handler *TaskHandler) {
 // creating and editing them is staff-only, and deleting one — which detaches it
 // from every task at once — is admin-only.
 func SetupLabelRoutes(router *gin.RouterGroup, handler *LabelHandler) {
-	labels := router.Group("/labels")
+	routes := Protected(router)
+	labels := routes.Group("/labels")
 	{
-		labels.GET("", middleware.RequirePermission(permissions.LabelsView), handler.List)
-		labels.POST("", middleware.RequirePermission(permissions.LabelsCreate), handler.Create)
-		labels.PUT("/:id", middleware.RequirePermission(permissions.LabelsUpdate), handler.Update)
-		labels.DELETE("/:id", middleware.RequirePermission(permissions.LabelsDelete), handler.Delete)
+		labels.GET("", handler.List)
+		labels.POST("", handler.Create)
+		labels.PUT("/:id", handler.Update)
+		labels.DELETE("/:id", handler.Delete)
 	}
 }
 
 func SetupAPIKeyRoutes(router *gin.RouterGroup, handler *APIKeyHandler) {
-	apiKeys := router.Group("/api-keys")
+	routes := Protected(router)
+	apiKeys := routes.Group("/api-keys")
 	{
 		apiKeys.POST("", handler.Create)
 		apiKeys.GET("", handler.List)
@@ -198,17 +200,18 @@ func SetupAPIKeyRoutes(router *gin.RouterGroup, handler *APIKeyHandler) {
 }
 
 func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHandler) {
-	configs := router.Group("/configurations")
+	routes := Protected(router)
+	configs := routes.Group("/configurations")
 	{
 		// Public endpoint for UI configurations (authenticated users only)
 		configs.GET("/ui", handler.GetUIConfigurations)
 
 		// Admin-only endpoints
-		configs.GET("", middleware.RequirePermission(permissions.SettingsView), handler.GetAll)
-		configs.GET("/category/:category", middleware.RequirePermission(permissions.SettingsView), handler.GetByCategory)
-		configs.GET("/:key", middleware.RequirePermission(permissions.SettingsView), handler.GetByKey)
-		configs.PUT("/:key", middleware.RequirePermission(permissions.SettingsUpdate), handler.Set)
-		configs.POST("/:key/reset", middleware.RequirePermission(permissions.SettingsUpdate), handler.Reset)
+		configs.GET("", handler.GetAll)
+		configs.GET("/category/:category", handler.GetByCategory)
+		configs.GET("/:key", handler.GetByKey)
+		configs.PUT("/:key", handler.Set)
+		configs.POST("/:key/reset", handler.Reset)
 	}
 }
 
@@ -216,27 +219,27 @@ func SetupConfigurationRoutes(router *gin.RouterGroup, handler *ConfigurationHan
 // have their own permission, settings.sso_manage: settings.view and
 // settings.update do not open them.
 func SetupSSOSettingsRoutes(router *gin.RouterGroup, handler *SSOSettingsHandler) {
-	guard := middleware.RequirePermission(permissions.SettingsSSOManage)
-	router.GET("/settings/sso", guard, handler.Get)
-	router.PUT("/settings/sso", guard, handler.Update)
+	routes := Protected(router)
+	routes.GET("/settings/sso", handler.Get)
+	routes.PUT("/settings/sso", handler.Update)
 }
 
 func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
-	dashboard := router.Group("/dashboard")
-	guard := middleware.RequirePermission(permissions.DashboardView)
+	routes := Protected(router)
+	dashboard := routes.Group("/dashboard")
 	{
-		dashboard.GET("/stats", guard, handler.GetStats)
-		dashboard.GET("/leads-by-status", guard, handler.GetLeadsByStatus)
-		dashboard.GET("/tickets-by-priority", guard, handler.GetTicketsByPriority)
-		dashboard.GET("/tasks-by-status", guard, handler.GetTasksByStatus)
-		dashboard.GET("/sales-performance", guard, handler.GetSalesPerformance)
-		dashboard.GET("/activities", guard, handler.GetActivities)
-		dashboard.GET("/upcoming-tasks", guard, handler.GetUpcomingTasks)
-		dashboard.GET("/recent-tickets", guard, handler.GetRecentTickets)
-		dashboard.GET("/new-leads", guard, handler.GetNewLeads)
+		dashboard.GET("/stats", handler.GetStats)
+		dashboard.GET("/leads-by-status", handler.GetLeadsByStatus)
+		dashboard.GET("/tickets-by-priority", handler.GetTicketsByPriority)
+		dashboard.GET("/tasks-by-status", handler.GetTasksByStatus)
+		dashboard.GET("/sales-performance", handler.GetSalesPerformance)
+		dashboard.GET("/activities", handler.GetActivities)
+		dashboard.GET("/upcoming-tasks", handler.GetUpcomingTasks)
+		dashboard.GET("/recent-tickets", handler.GetRecentTickets)
+		dashboard.GET("/new-leads", handler.GetNewLeads)
 		// Same dashboard guard; the handler (and the deal service behind it)
 		// then refuses support, which has no access to deals.
-		dashboard.GET("/pipeline", guard, handler.GetPipeline)
+		dashboard.GET("/pipeline", handler.GetPipeline)
 	}
 }
 
@@ -246,9 +249,8 @@ func SetupDashboardRoutes(router *gin.RouterGroup, handler *DashboardHandler) {
 // its own leads and deals inside the query), and cancelling a run is
 // admin-only.
 func SetupAutomationRoutes(router *gin.RouterGroup, handler *AutomationHandler) {
-	admin := middleware.RequirePermission(permissions.AutomationRulesManage)
-	rules := router.Group("/automation/rules")
-	rules.Use(admin)
+	routes := Protected(router)
+	rules := routes.Group("/automation/rules")
 	{
 		rules.POST("", handler.CreateRule)
 		// Static segment before the :id routes, as the deals group does.
@@ -261,20 +263,19 @@ func SetupAutomationRoutes(router *gin.RouterGroup, handler *AutomationHandler) 
 		rules.POST("/:id/disable", handler.DisableRule)
 		rules.POST("/:id/dry-run", handler.DryRun)
 	}
-	runs := router.Group("/automation/runs")
-	runs.Use(middleware.RequireAnyPermission(permissions.AutomationRunsView, permissions.AutomationRunsCancel))
+	runs := routes.Group("/automation/runs")
 	{
-		runs.GET("", middleware.RequirePermission(permissions.AutomationRunsView), handler.ListRuns)
-		runs.GET("/:id", middleware.RequirePermission(permissions.AutomationRunsView), handler.GetRun)
-		runs.POST("/:id/cancel", middleware.RequirePermission(permissions.AutomationRunsCancel), handler.CancelRun)
+		runs.GET("", handler.ListRuns)
+		runs.GET("/:id", handler.GetRun)
+		runs.POST("/:id/cancel", handler.CancelRun)
 	}
 }
 
 // SetupNotificationRoutes mounts a staff user's own notifications. Customers
 // are never addressed by a rule and get 403 on every route.
 func SetupNotificationRoutes(router *gin.RouterGroup, handler *NotificationHandler) {
-	notifications := router.Group("/notifications")
-	notifications.Use(middleware.RequirePermission(permissions.NotificationsUse))
+	routes := Protected(router)
+	notifications := routes.Group("/notifications")
 	{
 		notifications.GET("", handler.List)
 		// Static segments registered before the parameter route, as the
@@ -287,13 +288,13 @@ func SetupNotificationRoutes(router *gin.RouterGroup, handler *NotificationHandl
 
 // SetupBulkStatusRoutes registers the entity bulk status endpoints. They are
 // registered outside the entity groups so the Setup* signatures stay stable
-// for the test suites that mount them; the lead variant therefore repeats the
-// lead group's role guard explicitly. Per-item authorization happens in the
-// bulk service.
+// for the test suites that mount them; each takes its guard from its own
+// RouteKeys entry. Per-item authorization happens in the bulk service.
 func SetupBulkStatusRoutes(router *gin.RouterGroup, bulkHandler *BulkHandler) {
-	router.POST("/leads/bulk/status", middleware.RequirePermission(permissions.LeadsUpdate), bulkHandler.BulkUpdateLeadStatus)
-	router.POST("/tickets/bulk/status", bulkHandler.BulkUpdateTicketStatus)
-	router.POST("/tasks/bulk/status", middleware.RequirePermission(permissions.TasksUpdate), bulkHandler.BulkUpdateTaskStatus)
+	routes := Protected(router)
+	routes.POST("/leads/bulk/status", bulkHandler.BulkUpdateLeadStatus)
+	routes.POST("/tickets/bulk/status", bulkHandler.BulkUpdateTicketStatus)
+	routes.POST("/tasks/bulk/status", bulkHandler.BulkUpdateTaskStatus)
 }
 
 // SetupCustomerExternalIDRoutes mounts the write half of the customer
@@ -303,27 +304,27 @@ func SetupBulkStatusRoutes(router *gin.RouterGroup, bulkHandler *BulkHandler) {
 // list route of SetupCustomerRoutes. It is a separate function so that
 // SetupCustomerRoutes, and the line numbers the docs cite, stay unchanged.
 func SetupCustomerExternalIDRoutes(router *gin.RouterGroup, handler *CustomerHandler) {
-	writers := middleware.RequirePermission(permissions.CustomersUpdate)
-	router.POST("/customers/:id/external-ids", writers, handler.CreateExternalID)
-	router.DELETE("/customers/:id/external-ids/:mappingId", writers, handler.DeleteExternalID)
+	routes := Protected(router)
+	routes.POST("/customers/:id/external-ids", handler.CreateExternalID)
+	routes.DELETE("/customers/:id/external-ids/:mappingId", handler.DeleteExternalID)
 }
 
 // SetupWebhookRoutes mounts the outbound webhook registry and delivery log
 // (#345). Every route is admin only: the guard answers 403 to sales, support
 // and customer callers before the handler runs.
 func SetupWebhookRoutes(router *gin.RouterGroup, handler *WebhookHandler) {
-	webhooks := router.Group("/webhooks")
-	webhooks.Use(middleware.RequireAnyPermission(permissions.GroupKeys("webhooks")...))
+	routes := Protected(router)
+	webhooks := routes.Group("/webhooks")
 	{
-		webhooks.GET("/endpoints", middleware.RequirePermission(permissions.WebhooksManage), handler.ListEndpoints)
-		webhooks.POST("/endpoints", middleware.RequirePermission(permissions.WebhooksManage), handler.CreateEndpoint)
-		webhooks.GET("/endpoints/:id", middleware.RequirePermission(permissions.WebhooksManage), handler.GetEndpoint)
-		webhooks.PUT("/endpoints/:id", middleware.RequirePermission(permissions.WebhooksManage), handler.UpdateEndpoint)
-		webhooks.DELETE("/endpoints/:id", middleware.RequirePermission(permissions.WebhooksManage), handler.DeleteEndpoint)
-		webhooks.POST("/endpoints/:id/test", middleware.RequirePermission(permissions.WebhooksManage), handler.TestEndpoint)
-		webhooks.POST("/endpoints/:id/rotate-secret", middleware.RequirePermission(permissions.WebhooksManage), handler.RotateSecret)
-		webhooks.GET("/deliveries", middleware.RequirePermission(permissions.WebhooksManage), handler.ListDeliveries)
-		webhooks.POST("/deliveries/:id/redeliver", middleware.RequirePermission(permissions.WebhooksManage), handler.RedeliverDelivery)
+		webhooks.GET("/endpoints", handler.ListEndpoints)
+		webhooks.POST("/endpoints", handler.CreateEndpoint)
+		webhooks.GET("/endpoints/:id", handler.GetEndpoint)
+		webhooks.PUT("/endpoints/:id", handler.UpdateEndpoint)
+		webhooks.DELETE("/endpoints/:id", handler.DeleteEndpoint)
+		webhooks.POST("/endpoints/:id/test", handler.TestEndpoint)
+		webhooks.POST("/endpoints/:id/rotate-secret", handler.RotateSecret)
+		webhooks.GET("/deliveries", handler.ListDeliveries)
+		webhooks.POST("/deliveries/:id/redeliver", handler.RedeliverDelivery)
 	}
 }
 
@@ -335,18 +336,18 @@ func SetupWebhookRoutes(router *gin.RouterGroup, handler *WebhookHandler) {
 // /roles/:id. The escalation rule, the system-role rule and the in-use rule
 // are the role service's, inside its transaction.
 func SetupRoleRoutes(router *gin.RouterGroup, handler *RoleHandler) {
-	readers := middleware.RequireAnyPermission(permissions.RolesView, permissions.UsersAssignRole)
-	router.GET("/permissions/catalogue", readers, handler.Catalogue)
+	routes := Protected(router)
+	routes.GET("/permissions/catalogue", handler.Catalogue)
 
-	roles := router.Group("/roles")
+	roles := routes.Group("/roles")
 	{
-		roles.GET("", readers, handler.List)
-		roles.POST("", middleware.RequirePermission(permissions.RolesManage), handler.Create)
-		roles.GET("/audit", middleware.RequirePermission(permissions.RolesAuditView), handler.ListAudit)
-		roles.GET("/:id", readers, handler.Get)
-		roles.PUT("/:id", middleware.RequirePermission(permissions.RolesManage), handler.Update)
-		roles.DELETE("/:id", middleware.RequirePermission(permissions.RolesManage), handler.Delete)
-		roles.POST("/:id/clone", middleware.RequirePermission(permissions.RolesManage), handler.Clone)
+		roles.GET("", handler.List)
+		roles.POST("", handler.Create)
+		roles.GET("/audit", handler.ListAudit)
+		roles.GET("/:id", handler.Get)
+		roles.PUT("/:id", handler.Update)
+		roles.DELETE("/:id", handler.Delete)
+		roles.POST("/:id/clone", handler.Clone)
 	}
 }
 
@@ -354,5 +355,6 @@ func SetupRoleRoutes(router *gin.RouterGroup, handler *RoleHandler) {
 // The guard audit.sign_ins_view is held by the admin system role only; a
 // custom role may hold it.
 func SetupAuthAuditRoutes(router *gin.RouterGroup, handler *AuthAuditLogHandler) {
-	router.GET("/audit/sign-ins", middleware.RequirePermission(permissions.AuditSignInsView), handler.ListSignIns)
+	routes := Protected(router)
+	routes.GET("/audit/sign-ins", handler.ListSignIns)
 }
