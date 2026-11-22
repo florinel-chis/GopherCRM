@@ -59,8 +59,8 @@ type CustomerExternalID struct {
 const customerExternalIDCollation = "utf8mb4_bin"
 
 // ensureCustomerExternalIDCollation gives source, scope and external_id the
-// binary collation on MySQL/MariaDB. AutoMigrate creates the table with the
-// database's default collation (case- and accent-insensitive), under which the
+// binary collation on MySQL/MariaDB. MigrateDatabase's AutoMigrate creates the
+// table as utf8mb4_unicode_ci (case- and accent-insensitive), under which the
 // unique index would refuse ('Shop-A', "", 'X1') beside ('shop-a', "", 'x1')
 // and a lookup would match either. The SQL migration creates the columns with
 // utf8mb4_bin already; this guard covers a schema that only AutoMigrate

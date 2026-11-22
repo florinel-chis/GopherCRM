@@ -1953,6 +1953,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- On MySQL and MariaDB the startup auto-migration (`models.MigrateDatabase`) now creates tables in
+  `utf8mb4_unicode_ci` with `ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`, as the SQL migrations do,
+  instead of inheriting the database's default collation (MySQL 8's `utf8mb4_0900_ai_ci` would
+  change trailing-space email matching). Existing tables are not converted. This also fixes the
+  intermittent `TestFormTicketCustomerMatchMySQL` failure on MariaDB in CI (#696).
 - The labels, deals and tickets browser-test page objects find row actions by role and accessible
   name (`Edit label`/`Delete label` on the labels page, `View`/`Edit`/`Delete` on the deal and
   ticket lists) instead of by MUI icon test ids, which the production build the browser tests run

@@ -2745,7 +2745,10 @@ SQLite: the SQL files in `migrations/` are written for MySQL. The global DB hand
 The data model is documented in [datamodel.md](datamodel.md). Operational notes for the SQLite
 flavour — single-connection pool, WAL, backups — are in the README and [DOCKER.md](DOCKER.md).
 
-On MySQL and MariaDB both paths exist, and `cmd/migrate/schema_parity_migration_test.go`
+On MySQL and MariaDB both paths exist. `models.MigrateDatabaseWith` creates every table with
+`ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`, the options the SQL migrations
+write, whatever the database's default collation is; a table that already exists keeps its
+collation. `cmd/migrate/schema_parity_migration_test.go`
 (`TestSchemaParityMigration`) compares them: it builds one fresh schema from every SQL migration and
 one with `models.MigrateDatabaseWith`, then compares the tables, each column's type and nullability,
 and the indexes (unique or not, index type, ordered columns with prefix lengths; the index name is

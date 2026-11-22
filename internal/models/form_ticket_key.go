@@ -58,8 +58,8 @@ func (FormTicketKey) TableName() string { return "form_ticket_keys" }
 const formTicketKeyCollation = "utf8mb4_bin"
 
 // ensureFormTicketKeyCollation gives form_ticket_keys.idempotency_key the
-// binary collation on MySQL/MariaDB. AutoMigrate creates the column with the
-// database default (case- and accent-insensitive), under which 'Key-A' and
+// binary collation on MySQL/MariaDB. MigrateDatabase's AutoMigrate creates the
+// column as utf8mb4_unicode_ci (case- and accent-insensitive), under which 'Key-A' and
 // 'key-a' would collide in the unique index. The SQL migration creates it
 // with utf8mb4_bin already; this guard covers a schema AutoMigrate alone
 // created. It reads information_schema first and alters only when the
