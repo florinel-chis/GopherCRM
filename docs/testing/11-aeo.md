@@ -14,6 +14,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - `internal/repository/aeo_repository.go`, `internal/repository/interfaces.go`
 - `internal/aeo/` — `provider.go`, `anthropic.go`, `openai_compat.go`, `egress.go`, `errors.go`,
   `analysis.go`, `engine.go`, `scheduler.go`, `runtime.go`
+- `internal/egress/` — `egress.go`, `public.go` (the dial-time checks the provider guard builds on)
 - `internal/errors/errors.go`, `internal/config/config.go`, `internal/config/aeo_egress.go`
 - [AEO_SECURITY.md](../AEO_SECURITY.md) — egress policy and sanitized failure contract
 - `gocrm-ui/src/pages/aeo/AEODashboard.tsx`, `AEOPrompts.tsx`, `AEOCitations.tsx`,

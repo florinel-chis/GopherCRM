@@ -2136,7 +2136,8 @@ therefore means none of the batch's records changed, with one exception: rows al
 when this was deployed recorded `completed` after their commit under the old code, so their batch
 may have committed; they are swept to `failed` all the same (outcome unknown, documented, not
 stored). Sweep log lines carry only the `failed` count and, on failure, the error through
-`utils.LogError`. `Stop` cancels the sweep and joins its goroutine under main's shared deadline.
+`utils.LogError`. The runtime runs on a `lifecycle.Loop` (`internal/lifecycle`): `Stop` cancels the
+sweep and joins its goroutine under main's shared deadline, and `Start` after `Stop` does nothing.
 Since #453 every sweep (wired with `service.WithOIDCAttemptPruning`) also prunes the single sign-on
 attempts created more than `service.OIDCLoginAttemptRetention` (one day) earlier
 (`service.PruneOIDCLoginAttempts`: a plain read of up to 500 ids, then a delete by primary key
@@ -3359,7 +3360,7 @@ daily scheduler is a joinable `aeo.Scheduler` armed whenever `AEO_SCHEDULE_ENABL
 `setupDependencies` returns the stop handle `main` drains — through `drainAEO`, bounded by
 `aeoDrainTimeout` (15 s) — before `models.CloseDatabase`. HTTP requests then have their
 existing separate 5 s shutdown deadline. Inside the service, admission and the
-active-run count share one mutex (`aeoRunOwner`), separate from `startMu`, so shutdown never queues
+active-run count share one mutex (a `lifecycle.Owner`), separate from `startMu`, so shutdown never queues
 behind a start blocked in a database call; it closes admission, cancels the shared run context and
 waits. Run records and answer writes go through `AEORepository.WithContext(runCtx)`, and the
 engine finalizes on a fresh context bounded by `EngineOptions.CleanupTimeout`. When adding
@@ -3511,7 +3512,9 @@ automation_engine.go` holds the engine type that executes rules, with its lifecy
 schedule, run-lease, step, email-step and stale-run recovery code in `automation_lifecycle.go`,
 `automation_dispatch.go`, `automation_schedule.go`, `automation_run_lease.go`,
 `automation_steps.go`, `automation_email_step.go` and `automation_recovery.go`;
-`automation_runtime.go` owns the worker goroutine, and
+`automation_runtime.go` owns the worker goroutine (a `lifecycle.Loop` that also ends with the
+engine's owned context; the engine's admission count is a `lifecycle.Owner`, both in
+`internal/lifecycle`; `Start` after `Stop` is a no-op, so a stopped worker is never armed again), and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
 (`combineStops`) that `main` runs before `models.CloseDatabase`. The combined handle stops the
 automation worker, the form retention purge, the stale bulk operation sweep (#196), the password
@@ -3859,15 +3862,15 @@ Signed, thin events for `lead.created`, `customer.created` and `ticket.created` 
 `lead.updated`, `customer.updated` and `ticket.updated` (#408) and for `lead.deleted`,
 `customer.deleted` and `ticket.deleted` (#437), delivered after the writing transaction
 commits. Code: `internal/models/webhook.go`,
-`internal/repository/webhook_repository.go`, `internal/service/webhook_{outbox,signing,endpoint_service,runtime}.go`,
-`internal/handler/webhook_handler.go`, `internal/aeo/egress_public.go`, `cmd/webhook_runtime.go`.
+`internal/repository/webhook_repository.go`, `internal/webhook/{emitter,runtime,endpoint_service,signing}.go`,
+`internal/handler/webhook_handler.go`, `internal/egress/`, `cmd/webhook_runtime.go`.
 
 - **Registry.** `/webhooks/endpoints` (list, create, read, update, delete, test, rotate-secret) and
   `/webhooks/deliveries` sit behind `RequirePermission(webhooks.manage)` (admin). The handler validates every input before
   calling `WebhookService` (400 `VALIDATION_ERROR`, `error.details` keyed by `url`, `event_types`,
   `body`, `id`, `sort_by`, `endpoint_id`, `status` or `event_type`, the value never echoed).
-  `service.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
-  characters, and refuses a non-public IP literal (`aeo.CheckPublicURL`); a host name is judged at
+  `webhook.ValidateWebhookURL` accepts https without userinfo, query or fragment, at most 2048
+  characters, and refuses a non-public IP literal (`egress.CheckPublicURL`); a host name is judged at
   every connection. `event_types` takes any non-empty subset of the nine types
   (`webhook.AllEventTypes`); the raw array may hold at most 20 entries before deduplication
   (`webhookEventTypesMaxItems`), is stored canonical (deduplicated, sorted, comma-separated; all nine
@@ -3923,7 +3926,7 @@ commits. Code: `internal/models/webhook.go`,
   that emit events: `NewCatalogue` and the default catalogue (`Lead`, `Customer`, `Ticket`, in
   that order) give every event type (`AllEventTypes`, sorted), the exact check (`IsEventType`; the
   ping's type is never one), and the two refusal messages (`SubscribeRule`, behind
-  `service.WebhookEventTypesRule`, and `FilterRule`, used by the handler and by
+  `webhook.WebhookEventTypesRule`, and `FilterRule`, used by the handler and by
   `WebhookService.ListDeliveries`). `TestCatalogueSwaggerEnums` keeps the seven event type `enum`
   lists of `api/swagger.json` equal to it. `internal/webhook/emitter.go` holds the outbox writer:
   `NewEmitter` returns an `Emitter` (the no-op `Nop` for a nil repository), whose `Bind(tx)` gives a
@@ -4010,7 +4013,7 @@ commits. Code: `internal/models/webhook.go`,
   Users, deals, tasks and other entities get no deleted event. Tests:
   `internal/service/webhook_deleted_events_test.go` (`TestWebhookDeleted{FanOut,Atomicity}{SQLite,MySQL}`),
   `tests/webhooks_deleted_test.go`, `cmd/webhook_deleted_wiring_test.go`.
-- **Runtime.** `service.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
+- **Runtime.** `webhook.WebhookRuntime` runs one pass at start and every `WebhookPollInterval`
   (5 s): `RecoverExpiredLeases` (a `sending` row past `lease_until` back to `pending`, or `failed`
   with `lease_expired` at the cap), the secret check, a plain `SELECT id, endpoint_id … WHERE
   status = 'pending' AND next_attempt_at <= now ORDER BY next_attempt_at, id` (`ListDueDeliveries`)
@@ -4096,7 +4099,7 @@ commits. Code: `internal/models/webhook.go`,
   (`RequeueDelivery`) waits for the pause, and a `PUT` on the endpoint (a URL change or a
   reactivation) does not clear it, deliberately; `webhookEndpointColumns` stays `url`,
   `event_types`, `is_active`.
-- **Signing.** `service.SignWebhook(secret, eventID, unixSeconds, body)` returns `v1,` +
+- **Signing.** `webhook.SignWebhook(secret, eventID, unixSeconds, body)` returns `v1,` +
   base64(HMAC-SHA256(base64decode(secret minus whsec_), id + "." + timestamp + "." + body)). Each
   attempt is re-signed with its own `webhook-timestamp`. `NewWebhookRequest` takes the secrets as
   a list and joins one signature per secret with a space; `webhookSigningSecrets` picks them (#503):
@@ -4117,10 +4120,10 @@ commits. Code: `internal/models/webhook.go`,
   one `time.Now()` reading, and never clears. Headers: `webhook-id`,
   `webhook-timestamp`, `webhook-signature`, `Content-Type: application/json`, `User-Agent:
   GopherCRM-Webhooks/1`. Body: exactly `{"id","type","occurred_at","record_id"}`.
-- **Egress.** Requests go through `(*aeo.EgressGuard).PublicHTTPClient(url)` (see
+- **Egress.** Requests go through `(*egress.Guard).PublicHTTPClient(url)` (see
   [AEO_SECURITY.md](AEO_SECURITY.md#public-only-egress-for-webhooks)), 10 s per attempt
   (`WebhookRequestTimeout`), response bodies read up to 4 KiB and discarded. `cmd/webhook_runtime.go`
-  builds it from `aeo.NewEgressGuard(config.AEOEgressPolicy{})`, the real resolver and dialer.
+  builds it from `egress.New()`, the real resolver and dialer.
 - **Drain.** `Stop` cancels the loop: no worker starts a further claim, every attempt in flight
   (one per busy worker) runs to its end (the endpoint read and the expired-secret clear each
   bounded by `webhookFinishTimeout`, 5 s, the request by its timeout, the finish write by the same
@@ -4149,7 +4152,7 @@ commits. Code: `internal/models/webhook.go`,
   only when missing, no backfill, no index).
 
 Regression roots: `TestWebhookSchemaSQLite`, `TestWebhookJSON` (`internal/models`);
-`TestEgressPublicClient` (`internal/aeo`); `TestWebhookRepository{SQLite,MySQL}`
+`TestEgressPublicClient` (`internal/egress`); `TestWebhookRepository{SQLite,MySQL}`
 (`internal/repository`); `TestWebhookSignature`, `TestWebhookOutbox{Atomicity,FanOut}{SQLite,MySQL}`,
 `TestWebhookDeliveryAfterCommit`, `TestWebhookRetryBackoffAndCap`, `TestWebhookUndeliverableEndpoint`,
 `TestWebhookRuntimeLifecycle`, `TestWebhookEgressRefusal`, `TestWebhookRequestTimeout`,
@@ -4248,7 +4251,8 @@ the setting is off, so no goroutine runs and no row is read.
   after the commit. `storeReceivedSubmission` and `recordSpam` also insert rows but are not
   replayed, and what a purge costs them is unmeasured; `ConfirmSubmission` has no retry either.
   MariaDB was not probed for any of this.
-- **The drain.** `FormRetentionRuntime.Stop` cancels the sweep's context, so a chunk in flight rolls
+- **The drain.** The runtime runs on a `lifecycle.Loop` (`internal/lifecycle`).
+  `FormRetentionRuntime.Stop` cancels the sweep's context, so a chunk in flight rolls
   back and no further chunk starts, then joins the goroutine under `main`'s shared deadline. After a
   `Stop` that returned nil no row changes. A deadline that passes first returns an error, with no such
   guarantee, and `main` then skips closing the database as it does for the other runtimes. The purge

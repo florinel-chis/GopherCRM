@@ -108,7 +108,8 @@ restart.
 ## Connection-time enforcement
 
 Every engine builds its SDK client with an HTTP client from one shared guard
-(`internal/aeo/egress.go`). This applies to Anthropic, OpenAI, Gemini, Kimi, Perplexity, custom,
+(`internal/aeo/egress.go`, which matches the engine trust and builds on the dial-time checks of
+`internal/egress`). This applies to Anthropic, OpenAI, Gemini, Kimi, Perplexity, custom,
 and both the run engine and prompt generation. For each request:
 
 1. The request URL must match the engine's approved origin, or it is refused locally.
@@ -136,8 +137,8 @@ and both the run engine and prompt generation. For each request:
 ## Public-only egress for webhooks
 
 The outbound webhook sender (#345) reaches URLs an administrator typed, so it reuses the
-connection-time checks above but none of the AEO trust. `(*aeo.EgressGuard).PublicHTTPClient(url)`
-(`internal/aeo/egress_public.go`):
+connection-time checks above but none of the AEO trust. `(*egress.Guard).PublicHTTPClient(url)`
+(`internal/egress/public.go`):
 
 - accepts only an `https` URL with a host and without userinfo, query (not even a bare `?`) or
   fragment; anything else is `ErrEndpointNotPermitted` before any lookup;
@@ -150,9 +151,9 @@ connection-time checks above but none of the AEO trust. `(*aeo.EgressGuard).Publ
 
 `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` and the engines' official origins never
 apply to it: a local exception for `10.0.0.0/8` does not let a webhook reach `10.x`. Endpoint
-create and update also refuse a non-public IP literal up front (`aeo.CheckPublicURL`). A refused
+create and update also refuse a non-public IP literal up front (`egress.CheckPublicURL`). A refused
 delivery records `destination_refused` and is retried with the usual backoff. Regression root:
-`TestEgressPublicClient` (`internal/aeo`); end to end, `TestWebhookEgressRefusal`
+`TestEgressPublicClient` (`internal/egress`); end to end, `TestWebhookEgressRefusal`
 (`internal/service`) and `TestWebhookProductionWiring` (`cmd`, a `localhost` endpoint on the real
 guard).
 

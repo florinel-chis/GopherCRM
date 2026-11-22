@@ -16,10 +16,11 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // Signing-secret rotation with an overlap window (#503): RotateEndpointSecret
-// keeps the replaced secret as the previous one for WebhookSecretOverlap, and
+// keeps the replaced secret as the previous one for webhook.WebhookSecretOverlap, and
 // every delivery and test ping inside that window carries a signature under
 // each secret, new first. On SQLite and on a disposable TEST_MYSQL_DSN schema
 // (the MySQL root skips without the variable and fails when it is
@@ -47,7 +48,7 @@ func signatureParts(t *testing.T, header string) []string {
 // request at now.
 func verifiesPart(request consumerRequest, part, secret string, now time.Time) bool {
 	header := request.Header.Clone()
-	header.Set(WebhookHeaderSignature, part)
+	header.Set(webhook.WebhookHeaderSignature, part)
 	return verifyStandardWebhook(secret, header, request.Body, now, 5*time.Minute) == nil
 }
 
@@ -74,9 +75,9 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 	}
 	// deliverAt queues one due delivery for the endpoint and runs one pass of
 	// a runtime whose clock reads at; it returns the one request received.
-	deliverAt := func(t *testing.T, endpointID uint, consumer *webhookConsumer, at time.Time, opts ...WebhookRuntimeOption) consumerRequest {
+	deliverAt := func(t *testing.T, endpointID uint, consumer *webhookConsumer, at time.Time, opts ...webhook.WebhookRuntimeOption) consumerRequest {
 		t.Helper()
-		eventID, err := newWebhookEventID()
+		eventID, err := webhook.NewEventID()
 		require.NoError(t, err)
 		due := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
 		row := &models.WebhookDelivery{EndpointID: endpointID, EventID: eventID, EventType: models.WebhookEventLeadCreated,
@@ -84,7 +85,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		require.NoError(t, env.db.Create(row).Error)
 		before := len(consumer.received())
 		clock := newWebhookClock(at)
-		rt := env.runtime(consumer.guard(nil), append([]WebhookRuntimeOption{WithWebhookClock(clock.Now)}, opts...)...)
+		rt := env.runtime(consumer.guard(nil), append([]webhook.WebhookRuntimeOption{webhook.WithWebhookClock(clock.Now)}, opts...)...)
 		result, err := rt.RunOnce(ctx)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Attempted)
@@ -114,9 +115,9 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		// The stored expiry, not the computed one: MySQL rounds datetime(3).
 		expires := *row.PreviousSecretExpiresAt
 
-		inside := expires.Add(-WebhookSecretOverlap + time.Hour)
+		inside := expires.Add(-webhook.WebhookSecretOverlap + time.Hour)
 		request := deliverAt(t, created.ID, consumer, inside)
-		parts := signatureParts(t, request.Header.Get(WebhookHeaderSignature))
+		parts := signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 2, "two signatures inside the window")
 		assert.True(t, verifiesPart(request, parts[0], rotated.Secret, inside), "the first verifies with the new secret")
 		assert.False(t, verifiesPart(request, parts[0], created.Secret, inside), "the first does not verify with the old secret")
@@ -135,7 +136,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 				at := before.PreviousSecretExpiresAt.Add(offset)
 
 				request := deliverAt(t, created.ID, consumer, at)
-				parts := signatureParts(t, request.Header.Get(WebhookHeaderSignature))
+				parts := signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature))
 				require.Len(t, parts, 1, "one signature once the window is over")
 				assert.True(t, verifiesPart(request, parts[0], rotated.Secret, at), "it verifies with the new secret")
 				assert.False(t, verifiesPart(request, parts[0], created.Secret, at), "and not with the old one")
@@ -165,8 +166,8 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		require.NotNil(t, row.PreviousSecretSealed)
 		assert.Equal(t, created.Secret, open(t, *row.PreviousSecretSealed), "previous_secret_sealed opens to the old secret")
 		require.NotNil(t, row.PreviousSecretExpiresAt)
-		lower := before.Add(WebhookSecretOverlap).Truncate(time.Millisecond).Add(-time.Millisecond)
-		upper := after.Add(WebhookSecretOverlap).Truncate(time.Millisecond).Add(2 * time.Millisecond)
+		lower := before.Add(webhook.WebhookSecretOverlap).Truncate(time.Millisecond).Add(-time.Millisecond)
+		upper := after.Add(webhook.WebhookSecretOverlap).Truncate(time.Millisecond).Add(2 * time.Millisecond)
 		for _, expires := range []time.Time{*row.PreviousSecretExpiresAt, *rotated.PreviousSecretExpiresAt} {
 			assert.False(t, expires.Before(lower), "%s is not before %s", expires, lower)
 			assert.False(t, expires.After(upper), "%s is not after %s", expires, upper)
@@ -189,7 +190,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 
 		at := row.PreviousSecretExpiresAt.Add(-time.Hour)
 		request := deliverAt(t, created.ID, consumer, at)
-		parts := signatureParts(t, request.Header.Get(WebhookHeaderSignature))
+		parts := signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 2)
 		assert.True(t, verifiesPart(request, parts[0], third.Secret, at), "the first is the third secret's")
 		assert.True(t, verifiesPart(request, parts[1], second.Secret, at), "the second is the second secret's")
@@ -233,7 +234,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 
 		at := row.PreviousSecretExpiresAt.Add(-time.Hour)
 		request := deliverAt(t, created.ID, consumer, at)
-		require.Len(t, signatureParts(t, request.Header.Get(WebhookHeaderSignature)), 2)
+		require.Len(t, signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature)), 2)
 		for _, secret := range returned {
 			assert.NoError(t, verifyStandardWebhook(secret, request.Header, request.Body, at, 5*time.Minute))
 		}
@@ -258,8 +259,8 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		logger.SetOutput(&buffer)
 
 		at := row.PreviousSecretExpiresAt.Add(-time.Hour)
-		request := deliverAt(t, created.ID, consumer, at, WithWebhookLogger(logger))
-		parts := signatureParts(t, request.Header.Get(WebhookHeaderSignature))
+		request := deliverAt(t, created.ID, consumer, at, webhook.WithWebhookLogger(logger))
+		parts := signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 1, "the current signature only")
 		assert.True(t, verifiesPart(request, parts[0], rotated.Secret, at))
 
@@ -280,7 +281,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, 1, warnings, "one Warn with error_code=previous_secret_unavailable")
 		for _, forbidden := range []string{
 			rotated.Secret, created.Secret,
-			strings.TrimPrefix(rotated.Secret, WebhookSecretPrefix), strings.TrimPrefix(created.Secret, WebhookSecretPrefix),
+			strings.TrimPrefix(rotated.Secret, webhook.WebhookSecretPrefix), strings.TrimPrefix(created.Secret, webhook.WebhookSecretPrefix),
 			row.SecretSealed, originalPrevious, unopenable,
 		} {
 			assert.NotContains(t, logs, forbidden)
@@ -294,14 +295,14 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		require.Nil(t, row.PreviousSecretExpiresAt)
 		at := time.Now().UTC()
 		request := deliverAt(t, created.ID, consumer, at)
-		parts := signatureParts(t, request.Header.Get(WebhookHeaderSignature))
+		parts := signatureParts(t, request.Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 1)
 		assert.True(t, verifiesPart(request, parts[0], created.Secret, at))
 	})
 
 	t.Run("g: the test ping signs twice inside the window and writes nothing", func(t *testing.T) {
 		created, consumer := endpoint(t, true)
-		pinger := NewWebhookService(env.repo, env.txManager, env.box, WithWebhookPingClients(consumer.guard(nil)))
+		pinger := webhook.NewWebhookService(env.repo, env.txManager, env.box, webhook.WithWebhookPingClients(consumer.guard(nil)))
 		rotated := rotate(t, created.ID)
 		before := stored(t, created.ID)
 		deliveries := env.allDeliveries()
@@ -311,7 +312,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, models.WebhookPingSucceeded, result.Outcome)
 		received := consumer.received()
 		require.Len(t, received, 1)
-		parts := signatureParts(t, received[0].Header.Get(WebhookHeaderSignature))
+		parts := signatureParts(t, received[0].Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 2)
 		now := time.Now()
 		assert.True(t, verifiesPart(received[0], parts[0], rotated.Secret, now))
@@ -329,7 +330,7 @@ func runWebhookSecretRotation(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, models.WebhookPingSucceeded, result.Outcome)
 		received = consumer.received()
 		require.Len(t, received, 2)
-		parts = signatureParts(t, received[1].Header.Get(WebhookHeaderSignature))
+		parts = signatureParts(t, received[1].Header.Get(webhook.WebhookHeaderSignature))
 		require.Len(t, parts, 1)
 		assert.True(t, verifiesPart(received[1], parts[0], rotated.Secret, time.Now()))
 		assert.Equal(t, expired, stored(t, created.ID), "the ping does not clear the expired previous secret")

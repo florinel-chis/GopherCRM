@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -30,96 +30,26 @@ var ErrAEOShuttingDown = aeo.ErrShuttingDown
 // deadline main allows.
 const aeoRunCleanupTimeout = 5 * time.Second
 
-// aeoRunOwner is the lifecycle of every background run an AEO service starts.
+// newAEORunOwner builds the lifecycle of every background run an AEO service
+// starts.
 //
 // It is the single answer to "what is still running": a start registers itself
 // before touching the database, the executor goroutine inherits that
 // registration and releases it after the finalization attempt, and shutdown
 // first closes admission, then cancels the shared run context, then waits for
 // the count to reach zero or for its deadline. Admission and the count share
-// one mutex, so a start cannot slip between "admission closed" and "wait": it
-// is either counted before the close or refused after it.
+// the owner's own mutex, so a start cannot slip between "admission closed" and
+// "wait": it is either counted before the close or refused after it. Every run
+// and every admission read bound to the database carries the owner's context.
 //
 // The owner deliberately never takes the service's startMu. That mutex
 // serializes this process's abandoned-run sweep with the run claim and may be
 // held by a start blocked in a database call; shutdown must not queue behind it. The blocked
 // start is counted as owned work instead, so the deadline governs.
-type aeoRunOwner struct {
-	mu sync.Mutex
-
-	// ctx is cancelled by the first shutdown. Every run and every admission
-	// read bound to the database carries it.
-	ctx    context.Context
-	cancel context.CancelFunc
-	closed bool
-	active int
-
-	// drained is closed exactly once, when admission is closed and the last
-	// owned unit of work has released.
-	drained  chan struct{}
-	signaled bool
-}
-
-func newAEORunOwner() *aeoRunOwner {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &aeoRunOwner{ctx: ctx, cancel: cancel, drained: make(chan struct{})}
-}
-
-// admit registers one unit of owned work. It fails with ErrAEOShuttingDown once
-// shutdown has started. The returned release is idempotent.
-func (o *aeoRunOwner) admit() (release func(), err error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed || o.ctx.Err() != nil {
-		return nil, ErrAEOShuttingDown
-	}
-	o.active++
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			o.mu.Lock()
-			defer o.mu.Unlock()
-			o.active--
-			o.signalIfDrained()
-		})
-	}, nil
-}
-
-// signalIfDrained closes drained when nothing can be, or is, running. Callers
-// hold o.mu.
-func (o *aeoRunOwner) signalIfDrained() {
-	if o.closed && o.active == 0 && !o.signaled {
-		o.signaled = true
-		close(o.drained)
-	}
-}
-
-// activeCount reports the owned units of work still registered.
-func (o *aeoRunOwner) activeCount() int {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.active
-}
-
-// shutdown closes admission, cancels every owned run and waits for them to
-// release. It returns nil once nothing owned remains, or ctx's error — with the
-// number of still-active units — when the deadline passes first. It is safe to
-// call repeatedly and concurrently: later calls only wait.
-func (o *aeoRunOwner) shutdown(ctx context.Context) error {
-	o.mu.Lock()
-	if !o.closed {
-		o.closed = true
-		o.cancel()
-	}
-	o.signalIfDrained()
-	o.mu.Unlock()
-
-	select {
-	case <-o.drained:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("aeo runtime: %d run(s) still active at the shutdown deadline: %w", o.activeCount(), ctx.Err())
-	}
+func newAEORunOwner() *lifecycle.Owner {
+	return lifecycle.NewOwner(ErrAEOShuttingDown, func(active int, err error) error {
+		return fmt.Errorf("aeo runtime: %d run(s) still active at the shutdown deadline: %w", active, err)
+	})
 }
 
 // AEORuntime is the AEO service together with the ownership of its background
@@ -146,14 +76,15 @@ func (r *AEORuntime) Service() AEOService { return r.svc }
 // afterwards without a late write racing it. When ctx expires first it returns
 // an error naming the active count; the caller then follows the crash policy:
 // exit without closing the database and let the next boot's reconciliation
-// fail the rows left in "running". Repeated and concurrent calls are safe.
+// fail the rows left in "running". Repeated and concurrent calls are safe, and
+// once the runs have drained a repeated call returns nil whatever its context.
 func (r *AEORuntime) Shutdown(ctx context.Context) error {
-	return r.svc.lifecycle.shutdown(ctx)
+	return r.svc.lifecycle.Shutdown(ctx)
 }
 
 // ActiveRuns reports how many owned units of work — starts in progress and
 // executing runs — are registered right now.
-func (r *AEORuntime) ActiveRuns() int { return r.svc.lifecycle.activeCount() }
+func (r *AEORuntime) ActiveRuns() int { return r.svc.lifecycle.Active() }
 
 // runInBackground executes an admitted run on the owner's context and releases
 // the admission once the engine has attempted finalization. It is the only place a

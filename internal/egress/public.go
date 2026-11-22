@@ -1,4 +1,4 @@
-package aeo
+package egress
 
 import (
 	"crypto/tls"
@@ -12,8 +12,8 @@ import (
 )
 
 // Public-only egress (#345). The webhook sender reaches URLs an administrator
-// typed, so it reuses the dial-time checks of the provider guard but none of
-// its trust: AEO_EGRESS_ALLOWED_ORIGINS and AEO_EGRESS_LOCAL_ORIGINS never
+// typed, so it reuses the dial-time checks of the AEO provider clients but none
+// of their trust: AEO_EGRESS_ALLOWED_ORIGINS and AEO_EGRESS_LOCAL_ORIGINS never
 // apply here, and neither does an engine's official origin.
 //
 //   - The URL must be https with a host, and carry no userinfo, query (not even
@@ -30,7 +30,7 @@ import (
 // PublicHTTPClient returns a client that can reach only rawURL's origin, and
 // only through public addresses, or ErrEndpointNotPermitted for a URL that is
 // not acceptable. Timeouts come from the request context.
-func (g *EgressGuard) PublicHTTPClient(rawURL string) (*http.Client, error) {
+func (g *Guard) PublicHTTPClient(rawURL string) (*http.Client, error) {
 	if g == nil {
 		return nil, ErrEndpointNotPermitted
 	}
@@ -40,10 +40,10 @@ func (g *EgressGuard) PublicHTTPClient(rawURL string) (*http.Client, error) {
 	}
 	// A public rule: no local exception, so permits() admits public unicast
 	// only and alwaysBlockedAddress still applies first.
-	rule := egressRule{AEOEndpoint: endpoint}
+	rule := Rule{AEOEndpoint: endpoint}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           g.dialContext(rule),
+		DialContext:           g.DialContext(rule),
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: g.rootCAs},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 0,
@@ -53,7 +53,7 @@ func (g *EgressGuard) PublicHTTPClient(rawURL string) (*http.Client, error) {
 		IdleConnTimeout:       time.Second,
 	}
 	return &http.Client{
-		Transport:     &guardedTransport{rule: rule, next: transport},
+		Transport:     &Transport{Rule: rule, Next: transport},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrRedirectNotFollowed },
 	}, nil
 }
@@ -68,7 +68,7 @@ func CheckPublicURL(rawURL string) error {
 		return ErrEndpointNotPermitted
 	}
 	if literal, err := netip.ParseAddr(endpoint.Host); err == nil {
-		if !(egressRule{AEOEndpoint: endpoint}).permits(literal) {
+		if !(Rule{AEOEndpoint: endpoint}).permits(literal) {
 			return ErrDestinationNotPermitted
 		}
 	}

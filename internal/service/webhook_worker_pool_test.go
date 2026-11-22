@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // The sender pool (#568): a pass hands each endpoint's due rows to one
@@ -33,7 +34,7 @@ func TestWebhookWorkerPoolMySQL(t *testing.T) {
 // its next_attempt_at to next with a direct update.
 func seedPoolDelivery(t *testing.T, env *webhookEnv, endpointID, recordID uint, next time.Time) models.WebhookDelivery {
 	t.Helper()
-	eventID, err := newWebhookEventID()
+	eventID, err := webhook.NewEventID()
 	require.NoError(t, err)
 	occurred := next.Add(-time.Minute)
 	row := &models.WebhookDelivery{EndpointID: endpointID, EventID: eventID, EventType: models.WebhookEventLeadCreated,
@@ -60,7 +61,7 @@ func runWebhookWorkerPool(t *testing.T, db *gorm.DB) {
 	consumer := newWebhookConsumer(t)
 	recordID := env.seedLead().ID
 	now := time.Now().UTC().Truncate(time.Second)
-	clock := WithWebhookClock(func() time.Time { return now })
+	clock := webhook.WithWebhookClock(func() time.Time { return now })
 
 	t.Run("a slow endpoint does not delay a healthy one", func(t *testing.T) {
 		slow := env.endpoint(consumer.url("/slow"), true, models.WebhookEventLeadCreated)
@@ -86,9 +87,9 @@ func runWebhookWorkerPool(t *testing.T, db *gorm.DB) {
 		})
 		defer consumer.setHandler(nil)
 
-		rt := env.runtime(consumer.guard(nil), WithWebhookWorkers(2), clock)
+		rt := env.runtime(consumer.guard(nil), webhook.WithWebhookWorkers(2), clock)
 		done := make(chan struct{})
-		var result WebhookPassResult
+		var result webhook.WebhookPassResult
 		var passErr error
 		go func() {
 			defer close(done)
@@ -180,7 +181,7 @@ func runWebhookWorkerPool(t *testing.T, db *gorm.DB) {
 		})
 		defer consumer.setHandler(nil)
 
-		rt := env.runtime(consumer.guard(nil), WithWebhookWorkers(4), clock)
+		rt := env.runtime(consumer.guard(nil), webhook.WithWebhookWorkers(4), clock)
 		result, err := rt.RunOnce(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, 3, result.Succeeded)
@@ -216,16 +217,16 @@ func runWebhookWorkerPool(t *testing.T, db *gorm.DB) {
 		})
 		defer consumer.setHandler(nil)
 
-		replicas := []*WebhookRuntime{
-			env.runtime(consumer.guard(nil), WithWebhookWorkers(4), clock),
-			env.runtime(consumer.guard(nil), WithWebhookWorkers(4), clock),
+		replicas := []*webhook.WebhookRuntime{
+			env.runtime(consumer.guard(nil), webhook.WithWebhookWorkers(4), clock),
+			env.runtime(consumer.guard(nil), webhook.WithWebhookWorkers(4), clock),
 		}
 		barrier := make(chan struct{})
 		var wg sync.WaitGroup
 		errs := make([]error, len(replicas))
 		for i, rt := range replicas {
 			wg.Add(1)
-			go func(i int, rt *WebhookRuntime) {
+			go func(i int, rt *webhook.WebhookRuntime) {
 				defer wg.Done()
 				<-barrier
 				_, errs[i] = rt.RunOnce(context.Background())

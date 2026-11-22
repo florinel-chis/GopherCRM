@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 )
 
 // Obviously fake credentials and personal data. Every negative assertion
@@ -455,9 +456,9 @@ func TestAEOEndpointTrust(t *testing.T) {
 		guard := fi.guard(t, "", "")
 		client, err := guard.httpClient(config.AEOEgressOpenAI, OpenAIBaseURL)
 		require.NoError(t, err)
-		guarded, ok := client.Transport.(*guardedTransport)
+		guarded, ok := client.Transport.(*egress.Transport)
 		require.True(t, ok)
-		transport, ok := guarded.next.(*http.Transport)
+		transport, ok := guarded.Next.(*http.Transport)
 		require.True(t, ok)
 		assert.Nil(t, transport.Proxy, "no proxy function, so HTTP(S)_PROXY is ignored")
 		assert.False(t, transport.TLSClientConfig.InsecureSkipVerify)

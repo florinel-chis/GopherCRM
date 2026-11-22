@@ -17,7 +17,7 @@ vi.mock('@/api/endpoints', async () => {
   };
 });
 
-// The rule text of the server (service.WebhookURLRule).
+// The rule text of the server (webhook.WebhookURLRule).
 const URL_RULE =
   'must be an https URL of at most 2048 characters, without credentials, query string or fragment, whose host is not a private, loopback, link-local or metadata address';
 

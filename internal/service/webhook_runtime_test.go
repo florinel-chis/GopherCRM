@@ -16,6 +16,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +122,7 @@ func TestWebhookDeliveryAfterCommit(t *testing.T) {
 
 	t.Run("the started runtime delivers on the first poll after the commit", func(t *testing.T) {
 		ticks := make(chan time.Time, 1)
-		started := env.runtime(consumer.guard(nil), WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
+		started := env.runtime(consumer.guard(nil), webhook.WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
 		started.Start(ctx)
 		t.Cleanup(func() { _ = started.Stop(context.Background()) })
 		before := len(consumer.received())
@@ -146,19 +147,19 @@ func TestWebhookRetryBackoffAndCap(t *testing.T) {
 	endpoint := env.endpoint(consumer.url("/hook"), true, models.WebhookEventLeadCreated)
 	start := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
 	clock := newWebhookClock(start)
-	rt := env.runtime(consumer.guard(nil), WithWebhookClock(clock.Now))
+	rt := env.runtime(consumer.guard(nil), webhook.WithWebhookClock(clock.Now))
 	ctx := context.Background()
 
 	assert.Equal(t, 10, models.WebhookMaxAttempts)
-	assert.Equal(t, time.Minute, WebhookRetryBase)
-	assert.Equal(t, 6*time.Hour, WebhookRetryMax)
+	assert.Equal(t, time.Minute, webhook.WebhookRetryBase)
+	assert.Equal(t, 6*time.Hour, webhook.WebhookRetryMax)
 	expected := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute,
 		32 * time.Minute, 64 * time.Minute, 128 * time.Minute, 256 * time.Minute}
 	for i, delay := range expected {
-		assert.Equal(t, delay, WebhookBackoff(i+1, WebhookRetryBase, WebhookRetryMax), "after attempt %d", i+1)
+		assert.Equal(t, delay, webhook.WebhookBackoff(i+1, webhook.WebhookRetryBase, webhook.WebhookRetryMax), "after attempt %d", i+1)
 	}
-	assert.Equal(t, 6*time.Hour, WebhookBackoff(10, WebhookRetryBase, WebhookRetryMax), "the ceiling")
-	assert.Equal(t, 6*time.Hour, WebhookBackoff(64, WebhookRetryBase, WebhookRetryMax))
+	assert.Equal(t, 6*time.Hour, webhook.WebhookBackoff(10, webhook.WebhookRetryBase, webhook.WebhookRetryMax), "the ceiling")
+	assert.Equal(t, 6*time.Hour, webhook.WebhookBackoff(64, webhook.WebhookRetryBase, webhook.WebhookRetryMax))
 
 	lead := env.newLead()
 	require.NoError(t, env.leads.Create(lead))
@@ -226,7 +227,7 @@ func TestWebhookRetryBackoffAndCap(t *testing.T) {
 		env.endpoint(redirecting.url("/hook"), true, models.WebhookEventLeadCreated)
 		lead := env.newLead()
 		require.NoError(t, env.leads.Create(lead))
-		redirectRuntime := env.runtime(redirecting.guard(nil), WithWebhookClock(clock.Now))
+		redirectRuntime := env.runtime(redirecting.guard(nil), webhook.WithWebhookClock(clock.Now))
 		result, err := redirectRuntime.RunOnce(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, 1, result.Retried)
@@ -258,7 +259,7 @@ func TestWebhookUndeliverableEndpoint(t *testing.T) {
 	require.Len(t, rows, 4)
 
 	isActive := false
-	_, err := env.endpoints.UpdateEndpoint(ctx, inactive.ID, WebhookEndpointPatch{IsActive: &isActive})
+	_, err := env.endpoints.UpdateEndpoint(ctx, inactive.ID, webhook.WebhookEndpointPatch{IsActive: &isActive})
 	require.NoError(t, err)
 	// A deleted endpoint whose rows survive (the delete removes them; this
 	// row is detached by hand to model an endpoint missing at claim time).
@@ -356,30 +357,30 @@ func (r *deadlineRecordingWebhookRepository) ClearExpiredPreviousSecret(ctx cont
 }
 
 func TestWebhookRuntimeLifecycle(t *testing.T) {
-	assert.Equal(t, 5*time.Second, WebhookPollInterval)
-	assert.Equal(t, 10*time.Second, WebhookRequestTimeout)
-	assert.Equal(t, 2*time.Minute, WebhookSendLease)
-	assert.Equal(t, 30*24*time.Hour, WebhookDeliveryRetention)
-	assert.Equal(t, time.Hour, WebhookPruneInterval)
+	assert.Equal(t, 5*time.Second, webhook.WebhookPollInterval)
+	assert.Equal(t, 10*time.Second, webhook.WebhookRequestTimeout)
+	assert.Equal(t, 2*time.Minute, webhook.WebhookSendLease)
+	assert.Equal(t, 30*24*time.Hour, webhook.WebhookDeliveryRetention)
+	assert.Equal(t, time.Hour, webhook.WebhookPruneInterval)
 
 	env := webhookRuntimeEnv(t)
 	consumer := newWebhookConsumer(t)
 	env.endpoint(consumer.url("/hook"), true, models.WebhookEventLeadCreated)
 
 	t.Run("defaults and the injected interval", func(t *testing.T) {
-		assert.Equal(t, WebhookPollInterval, env.runtime(nil).Interval())
-		assert.Equal(t, WebhookRequestTimeout, env.runtime(nil).RequestTimeout())
-		assert.Equal(t, 250*time.Millisecond, env.runtime(nil, WithWebhookPollInterval(250*time.Millisecond)).Interval())
+		assert.Equal(t, webhook.WebhookPollInterval, env.runtime(nil).Interval())
+		assert.Equal(t, webhook.WebhookRequestTimeout, env.runtime(nil).RequestTimeout())
+		assert.Equal(t, 250*time.Millisecond, env.runtime(nil, webhook.WithWebhookPollInterval(250*time.Millisecond)).Interval())
 		assert.NoError(t, env.runtime(nil).Stop(context.Background()), "a runtime never started stops at once")
-		assert.Equal(t, 4, WebhookWorkers)
+		assert.Equal(t, 4, webhook.WebhookWorkers)
 		assert.Equal(t, 1, env.runtime(nil).Workers(), "without the option the pass is sequential")
-		assert.Equal(t, 3, env.runtime(nil, WithWebhookWorkers(3)).Workers())
-		assert.Equal(t, 1, env.runtime(nil, WithWebhookWorkers(0)).Workers(), "a non-positive size keeps the default")
-		assert.Equal(t, 1, env.runtime(nil, WithWebhookWorkers(-2)).Workers())
+		assert.Equal(t, 3, env.runtime(nil, webhook.WithWebhookWorkers(3)).Workers())
+		assert.Equal(t, 1, env.runtime(nil, webhook.WithWebhookWorkers(0)).Workers(), "a non-positive size keeps the default")
+		assert.Equal(t, 1, env.runtime(nil, webhook.WithWebhookWorkers(-2)).Workers())
 	})
 
 	t.Run("the injected interval drives the passes", func(t *testing.T) {
-		rt := env.runtime(consumer.guard(nil), WithWebhookPollInterval(20*time.Millisecond))
+		rt := env.runtime(consumer.guard(nil), webhook.WithWebhookPollInterval(20*time.Millisecond))
 		rt.Start(context.Background())
 		before := len(consumer.received())
 		lead := env.newLead()
@@ -412,7 +413,7 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 		lead := env.newLead()
 		require.NoError(t, env.leads.Create(lead))
 		ticks := make(chan time.Time, 1)
-		rt := env.runtime(consumer.guard(nil), WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
+		rt := env.runtime(consumer.guard(nil), webhook.WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
 		rt.Start(context.Background())
 		select {
 		case <-entered:
@@ -473,7 +474,7 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 		row := seedPoolDelivery(t, env, created.ID, env.seedLead().ID, time.Now().UTC().Add(-time.Minute))
 
 		wrapper := &deadlineRecordingWebhookRepository{WebhookRepository: env.repo}
-		rt := NewWebhookRuntime(wrapper, reads.guard(nil), env.box)
+		rt := webhook.NewWebhookRuntime(wrapper, reads.guard(nil), env.box)
 		result, err := rt.RunOnce(context.Background())
 		require.NoError(t, err)
 		assert.Equal(t, 1, result.Succeeded)
@@ -484,8 +485,8 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 			for _, call := range calls {
 				require.True(t, call.ok, "%s runs with a deadline", name)
 				assert.True(t, call.deadline.After(call.calledAt), "%s: the deadline lies after the call", name)
-				assert.False(t, call.deadline.After(call.calledAt.Add(webhookFinishTimeout)),
-					"%s: the deadline is at most webhookFinishTimeout after the call", name)
+				assert.False(t, call.deadline.After(call.calledAt.Add(webhook.WebhookFinishTimeout)),
+					"%s: the deadline is at most webhook.WebhookFinishTimeout after the call", name)
 			}
 		}
 		var stored models.WebhookEndpoint
@@ -519,8 +520,8 @@ func TestWebhookRuntimeLifecycle(t *testing.T) {
 		})
 
 		ticks := make(chan time.Time, 1)
-		rt := env.runtime(pool.guard(nil), WithWebhookWorkers(2), WithWebhookClock(func() time.Time { return now }),
-			WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
+		rt := env.runtime(pool.guard(nil), webhook.WithWebhookWorkers(2), webhook.WithWebhookClock(func() time.Time { return now }),
+			webhook.WithWebhookTicker(func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }))
 		rt.Start(context.Background())
 		seen := map[string]bool{}
 		wait := time.After(5 * time.Second)
@@ -587,7 +588,7 @@ func TestWebhookEgressRefusal(t *testing.T) {
 	}
 	start := time.Now().UTC().Add(time.Minute).Truncate(time.Millisecond)
 	clock := newWebhookClock(start)
-	rt := env.runtime(consumer.guard(extra), WithWebhookClock(clock.Now))
+	rt := env.runtime(consumer.guard(extra), webhook.WithWebhookClock(clock.Now))
 
 	lead := env.newLead()
 	require.NoError(t, env.leads.Create(lead))
@@ -604,7 +605,7 @@ func TestWebhookEgressRefusal(t *testing.T) {
 		assert.Equal(t, models.WebhookErrorDestinationRefused, row.ErrorCode)
 		assert.Nil(t, row.LastHTTPStatus)
 		require.NotNil(t, row.NextAttemptAt)
-		assert.WithinDuration(t, start.Add(WebhookRetryBase), *row.NextAttemptAt, time.Millisecond)
+		assert.WithinDuration(t, start.Add(webhook.WebhookRetryBase), *row.NextAttemptAt, time.Millisecond)
 	}
 }
 
@@ -623,7 +624,7 @@ func TestWebhookRequestTimeout(t *testing.T) {
 	})
 	env.endpoint(consumer.url("/slow"), true, models.WebhookEventLeadCreated)
 	const timeout = 300 * time.Millisecond
-	rt := env.runtime(consumer.guard(nil), WithWebhookRequestTimeout(timeout))
+	rt := env.runtime(consumer.guard(nil), webhook.WithWebhookRequestTimeout(timeout))
 	assert.Equal(t, timeout, rt.RequestTimeout())
 
 	lead := env.newLead()
@@ -687,9 +688,9 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 		assert.Equal(t, first.ID, tickets[0].EndpointID)
 
 		_, _, err = env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{Status: "done"}, 0, 10)
-		assert.ErrorAs(t, err, new(*WebhookValidationError))
+		assert.ErrorAs(t, err, new(*webhook.WebhookValidationError))
 		_, _, err = env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{EventType: "lead.archived"}, 0, 10)
-		assert.ErrorAs(t, err, new(*WebhookValidationError))
+		assert.ErrorAs(t, err, new(*webhook.WebhookValidationError))
 
 		raw, err := json.Marshal(rows)
 		require.NoError(t, err)
@@ -706,7 +707,7 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 	t.Run("finished rows older than the retention are pruned at most hourly", func(t *testing.T) {
 		now := time.Now().UTC().Truncate(time.Millisecond)
 		clock := newWebhookClock(now)
-		rt := env.runtime(nil, WithWebhookClock(clock.Now))
+		rt := env.runtime(nil, webhook.WithWebhookClock(clock.Now))
 		seed := func(status string, updated time.Time) uint {
 			row := &models.WebhookDelivery{EndpointID: first.ID, EventID: "evt_prune_" + strconv.FormatUint(webhookTestSeq.Add(1), 10),
 				EventType: models.WebhookEventLeadCreated, RecordID: 1, OccurredAt: updated, Status: status, CreatedAt: updated, UpdatedAt: updated}
@@ -718,13 +719,13 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 			return row.ID
 		}
 		exists := func(id uint) bool { return env.count(&models.WebhookDelivery{}, "id = ?", id) == 1 }
-		old := now.Add(-WebhookDeliveryRetention - time.Hour)
+		old := now.Add(-webhook.WebhookDeliveryRetention - time.Hour)
 		oldSucceeded := seed(models.WebhookDeliverySucceeded, old)
 		oldFailed := seed(models.WebhookDeliveryFailed, old)
 		oldPending := seed(models.WebhookDeliveryPending, old)
 		// The clock advances 1 h 10 min below; keep recent younger than the
 		// retention for the whole subtest.
-		recent := seed(models.WebhookDeliverySucceeded, now.Add(-WebhookDeliveryRetention+3*time.Hour))
+		recent := seed(models.WebhookDeliverySucceeded, now.Add(-webhook.WebhookDeliveryRetention+3*time.Hour))
 
 		result, err := rt.RunOnce(ctx)
 		require.NoError(t, err)
@@ -741,7 +742,7 @@ func TestWebhookDeliveryLogAndPrune(t *testing.T) {
 		assert.Zero(t, result.Pruned, "no second prune within the hour")
 		assert.True(t, exists(another))
 
-		clock.Advance(WebhookPruneInterval)
+		clock.Advance(webhook.WebhookPruneInterval)
 		result, err = rt.RunOnce(ctx)
 		require.NoError(t, err)
 		assert.EqualValues(t, 1, result.Pruned)
@@ -788,9 +789,9 @@ func TestWebhookLogsOmitSecrets(t *testing.T) {
 	_, err = rt.RunOnce(ctx)
 	require.NoError(t, err)
 
-	_, err = env.endpoints.UpdateEndpoint(ctx, good.ID, WebhookEndpointPatch{URL: strPtr(consumer.url("/changed-path-canary"))})
+	_, err = env.endpoints.UpdateEndpoint(ctx, good.ID, webhook.WebhookEndpointPatch{URL: strPtr(consumer.url("/changed-path-canary"))})
 	require.NoError(t, err)
-	_, err = env.endpoints.CreateEndpoint(ctx, WebhookEndpointInput{URL: "http://insecure-canary.example.net/x", EventTypes: []string{"lead.created"}})
+	_, err = env.endpoints.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: "http://insecure-canary.example.net/x", EventTypes: []string{"lead.created"}})
 	require.Error(t, err)
 	require.NoError(t, env.endpoints.DeleteEndpoint(ctx, refused.ID))
 	require.Error(t, env.endpoints.DeleteEndpoint(ctx, refused.ID))

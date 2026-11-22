@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 func TestWebhookProductionWiring(t *testing.T) {
@@ -26,7 +26,7 @@ func TestWebhookProductionWiring(t *testing.T) {
 		text := string(source)
 		for _, fragment := range []string{
 			"webhookRepo := repository.NewWebhookRepository(models.DB)",
-			"utils.NewSecretBox(cfg.API.APIKeySecret, service.WebhookSecretContext)",
+			"utils.NewSecretBox(cfg.API.APIKeySecret, webhook.WebhookSecretContext)",
 			"webhookEmitter := webhook.NewEmitter(webhookRepo)",
 			"service.WithLeadWebhooks(webhookEmitter)",
 			"service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager,",
@@ -35,18 +35,23 @@ func TestWebhookProductionWiring(t *testing.T) {
 			"service.WithFormWebhooks(webhookEmitter)",
 			"handler.SetupWebhookRoutes(protected, webhookHandler)",
 			"webhooks.start(backgroundCtx)",
-			"service.WithWebhookWorkers(service.WebhookWorkers)",
+			"webhook.WithWebhookWorkers(webhook.WebhookWorkers)",
 			"combineStops(automation.Stop, formRetention.Stop, bulkRecovery.Stop, passwordReset.Stop, webhooks.Stop, aeoRuntime.Stop)",
 		} {
 			assert.Contains(t, text, fragment)
 		}
 		assert.Equal(t, 1, strings.Count(text, "repository.NewWebhookRepository("), "one WebhookRepository")
-		assert.Equal(t, "webhook-endpoint-secret", service.WebhookSecretContext)
+		assert.Equal(t, "webhook-endpoint-secret", webhook.WebhookSecretContext)
+
+		runtimeSource, err := os.ReadFile("webhook_runtime.go")
+		require.NoError(t, err)
+		assert.Contains(t, string(runtimeSource), "egress.New(", "the sender is built on the public-only egress guard")
+		assert.NotContains(t, string(runtimeSource), "internal/aeo", "the sender does not depend on the AEO module")
 	})
 
 	t.Run("a localhost endpoint gets destination_refused and Stop leaves no goroutine", func(t *testing.T) {
 		boot := bootAutomation(t, false)
-		box := utils.NewSecretBox(boot.cfg.API.APIKeySecret, service.WebhookSecretContext)
+		box := utils.NewSecretBox(boot.cfg.API.APIKeySecret, webhook.WebhookSecretContext)
 		sealed, err := box.Seal("whsec_c2VjcmV0LWtleS1vZi10aGUtd2lyaW5nLXRlc3Q=")
 		require.NoError(t, err)
 		endpoint := &models.WebhookEndpoint{URL: "https://localhost/hook", EventTypes: models.WebhookEventTypes{models.WebhookEventLeadCreated},
@@ -57,8 +62,8 @@ func TestWebhookProductionWiring(t *testing.T) {
 			EventType: models.WebhookEventLeadCreated, RecordID: 1, OccurredAt: due, Status: models.WebhookDeliveryPending, NextAttemptAt: &due}
 		require.NoError(t, models.DB.Create(delivery).Error)
 
-		var built *service.WebhookRuntime
-		webhookRuntimeBuilt = func(rt *service.WebhookRuntime) { built = rt }
+		var built *webhook.WebhookRuntime
+		webhookRuntimeBuilt = func(rt *webhook.WebhookRuntime) { built = rt }
 		t.Cleanup(func() { webhookRuntimeBuilt = nil })
 
 		baseline := runtime.NumGoroutine()
@@ -74,10 +79,10 @@ func TestWebhookProductionWiring(t *testing.T) {
 			}
 		})
 		require.NotNil(t, built, "setupDependencies builds the webhook runtime")
-		assert.Equal(t, service.WebhookPollInterval, built.Interval())
-		assert.Equal(t, service.WebhookRequestTimeout, built.RequestTimeout())
-		assert.Equal(t, service.WebhookWorkers, built.Workers(), "main sizes the sender pool")
-		assert.Greater(t, service.WebhookWorkers, 1, "the production pool is wider than the sequential default")
+		assert.Equal(t, webhook.WebhookPollInterval, built.Interval())
+		assert.Equal(t, webhook.WebhookRequestTimeout, built.RequestTimeout())
+		assert.Equal(t, webhook.WebhookWorkers, built.Workers(), "main sizes the sender pool")
+		assert.Greater(t, webhook.WebhookWorkers, 1, "the production pool is wider than the sequential default")
 
 		// The first pass runs at start; the secret opens (the right context),
 		// and the real guard refuses localhost before any connection.

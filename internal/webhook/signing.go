@@ -1,4 +1,4 @@
-package service
+package webhook
 
 import (
 	"bytes"
@@ -39,8 +39,8 @@ const (
 	WebhookHeaderSignature = "webhook-signature"
 )
 
-// webhookOccurredAtLayout renders occurred_at in UTC with milliseconds.
-const webhookOccurredAtLayout = "2006-01-02T15:04:05.000Z"
+// WebhookOccurredAtLayout renders occurred_at in UTC with milliseconds.
+const WebhookOccurredAtLayout = "2006-01-02T15:04:05.000Z"
 
 // errWebhookSecretInvalid is returned for a secret that is not whsec_ plus a
 // non-empty base64 key. It never quotes the secret.
@@ -61,7 +61,7 @@ func WebhookBody(delivery *models.WebhookDelivery) ([]byte, error) {
 	return json.Marshal(webhookPayload{
 		ID:         delivery.EventID,
 		Type:       delivery.EventType,
-		OccurredAt: delivery.OccurredAt.UTC().Format(webhookOccurredAtLayout),
+		OccurredAt: delivery.OccurredAt.UTC().Format(WebhookOccurredAtLayout),
 		RecordID:   delivery.RecordID,
 	})
 }
@@ -121,7 +121,7 @@ func webhookPingBody(eventID string, occurredAt time.Time) ([]byte, error) {
 	return json.Marshal(webhookPingPayload{
 		ID:         eventID,
 		Type:       models.WebhookEventPing,
-		OccurredAt: occurredAt.UTC().Format(webhookOccurredAtLayout),
+		OccurredAt: occurredAt.UTC().Format(WebhookOccurredAtLayout),
 	})
 }
 

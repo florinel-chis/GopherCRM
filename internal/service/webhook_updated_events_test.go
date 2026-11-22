@@ -315,18 +315,18 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 			}
 			return out
 		}
-		created, err := env.endpoints.CreateEndpoint(ctx, WebhookEndpointInput{URL: "https://example.com/twenty", EventTypes: raw(20)})
+		created, err := env.endpoints.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: "https://example.com/twenty", EventTypes: raw(20)})
 		require.NoError(t, err, "20 raw entries are accepted")
 		stored, err := env.endpoints.GetEndpoint(ctx, created.ID)
 		require.NoError(t, err)
 		assert.Equal(t, models.WebhookEventTypes{"customer.created", "customer.deleted", "customer.updated", "lead.created", "lead.deleted", "lead.updated", "ticket.created", "ticket.deleted", "ticket.updated"}, stored.EventTypes)
 		require.NoError(t, env.endpoints.DeleteEndpoint(ctx, created.ID))
 
-		_, err = env.endpoints.CreateEndpoint(ctx, WebhookEndpointInput{URL: "https://example.com/twenty-one", EventTypes: raw(21)})
-		var validation *WebhookValidationError
+		_, err = env.endpoints.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: "https://example.com/twenty-one", EventTypes: raw(21)})
+		var validation *webhook.WebhookValidationError
 		require.ErrorAs(t, err, &validation)
 		assert.Equal(t, "event_types", validation.Field)
-		assert.Equal(t, WebhookEventTypesRule, validation.Message)
+		assert.Equal(t, webhook.WebhookEventTypesRule, validation.Message)
 	})
 
 	t.Run("unwired services write no row", func(t *testing.T) {

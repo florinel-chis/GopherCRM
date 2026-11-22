@@ -17,6 +17,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // TestWebhookPing covers POST /webhooks/endpoints/:id/test at the service: one
@@ -25,10 +26,11 @@ import (
 func TestWebhookPing(t *testing.T) {
 	// pingEnv wires a fresh environment whose registry pings through the
 	// consumer's guard.
-	pingEnv := func(t *testing.T, consumer *webhookConsumer, extra map[string][]netip.Addr) (*webhookEnv, WebhookService) {
+	pingEnv := func(t *testing.T, consumer *webhookConsumer, extra map[string][]netip.Addr, opts ...webhook.WebhookServiceOption) (*webhookEnv, webhook.WebhookService) {
 		t.Helper()
 		env := webhookRuntimeEnv(t)
-		return env, NewWebhookService(env.repo, env.txManager, env.box, WithWebhookPingClients(consumer.guard(extra)))
+		opts = append([]webhook.WebhookServiceOption{webhook.WithWebhookPingClients(consumer.guard(extra))}, opts...)
+		return env, webhook.NewWebhookService(env.repo, env.txManager, env.box, opts...)
 	}
 	// unchanged asserts the ping wrote nothing: the delivery count and the
 	// endpoint row stay as they were.
@@ -73,18 +75,18 @@ func TestWebhookPing(t *testing.T) {
 		require.NoError(t, verifyStandardWebhook(endpoint.Secret, request.Header, request.Body, time.Now(), 5*time.Minute),
 			"the ping verifies under the create-time secret")
 		assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
-		assert.Equal(t, WebhookUserAgent, request.Header.Get("User-Agent"))
+		assert.Equal(t, webhook.WebhookUserAgent, request.Header.Get("User-Agent"))
 
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(request.Body, &body))
 		assert.Equal(t, models.WebhookEventPing, body["type"])
 		id, _ := body["id"].(string)
 		assert.True(t, strings.HasPrefix(id, "evt_"), id)
-		assert.Equal(t, request.Header.Get(WebhookHeaderID), id)
+		assert.Equal(t, request.Header.Get(webhook.WebhookHeaderID), id)
 		assert.Equal(t, result.EventID, id)
 		assert.NotContains(t, body, "record_id")
 		occurredAt, _ := body["occurred_at"].(string)
-		_, err = time.Parse(webhookOccurredAtLayout, occurredAt)
+		_, err = time.Parse(webhook.WebhookOccurredAtLayout, occurredAt)
 		assert.NoError(t, err, "occurred_at is UTC with milliseconds")
 		assert.Len(t, body, 3, "id, type and occurred_at only")
 		unchanged(t, env, before)
@@ -173,12 +175,8 @@ func TestWebhookPing(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusOK)
 		})
-		env, svc := pingEnv(t, consumer, nil)
-		impl, ok := svc.(*webhookService)
-		require.True(t, ok)
-		assert.Equal(t, WebhookRequestTimeout, impl.pingTimeout, "the ping is bounded like a delivery")
 		const timeout = 300 * time.Millisecond
-		impl.pingTimeout = timeout
+		env, svc := pingEnv(t, consumer, nil, webhook.WithWebhookPingTimeout(timeout))
 		endpoint := env.endpoint(consumer.url("/slow"), true, models.WebhookEventLeadCreated)
 		before := take(t, env, endpoint.ID)
 
@@ -227,7 +225,7 @@ func TestWebhookPing(t *testing.T) {
 		env := webhookRuntimeEnv(t)
 		endpoint := env.endpoint(consumer.url("/ping"), true, models.WebhookEventLeadCreated)
 		_, err := env.endpoints.TestEndpoint(ctx, endpoint.ID)
-		assert.ErrorIs(t, err, ErrWebhooksUnavailable)
+		assert.ErrorIs(t, err, webhook.ErrWebhooksUnavailable)
 		assert.Zero(t, consumer.dials.Load())
 	})
 

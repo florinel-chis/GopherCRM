@@ -32,6 +32,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // aeoBootTimeout bounds every wait in these roots.
@@ -390,8 +391,8 @@ func TestAEORuntimeStartup(t *testing.T) {
 
 func TestAEORuntimeShutdown(t *testing.T) {
 	t.Run("stop cancels a scheduled admission waiting for the database", func(t *testing.T) {
-		var webhooks *service.WebhookRuntime
-		webhookRuntimeBuilt = func(rt *service.WebhookRuntime) { webhooks = rt }
+		var webhooks *webhook.WebhookRuntime
+		webhookRuntimeBuilt = func(rt *webhook.WebhookRuntime) { webhooks = rt }
 		t.Cleanup(func() { webhookRuntimeBuilt = nil })
 
 		// One sign-in audit row past the 90-day default retention, so the boot

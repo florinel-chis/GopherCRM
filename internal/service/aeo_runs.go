@@ -93,7 +93,7 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 	// times out on) instead of closing the database underneath. A start that
 	// fails anywhere below releases on return; a start that launches hands the
 	// release to the executor goroutine.
-	release, err := s.lifecycle.admit()
+	release, err := s.lifecycle.Admit()
 	if err != nil {
 		logger.Info("Refusing to start an AEO run: the runtime is shutting down")
 		return nil, err
@@ -105,7 +105,7 @@ func (s *aeoService) startRun(_ context.Context, trigger string, triggeredByID *
 		}
 	}()
 
-	runCtx := s.lifecycle.ctx
+	runCtx := s.lifecycle.Context()
 	repo := s.repo.WithContext(runCtx)
 
 	// Order matters: the caller gets the most actionable reason first. A missing

@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -110,12 +109,7 @@ type BulkOperationRecoveryRuntime struct {
 	authAudit              repository.AuthAuditRepository
 	authAuditRetentionDays int
 
-	mu      sync.Mutex
-	started bool
-	stopped bool
-	cancel  context.CancelFunc
-	// exited is closed by the goroutine when it returns; nil until Start.
-	exited chan struct{}
+	loop *lifecycle.Loop
 }
 
 // NewBulkOperationRecoveryRuntime builds the runtime over repo. A nil logger
@@ -134,6 +128,8 @@ func NewBulkOperationRecoveryRuntime(repo repository.BulkOperationRepository, lo
 	for _, opt := range opts {
 		opt(r)
 	}
+	r.loop = lifecycle.NewLoop("bulk operation recovery runtime", r.interval,
+		func(ctx context.Context) { _, _ = r.Sweep(ctx) }, lifecycle.WithTicker(r.newTicker))
 	return r
 }
 
@@ -210,65 +206,11 @@ func (r *BulkOperationRecoveryRuntime) log() *logrus.Logger {
 
 // Start sweeps once immediately on a goroutine derived from ctx, then on every
 // tick. Starting twice, or after Stop, is a no-op.
-func (r *BulkOperationRecoveryRuntime) Start(ctx context.Context) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.started || r.stopped {
-		return
-	}
-	r.started = true
-	sweepCtx, cancel := context.WithCancel(ctx)
-	r.cancel = cancel
-	exited := make(chan struct{})
-	r.exited = exited
-	ticks, stopTicker := r.newTicker(r.interval)
-	go r.loop(sweepCtx, ticks, stopTicker, exited)
-}
-
-func (r *BulkOperationRecoveryRuntime) loop(ctx context.Context, ticks <-chan time.Time, stopTicker func(), exited chan<- struct{}) {
-	defer close(exited)
-	defer stopTicker()
-	_, _ = r.Sweep(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticks:
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		_, _ = r.Sweep(ctx)
-	}
-}
+func (r *BulkOperationRecoveryRuntime) Start(ctx context.Context) { r.loop.Start(ctx) }
 
 // Stop cancels the sweep and waits for the goroutine to return, or for ctx to
 // end. A statement in flight finishes or is abandoned before Stop returns nil,
 // and after that the runtime writes nothing. A deadline that passes first is an
 // error. Once the goroutine has joined, a repeated Stop returns nil even on a
 // context that has already ended.
-func (r *BulkOperationRecoveryRuntime) Stop(ctx context.Context) error {
-	r.mu.Lock()
-	r.stopped = true
-	cancel := r.cancel
-	exited := r.exited
-	r.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	if exited == nil {
-		return nil
-	}
-	select {
-	case <-exited:
-		return nil
-	default:
-	}
-	select {
-	case <-exited:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("bulk operation recovery runtime did not stop before the deadline: %w", ctx.Err())
-	}
-}
+func (r *BulkOperationRecoveryRuntime) Stop(ctx context.Context) error { return r.loop.Stop(ctx) }

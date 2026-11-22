@@ -11,6 +11,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	"github.com/florinel-chis/gophercrm/internal/handler"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
@@ -125,7 +126,7 @@ var revision = "dev"
 // must never fail or roll back a deploy. webhooks is {"state": "running"}, or
 // {"state": "paused", "reason": "secret_unavailable"} while the sender holds
 // the deliveries of an endpoint whose signing secret cannot be opened (#559).
-func healthPayload(now time.Time, webhooks service.WebhookSenderStatus) gin.H {
+func healthPayload(now time.Time, webhooks webhook.WebhookSenderStatus) gin.H {
 	sender := gin.H{"state": "running"}
 	if webhooks.Paused {
 		sender = gin.H{"state": "paused", "reason": models.WebhookErrorSecretUnavailable}
@@ -288,7 +289,7 @@ func setupRouter(backgroundCtx context.Context, cfg *config.Config) (*gin.Engine
 // retention purge, the bulk operation sweep, the password reset queue, the
 // webhook sender and the AEO runtime at shutdown, in that order, before main closes the database, and the
 // status accessor of the webhook sender it started (GET /health reads it).
-func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) (func(context.Context) error, func() service.WebhookSenderStatus) {
+func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, scimGroup *gin.RouterGroup, cfg *config.Config) (func(context.Context) error, func() webhook.WebhookSenderStatus) {
 	// Outbound webhooks (#345): one repository is the outbox of every create,
 	// update and delete path (lead, customer, ticket, form) and the store of
 	// the registry and the delivery log, and one emitter over it writes the
@@ -331,7 +332,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 
 	// Endpoint secrets of the outbound webhooks are sealed under their own
 	// SecretBox context.
-	webhookBox := utils.NewSecretBox(cfg.API.APIKeySecret, service.WebhookSecretContext)
+	webhookBox := utils.NewSecretBox(cfg.API.APIKeySecret, webhook.WebhookSecretContext)
 
 	// The configuration service is built first: the password reset, quote and
 	// ticket reply mails read their product name from general.company_name
@@ -531,8 +532,8 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	formPublicHandler := handler.NewFormPublicHandler(formService, cfg.Forms, cfg.API.Prefix)
 	automationHandler := handler.NewAutomationHandler(automationService)
 	notificationHandler := handler.NewNotificationHandler(notificationService)
-	webhookHandler := handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, webhookBox,
-		service.WithWebhookPingClients(aeo.NewEgressGuard(config.AEOEgressPolicy{}))))
+	webhookHandler := handler.NewWebhookHandler(webhook.NewWebhookService(webhookRepo, txManager, webhookBox,
+		webhook.WithWebhookPingClients(egress.New())))
 
 	// Recover the automation runs whose lease went stale before the worker and
 	// the HTTP server start (#237). Each claim records this engine's instance
@@ -714,10 +715,10 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	bulkRecovery.start(backgroundCtx)
 
 	// The outbound webhook sender (#345) runs on every replica: every
-	// service.WebhookPollInterval it delivers the committed outbox rows through
-	// the public-only egress guard, on a pool of service.WebhookWorkers workers
+	// webhook.WebhookPollInterval it delivers the committed outbox rows through
+	// the public-only egress guard, on a pool of webhook.WebhookWorkers workers
 	// that sends each endpoint's rows one at a time in id order (#568).
-	webhooks := newWebhookBackground(webhookRepo, webhookBox, service.WithWebhookWorkers(service.WebhookWorkers))
+	webhooks := newWebhookBackground(webhookRepo, webhookBox, webhook.WithWebhookWorkers(webhook.WebhookWorkers))
 	webhooks.start(backgroundCtx)
 
 	// One drain handle for every runtime, which stops them all at the same time

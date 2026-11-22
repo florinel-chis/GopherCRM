@@ -64,7 +64,7 @@ Three chains are specified. A transaction that locks rows of one chain takes the
 **Outbound webhooks (#345), a self-contained order.** The endpoint delete
 (`internal/repository/webhook_repository.go`, `DeleteEndpoint`) takes `webhook_endpoints →
 webhook_deliveries`: a locking read of the endpoint by primary key, then the delete of its delivery
-rows, then the endpoint. The delivery runtime (`internal/service/webhook_runtime.go`) never takes a
+rows, then the endpoint. The delivery runtime (`internal/webhook/runtime.go`) never takes a
 locking read: it discovers due rows, expired leases and prunable rows with plain `SELECT`s and
 writes each row by primary key with a conditional `UPDATE` or `DELETE` that re-checks the
 discovered state, so it never locks through `idx_webhook_deliveries_status_next` or

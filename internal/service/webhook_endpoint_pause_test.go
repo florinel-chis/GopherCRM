@@ -19,6 +19,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // The endpoint circuit (#569): every sent attempt that fails adds one to
@@ -64,8 +65,8 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		}
 		return n
 	}
-	runtime := func(opts ...WebhookRuntimeOption) *WebhookRuntime {
-		return env.runtime(consumer.guard(nil), append([]WebhookRuntimeOption{WithWebhookClock(clock.Now)}, opts...)...)
+	runtime := func(opts ...webhook.WebhookRuntimeOption) *webhook.WebhookRuntime {
+		return env.runtime(consumer.guard(nil), append([]webhook.WebhookRuntimeOption{webhook.WithWebhookClock(clock.Now)}, opts...)...)
 	}
 	stored := func(t *testing.T, id uint) models.WebhookEndpoint {
 		t.Helper()
@@ -93,21 +94,21 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 	due := func() time.Time { return clock.Now().Add(-time.Second) }
 
 	t.Run("(a) the pause schedule", func(t *testing.T) {
-		assert.Equal(t, 3, WebhookEndpointPauseAfter)
-		assert.Equal(t, time.Minute, WebhookEndpointPauseBase)
-		assert.Equal(t, time.Hour, WebhookEndpointPauseMax)
+		assert.Equal(t, 3, webhook.WebhookEndpointPauseAfter)
+		assert.Equal(t, time.Minute, webhook.WebhookEndpointPauseBase)
+		assert.Equal(t, time.Hour, webhook.WebhookEndpointPauseMax)
 		want := []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute,
 			time.Hour, time.Hour}
 		for i, pause := range want {
 			failures := i + 3
-			assert.Equal(t, pause, WebhookEndpointPause(failures), "after %d failures", failures)
-			until := webhookEndpointPausedUntil(failures, clock.Now())
+			assert.Equal(t, pause, webhook.WebhookEndpointPause(failures), "after %d failures", failures)
+			until := webhook.WebhookEndpointPausedUntil(failures, clock.Now())
 			require.NotNil(t, until)
 			assert.True(t, until.Equal(clock.Now().Add(pause)))
 		}
 		for failures := 0; failures < 3; failures++ {
-			assert.Zero(t, WebhookEndpointPause(failures))
-			assert.Nil(t, webhookEndpointPausedUntil(failures, clock.Now()), "no pause below 3 failures")
+			assert.Zero(t, webhook.WebhookEndpointPause(failures))
+			assert.Nil(t, webhook.WebhookEndpointPausedUntil(failures, clock.Now()), "no pause below 3 failures")
 		}
 	})
 
@@ -209,12 +210,12 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		until := clock.Now().Add(time.Minute)
 		setCircuit(t, paused.ID, 3, &until)
 		var pausedRows []uint
-		for i := 0; i < webhookDiscoveryBatch+1; i++ {
+		for i := 0; i < webhook.WebhookDiscoveryBatch+1; i++ {
 			pausedRows = append(pausedRows, seedPoolDelivery(t, env, paused.ID, recordID, clock.Now().Add(-2*time.Minute)).ID)
 		}
 		healthyRow := seedPoolDelivery(t, env, healthy.ID, recordID, clock.Now().Add(-time.Minute))
 
-		result, err := runtime(WithWebhookWorkers(2)).RunOnce(ctx)
+		result, err := runtime(webhook.WithWebhookWorkers(2)).RunOnce(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, 1, result.Attempted)
 		assert.Equal(t, 1, result.Succeeded)
@@ -310,7 +311,7 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		logger.SetOutput(io.Discard)
 		logger.SetLevel(logrus.DebugLevel)
 		hook := logtest.NewLocal(logger)
-		_, err := runtime(WithWebhookLogger(logger)).RunOnce(ctx)
+		_, err := runtime(webhook.WithWebhookLogger(logger)).RunOnce(ctx)
 		require.NoError(t, err)
 
 		state := stored(t, endpoint.ID)
@@ -359,7 +360,7 @@ func runWebhookEndpointPause(t *testing.T, db *gorm.DB) {
 		// Replica B's 2xx reset lands between the first attempt's read (2
 		// failures) and its failure write, so that write loses its fence.
 		repo := newResetBeforeFailureWebhookRepository(env.repo, endpoint.ID)
-		result, err := NewWebhookRuntime(repo, consumer.guard(nil), env.box, WithWebhookClock(clock.Now), WithWebhookLogger(logger)).RunOnce(ctx)
+		result, err := webhook.NewWebhookRuntime(repo, consumer.guard(nil), env.box, webhook.WithWebhookClock(clock.Now), webhook.WithWebhookLogger(logger)).RunOnce(ctx)
 		require.NoError(t, err)
 
 		assert.EqualValues(t, 1, repo.resets.Load(), "the concurrent reset was injected exactly once")

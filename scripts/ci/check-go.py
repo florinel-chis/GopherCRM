@@ -51,6 +51,7 @@ TRANSACTION_SOURCES = {
 AEO_SOURCES = {
     'cmd': ('*_test.go',),
     'internal/aeo': ('*_test.go',),
+    'internal/egress': ('*_test.go',),
     'internal/service': ('aeo*_test.go',),
     'internal/repository': ('aeo*_test.go',),
     'internal/handler': ('aeo*_test.go',),

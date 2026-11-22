@@ -766,42 +766,6 @@ type FormService interface {
 	ConfirmSubmission(ctx context.Context, rawToken string) error
 }
 
-// WebhookService is the admin registry of outbound webhook endpoints and the
-// delivery log (#345). Invalid input is a *WebhookValidationError (it unwraps
-// to apperrors.ErrValidation), an unknown id apperrors.ErrNotFound, and a
-// service built without its repository or secret box ErrWebhooksUnavailable
-// (TestEndpoint also without its ping client factory). RedeliverDelivery
-// answers ErrWebhookDeliveryNotRedeliverable for a pending or sending row and
-// ErrWebhookEndpointUnavailable for a deleted or inactive endpoint.
-type WebhookService interface {
-	// CreateEndpoint validates the URL and event types, generates the signing
-	// secret, stores it sealed and returns it this once.
-	CreateEndpoint(ctx context.Context, input WebhookEndpointInput) (*models.WebhookEndpointCreated, error)
-	GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error)
-	ListEndpoints(ctx context.Context, offset, limit int, sortBy, sortOrder string) ([]models.WebhookEndpoint, int64, error)
-	// UpdateEndpoint writes the fields the patch carries; it never changes
-	// the secret (RotateEndpointSecret does).
-	UpdateEndpoint(ctx context.Context, id uint, patch WebhookEndpointPatch) (*models.WebhookEndpoint, error)
-	// RotateEndpointSecret replaces the signing secret and returns the new
-	// one this once; the replaced secret keeps signing next to it for
-	// WebhookSecretOverlap (#503).
-	RotateEndpointSecret(ctx context.Context, id uint) (*models.WebhookEndpointSecretRotated, error)
-	// DeleteEndpoint hard-deletes the endpoint and its delivery rows in one
-	// transaction, endpoint row locked first.
-	DeleteEndpoint(ctx context.Context, id uint) error
-	// ListDeliveries returns one page of the delivery log, newest first.
-	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
-	// TestEndpoint sends one signed webhook.ping request to the endpoint,
-	// active or not, synchronously and without writing anything. A refused,
-	// failed or unsigned attempt is a failed result, not an error; a service
-	// built without WithWebhookPingClients returns ErrWebhooksUnavailable.
-	TestEndpoint(ctx context.Context, id uint) (*models.WebhookPingResult, error)
-	// RedeliverDelivery puts a succeeded or failed delivery back into the
-	// queue (pending, attempts 0, due now, same event_id) with one
-	// conditional UPDATE and returns the requeued row.
-	RedeliverDelivery(ctx context.Context, id uint) (*models.WebhookDelivery, error)
-}
-
 // SCIMGroupService is the SCIM 2.0 Groups resource (#506). The groups are
 // the distinct groups-claim values of the effective single sign-on role
 // mapping; members are the managed accounts (live, not customer, linked

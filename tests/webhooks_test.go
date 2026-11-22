@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/florinel-chis/gophercrm/internal/aeo"
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	"github.com/florinel-chis/gophercrm/internal/handler"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -139,7 +139,7 @@ func TestWebhookAPISQLite(t *testing.T) {
 	leadRepo := repository.NewLeadRepository(db)
 	companyRepo := repository.NewCompanyRepository(db)
 	webhookRepo := repository.NewWebhookRepository(db)
-	box := utils.NewSecretBox("webhooks-api-test-master-secret-0123456789", service.WebhookSecretContext)
+	box := utils.NewSecretBox("webhooks-api-test-master-secret-0123456789", webhook.WebhookSecretContext)
 	failing := &failingWebhookRepository{WebhookRepository: webhookRepo, armed: &atomic.Bool{}, err: errors.New("injected outbox failure")}
 
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
@@ -160,7 +160,7 @@ func TestWebhookAPISQLite(t *testing.T) {
 	handler.SetupLeadRoutes(protected, handler.NewLeadHandler(leadService))
 	handler.SetupCustomerRoutes(protected, handler.NewCustomerHandler(customerService))
 	handler.SetupTicketRoutes(protected, handler.NewTicketHandler(ticketService, customerService))
-	handler.SetupWebhookRoutes(protected, handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, box)))
+	handler.SetupWebhookRoutes(protected, handler.NewWebhookHandler(webhook.NewWebhookService(webhookRepo, txManager, box)))
 
 	tokens := map[string]string{}
 	users := map[string]*models.User{}
@@ -201,14 +201,14 @@ func TestWebhookAPISQLite(t *testing.T) {
 	require.NoError(t, err)
 	roots := x509.NewCertPool()
 	roots.AddCert(consumer.server.Certificate())
-	guard := aeo.NewEgressGuard(config.AEOEgressPolicy{},
-		aeo.WithEgressResolver(apiResolver{"example.com": {netip.MustParseAddr("93.184.216.34")}}),
-		aeo.WithEgressDialer(func(ctx context.Context, _, _ string) (net.Conn, error) {
+	guard := egress.New(
+		egress.WithResolver(apiResolver{"example.com": {netip.MustParseAddr("93.184.216.34")}}),
+		egress.WithDialer(func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var dialer net.Dialer
 			return dialer.DialContext(ctx, "tcp", consumer.server.Listener.Addr().String())
 		}),
-		aeo.WithEgressRootCAs(roots))
-	runtime := service.NewWebhookRuntime(webhookRepo, guard, box)
+		egress.WithRootCAs(roots))
+	runtime := webhook.NewWebhookRuntime(webhookRepo, guard, box)
 
 	// An admin registers an endpoint and sees the secret once.
 	status, envelope, raw := do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{

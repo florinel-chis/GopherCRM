@@ -2,7 +2,7 @@ package service
 
 // Shared fixtures of the outbound webhook roots (#345): the full production
 // schema (openTicketIntakeDB), the real repositories and services, a
-// Standard Webhooks verifier written independently of SignWebhook, an HTTPS
+// Standard Webhooks verifier written independently of webhook.SignWebhook, an HTTPS
 // consumer reached through an injected egress guard, an injectable clock and
 // the failingWebhookRepository wrapper.
 
@@ -27,8 +27,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/florinel-chis/gophercrm/internal/aeo"
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -44,7 +44,7 @@ var webhookTestSeq atomic.Uint64
 // ------------------------------------------------------------ verifier ---
 
 // verifyStandardWebhook checks a delivery the way a consumer following the
-// Standard Webhooks specification does, without calling SignWebhook: decode
+// Standard Webhooks specification does, without calling webhook.SignWebhook: decode
 // the key after whsec_, HMAC-SHA256 "<id>.<timestamp>.<body>", compare every
 // v1 signature in constant time, and refuse a timestamp outside tolerance.
 func verifyStandardWebhook(secret string, header http.Header, body []byte, now time.Time, tolerance time.Duration) error {
@@ -202,7 +202,7 @@ func (r webhookResolver) LookupNetIP(_ context.Context, _, host string) ([]netip
 // guard builds the egress guard every runtime test uses: example.com resolves
 // to a public address (dialled through to the consumer), and extra maps more
 // hosts. AEO policy plays no part in PublicHTTPClient.
-func (c *webhookConsumer) guard(extra map[string][]netip.Addr) *aeo.EgressGuard {
+func (c *webhookConsumer) guard(extra map[string][]netip.Addr) *egress.Guard {
 	answers := map[string][]netip.Addr{"example.com": {netip.MustParseAddr("93.184.216.34")}}
 	for host, addrs := range extra {
 		answers[host] = addrs
@@ -212,8 +212,8 @@ func (c *webhookConsumer) guard(extra map[string][]netip.Addr) *aeo.EgressGuard 
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, "tcp", c.server.Listener.Addr().String())
 	}
-	return aeo.NewEgressGuard(config.AEOEgressPolicy{}, aeo.WithEgressResolver(webhookResolver{answers: answers}),
-		aeo.WithEgressDialer(dial), aeo.WithEgressRootCAs(c.roots))
+	return egress.New(egress.WithResolver(webhookResolver{answers: answers}),
+		egress.WithDialer(dial), egress.WithRootCAs(c.roots))
 }
 
 // --------------------------------------------------- failing repository ---
@@ -271,7 +271,7 @@ type webhookEnv struct {
 	owner     *models.User
 	mailer    *fakeFormMailer
 
-	endpoints WebhookService
+	endpoints webhook.WebhookService
 	leads     LeadService
 	customers CustomerService
 	tickets   TicketService
@@ -296,12 +296,12 @@ func newWebhookEnv(t *testing.T, db *gorm.DB, hooks repository.WebhookRepository
 	t.Setenv("API_KEY_SECRET", "")
 	t.Setenv("JWT_SECRET", formTestSecret)
 	env := &webhookEnv{t: t, db: db, repo: repository.NewWebhookRepository(db),
-		box: utils.NewSecretBox(webhookTestMasterSecret, WebhookSecretContext), txManager: utils.NewTransactionManager(db),
+		box: utils.NewSecretBox(webhookTestMasterSecret, webhook.WebhookSecretContext), txManager: utils.NewTransactionManager(db),
 		mailer: &fakeFormMailer{}}
 	env.owner = &models.User{Email: fmt.Sprintf("owner-%d@webhooks.test", webhookTestSeq.Add(1)), Password: "x",
 		FirstName: "Own", LastName: "Er", Role: models.RoleAdmin, IsActive: true}
 	require.NoError(t, db.Create(env.owner).Error)
-	env.endpoints = NewWebhookService(env.repo, env.txManager, env.box)
+	env.endpoints = webhook.NewWebhookService(env.repo, env.txManager, env.box)
 	env.wire(hooks)
 	return env
 }
@@ -353,13 +353,13 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 // secret.
 func (e *webhookEnv) endpoint(url string, active bool, types ...string) *models.WebhookEndpointCreated {
 	e.t.Helper()
-	created, err := e.endpoints.CreateEndpoint(context.Background(), WebhookEndpointInput{URL: url, EventTypes: types, IsActive: &active})
+	created, err := e.endpoints.CreateEndpoint(context.Background(), webhook.WebhookEndpointInput{URL: url, EventTypes: types, IsActive: &active})
 	require.NoError(e.t, err)
 	return created
 }
 
-func (e *webhookEnv) runtime(clients WebhookClientFactory, opts ...WebhookRuntimeOption) *WebhookRuntime {
-	return NewWebhookRuntime(e.repo, clients, e.box, opts...)
+func (e *webhookEnv) runtime(clients webhook.WebhookClientFactory, opts ...webhook.WebhookRuntimeOption) *webhook.WebhookRuntime {
+	return webhook.NewWebhookRuntime(e.repo, clients, e.box, opts...)
 }
 
 func (e *webhookEnv) uniqueEmail(prefix string) string {

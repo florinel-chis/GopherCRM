@@ -1,9 +1,8 @@
-package service
+package webhook
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,7 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/florinel-chis/gophercrm/internal/aeo"
+	"github.com/florinel-chis/gophercrm/internal/egress"
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -71,7 +72,7 @@ import (
 //
 // Stop cancels the loop: no worker starts a further claim, and every attempt
 // in flight runs to its end (its endpoint read, its expired-secret clear and
-// its finish write are each bounded by webhookFinishTimeout, its request by
+// its finish write are each bounded by WebhookFinishTimeout, its request by
 // the request timeout). A pass joins its workers before
 // it returns and the loop goroutine joins after the pass, so nothing is
 // written after Stop returns nil.
@@ -114,18 +115,18 @@ const (
 )
 
 const (
-	// webhookDiscoveryBatch bounds the rows one pass discovers.
-	webhookDiscoveryBatch = 100
-	// webhookFinishTimeout bounds the finish write of one attempt, and each of
+	// WebhookDiscoveryBatch bounds the rows one pass discovers.
+	WebhookDiscoveryBatch = 100
+	// WebhookFinishTimeout bounds the finish write of one attempt, and each of
 	// its two database reads (the endpoint read and the expired-secret clear).
-	webhookFinishTimeout = 5 * time.Second
+	WebhookFinishTimeout = 5 * time.Second
 	// webhookResponseDrainBytes is how much of a response body is read (and
 	// discarded) before the connection is closed.
 	webhookResponseDrainBytes = 4 << 10
 )
 
 // WebhookClientFactory hands out the HTTP client of one endpoint URL.
-// (*aeo.EgressGuard).PublicHTTPClient is the production implementation.
+// (*egress.Guard).PublicHTTPClient is the production implementation.
 type WebhookClientFactory interface {
 	PublicHTTPClient(url string) (*http.Client, error)
 }
@@ -161,10 +162,10 @@ func WebhookEndpointPause(failures int) time.Duration {
 	return WebhookBackoff(failures-WebhookEndpointPauseAfter+1, WebhookEndpointPauseBase, WebhookEndpointPauseMax)
 }
 
-// webhookEndpointPausedUntil is the stored paused_until after the given
+// WebhookEndpointPausedUntil is the stored paused_until after the given
 // number of consecutive failed sends, anchored at finishedAt; nil below
 // WebhookEndpointPauseAfter.
-func webhookEndpointPausedUntil(failures int, finishedAt time.Time) *time.Time {
+func WebhookEndpointPausedUntil(failures int, finishedAt time.Time) *time.Time {
 	pause := WebhookEndpointPause(failures)
 	if pause <= 0 {
 		return nil
@@ -253,11 +254,12 @@ type WebhookRuntime struct {
 	held    map[uint]struct{}
 	checked bool
 
-	mu      sync.Mutex
-	started bool
-	stopped bool
-	cancel  context.CancelFunc
-	exited  chan struct{}
+	loop *lifecycle.Loop
+	// logMu guards armed and stopLogged: Start logs once, when it arms the
+	// loop, and Stop once, when its join returns.
+	logMu      sync.Mutex
+	armed      bool
+	stopLogged bool
 }
 
 // NewWebhookRuntime builds the runtime over repo. clients hands out the
@@ -280,6 +282,8 @@ func NewWebhookRuntime(repo repository.WebhookRepository, clients WebhookClientF
 	for _, opt := range opts {
 		opt(r)
 	}
+	r.loop = lifecycle.NewLoop("webhook runtime", r.interval,
+		func(ctx context.Context) { _, _ = r.RunOnce(ctx) }, lifecycle.WithTicker(r.newTicker))
 	return r
 }
 
@@ -402,7 +406,7 @@ func (r *WebhookRuntime) RunOnce(ctx context.Context) (WebhookPassResult, error)
 	}
 	result.HeldEndpoints = len(held)
 
-	due, err := r.repo.ListDueDeliveries(ctx, now, webhookDiscoveryBatch, held)
+	due, err := r.repo.ListDueDeliveries(ctx, now, WebhookDiscoveryBatch, held)
 	if err != nil {
 		r.logPassError(ctx, "webhook_discover", err)
 		return result, err
@@ -565,7 +569,7 @@ func (r *WebhookRuntime) deliver(ctx context.Context, id uint) (string, bool, bo
 // nothing and reports false, so the group is not stopped on a pause that was
 // never stored (#586).
 func (r *WebhookRuntime) recordEndpointHealth(ctx context.Context, endpointID uint, outcome attemptOutcome) bool {
-	writeCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
+	writeCtx, cancel := context.WithTimeout(ctx, WebhookFinishTimeout)
 	defer cancel()
 	if outcome.succeeded {
 		if err := r.repo.RecordEndpointSuccess(writeCtx, endpointID); err != nil {
@@ -575,7 +579,7 @@ func (r *WebhookRuntime) recordEndpointHealth(ctx context.Context, endpointID ui
 	}
 	failures := outcome.failuresBefore + 1
 	finishedAt := r.now()
-	pausedUntil := webhookEndpointPausedUntil(failures, finishedAt)
+	pausedUntil := WebhookEndpointPausedUntil(failures, finishedAt)
 	updated, err := r.repo.RecordEndpointFailure(writeCtx, endpointID, outcome.failuresBefore, pausedUntil)
 	if err != nil {
 		r.logEndpointHealthError(endpointID, err)
@@ -602,10 +606,10 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 	// The two database reads carry their own bound: ctx is the work context,
 	// which Stop does not cancel, so without one a stuck read would hold the
 	// attempt (and the shutdown drain) past every deadline.
-	readCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
+	readCtx, cancel := context.WithTimeout(ctx, WebhookFinishTimeout)
 	endpoint, err := r.repo.GetEndpoint(readCtx, delivery.EndpointID)
 	cancel()
-	if err != nil && !isNotFound(err) {
+	if err != nil && !apperrors.IsNotFound(err) {
 		// A database failure is not a verdict on the endpoint: nothing is
 		// sent and the attempt is retried like a failed connection.
 		return attemptOutcome{errorCode: models.WebhookErrorConnectionFailed}
@@ -627,7 +631,7 @@ func (r *WebhookRuntime) attempt(ctx context.Context, delivery *models.WebhookDe
 		// The window is over: clear the previous secret, fenced on the expiry
 		// in the statement so a rotation committed since the read survives.
 		// A failure is housekeeping only and never blocks the send.
-		clearCtx, cancelClear := context.WithTimeout(ctx, webhookFinishTimeout)
+		clearCtx, cancelClear := context.WithTimeout(ctx, WebhookFinishTimeout)
 		err := r.repo.ClearExpiredPreviousSecret(clearCtx, endpoint.ID, now)
 		cancelClear()
 		if err != nil {
@@ -735,13 +739,13 @@ func sendWebhookOnce(ctx context.Context, clients WebhookClientFactory, url stri
 // classifyWebhookTransportError maps a failed request to an error code. The
 // error itself, which quotes the URL, is never kept.
 func classifyWebhookTransportError(reqCtx context.Context, err error) attemptOutcome {
-	if status, ok := aeo.RedirectStatus(err); ok {
+	if status, ok := egress.RedirectStatus(err); ok {
 		return attemptOutcome{httpStatus: &status, errorCode: models.WebhookErrorRedirect}
 	}
 	switch {
-	case errors.Is(err, aeo.ErrDestinationNotPermitted), errors.Is(err, aeo.ErrEndpointNotPermitted):
+	case errors.Is(err, egress.ErrDestinationNotPermitted), errors.Is(err, egress.ErrEndpointNotPermitted):
 		return attemptOutcome{errorCode: models.WebhookErrorDestinationRefused}
-	case errors.Is(err, aeo.ErrRedirectNotFollowed):
+	case errors.Is(err, egress.ErrRedirectNotFollowed):
 		return attemptOutcome{errorCode: models.WebhookErrorRedirect}
 	case errors.Is(reqCtx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return attemptOutcome{errorCode: models.WebhookErrorTimeout}
@@ -784,7 +788,7 @@ func (r *WebhookRuntime) finish(ctx context.Context, delivery *models.WebhookDel
 		fields["http_status"] = *outcome.httpStatus
 	}
 
-	writeCtx, cancel := context.WithTimeout(ctx, webhookFinishTimeout)
+	writeCtx, cancel := context.WithTimeout(ctx, WebhookFinishTimeout)
 	defer cancel()
 	if err := r.repo.FinishDelivery(writeCtx, delivery.ID, delivery.Attempts, result); err != nil {
 		r.log().WithFields(fields).WithError(utils.LogError(err)).Warn("Webhook delivery outcome not recorded")
@@ -805,64 +809,30 @@ func (r *WebhookRuntime) finish(ctx context.Context, delivery *models.WebhookDel
 // Start runs one pass at once on a goroutine derived from ctx, then one on
 // every tick. Starting twice, or after Stop, is a no-op.
 func (r *WebhookRuntime) Start(ctx context.Context) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.started || r.stopped {
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
+	wasRunning := r.loop.Running()
+	r.loop.Start(ctx)
+	if wasRunning || r.armed || !r.loop.Running() {
 		return
 	}
-	r.started = true
-	loopCtx, cancel := context.WithCancel(ctx)
-	r.cancel = cancel
-	exited := make(chan struct{})
-	r.exited = exited
-	ticks, stopTicker := r.newTicker(r.interval)
-	go r.loop(loopCtx, ticks, stopTicker, exited)
+	r.armed = true
 	r.log().WithField("operation", "webhook_runtime").Info("Webhook runtime started")
-}
-
-func (r *WebhookRuntime) loop(ctx context.Context, ticks <-chan time.Time, stopTicker func(), exited chan<- struct{}) {
-	defer close(exited)
-	defer stopTicker()
-	_, _ = r.RunOnce(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticks:
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		_, _ = r.RunOnce(ctx)
-	}
 }
 
 // Stop cancels the loop and waits for the goroutine, every attempt in flight
 // of the pool included, or for ctx to end. Once it returns nil the runtime writes
 // nothing. A repeated Stop after the join returns nil even on an ended ctx.
 func (r *WebhookRuntime) Stop(ctx context.Context) error {
-	r.mu.Lock()
-	r.stopped = true
-	cancel := r.cancel
-	exited := r.exited
-	r.mu.Unlock()
-
-	if cancel != nil {
-		cancel()
+	if err := r.loop.Stop(ctx); err != nil {
+		return err
 	}
-	if exited == nil {
-		return nil
-	}
-	select {
-	case <-exited:
-		return nil
-	default:
-	}
-	select {
-	case <-exited:
+	r.logMu.Lock()
+	logStopped := r.armed && !r.stopLogged
+	r.stopLogged = r.stopLogged || logStopped
+	r.logMu.Unlock()
+	if logStopped {
 		r.log().WithField("operation", "webhook_runtime").Info("Webhook runtime stopped")
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("webhook runtime did not stop before the deadline: %w", ctx.Err())
 	}
+	return nil
 }

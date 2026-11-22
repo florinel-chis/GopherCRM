@@ -18,6 +18,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // Manual redelivery of a logged delivery (#502): RedeliverDelivery puts a
@@ -52,7 +53,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 
 	seed := func(t *testing.T, endpointID uint, spec redeliverRow) models.WebhookDelivery {
 		t.Helper()
-		eventID, err := newWebhookEventID()
+		eventID, err := webhook.NewEventID()
 		require.NoError(t, err)
 		occurred := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
 		var lastAttempt *time.Time
@@ -96,7 +97,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 	}
 	// endpoint registers an endpoint on a fresh consumer, with no other row
 	// due, and returns it with a runtime on the real clock.
-	endpoint := func(t *testing.T, active bool) (*models.WebhookEndpointCreated, *webhookConsumer, *WebhookRuntime) {
+	endpoint := func(t *testing.T, active bool) (*models.WebhookEndpointCreated, *webhookConsumer, *webhook.WebhookRuntime) {
 		t.Helper()
 		env.clearDeliveries()
 		consumer := newWebhookConsumer(t)
@@ -175,7 +176,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		before := seed(t, hook.ID, redeliverRow{status: models.WebhookDeliveryPending, attempts: 2,
 			next: timePointer(time.Now().UTC().Add(time.Minute).Truncate(time.Second))})
 		_, err := env.endpoints.RedeliverDelivery(ctx, before.ID)
-		assert.ErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 		assert.Equal(t, before, env.delivery(before.ID))
 		assert.Empty(t, consumer.received())
 	})
@@ -185,7 +186,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		before := seed(t, hook.ID, redeliverRow{status: models.WebhookDeliverySending, attempts: 3,
 			lease: timePointer(time.Now().UTC().Add(time.Minute).Truncate(time.Second))})
 		_, err := env.endpoints.RedeliverDelivery(ctx, before.ID)
-		assert.ErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 		assert.Equal(t, before, env.delivery(before.ID))
 		assert.Empty(t, consumer.received())
 	})
@@ -199,7 +200,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		require.Equal(t, 5, claimed.Attempts)
 
 		_, err = env.endpoints.RedeliverDelivery(ctx, due.ID)
-		assert.ErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 		stored := env.delivery(due.ID)
 		assert.Equal(t, models.WebhookDeliverySending, stored.Status)
 		assert.Equal(t, claimed.Attempts, stored.Attempts, "the claimed attempts are kept")
@@ -255,7 +256,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		require.NoError(t, err)
 		pending := env.delivery(before.ID)
 		_, err = env.endpoints.RedeliverDelivery(ctx, before.ID)
-		assert.ErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 		assert.Equal(t, pending, env.delivery(before.ID), "the pending row is unchanged")
 	})
 
@@ -263,7 +264,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		hook, consumer, _ := endpoint(t, false)
 		before := failedRow(t, hook.ID, 0)
 		_, err := env.endpoints.RedeliverDelivery(ctx, before.ID)
-		assert.ErrorIs(t, err, ErrWebhookEndpointUnavailable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookEndpointUnavailable)
 		assert.Equal(t, before, env.delivery(before.ID))
 		assert.Empty(t, consumer.received())
 	})
@@ -273,7 +274,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		before := failedRow(t, hook.ID, 0)
 		require.NoError(t, env.db.Where("id = ?", hook.ID).Delete(&models.WebhookEndpoint{}).Error)
 		_, err := env.endpoints.RedeliverDelivery(ctx, before.ID)
-		assert.ErrorIs(t, err, ErrWebhookEndpointUnavailable)
+		assert.ErrorIs(t, err, webhook.ErrWebhookEndpointUnavailable)
 		assert.Equal(t, before, env.delivery(before.ID))
 	})
 
@@ -282,7 +283,7 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		require.NoError(t, env.db.Model(&models.WebhookDelivery{}).Select("COALESCE(MAX(id), 0)").Scan(&maxID).Error)
 		_, err := env.endpoints.RedeliverDelivery(ctx, maxID+1000)
 		assert.ErrorIs(t, err, apperrors.ErrNotFound)
-		assert.NotErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		assert.NotErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 	})
 
 	t.Run("log privacy", func(t *testing.T) {
@@ -298,10 +299,10 @@ func runWebhookRedeliver(t *testing.T, db *gorm.DB) {
 		_, err := env.endpoints.RedeliverDelivery(ctx, ok.ID)
 		require.NoError(t, err)
 		_, err = env.endpoints.RedeliverDelivery(ctx, ok.ID)
-		require.ErrorIs(t, err, ErrWebhookDeliveryNotRedeliverable)
+		require.ErrorIs(t, err, webhook.ErrWebhookDeliveryNotRedeliverable)
 		refused := failedRow(t, inactive.ID, 0)
 		_, err = env.endpoints.RedeliverDelivery(ctx, refused.ID)
-		require.ErrorIs(t, err, ErrWebhookEndpointUnavailable)
+		require.ErrorIs(t, err, webhook.ErrWebhookEndpointUnavailable)
 
 		logs := buffer.String()
 		require.Equal(t, 3, strings.Count(logs, `"operation":"webhook_delivery_redeliver"`), "one line per call: %s", logs)

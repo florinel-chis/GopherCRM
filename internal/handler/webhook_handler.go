@@ -10,7 +10,6 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
-	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/gin-gonic/gin"
@@ -47,11 +46,11 @@ type WebhookEndpointUpdateRequest struct {
 
 // WebhookHandler serves /webhooks.
 type WebhookHandler struct {
-	webhookService service.WebhookService
+	webhookService webhook.WebhookService
 }
 
 // NewWebhookHandler builds the handler.
-func NewWebhookHandler(webhookService service.WebhookService) *WebhookHandler {
+func NewWebhookHandler(webhookService webhook.WebhookService) *WebhookHandler {
 	return &WebhookHandler{webhookService: webhookService}
 }
 
@@ -84,7 +83,7 @@ func webhookHandlerLog(operation string) *logrus.Entry {
 
 // respondWebhookError maps a service error; the cause is never echoed.
 func respondWebhookError(c *gin.Context, logger *logrus.Entry, err error) {
-	var validation *service.WebhookValidationError
+	var validation *webhook.WebhookValidationError
 	switch {
 	case errors.As(err, &validation):
 		logger.WithField("error_code", utils.ErrCodeValidation).Warn("Webhook request refused")
@@ -166,11 +165,11 @@ func (h *WebhookHandler) CreateEndpoint(c *gin.Context) {
 	}
 	details := map[string]string{}
 	url := strings.TrimSpace(req.URL)
-	var validation *service.WebhookValidationError
-	if err := service.ValidateWebhookURL(url); errors.As(err, &validation) {
+	var validation *webhook.WebhookValidationError
+	if err := webhook.ValidateWebhookURL(url); errors.As(err, &validation) {
 		details[validation.Field] = validation.Message
 	}
-	if _, err := service.ValidateWebhookEventTypes(req.EventTypes); errors.As(err, &validation) {
+	if _, err := webhook.ValidateWebhookEventTypes(req.EventTypes); errors.As(err, &validation) {
 		details[validation.Field] = validation.Message
 	}
 	if len(details) > 0 {
@@ -179,7 +178,7 @@ func (h *WebhookHandler) CreateEndpoint(c *gin.Context) {
 		return
 	}
 
-	created, err := h.webhookService.CreateEndpoint(c.Request.Context(), service.WebhookEndpointInput{
+	created, err := h.webhookService.CreateEndpoint(c.Request.Context(), webhook.WebhookEndpointInput{
 		URL: url, EventTypes: req.EventTypes, IsActive: req.IsActive,
 	})
 	if err != nil {
@@ -292,7 +291,7 @@ func (h *WebhookHandler) UpdateEndpoint(c *gin.Context) {
 		utils.RespondBadRequest(c, "Invalid request format")
 		return
 	}
-	patch := service.WebhookEndpointPatch{EventTypes: req.EventTypes, IsActive: req.IsActive}
+	patch := webhook.WebhookEndpointPatch{EventTypes: req.EventTypes, IsActive: req.IsActive}
 	if req.URL != nil {
 		url := strings.TrimSpace(*req.URL)
 		patch.URL = &url
@@ -302,14 +301,14 @@ func (h *WebhookHandler) UpdateEndpoint(c *gin.Context) {
 		return
 	}
 	details := map[string]string{}
-	var validation *service.WebhookValidationError
+	var validation *webhook.WebhookValidationError
 	if patch.URL != nil {
-		if err := service.ValidateWebhookURL(*patch.URL); errors.As(err, &validation) {
+		if err := webhook.ValidateWebhookURL(*patch.URL); errors.As(err, &validation) {
 			details[validation.Field] = validation.Message
 		}
 	}
 	if patch.EventTypes != nil {
-		if _, err := service.ValidateWebhookEventTypes(patch.EventTypes); errors.As(err, &validation) {
+		if _, err := webhook.ValidateWebhookEventTypes(patch.EventTypes); errors.As(err, &validation) {
 			details[validation.Field] = validation.Message
 		}
 	}
@@ -477,9 +476,9 @@ func (h *WebhookHandler) RedeliverDelivery(c *gin.Context) {
 		utils.RespondSuccess(c, http.StatusOK, delivery)
 	case errors.Is(err, apperrors.ErrNotFound):
 		utils.RespondNotFound(c, "Webhook delivery not found")
-	case errors.Is(err, service.ErrWebhookDeliveryNotRedeliverable):
+	case errors.Is(err, webhook.ErrWebhookDeliveryNotRedeliverable):
 		utils.RespondConflict(c, "Webhook delivery is pending or being sent")
-	case errors.Is(err, service.ErrWebhookEndpointUnavailable):
+	case errors.Is(err, webhook.ErrWebhookEndpointUnavailable):
 		utils.RespondConflict(c, "Webhook endpoint is deleted or inactive")
 	default:
 		respondWebhookError(c, logger.WithField("delivery_id", id), err)

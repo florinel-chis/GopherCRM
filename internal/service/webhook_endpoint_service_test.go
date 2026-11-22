@@ -26,11 +26,11 @@ func TestWebhookEndpointService(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("the secret is returned once and stored sealed", func(t *testing.T) {
-		created, err := env.endpoints.CreateEndpoint(ctx, WebhookEndpointInput{URL: " https://example.com/hook ",
+		created, err := env.endpoints.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: " https://example.com/hook ",
 			EventTypes: []string{models.WebhookEventTicketCreated, models.WebhookEventLeadCreated, models.WebhookEventLeadCreated}})
 		require.NoError(t, err)
-		require.True(t, strings.HasPrefix(created.Secret, WebhookSecretPrefix))
-		key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(created.Secret, WebhookSecretPrefix))
+		require.True(t, strings.HasPrefix(created.Secret, webhook.WebhookSecretPrefix))
+		key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(created.Secret, webhook.WebhookSecretPrefix))
 		require.NoError(t, err)
 		assert.Len(t, key, 32)
 		assert.Equal(t, "https://example.com/hook", created.URL)
@@ -39,8 +39,8 @@ func TestWebhookEndpointService(t *testing.T) {
 		require.NoError(t, env.db.First(&stored, created.ID).Error)
 		assert.True(t, utils.IsSealed(stored.SecretSealed))
 		assert.NotContains(t, stored.SecretSealed, created.Secret)
-		assert.NotContains(t, stored.SecretSealed, strings.TrimPrefix(created.Secret, WebhookSecretPrefix))
-		opened, err := utils.NewSecretBox(webhookTestMasterSecret, WebhookSecretContext).Open(stored.SecretSealed)
+		assert.NotContains(t, stored.SecretSealed, strings.TrimPrefix(created.Secret, webhook.WebhookSecretPrefix))
+		opened, err := utils.NewSecretBox(webhookTestMasterSecret, webhook.WebhookSecretContext).Open(stored.SecretSealed)
 		require.NoError(t, err)
 		assert.Equal(t, created.Secret, opened)
 		_, err = utils.NewSecretBox(webhookTestMasterSecret, "configuration-secret").Open(stored.SecretSealed)
@@ -60,7 +60,7 @@ func TestWebhookEndpointService(t *testing.T) {
 		list, _, err := env.endpoints.ListEndpoints(ctx, 0, 100, "", "")
 		require.NoError(t, err)
 		active := false
-		updated, err := env.endpoints.UpdateEndpoint(ctx, created.ID, WebhookEndpointPatch{IsActive: &active})
+		updated, err := env.endpoints.UpdateEndpoint(ctx, created.ID, webhook.WebhookEndpointPatch{IsActive: &active})
 		require.NoError(t, err)
 		for name, value := range map[string]interface{}{"get": got, "list": list, "update": updated} {
 			body, err := json.Marshal(value)
@@ -81,7 +81,7 @@ func TestWebhookEndpointService(t *testing.T) {
 
 	t.Run("is_active false on create is stored false and gets no row", func(t *testing.T) {
 		inactive := false
-		created, err := env.endpoints.CreateEndpoint(ctx, WebhookEndpointInput{URL: "https://example.com/off",
+		created, err := env.endpoints.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: "https://example.com/off",
 			EventTypes: []string{models.WebhookEventLeadCreated}, IsActive: &inactive})
 		require.NoError(t, err)
 		assert.False(t, created.IsActive)
@@ -95,7 +95,7 @@ func TestWebhookEndpointService(t *testing.T) {
 	})
 
 	t.Run("validation and unknown ids", func(t *testing.T) {
-		for _, input := range []WebhookEndpointInput{
+		for _, input := range []webhook.WebhookEndpointInput{
 			{URL: "http://example.com/x", EventTypes: []string{models.WebhookEventLeadCreated}},
 			{URL: "https://example.com/x?a=1", EventTypes: []string{models.WebhookEventLeadCreated}},
 			{URL: "https://10.0.0.5/x", EventTypes: []string{models.WebhookEventLeadCreated}},
@@ -104,28 +104,28 @@ func TestWebhookEndpointService(t *testing.T) {
 			{URL: "https://example.com/x", EventTypes: []string{"lead.archived"}},
 		} {
 			_, err := env.endpoints.CreateEndpoint(ctx, input)
-			var validation *WebhookValidationError
+			var validation *webhook.WebhookValidationError
 			require.ErrorAs(t, err, &validation)
 			assert.ErrorIs(t, err, apperrors.ErrValidation)
 			assert.NotContains(t, validation.Message, "example.com")
 		}
-		_, err := env.endpoints.UpdateEndpoint(ctx, 1, WebhookEndpointPatch{})
-		assert.ErrorAs(t, err, new(*WebhookValidationError))
+		_, err := env.endpoints.UpdateEndpoint(ctx, 1, webhook.WebhookEndpointPatch{})
+		assert.ErrorAs(t, err, new(*webhook.WebhookValidationError))
 		_, err = env.endpoints.GetEndpoint(ctx, 999999)
 		assert.ErrorIs(t, err, apperrors.ErrNotFound)
 		yes := true
-		_, err = env.endpoints.UpdateEndpoint(ctx, 999999, WebhookEndpointPatch{IsActive: &yes})
+		_, err = env.endpoints.UpdateEndpoint(ctx, 999999, webhook.WebhookEndpointPatch{IsActive: &yes})
 		assert.ErrorIs(t, err, apperrors.ErrNotFound)
 		assert.ErrorIs(t, env.endpoints.DeleteEndpoint(ctx, 999999), apperrors.ErrNotFound)
 
-		unwired := NewWebhookService(nil, nil, nil)
-		_, err = unwired.CreateEndpoint(ctx, WebhookEndpointInput{URL: "https://example.com/x", EventTypes: []string{models.WebhookEventLeadCreated}})
-		assert.ErrorIs(t, err, ErrWebhooksUnavailable)
+		unwired := webhook.NewWebhookService(nil, nil, nil)
+		_, err = unwired.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: "https://example.com/x", EventTypes: []string{models.WebhookEventLeadCreated}})
+		assert.ErrorIs(t, err, webhook.ErrWebhooksUnavailable)
 	})
 
 	t.Run("the delivery log refuses an unknown event_type with the catalogue's message", func(t *testing.T) {
 		_, _, err := env.endpoints.ListDeliveries(ctx, repository.WebhookDeliveryFilter{EventType: "lead.archived"}, 0, 20)
-		var validation *WebhookValidationError
+		var validation *webhook.WebhookValidationError
 		require.ErrorAs(t, err, &validation)
 		assert.ErrorIs(t, err, apperrors.ErrValidation)
 		assert.Equal(t, "event_type", validation.Field)
