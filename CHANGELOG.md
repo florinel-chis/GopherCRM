@@ -1783,6 +1783,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TestTaskRowLockProductionWiring` (test only, #663) now registers its query callback before the
+  router starts the background runtimes and no longer removes it while they may still run, so the
+  race detector no longer reports the bulk-operation recovery sweep reading gorm's callback list
+  while the test changes it.
 - The validation planner now treats the AEO service files split out of `aeo_service.go` in #651
   (`aeo_profile.go`, `aeo_prompts.go`, `aeo_prompt_generation.go`, `aeo_runs.go`,
   `aeo_reports.go`, `aeo_normalize.go` under `internal/service/`) as AEO paths, so an AEO-only

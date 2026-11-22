@@ -36,16 +36,11 @@ func TestTaskRowLockProductionWiring(t *testing.T) {
 		AssignedToID: admin.ID}
 	require.NoError(t, models.DB.Create(task).Error)
 
-	backgroundCtx, stopBackground := context.WithCancel(context.Background())
-	t.Cleanup(stopBackground)
-	router, stop := setupRouter(backgroundCtx, boot.cfg)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
-		defer cancel()
-		_ = stop(ctx)
-	})
-
 	// Locked reads of the tasks table, recorded only while a request runs.
+	// Registered before setupRouter starts the background runtimes and never
+	// removed: gorm's callback list is not safe to change while the bulk-operation
+	// recovery sweep runs queries. bootAutomation opens a fresh models.DB per root
+	// and closes it in its cleanup, which runs after the drain below.
 	var mu sync.Mutex
 	recording := false
 	lockedTaskReads := 0
@@ -63,7 +58,15 @@ func TestTaskRowLockProductionWiring(t *testing.T) {
 			lockedTaskReads++
 		}
 	}))
-	t.Cleanup(func() { _ = models.DB.Callback().Query().Remove(callback) })
+
+	backgroundCtx, stopBackground := context.WithCancel(context.Background())
+	t.Cleanup(stopBackground)
+	router, stop := setupRouter(backgroundCtx, boot.cfg)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), automationBootTimeout)
+		defer cancel()
+		_ = stop(ctx)
+	})
 
 	token, err := service.NewAuthService(repository.NewUserRepository(models.DB),
 		repository.NewAPIKeyRepository(models.DB), boot.cfg.JWT).GenerateJWT(admin)
