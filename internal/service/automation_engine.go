@@ -10,6 +10,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -104,6 +105,11 @@ type AutomationEngine struct {
 	now           func() time.Time
 	owner         *automationOwner
 
+	// webhooks writes the lead.updated / ticket.updated rows of an
+	// assign_owner step that changed the record (#408), bound to the step
+	// transaction. webhook.Nop unless WithAutomationWebhooks is given.
+	webhooks webhook.Emitter
+
 	// Instance-local seams, nil in production. The regression roots use them
 	// to pause a step transaction after its first read, to inject a fault
 	// after an effect or after a send, and to act between the two email
@@ -148,9 +154,27 @@ type AutomationEngine struct {
 	recoveryObserver func(runID uint, outcome string)
 }
 
+// AutomationEngineOption configures an AutomationEngine at construction.
+type AutomationEngineOption func(*AutomationEngine)
+
+// WithAutomationWebhooks makes the assign_owner step emit lead.updated (lead
+// run) or ticket.updated (ticket run) through e, bound to the step
+// transaction, when the new owner or assignee changed the record's
+// WebhookState (#408). A deal run emits nothing, and a dry run runs no effect
+// and writes no row. A nil e means webhook.Nop.
+func WithAutomationWebhooks(e webhook.Emitter) AutomationEngineOption {
+	return func(engine *AutomationEngine) {
+		if e == nil {
+			e = webhook.Nop
+		}
+		engine.webhooks = e
+	}
+}
+
 // NewAutomationEngine wires the engine. The mailer may be nil, in which case
-// every send_email step fails with mail_failed.
-func NewAutomationEngine(repo repository.AutomationRepository, notifications repository.NotificationRepository, tasks repository.TaskRepository, users repository.UserRepository, m mailer.Mailer, txManager *utils.TransactionManager) *AutomationEngine {
+// every send_email step fails with mail_failed. Without WithAutomationWebhooks
+// the engine writes no webhook rows.
+func NewAutomationEngine(repo repository.AutomationRepository, notifications repository.NotificationRepository, tasks repository.TaskRepository, users repository.UserRepository, m mailer.Mailer, txManager *utils.TransactionManager, opts ...AutomationEngineOption) *AutomationEngine {
 	e := &AutomationEngine{
 		repo:          repo,
 		notifications: notifications,
@@ -160,6 +184,10 @@ func NewAutomationEngine(repo repository.AutomationRepository, notifications rep
 		txManager:     txManager,
 		now:           time.Now,
 		owner:         newAutomationOwner(),
+		webhooks:      webhook.Nop,
+	}
+	for _, opt := range opts {
+		opt(e)
 	}
 	e.instanceID = newAutomationInstanceID()
 	e.heartbeatInterval = automationRunHeartbeatInterval

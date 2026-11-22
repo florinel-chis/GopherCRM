@@ -9,6 +9,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
 )
@@ -147,7 +148,7 @@ type stepPlan struct {
 
 // planStep decides what a single-transaction step does, against the locked
 // record. The effect closure runs after the conditional advance.
-func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationRepository, run *models.AutomationRun, rule *models.AutomationRule, step models.AutomationStep, rec *automationRecord, now time.Time) (*stepPlan, error) {
+func (e *AutomationEngine) planStep(ctx context.Context, tx *gorm.DB, r repository.AutomationRepository, run *models.AutomationRun, rule *models.AutomationRule, step models.AutomationStep, rec *automationRecord, now time.Time) (*stepPlan, error) {
 	pos := step.Position
 	stepCount := len(rule.Steps)
 	cfg := step.Config
@@ -235,8 +236,18 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 				if err = r.SetLeadOwner(rec.id, target.ID, now); err != nil {
 					return err
 				}
-				err = automationLeadUpdated(r, rec.id, rec.lead.Status, rec.lead.Status, models.AutomationOriginAutomation, nil)
+				if err = automationLeadUpdated(r, rec.id, rec.lead.Status, rec.lead.Status, models.AutomationOriginAutomation, nil); err != nil {
+					return err
+				}
+				// lead.updated (#408) when the new owner changed the state of
+				// the lead read under lock in this step.
+				after := *rec.lead
+				after.OwnerID = target.ID
+				if rec.lead.WebhookState() != after.WebhookState() {
+					err = e.webhooks.Bind(tx).Updated(ctx, webhook.Lead, rec.id)
+				}
 			case models.AutomationEntityDeal:
+				// No webhook: deals are not in the webhook catalogue.
 				if err = r.SetDealOwner(rec.id, target.ID, now); err != nil {
 					return err
 				}
@@ -248,7 +259,17 @@ func (e *AutomationEngine) planStep(tx *gorm.DB, r repository.AutomationReposito
 				if err = r.SetTicketAssignee(rec.id, target.ID, now); err != nil {
 					return err
 				}
-				err = automationTicketUpdated(r, rec.id, rec.ticket.Status, rec.ticket.Status, models.AutomationOriginAutomation, nil)
+				if err = automationTicketUpdated(r, rec.id, rec.ticket.Status, rec.ticket.Status, models.AutomationOriginAutomation, nil); err != nil {
+					return err
+				}
+				// ticket.updated (#408) when the new assignee changed the
+				// state of the ticket read under lock in this step.
+				after := *rec.ticket
+				assignee := target.ID
+				after.AssignedToID = &assignee
+				if rec.ticket.WebhookState() != after.WebhookState() {
+					err = e.webhooks.Bind(tx).Updated(ctx, webhook.Ticket, rec.id)
+				}
 			}
 			return err
 		}
@@ -395,7 +416,7 @@ func (e *AutomationEngine) executeStep(run *models.AutomationRun, rule *models.A
 				Status: models.AutomationRunCancelled, NextPosition: pos, FinishedAt: &now, CancelReason: models.AutomationCancelRecordDeleted,
 			}, now)
 		}
-		plan, err := e.planStep(tx, r, run, rule, step, rec, now)
+		plan, err := e.planStep(ctx, tx, r, run, rule, step, rec, now)
 		if err != nil {
 			return err
 		}

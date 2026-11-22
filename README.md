@@ -469,18 +469,19 @@ any of nine event types:
 | `lead.created` | a lead is created through the API, or a form creates a new lead (a repeat enquiry to an existing lead sends nothing) |
 | `customer.created` | a customer is created through the API or by converting a lead |
 | `ticket.created` | a ticket is created through the API, or a confirmed form submission opens one (a duplicate key sends nothing) |
-| `lead.updated` | `PUT /api/v1/leads/{id}` changed at least one stored value of the lead, or `POST /api/v1/leads/bulk/status` changed its status (one event per lead) |
+| `lead.updated` | `PUT /api/v1/leads/{id}` changed at least one stored value of the lead, `POST /api/v1/leads/{id}/assign` changed its owner, `POST /api/v1/leads/{id}/convert` converted it (next to `customer.created`), `POST /api/v1/leads/bulk/status` changed its status (one event per lead), or an automation assign-owner step changed its owner |
 | `customer.updated` | `PUT /api/v1/customers/{id}` changed at least one stored value of the customer |
-| `ticket.updated` | `PUT /api/v1/tickets/{id}` changed at least one stored value of the ticket, or `POST /api/v1/tickets/bulk/status` changed its status (one event per ticket) |
+| `ticket.updated` | `PUT /api/v1/tickets/{id}` changed at least one stored value of the ticket, `POST /api/v1/tickets/bulk/status` changed its status (one event per ticket), or an automation assign-owner step changed its assignee |
 | `lead.deleted` | `DELETE /api/v1/leads/{id}`, and every erasure that reaches the lead: erasing the customer it was converted into, or that customer's login (`DELETE /api/v1/customers/{id}`, `DELETE /api/v1/users/{id}`) |
 | `customer.deleted` | `DELETE /api/v1/customers/{id}`, and the erasure of a lead converted into the customer or of the customer's login (`DELETE /api/v1/leads/{id}` by an admin, `DELETE /api/v1/users/{id}`) |
 | `ticket.deleted` | `DELETE /api/v1/tickets/{id}` |
 
-An update that sends only the values already stored answers 200 and sends nothing. The updated
-events come from those three `PUT` routes and the two bulk status endpoints only: deleting or
-erasing a record, converting a lead (still `customer.created` alone), assigning a lead or a
-customer, a ticket comment, a repeat form enquiry, an automation rule step and a company delete
-that unlinks its records send no updated event. The event says that the record changed, not what
+An update that sends only the values already stored answers 200 and sends nothing, and assigning
+a lead to its current owner sends nothing either. The updated events come from those three `PUT`
+routes, lead assignment and conversion, the two bulk status endpoints and the automation
+assign-owner step only: deleting or erasing a record, assigning a customer, a ticket comment, a
+repeat form enquiry, the other automation steps and a company delete that unlinks its records send
+no updated event. The event says that the record changed, not what
 changed: fetch the record to see its current state.
 
 A deleted event goes to every active endpoint subscribed to it, whether or not that endpoint

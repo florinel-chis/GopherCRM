@@ -341,7 +341,7 @@ func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.E
 		if err := automationTicketUpdated(automationTx(s.automation, tx), ticket.ID, locked.Status, ticket.Status, models.AutomationOriginUser, nil); err != nil {
 			return err
 		}
-		if !ticketStoredValuesChanged(locked, ticket) {
+		if locked.WebhookState() == ticket.WebhookState() {
 			return nil
 		}
 		return s.webhooks.Bind(tx).Updated(ctx, webhook.Ticket, ticket.ID)
@@ -353,19 +353,6 @@ func (s *ticketService) updateWithEvents(ticket *models.Ticket, logger *logrus.E
 	attachTicketAssignee(ticket, validatedAssignee, existing)
 	logger.WithField("status_changed", existing.Status != ticket.Status).Info("Ticket updated successfully")
 	return nil
-}
-
-// ticketStoredValuesChanged reports whether an update changed any column a
-// ticket update can change: the rule of the ticket.updated webhook event
-// (#408). due_at is compared as an instant; updated_at is not part of it.
-func ticketStoredValuesChanged(before, after *models.Ticket) bool {
-	return before.Title != after.Title ||
-		before.Description != after.Description ||
-		before.Status != after.Status ||
-		before.Priority != after.Priority ||
-		!equalUintPtr(before.AssignedToID, after.AssignedToID) ||
-		before.Resolution != after.Resolution ||
-		!equalTimePtr(before.DueAt, after.DueAt)
 }
 
 // errTicketLockingReadUnavailable is returned by a wired Update whose ticket

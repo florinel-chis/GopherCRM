@@ -45,10 +45,11 @@ type leadService struct {
 	webhooks webhook.Emitter
 }
 
-// WithLeadWebhooks makes Create emit lead.created, Update lead.updated (#408,
-// when a stored value changed) and ConvertToCustomer customer.created (inside
-// each attempt) through e, bound to the transaction that commits the record
-// (#345). A nil e means webhook.Nop: no webhooks.
+// WithLeadWebhooks makes Create emit lead.created, Update and Assign
+// lead.updated (#408, when the lead's WebhookState changed) and
+// ConvertToCustomer customer.created and lead.updated (inside each attempt)
+// through e, bound to the transaction that commits the record (#345). A nil e
+// means webhook.Nop: no webhooks.
 func WithLeadWebhooks(e webhook.Emitter) LeadServiceOption {
 	return func(s *leadService) {
 		if e == nil {
@@ -378,7 +379,7 @@ func (s *leadService) applyUpdate(ctx context.Context, logger *logrus.Entry, id 
 		}
 	}
 	previousStatus := lead.Status
-	before := *lead
+	before := lead.WebhookState()
 
 	// Apply updates
 	if firstName, ok := updates["first_name"].(string); ok {
@@ -443,7 +444,7 @@ func (s *leadService) applyUpdate(ctx context.Context, logger *logrus.Entry, id 
 	if err := automationLeadUpdated(events, lead.ID, previousStatus, lead.Status, models.AutomationOriginUser, nil); err != nil {
 		return nil, err
 	}
-	if leadStoredValuesChanged(&before, lead) {
+	if before != lead.WebhookState() {
 		if err := hooks.Updated(ctx, webhook.Lead, lead.ID); err != nil {
 			return nil, err
 		}
@@ -451,29 +452,11 @@ func (s *leadService) applyUpdate(ctx context.Context, logger *logrus.Entry, id 
 	return lead, nil
 }
 
-// leadStoredValuesChanged reports whether an update changed any column it can
-// write: the rule of the lead.updated webhook event (#408). updated_at is not
-// part of it.
-func leadStoredValuesChanged(before, after *models.Lead) bool {
-	return before.FirstName != after.FirstName ||
-		before.LastName != after.LastName ||
-		before.Email != after.Email ||
-		before.Phone != after.Phone ||
-		before.Company != after.Company ||
-		before.Position != after.Position ||
-		before.Source != after.Source ||
-		before.Status != after.Status ||
-		before.Classification != after.Classification ||
-		before.ExternalID != after.ExternalID ||
-		before.Notes != after.Notes ||
-		!equalUintPtr(before.CompanyID, after.CompanyID) ||
-		before.OwnerID != after.OwnerID
-}
-
 // Assign changes a lead's owner in one transaction: a locking read of the lead,
 // the visibility policy on that row (so a sales user who just handed the lead
-// over is refused), a locking read of the new owner, the write and its
-// lead_updated event. Unlike an update, it always checks the owner it names,
+// over is refused), a locking read of the new owner, the write, its
+// lead_updated automation event and, when the owner changed, its lead.updated
+// webhook rows (#408; assigning the current owner again writes none). Unlike an update, it always checks the owner it names,
 // even the lead's current one: an assignment states that this user should own
 // the lead now. A converted lead can be assigned; status and customer_id stay
 // as they were.
@@ -505,12 +488,18 @@ func (s *leadService) Assign(ctx context.Context, leadID, ownerID uint, actor Le
 		if err := checkLeadOwner(logger, s.lockedUserRead(tx), leadID, ownerID); err != nil {
 			return err
 		}
+		before := lead.WebhookState()
 		lead.OwnerID = ownerID
 		if err := s.leadRepo.WithTx(tx).Update(lead); err != nil {
 			return err
 		}
 		if err := automationLeadUpdated(automationTx(s.automation, tx), leadID, lead.Status, lead.Status, models.AutomationOriginUser, nil); err != nil {
 			return err
+		}
+		if before != lead.WebhookState() {
+			if err := s.webhooks.Bind(tx).Updated(ctx, webhook.Lead, leadID); err != nil {
+				return err
+			}
 		}
 		assigned = lead
 		return nil

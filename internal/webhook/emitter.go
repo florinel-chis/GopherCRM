@@ -30,18 +30,22 @@ import (
 // (customer.created, the latter inside each retry attempt), TicketService.Create
 // and form ticket intake with outcome created (ticket.created).
 //
-// The update paths (#408): LeadService.Update (lead.updated),
-// CustomerService.Update (customer.updated), TicketService.Update
-// (ticket.updated), and BulkSetLeadStatus / BulkSetTicketStatus (one
+// The update paths (#408): LeadService.Update and LeadService.Assign
+// (lead.updated), LeadService.ConvertToCustomer (lead.updated next to
+// customer.created, inside each retry attempt), CustomerService.Update
+// (customer.updated), TicketService.Update (ticket.updated), the automation
+// assign_owner step on a lead or ticket run (lead.updated / ticket.updated, in
+// the step transaction), and BulkSetLeadStatus / BulkSetTicketStatus (one
 // lead.updated / ticket.updated per record in one call, so the endpoints are
 // read once per batch). An updated event is written only when the write
-// changed at least one stored column of the record, comparing the row read
-// under lock inside the writing transaction with the row written (updated_at
-// excluded): an update that sends the stored values writes no row. The
-// caller's values come from a read made before the transaction, so a write
-// that reverts a column another request committed in between is a change and
-// emits an event. Assign, conversion, delete, ticket comments, automation
-// steps and bulk task status emit no updated event.
+// changed the record's WebhookState() (internal/models), the rule of the
+// event: the state of the row read under lock inside the writing transaction
+// is compared with the state written (updated_at excluded), so an update that
+// sends the stored values writes no row. The caller's values come from a read
+// made before the transaction, so a write that reverts a column another
+// request committed in between is a change and emits an event.
+// CustomerService.Assign, delete, ticket comments, the other automation steps
+// and bulk task status emit no updated event.
 //
 // The deleted paths (#437): TicketService.Delete (ticket.deleted, in one
 // transaction with the soft delete when the service is wired), and every
