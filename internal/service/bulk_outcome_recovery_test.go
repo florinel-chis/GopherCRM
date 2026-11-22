@@ -148,7 +148,7 @@ func runBulkOutcomeRecovery(t *testing.T, engine bulkRecoveryEngine) {
 
 		ok := NewBulkStatusService(repository.NewBulkOperationRepository(env.db), repository.NewBulkStatusRepository(env.db),
 			env.txManager, logger, WithBulkAutomationEvents(env.repo))
-		result, err := ok.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+		result, err := ok.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 		require.NoError(t, err)
 		assert.Equal(t, 1, result.Updated)
 		rows := operations(t, env.db)
@@ -159,7 +159,7 @@ func runBulkOutcomeRecovery(t *testing.T, engine bulkRecoveryEngine) {
 
 		faulty := NewBulkStatusService(completeFaultOperationRepo{BulkOperationRepository: repository.NewBulkOperationRepository(env.db)},
 			repository.NewBulkStatusRepository(env.db), env.txManager, logger, WithBulkAutomationEvents(env.repo))
-		_, err = faulty.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusQualified)
+		_, err = faulty.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusQualified)
 		require.ErrorIs(t, err, errCompleteFault, "the caller gets the completion's error")
 
 		assert.Equal(t, models.LeadStatusContacted, env.lead(lead.ID).Status, "no record status is committed")
@@ -185,7 +185,7 @@ func runBulkOutcomeRecovery(t *testing.T, engine bulkRecoveryEngine) {
 		// its bounded failed write times out behind the same holder.
 		err := cancelWhileWaiting(t, func() bool { return holder.held() && pooled() }, holder.release,
 			func(ctx context.Context) error {
-				_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+				_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 				return err
 			})
 		require.ErrorIs(t, err, context.Canceled)
@@ -240,7 +240,7 @@ func runBulkOutcomeRecovery(t *testing.T, engine bulkRecoveryEngine) {
 		}
 		svc := NewBulkStatusService(operationRepo, statusRepo, env.txManager, logger, WithBulkAutomationEvents(env.repo))
 
-		_, err := svc.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusQualified)
+		_, err := svc.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusQualified)
 		require.NoError(t, sweepErr)
 		require.EqualValues(t, 1, sweptCount, "the sweep failed the batch's row")
 

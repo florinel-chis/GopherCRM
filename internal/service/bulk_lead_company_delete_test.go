@@ -78,7 +78,7 @@ func TestBulkLeadStatusVsCompanyDeleteMySQL(t *testing.T) {
 			bulkDone := make(chan error, 1)
 			deleteDone := make(chan error, 1)
 			runBulk := func() {
-				_, err := bulk.BulkSetLeadStatus(context.Background(), f.env.admin.ID, models.RoleAdmin,
+				_, err := bulk.BulkSetLeadStatus(context.Background(), f.env.admin.ID, models.PermissionScopeAll,
 					[]uint{third.ID, first.ID, second.ID}, models.LeadStatusContacted)
 				bulkDone <- err
 			}

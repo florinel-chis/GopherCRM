@@ -242,21 +242,22 @@ func (s *automationService) DryRunDraft(rule *models.AutomationRule, entityType 
 
 // --- Runs --------------------------------------------------------------------
 
-// runScopeFor is the role scope of the run history: an admin sees every run,
-// a sales user the runs on the leads and deals it owns, and support and
-// customer callers are refused before any query.
+// runScopeFor is the scope of the run history, from the viewer's
+// automation.runs_view scope: all sees every run, own the runs on the leads
+// and deals the viewer owns, and a viewer without the key is refused before
+// any query.
 func runScopeFor(viewer LeadViewer) (repository.AutomationRunScope, error) {
-	switch viewer.Role {
-	case models.RoleAdmin:
+	switch viewer.Scope {
+	case models.PermissionScopeAll:
 		return repository.AutomationRunScope{}, nil
-	case models.RoleSales:
+	case models.PermissionScopeOwn:
 		if viewer.UserID == 0 {
-			return repository.AutomationRunScope{}, fmt.Errorf("sales viewer without an id: %w", apperrors.ErrForbidden)
+			return repository.AutomationRunScope{}, fmt.Errorf("own-scope viewer without an id: %w", apperrors.ErrForbidden)
 		}
 		owner := viewer.UserID
 		return repository.AutomationRunScope{OwnerID: &owner}, nil
 	default:
-		return repository.AutomationRunScope{}, fmt.Errorf("role %q has no access to automation runs: %w", viewer.Role, apperrors.ErrForbidden)
+		return repository.AutomationRunScope{}, fmt.Errorf("scope %q has no access to automation runs: %w", viewer.Scope, apperrors.ErrForbidden)
 	}
 }
 

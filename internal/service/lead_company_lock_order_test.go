@@ -367,7 +367,7 @@ func TestLeadCompanyLockOrderOutcomesSQLite(t *testing.T) {
 			if deleteFirst {
 				deleteCompany(t, company)
 			}
-			_, err := f.bulk.BulkSetLeadStatus(ctx, f.env.admin.ID, models.RoleAdmin, []uint{second.ID, first.ID}, models.LeadStatusContacted)
+			_, err := f.bulk.BulkSetLeadStatus(ctx, f.env.admin.ID, models.PermissionScopeAll, []uint{second.ID, first.ID}, models.LeadStatusContacted)
 			require.NoError(t, err)
 			if !deleteFirst {
 				deleteCompany(t, company)

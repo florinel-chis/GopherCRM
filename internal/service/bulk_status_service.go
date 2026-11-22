@@ -193,10 +193,11 @@ func (s *bulkStatusService) recordBulkStatusOutcome(ctx context.Context, operati
 
 // BulkSetLeadStatus sets one status on every listed lead.
 //
-// Admins may update any lead; sales users only leads they own, and a batch
-// containing even one lead they do not own is refused in full, naming those
-// leads. Support and customer users have no access to leads at all.
-func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
+// scope is the caller's leads.update scope. At all (admin) any lead may be
+// updated; at own (sales) only leads the caller owns, and a batch containing
+// even one lead it does not own is refused in full, naming those leads. A
+// caller without the key (support, customer) has no access to leads at all.
+func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
@@ -208,7 +209,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 	if status == models.LeadStatusConverted {
 		return nil, ConvertedStatusRefusal()
 	}
-	if actorRole != models.RoleAdmin && actorRole != models.RoleSales {
+	if scope != models.PermissionScopeAll && scope != models.PermissionScopeOwn {
 		return nil, bulkStatusForbidden("Only sales and admin users can update leads", nil)
 	}
 
@@ -230,7 +231,7 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 		notOwned := make([]uint, 0)
 		for _, lead := range leads {
 			found[lead.ID] = struct{}{}
-			if actorRole == models.RoleSales && lead.OwnerID != actorID {
+			if scope == models.PermissionScopeOwn && lead.OwnerID != actorID {
 				notOwned = append(notOwned, lead.ID)
 			}
 		}
@@ -268,12 +269,13 @@ func (s *bulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint,
 
 // BulkSetTicketStatus sets one status on every listed ticket.
 //
-// Admins may update any ticket, support users only tickets assigned to them.
-// Sales users are read-only on tickets and customers cannot update them at all,
-// so both are refused outright. A closed ticket cannot be reopened here either:
+// scope is the caller's tickets.update scope. At all (admin) any ticket may be
+// updated; at own (support) only tickets assigned to the caller. A caller
+// without the key (sales, which is read-only on tickets, and customers) is
+// refused outright. A closed ticket cannot be reopened here either:
 // the single-record update refuses that transition, and the bulk endpoint must
 // not be a way around it.
-func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
@@ -281,13 +283,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 	if !isValidTicketStatus(status) {
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid ticket status: %s", status))
 	}
-	switch actorRole {
-	case models.RoleAdmin, models.RoleSupport:
-	case models.RoleSales:
-		return nil, bulkStatusForbidden("Sales users cannot update tickets", nil)
-	case models.RoleCustomer:
-		return nil, bulkStatusForbidden("Customers cannot update tickets", nil)
-	default:
+	if scope != models.PermissionScopeAll && scope != models.PermissionScopeOwn {
 		return nil, bulkStatusForbidden("Your role cannot update tickets", nil)
 	}
 
@@ -304,7 +300,7 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 		closed := make([]uint, 0)
 		for _, ticket := range tickets {
 			found[ticket.ID] = struct{}{}
-			if actorRole == models.RoleSupport &&
+			if scope == models.PermissionScopeOwn &&
 				(ticket.AssignedToID == nil || *ticket.AssignedToID != actorID) {
 				notAssigned = append(notAssigned, ticket.ID)
 			}
@@ -349,19 +345,24 @@ func (s *bulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uin
 
 // BulkSetTaskStatus sets one status on every listed task.
 //
-// Admins may update any task, everyone else only tasks assigned to them. A
-// completed task's status is final for admins too, exactly as it is through the
+// scope is the caller's tasks.update scope. At all (admin) any task may be
+// updated; at own (every other system role) only tasks assigned to the
+// caller; a caller without the key is refused before the batch. A completed
+// task's status is final for admins too, exactly as it is through the
 // single-record update. The tasks are read with a locking read in id order
 // (GetTasksByIDs, #558), so the found, assignee and completed-task checks
 // judge the rows as committed, and the single task update, which locks the
 // same row, waits for the batch or the batch for it.
-func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
+func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
 	unique, err := normalizeBulkStatusIDs(ids)
 	if err != nil {
 		return nil, err
 	}
 	if !isValidTaskStatus(status) {
 		return nil, bulkStatusInvalidInput(fmt.Sprintf("Invalid task status: %s", status))
+	}
+	if scope != models.PermissionScopeAll && scope != models.PermissionScopeOwn {
+		return nil, bulkStatusForbidden("Insufficient permissions", nil)
 	}
 
 	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(_ context.Context, txRepo repository.BulkStatusRepository, _ repository.AutomationRepository, _ webhook.TxEmitter) error {
@@ -378,7 +379,7 @@ func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint,
 		completed := make([]uint, 0)
 		for _, task := range tasks {
 			found[task.ID] = struct{}{}
-			if actorRole != models.RoleAdmin && task.AssignedToID != actorID {
+			if scope != models.PermissionScopeAll && task.AssignedToID != actorID {
 				notAssigned = append(notAssigned, task.ID)
 			}
 			if task.Status == models.TaskStatusCompleted && status != models.TaskStatusCompleted {

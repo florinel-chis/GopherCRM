@@ -10,10 +10,10 @@ import (
 
 // The permission context (#259 S3, #347). This is the only handler file that
 // reads the caller's role or the published permission set. Every handler
-// decides through hasPermission and the scope helpers below; where a service
-// still takes a models.UserRole or a service.LeadViewer, the value is built
-// here from exactly one permission key (permissions.RoleForCall) and handed
-// to the service unread.
+// decides through hasPermission and the scope helpers below. A service call
+// governed by a permission key receives the caller id and the scope the
+// caller holds that one key at (permissionScope, viewerFor), and the service
+// decides from that scope.
 
 // callerPermissions is the caller's effective permission set, by the one rule
 // of permissions.Effective, which the permission guards apply too: the set
@@ -71,24 +71,11 @@ func denyWithoutPermission(c *gin.Context, key string) bool {
 	return true
 }
 
-// callRole is the models.UserRole argument of a service call that is governed
-// by one permission key. The value goes to the service and nowhere else: a
-// handler never compares it. ok is false when the key has no place in the
-// adapter table or the caller does not hold it; the handler then refuses.
-func callRole(c *gin.Context, key string) (role models.UserRole, ok bool) {
-	role, err := permissions.RoleForCall(key, callerPermissions(c), c.GetString("user_role"))
-	if err != nil {
-		return "", false
-	}
-	return role, true
-}
-
-// viewerFor is the caller as a service-side visibility policy sees it, built
-// from one key. A caller that does not hold the key is a viewer without a
-// role, which every policy answers with "sees nothing".
+// viewerFor is the caller as a service-side visibility policy sees it: its id
+// and the scope it holds one key at. A caller that does not hold the key is a
+// viewer with scope "", which every policy answers with "sees nothing".
 func viewerFor(c *gin.Context, key string) service.LeadViewer {
-	role, _ := callRole(c, key)
-	return service.LeadViewer{UserID: c.GetUint("user_id"), Role: role}
+	return service.LeadViewer{UserID: c.GetUint("user_id"), Scope: permissionScope(c, key)}
 }
 
 // dealViewer is the caller as service.CanViewDeal sees it: deals.view decides.
@@ -100,9 +87,7 @@ func dealViewer(c *gin.Context) service.LeadViewer {
 // which deals it may open and tasks.view which of their tasks it gets.
 func dealTaskViewer(c *gin.Context) service.LeadViewer {
 	viewer := dealViewer(c)
-	if !permissions.IsSystemRole(c.GetString("user_role")) {
-		viewer.TaskScope = permissionScope(c, permissions.TasksView)
-	}
+	viewer.TaskScope = permissionScope(c, permissions.TasksView)
 	return viewer
 }
 
@@ -150,14 +135,14 @@ func quoteCreatePolicy(c *gin.Context) service.QuoteCreatePolicy {
 }
 
 // quoteCreateRole is the role argument of QuoteService.Create for a caller on
-// a system role, which passes unchanged as through every RoleForCall entry.
-// isSystemRole is false for a custom role: it has no role to hand over and
-// goes through CreateWithPolicy with quoteCreatePolicy instead.
+// a system role: its users.role value, unchanged. isSystemRole is false for a
+// custom role: it has no role to hand over and goes through CreateWithPolicy
+// with quoteCreatePolicy instead.
 func quoteCreateRole(c *gin.Context) (role models.UserRole, isSystemRole bool) {
 	if !permissions.IsSystemRole(c.GetString("user_role")) {
 		return "", false
 	}
-	return callRole(c, permissions.DealsView)
+	return models.UserRole(c.GetString("user_role")), true
 }
 
 // meResponse is the body of GET /users/me: the account plus its role name

@@ -199,7 +199,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		already.Status = models.LeadStatusContacted
 		require.NoError(t, db.Create(already).Error)
 
-		result, err := env.bulk.BulkSetLeadStatus(ctx, admin, models.RoleAdmin, append(append([]uint{}, ids...), already.ID), models.LeadStatusContacted)
+		result, err := env.bulk.BulkSetLeadStatus(ctx, admin, models.PermissionScopeAll, append(append([]uint{}, ids...), already.ID), models.LeadStatusContacted)
 		require.NoError(t, err)
 		assert.Equal(t, 4, result.Updated)
 		events := map[string]bool{}
@@ -212,7 +212,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		assert.Empty(t, env.deliveries(models.WebhookEventLeadUpdated, already.ID), "a lead already at the status gets none")
 
 		before := env.allDeliveries()
-		_, err = env.bulk.BulkSetLeadStatus(ctx, admin, models.RoleAdmin, append(append([]uint{}, ids...), 999999991), models.LeadStatusQualified)
+		_, err = env.bulk.BulkSetLeadStatus(ctx, admin, models.PermissionScopeAll, append(append([]uint{}, ids...), 999999991), models.LeadStatusQualified)
 		require.ErrorIs(t, err, apperrors.ErrNotFound)
 		assert.Equal(t, before, env.allDeliveries(), "a refused batch writes no row")
 		for _, id := range ids {
@@ -227,7 +227,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		}
 		already := env.seedTicket(models.TicketStatusResolved)
 
-		result, err := env.bulk.BulkSetTicketStatus(ctx, admin, models.RoleAdmin, append(append([]uint{}, ids...), already.ID), models.TicketStatusResolved)
+		result, err := env.bulk.BulkSetTicketStatus(ctx, admin, models.PermissionScopeAll, append(append([]uint{}, ids...), already.ID), models.TicketStatusResolved)
 		require.NoError(t, err)
 		assert.Equal(t, 4, result.Updated)
 		events := map[string]bool{}
@@ -240,7 +240,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		assert.Empty(t, env.deliveries(models.WebhookEventTicketUpdated, already.ID), "a ticket already at the status gets none")
 
 		before := env.allDeliveries()
-		_, err = env.bulk.BulkSetTicketStatus(ctx, admin, models.RoleAdmin, append(append([]uint{}, ids...), 999999991), models.TicketStatusClosed)
+		_, err = env.bulk.BulkSetTicketStatus(ctx, admin, models.PermissionScopeAll, append(append([]uint{}, ids...), 999999991), models.TicketStatusClosed)
 		require.ErrorIs(t, err, apperrors.ErrNotFound)
 		assert.Equal(t, before, env.allDeliveries(), "a refused batch writes no row")
 		for _, id := range ids {
@@ -251,7 +251,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("no updated event", func(t *testing.T) {
 		env.clearDeliveries()
 		erasedLead := env.seedLead()
-		require.NoError(t, env.leads.Delete(context.Background(), erasedLead.ID, models.RoleAdmin))
+		require.NoError(t, env.leads.Delete(context.Background(), erasedLead.ID, models.PermissionScopeAll))
 		erasedCustomer := env.seedCustomer()
 		require.NoError(t, env.customers.Delete(context.Background(), erasedCustomer.ID))
 		deletedTicket := env.seedTicket(models.TicketStatusOpen)
@@ -276,7 +276,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("lead assign to another owner", func(t *testing.T) {
 		env.clearDeliveries()
 		lead := env.seedLead()
-		assigned, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		assigned, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Scope: models.PermissionScopeAll})
 		require.NoError(t, err)
 		assert.Equal(t, other.ID, assigned.OwnerID)
 		assert.Equal(t, other.ID, storedLead(t, db, lead.ID).OwnerID)
@@ -287,7 +287,7 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("lead assign to its current owner", func(t *testing.T) {
 		env.clearDeliveries()
 		lead := env.seedLead()
-		_, err := env.leads.Assign(ctx, lead.ID, admin, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		_, err := env.leads.Assign(ctx, lead.ID, admin, LeadViewer{UserID: admin, Scope: models.PermissionScopeAll})
 		require.NoError(t, err)
 		assert.Equal(t, admin, storedLead(t, db, lead.ID).OwnerID)
 		assert.Zero(t, env.allDeliveries(), "an assignment that changes nothing writes no row")
@@ -341,9 +341,9 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		require.NoError(t, updateCustomer(t, env, customer.ID, func(c *models.Customer) { c.FirstName = "Unwired" }))
 		ticket := env.seedTicket(models.TicketStatusOpen)
 		require.NoError(t, updateTicket(t, env, env.tickets, ticket.ID, func(tk *models.Ticket) { tk.Priority = models.TicketPriorityHigh }))
-		_, err = env.bulk.BulkSetLeadStatus(ctx, admin, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusQualified)
+		_, err = env.bulk.BulkSetLeadStatus(ctx, admin, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusQualified)
 		require.NoError(t, err)
-		_, err = env.bulk.BulkSetTicketStatus(ctx, admin, models.RoleAdmin, []uint{ticket.ID}, models.TicketStatusResolved)
+		_, err = env.bulk.BulkSetTicketStatus(ctx, admin, models.PermissionScopeAll, []uint{ticket.ID}, models.TicketStatusResolved)
 		require.NoError(t, err)
 
 		assert.Equal(t, "Unwired", storedLead(t, db, lead.ID).FirstName)
@@ -394,7 +394,7 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 
 	t.Run("BulkSetLeadStatus", func(t *testing.T) {
 		first, second := env.seedLead(), env.seedLead()
-		_, err := env.bulk.BulkSetLeadStatus(ctx, admin, models.RoleAdmin, []uint{first.ID, second.ID}, models.LeadStatusContacted)
+		_, err := env.bulk.BulkSetLeadStatus(ctx, admin, models.PermissionScopeAll, []uint{first.ID, second.ID}, models.LeadStatusContacted)
 		require.ErrorIs(t, err, injectedFailure)
 		assert.Equal(t, models.LeadStatusNew, storedLead(t, db, first.ID).Status)
 		assert.Equal(t, models.LeadStatusNew, storedLead(t, db, second.ID).Status)
@@ -403,7 +403,7 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 
 	t.Run("BulkSetTicketStatus", func(t *testing.T) {
 		first, second := env.seedTicket(models.TicketStatusOpen), env.seedTicket(models.TicketStatusOpen)
-		_, err := env.bulk.BulkSetTicketStatus(ctx, admin, models.RoleAdmin, []uint{first.ID, second.ID}, models.TicketStatusResolved)
+		_, err := env.bulk.BulkSetTicketStatus(ctx, admin, models.PermissionScopeAll, []uint{first.ID, second.ID}, models.TicketStatusResolved)
 		require.ErrorIs(t, err, injectedFailure)
 		assert.Equal(t, models.TicketStatusOpen, storedTicket(t, db, first.ID).Status)
 		assert.Equal(t, models.TicketStatusOpen, storedTicket(t, db, second.ID).Status)
@@ -415,7 +415,7 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 		other := &models.User{Email: env.uniqueEmail("assignee"), Password: "x", FirstName: "As", LastName: "Signee",
 			Role: models.RoleSales, IsActive: true}
 		require.NoError(t, db.Create(other).Error)
-		_, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		_, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Scope: models.PermissionScopeAll})
 		require.ErrorIs(t, err, injectedFailure)
 		assert.Equal(t, admin, storedLead(t, db, lead.ID).OwnerID, "the assignment rolled back")
 		assert.Zero(t, env.count(&models.AutomationEvent{}, "entity_type = ? AND entity_id = ?", models.AutomationEntityLead, lead.ID),

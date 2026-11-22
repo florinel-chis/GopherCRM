@@ -423,7 +423,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_Success() {
 	}
 
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
-	suite.mockService.On("Delete", mock.Anything, uint(1), models.RoleAdmin).Return(nil)
+	suite.mockService.On("Delete", mock.Anything, uint(1), models.PermissionScopeAll).Return(nil)
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil)
 	rec := httptest.NewRecorder()
@@ -444,7 +444,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_PassesTheRequestContext() {
 	suite.mockService.On("GetByID", uint(1)).Return(existingLead, nil)
 	suite.mockService.On("Delete", mock.MatchedBy(func(ctx context.Context) bool {
 		return ctx.Value(marker{}) == "erase"
-	}), uint(1), models.RoleAdmin).Return(nil).Once()
+	}), uint(1), models.PermissionScopeAll).Return(nil).Once()
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/1", nil).WithContext(requestCtx)
 	rec := httptest.NewRecorder()
@@ -466,7 +466,7 @@ func (suite *LeadHandlerTestSuite) TestDelete_ConvertedLeadForbiddenForSales() {
 	router.DELETE("/leads/:id", suite.handler.Delete)
 
 	suite.mockService.On("GetByID", uint(5)).Return(&models.Lead{BaseModel: models.BaseModel{ID: 5}, OwnerID: 2}, nil)
-	suite.mockService.On("Delete", mock.Anything, uint(5), models.RoleSales).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
+	suite.mockService.On("Delete", mock.Anything, uint(5), models.PermissionScope("")).Return(fmt.Errorf("erasing: %w", apperrors.ErrForbidden))
 
 	req := httptest.NewRequest(http.MethodDelete, "/leads/5", nil)
 	rec := httptest.NewRecorder()

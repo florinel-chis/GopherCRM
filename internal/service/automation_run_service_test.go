@@ -7,6 +7,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestAutomationRunServiceRoles(t *testing.T) {
 
 	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer, ""} {
 		counting.queries.Store(0)
-		viewer := LeadViewer{UserID: env.admin.ID, Role: role}
+		viewer := LeadViewer{UserID: env.admin.ID, Scope: permissions.ForSystemRole(string(role)).Scope(permissions.AutomationRunsView)}
 		_, _, err := svc.ListRuns(viewer, 0, 20, repository.AutomationRunListFilter{})
 		assert.Truef(t, errors.Is(err, apperrors.ErrForbidden), "role %q list: %v", role, err)
 		_, err = svc.GetRun(viewer, myRun.ID)
@@ -63,7 +64,7 @@ func TestAutomationRunServiceRoles(t *testing.T) {
 		assert.Zerof(t, counting.queries.Load(), "role %q was refused before any query", role)
 	}
 
-	admin := LeadViewer{UserID: env.admin.ID, Role: models.RoleAdmin}
+	admin := LeadViewer{UserID: env.admin.ID, Scope: models.PermissionScopeAll}
 	runs, total, err := svc.ListRuns(admin, 0, 20, repository.AutomationRunListFilter{})
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, total)
@@ -72,7 +73,7 @@ func TestAutomationRunServiceRoles(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, theirRun.ID, got.ID)
 
-	sales := LeadViewer{UserID: env.sales.ID, Role: models.RoleSales}
+	sales := LeadViewer{UserID: env.sales.ID, Scope: models.PermissionScopeOwn}
 	runs, total, err = svc.ListRuns(sales, 0, 20, repository.AutomationRunListFilter{})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, total)

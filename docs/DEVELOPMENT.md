@@ -1666,8 +1666,9 @@ expected sequence and the count. The Database migrations workflow runs both root
 on MySQL 8 and MariaDB 10.11, and its checker rejects a skip.
 
 **A task's deal link (#240).** `tasks.deal_id` is additive to the lead-or-customer rule and follows
-`service.CanViewDeal` (`internal/service/deal_visibility.go`): admin any deal, sales its own, every
-other role none. `checkDealLink` is the write side: a missing and a hidden deal both give
+`service.CanViewDeal` (`internal/service/deal_visibility.go`), decided by the caller's `deals.view`
+scope: `all` any deal, `own` the caller's deals, not held none (on the system matrix that is admin,
+sales and every other role). `checkDealLink` is the write side: a missing and a hidden deal both give
 `ErrDealNotFound` with one message, and only a not-found lookup is mapped, so an outage answers 500.
 `TaskService.UpdateWithLabels` takes `dealIDSent`: absent keeps the stored link unchecked, a sent id
 is checked even when it equals the stored one, and 0 clears the link when the actor may see the stored

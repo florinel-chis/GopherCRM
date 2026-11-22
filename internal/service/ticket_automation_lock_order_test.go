@@ -63,7 +63,7 @@ func TestAutomationTicketLockOrderMySQL(t *testing.T) {
 			run: func(env *ticketAutomationEnv, ticketID uint) error {
 				bulk := NewBulkStatusService(repository.NewBulkOperationRepository(env.db), repository.NewBulkStatusRepository(env.db),
 					env.txManager, quiet, WithBulkAutomationEvents(env.repo))
-				_, err := bulk.BulkSetTicketStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{ticketID}, models.TicketStatusResolved)
+				_, err := bulk.BulkSetTicketStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{ticketID}, models.TicketStatusResolved)
 				return err
 			},
 			verify: func(t *testing.T, env *ticketAutomationEnv, ticket *models.Ticket, run models.AutomationRun, _ bool) {

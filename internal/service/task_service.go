@@ -530,10 +530,7 @@ func (s *taskService) ListByDeal(viewer LeadViewer, dealID uint, offset, limit i
 	}
 
 	var assigneeID *uint
-	ownTasksOnly := viewer.Role != models.RoleAdmin
-	if viewer.TaskScope != "" {
-		ownTasksOnly = viewer.TaskScope != models.PermissionScopeAll
-	}
+	ownTasksOnly := viewer.TaskScope != models.PermissionScopeAll
 	if ownTasksOnly {
 		id := viewer.UserID
 		assigneeID = &id

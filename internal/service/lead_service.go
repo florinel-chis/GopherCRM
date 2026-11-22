@@ -529,16 +529,17 @@ func (s *leadService) Assign(ctx context.Context, leadID, ownerID uint, actor Le
 // customer, so erasing one half alone erases nobody. See leadRepository.Delete
 // and repository/erasure_cascade.go.
 //
-// actorRole decides how far the erasure may reach. Erasing a customer is an
-// admin action, so only an admin may erase a converted lead; any other caller
-// (an owning sales user) gets leadRepository.DeleteUnconverted, which refuses a
-// converted lead with an apperrors.ErrForbidden inside the erasure unit, on the
+// eraseConverted is the caller's leads.erase_converted scope and decides how
+// far the erasure may reach. Erasing a customer is an admin action, so only a
+// caller holding the key at all (admin on the system matrix) may erase a
+// converted lead; any other caller (an owning sales user) gets
+// leadRepository.DeleteUnconverted, which refuses a converted lead with an apperrors.ErrForbidden inside the erasure unit, on the
 // locked lead row, and rolls the unit back. Ownership of the lead stays the
 // handler's check.
 //
 // Note the logging below deliberately records only the lead ID: an erasure
 // audit trail that quotes the erased email would defeat the erasure.
-func (s *leadService) Delete(ctx context.Context, id uint, actorRole models.UserRole) error {
+func (s *leadService) Delete(ctx context.Context, id uint, eraseConverted models.PermissionScope) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("lead_id", id), "LeadService", "Delete")
 
 	// An erasure that matched no row must never report success: the scrub and
@@ -560,7 +561,7 @@ func (s *leadService) Delete(ctx context.Context, id uint, actorRole models.User
 	}
 
 	erase := s.leadRepo.DeleteUnconverted
-	if actorRole == models.RoleAdmin {
+	if eraseConverted == models.PermissionScopeAll {
 		erase = s.leadRepo.Delete
 	}
 	if err := erase(ctx, id); err != nil {

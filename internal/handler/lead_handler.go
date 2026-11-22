@@ -772,14 +772,10 @@ func (h *LeadHandler) Delete(c *gin.Context) {
 	}
 
 	// Erasing a converted lead also erases the customer it became, which is
-	// its own permission: the role handed to the service comes from
+	// its own permission: the scope handed to the service comes from
 	// leads.erase_converted alone, never from the leads.delete scope.
-	eraseRole, ok := callRole(c, permissions.LeadsEraseConverted)
-	if !ok {
-		utils.RespondForbidden(c, "Insufficient permissions")
-		return
-	}
-	if err := h.leadService.Delete(c.Request.Context(), uint(id), eraseRole); err != nil {
+	eraseConverted := permissionScope(c, permissions.LeadsEraseConverted)
+	if err := h.leadService.Delete(c.Request.Context(), uint(id), eraseConverted); err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
 			utils.RespondForbidden(c, "Only an admin can delete a converted lead: it also erases the customer it became")
 			return

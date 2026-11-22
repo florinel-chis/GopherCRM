@@ -22,6 +22,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -158,7 +159,7 @@ func (suite *DealHandlerTestSuite) TestRoleMatrix() {
 			suite.mockService.On("List", 0, 20, mock.Anything).Return([]models.Deal{}, int64(0), nil).Once()
 		}},
 		{"pipeline", http.MethodGet, "/deals/pipeline", nil, adminAndSales, func() {
-			suite.mockService.On("Pipeline", mock.Anything, uint(1), suite.role).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
+			suite.mockService.On("Pipeline", mock.Anything, uint(1), permissions.ForSystemRole(string(suite.role)).Scope(permissions.DealsView)).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
 		}},
 		{"get", http.MethodGet, "/deals/5", nil, adminAndSales, func() {
 			suite.mockService.On("GetByID", uint(5)).Return(ownDeal(5), nil).Once()
@@ -212,7 +213,7 @@ func (suite *DealHandlerTestSuite) TestRoleMatrix() {
 
 // --- Pipeline ---------------------------------------------------------------
 
-// The filters reach the service as parsed, next to the caller's id and role;
+// The filters reach the service as parsed, next to the caller's id and deals.view scope;
 // the owner rule itself is the service's (see TestDealService_PipelineScoping).
 func (suite *DealHandlerTestSuite) TestPipeline_PassesTheFiltersAndTheCaller() {
 	for _, role := range []models.UserRole{models.RoleAdmin, models.RoleSales} {
@@ -221,7 +222,7 @@ func (suite *DealHandlerTestSuite) TestPipeline_PassesTheFiltersAndTheCaller() {
 		suite.userID = 7
 		suite.mockService.On("Pipeline", mock.MatchedBy(func(f repository.DealPipelineFilter) bool {
 			return f.OwnerID != nil && *f.OwnerID == 4 && f.CompanyID != nil && *f.CompanyID == 3
-		}), uint(7), role).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
+		}), uint(7), permissions.ForSystemRole(string(role)).Scope(permissions.DealsView)).Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
 
 		w := suite.do(http.MethodGet, "/deals/pipeline?owner_id=4&company_id=3", nil)
 		assert.Equalf(suite.T(), http.StatusOK, w.Code, "%s: %s", role, w.Body.String())
@@ -230,7 +231,7 @@ func (suite *DealHandlerTestSuite) TestPipeline_PassesTheFiltersAndTheCaller() {
 
 	// No filter at all is two nil pointers.
 	suite.SetupTest()
-	suite.mockService.On("Pipeline", repository.DealPipelineFilter{}, uint(1), models.RoleAdmin).
+	suite.mockService.On("Pipeline", repository.DealPipelineFilter{}, uint(1), models.PermissionScopeAll).
 		Return(&models.DealPipeline{Stages: []models.DealPipelineStage{}}, nil).Once()
 	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
@@ -256,7 +257,7 @@ func (suite *DealHandlerTestSuite) TestPipeline_ResponseShape() {
 		{Currency: "CHF", AmountCents: 1, WeightedCents: 1},
 		{Currency: "EUR", AmountCents: 100000, WeightedCents: 70000},
 	}}
-	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).Return(&models.DealPipeline{Stages: stages}, nil)
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.PermissionScopeAll).Return(&models.DealPipeline{Stages: stages}, nil)
 
 	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
 	suite.Require().Equal(http.StatusOK, w.Code, w.Body.String())
@@ -288,12 +289,12 @@ func (suite *DealHandlerTestSuite) TestPipeline_ResponseShape() {
 // The service's refusal (a role without deal access that got past a guard) is
 // a 403, and an unclassified failure a 500.
 func (suite *DealHandlerTestSuite) TestPipeline_ServiceErrors() {
-	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.PermissionScopeAll).
 		Return(nil, fmt.Errorf("wrapped: %w", apperrors.ErrForbidden)).Once()
 	w := suite.do(http.MethodGet, "/deals/pipeline", nil)
 	assert.Equal(suite.T(), http.StatusForbidden, w.Code)
 
-	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.RoleAdmin).
+	suite.mockService.On("Pipeline", mock.Anything, uint(1), models.PermissionScopeAll).
 		Return(nil, errors.New("boom")).Once()
 	w = suite.do(http.MethodGet, "/deals/pipeline", nil)
 	assert.Equal(suite.T(), http.StatusInternalServerError, w.Code)

@@ -2,7 +2,6 @@ package permissions
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"sort"
 	"strings"
@@ -174,59 +173,30 @@ func TestForUserResolution(t *testing.T) {
 	assert.Equal(t, ForSystemRole("sales").List(), ForUser(sales).List())
 }
 
-func TestRoleForCall(t *testing.T) {
-	setOf := func(grants ...Grant) Set { return NewSet(grants...) }
-	allOf := func(key string) Set { return setOf(Grant{Key: key, Scope: models.PermissionScopeAll}) }
-	ownOf := func(key string) Set { return setOf(Grant{Key: key, Scope: models.PermissionScopeOwn}) }
-
-	// The adapter table, row by row, for a custom-role caller.
+// TestSystemRoleScopesOfServiceKeys pins the scope each system role holds the
+// keys that govern a service call at. The services decide from that scope, so
+// these rows are what keeps every system role's access unchanged.
+func TestSystemRoleScopesOfServiceKeys(t *testing.T) {
+	const none = models.PermissionScope("")
 	for _, row := range []struct {
-		key              string
-		all, own, absent models.UserRole
+		key                             string
+		admin, sales, support, customer models.PermissionScope
 	}{
-		{LeadsEraseConverted, models.RoleAdmin, "", models.RoleSales},
-		{DealsView, models.RoleAdmin, models.RoleSales, ""},
-		{LeadsUpdate, models.RoleAdmin, models.RoleSales, ""},
-		{TicketsUpdate, models.RoleAdmin, models.RoleSupport, ""},
-		{TasksUpdate, models.RoleAdmin, models.RoleSales, ""},
-		{LeadsView, models.RoleAdmin, models.RoleSales, models.RoleSupport},
-		{LeadsExport, models.RoleAdmin, models.RoleSales, ""},
-		{AutomationRunsView, models.RoleAdmin, models.RoleSales, ""},
+		{LeadsEraseConverted, all, none, none, none},
+		{DealsView, all, own, none, none},
+		{LeadsUpdate, all, own, none, none},
+		{TicketsUpdate, all, none, own, none},
+		{TasksUpdate, all, own, own, own},
+		{LeadsView, all, own, none, none},
+		{LeadsExport, all, own, none, none},
+		{AutomationRunsView, all, own, none, none},
+		// ListByDeal reads tasks.view as the viewer's TaskScope.
+		{TasksView, all, own, own, own},
 	} {
-		role, err := RoleForCall(row.key, allOf(row.key), string(models.RoleCustom))
-		require.NoError(t, err, row.key)
-		assert.Equal(t, row.all, role, "%s at all", row.key)
-
-		if row.own != "" {
-			role, err = RoleForCall(row.key, ownOf(row.key), string(models.RoleCustom))
-			require.NoError(t, err, row.key)
-			assert.Equal(t, row.own, role, "%s at own", row.key)
-		}
-
-		role, err = RoleForCall(row.key, Set{}, string(models.RoleCustom))
-		if row.absent == "" {
-			assert.ErrorIs(t, err, ErrNotHeld, "%s absent", row.key)
-			assert.Empty(t, role)
-		} else {
-			require.NoError(t, err, row.key)
-			assert.Equal(t, row.absent, role, "%s absent", row.key)
-		}
-
-		// A system role passes unchanged, whatever it holds.
-		for _, system := range []string{"admin", "sales", "support", "customer"} {
-			role, err = RoleForCall(row.key, ForSystemRole(system), system)
-			require.NoError(t, err)
-			assert.Equal(t, models.UserRole(system), role)
-		}
-	}
-	assert.Len(t, callRoles, 8, "the table has exactly the rows asserted above")
-
-	// A key outside the table is an error, never a default.
-	for _, outside := range []string{QuotesCreate, TicketsView, UsersView, "nosuch.key", ""} {
-		for _, system := range []string{"admin", "sales", string(models.RoleCustom), ""} {
-			role, err := RoleForCall(outside, ForSystemRole("admin"), system)
-			assert.True(t, errors.Is(err, ErrNoCallRole), "%q as %q", outside, system)
-			assert.Empty(t, role)
+		for role, want := range map[string]models.PermissionScope{
+			"admin": row.admin, "sales": row.sales, "support": row.support, "customer": row.customer,
+		} {
+			assert.Equal(t, want, ForSystemRole(role).Scope(row.key), "%s as %s", row.key, role)
 		}
 	}
 }

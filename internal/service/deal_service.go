@@ -371,13 +371,13 @@ func (s *dealService) History(dealID uint) ([]models.DealStageChange, error) {
 
 // Pipeline aggregates the pipeline for the caller; see the interface for the
 // scoping rule.
-func (s *dealService) Pipeline(filter repository.DealPipelineFilter, actorID uint, role models.UserRole) (*models.DealPipeline, error) {
+func (s *dealService) Pipeline(filter repository.DealPipelineFilter, actorID uint, scope models.PermissionScope) (*models.DealPipeline, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"actor_id": actorID,
-		"role":     role,
+		"scope":    scope,
 	}), "DealService", "Pipeline")
 
-	ownerID, err := dealOwnerScope(role, actorID, filter.OwnerID)
+	ownerID, err := dealOwnerScope(scope, actorID, filter.OwnerID)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Pipeline refused")
 		return nil, err
@@ -396,13 +396,13 @@ func (s *dealService) Pipeline(filter repository.DealPipelineFilter, actorID uin
 // tile. The month is the calendar month of the current instant in UTC, laid
 // out in Go and passed down as a half-open range, as the other dashboard
 // widgets bucket time.
-func (s *dealService) DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error) {
+func (s *dealService) DashboardPipeline(actorID uint, scope models.PermissionScope) (*models.DealDashboardPipeline, error) {
 	logger := utils.LogServiceCall(utils.Logger.WithFields(map[string]interface{}{
 		"actor_id": actorID,
-		"role":     role,
+		"scope":    scope,
 	}), "DealService", "DashboardPipeline")
 
-	ownerID, err := dealOwnerScope(role, actorID, nil)
+	ownerID, err := dealOwnerScope(scope, actorID, nil)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Dashboard pipeline refused")
 		return nil, err
@@ -427,19 +427,19 @@ func (s *dealService) DashboardPipeline(actorID uint, role models.UserRole) (*mo
 	}, nil
 }
 
-// dealOwnerScope is the owner filter the caller's role imposes on an
-// aggregate: an admin keeps the requested one (nil = everybody), a sales user
-// is narrowed to itself whatever it asked for, and every other role has no
+// dealOwnerScope is the owner filter the caller's deals.view scope imposes on
+// an aggregate: all keeps the requested one (nil = everybody), own is narrowed
+// to the actor whatever it asked for, and a caller without the key has no
 // access to deals at all.
-func dealOwnerScope(role models.UserRole, actorID uint, requested *uint) (*uint, error) {
-	switch role {
-	case models.RoleAdmin:
+func dealOwnerScope(scope models.PermissionScope, actorID uint, requested *uint) (*uint, error) {
+	switch scope {
+	case models.PermissionScopeAll:
 		return requested, nil
-	case models.RoleSales:
+	case models.PermissionScopeOwn:
 		own := actorID
 		return &own, nil
 	default:
-		return nil, fmt.Errorf("role %q has no access to deals: %w", role, apperrors.ErrForbidden)
+		return nil, fmt.Errorf("scope %q has no access to deals: %w", scope, apperrors.ErrForbidden)
 	}
 }
 

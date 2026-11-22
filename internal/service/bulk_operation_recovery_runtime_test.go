@@ -285,7 +285,7 @@ func TestBulkOperationRecoveryLogsOmitPersonalData(t *testing.T) {
 		svc := NewBulkStatusService(
 			faultyOperationRepo{BulkOperationRepository: repository.NewBulkOperationRepository(env.db), failUpdate: true},
 			repository.NewBulkStatusRepository(env.db), env.txManager, logger, WithBulkAutomationEvents(env.repo))
-		_, err := svc.BulkSetLeadStatus(context.Background(), env.sales.ID, models.RoleSales, []uint{lead.ID, 999999}, models.LeadStatusContacted)
+		_, err := svc.BulkSetLeadStatus(context.Background(), env.sales.ID, models.PermissionScopeOwn, []uint{lead.ID, 999999}, models.LeadStatusContacted)
 		require.Error(t, err)
 
 		lines := logLines(t, out.String())

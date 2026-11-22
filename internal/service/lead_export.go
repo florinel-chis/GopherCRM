@@ -21,23 +21,26 @@ type LeadExportParams struct {
 }
 
 // ExportForActor returns exactly the leads the actor may list, unpaginated, for
-// the CSV export (#234). The scope is the lead list's (LeadHandler.List):
+// the CSV export (#234). actor.Scope is the caller's leads.export scope, and
+// the rows follow the lead list's (LeadHandler.List):
 //
-//   - an admin gets every live lead matching the list's combined filters: a
+//   - scope all (admin on the system matrix) gets every live lead matching the list's combined filters: a
 //     non-empty search and an exact classification are ANDed, and the rows
 //     follow the sort when one is given, else ascending id order;
-//   - a sales user gets only its own leads in ascending id order, and every
-//     parameter it sent is ignored, as the list ignores them for that role;
-//   - every other role (support, customer, unknown) and a sales actor without
-//     an id get an error matching apperrors.ErrForbidden, without a read.
+//   - scope own (sales) gets only the actor's own leads in ascending id
+//     order, and every parameter it sent is ignored, as the list ignores them
+//     for that scope;
+//   - a caller without the key (support, customer, unknown) and an own-scope
+//     actor without an id get an error matching apperrors.ErrForbidden,
+//     without a read.
 //
 // The rows come from one ordered statement (LeadRepository.ListAllForExport).
-// The log lines carry the operation, the role, the user id, the row count and
+// The log lines carry the operation, the scope, the user id, the row count and
 // presence flags only: never a lead's data, the search term or the raw sort.
 func (s *leadService) ExportForActor(actor LeadViewer, params LeadExportParams) ([]models.Lead, error) {
 	logger := utils.Logger.WithFields(logrus.Fields{
 		"operation":          "LeadService.ExportForActor",
-		"role":               string(actor.Role),
+		"scope":              string(actor.Scope),
 		"user_id":            actor.UserID,
 		"has_search":         params.Search != "",
 		"has_classification": params.Classification != "",
@@ -46,18 +49,18 @@ func (s *leadService) ExportForActor(actor LeadViewer, params LeadExportParams) 
 
 	var filter repository.LeadExportFilter
 	switch {
-	case actor.Role == models.RoleAdmin:
+	case actor.Scope == models.PermissionScopeAll:
 		filter.Search = params.Search
 		filter.Classification = models.LeadClassification(params.Classification)
 		if params.SortBy != "" {
 			filter.SortBy = params.SortBy
 			filter.SortOrder = params.SortOrder
 		}
-	case actor.Role == models.RoleSales && actor.UserID != 0:
+	case actor.Scope == models.PermissionScopeOwn && actor.UserID != 0:
 		ownerID := actor.UserID
 		filter.OwnerID = &ownerID
 	default:
-		logger.Warn("Lead export refused for this role")
+		logger.Warn("Lead export refused for this scope")
 		return nil, fmt.Errorf("lead export refused: %w", apperrors.ErrForbidden)
 	}
 

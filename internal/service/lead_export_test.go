@@ -32,8 +32,8 @@ func leadExportUint(v uint) *uint { return &v }
 // repository with (#234, #618): the lead list's combined filters for an admin,
 // the caller's own leads in id order for a sales user, whatever either sent.
 func TestLeadServiceExportScope(t *testing.T) {
-	admin := LeadViewer{UserID: 1, Role: models.RoleAdmin}
-	sales := LeadViewer{UserID: 7, Role: models.RoleSales}
+	admin := LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}
+	sales := LeadViewer{UserID: 7, Scope: models.PermissionScopeOwn}
 	all := LeadExportParams{Search: "acme", Classification: "spam", SortBy: "email", SortOrder: "desc"}
 
 	cases := []struct {
@@ -87,19 +87,19 @@ func TestLeadServiceExportScope(t *testing.T) {
 	})
 }
 
-// TestLeadServiceExportRefusesOtherRoles: support, customer and any unknown
-// role are refused with apperrors.ErrForbidden before the repository is called.
+// TestLeadServiceExportRefusesOtherRoles: support, customer (no leads.export
+// scope) and any unknown scope are refused with apperrors.ErrForbidden before the repository is called.
 func TestLeadServiceExportRefusesOtherRoles(t *testing.T) {
 	actors := []LeadViewer{
-		{UserID: 3, Role: models.RoleSupport},
-		{UserID: 4, Role: models.RoleCustomer},
-		{UserID: 5, Role: ""},
-		{UserID: 6, Role: "superuser"},
-		{UserID: 7, Role: "Admin"},
-		{UserID: 0, Role: models.RoleSales}, // a sales actor without an id owns nothing
+		{UserID: 3, Scope: ""}, // support
+		{UserID: 4, Scope: ""}, // customer
+		{UserID: 5, Scope: ""},
+		{UserID: 6, Scope: "superuser"},
+		{UserID: 7, Scope: "All"},
+		{UserID: 0, Scope: models.PermissionScopeOwn}, // an own-scope actor without an id owns nothing
 	}
 	for _, actor := range actors {
-		t.Run(fmt.Sprintf("%s_%d", actor.Role, actor.UserID), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s_%d", actor.Scope, actor.UserID), func(t *testing.T) {
 			repo := new(mocks.LeadRepository)
 			got, err := newLeadExportService(repo).ExportForActor(actor,
 				LeadExportParams{Search: "acme", Classification: "spam", SortBy: "email", SortOrder: "asc"})
@@ -155,7 +155,7 @@ func TestLeadServiceExportLogsOmitPersonalData(t *testing.T) {
 	)
 	canaries := []string{search, first, last, email, phone, notes, "notes-canary"}
 	allowed := map[string]bool{
-		"operation": true, "role": true, "user_id": true, "count": true,
+		"operation": true, "scope": true, "user_id": true, "count": true,
 		"has_search": true, "has_classification": true, "has_sort": true,
 		// logrus's own keys, and the redacted error of a failure
 		"level": true, "msg": true, "time": true, "error": true,
@@ -174,7 +174,7 @@ func TestLeadServiceExportLogsOmitPersonalData(t *testing.T) {
 				repo.On("ListAllForExport", want).Return(nil, fmt.Errorf("query failed for %q", search)).Once()
 			}
 
-			_, err := newLeadExportService(repo).ExportForActor(LeadViewer{UserID: 1, Role: models.RoleAdmin},
+			_, err := newLeadExportService(repo).ExportForActor(LeadViewer{UserID: 1, Scope: models.PermissionScopeAll},
 				LeadExportParams{Search: search, SortBy: sortBy, SortOrder: "asc"})
 			assert.Equal(t, !success, err != nil)
 
@@ -183,7 +183,7 @@ func TestLeadServiceExportLogsOmitPersonalData(t *testing.T) {
 			for _, line := range lines {
 				if line["operation"] == "LeadService.ExportForActor" {
 					exportLines++
-					assert.Equal(t, "admin", line["role"])
+					assert.Equal(t, "all", line["scope"])
 					assert.Equal(t, float64(1), line["user_id"])
 					assert.Equal(t, true, line["has_search"])
 					assert.Equal(t, true, line["has_sort"])

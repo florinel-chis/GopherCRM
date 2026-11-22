@@ -10,15 +10,16 @@ import (
 )
 
 // CanViewDeal is the one deal-visibility policy behind a task's deal link, when
-// the link is written and when it is read back: an admin sees every deal, a
-// sales user only the deals it owns, and every other role (support, customer,
-// or none) no deal at all. A nil deal, one that is not loaded or no longer
-// exists, is visible to admins only.
+// the link is written and when it is read back: a viewer whose deals.view
+// scope is all sees every deal, one whose scope is own only the deals it owns,
+// and one without the key no deal at all. On the system matrix that is admin,
+// sales and every other role. A nil deal, one that is not loaded or no longer
+// exists, is visible at all only.
 func CanViewDeal(viewer LeadViewer, deal *models.Deal) bool {
-	switch viewer.Role {
-	case models.RoleAdmin:
+	switch viewer.Scope {
+	case models.PermissionScopeAll:
 		return true
-	case models.RoleSales:
+	case models.PermissionScopeOwn:
 		return deal != nil && viewer.UserID != 0 && deal.OwnerID == viewer.UserID
 	default:
 		return false
@@ -31,7 +32,7 @@ func CanViewDeal(viewer LeadViewer, deal *models.Deal) bool {
 // preloaded deal and re-made on every read, so a link written before the deal
 // changed owner stops showing as soon as the policy says so. A deal_id without
 // its deal (not preloaded, soft-deleted, or a preloaded deal that is not the
-// linked one) is hidden from everyone but admins.
+// linked one) is hidden from everyone but a viewer whose scope is all.
 func RedactTaskDeal(viewer LeadViewer, task *models.Task) {
 	if task == nil || (task.DealID == nil && task.Deal == nil) {
 		return
@@ -59,8 +60,8 @@ func linkedDeal(dealID *uint, deal *models.Deal) *models.Deal {
 }
 
 // checkDealLink is the write side of CanViewDeal: dealID must name a live deal
-// that the acting user may see, closed deals included. The actor's role is read
-// from the user repository rather than trusted from the caller. A deal that
+// that the acting user may see, closed deals included. The actor's permissions are
+// read from the user repository rather than trusted from the caller. A deal that
 // does not exist and one the actor may not see both get ErrDealNotFound with
 // the same message, so a write cannot be used to probe for hidden deals. Only a
 // not-found lookup is mapped: any other failure is returned as it is, so an

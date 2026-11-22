@@ -1,9 +1,6 @@
 package permissions
 
 import (
-	"errors"
-	"fmt"
-
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
@@ -186,66 +183,4 @@ var SelfServiceRoutes = map[string]bool{
 	"GET /configurations/ui":     true,
 	"POST /auth/logout":          true,
 	"POST /auth/change-password": true,
-}
-
-// ErrNoCallRole is returned by RoleForCall for a key that has no entry in the
-// adapter table.
-var ErrNoCallRole = errors.New("permissions: key has no service-call role")
-
-// ErrNotHeld is returned by RoleForCall when the caller does not hold the key
-// and the table gives the absent case no role.
-var ErrNotHeld = errors.New("permissions: key is not held")
-
-// callRole maps one key's scope to the role argument a service call expects.
-type callRole struct {
-	all, own, absent models.UserRole
-}
-
-// callRoles is the service-boundary adapter table of #259. The services still
-// decide by a models.UserRole argument; a custom-role caller is translated,
-// per call site, from exactly one key.
-var callRoles = map[string]callRole{
-	// LeadService.Delete: only the converted-lead erasure reads the role.
-	LeadsEraseConverted: {all: models.RoleAdmin, absent: models.RoleSales},
-	// DealService.Pipeline, DashboardPipeline and the deal-link viewer.
-	DealsView: {all: models.RoleAdmin, own: models.RoleSales},
-	// BulkSetLeadStatus.
-	LeadsUpdate: {all: models.RoleAdmin, own: models.RoleSales},
-	// BulkSetTicketStatus.
-	TicketsUpdate: {all: models.RoleAdmin, own: models.RoleSupport},
-	// BulkSetTaskStatus.
-	TasksUpdate: {all: models.RoleAdmin, own: models.RoleSales},
-	// LeadViewer for CanViewLead and lead-link redaction; support sees none.
-	LeadsView: {all: models.RoleAdmin, own: models.RoleSales, absent: models.RoleSupport},
-	// LeadService.ExportForActor: which leads the CSV holds.
-	LeadsExport: {all: models.RoleAdmin, own: models.RoleSales},
-	// The automation run viewer; never the lead viewer.
-	AutomationRunsView: {all: models.RoleAdmin, own: models.RoleSales},
-}
-
-// RoleForCall builds the models.UserRole argument of a service call from one
-// permission key. A system role passes unchanged. Any other caller is mapped
-// by the scope it holds the key at. A key outside the table is an error, never
-// a default; so is a key the caller does not hold where the table names no
-// role for that case.
-func RoleForCall(key string, set Set, systemRole string) (models.UserRole, error) {
-	rule, ok := callRoles[key]
-	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrNoCallRole, key)
-	}
-	if IsSystemRole(systemRole) {
-		return models.UserRole(systemRole), nil
-	}
-	switch set.Scope(key) {
-	case all:
-		return rule.all, nil
-	case own:
-		if rule.own != "" {
-			return rule.own, nil
-		}
-	}
-	if rule.absent != "" {
-		return rule.absent, nil
-	}
-	return "", fmt.Errorf("%w: %s", ErrNotHeld, key)
 }

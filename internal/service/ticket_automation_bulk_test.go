@@ -41,7 +41,7 @@ func runAutomationTicketBulkEvents(t *testing.T, db *gorm.DB) {
 		resolved := env.createTicket(env.support, models.TicketStatusResolved)
 		inProgress := env.createTicket(env.support, models.TicketStatusInProgress)
 
-		_, err := bulk.BulkSetTicketStatus(ctx, env.support.ID, models.RoleSupport,
+		_, err := bulk.BulkSetTicketStatus(ctx, env.support.ID, models.PermissionScopeOwn,
 			[]uint{inProgress.ID, resolved.ID, open.ID}, models.TicketStatusResolved)
 		require.NoError(t, err)
 
@@ -75,13 +75,13 @@ func runAutomationTicketBulkEvents(t *testing.T, db *gorm.DB) {
 		closed := env.createTicket(env.support, models.TicketStatusClosed)
 		eventsBefore := env.count(&models.AutomationEvent{})
 
-		_, err := bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{mine.ID, 99999999}, models.TicketStatusResolved)
+		_, err := bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{mine.ID, 99999999}, models.TicketStatusResolved)
 		require.ErrorIs(t, err, apperrors.ErrNotFound, "missing id")
-		_, err = bulk.BulkSetTicketStatus(ctx, env.support.ID, models.RoleSupport, []uint{mine.ID, unassigned.ID}, models.TicketStatusResolved)
+		_, err = bulk.BulkSetTicketStatus(ctx, env.support.ID, models.PermissionScopeOwn, []uint{mine.ID, unassigned.ID}, models.TicketStatusResolved)
 		require.ErrorIs(t, err, apperrors.ErrForbidden, "unassigned support ticket")
-		_, err = bulk.BulkSetTicketStatus(ctx, env.support.ID, models.RoleSupport, []uint{mine.ID, other.ID}, models.TicketStatusResolved)
+		_, err = bulk.BulkSetTicketStatus(ctx, env.support.ID, models.PermissionScopeOwn, []uint{mine.ID, other.ID}, models.TicketStatusResolved)
 		require.ErrorIs(t, err, apperrors.ErrForbidden, "another support user's ticket")
-		_, err = bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{mine.ID, closed.ID}, models.TicketStatusOpen)
+		_, err = bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{mine.ID, closed.ID}, models.TicketStatusOpen)
 		require.ErrorIs(t, err, apperrors.ErrClosedTicketReopen, "closed reopen")
 
 		assert.Equal(t, eventsBefore, env.count(&models.AutomationEvent{}), "no refused batch recorded an event")
@@ -98,7 +98,7 @@ func runAutomationTicketBulkEvents(t *testing.T, db *gorm.DB) {
 		require.NoError(t, db.Model(&models.Ticket{}).Where("id = ?", second.ID).Update("status", models.TicketStatusInProgress).Error)
 
 		log := captureStatements(t, db)
-		_, err := bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{second.ID, first.ID}, models.TicketStatusResolved)
+		_, err := bulk.BulkSetTicketStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{second.ID, first.ID}, models.TicketStatusResolved)
 		require.NoError(t, err)
 
 		events := env.ticketEvents(second.ID)

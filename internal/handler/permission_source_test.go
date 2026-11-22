@@ -208,17 +208,16 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 	ensureTestLogger()
 
 	type answers struct {
-		Has       bool
-		OnAll     bool
-		OwnOnly   bool
-		Scope     models.PermissionScope
-		Denied    bool
-		CallRole  models.UserRole
-		CallOK    bool
-		Aggregate models.PermissionScope
+		Has     bool
+		OnAll   bool
+		OwnOnly bool
+		Scope   models.PermissionScope
+		Denied  bool
+		// ViewerScope is the scope a service-side policy receives.
+		ViewerScope models.PermissionScope
+		Aggregate   models.PermissionScope
 	}
 	probe := func(c *gin.Context) answers {
-		role, ok := callRole(c, permissions.LeadsView)
 		// denyWithoutPermission writes a response; ask it on a copy of the
 		// context's values, never on the request under test.
 		recorder := httptest.NewRecorder()
@@ -226,14 +225,13 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 		shadow.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 		shadow.Keys = c.Keys
 		return answers{
-			Has:       hasPermission(c, permissions.LeadsView),
-			OnAll:     hasPermissionOnAll(c, permissions.LeadsView),
-			OwnOnly:   hasPermissionOnOwnOnly(c, permissions.LeadsView),
-			Scope:     permissionScope(c, permissions.LeadsView),
-			Denied:    denyWithoutPermission(shadow, permissions.LeadsView),
-			CallRole:  role,
-			CallOK:    ok,
-			Aggregate: aggregateScope(c, permissions.LeadsView),
+			Has:         hasPermission(c, permissions.LeadsView),
+			OnAll:       hasPermissionOnAll(c, permissions.LeadsView),
+			OwnOnly:     hasPermissionOnOwnOnly(c, permissions.LeadsView),
+			Scope:       permissionScope(c, permissions.LeadsView),
+			Denied:      denyWithoutPermission(shadow, permissions.LeadsView),
+			ViewerScope: viewerFor(c, permissions.LeadsView).Scope,
+			Aggregate:   aggregateScope(c, permissions.LeadsView),
 		}
 	}
 
@@ -290,6 +288,7 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 		assert.False(t, got.OnAll)
 		assert.Equal(t, models.PermissionScope(""), got.Scope)
 		assert.True(t, got.Denied, "denyWithoutPermission refuses")
+		assert.Equal(t, models.PermissionScope(""), got.ViewerScope, "the service gets no scope: the published set wins over the role")
 		assert.Equal(t, http.StatusForbidden, taskStatus, "a real handler refuses: the published set wins over the role")
 	})
 	t.Run("a published set decides, whatever user_role says", func(t *testing.T) {
@@ -301,10 +300,9 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 		assert.False(t, got.Denied)
 		assert.Equal(t, http.StatusOK, taskStatus, "tasks.view at scope all opens the task")
 	})
-	t.Run("a custom role is translated for the service from one key", func(t *testing.T) {
+	t.Run("a custom role hands the service the scope of one key", func(t *testing.T) {
 		got, _ := run(t, ownLeads, "")
-		assert.True(t, got.CallOK)
-		assert.Equal(t, models.RoleSales, got.CallRole, "leads.view at scope own is what a sales caller has")
+		assert.Equal(t, models.PermissionScopeOwn, got.ViewerScope, "leads.view at scope own, as a sales caller has it")
 		assert.Equal(t, models.PermissionScopeOwn, got.Aggregate, "a custom role's dashboard aggregates follow its scope")
 	})
 	t.Run("no published set, user_role=sales: the system matrix answers", func(t *testing.T) {
@@ -312,8 +310,7 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 		assert.True(t, got.Has)
 		assert.True(t, got.OwnOnly)
 		assert.False(t, got.Denied)
-		assert.True(t, got.CallOK)
-		assert.Equal(t, models.RoleSales, got.CallRole, "a system role passes unchanged")
+		assert.Equal(t, models.PermissionScopeOwn, got.ViewerScope, "the matrix gives sales leads.view at scope own")
 		assert.Equal(t, models.PermissionScopeAll, got.Aggregate, "a system role keeps the system-wide aggregates")
 		assert.Equal(t, http.StatusForbidden, taskStatus, "tasks.view at scope own: task 1 is assigned to somebody else")
 	})
@@ -321,13 +318,13 @@ func TestPermissionContextPublishedSetWins(t *testing.T) {
 		got, _ := run(t, nil, "support")
 		assert.False(t, got.Has)
 		assert.True(t, got.Denied)
-		assert.True(t, got.CallOK)
-		assert.Equal(t, models.RoleSupport, got.CallRole)
+		assert.Equal(t, models.PermissionScope(""), got.ViewerScope)
 	})
 	t.Run("neither a set nor a role: nothing is held", func(t *testing.T) {
 		got, taskStatus := run(t, nil, "")
 		assert.False(t, got.Has)
 		assert.True(t, got.Denied)
+		assert.Equal(t, models.PermissionScope(""), got.ViewerScope)
 		assert.Equal(t, http.StatusForbidden, taskStatus)
 	})
 }

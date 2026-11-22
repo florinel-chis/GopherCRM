@@ -39,14 +39,15 @@ var (
 	conversionStatements = regexp.MustCompile("(?s)^(SELECT .*FROM `leads` .*FOR UPDATE$|INSERT INTO `customers`|UPDATE `leads` SET|INSERT INTO `automation_events`)")
 )
 
-// leadErasureRoles are the two erasure paths of LeadService.Delete.
+// leadErasureRoles are the two erasure paths of LeadService.Delete: the
+// leads.erase_converted scope an admin and a sales user hold.
 var leadErasureRoles = []struct {
 	name  string
-	role  models.UserRole
+	role  models.PermissionScope
 	admin bool
 }{
-	{"admin", models.RoleAdmin, true},
-	{"non-admin", models.RoleSales, false},
+	{"admin", models.PermissionScopeAll, true},
+	{"non-admin", "", false},
 }
 
 // seedPendingLeadRun inserts one pending automation run of the lead.
@@ -353,7 +354,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 		lead := f.lead(nil)
 		customer, err := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 		require.NoError(t, err)
-		require.NoError(t, f.leadSvc.Delete(context.Background(), lead.ID, models.RoleAdmin))
+		require.NoError(t, f.leadSvc.Delete(context.Background(), lead.ID, models.PermissionScopeAll))
 		assertLeadAndCustomerErased(t, f, lead.ID, customer.ID)
 	})
 
@@ -363,7 +364,7 @@ func TestLeadErasureVsConversionSQLite(t *testing.T) {
 		customer, err := f.leadSvc.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
 		require.NoError(t, err)
 		before := storedLeadState(f, lead.ID)
-		assertRefusedForNonAdmin(t, f.leadSvc.Delete(context.Background(), lead.ID, models.RoleSales))
+		assertRefusedForNonAdmin(t, f.leadSvc.Delete(context.Background(), lead.ID, models.PermissionScope("")))
 		assert.Equal(t, before, storedLeadState(f, lead.ID))
 		assertConvertedUnchanged(t, f, lead, customer, run)
 	})
