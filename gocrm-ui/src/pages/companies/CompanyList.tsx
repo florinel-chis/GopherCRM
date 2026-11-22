@@ -24,6 +24,10 @@ interface ListState {
   sort_order?: 'asc' | 'desc';
 }
 
+// The row's identity for the accessible names of its view, edit and delete
+// buttons: the name its first column shows.
+const companyLabel = (company: Company): string => company.name;
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -176,6 +180,7 @@ export const Component: React.FC = () => {
         onRowClick={(company) => navigate(`/companies/${company.id}`)}
         onEdit={canUpdate ? (company) => navigate(`/companies/${company.id}/edit`) : undefined}
         onDelete={canDelete ? (company) => setDeleteDialog({ open: true, company }) : undefined}
+        getRowLabel={companyLabel}
       />
 
       <ConfirmDialog

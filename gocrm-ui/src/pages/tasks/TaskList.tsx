@@ -85,6 +85,10 @@ const getPriorityColor = (priority: Task['priority']) => {
   }
 };
 
+// The row's identity, shared by its overflow-menu label and the accessible
+// names of its view, edit and delete buttons.
+const taskLabel = (task: Task): string => task.title;
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -266,7 +270,7 @@ export const Component: React.FC = () => {
   // completed yet. Each menu closes over its own row.
   const renderRowActions = (task: Task) => (
     <RowActionsMenu
-      label={`More actions for ${task.title}`}
+      label={`More actions for ${taskLabel(task)}`}
       actions={
         task.status !== 'completed'
           ? [
@@ -521,6 +525,7 @@ export const Component: React.FC = () => {
           onEdit={(task) => navigate(`/tasks/${task.id}/edit`)}
           onDelete={(task) => setDeleteDialog({ open: true, task })}
           rowActions={renderRowActions}
+          getRowLabel={taskLabel}
         />
       ) : (
         renderCalendarView()
