@@ -144,7 +144,7 @@ names the Go test that already pins its API behaviour.
   2. As support and as customer, request `GET /api/v1/deals`.
 - **Expected:** Step 1: each rep sees only its own deals, and the `owner_id` filter does not widen
   the scope (the handler overrides it with the caller). Step 2: **403** "Insufficient permissions"
-  from the group guard; the sidebar hides "Deals" for those roles.
+  from the per-route guard built from `RouteKeys`; the sidebar hides "Deals" for those roles.
 - **Automation:** blocked — needs a role-login helper. Go:
   `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestList_SalesIsAlwaysNarrowedToItself` (`internal/handler/deal_handler_test.go`);
   `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`), `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).

@@ -699,7 +699,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 		handler.SetupAuthAuditRoutes(protected, handler.NewAuthAuditLogHandler(service.NewAuthAuditLogService(authAuditRepo)))
 		handler.SetupSCIMTokenRoutes(protected, handler.NewSCIMTokenHandler(scimTokenService))
 
-		protectedAuth := protected.Group("/auth")
+		protectedAuth := handler.Protected(protected).Group("/auth")
 		{
 			protectedAuth.POST("/logout", authHandler.Logout)
 			protectedAuth.POST("/change-password", authHandler.ChangePassword)

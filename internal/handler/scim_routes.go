@@ -1,10 +1,6 @@
 package handler
 
-import (
-	"github.com/florinel-chis/gophercrm/internal/middleware"
-	"github.com/florinel-chis/gophercrm/internal/permissions"
-	"github.com/gin-gonic/gin"
-)
+import "github.com/gin-gonic/gin"
 
 // SetupSCIMRoutes mounts the SCIM 2.0 discovery documents (#468), the read
 // of the Users resource (#469), its create and replace (#470), its patch
@@ -41,8 +37,8 @@ func SetupSCIMRoutes(router *gin.RouterGroup, handler *SCIMHandler, users *SCIMU
 // SetupSCIMTokenRoutes mounts the administration of the SCIM provider tokens
 // (#468) behind settings.scim_manage, held by the admin system role only.
 func SetupSCIMTokenRoutes(router *gin.RouterGroup, handler *SCIMTokenHandler) {
-	guard := middleware.RequirePermission(permissions.SettingsSCIMManage)
-	router.GET("/settings/scim/tokens", guard, handler.List)
-	router.POST("/settings/scim/tokens", guard, handler.Create)
-	router.DELETE("/settings/scim/tokens/:id", guard, handler.Revoke)
+	routes := Protected(router)
+	routes.GET("/settings/scim/tokens", handler.List)
+	routes.POST("/settings/scim/tokens", handler.Create)
+	routes.DELETE("/settings/scim/tokens/:id", handler.Revoke)
 }

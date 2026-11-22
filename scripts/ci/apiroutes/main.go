@@ -78,7 +78,12 @@ var DefaultSources = []Source{{"main", "cmd"}, {"handler", "internal/handler"}}
 
 const (
 	entryFunction = "main.setupRouter"
-	baseExpr      = "cfg.API.Prefix"
+	// protectedFunction wraps a router group in a ProtectedRouter, whose
+	// GET/POST/PUT/DELETE register on the wrapped group under the same path.
+	protectedFunction   = "handler.Protected"
+	protectedPackage    = "handler"
+	protectedRouterType = "ProtectedRouter"
+	baseExpr            = "cfg.API.Prefix"
 	// authMiddleware is the call that installs authentication.
 	authMiddleware = "middleware.Auth"
 )
@@ -235,6 +240,11 @@ func (x *extractor) load(src Source) error {
 			x.pkgOf[fn] = src.Package
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && src.Package == protectedPackage && receiverType(fn) == protectedRouterType {
+				// The helper's own Handle call is how it registers the
+				// routes the walk reads at the callers; it is not a route.
+				return false
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -423,6 +433,16 @@ func (x *extractor) groupOf(expr ast.Expr, s scope, pkg string) (group, bool) {
 	case *ast.ParenExpr:
 		return x.groupOf(e.X, s, pkg)
 	case *ast.CallExpr:
+		if key, ok := x.funcKey(e.Fun, pkg); ok && key == protectedFunction {
+			// handler.Protected wraps a group without changing its path,
+			// authentication or middleware codes. The permission guards it
+			// builds are not in middlewareResponses, as the hand-written
+			// RequirePermission guards were not.
+			if len(e.Args) != 1 {
+				return group{}, false
+			}
+			return x.groupOf(e.Args[0], s, pkg)
+		}
 		sel, ok := e.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return group{}, false

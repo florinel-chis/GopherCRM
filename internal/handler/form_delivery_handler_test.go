@@ -17,6 +17,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -164,19 +165,19 @@ func TestFormDeliveryRoutesRoles(t *testing.T) {
 
 		// Registration order (gin's Routes() reports tree order, so the source
 		// is read): the delivery routes come before /forms/:id, and the retry
-		// carries the admin-and-sales write guard.
+		// carries the admin-and-sales write guard from its RouteKeys entry.
 		source, err := os.ReadFile("form_routes.go")
 		require.NoError(t, err)
 		text := string(source)
 		list := strings.Index(text, `group.GET("/deliveries", h.ListDeliveries)`)
-		retry := strings.Index(text, `group.POST("/deliveries/:id/retry", write, h.RetryDelivery)`)
+		retry := strings.Index(text, `group.POST("/deliveries/:id/retry", h.RetryDelivery)`)
 		detail := strings.Index(text, `group.GET("/:id", h.Get)`)
 		require.NotEqual(t, -1, list)
-		require.NotEqual(t, -1, retry, "the retry route is behind the write guard")
+		require.NotEqual(t, -1, retry)
 		require.NotEqual(t, -1, detail)
 		assert.Less(t, list, detail)
 		assert.Less(t, retry, detail)
-		assert.Contains(t, text, "write := middleware.RequirePermission(permissions.FormsManage)")
+		assert.Equal(t, []string{permissions.FormsManage}, permissions.RouteKeys["POST /forms/deliveries/:id/retry"].AnyOf)
 	})
 
 	for _, c := range []struct {

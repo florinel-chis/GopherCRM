@@ -323,3 +323,121 @@ func TestExtractRepositoryRouter(t *testing.T) {
 		}
 	}
 }
+
+// protectedHelper is a copy, in shape, of internal/handler/protected_routes.go:
+// a wrapper whose methods register on the wrapped group through Handle.
+const protectedHelper = `package handler
+
+type ProtectedRouter struct {
+	group *gin.RouterGroup
+	root  string
+}
+
+func Protected(router *gin.RouterGroup) ProtectedRouter {
+	return ProtectedRouter{group: router, root: router.BasePath()}
+}
+
+func (r ProtectedRouter) Group(relativePath string) ProtectedRouter {
+	return ProtectedRouter{group: r.group.Group(relativePath), root: r.root}
+}
+
+func (r ProtectedRouter) GET(relativePath string, handlers ...gin.HandlerFunc) {
+	r.handle("GET", relativePath, handlers)
+}
+
+func (r ProtectedRouter) handle(method, relativePath string, handlers []gin.HandlerFunc) {
+	r.group.Handle(method, relativePath, handlers...)
+}
+`
+
+// writeProtectedTree is writeTree plus the ProtectedRouter helper file.
+func writeProtectedTree(t *testing.T, cmd, handler string) string {
+	t.Helper()
+	root := writeTree(t, cmd, handler)
+	if err := os.WriteFile(filepath.Join(root, "internal/handler/protected_routes.go"), []byte(protectedHelper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// Routes registered through a bare Protected(router) inside package handler,
+// through handler.Protected(group) from cmd, and through Group on either keep
+// the wrapped group's path, Auth flag and middleware codes; the helper's own
+// Handle call is not reported.
+func TestExtractFollowsTheProtectedRouter(t *testing.T) {
+	cmd := strings.Replace(goodCmd, `	protected.Use(middleware.Auth(svc))`, `	protected.Use(middleware.Auth(svc))
+	protected.Use(middleware.RateLimitModerate())`, 1)
+	cmd = strings.Replace(cmd, `	handler.SetupWidgetRoutes(alias, h)`, `	handler.SetupWidgetRoutes(alias, h)
+	protectedAuth := handler.Protected(protected).Group("/auth")
+	{
+		protectedAuth.POST("/logout", h.Logout)
+	}
+	direct := handler.Protected(protected)
+	direct.GET("/direct", h.Direct)`, 1)
+	handler := `package handler
+
+func NewWidgetHandler() *WidgetHandler { return &WidgetHandler{} }
+
+func SetupWidgetRoutes(router *gin.RouterGroup, h *WidgetHandler) {
+	routes := Protected(router)
+	widgets := routes.Group("/widgets")
+	{
+		widgets.GET("", h.List)
+		widgets.DELETE("/:id", h.Delete)
+	}
+	routes.POST("/widgets/bulk/status", h.Bulk)
+}
+`
+	routes, err := Extract(writeProtectedTree(t, cmd, handler), DefaultSources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, r := range routes {
+		got[routeKeys([]Route{r})[0]] = fmt.Sprintf("%s auth=%t %v %s", r.Handler, r.Auth, r.Responses, r.File)
+	}
+	want := map[string]string{
+		"POST /auth/login":          "handler.WidgetHandler.Login auth=false [] cmd/main.go",
+		"POST /auth/logout":         "handler.WidgetHandler.Logout auth=true [401 429] cmd/main.go",
+		"GET /direct":               "handler.WidgetHandler.Direct auth=true [401 429] cmd/main.go",
+		"GET /widgets":              "handler.WidgetHandler.List auth=true [401 429] internal/handler/main.go",
+		"DELETE /widgets/{id}":      "handler.WidgetHandler.Delete auth=true [401 429] internal/handler/main.go",
+		"POST /widgets/bulk/status": "handler.WidgetHandler.Bulk auth=true [401 429] internal/handler/main.go",
+		"!GET /health":              " auth=false [] cmd/main.go",
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %d routes, want %d: %v", len(got), len(want), got)
+	}
+	for key, w := range want {
+		if got[key] != w {
+			t.Errorf("%s = %q, want %q", key, got[key], w)
+		}
+	}
+}
+
+// Only the ProtectedRouter method bodies are skipped: a Handle call in any
+// other method or function of package handler is still reported.
+func TestExtractReportsHandleOutsideTheProtectedRouter(t *testing.T) {
+	cases := map[string]string{
+		"method of another type": "\nfunc (o Other) handle(g *gin.RouterGroup) {\n\tg.Handle(\"GET\", \"/x\", nil)\n}\n",
+		"plain function":         "\nfunc register(g *gin.RouterGroup) {\n\tg.Handle(\"GET\", \"/x\", nil)\n}\n",
+		"reached setup function": "",
+	}
+	for name, extra := range cases {
+		t.Run(name, func(t *testing.T) {
+			handler := goodHandler + extra
+			want := "not reached from main.setupRouter"
+			if extra == "" {
+				handler = strings.Replace(goodHandler, `widgets.GET("", h.List)`, `widgets.Handle("GET", "", h.List)`, 1)
+				want = "unsupported route registration form Handle"
+			}
+			_, err := Extract(writeProtectedTree(t, goodCmd, handler), DefaultSources)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("error = %v, want it to contain %q", err, want)
+			}
+			if strings.Contains(err.Error(), "protected_routes.go") {
+				t.Fatalf("the ProtectedRouter methods were reported: %v", err)
+			}
+		})
+	}
+}

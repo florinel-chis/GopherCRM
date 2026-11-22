@@ -29,8 +29,9 @@ lead creation, and the erasure of submission data. Every **Expected** states wha
   the builder's ticket action (TC-FORM-131) and `forms-public-api.spec.ts` the public API; the
   other cases against the SPA are *planned* for `gocrm-ui/e2e/tests/forms.spec.ts`; where a Go or
   Vitest test already pins the behaviour the Automation line names it.
-- **`/forms` is closed to `customer`.** Group guard is `RequireRole(admin, sales, support)`;
-  create/update need admin or sales, delete needs admin. The SPA mirrors this (route gate plus
+- **`/forms` is closed to `customer`.** The per-route guards built from `RouteKeys` refuse
+  `customer` with 403 (on `GET /forms/deliveries` and `GET /forms/:id` the handler's first
+  statement does); create/update need admin or sales, delete needs admin. The SPA mirrors this (route gate plus
   read-only rendering for support).
 - **The public endpoints are open by design** — no auth, permissive credential-less CORS, and
   per-route rate limits (generous on reads, strict on submits/confirms). E2E against them must

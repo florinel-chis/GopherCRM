@@ -251,8 +251,13 @@ through this route only once `leads.assign_owner` is ticked on it
 
 Every protected route is either in `permissions.RouteKeys` (`internal/permissions/routes.go`),
 which names the key or keys that open it, or in `permissions.SelfServiceRoutes`; never in both.
-The route files guard with `middleware.RequirePermission` and `middleware.RequireAnyPermission`,
-and a caller that does not hold the key is answered 403 `FORBIDDEN`. The permission check comes
+The route files register every protected route through `handler.Protected`
+(`internal/handler/protected_routes.go`), which builds the route's guard from its `RouteKeys`
+entry: `middleware.RequireAnyPermission` of its `AnyOf` keys and a `middleware.RequirePermission`
+for each `AllOf` key. A self-service route and a route marked `CheckedInHandler`, whose handler
+checks the key in its first statement, get no route guard. Registering a route that has no entry
+in either table panics at startup, naming the route. A caller that does not hold the key is
+answered 403 `FORBIDDEN`. The permission check comes
 before any ownership check, so a caller without the key is refused on its own records too. A role
 with no permissions is refused on every route of `RouteKeys`
 (`TestZeroPermissionRoleIsDeniedEverywhere` and `TestEveryRouteRequiresItsOwnKey` in `cmd`).

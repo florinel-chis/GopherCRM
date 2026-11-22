@@ -158,9 +158,9 @@ func (suite *AEOHandlerTestSuite) allowEverything() {
 	m.On("Providers").Return([]models.AEOProviderStatus{}).Maybe()
 }
 
-// The customer role is rejected by the group guard on every route, and the
-// stricter per-route guards keep support out of the mutations and everyone but
-// admin out of the delete.
+// The customer role is rejected by the per-route guard built from RouteKeys
+// on every route, and the stricter per-route guards keep support out of the
+// mutations and everyone but admin out of the delete.
 func (suite *AEOHandlerTestSuite) TestRBACMatrix() {
 	suite.allowEverything()
 
