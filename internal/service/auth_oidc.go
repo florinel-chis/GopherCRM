@@ -3,9 +3,13 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +28,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
@@ -493,14 +498,76 @@ func (p *oidcProvider) verifier(clientID string) *oidc.IDTokenVerifier {
 	return oidc.NewVerifier(p.key.issuer, p.appKeySet, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: p.appAlgs})
 }
 
+// oauthConfig is the OAuth 2.0 client of the configuration. With a client
+// certificate in force it carries no secret and sends client_id in the form,
+// so the token request authenticates only with the client assertion.
 func (s *oidcService) oauthConfig(provider *oidc.Provider, cfg EffectiveSSOConfig) *oauth2.Config {
-	return &oauth2.Config{
+	out := &oauth2.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
 		Endpoint:     provider.Endpoint(),
 		RedirectURL:  s.redirectURI(),
 		Scopes:       s.requestScopes(cfg),
 	}
+	if cfg.ClientCertificate != nil {
+		out.ClientSecret = ""
+		out.Endpoint.AuthStyle = oauth2.AuthStyleInParams
+	}
+	return out
+}
+
+// exchangeCode redeems the authorization code with the PKCE verifier. With a
+// client certificate in force the request carries a fresh client assertion;
+// a signing failure fails the exchange.
+func (s *oidcService) exchangeCode(ctx context.Context, provider *oidc.Provider, cfg EffectiveSSOConfig, code, verifier string) (*oauth2.Token, error) {
+	options := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
+	if cfg.ClientCertificate != nil {
+		assertion, err := s.clientAssertion(cfg.ClientCertificate, cfg.ClientID, provider.Endpoint().TokenURL)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options,
+			oauth2.SetAuthURLParam("client_assertion_type", oidcClientAssertionType),
+			oauth2.SetAuthURLParam("client_assertion", assertion))
+	}
+	return s.oauthConfig(provider, cfg).Exchange(ctx, code, options...)
+}
+
+// The client assertion of RFC 7523 (private_key_jwt).
+const (
+	oidcClientAssertionType     = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	oidcClientAssertionLifetime = 5 * time.Minute
+)
+
+// clientAssertion signs the client assertion of one code exchange: PS256 over
+// the certificate's key, the certificate named by its x5t and x5t#S256
+// thumbprints, aud the token endpoint, iss and sub the client id, a fresh jti,
+// valid from now for five minutes.
+func (s *oidcService) clientAssertion(cert *SSOClientCertificate, clientID, tokenURL string) (string, error) {
+	jti := make([]byte, 16)
+	if _, err := rand.Read(jti); err != nil {
+		return "", fmt.Errorf("generate the client assertion id: %w", err)
+	}
+	now := s.now().UTC()
+	token := jwt.NewWithClaims(jwt.SigningMethodPS256, jwt.RegisteredClaims{
+		Issuer:    clientID,
+		Subject:   clientID,
+		Audience:  jwt.ClaimStrings{tokenURL},
+		ID:        hex.EncodeToString(jti),
+		IssuedAt:  jwt.NewNumericDate(now),
+		NotBefore: jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(oidcClientAssertionLifetime)),
+	})
+	sha1Sum := sha1.Sum(cert.Certificate.Raw)
+	sha256Sum := sha256.Sum256(cert.Certificate.Raw)
+	token.Header["typ"] = "JWT"
+	token.Header["x5t"] = base64.RawURLEncoding.EncodeToString(sha1Sum[:])
+	token.Header["x5t#S256"] = base64.RawURLEncoding.EncodeToString(sha256Sum[:])
+	signed, err := token.SignedString(cert.PrivateKey)
+	if err != nil {
+		return "", fmt.Errorf("sign the client assertion: %w", err)
+	}
+	return signed, nil
 }
 
 // requestScopes are the configured scopes, plus the Microsoft Graph
@@ -735,7 +802,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	}
 	provider := discovered.provider
 
-	token, err := s.oauthConfig(provider, cfg).Exchange(ctx, code, oauth2.VerifierOption(attempt.CodeVerifier))
+	token, err := s.exchangeCode(ctx, provider, cfg, code, attempt.CodeVerifier)
 	if err != nil {
 		oidcLogger(ctx, attempt.ID).WithField("error_code", "token_exchange_failed").Warn("Single sign-on code exchange failed")
 		return nil, facts, ssoUnavailable(AuthAuditReasonTokenExchangeFailed)

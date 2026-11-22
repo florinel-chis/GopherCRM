@@ -64,6 +64,11 @@ const (
 	ConfigKeySSOClientSecret  = "security.sso.client_secret"
 	ConfigKeySSOScopes        = "security.sso.scopes"
 	ConfigKeySSORoleMapping   = "security.sso.role_mapping"
+	// The client certificate (PEM) and its RSA private key (PEM). While both
+	// hold a usable pair, the code exchange authenticates with a signed client
+	// assertion instead of the client secret. No environment fallback.
+	ConfigKeySSOClientCertificate = "security.sso.client_certificate"
+	ConfigKeySSOClientPrivateKey  = "security.sso.client_private_key"
 )
 
 // IsSSOConfigurationKey reports whether key names a reserved SSO setting. It
@@ -462,10 +467,11 @@ func DefaultConfigurations() []Configuration {
 	return append(defaults, defaultAEOProviderConfigurations()...)
 }
 
-// defaultSSOConfigurations seeds the seven reserved single sign-on settings.
+// defaultSSOConfigurations seeds the nine reserved single sign-on settings.
 // They ship empty so the OIDC_* environment fallbacks apply until an
-// administrator stores a value; the client secret and the role mapping are
-// sensitive and therefore encrypted at rest.
+// administrator stores a value; the client secret, the role mapping, the
+// client certificate and its private key are sensitive and therefore
+// encrypted at rest.
 func defaultSSOConfigurations() []Configuration {
 	entry := func(key, description string, sensitive bool) Configuration {
 		return Configuration{
@@ -489,5 +495,7 @@ func defaultSSOConfigurations() []Configuration {
 		entry(ConfigKeySSOClientSecret, "OpenID Connect client secret; empty follows OIDC_CLIENT_SECRET", true),
 		entry(ConfigKeySSOScopes, "Space-separated OpenID Connect scopes; empty follows OIDC_SCOPES, then openid profile email", false),
 		entry(ConfigKeySSORoleMapping, "JSON array mapping an ID-token claim value to a role id; empty follows OIDC_ROLE_MAPPING", true),
+		entry(ConfigKeySSOClientCertificate, "OpenID Connect client certificate (PEM); with its private key it replaces the client secret in the code exchange; empty means none", true),
+		entry(ConfigKeySSOClientPrivateKey, "RSA private key (PEM) of the OpenID Connect client certificate; empty means none", true),
 	}
 }

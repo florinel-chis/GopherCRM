@@ -1507,9 +1507,9 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 }
 
 // TestConcurrencyDocOIDCSignIn pins the OIDC sign-in flow (#435) to the code:
-// the attempt claim is its own statement before the governed transaction,
-// which takes admin set → users → roles before it writes the identity and the
-// refresh token.
+// the attempt claim is its own statement before the code exchange and the
+// governed transaction, which takes admin set → users → roles before it writes
+// the identity and the refresh token.
 func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	assert.Contains(t, concurrencyDocNormalize(fields["OIDC sign-in"]["Order"]),
@@ -1528,7 +1528,11 @@ func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 		}
 	}
 	callback := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) callback(")
-	inOrder(callback, "s.attempts.Claim(", ".Exchange(", "s.users.ApplyOIDCSignIn(")
+	inOrder(callback, "s.attempts.Claim(", "s.exchangeCode(", "s.users.ApplyOIDCSignIn(")
+	// The code exchange itself lives in exchangeCode, which adds the client
+	// assertion when a certificate is in force.
+	exchange := concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func (s *oidcService) exchangeCode(")
+	inOrder(exchange, ".Exchange(")
 	apply := concurrencyDocFuncBody(t, "internal/service/user_governed_writes.go", "func (s *userService) ApplyOIDCSignIn(")
 	inOrder(apply, "s.governance.run(ctx,", "lockAdminSet(tx)", "identities.GetByIssuerSubject(",
 		"tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(", "in.issue(tx.handle")

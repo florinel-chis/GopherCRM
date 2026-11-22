@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single sign-on with a client certificate (#633).** Settings > Single sign-on accepts a client
+  certificate and its RSA private key (PEM, at least 2048 bits, PKCS#8 or PKCS#1, unencrypted) next
+  to the client secret, stored encrypted in the new reserved settings
+  `security.sso.client_certificate` and `security.sso.client_private_key`. While a usable pair is
+  set, the code exchange authenticates with a signed client assertion (`private_key_jwt`, RFC
+  7523, PS256) instead of the client secret; without one the secret is sent as before.
+  `PUT /settings/sso` takes `client_certificate` and `client_private_key` together (both absent
+  keep the pair, both "" clear it) and refuses a certificate that does not parse or has expired, or
+  a key that is encrypted, not RSA, too short or does not match, field by field and without
+  storing anything. `GET /settings/sso` reports `client_certificate_set`, the SHA-1 thumbprint and
+  the expiry, never the PEM or the key. There is no environment variable for the certificate. The
+  Microsoft Entra ID guide explains how to create, upload and renew the certificate.
+
 - **Browser headers on the web app and the backend's form pages (#564).** Every page and asset of
   the web app, error answers included, now carries a content policy (`Content-Security-Policy`,
   same-origin scripts, styles, images, fonts and API calls only; no framing), `X-Frame-Options:

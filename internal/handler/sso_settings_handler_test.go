@@ -2,11 +2,20 @@ package handler
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/middleware"
@@ -21,7 +30,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// ssoConfigStore is a ConfigurationService holding the seven SSO rows in
+// ssoConfigStore is a ConfigurationService holding the nine SSO rows in
 // plaintext; only the reads and SetSSO the SSO service uses are implemented.
 type ssoConfigStore struct {
 	service.ConfigurationService
@@ -337,4 +346,168 @@ func TestSSOSettingsHandlerAllowPassword(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 		assert.Zero(t, store.writes)
 	})
+}
+
+// ssoHandlerTestPair is a generated self-signed certificate and its PKCS#8
+// key, in PEM.
+type ssoHandlerTestPair struct {
+	cert            *x509.Certificate
+	certPEM, keyPEM string
+}
+
+func newSSOHandlerTestPair(t *testing.T, bits int) ssoHandlerTestPair {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "gophercrm-handler-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(30 * 24 * time.Hour).Truncate(time.Second),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	return ssoHandlerTestPair{
+		cert:    cert,
+		certPEM: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		keyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})),
+	}
+}
+
+// ssoBodyWithPair is ssoValidBody plus the given certificate fields; a nil
+// value leaves the field out.
+func ssoBodyWithPair(t *testing.T, certPEM, keyPEM *string) string {
+	t.Helper()
+	var body map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(ssoValidBody), &body))
+	if certPEM != nil {
+		body["client_certificate"] = *certPEM
+	}
+	if keyPEM != nil {
+		body["client_private_key"] = *keyPEM
+	}
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// assertNoPEM checks that a body carries no PEM text and no line of the
+// given values.
+func assertNoPEM(t *testing.T, body string, values ...string) {
+	t.Helper()
+	assert.NotContains(t, body, "BEGIN")
+	assert.NotContains(t, body, "-----END")
+	for _, value := range values {
+		for _, line := range strings.Split(value, "\n") {
+			if len(line) >= 16 && !strings.HasPrefix(line, "-----") {
+				assert.NotContains(t, body, line[:16])
+			}
+		}
+	}
+}
+
+func TestSSOSettingsHandlerClientCertificate(t *testing.T) {
+	require.NoError(t, utils.InitLogger(&config.LoggingConfig{Level: "error", Format: "json"}))
+	pair := newSSOHandlerTestPair(t, 2048)
+	sum := sha1.Sum(pair.cert.Raw)
+	thumbprint := strings.ToUpper(hex.EncodeToString(sum[:]))
+	str := func(v string) *string { return &v }
+
+	decode := func(t *testing.T, w *httptest.ResponseRecorder) map[string]interface{} {
+		t.Helper()
+		var envelope struct {
+			Data map[string]interface{} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope), w.Body.String())
+		return envelope.Data
+	}
+
+	t.Run("PUT a pair, GET reports it without the PEM; absent keeps, empty clears", func(t *testing.T) {
+		store := newSSOConfigStore()
+		router := newSSOSettingsTestRouter(store, asSystemRole("admin"))
+
+		w := ssoRequest(router, http.MethodGet, "")
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		data := decode(t, w)
+		assert.Equal(t, false, data["client_certificate_set"])
+		assert.Equal(t, "", data["client_certificate_thumbprint"])
+		assert.Equal(t, "", data["client_certificate_expires_at"])
+		assert.Equal(t, "default", data["sources"].(map[string]interface{})["client_certificate"])
+
+		w = ssoRequest(router, http.MethodPut, ssoBodyWithPair(t, &pair.certPEM, &pair.keyPEM))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assertNoPEM(t, w.Body.String(), pair.certPEM, pair.keyPEM)
+		for _, body := range []string{w.Body.String(), ssoRequest(router, http.MethodGet, "").Body.String()} {
+			var envelope struct {
+				Data map[string]interface{} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(body), &envelope))
+			data := envelope.Data
+			assert.Equal(t, true, data["client_certificate_set"])
+			assert.Equal(t, thumbprint, data["client_certificate_thumbprint"])
+			assert.Equal(t, pair.cert.NotAfter.UTC().Format(time.RFC3339), data["client_certificate_expires_at"])
+			assert.Equal(t, "settings", data["sources"].(map[string]interface{})["client_certificate"])
+			assert.NotContains(t, data, "client_certificate")
+			assert.NotContains(t, data, "client_private_key")
+			assertNoPEM(t, body, pair.certPEM, pair.keyPEM)
+		}
+
+		w = ssoRequest(router, http.MethodPut, ssoValidBody)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, true, decode(t, w)["client_certificate_set"], "absent keeps the pair")
+
+		w = ssoRequest(router, http.MethodPut, ssoBodyWithPair(t, str(""), str("")))
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		data = decode(t, w)
+		assert.Equal(t, false, data["client_certificate_set"], "empty clears the pair")
+		assert.Equal(t, "", data["client_certificate_thumbprint"])
+		assert.Equal(t, "", store.values[models.ConfigKeySSOClientCertificate])
+		assert.Equal(t, "", store.values[models.ConfigKeySSOClientPrivateKey])
+	})
+
+	small := newSSOHandlerTestPair(t, 1024)
+	other := newSSOHandlerTestPair(t, 2048)
+	for name, tc := range map[string]struct {
+		cert, key *string
+		field     string
+	}{
+		"certificate not PEM":   {str("not a certificate"), &pair.keyPEM, "client_certificate"},
+		"key not PEM":           {&pair.certPEM, str("not a key"), "client_private_key"},
+		"key under 2048 bits":   {&small.certPEM, &small.keyPEM, "client_private_key"},
+		"key does not match":    {&pair.certPEM, &other.keyPEM, "client_private_key"},
+		"only the certificate":  {&pair.certPEM, nil, "client_private_key"},
+		"only the key":          {nil, &pair.keyPEM, "client_certificate"},
+		"certificate too large": {str(pair.certPEM + strings.Repeat(" ", 16385)), &pair.keyPEM, "client_certificate"},
+		"key too large":         {&pair.certPEM, str(pair.keyPEM + strings.Repeat(" ", 16385)), "client_private_key"},
+	} {
+		t.Run("400 "+name, func(t *testing.T) {
+			store := newSSOConfigStore()
+			store.values[models.ConfigKeySSOClientCertificate] = pair.certPEM
+			store.values[models.ConfigKeySSOClientPrivateKey] = pair.keyPEM
+			before := store.snapshot()
+			w := ssoRequest(newSSOSettingsTestRouter(store, asSystemRole("admin")), http.MethodPut, ssoBodyWithPair(t, tc.cert, tc.key))
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Equal(t, utils.ErrCodeValidation, ssoErrorCode(t, w))
+			var envelope struct {
+				Error struct {
+					Details map[string]string `json:"details"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &envelope))
+			assert.Contains(t, envelope.Error.Details, tc.field)
+			var submitted []string
+			for _, value := range []*string{tc.cert, tc.key} {
+				if value != nil {
+					submitted = append(submitted, *value)
+				}
+			}
+			assertNoPEM(t, w.Body.String(), submitted...)
+			assert.Zero(t, store.writes)
+			assert.Equal(t, before, store.snapshot(), "no row changed")
+		})
+	}
 }

@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -41,6 +42,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/go-jose/go-jose/v4"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -146,6 +148,17 @@ type oidcTestIssuer struct {
 	jwksQueries   []string
 	// discoveryPaths is the path of each discovery request.
 	discoveryPaths []string
+	// assertionCert is the client certificate registered for the client: a
+	// posted client_assertion must verify against it. tokenRequests records
+	// the form and Authorization header of each token request.
+	assertionCert *x509.Certificate
+	tokenRequests []oidcTokenRequest
+}
+
+// oidcTokenRequest is what one token request carried.
+type oidcTokenRequest struct {
+	form          url.Values
+	authorization string
 }
 
 // Modes of the fake userinfo endpoint (#451).
@@ -535,16 +548,28 @@ func (i *oidcTestIssuer) token(w http.ResponseWriter, r *http.Request) {
 		oidcTokenError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	clientID, clientSecret, ok := r.BasicAuth()
-	if ok {
-		clientID, _ = url.QueryUnescape(clientID)
-		clientSecret, _ = url.QueryUnescape(clientSecret)
+	i.mu.Lock()
+	i.tokenRequests = append(i.tokenRequests, oidcTokenRequest{form: cloneValues(r.PostForm), authorization: r.Header.Get("Authorization")})
+	assertionCert := i.assertionCert
+	i.mu.Unlock()
+	if _, posted := r.PostForm["client_assertion"]; posted {
+		// private_key_jwt: the assertion is the only client credential.
+		if !i.clientAssertionValid(r, assertionCert) {
+			oidcTokenError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
 	} else {
-		clientID, clientSecret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
-	}
-	if clientID != oidcTestClientID || clientSecret != oidcTestClientSecret {
-		oidcTokenError(w, http.StatusUnauthorized, "invalid_client")
-		return
+		clientID, clientSecret, ok := r.BasicAuth()
+		if ok {
+			clientID, _ = url.QueryUnescape(clientID)
+			clientSecret, _ = url.QueryUnescape(clientSecret)
+		} else {
+			clientID, clientSecret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+		}
+		if clientID != oidcTestClientID || clientSecret != oidcTestClientSecret {
+			oidcTokenError(w, http.StatusUnauthorized, "invalid_client")
+			return
+		}
 	}
 	if r.PostForm.Get("grant_type") != "authorization_code" {
 		oidcTokenError(w, http.StatusBadRequest, "unsupported_grant_type")
@@ -582,6 +607,56 @@ func (i *oidcTestIssuer) token(w http.ResponseWriter, r *http.Request) {
 		"expires_in":   3600,
 		"id_token":     idToken,
 	})
+}
+
+// clientAssertionValid checks a private_key_jwt token request: no
+// Authorization header and no client_secret, client_id and the assertion type
+// set, and an assertion that verifies as PS256 against the registered
+// certificate, names it by x5t, and carries aud = the token endpoint and
+// iss = sub = the client id.
+func (i *oidcTestIssuer) clientAssertionValid(r *http.Request, cert *x509.Certificate) bool {
+	if cert == nil || r.Header.Get("Authorization") != "" {
+		return false
+	}
+	if _, posted := r.PostForm["client_secret"]; posted {
+		return false
+	}
+	if r.PostForm.Get("client_id") != oidcTestClientID ||
+		r.PostForm.Get("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+		return false
+	}
+	thumbprint := sha1.Sum(cert.Raw)
+	token, err := jwt.Parse(r.PostForm.Get("client_assertion"), func(token *jwt.Token) (interface{}, error) {
+		if token.Header["x5t"] != base64.RawURLEncoding.EncodeToString(thumbprint[:]) {
+			return nil, errors.New("unknown certificate")
+		}
+		return cert.PublicKey, nil
+	}, jwt.WithValidMethods([]string{"PS256"}), jwt.WithAudience(i.server.URL+"/token"),
+		jwt.WithIssuer(oidcTestClientID), jwt.WithSubject(oidcTestClientID), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
+	return err == nil && token.Valid
+}
+
+func (i *oidcTestIssuer) setAssertionCertificate(cert *x509.Certificate) {
+	i.mu.Lock()
+	i.assertionCert = cert
+	i.mu.Unlock()
+}
+
+// takeTokenRequests returns and forgets the recorded token requests.
+func (i *oidcTestIssuer) takeTokenRequests() []oidcTokenRequest {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	out := i.tokenRequests
+	i.tokenRequests = nil
+	return out
+}
+
+func cloneValues(values url.Values) url.Values {
+	out := url.Values{}
+	for key, list := range values {
+		out[key] = append([]string(nil), list...)
+	}
+	return out
 }
 
 func (i *oidcTestIssuer) sign(grant oidcGrant) string {
@@ -2608,4 +2683,164 @@ func TestOIDCProfileNames(t *testing.T) {
 			assert.LessOrEqual(t, len(last), oidcNameMaxBytes)
 		})
 	}
+}
+
+// TestOIDCClientAssertion signs in through the fake token endpoint with a
+// client certificate stored next to the client secret: the code exchange
+// authenticates with a PS256 client assertion (private_key_jwt) and sends no
+// secret. Without the pair, and after it is cleared, the secret is sent as
+// before.
+func TestOIDCClientAssertion(t *testing.T) {
+	db, competitor := openOIDCTestSQLite(t)
+	f := newOIDCFixture(t, db, competitor)
+	pair := validSSOTestCertificate(t)
+
+	// storePair stores the fixture's settings (client secret included) and
+	// the certificate pair; "" and "" clear the pair.
+	storePair := func(t *testing.T, certPEM, keyPEM string) {
+		t.Helper()
+		enabled, secret := true, oidcTestClientSecret
+		require.NoError(t, f.sso.Update(context.Background(), SSOSettingsUpdate{
+			Enabled:           &enabled,
+			IssuerURL:         f.issuer.Issuer(),
+			ClientID:          oidcTestClientID,
+			ClientSecret:      &secret,
+			RoleMapping:       f.mapping(),
+			ClientCertificate: &certPEM,
+			ClientPrivateKey:  &keyPEM,
+		}))
+	}
+	begin := func(t *testing.T) {
+		t.Helper()
+		f.reset(t)
+		storePair(t, "", "")
+		f.issuer.setAssertionCertificate(nil)
+		f.issuer.takeTokenRequests()
+		t.Cleanup(func() {
+			storePair(t, "", "")
+			f.issuer.setAssertionCertificate(nil)
+		})
+	}
+	// assertSecretRequest checks a token request authenticated with the
+	// client secret and carrying no assertion.
+	assertSecretRequest := func(t *testing.T, request oidcTokenRequest) {
+		t.Helper()
+		assert.NotContains(t, request.form, "client_assertion")
+		assert.NotContains(t, request.form, "client_assertion_type")
+		probe := &http.Request{Header: http.Header{"Authorization": {request.authorization}}}
+		user, secret, basic := probe.BasicAuth()
+		if basic {
+			user, _ = url.QueryUnescape(user)
+			secret, _ = url.QueryUnescape(secret)
+		} else {
+			user, secret = request.form.Get("client_id"), request.form.Get("client_secret")
+		}
+		assert.Equal(t, oidcTestClientID, user)
+		assert.Equal(t, oidcTestClientSecret, secret, "the client secret is sent")
+	}
+
+	t.Run("a certificate pair: the token request carries a client assertion and no secret", func(t *testing.T) {
+		begin(t)
+		storePair(t, pair.certPEM, pair.keyPEM)
+		f.issuer.setAssertionCertificate(pair.cert)
+		cfg, err := f.sso.SSOConfig(context.Background())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate)
+		require.Equal(t, oidcTestClientSecret, cfg.ClientSecret, "a client secret is stored too")
+
+		var jtis []string
+		for _, sub := range []string{"subject-assertion-1", "subject-assertion-2"} {
+			tokens, err := f.signIn(t, oidcValid(sub, sub+"@idp.example.test"))
+			require.NoError(t, err)
+			require.NotNil(t, tokens)
+			assert.NotEmpty(t, tokens.AccessToken)
+
+			requests := f.issuer.takeTokenRequests()
+			require.Len(t, requests, 1)
+			request := requests[0]
+			assert.Empty(t, request.authorization, "no Authorization header")
+			assert.NotContains(t, request.form, "client_secret")
+			assert.Equal(t, oidcTestClientID, request.form.Get("client_id"))
+			assert.Equal(t, "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", request.form.Get("client_assertion_type"))
+
+			now := f.now()
+			claims := jwt.RegisteredClaims{}
+			parsed, err := jwt.ParseWithClaims(request.form.Get("client_assertion"), &claims, func(*jwt.Token) (interface{}, error) {
+				return pair.cert.PublicKey.(*rsa.PublicKey), nil
+			}, jwt.WithValidMethods([]string{"PS256"}), jwt.WithTimeFunc(func() time.Time { return now }))
+			require.NoError(t, err)
+			require.True(t, parsed.Valid)
+
+			sha1Sum := sha1.Sum(pair.cert.Raw)
+			sha256Sum := sha256.Sum256(pair.cert.Raw)
+			assert.Equal(t, "JWT", parsed.Header["typ"])
+			assert.Equal(t, "PS256", parsed.Header["alg"])
+			assert.Equal(t, base64.RawURLEncoding.EncodeToString(sha1Sum[:]), parsed.Header["x5t"])
+			assert.Equal(t, base64.RawURLEncoding.EncodeToString(sha256Sum[:]), parsed.Header["x5t#S256"])
+
+			assert.Equal(t, jwt.ClaimStrings{f.issuer.URL() + "/token"}, claims.Audience)
+			assert.Equal(t, oidcTestClientID, claims.Issuer)
+			assert.Equal(t, oidcTestClientID, claims.Subject)
+			assert.NotEmpty(t, claims.ID)
+			require.NotNil(t, claims.IssuedAt)
+			require.NotNil(t, claims.NotBefore)
+			require.NotNil(t, claims.ExpiresAt)
+			assert.False(t, claims.IssuedAt.After(now), "iat is not after now")
+			assert.False(t, claims.NotBefore.After(now), "nbf is not after now")
+			assert.True(t, claims.ExpiresAt.After(now), "exp is after now")
+			assert.False(t, claims.ExpiresAt.After(now.Add(5*time.Minute)), "exp is at most five minutes later")
+			jtis = append(jtis, claims.ID)
+		}
+		assert.NotEqual(t, jtis[0], jtis[1], "a fresh jti per sign-in")
+	})
+
+	t.Run("a certificate the endpoint does not hold: unavailable, token_exchange_failed", func(t *testing.T) {
+		begin(t)
+		storePair(t, pair.certPEM, pair.keyPEM)
+		f.issuer.setAssertionCertificate(validSSOTestCertificate(t).cert)
+		tokens, err := f.signIn(t, oidcValid("subject-assertion-other", "assertion-other@idp.example.test"))
+		assert.Nil(t, tokens)
+		require.ErrorIs(t, err, ErrSSOUnavailable)
+		assert.Equal(t, AuthAuditReasonTokenExchangeFailed, f.lastAudit(t).Reason)
+		assert.Equal(t, int64(0), f.users(t))
+		requests := f.issuer.takeTokenRequests()
+		require.Len(t, requests, 1)
+		assert.NotEmpty(t, requests[0].form.Get("client_assertion"))
+		assert.NotContains(t, requests[0].form, "client_secret")
+	})
+
+	t.Run("without a certificate pair: the client secret and no client_assertion", func(t *testing.T) {
+		begin(t)
+		f.issuer.setAssertionCertificate(pair.cert)
+		tokens, err := f.signIn(t, oidcValid("subject-secret-1", "secret-1@idp.example.test"))
+		require.NoError(t, err)
+		require.NotNil(t, tokens)
+		requests := f.issuer.takeTokenRequests()
+		require.NotEmpty(t, requests)
+		for _, request := range requests {
+			assertSecretRequest(t, request)
+		}
+	})
+
+	t.Run("after the pair is cleared: the client secret again", func(t *testing.T) {
+		begin(t)
+		f.issuer.setAssertionCertificate(pair.cert)
+		storePair(t, pair.certPEM, pair.keyPEM)
+		_, err := f.signIn(t, oidcValid("subject-cleared-1", "cleared-1@idp.example.test"))
+		require.NoError(t, err)
+		require.NotEmpty(t, f.issuer.takeTokenRequests()[0].form.Get("client_assertion"))
+
+		storePair(t, "", "")
+		cfg, err := f.sso.SSOConfig(context.Background())
+		require.NoError(t, err)
+		require.Nil(t, cfg.ClientCertificate)
+		tokens, err := f.signIn(t, oidcValid("subject-cleared-2", "cleared-2@idp.example.test"))
+		require.NoError(t, err)
+		require.NotNil(t, tokens)
+		requests := f.issuer.takeTokenRequests()
+		require.NotEmpty(t, requests)
+		for _, request := range requests {
+			assertSecretRequest(t, request)
+		}
+	})
 }

@@ -1,4 +1,7 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes, X509Certificate } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
+import { format } from 'date-fns';
 import {
   test,
   expect,
@@ -814,6 +817,116 @@ test.describe('Single sign-on with the test issuer', () => {
       // Back to the test issuer; no link exists under the other one, so no flag is needed.
       await admin.putSSO(before);
       expect((await admin.getSSO()).issuer_url).toBe(OIDC_ISSUER_URL);
+      await admin.dispose();
+    }
+  });
+
+  test('S15: a client certificate is saved on the settings screen, shown by its thumbprint, its key never', async ({
+    page,
+  }, testInfo) => {
+    // A self-signed pair made for this run only: no key is committed.
+    const keyFile = testInfo.outputPath('gophercrm-e2e-sso.key');
+    const certFile = testInfo.outputPath('gophercrm-e2e-sso.crt');
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-sha256',
+        '-days',
+        '2',
+        '-nodes',
+        '-subj',
+        '/CN=gophercrm-e2e',
+        '-keyout',
+        keyFile,
+        '-out',
+        certFile,
+      ],
+      { stdio: 'ignore' },
+    );
+    const certPEM = readFileSync(certFile, 'utf8');
+    const keyPEM = readFileSync(keyFile, 'utf8');
+    rmSync(keyFile, { force: true });
+    rmSync(certFile, { force: true });
+    // The uppercase hex SHA-1, computed here and not by the backend.
+    const x509 = new X509Certificate(certPEM);
+    const thumbprint = x509.fingerprint.replaceAll(':', '');
+    const notAfter = new Date(x509.validTo);
+    // Lines of the key's base64 body: none may appear on the page or in an answer.
+    const keyLines = keyPEM
+      .split('\n')
+      .filter((line) => line.length >= 16 && !line.startsWith('-----'));
+    const expectNoKey = (text: string) => {
+      for (const line of keyLines) expect(text).not.toContain(line);
+    };
+
+    const admin = await APIClient.admin();
+    try {
+      await new AdminAuthHelper(page).ensureAdminLoggedIn();
+      const settings = new SSOSettingsPage(page);
+      await settings.goto();
+      await expect(settings.certificateStatus).toHaveText('No client certificate is set', {
+        timeout: LOAD,
+      });
+
+      await settings.clientCertificate.fill(certPEM);
+      await settings.clientPrivateKey.fill(keyPEM);
+      const saved = await settings.save();
+      const savedText = await saved.text();
+      expect(saved.status(), savedText).toBe(200);
+      expectNoKey(savedText);
+      expect(savedText).not.toContain('BEGIN');
+
+      await expect(settings.certificateStatus).toContainText(`thumbprint ${thumbprint}`, {
+        timeout: LOAD,
+      });
+      await expect(settings.certificateStatus).toContainText(
+        `expires ${format(notAfter, 'PP')}); it is used instead of the client secret`,
+      );
+      await expect(settings.clientPrivateKey).toHaveValue('');
+      await expect(settings.clientCertificate).toHaveValue('');
+      expectNoKey(await page.content());
+
+      await page.reload();
+      await expect(settings.certificateStatus).toContainText(`thumbprint ${thumbprint}`, {
+        timeout: LOAD,
+      });
+      expectNoKey(await page.content());
+
+      const response = await admin.get('/settings/sso');
+      expect(response.status()).toBe(200);
+      const body = await response.text();
+      expectNoKey(body);
+      expect(body).not.toContain('BEGIN');
+      const stored = JSON.parse(body).data;
+      expect(stored).toMatchObject({
+        client_certificate_set: true,
+        client_certificate_thumbprint: thumbprint,
+        client_secret_set: true,
+      });
+      expect(stored.sources.client_certificate).toBe('settings');
+      expect(new Date(stored.client_certificate_expires_at).getTime()).toBe(notAfter.getTime());
+
+      // Clear it again, so the secret applies to later sign-ins.
+      await settings.clearCertificateButton.click();
+      await expect(settings.certificateStatus).toHaveText(
+        'The client certificate will be cleared when you save',
+      );
+      const cleared = await settings.save();
+      expect(cleared.status(), await cleared.text()).toBe(200);
+      await expect(settings.certificateStatus).toHaveText('No client certificate is set', {
+        timeout: LOAD,
+      });
+      expect((await admin.getSSO()).client_certificate_set).toBe(false);
+    } finally {
+      await admin.putSSO({
+        ...(await currentSettings(admin)),
+        client_certificate: '',
+        client_private_key: '',
+      });
       await admin.dispose();
     }
   });
