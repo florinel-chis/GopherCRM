@@ -19985,7 +19985,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Create a draft quote. Roles: admin and sales.\nRules: title required (trimmed, 1 to 200 characters); notes at most 65535 bytes; valid_until YYYY-MM-DD; currency three upper-case letters, defaulting to the deals.default_currency setting (EUR as shipped). At least one of deal_id and customer_id is required. With deal_id: the deal must be live (else 400 INVALID_REFERENCE), owned by the caller when the caller is sales (403), and neither won nor lost (409); without customer_id the deal's customer is used, possibly none (such a quote cannot be emailed); a customer_id different from the deal's customer is 400 VALIDATION_ERROR. customer_id must name a live customer. owner_id defaults to the caller; a sales user may only name itself; the owner must be a live user.\nThe quote starts as a draft with no lines and totals of 0, whatever else was sent; its first status-history row (from_status null, to_status draft) is written in the same transaction. No automation event is recorded for quotes.\nThe response is the quote re-read with its number, lines and the customer, deal and owner summaries.",
+                "description": "Create a draft quote. Roles: admin and sales.\nRules: title required (trimmed, 1 to 200 characters); notes at most 65535 bytes; valid_until YYYY-MM-DD; currency three upper-case letters, defaulting to the deals.default_currency setting (EUR as shipped). At least one of deal_id and customer_id is required. With deal_id: the deal must be live (else 400 INVALID_REFERENCE), owned by the caller when the caller is sales (403), and neither won nor lost (409); without customer_id the deal's customer is used, possibly none (such a quote cannot be emailed); a customer_id different from the deal's customer is 400 VALIDATION_ERROR. customer_id must name a live customer. owner_id defaults to the caller; a sales user may only name itself; the owner must be a live user.\nThe quote starts as a draft with no lines and totals of 0, whatever else was sent; its first status-history row (from_status null, to_status draft) is written in the same transaction. No automation event is recorded for quotes.\nThe response is the quote re-read with its number, lines and the customer, deal and owner summaries.\nA quote.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the quote and its draft history row.",
                 "consumes": [
                     "application/json"
                 ],
@@ -20343,7 +20343,7 @@
                 }
             },
             "post": {
-                "description": "Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.\nThe body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent or a quote whose customer was erased, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.",
+                "description": "Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.\nThe body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent or a quote whose customer was erased, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.\nA committed accept or decline writes a quote.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction, after the history row; a refused answer writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -20612,7 +20612,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partial update of a draft quote. Roles: admin (any quote) and sales (only the quotes it owns). Every absent field keeps its stored value; deal_id is not editable. valid_until takes YYYY-MM-DD, or null or an empty string to clear it. customer_id, when it changes, must name a live customer (400 INVALID_REFERENCE) and, when the quote's deal has a customer, be that customer (400 VALIDATION_ERROR). currency may change only while the quote has no lines (409 otherwise). owner_id: a sales user may only name itself; an admin any live user (checked when it changes). The stored quote is re-read under a row lock and written only while it is still a draft.\nThe response is the quote re-read with its lines and summaries.",
+                "description": "Partial update of a draft quote. Roles: admin (any quote) and sales (only the quotes it owns). Every absent field keeps its stored value; deal_id is not editable. valid_until takes YYYY-MM-DD, or null or an empty string to clear it. customer_id, when it changes, must name a live customer (400 INVALID_REFERENCE) and, when the quote's deal has a customer, be that customer (400 VALIDATION_ERROR). currency may change only while the quote has no lines (409 otherwise). owner_id: a sales user may only name itself; an admin any live user (checked when it changes). The stored quote is re-read under a row lock and written only while it is still a draft.\nThe response is the quote re-read with its lines and summaries.\nWhen the update changed at least one stored value of the quote (compared with the row read under lock in the update's transaction), a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -20797,7 +20797,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.",
+                "description": "Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.\nA quote.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the quote) is written in the same transaction as the soft delete, after a locking read of the quote on which the draft-only check of a sales caller runs; a refused delete writes none.",
                 "produces": [
                     "application/json"
                 ],
@@ -21310,7 +21310,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.\nOne transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.\nThe response is the whole quote with its lines and recomputed totals.",
+                "description": "Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.\nOne transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.\nThe response is the whole quote with its lines and recomputed totals.\nA quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line and the totals.",
                 "consumes": [
                     "application/json"
                 ],
@@ -21497,7 +21497,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.\nThe response is the whole quote with its lines and recomputed totals.",
+                "description": "Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.\nThe response is the whole quote with its lines and recomputed totals.\nWhen the edit changed at least one stored value of the line, a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an edit that sends the stored values writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -21689,7 +21689,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.\nThe response is the whole quote with its remaining lines and recomputed totals.",
+                "description": "Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.\nThe response is the whole quote with its remaining lines and recomputed totals.\nA quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line removal and the totals.",
                 "produces": [
                     "application/json"
                 ],
@@ -22041,7 +22041,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Change the status. Roles: admin (any quote) and sales (only the quotes it owns). The allowed moves are draft to sent, sent to accepted, sent to rejected, sent to expired and sent back to draft; accepted, rejected and expired are final. Any other pair, the same status again included, is 400 INVALID_STATUS_TRANSITION and writes nothing.\nOne transaction: a locking read of the quote, the transition check, the acceptance check (accepted is 409 once valid_until lies before today's date in the server's zone), a conditional claim (WHERE status = the stored status; a lost race is 400 INVALID_STATUS_TRANSITION), for draft to sent a locked count of the lines (none rolls everything back with 409), and one status-history row.\nTimestamps: sent sets sent_at and clears closed_at; accepted, rejected and expired set closed_at; sent to draft clears both. Accepting a quote does not change its deal, and no email is sent (see POST /quotes/{id}/email).",
+                "description": "Change the status. Roles: admin (any quote) and sales (only the quotes it owns). The allowed moves are draft to sent, sent to accepted, sent to rejected, sent to expired and sent back to draft; accepted, rejected and expired are final. Any other pair, the same status again included, is 400 INVALID_STATUS_TRANSITION and writes nothing.\nOne transaction: a locking read of the quote, the transition check, the acceptance check (accepted is 409 once valid_until lies before today's date in the server's zone), a conditional claim (WHERE status = the stored status; a lost race is 400 INVALID_STATUS_TRANSITION), for draft to sent a locked count of the lines (none rolls everything back with 409), and one status-history row.\nTimestamps: sent sets sent_at and clears closed_at; accepted, rejected and expired set closed_at; sent to draft clears both. Accepting a quote does not change its deal, and no email is sent (see POST /quotes/{id}/email).\nEvery committed transition writes a quote.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction, after the history row; a refused or rolled-back transition writes none.",
                 "consumes": [
                     "application/json"
                 ],
@@ -28352,7 +28352,10 @@
                             "task.deleted",
                             "company.created",
                             "company.updated",
-                            "company.deleted"
+                            "company.deleted",
+                            "quote.created",
+                            "quote.updated",
+                            "quote.deleted"
                         ],
                         "type": "string",
                         "description": "Only rows of this event type (unknown value: 400)",
@@ -28837,7 +28840,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.\nFrom then on every lead, customer, ticket, deal, task or company created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step; for a company, POST /companies) and every lead, customer, ticket, deal, task or company changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), PUT /companies/{id}, the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, a company deleted by DELETE /companies/{id} (company.deleted only: clearing company_id on its leads, customers and deals enqueues no updated event), and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
+                "description": "Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.\nFrom then on every lead, customer, ticket, deal, task, company or quote created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step; for a company, POST /companies; for a quote, POST /quotes) and every lead, customer, ticket, deal, task, company or quote changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), PUT /companies/{id}, PUT /quotes/{id}, POST, PUT and DELETE /quotes/{id}/lines (an add or a delete always counts, a line edit only when a stored line value changed), POST /quotes/{id}/status and POST /quotes/public/response (every committed transition counts), the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, a company deleted by DELETE /companies/{id} (company.deleted only: clearing company_id on its leads, customers and deals enqueues no updated event), a quote deleted by DELETE /quotes/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.\nThe URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).\nRoles: admin.",
                 "consumes": [
                     "application/json"
                 ],
@@ -34384,7 +34387,10 @@
                         "task.deleted",
                         "company.created",
                         "company.updated",
-                        "company.deleted"
+                        "company.deleted",
+                        "quote.created",
+                        "quote.updated",
+                        "quote.deleted"
                     ],
                     "readOnly": true,
                     "example": "lead.created"
@@ -34423,7 +34429,7 @@
                     "example": "2026-11-20T09:30:00.123Z"
                 },
                 "record_id": {
-                    "description": "Id of the created, updated or deleted lead, customer, ticket, deal, task or company: the only record datum sent.",
+                    "description": "Id of the created, updated or deleted lead, customer, ticket, deal, task, company or quote: the only record datum sent.",
                     "type": "integer",
                     "readOnly": true,
                     "example": 42
@@ -34482,6 +34488,9 @@
                             "lead.created",
                             "lead.deleted",
                             "lead.updated",
+                            "quote.created",
+                            "quote.deleted",
+                            "quote.updated",
                             "task.created",
                             "task.deleted",
                             "task.updated",
@@ -34568,6 +34577,9 @@
                             "lead.created",
                             "lead.deleted",
                             "lead.updated",
+                            "quote.created",
+                            "quote.deleted",
+                            "quote.updated",
                             "task.created",
                             "task.deleted",
                             "task.updated",
@@ -34659,6 +34671,9 @@
                             "lead.created",
                             "lead.deleted",
                             "lead.updated",
+                            "quote.created",
+                            "quote.deleted",
+                            "quote.updated",
                             "task.created",
                             "task.deleted",
                             "task.updated",
@@ -38876,7 +38891,7 @@
             ],
             "properties": {
                 "event_types": {
-                    "description": "Event types to subscribe to: 1 to 18 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated and company.deleted; duplicates collapse.",
+                    "description": "Event types to subscribe to: 1 to 21 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted, quote.created, quote.updated and quote.deleted; duplicates collapse.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -38898,7 +38913,10 @@
                             "task.deleted",
                             "company.created",
                             "company.updated",
-                            "company.deleted"
+                            "company.deleted",
+                            "quote.created",
+                            "quote.updated",
+                            "quote.deleted"
                         ]
                     },
                     "example": [
@@ -38923,7 +38941,7 @@
             "type": "object",
             "properties": {
                 "event_types": {
-                    "description": "New subscribed subset: 1 to 18 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated and company.deleted.",
+                    "description": "New subscribed subset: 1 to 21 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted, quote.created, quote.updated and quote.deleted.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -38945,7 +38963,10 @@
                             "task.deleted",
                             "company.created",
                             "company.updated",
-                            "company.deleted"
+                            "company.deleted",
+                            "quote.created",
+                            "quote.updated",
+                            "quote.deleted"
                         ]
                     },
                     "example": [
@@ -39054,7 +39075,7 @@
             "name": "forms"
         },
         {
-            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks and companies (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted).",
+            "description": "Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks, companies and quotes (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted, quote.created, quote.updated, quote.deleted).",
             "name": "webhooks"
         },
         {

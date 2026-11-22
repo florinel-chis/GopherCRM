@@ -25,3 +25,12 @@ func TestWebhookPingTimeoutDefault(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 300*time.Millisecond, impl.pingTimeout)
 }
+
+// TestWebhookEventTypesMaxItemsCoversCatalogue pins the raw event_types bound
+// (#518): an array listing every catalogue type once must be accepted.
+func TestWebhookEventTypesMaxItemsCoversCatalogue(t *testing.T) {
+	assert.Equal(t, 32, webhookEventTypesMaxItems)
+	assert.GreaterOrEqual(t, webhookEventTypesMaxItems, len(AllEventTypes()))
+	_, err := ValidateWebhookEventTypes(AllEventTypes())
+	require.NoError(t, err)
+}

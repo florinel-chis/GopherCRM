@@ -97,6 +97,7 @@ func (h *QuotePublicHandler) View(c *gin.Context) {
 // @Summary Accept or decline a quote through its client response link
 // @Description Unauthenticated. Spends the token of an emailed response link and moves the quote from sent to accepted (decision accept) or rejected (decision decline). In one transaction the token is claimed, the quote's status and closed_at are written and one status history row is added; the history row has no user (changed_by_id null) and source client, so the staff history shows the answer as the client's. The linked deal is not changed. A failure before the commit rolls everything back and the link stays usable.
 // @Description The body is validated before the token is looked at: malformed JSON, a missing token or a decision other than accept or decline is 400 VALIDATION_ERROR and leaves the link usable. The token is single use: a second request, and every unknown, used, expired or invalidated token or a quote that is no longer sent or a quote whose customer was erased, is the same 400 'Invalid or expired quote link'. Of two concurrent requests with one token exactly one succeeds. Rate limit: the strict tier, one bucket per client IP shared by both /quotes/public/response routes.
+// @Description A committed accept or decline writes a quote.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction, after the history row; a refused answer writes none.
 // @Tags public-quotes
 // @Accept json
 // @Produce json

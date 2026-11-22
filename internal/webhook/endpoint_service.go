@@ -34,8 +34,9 @@ const WebhookSecretContext = "webhook-endpoint-secret"
 const webhookSecretBytes = 32
 
 // webhookEventTypesMaxItems bounds the raw event_types array before
-// deduplication.
-const webhookEventTypesMaxItems = 20
+// deduplication. It must stay at least the number of catalogue event types
+// (21 since #518), or an array listing every type once would be refused.
+const webhookEventTypesMaxItems = 32
 
 // ErrWebhooksUnavailable is returned by a service built without its
 // repository or secret box. It is a plain error: the handler answers 500.

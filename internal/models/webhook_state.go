@@ -256,3 +256,79 @@ func (c *Company) WebhookState() CompanyWebhookState {
 		OwnerID:       webhookID(c.OwnerID),
 	}
 }
+
+// QuoteWebhookState is the state quote.updated compares (#518): every column
+// quoteRepository.UpdateDraft, UpdateTotals and ClaimStatus write. ValidUntil,
+// SentAt and ClosedAt compare as instants. last_emailed_at, which only
+// StampEmailed writes, stays out on purpose: an email is a delivery record,
+// not a change to the quote's terms or status, and QuoteService.Email emits
+// nothing.
+type QuoteWebhookState struct {
+	Title           string
+	Currency        string
+	ValidUntil      WebhookTime
+	Notes           string
+	DealID          uint
+	CustomerID      uint
+	OwnerID         uint
+	SubtotalCents   int64
+	DiscountCents   int64
+	TotalCents      int64
+	TaxCents        int64
+	GrossTotalCents int64
+	Status          QuoteStatus
+	SentAt          WebhookTime
+	ClosedAt        WebhookTime
+}
+
+// WebhookState returns the quote's state for the quote.updated event.
+func (q *Quote) WebhookState() QuoteWebhookState {
+	return QuoteWebhookState{
+		Title:           q.Title,
+		Currency:        q.Currency,
+		ValidUntil:      webhookTime(q.ValidUntil),
+		Notes:           q.Notes,
+		DealID:          webhookID(q.DealID),
+		CustomerID:      webhookID(q.CustomerID),
+		OwnerID:         q.OwnerID,
+		SubtotalCents:   q.SubtotalCents,
+		DiscountCents:   q.DiscountCents,
+		TotalCents:      q.TotalCents,
+		TaxCents:        q.TaxCents,
+		GrossTotalCents: q.GrossTotalCents,
+		Status:          q.Status,
+		SentAt:          webhookTime(q.SentAt),
+		ClosedAt:        webhookTime(q.ClosedAt),
+	}
+}
+
+// QuoteLineWebhookState is the line state QuoteService.UpdateLine compares
+// before it emits quote.updated (#518): the columns quoteRepository.UpdateLine
+// (Save, Product omitted) writes, minus the key, quote_id and the
+// bookkeeping timestamps.
+type QuoteLineWebhookState struct {
+	ProductID      uint
+	Position       int64
+	Description    string
+	Quantity       QuoteQuantity
+	UnitPriceCents int64
+	DiscountBP     int64
+	LineTotalCents int64
+	TaxRateBP      int64
+	TaxCents       int64
+}
+
+// WebhookState returns the line's state for the quote.updated event.
+func (l *QuoteLine) WebhookState() QuoteLineWebhookState {
+	return QuoteLineWebhookState{
+		ProductID:      l.ProductID,
+		Position:       l.Position,
+		Description:    l.Description,
+		Quantity:       l.Quantity,
+		UnitPriceCents: l.UnitPriceCents,
+		DiscountBP:     l.DiscountBP,
+		LineTotalCents: l.LineTotalCents,
+		TaxRateBP:      l.TaxRateBP,
+		TaxCents:       l.TaxCents,
+	}
+}

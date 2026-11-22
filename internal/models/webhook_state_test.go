@@ -55,6 +55,14 @@ func TestWebhookStateNullableIDs(t *testing.T) {
 			if got := companyA.WebhookState() == companyB.WebhookState(); got != tc.equal {
 				t.Errorf("company states equal = %v, want %v", got, tc.equal)
 			}
+			for _, pair := range [][2]*Quote{
+				{{DealID: tc.a}, {DealID: tc.b}},
+				{{CustomerID: tc.a}, {CustomerID: tc.b}},
+			} {
+				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
+					t.Errorf("quote states equal = %v, want %v", got, tc.equal)
+				}
+			}
 		})
 	}
 }
@@ -96,6 +104,16 @@ func TestWebhookStateTicketDueAt(t *testing.T) {
 			taskA, taskB := &Task{DueDate: tc.a}, &Task{DueDate: tc.b}
 			if got := taskA.WebhookState() == taskB.WebhookState(); got != tc.equal {
 				t.Errorf("task states equal = %v, want %v", got, tc.equal)
+			}
+			// And the quote's valid_until, sent_at and closed_at.
+			for _, pair := range [][2]*Quote{
+				{{ValidUntil: tc.a}, {ValidUntil: tc.b}},
+				{{SentAt: tc.a}, {SentAt: tc.b}},
+				{{ClosedAt: tc.a}, {ClosedAt: tc.b}},
+			} {
+				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
+					t.Errorf("quote states equal = %v, want %v", got, tc.equal)
+				}
 			}
 		})
 	}

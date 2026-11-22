@@ -204,6 +204,7 @@ func lineDescriptionError(description *string) string {
 // @Description Rules: title required (trimmed, 1 to 200 characters); notes at most 65535 bytes; valid_until YYYY-MM-DD; currency three upper-case letters, defaulting to the deals.default_currency setting (EUR as shipped). At least one of deal_id and customer_id is required. With deal_id: the deal must be live (else 400 INVALID_REFERENCE), owned by the caller when the caller is sales (403), and neither won nor lost (409); without customer_id the deal's customer is used, possibly none (such a quote cannot be emailed); a customer_id different from the deal's customer is 400 VALIDATION_ERROR. customer_id must name a live customer. owner_id defaults to the caller; a sales user may only name itself; the owner must be a live user.
 // @Description The quote starts as a draft with no lines and totals of 0, whatever else was sent; its first status-history row (from_status null, to_status draft) is written in the same transaction. No automation event is recorded for quotes.
 // @Description The response is the quote re-read with its number, lines and the customer, deal and owner summaries.
+// @Description A quote.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the quote and its draft history row.
 // @Tags quotes
 // @Accept json
 // @Produce json
@@ -385,6 +386,7 @@ func (h *QuoteHandler) Get(c *gin.Context) {
 // @Summary Update a draft quote
 // @Description Partial update of a draft quote. Roles: admin (any quote) and sales (only the quotes it owns). Every absent field keeps its stored value; deal_id is not editable. valid_until takes YYYY-MM-DD, or null or an empty string to clear it. customer_id, when it changes, must name a live customer (400 INVALID_REFERENCE) and, when the quote's deal has a customer, be that customer (400 VALIDATION_ERROR). currency may change only while the quote has no lines (409 otherwise). owner_id: a sales user may only name itself; an admin any live user (checked when it changes). The stored quote is re-read under a row lock and written only while it is still a draft.
 // @Description The response is the quote re-read with its lines and summaries.
+// @Description When the update changed at least one stored value of the quote (compared with the row read under lock in the update's transaction), a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none.
 // @Tags quotes
 // @Accept json
 // @Produce json
@@ -469,6 +471,7 @@ func (h *QuoteHandler) Update(c *gin.Context) {
 // Delete godoc
 // @Summary Delete a quote
 // @Description Soft-delete a quote. Roles: admin (any quote, any status) and sales (only its own quotes, and only drafts). The lines and the history rows stay in their tables. This is not an erasure: the title, notes and line descriptions stay on the deleted rows. They are overwritten (title [redacted], notes empty, each line description set to its product's name) only when the quote's customer, or the customer or lead of its deal, is erased through DELETE /customers/{id}, /leads/{id} or /users/{id}, which reaches deleted quotes in every status too.
+// @Description A quote.deleted webhook event (one delivery per active endpoint subscribed to it, including endpoints that never received an event for the quote) is written in the same transaction as the soft delete, after a locking read of the quote on which the draft-only check of a sales caller runs; a refused delete writes none.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -505,6 +508,7 @@ func (h *QuoteHandler) Delete(c *gin.Context) {
 // @Description Add a line priced from a product. Roles: admin (any quote) and sales (only the quotes it owns). The product must be live and active (400 INVALID_REFERENCE otherwise) and priced in the quote's currency (400 VALIDATION_ERROR). The product's name and price are copied onto the line unless description (when not blank) or unit_price_cents override them; a later change to the product never alters the line. The new line's position is the highest position plus one. quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places (a value outside that is 400 VALIDATION_ERROR with error.details.quantity before anything is read; a string is 400 BAD_REQUEST), discount_bp 0 to 10000 (basis points: 1250 is 12.5 percent), tax_rate_bp 0 to 10000 (2100 is 21 percent, 0 when absent), unit_price_cents 0 to 10^12; quantity x unit_price_cents rounded half up and the resulting quote gross total (net total plus tax) may not exceed 10^12, and a quote holds at most 100 lines (all 400 VALIDATION_ERROR, nothing written). line_total_cents is quantity x unit_price_cents x (10000 - discount_bp) / 10000 rounded half up once, computed exactly; subtotal_cents sums the rounded line gross values. The line's tax_cents is line_total_cents x tax_rate_bp / 10000 rounded half up; the quote's tax_cents is the sum of the line taxes and gross_total_cents is total_cents plus tax_cents.
 // @Description One transaction: a locking read of the quote (SELECT ... FOR UPDATE on MySQL/MariaDB), the draft check, the insert, then the totals recomputed from the lines and written only while the quote is still a draft.
 // @Description The response is the whole quote with its lines and recomputed totals.
+// @Description A quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line and the totals.
 // @Tags quotes
 // @Accept json
 // @Produce json
@@ -560,6 +564,7 @@ func (h *QuoteHandler) AddLine(c *gin.Context) {
 // @Summary Edit a line of a draft quote
 // @Description Partial update of a line. Roles: admin (any quote) and sales (only the quotes it owns). Absent fields keep their values; a blank description keeps the stored text. The bounds of adding a line apply to the merged line, and position must be at least 1 (other lines are not renumbered). quantity is a JSON number from 0.001 to 1000000 with at most 3 decimal places; absent or null keeps the stored quantity. tax_rate_bp is 0 to 10000; absent keeps the stored rate and 0 clears it. The line's tax and the quote's tax and gross totals are recomputed, and the 10^12 cap applies to the gross total. Same transaction shape as adding a line, with the totals recomputed.
 // @Description The response is the whole quote with its lines and recomputed totals.
+// @Description When the edit changed at least one stored value of the line, a quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an edit that sends the stored values writes none.
 // @Tags quotes
 // @Accept json
 // @Produce json
@@ -619,6 +624,7 @@ func (h *QuoteHandler) UpdateLine(c *gin.Context) {
 // @Summary Remove a line from a draft quote
 // @Description Hard-delete a line and recompute the totals, tax and gross total included, in one transaction (locking read, draft check, delete, conditional totals write). Roles: admin (any quote) and sales (only the quotes it owns). The remaining lines keep their positions.
 // @Description The response is the whole quote with its remaining lines and recomputed totals.
+// @Description A quote.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the line removal and the totals.
 // @Tags quotes
 // @Produce json
 // @Security BearerAuth
@@ -661,6 +667,7 @@ func (h *QuoteHandler) DeleteLine(c *gin.Context) {
 // @Description Change the status. Roles: admin (any quote) and sales (only the quotes it owns). The allowed moves are draft to sent, sent to accepted, sent to rejected, sent to expired and sent back to draft; accepted, rejected and expired are final. Any other pair, the same status again included, is 400 INVALID_STATUS_TRANSITION and writes nothing.
 // @Description One transaction: a locking read of the quote, the transition check, the acceptance check (accepted is 409 once valid_until lies before today's date in the server's zone), a conditional claim (WHERE status = the stored status; a lost race is 400 INVALID_STATUS_TRANSITION), for draft to sent a locked count of the lines (none rolls everything back with 409), and one status-history row.
 // @Description Timestamps: sent sets sent_at and clears closed_at; accepted, rejected and expired set closed_at; sent to draft clears both. Accepting a quote does not change its deal, and no email is sent (see POST /quotes/{id}/email).
+// @Description Every committed transition writes a quote.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction, after the history row; a refused or rolled-back transition writes none.
 // @Tags quotes
 // @Accept json
 // @Produce json

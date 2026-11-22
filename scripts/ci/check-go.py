@@ -41,7 +41,7 @@ TRANSACTION_SOURCES = {
                          'webhook_deleted_events_test.go', 'webhook_redeliver_test.go',
                          'webhook_worker_pool_test.go', 'webhook_endpoint_pause_test.go',
                          'webhook_outbox_batch_test.go', 'webhook_secret_hold_test.go',
-                         'task_webhook_events_test.go'),
+                         'task_webhook_events_test.go', 'quote_webhook_events_test.go'),
     'internal/repository': ('lead*_test.go', 'form*_test.go', 'deal*_test.go',
                             'company*_test.go', 'aeo*_test.go', 'bulk*_test.go',
                             'erasure_lock_order_test.go', 'erasure_quote_tokens_test.go',

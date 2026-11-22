@@ -169,6 +169,8 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	dealState := webhookStateColumns(t, db, &models.Deal{}, models.DealWebhookState{})
 	taskState := webhookStateColumns(t, db, &models.Task{}, models.TaskWebhookState{})
 	companyState := webhookStateColumns(t, db, &models.Company{}, models.CompanyWebhookState{})
+	quoteState := webhookStateColumns(t, db, &models.Quote{}, models.QuoteWebhookState{})
+	quoteLineState := webhookStateColumns(t, db, &models.QuoteLine{}, models.QuoteLineWebhookState{})
 
 	leads := captureUpdateColumns(t, db, "leads")
 	customers := captureUpdateColumns(t, db, "customers")
@@ -176,6 +178,18 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	deals := captureUpdateColumns(t, db, "deals")
 	tasks := captureUpdateColumns(t, db, "tasks")
 	companies := captureUpdateColumns(t, db, "companies")
+	quotes := captureUpdateColumns(t, db, "quotes")
+	quoteLines := captureUpdateColumns(t, db, "quote_lines")
+
+	product := &models.Product{Name: "State product", SKU: "STATE-1", UnitPriceCents: 1000, Currency: "EUR", IsActive: true}
+	require.NoError(t, db.Create(product).Error)
+	validUntil := time.Date(2099, 12, 31, 0, 0, 0, 0, time.Local)
+	quote := &models.Quote{Title: "State quote", Status: models.QuoteStatusDraft, Currency: "EUR", ValidUntil: &validUntil, Notes: "n",
+		DealID: &deal.ID, CustomerID: &customer.ID, OwnerID: owner.ID}
+	require.NoError(t, NewQuoteRepository(db).Create(quote))
+	quoteLine := &models.QuoteLine{QuoteID: quote.ID, ProductID: product.ID, Position: 1, Description: "State line",
+		Quantity: models.QuoteQuantityFromUnits(2), UnitPriceCents: 1000, LineTotalCents: 2000}
+	require.NoError(t, NewQuoteRepository(db).CreateLine(quoteLine))
 
 	t.Run("leadRepository.Update writes exactly the lead state", func(t *testing.T) {
 		stored, err := NewLeadRepository(db).GetByID(lead.ID)
@@ -227,6 +241,79 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 		stored.Notes = "changed"
 		require.NoError(t, NewCompanyRepository(db).Update(stored))
 		assertNoWebhookStateDrift(t, "companyRepository.Update", companies.take(), companyState, true)
+	})
+
+	t.Run("quoteRepository.UpdateDraft writes exactly the quote's editable state", func(t *testing.T) {
+		// UpdateDraft writes the editable columns only; the totals, status and
+		// stamps belong to the writers below, so the check is that every
+		// column it writes is in the state and every editable one is written.
+		quote.Notes = "changed"
+		rows, err := NewQuoteRepository(db).UpdateDraft(quote)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), rows)
+		written := quotes.take()
+		assertNoWebhookStateDrift(t, "quoteRepository.UpdateDraft", written, quoteState, false)
+		assert.Equal(t, []string{"currency", "customer_id", "deal_id", "notes", "owner_id", "title", "updated_at", "valid_until"}, written,
+			"UpdateDraft writes exactly the editable columns")
+	})
+
+	t.Run("quoteRepository.UpdateTotals writes only quote state columns", func(t *testing.T) {
+		rows, err := NewQuoteRepository(db).UpdateTotals(quote.ID, models.QuoteTotals{Subtotal: 2000, Total: 2000, Gross: 2000})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), rows)
+		assertNoWebhookStateDrift(t, "quoteRepository.UpdateTotals", quotes.take(), quoteState, false)
+	})
+
+	t.Run("quoteRepository.ClaimStatus writes only quote state columns", func(t *testing.T) {
+		at := now
+		rows, err := NewQuoteRepository(db).ClaimStatus(quote.ID, models.QuoteStatusDraft, models.QuoteStatusSent, QuoteStatusStamps{SentAt: &at})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), rows)
+		assertNoWebhookStateDrift(t, "quoteRepository.ClaimStatus", quotes.take(), quoteState, false)
+	})
+
+	t.Run("the three quote writers together write exactly the quote state", func(t *testing.T) {
+		// The union of UpdateDraft, UpdateTotals and ClaimStatus is the
+		// state: no state column is written by none of them.
+		repo := NewQuoteRepository(db)
+		at := now
+		_, err := repo.ClaimStatus(quote.ID, models.QuoteStatusSent, models.QuoteStatusDraft, QuoteStatusStamps{})
+		require.NoError(t, err)
+		_, err = repo.UpdateDraft(quote)
+		require.NoError(t, err)
+		_, err = repo.UpdateTotals(quote.ID, models.QuoteTotals{Subtotal: 3000, Total: 3000, Gross: 3000})
+		require.NoError(t, err)
+		_, err = repo.ClaimStatus(quote.ID, models.QuoteStatusDraft, models.QuoteStatusSent, QuoteStatusStamps{SentAt: &at})
+		require.NoError(t, err)
+		assertNoWebhookStateDrift(t, "quoteRepository UpdateDraft+UpdateTotals+ClaimStatus", quotes.take(), quoteState, true)
+	})
+
+	t.Run("quoteRepository.StampEmailed writes only last_emailed_at outside the state", func(t *testing.T) {
+		latest, err := NewQuoteRepository(db).LatestStatusChangeID(quote.ID)
+		require.NoError(t, err)
+		rows, err := NewQuoteRepository(db).StampEmailed(quote.ID, latest, now)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), rows)
+		written := quotes.take()
+		assert.Equal(t, []string{"last_emailed_at", "updated_at"}, written)
+		missing, _ := webhookStateDrift(written, quoteState, false)
+		assert.Equal(t, []string{"last_emailed_at"}, missing, "the email stamp is deliberately no state column")
+	})
+
+	t.Run("quoteRepository.UpdateLine writes exactly the line state", func(t *testing.T) {
+		stored, err := NewQuoteRepository(db).GetLine(quote.ID, quoteLine.ID)
+		require.NoError(t, err)
+		stored.DiscountBP = 500
+		require.NoError(t, NewQuoteRepository(db).UpdateLine(stored))
+		// quote_id is written by the full save but is the line's parent key,
+		// never changed, so the state leaves it out with the bookkeeping.
+		var written []string
+		for _, c := range quoteLines.take() {
+			if c != "quote_id" {
+				written = append(written, c)
+			}
+		}
+		assertNoWebhookStateDrift(t, "quoteRepository.UpdateLine", written, quoteLineState, true)
 	})
 
 	t.Run("leadRepository.ConvertToCustomer writes only lead state columns", func(t *testing.T) {
