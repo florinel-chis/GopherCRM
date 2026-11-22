@@ -31,7 +31,7 @@ import {
   History as HistoryIcon,
   ReportProblem as LostIcon,
 } from '@mui/icons-material';
-import { AxiosError } from 'axios';
+import { apiErrorMessage } from '@/utils/apiError';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -65,14 +65,6 @@ const Field: React.FC<FieldProps> = ({ icon, label, children }) => (
     </Box>
   </Box>
 );
-
-const serverMessage = (error: unknown): string | undefined => {
-  if (error instanceof AxiosError) {
-    const message = (error.response?.data as { message?: unknown } | undefined)?.message;
-    return typeof message === 'string' && message !== '' ? message : undefined;
-  }
-  return undefined;
-};
 
 export const Component: React.FC = () => {
   const { id } = useParams();
@@ -110,7 +102,7 @@ export const Component: React.FC = () => {
       setLostDialog(false);
     },
     onError: (error) => {
-      showError(serverMessage(error) ?? 'Failed to update the stage');
+      showError(apiErrorMessage(error, 'Failed to update the stage'));
     },
   });
 

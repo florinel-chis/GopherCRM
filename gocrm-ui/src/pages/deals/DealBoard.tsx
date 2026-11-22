@@ -22,7 +22,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   MoreVert as MoreVertIcon,
 } from '@mui/icons-material';
-import { AxiosError } from 'axios';
+import { apiErrorMessage } from '@/utils/apiError';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { dealsApi, type ChangeDealStageData, type DealFilters } from '@/api/endpoints';
@@ -50,14 +50,6 @@ const boardColumnFilters = (stage: DealStage): DealFilters =>
   isClosedDealStage(stage)
     ? { stage, limit: BOARD_COLUMN_LIMIT, sort_by: 'closed_at', sort_order: 'desc' }
     : { stage, limit: BOARD_COLUMN_LIMIT, sort_by: 'expected_close_date', sort_order: 'asc' };
-
-const serverMessage = (error: unknown): string | undefined => {
-  if (error instanceof AxiosError) {
-    const message = (error.response?.data as { message?: unknown } | undefined)?.message;
-    return typeof message === 'string' && message !== '' ? message : undefined;
-  }
-  return undefined;
-};
 
 const ownerInitials = (deal: Deal): string => {
   const owner = deal.owner;
@@ -333,7 +325,7 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['deal'] });
     },
     onError: (error) => {
-      showError(serverMessage(error) ?? 'Failed to move the deal');
+      showError(apiErrorMessage(error, 'Failed to move the deal'));
     },
   });
 

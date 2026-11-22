@@ -1156,6 +1156,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Web app: API error messages are read by one shared helper (#623), `apiErrorMessage` in
+  `src/utils/apiError.ts`, instead of each page parsing the error body. The single sign-on settings
+  page now shows the refused fields on one line after the server message, and field details are
+  shown only for 400 answers.
 - Web app: removed the unused `authApi.refreshToken` helper (session refresh runs only through the
   API client) and a stale placeholder test in `LeadList.test.tsx` (#625).
 - The automation engine service file is split by responsibility (#619): `automation_engine.go` keeps

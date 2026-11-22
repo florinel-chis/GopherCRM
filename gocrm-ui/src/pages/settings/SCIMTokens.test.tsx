@@ -181,6 +181,31 @@ describe('SCIMTokens', () => {
     expect(screen.queryByRole('dialog', { name: 'Your new SCIM token' })).not.toBeInTheDocument();
   });
 
+  it('shows only the server message when a create is rate limited', async () => {
+    const user = userEvent.setup();
+    vi.mocked(scimTokensApi.create).mockRejectedValue({
+      response: {
+        status: 429,
+        data: {
+          code: 'TOO_MANY_REQUESTS',
+          message: 'Too many requests. Please try again later.',
+          details: { retry_after: '60s' },
+        },
+      },
+    });
+    renderPage();
+    await screen.findByText('Entra ID');
+
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Create SCIM token' });
+    await user.type(within(dialog).getByLabelText(/Name/), 'Okta');
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(
+      await within(dialog).findByText('Too many requests. Please try again later.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/retry_after/)).toBeNull();
+  });
+
   describe('revoke', () => {
     it('revokes the row only after Confirm', async () => {
       const user = userEvent.setup();

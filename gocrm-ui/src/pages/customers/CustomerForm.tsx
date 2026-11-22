@@ -12,6 +12,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { customersApi, type CreateCustomerData, type UpdateCustomerData } from '@/api/endpoints';
 import type { Company } from '@/types';
+import { apiErrorMessage, getAPIError } from '@/utils/apiError';
 import { customerWebsiteSchema } from '@/utils/customerWebsite';
 
 const customerSchema = z.object({
@@ -29,13 +30,6 @@ const customerSchema = z.object({
 });
 
 type CustomerFormData = z.infer<typeof customerSchema>;
-
-// What the axios client leaves in `error.response.data`: the `error` object of
-// the API envelope ({code, message, details}), not the envelope itself.
-interface ServerErrorPayload {
-  code?: string;
-  message?: string;
-}
 
 export const Component: React.FC = () => {
   const navigate = useNavigate();
@@ -89,14 +83,13 @@ export const Component: React.FC = () => {
   // An unknown or deleted company_id comes back as 400 INVALID_REFERENCE with
   // no details and the field named in the message ("unknown company_id 7:
   // company not found"); that message belongs on the company picker.
-  // Returns the server's message, if any, for the snackbar.
-  const reportCompanyReference = (error: unknown): string | undefined => {
-    const payload = (error as { response?: { data?: ServerErrorPayload } })?.response?.data;
-    const message = typeof payload?.message === 'string' ? payload.message : undefined;
-    if (payload?.code === 'INVALID_REFERENCE' && message?.includes('company_id')) {
-      setCompanyError(message);
+  // Returns the message for the snackbar: the server's, or the fallback.
+  const reportCompanyReference = (error: unknown, fallback: string): string => {
+    const apiError = getAPIError(error);
+    if (apiError?.code === 'INVALID_REFERENCE' && apiError.message?.includes('company_id')) {
+      setCompanyError(apiError.message);
     }
-    return message;
+    return apiErrorMessage(error, fallback);
   };
 
   const createMutation = useMutation({
@@ -107,7 +100,7 @@ export const Component: React.FC = () => {
       navigate('/customers');
     },
     onError: (error: unknown) => {
-      showError(reportCompanyReference(error) || 'Failed to create customer');
+      showError(reportCompanyReference(error, 'Failed to create customer'));
     },
   });
 
@@ -121,7 +114,7 @@ export const Component: React.FC = () => {
       navigate('/customers');
     },
     onError: (error: unknown) => {
-      showError(reportCompanyReference(error) || 'Failed to update customer');
+      showError(reportCompanyReference(error, 'Failed to update customer'));
     },
   });
 
