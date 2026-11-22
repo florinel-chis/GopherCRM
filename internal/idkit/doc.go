@@ -13,4 +13,7 @@
 // types and errors they use. IdentityStore and SessionIssuer join a
 // transaction carried by ctx; AttemptStore, AuditSink and ConfigSource run
 // only outside one.
+//
+// Two test kits sit next to the layer: oidctest, an in-process OpenID
+// Connect issuer, and scim/scimtest, a SCIM client; only tests import them.
 package idkit

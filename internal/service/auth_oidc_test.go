@@ -3,8 +3,8 @@ package service
 // Issue #435: OpenID Connect sign-in. TestOIDCSignInSQLite and
 // TestOIDCSignInMySQL drive ONE table of subtests (oidcSignInCases) against
 // the real service: the settings are stored through SSOSettingsService.Update,
-// the issuer is an in-process httptest TLS server trusted through
-// WithOIDCRootCAs, and every subtest asserts the same outcome on every engine.
+// the issuer is the in-process TLS server of internal/idkit/oidctest trusted
+// through WithOIDCRootCAs, and every subtest asserts the same outcome on every engine.
 // The MySQL root runs on a schema built by the real migrations
 // (TEST_MYSQL_DSN; also pointed at MariaDB 10.11), the SQLite root on a file
 // opened by the production connector. The test issuer checks the PKCE
@@ -40,6 +40,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
+	"github.com/florinel-chis/gophercrm/internal/idkit/oidctest"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -57,8 +58,6 @@ const (
 	oidcTestAppBaseURL   = "https://crm.example.test"
 	oidcTestJWTSecret    = "oidc-sign-in-test-jwt-secret-0123456789abcdef"
 	oidcTestAPIKeySecret = "oidc-sign-in-test-api-key-secret-0123456789"
-	oidcTestKeyID        = "k1"
-	oidcTestRotatedKeyID = "k2"
 	oidcTestAppKeyID     = "app-key"
 
 	oidcGroupAdmins = "crm-admins"
@@ -103,58 +102,20 @@ type oidcTokenSpec struct {
 	appKey bool
 }
 
-type oidcGrant struct {
-	challenge, redirect, nonce string
-	spec                       oidcTokenSpec
-}
-
+// oidcTestIssuer is the issuer of the fixture: the generic issuer of
+// internal/idkit/oidctest plus the Entra ID parts this package tests (#450,
+// #505). Those are the application signing key, published through the JWKS
+// hook only for appid=crm-client, the fake Microsoft Graph getMemberObjects
+// mounted on the issuer's server, and a second trusted TLS server standing
+// for another host, which counts the requests it receives.
 type oidcTestIssuer struct {
-	t        *testing.T
-	server   *httptest.Server
-	key      *rsa.PrivateKey
-	otherKey *rsa.PrivateKey
-	// rotatedKey replaces key under kid k2 once rotated is set; appKey is
-	// the application signing key (kid app-key).
-	rotatedKey *rsa.PrivateKey
-	appKey     *rsa.PrivateKey
-	// other is a second trusted TLS server standing for another host; it
-	// counts the requests it receives.
-	other *httptest.Server
+	idp    *oidctest.Issuer
+	appKey *rsa.PrivateKey
+	other  *httptest.Server
 
-	mu                sync.Mutex
-	grants            map[string]oidcGrant
-	tokenStatus       int
-	discoveryRedirect bool
-	issuedIDTokens    []string
-	codeSeq           int
-	// accessTokens maps each issued access token to its code.
-	accessTokens map[string]string
-	lastAccess   string
-	graph        oidcFakeGraph
-	otherHits    int
-	// accessSubjects maps each issued access token to the sub of its grant.
-	accessSubjects map[string]string
-	userinfo       oidcFakeUserInfo
-	// path is the path of the issuer under the server ("" or
-	// "/<tenant>/v2.0", #505): discovery is served under it and iss carries
-	// it.
-	path string
-	// rotated makes the JWKS publish rotatedKey (k2) instead of key (k1)
-	// and new ID tokens carry k2.
-	rotated bool
-	// discoveryHits and jwksHits count the discovery (a redirected one
-	// included) and JWKS requests; jwksQueries is the raw query of each JWKS
-	// request.
-	discoveryHits int
-	jwksHits      int
-	jwksQueries   []string
-	// discoveryPaths is the path of each discovery request.
-	discoveryPaths []string
-	// assertionCert is the client certificate registered for the client: a
-	// posted client_assertion must verify against it. tokenRequests records
-	// the form and Authorization header of each token request.
-	assertionCert *x509.Certificate
-	tokenRequests []oidcTokenRequest
+	mu        sync.Mutex
+	graph     oidcFakeGraph
+	otherHits int
 }
 
 // oidcTokenRequest is what one token request carried.
@@ -165,18 +126,18 @@ type oidcTokenRequest struct {
 
 // Modes of the fake userinfo endpoint (#451).
 const (
-	userinfoModeJSON      = "json"
-	userinfoModeStatus500 = "status500"
-	userinfoModeSlow      = "slow"
-	userinfoModeRedirect  = "redirect"
-	userinfoModeOversized = "oversized"
-	userinfoModeJWT       = "jwt"
-	userinfoModeRaw       = "raw"
+	userinfoModeJSON      = string(oidctest.UserInfoJSON)
+	userinfoModeStatus500 = string(oidctest.UserInfoStatus500)
+	userinfoModeSlow      = string(oidctest.UserInfoSlow)
+	userinfoModeRedirect  = string(oidctest.UserInfoRedirect)
+	userinfoModeOversized = string(oidctest.UserInfoOversized)
+	userinfoModeJWT       = string(oidctest.UserInfoJWT)
+	userinfoModeRaw       = string(oidctest.UserInfoRaw)
 )
 
-// oidcFakeUserInfo is the fake userinfo endpoint: how discovery advertises it,
-// what it answers and what it received. The default (JSON, sub echoed, no
-// groups) behaves the way an issuer did before #451 read userinfo.
+// oidcFakeUserInfo is the fake userinfo endpoint: how discovery advertises it
+// and what it answers. The default (JSON, sub echoed, no groups) behaves the
+// way an issuer did before #451 read userinfo.
 type oidcFakeUserInfo struct {
 	mode string
 	// omitEndpoint leaves userinfo_endpoint out of discovery; plainHTTP
@@ -189,8 +150,7 @@ type oidcFakeUserInfo struct {
 	// groups is the raw groups member; nil leaves it out.
 	groups json.RawMessage
 	// raw is the whole body of userinfoModeRaw.
-	raw      string
-	requests []oidcUserInfoRequest
+	raw string
 }
 
 type oidcUserInfoRequest struct {
@@ -221,25 +181,20 @@ type oidcGraphRequest struct {
 
 func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	other, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	rotated, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
 	app, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	issuer := &oidcTestIssuer{t: t, key: key, otherKey: other, rotatedKey: rotated, appKey: app, grants: map[string]oidcGrant{}, accessTokens: map[string]string{},
-		accessSubjects: map[string]string{}, userinfo: oidcFakeUserInfo{mode: userinfoModeJSON}}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/openid-configuration", issuer.discovery)
-	mux.HandleFunc("/"+oidcTestTenant+"/v2.0/.well-known/openid-configuration", issuer.discovery)
-	mux.HandleFunc("/jwks", issuer.jwks)
-	mux.HandleFunc("/token", issuer.token)
-	mux.HandleFunc(oidcGraphPath, issuer.graphMemberObjects)
-	mux.HandleFunc(oidcUserInfoPath, issuer.userInfo)
-	issuer.server = httptest.NewTLSServer(mux)
-	t.Cleanup(issuer.server.Close)
+	issuer := &oidcTestIssuer{
+		idp: oidctest.New(t, oidctest.WithClient(oidcTestClientID, oidcTestClientSecret),
+			oidctest.WithUserInfoClaims(map[string]interface{}{"email": "userinfo-only@idp.example.test", "roles": []string{oidcAppRole}})),
+		appKey: app,
+	}
+	issuer.idp.SetJWKSHook(func(query url.Values) []jose.JSONWebKey {
+		if query.Get("appid") != oidcTestClientID {
+			return nil
+		}
+		return []jose.JSONWebKey{{Key: &app.PublicKey, KeyID: oidcTestAppKeyID, Algorithm: string(jose.RS256), Use: "sig"}}
+	})
+	issuer.idp.Handle(oidcGraphPath, http.HandlerFunc(issuer.graphMemberObjects))
 	issuer.other = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		issuer.mu.Lock()
 		issuer.otherHits++
@@ -257,12 +212,12 @@ func newOIDCTestIssuer(t *testing.T) *oidcTestIssuer {
 func (i *oidcTestIssuer) graphMemberObjects(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	authorization := r.Header.Get("Authorization")
+	_, known := i.idp.AccessSubject(strings.TrimPrefix(authorization, "Bearer "))
 	i.mu.Lock()
 	i.graph.requests = append(i.graph.requests, oidcGraphRequest{
 		method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: string(body),
 		authorization: authorization, contentType: r.Header.Get("Content-Type"),
 	})
-	_, known := i.accessTokens[strings.TrimPrefix(authorization, "Bearer ")]
 	mode, pages := i.graph.mode, i.graph.pages
 	i.mu.Unlock()
 	if !strings.HasPrefix(authorization, "Bearer ") || !known {
@@ -299,92 +254,37 @@ func (i *oidcTestIssuer) graphMemberObjects(w http.ResponseWriter, r *http.Reque
 		answer["@odata.nextLink"] = i.other.URL + "/v1.0/me/getMemberObjects?page=1"
 	case graphModeEndless:
 		answer["value"] = []string{oidcGraphGroupUnrelated}
-		answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.server.URL, oidcGraphPath, page+1)
+		answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.idp.URL(), oidcGraphPath, page+1)
 	default:
 		if page < len(pages) {
 			answer["value"] = pages[page]
 		}
 		if page+1 < len(pages) {
-			answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.server.URL, oidcGraphPath, page+1)
+			answer["@odata.nextLink"] = fmt.Sprintf("%s%s?page=%d", i.idp.URL(), oidcGraphPath, page+1)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(answer)
 }
 
-// userInfo is the fake userinfo endpoint. It answers 401 unless the bearer is
-// an access token this issuer returned from a code exchange.
-func (i *oidcTestIssuer) userInfo(w http.ResponseWriter, r *http.Request) {
-	authorization := r.Header.Get("Authorization")
-	i.mu.Lock()
-	i.userinfo.requests = append(i.userinfo.requests, oidcUserInfoRequest{
-		method: r.Method, authorization: authorization, accept: r.Header.Get("Accept"),
-	})
-	echoed, known := i.accessSubjects[strings.TrimPrefix(authorization, "Bearer ")]
-	info := i.userinfo
-	i.mu.Unlock()
-	if !strings.HasPrefix(authorization, "Bearer ") || !known {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-	answer := map[string]interface{}{"email": "userinfo-only@idp.example.test", "roles": []string{oidcAppRole}}
-	if !info.omitSub {
-		answer["sub"] = echoed
-		if info.sub != nil {
-			answer["sub"] = *info.sub
-		}
-	}
-	if info.groups != nil {
-		answer["groups"] = info.groups
-	}
-	switch info.mode {
-	case userinfoModeStatus500:
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	case userinfoModeSlow:
-		select {
-		case <-r.Context().Done():
-		case <-time.After(2 * time.Second):
-		}
-	case userinfoModeRedirect:
-		http.Redirect(w, r, i.other.URL+oidcUserInfoPath, http.StatusFound)
-		return
-	case userinfoModeOversized:
-		answer["padding"] = strings.Repeat("x", 1<<20)
-	case userinfoModeJWT:
-		w.Header().Set("Content-Type", "application/jwt")
-		_, _ = w.Write([]byte("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."))
-		return
-	case userinfoModeRaw:
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		_, _ = w.Write([]byte(info.raw))
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(answer)
-}
-
 // setUserInfo replaces the userinfo behaviour, keeping the recorded requests.
+// A redirect points at the other host.
 func (i *oidcTestIssuer) setUserInfo(info oidcFakeUserInfo) {
-	i.mu.Lock()
-	if info.mode == "" {
-		info.mode = userinfoModeJSON
-	}
-	info.requests = i.userinfo.requests
-	i.userinfo = info
-	i.mu.Unlock()
+	i.idp.SetUserInfo(oidctest.UserInfo{
+		Mode: oidctest.UserInfoMode(info.mode), OmitEndpoint: info.omitEndpoint, PlainHTTP: info.plainHTTP,
+		Sub: info.sub, OmitSub: info.omitSub, Groups: info.groups, Raw: info.raw,
+		RedirectURL: i.other.URL + oidcUserInfoPath,
+	})
 }
 
-func (i *oidcTestIssuer) resetUserInfo() {
-	i.mu.Lock()
-	i.userinfo = oidcFakeUserInfo{mode: userinfoModeJSON}
-	i.mu.Unlock()
-}
+func (i *oidcTestIssuer) resetUserInfo() { i.idp.ResetUserInfo() }
 
 func (i *oidcTestIssuer) userInfoRequests() []oidcUserInfoRequest {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return append([]oidcUserInfoRequest(nil), i.userinfo.requests...)
+	var out []oidcUserInfoRequest
+	for _, request := range i.idp.UserInfoRequests() {
+		out = append(out, oidcUserInfoRequest{method: request.Method, authorization: request.Authorization, accept: request.Accept})
+	}
+	return out
 }
 
 func (i *oidcTestIssuer) setGraph(mode string, pages ...[]string) {
@@ -413,347 +313,75 @@ func (i *oidcTestIssuer) otherRequests() int {
 }
 
 // lastAccessToken is the access token of the latest code exchange.
-func (i *oidcTestIssuer) lastAccessToken() string {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.lastAccess
-}
+func (i *oidcTestIssuer) lastAccessToken() string { return i.idp.LastAccessToken() }
 
-func (i *oidcTestIssuer) URL() string { return i.server.URL }
+func (i *oidcTestIssuer) URL() string { return i.idp.URL() }
 
 // Issuer is the issuer identifier: the server URL plus the tenant path when
 // one is set.
-func (i *oidcTestIssuer) Issuer() string {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.server.URL + i.path
-}
+func (i *oidcTestIssuer) Issuer() string { return i.idp.Issuer() }
 
-// setPath sets the issuer path ("" for the bare server URL).
-func (i *oidcTestIssuer) setPath(path string) {
-	i.mu.Lock()
-	i.path = path
-	i.mu.Unlock()
-}
+// setPath sets the issuer path ("" for the bare server URL, or
+// "/<tenant>/v2.0", #505): discovery is served under it and iss carries it.
+func (i *oidcTestIssuer) setPath(path string) { i.idp.SetPath(path) }
 
+// rootCAs trusts the issuer and the other host.
 func (i *oidcTestIssuer) rootCAs() *x509.CertPool {
-	pool := x509.NewCertPool()
-	pool.AddCert(i.server.Certificate())
+	pool := i.idp.RootCAs()
 	pool.AddCert(i.other.Certificate())
 	return pool
 }
 
-func (i *oidcTestIssuer) discovery(w http.ResponseWriter, r *http.Request) {
-	i.mu.Lock()
-	i.discoveryHits++
-	i.discoveryPaths = append(i.discoveryPaths, r.URL.Path)
-	redirect := i.discoveryRedirect
-	omitUserInfo, plainUserInfo := i.userinfo.omitEndpoint, i.userinfo.plainHTTP
-	issuerPath := i.path
-	i.mu.Unlock()
-	if redirect {
-		http.Redirect(w, r, i.server.URL+"/moved/.well-known/openid-configuration", http.StatusFound)
-		return
-	}
-	document := map[string]interface{}{
-		"issuer":                                i.server.URL + issuerPath,
-		"authorization_endpoint":                i.server.URL + "/authorize",
-		"token_endpoint":                        i.server.URL + "/token",
-		"jwks_uri":                              i.server.URL + "/jwks",
-		"response_types_supported":              []string{"code"},
-		"subject_types_supported":               []string{"public"},
-		"id_token_signing_alg_values_supported": []string{"RS256"},
-		"code_challenge_methods_supported":      []string{"S256"},
-	}
-	switch {
-	case omitUserInfo:
-	case plainUserInfo:
-		document["userinfo_endpoint"] = "http://" + strings.TrimPrefix(i.server.URL, "https://") + oidcUserInfoPath
-	default:
-		document["userinfo_endpoint"] = i.server.URL + oidcUserInfoPath
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(document)
-}
-
-func (i *oidcTestIssuer) jwks(w http.ResponseWriter, r *http.Request) {
-	i.mu.Lock()
-	i.jwksHits++
-	i.jwksQueries = append(i.jwksQueries, r.URL.RawQuery)
-	key, kid := i.key, oidcTestKeyID
-	if i.rotated {
-		key, kid = i.rotatedKey, oidcTestRotatedKeyID
-	}
-	i.mu.Unlock()
-	keys := []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: kid, Algorithm: string(jose.RS256), Use: "sig"}}
-	if r.URL.Query().Get("appid") == oidcTestClientID {
-		keys = append(keys, jose.JSONWebKey{Key: &i.appKey.PublicKey, KeyID: oidcTestAppKeyID, Algorithm: string(jose.RS256), Use: "sig"})
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: keys})
-}
-
 // rotate makes the issuer sign with a new key under kid k2 and publish only
 // that key; rotate(false) undoes it.
-func (i *oidcTestIssuer) rotate(on bool) {
-	i.mu.Lock()
-	i.rotated = on
-	i.mu.Unlock()
-}
+func (i *oidcTestIssuer) rotate(on bool) { i.idp.Rotate(on) }
 
 // fetches is how many discovery and JWKS requests the issuer received.
-func (i *oidcTestIssuer) fetches() (discovery, jwks int) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return i.discoveryHits, i.jwksHits
-}
+func (i *oidcTestIssuer) fetches() (discovery, jwks int) { return i.idp.Fetches() }
 
 // lastDiscoveryPath is the path of the latest discovery request.
-func (i *oidcTestIssuer) lastDiscoveryPath() string {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	if len(i.discoveryPaths) == 0 {
-		return ""
-	}
-	return i.discoveryPaths[len(i.discoveryPaths)-1]
-}
+func (i *oidcTestIssuer) lastDiscoveryPath() string { return i.idp.LastDiscoveryPath() }
 
 // jwksRequestQueries is the raw query of every JWKS request.
-func (i *oidcTestIssuer) jwksRequestQueries() []string {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	return append([]string(nil), i.jwksQueries...)
-}
+func (i *oidcTestIssuer) jwksRequestQueries() []string { return i.idp.JWKSQueries() }
 
 // resetFetches zeroes the request counters and undoes the rotation.
-func (i *oidcTestIssuer) resetFetches() {
-	i.mu.Lock()
-	i.discoveryHits, i.jwksHits, i.jwksQueries, i.discoveryPaths, i.rotated = 0, 0, nil, nil, false
-	i.mu.Unlock()
-}
+func (i *oidcTestIssuer) resetFetches() { i.idp.ResetFetches() }
 
-func oidcTokenError(w http.ResponseWriter, status int, code string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
-}
-
-func (i *oidcTestIssuer) token(w http.ResponseWriter, r *http.Request) {
-	i.mu.Lock()
-	status := i.tokenStatus
-	i.mu.Unlock()
-	if status != 0 {
-		oidcTokenError(w, status, "server_error")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		oidcTokenError(w, http.StatusBadRequest, "invalid_request")
-		return
-	}
-	i.mu.Lock()
-	i.tokenRequests = append(i.tokenRequests, oidcTokenRequest{form: cloneValues(r.PostForm), authorization: r.Header.Get("Authorization")})
-	assertionCert := i.assertionCert
-	i.mu.Unlock()
-	if _, posted := r.PostForm["client_assertion"]; posted {
-		// private_key_jwt: the assertion is the only client credential.
-		if !i.clientAssertionValid(r, assertionCert) {
-			oidcTokenError(w, http.StatusUnauthorized, "invalid_client")
-			return
-		}
-	} else {
-		clientID, clientSecret, ok := r.BasicAuth()
-		if ok {
-			clientID, _ = url.QueryUnescape(clientID)
-			clientSecret, _ = url.QueryUnescape(clientSecret)
-		} else {
-			clientID, clientSecret = r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
-		}
-		if clientID != oidcTestClientID || clientSecret != oidcTestClientSecret {
-			oidcTokenError(w, http.StatusUnauthorized, "invalid_client")
-			return
-		}
-	}
-	if r.PostForm.Get("grant_type") != "authorization_code" {
-		oidcTokenError(w, http.StatusBadRequest, "unsupported_grant_type")
-		return
-	}
-	i.mu.Lock()
-	grant, found := i.grants[r.PostForm.Get("code")]
-	i.mu.Unlock()
-	if !found {
-		oidcTokenError(w, http.StatusBadRequest, "invalid_grant")
-		return
-	}
-	// The redirect URI of the exchange must be the authorization request's.
-	if r.PostForm.Get("redirect_uri") != grant.redirect {
-		oidcTokenError(w, http.StatusBadRequest, "invalid_grant")
-		return
-	}
-	// PKCE: S256 of the verifier must be the challenge of the request.
-	sum := sha256.Sum256([]byte(r.PostForm.Get("code_verifier")))
-	if r.PostForm.Get("code_verifier") == "" || base64.RawURLEncoding.EncodeToString(sum[:]) != grant.challenge {
-		oidcTokenError(w, http.StatusBadRequest, "invalid_grant")
-		return
-	}
-	idToken := i.sign(grant)
-	accessToken := "idp-access-token-" + r.PostForm.Get("code")
-	i.mu.Lock()
-	i.accessTokens[accessToken] = r.PostForm.Get("code")
-	i.accessSubjects[accessToken] = grant.spec.sub
-	i.lastAccess = accessToken
-	i.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"access_token": accessToken,
-		"token_type":   "Bearer",
-		"expires_in":   3600,
-		"id_token":     idToken,
-	})
-}
-
-// clientAssertionValid checks a private_key_jwt token request: no
-// Authorization header and no client_secret, client_id and the assertion type
-// set, and an assertion that verifies as PS256 against the registered
-// certificate, names it by x5t, and carries aud = the token endpoint and
-// iss = sub = the client id.
-func (i *oidcTestIssuer) clientAssertionValid(r *http.Request, cert *x509.Certificate) bool {
-	if cert == nil || r.Header.Get("Authorization") != "" {
-		return false
-	}
-	if _, posted := r.PostForm["client_secret"]; posted {
-		return false
-	}
-	if r.PostForm.Get("client_id") != oidcTestClientID ||
-		r.PostForm.Get("client_assertion_type") != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
-		return false
-	}
-	thumbprint := sha1.Sum(cert.Raw)
-	token, err := jwt.Parse(r.PostForm.Get("client_assertion"), func(token *jwt.Token) (interface{}, error) {
-		if token.Header["x5t"] != base64.RawURLEncoding.EncodeToString(thumbprint[:]) {
-			return nil, errors.New("unknown certificate")
-		}
-		return cert.PublicKey, nil
-	}, jwt.WithValidMethods([]string{"PS256"}), jwt.WithAudience(i.server.URL+"/token"),
-		jwt.WithIssuer(oidcTestClientID), jwt.WithSubject(oidcTestClientID), jwt.WithExpirationRequired(), jwt.WithIssuedAt())
-	return err == nil && token.Valid
-}
-
+// setAssertionCertificate registers the client certificate a posted
+// client_assertion must verify against.
 func (i *oidcTestIssuer) setAssertionCertificate(cert *x509.Certificate) {
-	i.mu.Lock()
-	i.assertionCert = cert
-	i.mu.Unlock()
+	i.idp.SetAssertionCertificate(cert)
 }
 
 // takeTokenRequests returns and forgets the recorded token requests.
 func (i *oidcTestIssuer) takeTokenRequests() []oidcTokenRequest {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	out := i.tokenRequests
-	i.tokenRequests = nil
-	return out
-}
-
-func cloneValues(values url.Values) url.Values {
-	out := url.Values{}
-	for key, list := range values {
-		out[key] = append([]string(nil), list...)
+	var out []oidcTokenRequest
+	for _, request := range i.idp.TakeTokenRequests() {
+		out = append(out, oidcTokenRequest{form: request.Form, authorization: request.Authorization})
 	}
 	return out
-}
-
-func (i *oidcTestIssuer) sign(grant oidcGrant) string {
-	spec := grant.spec
-	now := time.Now()
-	claims := map[string]interface{}{
-		"iss":   i.Issuer(),
-		"sub":   spec.sub,
-		"aud":   oidcTestClientID,
-		"exp":   now.Add(5 * time.Minute).Unix(),
-		"iat":   now.Unix(),
-		"nonce": grant.nonce,
-	}
-	if spec.audience != "" {
-		claims["aud"] = spec.audience
-	}
-	if spec.nonce != "" {
-		claims["nonce"] = spec.nonce
-	}
-	if spec.email != "" {
-		claims["email"] = spec.email
-	}
-	if spec.groups != nil {
-		claims["groups"] = spec.groups
-	}
-	if spec.roles != nil {
-		claims["roles"] = spec.roles
-	}
-	for k, v := range spec.extra {
-		claims[k] = v
-	}
-	i.mu.Lock()
-	key, kid := i.key, oidcTestKeyID
-	if i.rotated {
-		key, kid = i.rotatedKey, oidcTestRotatedKeyID
-	}
-	i.mu.Unlock()
-	switch {
-	case spec.appKey:
-		key, kid = i.appKey, oidcTestAppKeyID
-	case spec.otherKey:
-		key = i.otherKey
-	}
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key},
-		(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", kid))
-	require.NoError(i.t, err)
-	payload, err := json.Marshal(claims)
-	require.NoError(i.t, err)
-	signed, err := signer.Sign(payload)
-	require.NoError(i.t, err)
-	compact, err := signed.CompactSerialize()
-	require.NoError(i.t, err)
-	i.mu.Lock()
-	i.issuedIDTokens = append(i.issuedIDTokens, compact)
-	i.mu.Unlock()
-	return compact
 }
 
 // authorize plays the browser and the issuer's login page: it checks the
 // authorization URL and returns a code and the state to send back.
 func (i *oidcTestIssuer) authorize(t *testing.T, authURL string, spec oidcTokenSpec) (code, state string) {
 	t.Helper()
-	parsed, err := url.Parse(authURL)
-	require.NoError(t, err)
-	q := parsed.Query()
-	require.Equal(t, "code", q.Get("response_type"))
-	require.Equal(t, "S256", q.Get("code_challenge_method"))
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	i.codeSeq++
-	code = fmt.Sprintf("code-%d-%s", i.codeSeq, strings.Repeat("x", 8))
-	i.grants[code] = oidcGrant{challenge: q.Get("code_challenge"), redirect: q.Get("redirect_uri"), nonce: q.Get("nonce"), spec: spec}
-	return code, q.Get("state")
-}
-
-func (i *oidcTestIssuer) setTokenStatus(status int) {
-	i.mu.Lock()
-	i.tokenStatus = status
-	i.mu.Unlock()
-}
-
-func (i *oidcTestIssuer) setDiscoveryRedirect(on bool) {
-	i.mu.Lock()
-	i.discoveryRedirect = on
-	i.mu.Unlock()
-}
-
-func (i *oidcTestIssuer) lastIDToken() string {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	if len(i.issuedIDTokens) == 0 {
-		return ""
+	claims := oidctest.Claims{
+		Subject: spec.sub, Email: spec.email, Groups: spec.groups, Roles: spec.roles, Extra: spec.extra,
+		Nonce: spec.nonce, Audience: spec.audience, UnpublishedKey: spec.otherKey,
 	}
-	return i.issuedIDTokens[len(i.issuedIDTokens)-1]
+	if spec.appKey {
+		claims.SigningKey, claims.KeyIDOverride = i.appKey, oidcTestAppKeyID
+	}
+	return i.idp.Authorize(t, authURL, claims)
 }
+
+func (i *oidcTestIssuer) setTokenStatus(status int) { i.idp.SetTokenStatus(status) }
+
+func (i *oidcTestIssuer) setDiscoveryRedirect(on bool) { i.idp.SetDiscoveryRedirect(on) }
+
+func (i *oidcTestIssuer) lastIDToken() string { return i.idp.LastIDToken() }
 
 // ----------------------------------------------------------------- fixture ---
 

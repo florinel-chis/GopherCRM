@@ -1269,6 +1269,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit, configuration). `internal/service/auth_oidc_host.go` holds GopherCRM's implementations
   over the existing repositories and services, with contract tests. Nothing uses them yet.
   Behaviour is unchanged.
+- **Identity test kits (#647).** `internal/idkit/oidctest` is an in-process OpenID Connect issuer for
+  tests (discovery, JWKS with key rotation, the code exchange with PKCE S256 and client secret or
+  private_key_jwt authentication, userinfo) with no provider-specific code, and
+  `internal/idkit/scim/scimtest` is a SCIM test client that sends the bearer token and the SCIM
+  media type and decodes SCIM error bodies. The single sign-on service tests and the SCIM
+  provisioning-cycle golden test now use them; only tests import either kit. Behaviour is
+  unchanged and both golden files are byte-identical.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.
