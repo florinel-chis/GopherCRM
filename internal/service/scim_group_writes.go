@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/scim"
@@ -163,7 +164,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 	var changed []uint
 	err = s.writes.governance.run(ctx, func(tx *governedTx) error {
 		changed = nil
-		admins, err := tx.userRoles.LockActiveAdmins()
+		admins, err := lockAdminSet(tx)
 		if err != nil {
 			return err
 		}
@@ -327,38 +328,19 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 			results[id] = result
 		}
 
-		// The last-admin rule, judged on the result. The admin set before
-		// the patch is the locked admins plus every affected managed account
-		// that the locking read of lockUsers shows as an active admin:
-		// LockActiveAdmins discovers its ids with a consistent read, so on
-		// MySQL/MariaDB REPEATABLE READ a patch that committed while this
-		// one waited for the admin set (a handover X -> Y) leaves the new
-		// admin Y out of admins, and only the current read of Y counts it.
-		before := map[uint]bool{}
-		for _, admin := range admins {
-			before[admin.ID] = true
-		}
+		// The last-admin rule, judged on the result. Only the affected
+		// managed accounts join the admin set before the patch (see
+		// adminSet.include); an admin without a result is unaffected, or only
+		// a leftover membership row of an account that is not managed is
+		// removed, and stays an active admin.
+		after := make(map[uint]userChange, len(results))
 		for _, id := range affectedManaged {
-			if u := users[id]; u.IsActive && u.Role == models.RoleAdmin {
-				before[id] = true
-			}
-		}
-		// An admin without a result is unaffected, or only a leftover
-		// membership row of an account that is not managed is removed: it
-		// stays an active admin. An admin with a result stays one only when
-		// the result keeps the admin role and does not deactivate it.
-		after := map[uint]bool{}
-		for _, admin := range admins {
-			if r, ok := results[admin.ID]; !ok || (r.role == models.RoleAdmin && !r.deactivate) {
-				after[admin.ID] = true
-			}
+			admins.include(users[id])
 		}
 		for id, r := range results {
-			if r.user.IsActive && !r.deactivate && r.role == models.RoleAdmin {
-				after[id] = true
-			}
+			after[id] = userChange{role: r.role, active: r.user.IsActive && !r.deactivate}
 		}
-		if len(before) > 0 && len(after) == 0 {
+		if errors.Is(admins.checkAfter(after), apperrors.ErrLastAdmin) {
 			return fmt.Errorf("group patch: %w", ErrSCIMGroupLastAdmin)
 		}
 
