@@ -14,12 +14,12 @@ blocked until the page is built.
 - `gocrm-ui/src/pages/settings/RoleList.tsx`, `gocrm-ui/src/pages/settings/RoleEditor.tsx`,
   `gocrm-ui/src/api/endpoints/roles.ts` (the role screens, TC-SET-035)
 - `gocrm-ui/src/pages/settings/Webhooks.tsx`, `WebhookEndpointDialog.tsx`,
-  `WebhookSecretDialog.tsx`, `WebhookDeliveryLog.tsx`, `gocrm-ui/src/api/endpoints/webhooks.ts`,
+  `WebhookDeliveryLog.tsx`, `gocrm-ui/src/components/OneTimeSecretDialog.tsx`, `gocrm-ui/src/api/endpoints/webhooks.ts`,
   `internal/handler/webhook_handler.go`, `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` (the
   webhook screen, TC-SET-036 to TC-SET-040)
 - `gocrm-ui/src/pages/settings/SSOSettings.tsx`, `gocrm-ui/src/api/endpoints/ssoSettings.ts`,
   `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041)
-- `gocrm-ui/src/pages/settings/SCIMTokens.tsx`, `SCIMTokenSecretDialog.tsx`,
+- `gocrm-ui/src/pages/settings/SCIMTokens.tsx`, `gocrm-ui/src/components/OneTimeSecretDialog.tsx`,
   `gocrm-ui/src/api/endpoints/scimTokens.ts`, `internal/handler/scim_token_handler.go`,
   `gocrm-ui/e2e/tests/settings-scim-tokens.spec.ts` (the SCIM provider token screen, TC-SET-042)
 - `gocrm-ui/src/api/endpoints/apikeys.ts`, `gocrm-ui/src/api/endpoints/configurations.ts`,
@@ -768,7 +768,7 @@ can succeed.
   the query client holds it after the dialog closes. No other view renders a secret.
 - **Automation:** automated — `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` "admin registers an
   endpoint, sees the secret once, edits and deletes it"; Vitest
-  `src/pages/settings/Webhooks.test.tsx`, `src/pages/settings/WebhookSecretDialog.test.tsx`,
+  `src/pages/settings/Webhooks.test.tsx`, `src/components/OneTimeSecretDialog.test.tsx`,
   `src/pages/settings/WebhookEndpointDialog.test.tsx` and `src/api/endpoints/webhooks.test.ts`
 
 ### TC-SET-037 — Edit, deactivate and delete a webhook endpoint

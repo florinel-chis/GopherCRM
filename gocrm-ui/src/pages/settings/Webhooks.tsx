@@ -36,7 +36,7 @@ import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
 import { WebhookDeliveryLog } from './WebhookDeliveryLog';
 import { WebhookEndpointDialog } from './WebhookEndpointDialog';
-import { WebhookSecretDialog } from './WebhookSecretDialog';
+import { OneTimeSecretDialog } from '@/components/OneTimeSecretDialog';
 import { webhookKeys } from './webhookQueries';
 
 type TabKey = 'endpoints' | 'deliveries';
@@ -249,7 +249,21 @@ const EndpointsTab: React.FC = () => {
         }}
       />
 
-      <WebhookSecretDialog secret={secret} onClose={closeSecret} />
+      <OneTimeSecretDialog
+        title="Signing secret"
+        label="Signing secret"
+        copyLabel="Copy signing secret"
+        copiedMessage="Signing secret copied to clipboard"
+        testId="webhook-secret"
+        secret={secret}
+        onClose={closeSecret}
+        warning={
+          <>
+            Copy this secret now. It cannot be shown again: it is stored encrypted and no other
+            screen or request returns it. If it is lost, delete the endpoint and register it again.
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={deleteTarget !== null}

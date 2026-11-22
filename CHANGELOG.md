@@ -1156,6 +1156,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Web app: one shared dialog, `OneTimeSecretDialog` in `src/components/OneTimeSecretDialog.tsx`,
+  shows a value that is shown only once: a new API key, a new SCIM token and a new webhook signing
+  secret (#620). It replaces the two per-screen dialogs and the inline API key dialog. The three
+  one-time value dialogs now close only through their Done button; a click outside them or Escape
+  leaves them open. When the browser offers no clipboard access, the copy button shows an error
+  instead of a success message. The copy error text is now the same on all three screens: "Could
+  not copy to the clipboard. Select and copy it manually." (it named the token, the secret or the
+  key before). Titles, labels, button names, success messages and test ids are unchanged; the SCIM
+  token dialog's title id is now `scim-token-value-title`.
+
 - Web app: API error messages are read by one shared helper (#623), `apiErrorMessage` in
   `src/utils/apiError.ts`, instead of each page parsing the error body. The single sign-on settings
   page now shows the refused fields on one line after the server message, and field details are
