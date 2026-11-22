@@ -1,0 +1,585 @@
+{
+  "steps": [
+    {
+      "name": "provision_sales",
+      "error": "",
+      "tokens": true,
+      "refresh_tokens_added": 1,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "success",
+          "reason": "",
+          "user": "jit",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-provision_sales",
+          "subject_ref": null,
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [
+        {
+          "action": "user_role_changed",
+          "actor": "jit",
+          "target": "jit",
+          "auth_method": "oidc",
+          "role": null,
+          "role_name": "sales",
+          "before_state": null,
+          "after_state": {
+            "role": "sales",
+            "role_id": null
+          }
+        }
+      ],
+      "account": {
+        "label": "jit",
+        "role": "sales",
+        "is_active": true,
+        "identities": 1
+      }
+    },
+    {
+      "name": "resign_unchanged",
+      "error": "",
+      "tokens": true,
+      "refresh_tokens_added": 1,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "success",
+          "reason": "",
+          "user": "jit",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-resign_unchanged",
+          "subject_ref": null,
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": {
+        "label": "jit",
+        "role": "sales",
+        "is_active": true,
+        "identities": 1
+      }
+    },
+    {
+      "name": "remap_support",
+      "error": "",
+      "tokens": true,
+      "refresh_tokens_added": 1,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "success",
+          "reason": "",
+          "user": "jit",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-remap_support",
+          "subject_ref": null,
+          "claim_roles": "[\"CRM.Support\"]",
+          "claim_groups": "[]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [
+        {
+          "action": "user_role_changed",
+          "actor": "jit",
+          "target": "jit",
+          "auth_method": "oidc",
+          "role": null,
+          "role_name": "support",
+          "before_state": {
+            "role": "sales",
+            "role_id": null
+          },
+          "after_state": {
+            "role": "support",
+            "role_id": null
+          }
+        }
+      ],
+      "account": {
+        "label": "jit",
+        "role": "support",
+        "is_active": true,
+        "identities": 1
+      }
+    },
+    {
+      "name": "state_replayed",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "state_invalid",
+          "user": null,
+          "attempt": null,
+          "api_key_id": null,
+          "request_id": "golden-state_replayed",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "binding_missing",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "binding_missing",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-binding_missing",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "binding_mismatch",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "binding_mismatch",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-binding_mismatch",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "id_token_invalid",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "id_token_invalid",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-id_token_invalid",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "nonce_mismatch",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "nonce_mismatch",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-nonce_mismatch",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "subject_invalid",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "subject_invalid",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-subject_invalid",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "groups_malformed",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "groups_malformed",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-groups_malformed",
+          "subject_ref": "hmac",
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "group_overage",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "group_overage",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-group_overage",
+          "subject_ref": "hmac",
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "userinfo_subject_mismatch",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "userinfo_subject_mismatch",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-userinfo_subject_mismatch",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "groups_unavailable",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "groups_unavailable",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-groups_unavailable",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "no_mapping_match",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "no_mapping_match",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-no_mapping_match",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"crm-SALES\",\"other\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "email_taken",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "email_taken",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-email_taken",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "account_inactive",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "account_inactive",
+          "user": "inactive",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-account_inactive",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": {
+        "label": "inactive",
+        "role": "sales",
+        "is_active": false,
+        "identities": 1
+      }
+    },
+    {
+      "name": "account_erased",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "account_erased",
+          "user": "erased",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-account_erased",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": {
+        "label": "erased",
+        "role": "sales",
+        "is_active": false,
+        "identities": 1
+      }
+    },
+    {
+      "name": "last_admin",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "last_admin",
+          "user": "admin_only",
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-last_admin",
+          "subject_ref": "hmac",
+          "claim_roles": "[]",
+          "claim_groups": "[\"unrelated\",\"crm-sales\"]",
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": {
+        "label": "admin_only",
+        "role": "admin",
+        "is_active": true,
+        "identities": 1
+      }
+    },
+    {
+      "name": "token_exchange_failed",
+      "error": "unavailable",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "token_exchange_failed",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-token_exchange_failed",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    },
+    {
+      "name": "issuer_changed",
+      "error": "sign_in_failed",
+      "tokens": false,
+      "refresh_tokens_added": 0,
+      "auth_audit": [
+        {
+          "method": "oidc",
+          "outcome": "refused",
+          "reason": "issuer_changed",
+          "user": null,
+          "attempt": "claimed",
+          "api_key_id": null,
+          "request_id": "golden-issuer_changed",
+          "subject_ref": null,
+          "claim_roles": null,
+          "claim_groups": null,
+          "client_network": "203.0.113.0/24",
+          "user_agent_family": "Chrome on Windows",
+          "attempts": 1,
+          "aggregate_key": null
+        }
+      ],
+      "role_audit": [],
+      "account": null
+    }
+  ]
+}

@@ -678,6 +678,8 @@ test --list` reports 100.
 | `cmd/migrate/user_identity_source_migration_test.go` | 2 (one MySQL/MariaDB, + subtests) | User identity source migration (#505) |
 | `cmd/automation_runtime_test.go` | 1 (+ subtests) | Automation worker through the real wiring (boot stale sweep, start, drain) |
 | `cmd/system_role_route_matrix_test.go` | 5 (+ subtests) | System-role route matrix through `setupRouter` (#322): replay of `cmd/testdata/system_role_route_matrix.json` (the 157 protected routes recorded before the freeze, four roles; the 8 role API routes added after it by #348 are on `routeMatrixAfterFreeze`), route coverage, fixture anchors, golden provenance and generator guard, cell comparison |
+| `internal/service/auth_oidc_golden_test.go` | 3 (SQLite and MySQL roots, + subtests) | Single sign-on characterisation gate (#636): one fixed run of 20 callbacks (3 sign-ins, 17 refusals) on each engine compared with `internal/service/testdata/oidc_signin_golden.json` (error class, `auth_audit_log` and `role_audit_log` rows, linked account), and the comparison's self-test |
+| `cmd/scim_cycle_golden_test.go` | 2 (+ subtests) | SCIM provisioning cycle through `setupRouter` (#636): 20 Entra ID-shaped requests compared with `cmd/testdata/scim_provisioning_cycle.json` (status, `Content-Type`, `Location` and `ETag` headers, body), and the comparison's self-test |
 | `tests/automation_api_test.go` | 2 (+ subtests) | Automation rules, runs and dry run over HTTP |
 | `tests/notification_api_test.go` | 1 (+ subtests) | Notifications over HTTP |
 | `internal/repository/automation_repository_test.go` | 3 (SQLite + MySQL) | Run list scope, conditional updates |

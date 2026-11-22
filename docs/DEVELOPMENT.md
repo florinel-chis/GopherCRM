@@ -2557,6 +2557,96 @@ Once a route file (`cmd/main.go` or a non-test `internal/handler/*routes*.go`) u
 replay test keeps running against the frozen golden: from then on the file is the record of the
 system roles before permission guards, not something to regenerate.
 
+### Sign-in, SCIM and last-admin characterisation gate (#636)
+
+Two recorded-output suites and the existing last-admin roots pin what single sign-on, SCIM
+provisioning and the last-admin rule do today. A pull request that refactors authentication runs
+this gate and passes it unchanged.
+
+**Single sign-on golden.** `internal/service/auth_oidc_golden_test.go` `TestOIDCSignInGoldenSQLite`
+and `internal/service/auth_oidc_golden_test.go` `TestOIDCSignInGoldenMySQL` replay one fixed run of
+20 callbacks against the in-process test issuer on one database, with no reset between steps: three
+sign-ins (a just-in-time provisioning, an unchanged repeat, a remap to support), then 17 refusals
+(`state_invalid`, `binding_missing`, `binding_mismatch`, `id_token_invalid`, `nonce_mismatch`,
+`subject_invalid`, `groups_malformed`, `group_overage`, `userinfo_subject_mismatch`,
+`groups_unavailable`, `no_mapping_match`, `email_taken`, `account_inactive`, `account_erased`,
+`last_admin`, `token_exchange_failed`, `issuer_changed`). Both roots compare their run with the one
+file `internal/service/testdata/oidc_signin_golden.json`, so every step has the same outcome on
+SQLite, MySQL and MariaDB. Per step it records the error class (`""`, `sign_in_failed` or
+`unavailable`), whether tokens were returned, the refresh tokens added, the step's one
+`auth_audit_log` row, its `role_audit_log` rows and the account the step's identity is linked to
+afterwards. Users appear by fixed labels (`jit`, `admin_only`, `inactive`, `erased`,
+`password_owner`) and roles by name; a claimed attempt is recorded as `claimed` after it is checked
+against the step's state, a subject reference as `hmac` after it is checked to be 64 hex digits.
+Ids and timestamps are left out. The only other normalisation replaces the test issuer's URL with
+`<issuer>` and the second issuer of `issuer_changed` with `<other-issuer>`; the file holds no URL,
+email address or raw subject. `internal/service/auth_oidc_golden_test.go` `TestOIDCSignInGoldenCompare`
+checks that the comparison reports a changed reason, a missing `auth_audit_log` row and an extra
+`role_audit_log` row by their step, and nothing for the unaltered file.
+
+`identity_taken` is engine-specific and is not in the golden: it is reached only through the
+unique-index collision of a concurrent link insert, which MySQL and MariaDB refuse while SQLite
+replays the busy write and signs in. The `scim_oid_concurrent_link_before_insert` case of
+`internal/service/auth_oidc_test.go` `TestOIDCSignInMySQL` pins it.
+
+**SCIM provisioning cycle golden.** `cmd/scim_cycle_golden_test.go` `TestSCIMProvisioningCycleGolden`
+sends 20 requests in Microsoft Entra ID's documented shapes through `setupRouter` over a fresh
+SQLite file: the user lookup, create, repeated create, read, patch with and without a path,
+replace, the group lookup, create, member add, read, member remove and delete (answered 405), a
+missing user, an unparsable filter, a malformed patch body, the deactivation, the delete and a read
+after it. `cmd/testdata/scim_provisioning_cycle.json` records each request and its status, the
+`Content-Type`, `Location` and `ETag` headers (`""` when absent) and the body. Only `meta.created`
+and `meta.lastModified` are replaced with `<timestamp>`, after they are checked to be RFC 3339 and
+in order; ids, locations and hosts are kept as served. The file never holds the SCIM token.
+`cmd/scim_cycle_golden_test.go` `TestSCIMProvisioningCycleGoldenCompare` checks that a changed
+status, a missing body field and a changed header are reported by their step.
+
+**Golden files.** They are written only by their update flags:
+
+```bash
+go test -count=1 ./internal/service -run '^TestOIDCSignInGoldenSQLite$' -update-oidc-golden
+go test -count=1 ./cmd -run '^TestSCIMProvisioningCycleGolden$' -update-scim-cycle
+```
+
+The MySQL root never writes. A refactoring pull request leaves both files byte-identical. A change
+to either is a behaviour change for its own ticket: it is regenerated, recorded as observed and
+never edited by hand.
+
+**Last-admin roots.** On MySQL and MariaDB, eight roots:
+`internal/service/auth_governed_last_admin_test.go` `TestGovernedLastAdminAfterHandoverMySQL`,
+`internal/service/auth_oidc_test.go` `TestOIDCSignInMySQL` (its `last_admin` subtests and
+`last_admin_race/after_handover`), `internal/service/auth_scim_groups_test.go` `TestSCIMGroupsMySQL`,
+`internal/service/auth_scim_user_delete_test.go` `TestSCIMUserDeleteMySQL`,
+`internal/service/auth_scim_user_patch_test.go` `TestSCIMUserPatchMySQL`,
+`internal/service/auth_scim_user_writes_test.go` `TestSCIMUserWritesMySQL`,
+`internal/integration/role_last_admin_integration_test.go` `TestLastAdminInvariantMySQL` and
+`internal/integration/role_last_admin_integration_test.go` `TestLastAdminConcurrentMySQL`. On
+SQLite, four roots: `internal/service/auth_last_admin_guard_test.go` `TestIsLastActiveAdmin`,
+`internal/integration/role_last_admin_integration_test.go` `TestLastAdminInvariantSQLite`,
+`internal/integration/role_last_admin_integration_test.go` `TestLastAdminConcurrentSQLite` and
+`internal/integration/role_last_admin_integration_test.go` `TestLastAdminAPISQLite`.
+
+**Commands.** With `TEST_MYSQL_DSN` set to the MySQL 8 server (the MySQL roots skip without it, so
+check that they ran):
+
+```bash
+timeout 540 go test -count=1 -run '^TestOIDCSignInGolden(SQLite|MySQL|Compare)$' ./internal/service
+timeout 300 go test -count=1 -run '^TestSCIMProvisioningCycleGolden(Compare)?$' ./cmd
+timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestIsLastActiveAdmin)$' ./internal/service
+timeout 540 go test -count=1 -run '^TestOIDCSignInMySQL$' ./internal/service
+timeout 540 go test -count=1 -run '^TestLastAdmin' ./internal/integration
+```
+
+The same on MariaDB 10.11, with `TEST_MYSQL_DSN="$TEST_MARIADB_DSN"` pointing the MySQL roots at
+it:
+
+```bash
+TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestOIDCSignInGoldenMySQL$' ./internal/service
+TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^(TestGovernedLastAdminAfterHandoverMySQL|TestSCIM(Groups|UserDelete|UserPatch|UserWrites)MySQL|TestIsLastActiveAdmin)$' ./internal/service
+TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestOIDCSignInMySQL$' ./internal/service
+TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestLastAdmin' ./internal/integration
+```
+
 ## Gotchas
 
 Traps that have already cost time here. Each is stated as the wrong move and the correct one.

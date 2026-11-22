@@ -1227,6 +1227,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such as `password` or `groups`, are still refused with 400 `invalidPath`. The provisioning
   guides no longer ask administrators to delete those attribute mappings.
 
+- **Recorded-output tests pin single sign-on and SCIM provisioning before the authentication
+  refactoring (#636).** `TestOIDCSignInGoldenSQLite` and `TestOIDCSignInGoldenMySQL` replay one
+  fixed run of 20 single sign-on callbacks (three sign-ins, then 17 refusals) and compare every
+  error class, sign-in audit row, role audit row and linked account with one recorded file, on
+  SQLite, MySQL and MariaDB alike. `TestSCIMProvisioningCycleGolden` sends a fixed 20-request SCIM
+  cycle (users, groups and error answers) through the shipped router and compares status, headers
+  and bodies with its recorded file. The developer guide lists these tests and the existing
+  last-admin tests on MySQL, MariaDB and SQLite, with the commands to run them, as the checks a
+  refactoring keeps passing unchanged. Tests and documentation only; nothing in the shipped server
+  changes.
+
 - **Tests open their databases through a shared test-support package (#613).** The new
   test-only package `internal/testsupport` opens a private SQLite database (`OpenSQLite`), reads
   the `TEST_MYSQL_DSN` server and skips without it (`MySQLFromEnv`), creates and drops a
