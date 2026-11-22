@@ -479,6 +479,22 @@ func runSCIMUserPatch(t *testing.T, base *oidcFixture) {
 			assert.ErrorIs(t, err, apperrors.ErrNotFound)
 			assert.Equal(t, before, f.patchState(t, lee.ID), "the account is unchanged")
 		}},
+		{"trailing-space issuer is not found", func(t *testing.T) {
+			// MySQL and MariaDB compare the issuer column under PAD SPACE, so
+			// the row comes back from the narrowed read; the byte-exact judge
+			// refuses it.
+			pat := f.seedUser(t, "pat@x.test", models.RoleSales, true, scimPatchPassword)
+			require.NoError(t, f.db.Create(&models.UserIdentity{UserID: pat.ID, Issuer: f.issuer.URL() + " ",
+				Subject: "sub-pat", Source: models.UserIdentitySourceSCIM}).Error)
+			f.login(t, pat.Email, scimPatchPassword)
+			before := f.patchState(t, pat.ID)
+			require.Equal(t, int64(1), before.liveSessions)
+			record, err := f.svc.Patch(ctx, uintString(pat.ID), parsePatch(t, `{"Operations":[{"op":"replace","path":"active","value":false}]}`))
+			assert.Nil(t, record)
+			assert.ErrorIs(t, err, apperrors.ErrNotFound)
+			assert.Equal(t, before, f.patchState(t, pat.ID), "the account is unchanged")
+			assert.Empty(t, f.roleAudits(t, pat.ID))
+		}},
 		{"refusals write nothing", func(t *testing.T) {
 			hal := seed(t, "hal@x.test", models.RoleSales)
 			taken := seed(t, "taken@x.test", models.RoleSales)

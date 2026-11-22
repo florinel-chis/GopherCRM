@@ -12,6 +12,7 @@ import (
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim/server"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -49,7 +50,7 @@ import (
 // locally included, is apperrors.ErrNotFound, judged right after the users
 // lock and before any check or write, so nothing is written.
 
-// Refusals of a SCIM user write. The handler answers ErrSCIMInvalidValue with
+// Refusals of a SCIM user write. The SCIM server (NewSCIMServer) answers ErrSCIMInvalidValue with
 // 400 invalidValue and ErrSCIMUniqueness with 409 uniqueness.
 var (
 	ErrSCIMInvalidValue = errors.New("scim: invalid value")
@@ -137,8 +138,8 @@ func (w *scimUserWrites) credentialStores(tx *governedTx) credentialStores {
 }
 
 // requireManaged refuses, as a not-found, a locked target that is not
-// managed under issuer: one without a user_identities row whose issuer equals
-// issuer byte for byte (an account created locally, or linked only under
+// managed under issuer, as server.Manages judges it: one without a
+// user_identities row whose issuer equals issuer byte for byte (an account created locally, or linked only under
 // another issuer). It runs right after the users lock, before the last-admin
 // rule, the address check and any write, so a refusal writes nothing. The
 // identities are a plain read through the transaction: the application never
@@ -149,12 +150,10 @@ func (s *scimUserService) requireManaged(tx *governedTx, issuer string, id uint)
 		if err != nil {
 			return fmt.Errorf("read the identities of scim user %d: %w", id, err)
 		}
-		for _, identity := range identities {
-			// utf8mb4_bin PAD SPACE also returns an issuer with a trailing
-			// space on MySQL/MariaDB: judge it byte for byte.
-			if identity.Issuer == issuer {
-				return nil
-			}
+		// utf8mb4_bin PAD SPACE also returns an issuer with a trailing
+		// space on MySQL/MariaDB: the package judge compares byte for byte.
+		if server.Manages(issuer, idkitIdentities(identities)) {
+			return nil
 		}
 	}
 	return fmt.Errorf("scim user %d not found: %w", id, apperrors.ErrNotFound)

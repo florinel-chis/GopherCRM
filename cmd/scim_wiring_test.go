@@ -588,6 +588,33 @@ func TestSCIMUserWritesWired(t *testing.T) {
 	var authAudits []models.AuthAuditLog
 	require.NoError(t, models.DB.Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", stored.ID).Find(&authAudits).Error)
 	assert.Len(t, authAudits, 2, "one success row per write")
+
+	t.Run("success audit row carries the request facts", func(t *testing.T) {
+		const (
+			remoteIP  = "198.51.100.77"
+			userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+		)
+		require.NotEqual(t, utils.ClientNetwork(""), utils.ClientNetwork(remoteIP))
+		require.NotEqual(t, utils.UserAgentFamily(""), utils.UserAgentFamily(userAgent))
+		request := httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewBufferString(`{"userName":"facts-0649@crm.example.test",
+			"externalId":"sub-0649","name":{"givenName":"Request","familyName":"Facts"},"roles":[{"value":"CRM.Sales"}]}`))
+		request.RemoteAddr = remoteIP + ":4321"
+		request.Header.Set("X-Request-ID", "req-468")
+		request.Header.Set("User-Agent", userAgent)
+		request.Header.Set("Authorization", token)
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+		var created scimWiredUser
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+
+		var rows []models.AuthAuditLog
+		require.NoError(t, models.DB.Where("method = ? AND outcome = ? AND user_id = ?", "scim", "success", created.ID).Find(&rows).Error)
+		require.Len(t, rows, 1)
+		assert.Equal(t, "req-468", rows[0].RequestID)
+		assert.Equal(t, utils.ClientNetwork(remoteIP), rows[0].ClientNetwork)
+		assert.Equal(t, utils.UserAgentFamily(userAgent), rows[0].UserAgentFamily)
+	})
 }
 
 // TestSCIMUserPatchWired (#471): through setupRouter a SCIM PATCH in Entra

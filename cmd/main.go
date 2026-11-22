@@ -671,9 +671,13 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// sessions (token_version, refresh tokens).
 	scimGroupService := service.NewSCIMGroupService(repository.NewSCIMGroupMemberRepository(models.DB), ssoSettings,
 		service.WithSCIMGroupWrites(userRepo, roleRepo, roleAuditRepo, refreshTokenRepo, apiKeyRepo, txManager, authAudit))
-	handler.SetupSCIMRoutes(scimGroup, handler.NewSCIMHandler(cfg.Forms.PublicBaseURL),
-		handler.NewSCIMUserHandler(scimUserService, cfg.Forms.PublicBaseURL),
-		handler.NewSCIMGroupHandler(scimGroupService, cfg.Forms.PublicBaseURL))
+	// The SCIM HTTP layer is package internal/idkit/scim/server, mounted on
+	// the group's routes over the two services.
+	scimServer, err := handler.NewSCIMServer(scimUserService, scimGroupService, cfg.Forms.PublicBaseURL)
+	if err != nil {
+		log.Fatalf("Failed to build the SCIM server: %v", err)
+	}
+	handler.SetupSCIMRoutes(scimGroup, scimServer)
 
 	// Protected routes: moderate rate limiting charged before authentication (#466)
 	protected := router.Group("")
