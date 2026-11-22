@@ -25,6 +25,8 @@ import (
 const (
 	authAuditVocabularyFile = "internal/service/auth_audit_vocabulary.go"
 	authAuditServiceDir     = "internal/service"
+	// authAuditIDKitOIDCDir is the package of the sign-in error types.
+	authAuditIDKitOIDCDir = "internal/idkit/oidc"
 )
 
 // authAuditKind is the registry list a site's value must be in.
@@ -43,7 +45,7 @@ var authAuditSiteKinds = []string{
 	"outcomeEntry.method", "outcomeEntry.fallback",
 	"AuthAuditEntry.Method", "AuthAuditEntry.Outcome",
 	"service.AuthAuditEntry.Method", "service.AuthAuditEntry.Outcome", "service.AuthAuditEntry.Reason",
-	"authRefusalError.reason", "oidcRefusalError.code", "ssoUnavailableError.code",
+	"authRefusalError.reason", "idkitoidc.RefusalError.Code", "idkitoidc.UnavailableError.Code",
 	"AuthAuditReason.return", "Authenticate.return", "ownerRejected",
 	"AuthAuditEntry.Reason.assigned", "service.AuthAuditEntry.Reason.assigned",
 }
@@ -236,6 +238,19 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 				}
 			}
 		}
+		// idkitOIDCAlias is the name this file imports the package of the
+		// sign-in error types under, resolved from its import path only, so
+		// an import of go-oidc as oidc is never mistaken for it.
+		idkitOIDCAlias := ""
+		for _, imp := range f.file.Imports {
+			path, _ := strconv.Unquote(imp.Path.Value)
+			if strings.HasSuffix(path, "/"+authAuditIDKitOIDCDir) {
+				idkitOIDCAlias = "oidc"
+				if imp.Name != nil {
+					idkitOIDCAlias = imp.Name.Name
+				}
+			}
+		}
 
 		// check classifies expr at a site of kind site whose value must be
 		// in the list of kind; allowEmpty admits "".
@@ -291,7 +306,8 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 		}
 
 		// compositeType is the type name of a composite literal and "service."
-		// when it is qualified by this file's import of the service package.
+		// or "idkitoidc." when it is qualified by this file's import of the
+		// service package or of the package of the sign-in error types.
 		compositeType := func(node *ast.CompositeLit) (typeName, prefix string) {
 			switch typ := node.Type.(type) {
 			case *ast.Ident:
@@ -299,6 +315,8 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 			case *ast.SelectorExpr:
 				if x, ok := typ.X.(*ast.Ident); ok && serviceAlias != "" && x.Name == serviceAlias {
 					typeName, prefix = typ.Sel.Name, "service."
+				} else if ok && idkitOIDCAlias != "" && x.Name == idkitOIDCAlias {
+					typeName, prefix = typ.Sel.Name, "idkitoidc."
 				}
 			}
 			return typeName, prefix
@@ -473,8 +491,8 @@ func scanAuthAuditWriters(fset *token.FileSet, files []authAuditSourceFile, regi
 					fields = auditEntryFields
 				case prefix == "" && typeName == "authRefusalError":
 					fields = map[string]authAuditKind{"reason": authAuditKindReason}
-				case prefix == "" && (typeName == "oidcRefusalError" || typeName == "ssoUnavailableError"):
-					fields = map[string]authAuditKind{"code": authAuditKindReason}
+				case prefix == "idkitoidc." && (typeName == "RefusalError" || typeName == "UnavailableError"):
+					fields = map[string]authAuditKind{"Code": authAuditKindReason}
 				}
 				for _, element := range node.Elts {
 					pair, ok := element.(*ast.KeyValueExpr)
@@ -680,6 +698,13 @@ func TestAuthAuditWritersUseRegisteredValues(t *testing.T) {
 					assert.Equal(t, 1, got.sites["service.AuthAuditEntry.Reason.assigned"])
 					assert.True(t, got.used["AuthAuditReasonTokenInvalid"])
 				}},
+			{"literal Code of idkitoidc.RefusalError", authAuditServiceDir,
+				"package service\nimport idkitoidc \"github.com/florinel-chis/gophercrm/internal/idkit/oidc\"\nfunc f() error { return &idkitoidc.RefusalError{Code: \"made_up\"} }\n", 1,
+				func(t *testing.T, got authAuditScan) {
+					assert.Equal(t, 1, got.sites["idkitoidc.RefusalError.Code"])
+				}},
+			{"go-oidc imported as oidc is not the error package", authAuditServiceDir,
+				"package service\nimport \"github.com/coreos/go-oidc/v3/oidc\"\nvar e = &oidc.RefusalError{Code: \"made_up\"}\n", 0, nil},
 			{"forwarded reason defined from a literal", authAuditServiceDir,
 				"package service\nfunc f() { reason := \"made_up\"; _ = AuthAuditEntry{Reason: reason} }\n", 1, nil},
 		}

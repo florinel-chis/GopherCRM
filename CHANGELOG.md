@@ -1243,6 +1243,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `rolemap.UsesGroups`). The OIDC sign-in callback, the SCIM Users writes and the SCIM group patch
   all call `rolemap.Match`. The stored mapping format, the settings API and behaviour are
   unchanged.
+- **OpenID Connect client package (#643).** The generic OpenID Connect client helpers moved from
+  `internal/service/auth_oidc.go` to `internal/idkit/oidc`: the issuer HTTP client
+  (`oidc.NewHTTPClient`), the cached discovered provider (`oidc.ProviderCache`), the state, nonce
+  and PKCE values (`oidc.NewAuthRequest`, `oidc.AuthCodeURL`), the client secret or certificate
+  (`private_key_jwt`) code exchange (`oidc.Client`, `oidc.ClientAssertion`), the claim parsing
+  and subject and name rules (`oidc.Claims`, `oidc.ValidSubject`, `oidc.ProfileNames`) and the
+  sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`). The OIDC service, the SCIM
+  Users writes and the sign-in audit call the new package; the Entra ID rules, the userinfo group
+  resolution, the attempt storage and the sign-in flow stay in `internal/service`. Answers, audit
+  rows and refusal codes are unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -226,7 +227,7 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 	if err != nil {
 		return nil, fmt.Errorf("read the single sign-on settings: %w", err)
 	}
-	if !validOIDCSubject(in.ExternalID) {
+	if !idkitoidc.ValidSubject(in.ExternalID) {
 		return nil, scimInvalid("externalId is missing or invalid")
 	}
 	if err := checkSCIMProfile(in); err != nil {

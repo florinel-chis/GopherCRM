@@ -38,6 +38,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/database"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -892,16 +893,12 @@ func (f *oidcFixture) reset(t *testing.T) {
 // clearProviderCache drops the cached discovery, so the next call
 // discovers again.
 func (f *oidcFixture) clearProviderCache() {
-	f.svc.providers.mu.Lock()
-	f.svc.providers.entry = nil
-	f.svc.providers.mu.Unlock()
+	f.svc.providers.Clear()
 }
 
 // cachedProvider is the cached discovery, nil when there is none.
-func (f *oidcFixture) cachedProvider() *oidcProvider {
-	f.svc.providers.mu.Lock()
-	defer f.svc.providers.mu.Unlock()
-	return f.svc.providers.entry
+func (f *oidcFixture) cachedProvider() *idkitoidc.Discovery {
+	return f.svc.providers.Cached()
 }
 
 // assertFetches checks the issuer's discovery and JWKS request totals.
@@ -1042,7 +1039,7 @@ func (f *oidcFixture) assertRefused(t *testing.T, code string, tokens *AuthToken
 	t.Helper()
 	assert.Nil(t, tokens)
 	assert.ErrorIs(t, err, ErrSSOSignInFailed)
-	assert.Equal(t, code, oidcErrorCode(err), "refused for the property under test")
+	assert.Equal(t, code, idkitoidc.RefusalCode(err), "refused for the property under test")
 	assert.Equal(t, usersBefore, f.users(t), "no user is created")
 	assert.Equal(t, identitiesBefore, f.identities(t), "no identity is created")
 
@@ -1408,7 +1405,7 @@ var oidcSignInCases = []struct {
 		tokens, err := f.signIn(t, oidcValid("subject-race", email))
 		assert.Nil(t, tokens)
 		assert.ErrorIs(t, err, ErrSSOSignInFailed)
-		assert.Equal(t, "email_taken", oidcErrorCode(err))
+		assert.Equal(t, "email_taken", idkitoidc.RefusalCode(err))
 		if f.db.Dialector.Name() == "mysql" {
 			// MySQL/MariaDB: the insert itself hits the unique index and the
 			// whole transaction rolls back.
@@ -1550,7 +1547,7 @@ var oidcSignInCases = []struct {
 			// whole transaction rolls back.
 			assert.Nil(t, tokens)
 			assert.ErrorIs(t, err, ErrSSOSignInFailed)
-			assert.Equal(t, "identity_taken", oidcErrorCode(err))
+			assert.Equal(t, "identity_taken", idkitoidc.RefusalCode(err))
 			assert.ErrorIs(t, err, repository.ErrUserIdentityTaken)
 			assert.Equal(t, int64(0), f.refreshTokens(t, owner.ID))
 		} else {
@@ -1597,7 +1594,7 @@ var oidcSignInCases = []struct {
 		signIn("subject-cache-1")
 		signIn("subject-cache-2")
 		f.assertFetches(t, 1, 1, "two sign-ins share one discovery and one key fetch")
-		f.advance(oidcProviderCacheTTL - time.Millisecond)
+		f.advance(idkitoidc.ProviderCacheTTL - time.Millisecond)
 		signIn("subject-cache-3")
 		f.assertFetches(t, 1, 1, "still cached 1ms before the 24h")
 		f.advance(time.Millisecond)
@@ -1638,7 +1635,7 @@ var oidcSignInCases = []struct {
 		f.assertFetches(t, 3, 2, "a changed issuer is discovered on the next sign-in")
 		assert.Equal(t, "/"+oidcTestTenant+"/v2.0/.well-known/openid-configuration", f.issuer.lastDiscoveryPath())
 		require.NotNil(t, f.cachedProvider())
-		assert.Equal(t, f.issuer.Issuer(), f.cachedProvider().key.issuer)
+		assert.Equal(t, f.issuer.Issuer(), f.cachedProvider().Key.Issuer)
 	}},
 	{"entra_app_signing_keys", func(t *testing.T, f *oidcFixture) {
 		appKeySpec := func(sub string) oidcTokenSpec {
@@ -1989,7 +1986,7 @@ var oidcSignInCases = []struct {
 		require.NoError(t, err)
 		ctx, discovered, err := f.svc.discover(context.Background(), cfg, 0)
 		require.NoError(t, err)
-		_, err = f.svc.resolveUserInfoGroups(ctx, discovered.provider, "", "subject-ui-no-access")
+		_, err = f.svc.resolveUserInfoGroups(ctx, discovered.Provider, "", "subject-ui-no-access")
 		assert.ErrorIs(t, err, errUserInfoNoAccessToken)
 		assert.Empty(t, f.issuer.userInfoRequests(), "no request without an access token")
 	}},
@@ -2142,7 +2139,7 @@ var oidcSignInCases = []struct {
 			assert.NotEmpty(t, before.CodeVerifier, "the verifier is stored until the callback")
 			_, err := f.svc.Callback(context.Background(), code, state, state)
 			if wantErr {
-				assert.Equal(t, "nonce_mismatch", oidcErrorCode(err))
+				assert.Equal(t, "nonce_mismatch", idkitoidc.RefusalCode(err))
 			} else {
 				require.NoError(t, err)
 			}
@@ -2468,42 +2465,6 @@ func TestOIDCSignInMySQL(t *testing.T) {
 	runOIDCSignIn(t, newOIDCFixture(t, db, db))
 }
 
-func TestOIDCHTTPClient(t *testing.T) {
-	client := newOIDCHTTPClient(nil)
-	assert.Greater(t, client.Timeout, time.Duration(0), "a non-zero timeout")
-	transport, ok := client.Transport.(*http.Transport)
-	require.True(t, ok)
-	assert.Nil(t, transport.Proxy, "HTTP(S)_PROXY is ignored")
-
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(target.Close)
-	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
-	}))
-	t.Cleanup(redirecting.Close)
-	response, err := client.Get(redirecting.URL)
-	require.NoError(t, err)
-	_ = response.Body.Close()
-	assert.Equal(t, http.StatusFound, response.StatusCode, "the redirect is not followed")
-}
-
-func TestOIDCSubjectAndClaimRules(t *testing.T) {
-	for _, sub := range []string{"abc", "00u1a2b3c4", strings.Repeat("a", 255)} {
-		assert.True(t, validOIDCSubject(sub), sub)
-	}
-	for _, sub := range []string{"", "abc ", " abc", "a\tb", "abé", strings.Repeat("a", 256), "a\nb"} {
-		assert.False(t, validOIDCSubject(sub), "%q", sub)
-	}
-	for raw, ok := range map[string]bool{``: true, `["a","b"]`: true, `[]`: true, `"a"`: false, `null`: false, `[1]`: false, `{}`: false} {
-		_, got := oidcStringArray(json.RawMessage(raw))
-		assert.Equal(t, ok, got, raw)
-	}
-	assert.Equal(t, "ab", truncateUTF8("abé", 3), "cut on a rune boundary")
-	assert.Equal(t, "abé", truncateUTF8("abé", 4))
-}
-
 func TestOIDCGraphDefaults(t *testing.T) {
 	svc := NewOIDCService(nil, nil, nil, nil, nil, nil, nil, nil, nil, "").(*oidcService)
 	assert.Equal(t, "login.microsoftonline.com", svc.entraIssuerHost)
@@ -2649,30 +2610,10 @@ func TestOIDCClaimExpiredClearFails(t *testing.T) {
 	assert.Nil(t, after.UsedAt)
 }
 
-func TestOIDCProfileNames(t *testing.T) {
-	long := strings.Repeat("é", 60) // 120 bytes
-	cases := []struct {
-		name                string
-		given, family, full string
-		first, last         string
-	}{
-		{"given_only", "Ada", "", "", "Ada", ""},
-		{"family_only", "", "Lovelace", "", "", "Lovelace"},
-		{"both", "Ada", "Lovelace", "", "Ada", "Lovelace"},
-		{"name_one_word", "", "", "Cher", "Cher", ""},
-		{"name_extra_whitespace", "", "", "  Ada \t Augusta\n  King  ", "Ada", "Augusta King"},
-		{"multibyte_truncation", "", "", long + " " + long, strings.Repeat("é", 50), strings.Repeat("é", 50)},
-		{"given_wins_over_name", "Ada", "", "Someone Else", "Ada", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			first, last := oidcProfileNames(tc.given, tc.family, tc.full)
-			assert.Equal(t, tc.first, first)
-			assert.Equal(t, tc.last, last)
-			assert.LessOrEqual(t, len(first), oidcNameMaxBytes)
-			assert.LessOrEqual(t, len(last), oidcNameMaxBytes)
-		})
-	}
+// TestOIDCLimitsMatchModels: the subject limit of the claim rules is the
+// width of the identity column the subject is stored in.
+func TestOIDCLimitsMatchModels(t *testing.T) {
+	assert.Equal(t, models.UserIdentitySubjectMaxLength, idkitoidc.SubjectMaxBytes)
 }
 
 // TestOIDCClientAssertion signs in through the fake token endpoint with a

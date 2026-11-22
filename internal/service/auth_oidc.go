@@ -3,13 +3,7 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha1"
-	"crypto/sha256"
-	"crypto/subtle"
-	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,17 +13,15 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
@@ -74,21 +66,28 @@ import (
 // claimed), and never a code, state, sign-in cookie value, nonce, verifier,
 // token, email, subject, name or claim. Attempts older than OIDCLoginAttemptRetention are pruned by
 // the stale bulk operation sweep (PruneOIDCLoginAttempts).
+//
+// The generic OpenID Connect client helpers (the issuer HTTP client, the
+// cached provider, the state, nonce and PKCE values, the secret or
+// certificate code exchange, the claim rules and the error types) live in
+// internal/idkit/oidc; this file keeps the host's side: settings, attempts,
+// the Entra ID rules, the Graph and userinfo group resolution, auditing and
+// logging.
 
 // Errors of the OIDC sign-in, classified with errors.Is.
 var (
 	// ErrSSODisabled: single sign-on is switched off (404).
-	ErrSSODisabled = errors.New("single sign-on is disabled")
+	ErrSSODisabled = idkitoidc.ErrDisabled
 	// ErrSSOUnavailable: single sign-on is on but the issuer or client is not
 	// configured, the issuer cannot be discovered, or the token endpoint
 	// failed (503).
-	ErrSSOUnavailable = errors.New("single sign-on is unavailable")
+	ErrSSOUnavailable = idkitoidc.ErrUnavailable
 	// ErrSSOSignInFailed covers every refusal of a callback (401): an
 	// unknown, used or expired state, a missing sign-in cookie or one that
 	// names another sign-in, a token that does not verify, a claim that does
 	// not map, a refused account. The reason is logged as an
 	// error_code and never disclosed.
-	ErrSSOSignInFailed = errors.New("single sign-on failed")
+	ErrSSOSignInFailed = idkitoidc.ErrSignInFailed
 )
 
 // OIDCService is the OpenID Connect sign-in.
@@ -120,12 +119,8 @@ const OIDCAttemptTTL = oidcAttemptTTL
 // Limits and lifetimes of the OIDC sign-in.
 const (
 	oidcAttemptTTL         = 10 * time.Minute
-	oidcHTTPTimeout        = 10 * time.Second
-	oidcProviderCacheTTL   = 24 * time.Hour
 	oidcIssuerMaxBytes     = models.UserIdentityIssuerMaxLength
-	oidcSubjectMaxBytes    = models.UserIdentitySubjectMaxLength
 	oidcEmailMaxBytes      = 255
-	oidcNameMaxBytes       = 100
 	oidcCallbackPath       = "/auth/callback"
 	oidcRandomPasswordSize = 32
 )
@@ -156,45 +151,35 @@ const (
 	oidcUserInfoMaxBytes = 1 << 20
 )
 
-// oidcRefusalError is a refusal with the error_code it is logged under. It is
-// ErrSSOSignInFailed to errors.Is, and also the cause it wraps, if any. userID
-// names the account an identity row linked to, when the refusal concerns one
-// (the audit row's user_id, #454).
-type oidcRefusalError struct {
-	code   string
-	cause  error
+// oidcRefuse and oidcRefuseWith build a refusal with the error_code it is
+// logged under (an idkitoidc.RefusalError): ErrSSOSignInFailed to errors.Is,
+// and also the cause it wraps, if any.
+func oidcRefuse(code string) error { return &idkitoidc.RefusalError{Code: code} }
+
+func oidcRefuseWith(code string, cause error) error {
+	return &idkitoidc.RefusalError{Code: code, Cause: cause}
+}
+
+// oidcAccountRefusal is a refusal that concerns the account an identity row
+// linked to (the audit row's user_id, #454). It reads and compares as the
+// refusal it wraps.
+type oidcAccountRefusal struct {
+	err    error
 	userID uint
 }
 
-func (e *oidcRefusalError) Error() string { return "single sign-on failed: " + e.code }
+func (e *oidcAccountRefusal) Error() string { return e.err.Error() }
 
-func (e *oidcRefusalError) Is(target error) bool { return target == ErrSSOSignInFailed }
-
-func (e *oidcRefusalError) Unwrap() error { return e.cause }
-
-func oidcRefuse(code string) error { return &oidcRefusalError{code: code} }
-
-func oidcRefuseWith(code string, cause error) error {
-	return &oidcRefusalError{code: code, cause: cause}
-}
+func (e *oidcAccountRefusal) Unwrap() error { return e.err }
 
 // oidcRefusalForUser sets the user a refusal concerns; err is returned as it
 // is when it is not a refusal.
 func oidcRefusalForUser(err error, userID uint) error {
-	var refusal *oidcRefusalError
+	var refusal *idkitoidc.RefusalError
 	if errors.As(err, &refusal) {
-		refusal.userID = userID
+		return &oidcAccountRefusal{err: err, userID: userID}
 	}
 	return err
-}
-
-// oidcErrorCode is the error_code a refusal is logged under.
-func oidcErrorCode(err error) string {
-	var refusal *oidcRefusalError
-	if errors.As(err, &refusal) {
-		return refusal.code
-	}
-	return ""
 }
 
 // OIDCServiceOption configures NewOIDCService. Production passes none.
@@ -226,11 +211,11 @@ type oidcService struct {
 	appBaseURL    string
 	now           func() time.Time
 	rootCAs       *x509.CertPool
-	// client is the issuer client (newOIDCHTTPClient), built once by
+	// client is the issuer client (idkitoidc.NewHTTPClient), built once by
 	// NewOIDCService after the options.
 	client *http.Client
 	// providers keeps the last discovered issuer (see discover).
-	providers oidcProviderCache
+	providers *idkitoidc.ProviderCache
 	// beforeJITInsert is a test seam of the first sign-in (see
 	// oidcSignIn.beforeInsert); nil in production.
 	beforeJITInsert func()
@@ -286,7 +271,8 @@ func NewOIDCService(
 	for _, opt := range opts {
 		opt(s)
 	}
-	s.client = newOIDCHTTPClient(s.rootCAs)
+	s.client = idkitoidc.NewHTTPClient(s.rootCAs)
+	s.providers = idkitoidc.NewProviderCache(s.client, func() time.Time { return s.now() })
 	return s
 }
 
@@ -337,26 +323,6 @@ func oidcLogger(ctx context.Context, attemptID uint) *logrus.Entry {
 	})
 }
 
-// newOIDCHTTPClient builds the client that talks to an issuer: discovery,
-// JWKS and the code exchange. NewOIDCService builds it once and every
-// sign-in shares it, including the cached key sets. It has a timeout, never
-// follows a redirect and ignores HTTP(S)_PROXY. rootCAs nil means the system
-// roots.
-func newOIDCHTTPClient(rootCAs *x509.CertPool) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	if rootCAs != nil {
-		transport.TLSClientConfig = &tls.Config{RootCAs: rootCAs, MinVersion: tls.VersionTLS12}
-	}
-	return &http.Client{
-		Timeout:   oidcHTTPTimeout,
-		Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
 // redirectURI is the SPA page the issuer sends the browser back to.
 func (s *oidcService) redirectURI() string {
 	return s.appBaseURL + oidcCallbackPath
@@ -382,193 +348,58 @@ func ssoConfigured(cfg EffectiveSSOConfig) bool {
 	return cfg.IssuerURL != "" && cfg.ClientID != "" && len(cfg.IssuerURL) <= oidcIssuerMaxBytes
 }
 
-// oidcProviderKey identifies a cached discovery: the configured issuer URL,
-// whether the Entra ID application signing keys are used and, only then, the
-// client id they are read for.
-type oidcProviderKey struct {
-	issuer   string
-	appKeys  bool
-	clientID string
-}
-
-// oidcProvider is one discovered issuer: the go-oidc provider and, in
-// app-key mode, the key set of jwks_uri?appid=<client id> with the signing
-// algorithms the discovery document allows.
-type oidcProvider struct {
-	key       oidcProviderKey
-	provider  *oidc.Provider
-	appKeySet oidc.KeySet
-	appAlgs   []string
-	fetchedAt time.Time
-}
-
-// oidcProviderCache holds at most one discovered issuer. mu is held while a
-// miss fetches, so concurrent misses wait for one discovery.
-type oidcProviderCache struct {
-	mu    sync.Mutex
-	entry *oidcProvider
-}
-
-// oidcSigningAlgs are the ID token algorithms go-oidc verifies; a
-// discovery document's list is filtered to them the way go-oidc filters it
-// for provider.Verifier.
-var oidcSigningAlgs = map[string]bool{
-	oidc.RS256: true, oidc.RS384: true, oidc.RS512: true,
-	oidc.ES256: true, oidc.ES384: true, oidc.ES512: true,
-	oidc.PS256: true, oidc.PS384: true, oidc.PS512: true,
-	oidc.EdDSA: true,
-}
-
 // providerKey is the cache key of cfg. The application signing keys are used
 // only when OIDC_ENTRA_APP_SIGNING_KEYS is on and the issuer is Entra ID.
-func (s *oidcService) providerKey(cfg EffectiveSSOConfig) oidcProviderKey {
-	key := oidcProviderKey{issuer: cfg.IssuerURL}
+func (s *oidcService) providerKey(cfg EffectiveSSOConfig) idkitoidc.ProviderKey {
+	key := idkitoidc.ProviderKey{Issuer: cfg.IssuerURL}
 	if cfg.EntraAppSigningKeys && oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-		key.appKeys, key.clientID = true, cfg.ClientID
+		key.AppKeys, key.ClientID = true, cfg.ClientID
 	}
 	return key
 }
 
 // discover returns the configured issuer's provider and the context that
 // carries the issuer client for the code exchange and the userinfo call.
-// The discovery document and the signing keys are kept for
-// oidcProviderCacheTTL per (issuer, app-key mode, client id in app-key
+// The discovery is cached by idkitoidc.ProviderCache for
+// idkitoidc.ProviderCacheTTL per (issuer, app-key mode, client id in app-key
 // mode); a different key replaces the entry, and go-oidc fetches the keys
 // again when a token names an unknown key id. A failed discovery
 // (unreachable, redirect, timeout, an issuer mismatch) is not kept, leaves
 // the cached entry as it was and is ErrSSOUnavailable.
-func (s *oidcService) discover(ctx context.Context, cfg EffectiveSSOConfig, attemptID uint) (context.Context, *oidcProvider, error) {
+func (s *oidcService) discover(ctx context.Context, cfg EffectiveSSOConfig, attemptID uint) (context.Context, *idkitoidc.Discovery, error) {
 	ctx = oidc.ClientContext(ctx, s.client)
-	key := s.providerKey(cfg)
-
-	s.providers.mu.Lock()
-	defer s.providers.mu.Unlock()
-	if entry := s.providers.entry; entry != nil && entry.key == key && s.now().Before(entry.fetchedAt.Add(oidcProviderCacheTTL)) {
-		return ctx, entry, nil
-	}
-	entry, err := s.fetchProvider(ctx, key)
+	entry, err := s.providers.Get(ctx, s.providerKey(cfg))
 	if err != nil {
 		oidcLogger(ctx, attemptID).WithField("error_code", "discovery_failed").Warn("Single sign-on issuer discovery failed")
 		return nil, nil, ssoUnavailable(AuthAuditReasonDiscoveryFailed)
 	}
-	s.providers.entry = entry
 	return ctx, entry, nil
 }
 
-// fetchProvider runs the discovery of key.issuer and, in app-key mode,
-// prepares the key set of jwks_uri?appid=<client id>.
-func (s *oidcService) fetchProvider(ctx context.Context, key oidcProviderKey) (*oidcProvider, error) {
-	provider, err := oidc.NewProvider(ctx, key.issuer)
-	if err != nil {
-		return nil, err
-	}
-	entry := &oidcProvider{key: key, provider: provider, fetchedAt: s.now()}
-	if !key.appKeys {
-		return entry, nil
-	}
-	var document struct {
-		JWKSURI    string   `json:"jwks_uri"`
-		Algorithms []string `json:"id_token_signing_alg_values_supported"`
-	}
-	if err := provider.Claims(&document); err != nil {
-		return nil, err
-	}
-	jwksURL, err := url.Parse(document.JWKSURI)
-	if err != nil || document.JWKSURI == "" {
-		return nil, errors.New("the discovery document has no usable jwks_uri")
-	}
-	query := jwksURL.Query()
-	query.Set("appid", key.clientID)
-	jwksURL.RawQuery = query.Encode()
-	entry.appKeySet = oidc.NewRemoteKeySet(oidc.ClientContext(context.Background(), s.client), jwksURL.String())
-	for _, alg := range document.Algorithms {
-		if oidcSigningAlgs[alg] {
-			entry.appAlgs = append(entry.appAlgs, alg)
-		}
-	}
-	return entry, nil
-}
-
-// verifier checks ID tokens for the current client id against the entry's
-// keys: the provider's own key set, or the application signing keys in
-// app-key mode. It is built per call, never cached.
-func (p *oidcProvider) verifier(clientID string) *oidc.IDTokenVerifier {
-	if p.appKeySet == nil {
-		return p.provider.Verifier(&oidc.Config{ClientID: clientID})
-	}
-	return oidc.NewVerifier(p.key.issuer, p.appKeySet, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: p.appAlgs})
-}
-
-// oauthConfig is the OAuth 2.0 client of the configuration. With a client
-// certificate in force it carries no secret and sends client_id in the form,
-// so the token request authenticates only with the client assertion.
-func (s *oidcService) oauthConfig(provider *oidc.Provider, cfg EffectiveSSOConfig) *oauth2.Config {
-	out := &oauth2.Config{
+// oidcClient is the OAuth 2.0 client of the configuration: the client id,
+// the secret or, when one is in force, the client certificate, the SPA
+// callback and the request scopes.
+func (s *oidcService) oidcClient(cfg EffectiveSSOConfig) idkitoidc.Client {
+	client := idkitoidc.Client{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
-		Endpoint:     provider.Endpoint(),
 		RedirectURL:  s.redirectURI(),
 		Scopes:       s.requestScopes(cfg),
 	}
 	if cfg.ClientCertificate != nil {
-		out.ClientSecret = ""
-		out.Endpoint.AuthStyle = oauth2.AuthStyleInParams
+		client.Certificate = &idkitoidc.ClientCertificate{
+			Certificate: cfg.ClientCertificate.Certificate,
+			PrivateKey:  cfg.ClientCertificate.PrivateKey,
+		}
 	}
-	return out
+	return client
 }
 
 // exchangeCode redeems the authorization code with the PKCE verifier. With a
 // client certificate in force the request carries a fresh client assertion;
 // a signing failure fails the exchange.
 func (s *oidcService) exchangeCode(ctx context.Context, provider *oidc.Provider, cfg EffectiveSSOConfig, code, verifier string) (*oauth2.Token, error) {
-	options := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
-	if cfg.ClientCertificate != nil {
-		assertion, err := s.clientAssertion(cfg.ClientCertificate, cfg.ClientID, provider.Endpoint().TokenURL)
-		if err != nil {
-			return nil, err
-		}
-		options = append(options,
-			oauth2.SetAuthURLParam("client_assertion_type", oidcClientAssertionType),
-			oauth2.SetAuthURLParam("client_assertion", assertion))
-	}
-	return s.oauthConfig(provider, cfg).Exchange(ctx, code, options...)
-}
-
-// The client assertion of RFC 7523 (private_key_jwt).
-const (
-	oidcClientAssertionType     = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-	oidcClientAssertionLifetime = 5 * time.Minute
-)
-
-// clientAssertion signs the client assertion of one code exchange: PS256 over
-// the certificate's key, the certificate named by its x5t and x5t#S256
-// thumbprints, aud the token endpoint, iss and sub the client id, a fresh jti,
-// valid from now for five minutes.
-func (s *oidcService) clientAssertion(cert *SSOClientCertificate, clientID, tokenURL string) (string, error) {
-	jti := make([]byte, 16)
-	if _, err := rand.Read(jti); err != nil {
-		return "", fmt.Errorf("generate the client assertion id: %w", err)
-	}
-	now := s.now().UTC()
-	token := jwt.NewWithClaims(jwt.SigningMethodPS256, jwt.RegisteredClaims{
-		Issuer:    clientID,
-		Subject:   clientID,
-		Audience:  jwt.ClaimStrings{tokenURL},
-		ID:        hex.EncodeToString(jti),
-		IssuedAt:  jwt.NewNumericDate(now),
-		NotBefore: jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(oidcClientAssertionLifetime)),
-	})
-	sha1Sum := sha1.Sum(cert.Certificate.Raw)
-	sha256Sum := sha256.Sum256(cert.Certificate.Raw)
-	token.Header["typ"] = "JWT"
-	token.Header["x5t"] = base64.RawURLEncoding.EncodeToString(sha1Sum[:])
-	token.Header["x5t#S256"] = base64.RawURLEncoding.EncodeToString(sha256Sum[:])
-	signed, err := token.SignedString(cert.PrivateKey)
-	if err != nil {
-		return "", fmt.Errorf("sign the client assertion: %w", err)
-	}
-	return signed, nil
+	return s.oidcClient(cfg).Exchange(ctx, provider, code, verifier, s.now())
 }
 
 // requestScopes are the configured scopes, plus the Microsoft Graph
@@ -627,23 +458,18 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	if err != nil {
 		return nil, err
 	}
-	provider := discovered.provider
+	provider := discovered.Provider
 
-	state, err := generateOpaqueToken()
+	request, err := idkitoidc.NewAuthRequest()
 	if err != nil {
 		return nil, err
 	}
-	nonce, err := generateOpaqueToken()
-	if err != nil {
-		return nil, err
-	}
-	verifier := oauth2.GenerateVerifier()
 
 	now := s.now().UTC()
 	attempt := &models.OIDCLoginAttempt{
-		StateHash:    hashOpaqueToken(state, s.auth.sessionTokenSecret()),
-		Nonce:        nonce,
-		CodeVerifier: verifier,
+		StateHash:    hashOpaqueToken(request.State, s.auth.sessionTokenSecret()),
+		Nonce:        request.Nonce,
+		CodeVerifier: request.Verifier,
 		Issuer:       cfg.IssuerURL,
 		ExpiresAt:    now.Add(oidcAttemptTTL),
 	}
@@ -652,8 +478,8 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	}
 	oidcLogger(ctx, attempt.ID).Info("Single sign-on started")
 	return &OIDCAuthorization{
-		URL:          s.oauthConfig(provider, cfg).AuthCodeURL(state, oidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)),
-		State:        state,
+		URL:          idkitoidc.AuthCodeURL(s.oidcClient(cfg).OAuth2Config(provider), request),
+		State:        request.State,
 		SecureCookie: s.httpsOnlyCookie(),
 	}, nil
 }
@@ -663,21 +489,6 @@ func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 func (s *oidcService) httpsOnlyCookie() bool {
 	scheme, _, found := strings.Cut(s.appBaseURL, "://")
 	return found && strings.EqualFold(scheme, "https")
-}
-
-// oidcClaims are the ID-token claims the sign-in reads. Groups and roles are
-// kept raw so their shape can be checked.
-type oidcClaims struct {
-	Groups     json.RawMessage `json:"groups"`
-	Roles      json.RawMessage `json:"roles"`
-	ClaimNames json.RawMessage `json:"_claim_names"`
-	Email      json.RawMessage `json:"email"`
-	GivenName  json.RawMessage `json:"given_name"`
-	FamilyName json.RawMessage `json:"family_name"`
-	Name       json.RawMessage `json:"name"`
-	// OID and TID are the Entra ID object id and tenant id (#505).
-	OID json.RawMessage `json:"oid"`
-	TID json.RawMessage `json:"tid"`
 }
 
 func (s *oidcService) Callback(ctx context.Context, code, state, binding string) (*AuthTokens, error) {
@@ -691,10 +502,10 @@ func (s *oidcService) Callback(ctx context.Context, code, state, binding string)
 func (s *oidcService) finishCallback(ctx context.Context, tokens *AuthTokens, facts oidcCallbackFacts, err error) (*AuthTokens, error) {
 	auditID := s.recordCallback(ctx, tokens, facts, err)
 	if err != nil {
-		if errorCode := oidcErrorCode(err); errorCode != "" {
+		if errorCode := idkitoidc.RefusalCode(err); errorCode != "" {
 			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
 				Warn("Single sign-on refused")
-		} else if errorCode := oidcUnavailableCode(err); errorCode != "" {
+		} else if errorCode := idkitoidc.UnavailableCode(err); errorCode != "" {
 			oidcLogger(ctx, facts.attemptID).WithField("error_code", errorCode).WithField("audit_id", auditID).
 				Warn("Single sign-on unavailable")
 		}
@@ -703,15 +514,6 @@ func (s *oidcService) finishCallback(ctx context.Context, tokens *AuthTokens, fa
 	oidcLogger(ctx, facts.attemptID).WithField("user_id", tokens.User.ID).WithField("audit_id", auditID).
 		Info("Signed in through single sign-on")
 	return tokens, nil
-}
-
-// oidcUnavailableCode is the reason code of a 503, "" for any other error.
-func oidcUnavailableCode(err error) string {
-	var unavailable *ssoUnavailableError
-	if errors.As(err, &unavailable) {
-		return unavailable.code
-	}
-	return ""
 }
 
 // oidcCallbackFacts is what a callback learned before it ended, for the
@@ -776,7 +578,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if binding == "" {
 		return nil, facts, oidcRefuse(AuthAuditReasonBindingMissing)
 	}
-	if subtle.ConstantTimeCompare([]byte(binding), []byte(state)) != 1 {
+	if !idkitoidc.BindingMatches(binding, state) {
 		return nil, facts, oidcRefuse(AuthAuditReasonBindingMismatch)
 	}
 	if attempt.Issuer != cfg.IssuerURL {
@@ -790,7 +592,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if err != nil {
 		return nil, facts, err
 	}
-	provider := discovered.provider
+	provider := discovered.Provider
 
 	token, err := s.exchangeCode(ctx, provider, cfg, code, attempt.CodeVerifier)
 	if err != nil {
@@ -801,16 +603,16 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if rawIDToken == "" {
 		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenMissing)
 	}
-	idToken, err := discovered.verifier(cfg.ClientID).Verify(ctx, rawIDToken)
+	idToken, err := discovered.Verifier(cfg.ClientID).Verify(ctx, rawIDToken)
 	if err != nil {
 		return nil, facts, oidcRefuse(AuthAuditReasonIDTokenInvalid)
 	}
-	if idToken.Nonce == "" || subtle.ConstantTimeCompare([]byte(idToken.Nonce), []byte(attempt.Nonce)) != 1 {
+	if !idkitoidc.NonceMatches(idToken.Nonce, attempt.Nonce) {
 		return nil, facts, oidcRefuse(AuthAuditReasonNonceMismatch)
 	}
 	facts.verified, facts.issuer, facts.subject = true, idToken.Issuer, idToken.Subject
 
-	var claims oidcClaims
+	var claims idkitoidc.Claims
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
 	}
@@ -833,11 +635,11 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 			resolveGroups = true
 		}
 	}
-	groups, ok := oidcStringArray(claims.Groups)
+	groups, ok := idkitoidc.StringArray(claims.Groups)
 	if !ok {
 		return nil, facts, oidcRefuse(AuthAuditReasonGroupsMalformed)
 	}
-	roles, ok := oidcStringArray(claims.Roles)
+	roles, ok := idkitoidc.StringArray(claims.Roles)
 	if !ok {
 		return nil, facts, oidcRefuse(AuthAuditReasonRolesMalformed)
 	}
@@ -846,7 +648,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		facts.groups = oidcClaimValues(groups)
 	}
 	subject := idToken.Subject
-	if !validOIDCSubject(subject) {
+	if !idkitoidc.ValidSubject(subject) {
 		return nil, facts, oidcRefuse(AuthAuditReasonSubjectInvalid)
 	}
 	if len(idToken.Issuer) > oidcIssuerMaxBytes {
@@ -881,9 +683,9 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	// compared byte for byte; a non-string claim counts as absent.
 	scimSubject := ""
 	if oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-		tid := oidcString(claims.TID)
-		oid := oidcString(claims.OID)
-		if tid != "" && tid == oidcEntraTenant(cfg.IssuerURL) && validOIDCSubject(oid) {
+		tid := idkitoidc.String(claims.TID)
+		oid := idkitoidc.String(claims.OID)
+		if tid != "" && tid == oidcEntraTenant(cfg.IssuerURL) && idkitoidc.ValidSubject(oid) {
 			scimSubject = oid
 		}
 	}
@@ -892,12 +694,12 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	if err != nil {
 		return nil, facts, err
 	}
-	firstName, lastName := oidcProfileNames(oidcString(claims.GivenName), oidcString(claims.FamilyName), oidcString(claims.Name))
+	firstName, lastName := idkitoidc.ProfileNames(idkitoidc.String(claims.GivenName), idkitoidc.String(claims.FamilyName), idkitoidc.String(claims.Name))
 	tokens, err := s.users.ApplyOIDCSignIn(ctx, oidcSignIn{
 		issuer:       idToken.Issuer,
 		subject:      subject,
 		roleID:       roleID,
-		email:        oidcString(claims.Email),
+		email:        idkitoidc.String(claims.Email),
 		firstName:    firstName,
 		lastName:     lastName,
 		passwordHash: passwordHash,
@@ -949,7 +751,7 @@ func (s *oidcService) resolveEntraGroups(ctx context.Context, accessToken string
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.graphTimeout)
 	defer cancel()
-	client := newOIDCHTTPClient(s.rootCAs)
+	client := idkitoidc.NewHTTPClient(s.rootCAs)
 
 	ids := []string{}
 	next := strings.TrimRight(s.graphBaseURL, "/") + oidcGraphMemberObjects
@@ -1089,7 +891,7 @@ func (s *oidcService) resolveUserInfoGroups(ctx context.Context, provider *oidc.
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", "Bearer "+accessToken)
-	response, err := newOIDCHTTPClient(s.rootCAs).Do(request)
+	response, err := idkitoidc.NewHTTPClient(s.rootCAs).Do(request)
 	if err != nil {
 		return nil, errUserInfoRequest
 	}
@@ -1150,23 +952,6 @@ func (s *oidcService) issue(handle *gorm.DB, user *models.User) (*AuthTokens, er
 	return &AuthTokens{AccessToken: access, RefreshToken: refresh, User: user}, nil
 }
 
-// oidcStringArray decodes a claim that must be absent or a JSON array of
-// strings. Anything else, null included, is refused.
-func oidcStringArray(raw json.RawMessage) ([]string, bool) {
-	if len(raw) == 0 {
-		return nil, true
-	}
-	trimmed := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(trimmed, "[") {
-		return nil, false
-	}
-	var values []string
-	if err := json.Unmarshal(raw, &values); err != nil {
-		return nil, false
-	}
-	return values, true
-}
-
 // oidcClaimValues is a read claim array for the audit row: never nil, so an
 // absent claim is stored as [] and not as NULL.
 func oidcClaimValues(values []string) []string {
@@ -1174,56 +959,6 @@ func oidcClaimValues(values []string) []string {
 		return []string{}
 	}
 	return values
-}
-
-// oidcString is a string claim, or "" when it is absent or not a string.
-func oidcString(raw json.RawMessage) string {
-	var value string
-	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
-		return ""
-	}
-	return value
-}
-
-// oidcProfileNames are the first and last name a first sign-in provisions:
-// given_name and family_name as they are when either is a non-empty string;
-// otherwise name split at whitespace, its first field the first name and the
-// remaining fields, joined by single spaces, the last name; otherwise both
-// empty. Each is cut to oidcNameMaxBytes on a rune boundary.
-func oidcProfileNames(given, family, name string) (first, last string) {
-	if given != "" || family != "" {
-		first, last = given, family
-	} else if fields := strings.Fields(name); len(fields) > 0 {
-		first, last = fields[0], strings.Join(fields[1:], " ")
-	}
-	return truncateUTF8(first, oidcNameMaxBytes), truncateUTF8(last, oidcNameMaxBytes)
-}
-
-// validOIDCSubject accepts a sub of 1-255 printable ASCII bytes without
-// leading or trailing whitespace, so a subject that a PAD SPACE collation
-// would equate with another never reaches the database.
-func validOIDCSubject(sub string) bool {
-	if sub == "" || len(sub) > oidcSubjectMaxBytes || strings.TrimSpace(sub) != sub {
-		return false
-	}
-	for i := 0; i < len(sub); i++ {
-		if sub[i] < 0x20 || sub[i] > 0x7e {
-			return false
-		}
-	}
-	return true
-}
-
-// truncateUTF8 cuts s to at most max bytes on a rune boundary.
-func truncateUTF8(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
 }
 
 // oidcUnusablePasswordHash is the bcrypt hash of random bytes that are
