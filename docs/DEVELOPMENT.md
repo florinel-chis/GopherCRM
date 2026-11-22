@@ -1763,17 +1763,24 @@ a non-empty `external_id` is not validated). The handler then reads `status` wit
 value of a repeated parameter; empty counts as absent) and validates it with `LeadStatus.IsValid`
 before any service call: an unknown value is 400 `VALIDATION_ERROR` with `error.details.status`, the
 value not echoed or logged. `IsValid` is the one list: bulk status's `isValidLeadStatus` delegates
-to it. With a status the handler calls `LeadService.ListFiltered(repository.LeadListFilter{OwnerID,
-Search, Classification, Status}, offset, limit, sortBy, sortOrder)`: a caller without
-`leads.view` at scope all (sales) gets `OwnerID` forced to its own `user_id`, `Status` only and an
-empty sort, as its search, classification and sort were ignored before; an admin gets status,
-search, classification and the sort together. Without a status the existing `GetByOwner`, `Search`,
-`GetByClassification`, `ListSorted` and `List` branches run with unchanged arguments.
-`LeadRepository.ListByFilter` (Owner preload, `orderPage`, then OFFSET/LIMIT; id ascending without
-a sort) and `CountByFilter` share one predicate builder, `whereLeadListFilter`, which ANDs
-`leads.owner_id`, `leads.classification` and `leads.status` with the parenthesised search OR over
-the six searched columns, so the rows and the total come from the same filter before offset and
-limit; erased (soft-deleted) leads stay excluded. The service logs offset, limit, the owner id and
+to it. Since #618 every request past `external_id` takes ONE path,
+`LeadService.ListFiltered(repository.LeadListFilter{OwnerID, Search, Classification, Status},
+offset, limit, sortBy, sortOrder)`, and the parameters a caller may use are always ANDed: a caller
+without `leads.view` at scope all (sales) gets `OwnerID` forced to its own `user_id`, the status
+when given and an empty sort (its search, classification and sort stay ignored); an admin gets
+search, classification, status and the sort together. The owner is preloaded on every path.
+`LeadRepository.ListByFilter` (`orderPage`, then OFFSET/LIMIT; id ascending without a sort) and
+`CountByFilter` share one predicate builder, `whereLeadListFilter`, which ANDs `leads.owner_id`,
+`leads.classification` and `leads.status` with the parenthesised search OR over the six searched
+columns, so the rows and the total come from the same filter before offset and limit; erased
+(soft-deleted) leads stay excluded. The search is a literal substring: `containsPattern`
+(`internal/repository/like_pattern.go`) escapes `!`, `%` and `_` with `!`, and every LIKE is
+`col LIKE ? ESCAPE '!'` (built by `likeAnyClause`), so `%`, `_`, `!` and a backslash match only
+themselves on SQLite, MySQL and MariaDB. `!` rather than a backslash because `'\\'` is one
+character on MySQL but two on SQLite, and MySQL treats a backslash as its default LIKE escape.
+`LeadRepository.ListAllForExport` builds its WHERE from the same `whereLeadListFilter`, so
+`GET /leads/export` matches exactly the rows the admin list would (search, classification and
+the sort combined; sales its own leads only). The service logs offset, limit, the owner id and
 the presence flags `status_filter`, `search_filter` and `classification_filter` only, never the
 search term or the raw sort. `GET /leads/export` keeps ignoring `status`. No schema change.
 Regression roots: `TestLeadStatusIsValid` (`internal/models`); `TestLeadListStatusFilterHandler`
@@ -1788,20 +1795,21 @@ priority only). The handler reads them with `c.Query` (first value of a repeated
 counts as absent, which is what the list page sends for "All") and validates them with
 `TaskStatus.IsValid` / `TaskPriority.IsValid` before any service call: an unknown value is 400
 `VALIDATION_ERROR` with `error.details` keyed by the offending parameter name(s), the value not
-echoed and the warning log carrying only the count. With either filter the handler calls
+echoed and the warning log carrying only the count. Since #618 every request takes ONE path,
 `TaskService.ListFiltered(repository.TaskListFilter{AssigneeID, LabelID, Search, Status,
-Priority}, offset, limit, sortBy, sortOrder)`, keeping each caller's existing contract: a caller
-holding `tasks.view` at scope all (admin) gets `AssigneeID` nil, `search` only without `label_id`
-(label still wins) and the normalised sort; any other caller gets `AssigneeID` forced to its own
-`user_id`, no search, and the sort only together with `label_id` (id ascending otherwise, as
-`GetByAssignee`). Without either filter the existing `ListByLabelForAssignee`, `ListByLabel`,
-`GetByAssignee`, `Search`, `ListSorted` and `List` branches run with unchanged arguments.
-`TaskRepository.ListByFilter` (the `taskListPreloads`, so `assigned_to` is filled on every filtered
-path; `orderPage`, then OFFSET/LIMIT) and `CountByFilter` share one predicate builder,
-`whereTaskListFilter`, which joins `task_labels` only for a label filter and ANDs
-`tasks.assigned_to_id`, `tasks.status` and `tasks.priority` with the parenthesised
-`(tasks.title LIKE ? OR tasks.description LIKE ?)`, every column qualified and every value bound;
-soft-deleted tasks stay excluded. The service logs offset, limit, the assignee and label ids, the
+Priority}, offset, limit, sortBy, sortOrder)`, and the parameters a caller may use are always
+ANDed: a caller holding `tasks.view` at scope all (admin) gets `AssigneeID` nil and `label_id`,
+`search`, the filters and the normalised sort combined; any other caller gets `AssigneeID` forced
+to its own `user_id`, no search, and the sort only together with `label_id` (id ascending
+otherwise). `GET /tasks/my` stays on `TaskService.GetByAssignee`, which reads through the same
+`ListByFilter`/`CountByFilter` with `AssigneeID` and the preloads `Labels`, `Lead` and `Deal` only
+(its `assigned_to` stays zero-valued). `TaskRepository.ListByFilter` (the `taskListPreloads` on
+`GET /tasks`, so `assigned_to` is filled on every path; `orderPage`, then OFFSET/LIMIT) and
+`CountByFilter` share one predicate builder, `whereTaskListFilter`, which joins `task_labels` only
+for a label filter and ANDs `tasks.assigned_to_id`, `tasks.status` and `tasks.priority` with the
+parenthesised `(tasks.title LIKE ? ESCAPE '!' OR tasks.description LIKE ? ESCAPE '!')`, every
+column qualified and every value bound; the search term is escaped by `containsPattern` as for
+leads, so it matches literally. Soft-deleted tasks stay excluded. The service logs offset, limit, the assignee and label ids, the
 total and the presence flags `status_filter`, `priority_filter` and `search_filter` only. No
 schema change. Regression roots: `TestTaskEnumIsValid` (`internal/models`);
 `TestTaskListFilterHandler` (`internal/handler`); `TestTaskServiceListFiltered`

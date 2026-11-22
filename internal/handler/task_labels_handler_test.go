@@ -16,6 +16,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -219,7 +220,7 @@ func (suite *TaskLabelHandlerTestSuite) TestUpdate_RejectsZeroLabelID() {
 }
 
 func (suite *TaskLabelHandlerTestSuite) TestList_LabelFilterForAdmin() {
-	suite.mockService.On("ListByLabel", uint(7), 0, 20, "title", "asc").
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{LabelID: 7}, 0, 20, "title", "asc").
 		Return([]models.Task{{BaseModel: models.BaseModel{ID: 1}}}, int64(1), nil)
 
 	w := suite.do(http.MethodGet, "/tasks?label_id=7&sort_by=title&sort_order=asc", nil)
@@ -233,35 +234,36 @@ func (suite *TaskLabelHandlerTestSuite) TestList_LabelFilterStaysScopedForNonAdm
 	suite.role = models.RoleSupport
 	suite.userID = 12
 
-	suite.mockService.On("ListByLabelForAssignee", uint(12), uint(7), 0, 20, "", "asc").
+	assignee := uint(12)
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{AssigneeID: &assignee, LabelID: 7}, 0, 20, "", "asc").
 		Return([]models.Task{}, int64(0), nil)
 
 	w := suite.do(http.MethodGet, "/tasks?label_id=7", nil)
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	suite.mockService.AssertNotCalled(suite.T(), "ListByLabel", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertExpectations(suite.T())
 }
 
-// Documented behaviour: label_id wins over search rather than the two being
-// combined.
-func (suite *TaskLabelHandlerTestSuite) TestList_LabelFilterTakesPrecedenceOverSearch() {
-	suite.mockService.On("ListByLabel", uint(7), 0, 20, "", "asc").
+// For an admin label_id and search combine (#618): both reach the one list
+// call.
+func (suite *TaskLabelHandlerTestSuite) TestList_LabelFilterCombinesWithSearch() {
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{LabelID: 7, Search: "anything"}, 0, 20, "", "asc").
 		Return([]models.Task{}, int64(0), nil)
 
 	w := suite.do(http.MethodGet, "/tasks?label_id=7&search=anything", nil)
 	assert.Equal(suite.T(), http.StatusOK, w.Code)
-	suite.mockService.AssertNotCalled(suite.T(), "Search", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertExpectations(suite.T())
 }
 
 // A malformed or non-positive label_id is ignored, exactly like a sort_by that
 // is not on the allowlist — the list still renders instead of erroring.
 func (suite *TaskLabelHandlerTestSuite) TestList_MalformedLabelIDIsIgnored() {
-	suite.mockService.On("List", 0, 20).Return([]models.Task{}, int64(0), nil).Twice()
+	suite.mockService.On("ListFiltered", repository.TaskListFilter{}, 0, 20, "", "asc").Return([]models.Task{}, int64(0), nil).Twice()
 
 	for _, query := range []string{"/tasks?label_id=abc", "/tasks?label_id=0"} {
 		w := suite.do(http.MethodGet, query, nil)
 		assert.Equalf(suite.T(), http.StatusOK, w.Code, "%s must still list", query)
 	}
-	suite.mockService.AssertNotCalled(suite.T(), "ListByLabel", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	suite.mockService.AssertExpectations(suite.T())
 }
 
 func TestTaskLabelHandlerTestSuite(t *testing.T) {

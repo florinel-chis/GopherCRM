@@ -142,8 +142,6 @@ type LeadService interface {
 	// ListByExternalID returns up to LeadExternalIDLookupLimit live leads
 	// whose external_id equals externalID, lowest id first, owner preloaded.
 	ListByExternalID(externalID string) ([]models.Lead, error)
-	GetByOwner(ownerID uint, offset, limit int) ([]models.Lead, int64, error)
-	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, int64, error)
 	Update(id uint, updates map[string]interface{}) (*models.Lead, error)
 	// Assign makes ownerID the lead's owner, for an actor CanViewLead admits on
 	// the locked row: apperrors.ErrForbidden otherwise, a not-found error for a
@@ -155,13 +153,10 @@ type LeadService interface {
 	// lead, because that erases the customer it became; anyone else is refused
 	// with an apperrors.ErrForbidden and nothing changes.
 	Delete(ctx context.Context, id uint, actorRole models.UserRole) error
-	List(offset, limit int) ([]models.Lead, int64, error)
-	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
-	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
-	// ListFiltered lists the leads matching filter for GET /leads with a
-	// status filter (#426): rows and total share one predicate, applied before
-	// offset and limit. The handler sets filter.OwnerID for callers that see
-	// only their own leads.
+	// ListFiltered is the one list of GET /leads (#426, #618): the leads
+	// matching filter, with their owner, where rows and total share one
+	// predicate whose fields are ANDed and applied before offset and limit. The
+	// handler sets filter.OwnerID for callers that see only their own leads.
 	ListFiltered(filter repository.LeadListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Lead, int64, error)
 	ConvertToCustomer(ctx context.Context, leadID uint, customerData *models.Customer) (*models.Customer, error)
 	GetCount() (int64, error)
@@ -178,7 +173,7 @@ type LeadService interface {
 	// is spelled the same on MySQL 8 and SQLite.
 	GetConversionTimestamps(since time.Time) ([]time.Time, error)
 	// ExportForActor returns every lead the actor may list, unpaginated, for
-	// GET /leads/export: an admin under the list's parameter precedence, a
+	// GET /leads/export: an admin under the list's combined filters, a
 	// sales user only its own leads in id order with every parameter ignored,
 	// and an error matching apperrors.ErrForbidden for any other role, without
 	// a read.
@@ -287,15 +282,15 @@ type TicketService interface {
 type TaskService interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)
+	// GetByAssignee backs GET /tasks/my: the caller's tasks in id order, with
+	// their labels, lead and deal (the assignee is not loaded), through the
+	// task list query.
 	GetByAssignee(assigneeID uint, offset, limit int) ([]models.Task, int64, error)
 	Update(task *models.Task) error
 	Delete(id uint) error
-	List(offset, limit int) ([]models.Task, int64, error)
-	ListSorted(offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
-	Search(query string, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
-	// ListFiltered is GET /tasks with a status or priority filter (#427): one
-	// page of the tasks matching filter, with taskListPreloads, and the number
-	// of tasks the same filter matches before pagination.
+	// ListFiltered is the one list of GET /tasks (#427, #618): one page of the
+	// tasks matching filter, whose fields are ANDed, with taskListPreloads, and
+	// the number of tasks the same filter matches before pagination.
 	ListFiltered(filter repository.TaskListFilter, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	GetPendingCount() (int64, error)
 	// Dashboard analytics. The ByAssignee variants exist so the handlers can
@@ -338,10 +333,6 @@ type TaskService interface {
 	// RedactTaskDeals as well.
 	CreateWithLabels(task *models.Task, labelIDs []uint, actorID uint) error
 	UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error
-	// ListByLabel and the ByAssignee variant back the ?label_id= filter, with
-	// the same admin/non-admin split as the rest of the task listings.
-	ListByLabel(labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
-	ListByLabelForAssignee(assigneeID, labelID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 	// ListByDeal backs GET /deals/{id}/tasks: apperrors.ErrDealNotFound for a
 	// missing or soft-deleted deal, apperrors.ErrForbidden for a deal the viewer
 	// may not see, every live task of the deal for an admin and only the tasks

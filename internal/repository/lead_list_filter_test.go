@@ -136,4 +136,27 @@ func runLeadListFilterRepository(t *testing.T, db *gorm.DB) {
 		_, err := repo.ListByFilter(LeadListFilter{Status: models.LeadStatusQualified}, 0, 20, "notes; DROP", "asc")
 		require.Error(t, err)
 	})
+
+	// #618: the search is a literal substring. Each literal row holds one LIKE
+	// metacharacter, and each decoy row holds another character where an
+	// unescaped wildcard would match it. Seeded last, so the subtests above keep
+	// their rows and counts.
+	t.Run("search matches wildcards literally", func(t *testing.T) {
+		underscore := seed("Lit", "lit1@lead-filter.test", "a_b", "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+		seed("Lit", "lit2@lead-filter.test", "axb", "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+		percent := seed("Lit", "lit3@lead-filter.test", "50%", "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+		seed("Lit", "lit4@lead-filter.test", "50x", "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+		bang := seed("Lit", "lit5@lead-filter.test", "a!b", "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+		backslash := seed("Lit", "lit6@lead-filter.test", `a\b`, "", owner1, models.LeadStatusNew, models.LeadClassificationTest)
+
+		for _, tc := range []struct {
+			term string
+			want uint
+		}{{"_", underscore}, {"%", percent}, {"!", bang}, {`\`, backslash}} {
+			check(t, LeadListFilter{Search: tc.term}, 0, 20, "", "", []uint{tc.want}, 1)
+			exported, err := repo.ListAllForExport(LeadExportFilter{Search: tc.term})
+			require.NoError(t, err)
+			assert.Equal(t, []uint{tc.want}, ids(exported), "the export matches %q literally", tc.term)
+		}
+	})
 }

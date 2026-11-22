@@ -29,8 +29,8 @@ func newLeadExportService(repo *mocks.LeadRepository) LeadService {
 func leadExportUint(v uint) *uint { return &v }
 
 // TestLeadServiceExportScope pins which filter each role's request reaches the
-// repository with (#234): the lead list's precedence for an admin, the
-// caller's own leads in id order for a sales user, whatever either sent.
+// repository with (#234, #618): the lead list's combined filters for an admin,
+// the caller's own leads in id order for a sales user, whatever either sent.
 func TestLeadServiceExportScope(t *testing.T) {
 	admin := LeadViewer{UserID: 1, Role: models.RoleAdmin}
 	sales := LeadViewer{UserID: 7, Role: models.RoleSales}
@@ -42,12 +42,12 @@ func TestLeadServiceExportScope(t *testing.T) {
 		params LeadExportParams
 		want   repository.LeadExportFilter
 	}{
-		{"admin_search_wins_and_keeps_the_sort", admin, all,
-			repository.LeadExportFilter{Search: "acme", SortBy: "email", SortOrder: "desc"}},
-		{"admin_search_without_sort", admin, LeadExportParams{Search: "acme", Classification: "spam", SortOrder: "desc"},
-			repository.LeadExportFilter{Search: "acme"}},
-		{"admin_classification_clears_the_sort", admin, LeadExportParams{Classification: "spam", SortBy: "email", SortOrder: "desc"},
-			repository.LeadExportFilter{Classification: models.LeadClassificationSpam}},
+		{"admin_search_classification_and_sort_combine", admin, all,
+			repository.LeadExportFilter{Search: "acme", Classification: models.LeadClassificationSpam, SortBy: "email", SortOrder: "desc"}},
+		{"admin_search_and_classification_without_sort", admin, LeadExportParams{Search: "acme", Classification: "spam", SortOrder: "desc"},
+			repository.LeadExportFilter{Search: "acme", Classification: models.LeadClassificationSpam}},
+		{"admin_classification_keeps_the_sort", admin, LeadExportParams{Classification: "spam", SortBy: "email", SortOrder: "desc"},
+			repository.LeadExportFilter{Classification: models.LeadClassificationSpam, SortBy: "email", SortOrder: "desc"}},
 		{"admin_classification_any_value_is_passed_exactly", admin, LeadExportParams{Classification: "nonsense"},
 			repository.LeadExportFilter{Classification: "nonsense"}},
 		{"admin_sort", admin, LeadExportParams{SortBy: "company", SortOrder: "asc"},

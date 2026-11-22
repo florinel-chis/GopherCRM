@@ -227,8 +227,8 @@ func (h *TaskHandler) Get(c *gin.Context) {
 
 // List godoc
 // @Summary List tasks
-// @Description One page of tasks. Roles: every authenticated role. Admins see every task and may use search and sorting. Every other role is silently narrowed to the tasks assigned to them, and search, sort_by and sort_order are ignored for them, except with label_id, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label and takes precedence over search (search is ignored when both are sent); an unparseable or non-positive label_id is ignored, and an unknown one yields an empty page rather than 404. Precedence for admins: label_id, then search, then sort_by, then the plain list. search matches title or description with SQL LIKE. An unknown sort_by is ignored (unsorted, ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; offset defaults to 0; limit defaults to 20, non-positive or unparseable values fall back to the default and anything above 100 is clamped to 100. The non-admin path without label_id, status or priority returns assigned_to as a zero-valued object. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
-// @Description status (#427) takes exactly one of pending, in_progress, completed or cancelled, and priority exactly one of low, medium or high, both matched case-sensitively. An empty value is ignored, a repeated parameter uses its first value, and any other value (done, Completed, urgent, HIGH, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed by the offending parameter name(s) and the value not echoed. With a status or priority, the filters are applied in the query before offset and limit, so tasks, total and meta count only the filtered set, and assigned_to is filled for every caller. For an admin they combine with each other, with label_id, with search (still ignored when label_id is given) and with sort_by/sort_order, all ANDed. For every other role they narrow only the caller's own tasks, combine with label_id, ignore search, and honour sort_by/sort_order only together with label_id (ascending id order otherwise).
+// @Description One page of tasks. Roles: every authenticated role. Admins see every task and may use search and sorting. Every other role is silently narrowed to the tasks assigned to them, and search, sort_by and sort_order are ignored for them, except with label_id, which is the one non-admin path that honours sort_by and sort_order. label_id filters to the tasks carrying that label; an unparseable or non-positive label_id is ignored, and an unknown one yields an empty page rather than 404. For admins label_id, search, status, priority and sort_by/sort_order all combine (ANDed) in one query applied before offset and limit. search is a literal substring matched against title or description (the characters %, _, ! and backslash match only themselves), case-insensitive per the column collation (MySQL/MariaDB defaults; ASCII letters only on SQLite). An unknown sort_by is ignored (unsorted, ascending id) and any sort_order other than asc or desc falls back to asc. Pagination: page (1-based) overrides offset when greater than 0; offset defaults to 0; limit defaults to 20, non-positive or unparseable values fall back to the default and anything above 100 is clamped to 100. assigned_to is filled on every GET /tasks path. lead_id and lead are omitted whenever the caller may not see the linked lead (admins see every lead, sales users only the leads they own, every other role none), decided again on every read.
+// @Description status (#427) takes exactly one of pending, in_progress, completed or cancelled, and priority exactly one of low, medium or high, both matched case-sensitively. An empty value is ignored, a repeated parameter uses its first value, and any other value (done, Completed, urgent, HIGH, ...) is 400 VALIDATION_ERROR before anything is read, with error.details keyed by the offending parameter name(s) and the value not echoed. The filters are applied in the query before offset and limit, so tasks, total and meta count only the filtered set. For an admin they combine with each other, with label_id, with search and with sort_by/sort_order, all ANDed. For every other role they narrow only the caller's own tasks, combine with label_id, ignore search, and honour sort_by/sort_order only together with label_id (ascending id order otherwise).
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
@@ -240,7 +240,7 @@ func (h *TaskHandler) Get(c *gin.Context) {
 // @Param priority query string false "Only tasks with this priority (exact, case-sensitive match); empty is ignored, any other value is 400. Combines with status, label_id and, for admins, search and the sort; non-admins are still narrowed to their own tasks" Enums(low, medium, high)
 // @Param sort_by query string false "Sort column (admin, or any role with label_id); unknown values are ignored" Enums(created_at, updated_at, title, status, priority, due_date)
 // @Param sort_order query string false "Sort direction; anything else falls back to asc" Enums(asc, desc) default(asc)
-// @Param search query string false "Substring matched against title and description (admin only; ignored when label_id is given)"
+// @Param search query string false "Literal substring matched against title and description (admin only; combined with label_id, status, priority and the sort)"
 // @Param label_id query int false "Only tasks carrying this label; non-admins still see only their own tasks"
 // @Success 200 {object} utils.APIResponse{data=TaskListData,meta=utils.APIMeta} "One page of tasks; meta carries page, per_page, total and total_pages"
 // @Failure 400 {object} utils.APIResponse{error=utils.APIError} "VALIDATION_ERROR - status or priority is not one of the listed values (error.details is keyed by the offending parameter name; the value is not echoed)"
@@ -322,44 +322,26 @@ func (h *TaskHandler) List(c *gin.Context) {
 	var total int64
 	var err error
 
-	// A status or priority filter goes through ListFiltered, which keeps each
-	// caller's search and sort contract: an admin gets the filters combined
-	// with label_id, search (label_id still wins over it) and the sort; every
+	// One list path: every parameter the caller may use is ANDed. An admin
+	// gets label_id, search, status, priority and the sort combined; every
 	// other caller is narrowed to its own tasks, without search, and with the
-	// sort only together with label_id. Without either filter the existing
-	// branches run unchanged.
-	if status != "" || priority != "" {
-		filter := repository.TaskListFilter{
-			LabelID:  labelID,
-			Status:   status,
-			Priority: priority,
-		}
-		filterSortBy, filterSortOrder := sortBy, sortOrder
-		if seesEveryTask {
-			if labelID == 0 {
-				filter.Search = search
-			}
-		} else {
-			assigneeID := currentUserID
-			filter.AssigneeID = &assigneeID
-			if labelID == 0 {
-				filterSortBy, filterSortOrder = "", ""
-			}
-		}
-		tasks, total, err = h.taskService.ListFiltered(filter, offset, limit, filterSortBy, filterSortOrder)
-	} else if labelID != 0 && !seesEveryTask {
-		tasks, total, err = h.taskService.ListByLabelForAssignee(currentUserID, labelID, offset, limit, sortBy, sortOrder)
-	} else if labelID != 0 {
-		tasks, total, err = h.taskService.ListByLabel(labelID, offset, limit, sortBy, sortOrder)
-	} else if !seesEveryTask {
-		tasks, total, err = h.taskService.GetByAssignee(currentUserID, offset, limit)
-	} else if search != "" {
-		tasks, total, err = h.taskService.Search(search, offset, limit, sortBy, sortOrder)
-	} else if sortBy != "" {
-		tasks, total, err = h.taskService.ListSorted(offset, limit, sortBy, sortOrder)
-	} else {
-		tasks, total, err = h.taskService.List(offset, limit)
+	// sort only together with label_id (ascending id order otherwise).
+	filter := repository.TaskListFilter{
+		LabelID:  labelID,
+		Status:   status,
+		Priority: priority,
 	}
+	filterSortBy, filterSortOrder := sortBy, sortOrder
+	if seesEveryTask {
+		filter.Search = search
+	} else {
+		assigneeID := currentUserID
+		filter.AssigneeID = &assigneeID
+		if labelID == 0 {
+			filterSortBy, filterSortOrder = "", ""
+		}
+	}
+	tasks, total, err = h.taskService.ListFiltered(filter, offset, limit, filterSortBy, filterSortOrder)
 
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Error("Failed to list tasks")

@@ -406,7 +406,7 @@ regression anchors, not endorsements.
   1. Navigate to `/tasks`.
   2. Type the unique title fragment into "Search tasks...".
   3. Select Status = "Completed".
-- **Expected:** The request carries both `search` and `status`; since #427 both narrow the result (ANDed, before pagination), so the `pending` task disappears and the table is empty. With `label_id` as well, `label_id` still overrides `search`. For a non-admin, `search` stays ignored and only the status narrows the caller's own tasks.
+- **Expected:** The request carries both `search` and `status`; since #427 both narrow the result (ANDed, before pagination), so the `pending` task disappears and the table is empty. With `label_id` as well, all three combine (#618). For a non-admin, `search` stays ignored and only the status narrows the caller's own tasks.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` (extended)
 
 ---
@@ -420,7 +420,7 @@ regression anchors, not endorsements.
 - **Steps:**
   1. Navigate to `/tasks`.
   2. Type the unique fragment into the "Search tasks..." field.
-- **Expected:** Each keystroke resets `page` to 1 and issues `GET /api/v1/tasks?…&search=<fragment>` (there is no debounce). The response contains the matching task and the table narrows to it. Search takes precedence over `sort_by` in `TaskHandler.List` (`internal/handler/task_handler.go`).
+- **Expected:** Each keystroke resets `page` to 1 and issues `GET /api/v1/tasks?…&search=<fragment>` (there is no debounce). The response contains the matching task and the table narrows to it. Search combines with `sort_by` in `TaskHandler.List` (`internal/handler/task_handler.go`), and the term is matched literally (`%`, `_`, `!` and `\` match only themselves, #618).
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-tasks.spec.ts` "admin can search tasks" (since 2026-09-23 it asserts that the search returns exactly the task it created)
 
 ### TC-TASK-033 — Search with no matches empties the table

@@ -236,28 +236,28 @@ func TestListByLabelFiltersSortsAndScopes(t *testing.T) {
 
 	taskRepo := NewTaskRepository(db)
 
-	all, err := taskRepo.ListByLabel(tagged.ID, nil, 0, 20, "title", "asc", "AssignedTo", "Labels")
+	all, err := taskRepo.ListByFilter(TaskListFilter{LabelID: tagged.ID}, 0, 20, "title", "asc", "AssignedTo", "Labels")
 	require.NoError(t, err)
 	require.Len(t, all, 3)
 	assert.Equal(t, []string{"Alpha", "Bravo", "Charlie"}, []string{all[0].Title, all[1].Title, all[2].Title})
 	assert.Equal(t, owner.ID, all[0].AssignedTo.ID, "the preloads must still be applied through the join")
 	assert.Len(t, all[0].Labels, 1)
 
-	total, err := taskRepo.CountByLabel(tagged.ID, nil)
+	total, err := taskRepo.CountByFilter(TaskListFilter{LabelID: tagged.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), total)
 
-	mine, err := taskRepo.ListByLabel(tagged.ID, &owner.ID, 0, 20, "title", "desc")
+	mine, err := taskRepo.ListByFilter(TaskListFilter{LabelID: tagged.ID, AssigneeID: &owner.ID}, 0, 20, "title", "desc")
 	require.NoError(t, err)
 	require.Len(t, mine, 2)
 	assert.Equal(t, []string{"Bravo", "Alpha"}, []string{mine[0].Title, mine[1].Title})
 
-	mineTotal, err := taskRepo.CountByLabel(tagged.ID, &owner.ID)
+	mineTotal, err := taskRepo.CountByFilter(TaskListFilter{LabelID: tagged.ID, AssigneeID: &owner.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), mineTotal)
 
 	// An unvalidated sort column must be refused, not interpolated.
-	_, err = taskRepo.ListByLabel(tagged.ID, nil, 0, 20, "name); DROP TABLE tasks;--", "asc")
+	_, err = taskRepo.ListByFilter(TaskListFilter{LabelID: tagged.ID}, 0, 20, "name); DROP TABLE tasks;--", "asc")
 	assert.Error(t, err)
 }
 
@@ -274,12 +274,12 @@ func TestListByLabelExcludesSoftDeletedTasks(t *testing.T) {
 	require.NoError(t, db.Delete(drop).Error)
 
 	taskRepo := NewTaskRepository(db)
-	tasks, err := taskRepo.ListByLabel(label.ID, nil, 0, 20, "", "")
+	tasks, err := taskRepo.ListByFilter(TaskListFilter{LabelID: label.ID}, 0, 20, "", "")
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	assert.Equal(t, keep.ID, tasks[0].ID)
 
-	count, err := taskRepo.CountByLabel(label.ID, nil)
+	count, err := taskRepo.CountByFilter(TaskListFilter{LabelID: label.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 }
@@ -336,9 +336,9 @@ func TestCreateAndUpdateReplaceTheWholeLabelSet(t *testing.T) {
 	assert.Equal(t, "#111111", untouched.Color)
 }
 
-// The label listings back /tasks/my and the non-admin task list, which read
-// through GetByAssignedToID; a task there without its labels renders without
-// its chips.
+// GET /tasks/my reads the caller's tasks through ListByFilter with an assignee
+// filter and the Labels preload; a task there without its labels renders
+// without its chips.
 func TestGetByAssignedToIDPreloadsLabels(t *testing.T) {
 	db := migrateLabelTables(t, testsupport.OpenSQLite(t, testsupport.DriverDefaultMaxOpenConns()))
 	user := createLabelTestUser(t, db)
@@ -349,7 +349,7 @@ func TestGetByAssignedToIDPreloadsLabels(t *testing.T) {
 	createLabelTestTask(t, db, "Mine to do", user.ID, *label)
 
 	taskRepo := NewTaskRepository(db)
-	tasks, err := taskRepo.GetByAssignedToID(user.ID, 0, 20)
+	tasks, err := taskRepo.ListByFilter(TaskListFilter{AssigneeID: &user.ID}, 0, 20, "", "", "Labels", "Lead", "Deal")
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)
 	require.Len(t, tasks[0].Labels, 1)

@@ -451,7 +451,7 @@ func runLeadExportCSV(t *testing.T, db *gorm.DB) {
 		}
 	}
 
-	t.Run("admin_precedence_follows_the_list", func(t *testing.T) {
+	t.Run("admin_filters_follow_the_list", func(t *testing.T) {
 		alpha := func(l *models.Lead) bool {
 			for _, field := range []string{l.FirstName, l.LastName, l.Email, l.Company, l.Phone, l.Notes} {
 				if strings.Contains(field, "alpha") {
@@ -460,11 +460,13 @@ func runLeadExportCSV(t *testing.T, db *gorm.DB) {
 			}
 			return false
 		}
-		// search wins over classification and keeps the sort
-		assertOrder(t, "?search=alpha&classification=spam&sort_by=email&sort_order=desc", alpha, "email", true)
-		// classification wins over the sort: id ascending
-		assertOrder(t, "?classification=spam&sort_by=email&sort_order=desc",
-			func(l *models.Lead) bool { return l.Classification == models.LeadClassificationSpam }, "", false)
+		spam := func(l *models.Lead) bool { return l.Classification == models.LeadClassificationSpam }
+		// search and classification combine and keep the sort
+		records := assertOrder(t, "?search=alpha&classification=spam&sort_by=email&sort_order=desc",
+			func(l *models.Lead) bool { return alpha(l) && spam(l) }, "email", true)
+		require.NotEmpty(t, records, "the fixture holds alpha leads classified spam")
+		// classification keeps the sort
+		assertOrder(t, "?classification=spam&sort_by=email&sort_order=desc", spam, "email", true)
 		// an unknown sort column is dropped, a bad direction becomes asc
 		assertOrder(t, "?sort_by=notes%3BDROP+TABLE+leads&sort_order=desc", nil, "", false)
 		assertOrder(t, "?sort_by=company&sort_order=sideways", nil, "company", false)

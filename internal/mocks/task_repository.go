@@ -19,62 +19,6 @@ type TaskRepository struct {
 	mock.Mock
 }
 
-// Count provides a mock function with no fields
-func (_m *TaskRepository) Count() (int64, error) {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for Count")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func() (int64, error)); ok {
-		return rf()
-	}
-	if rf, ok := ret.Get(0).(func() int64); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// CountByAssignedToID provides a mock function with given fields: assignedToID
-func (_m *TaskRepository) CountByAssignedToID(assignedToID uint) (int64, error) {
-	ret := _m.Called(assignedToID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for CountByAssignedToID")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint) (int64, error)); ok {
-		return rf(assignedToID)
-	}
-	if rf, ok := ret.Get(0).(func(uint) int64); ok {
-		r0 = rf(assignedToID)
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func(uint) error); ok {
-		r1 = rf(assignedToID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // CountPending provides a mock function with no fields
 func (_m *TaskRepository) CountPending() (int64, error) {
 	ret := _m.Called()
@@ -139,36 +83,6 @@ func (_m *TaskRepository) Delete(id uint) error {
 	return r0
 }
 
-// GetByAssignedToID provides a mock function with given fields: assignedToID, offset, limit
-func (_m *TaskRepository) GetByAssignedToID(assignedToID uint, offset int, limit int) ([]models.Task, error) {
-	ret := _m.Called(assignedToID, offset, limit)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetByAssignedToID")
-	}
-
-	var r0 []models.Task
-	var r1 error
-	if rf, ok := ret.Get(0).(func(uint, int, int) ([]models.Task, error)); ok {
-		return rf(assignedToID, offset, limit)
-	}
-	if rf, ok := ret.Get(0).(func(uint, int, int) []models.Task); ok {
-		r0 = rf(assignedToID, offset, limit)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Task)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(uint, int, int) error); ok {
-		r1 = rf(assignedToID, offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // GetByID provides a mock function with given fields: id
 func (_m *TaskRepository) GetByID(id uint) (*models.Task, error) {
 	ret := _m.Called(id)
@@ -199,36 +113,6 @@ func (_m *TaskRepository) GetByID(id uint) (*models.Task, error) {
 	return r0, r1
 }
 
-// List provides a mock function with given fields: offset, limit
-func (_m *TaskRepository) List(offset int, limit int) ([]models.Task, error) {
-	ret := _m.Called(offset, limit)
-
-	if len(ret) == 0 {
-		panic("no return value specified for List")
-	}
-
-	var r0 []models.Task
-	var r1 error
-	if rf, ok := ret.Get(0).(func(int, int) ([]models.Task, error)); ok {
-		return rf(offset, limit)
-	}
-	if rf, ok := ret.Get(0).(func(int, int) []models.Task); ok {
-		r0 = rf(offset, limit)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]models.Task)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(int, int) error); ok {
-		r1 = rf(offset, limit)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
 // Update provides a mock function with given fields: task
 func (_m *TaskRepository) Update(task *models.Task) error {
 	ret := _m.Called(task)
@@ -245,31 +129,6 @@ func (_m *TaskRepository) Update(task *models.Task) error {
 	}
 
 	return r0
-}
-
-// NewTaskRepository creates a new instance of TaskRepository. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
-// The first argument is typically a *testing.T value.
-func (_m *TaskRepository) ListSortedWithPreloads(offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Task, error) {
-	ret := _m.Called(offset, limit, sortBy, sortOrder, preloads)
-	var r0 []models.Task
-	if ret.Get(0) != nil {
-		r0 = ret.Get(0).([]models.Task)
-	}
-	return r0, ret.Error(1)
-}
-
-func (_m *TaskRepository) Search(query string, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Task, error) {
-	ret := _m.Called(query, offset, limit, sortBy, sortOrder, preloads)
-	var r0 []models.Task
-	if ret.Get(0) != nil {
-		r0 = ret.Get(0).([]models.Task)
-	}
-	return r0, ret.Error(1)
-}
-
-func (_m *TaskRepository) CountSearch(query string) (int64, error) {
-	ret := _m.Called(query)
-	return ret.Get(0).(int64), ret.Error(1)
 }
 
 // CountByStatus provides a mock function with no fields
@@ -336,24 +195,6 @@ func (_m *TaskRepository) UpdateWithLabels(task *models.Task, labels []models.La
 	}
 
 	return ret.Error(0)
-}
-
-// ListByLabel provides a mock function with given fields: labelID, assignedToID, offset, limit, sortBy, sortOrder, preloads
-func (_m *TaskRepository) ListByLabel(labelID uint, assignedToID *uint, offset int, limit int, sortBy string, sortOrder string, preloads ...string) ([]models.Task, error) {
-	ret := _m.Called(labelID, assignedToID, offset, limit, sortBy, sortOrder, preloads)
-
-	var r0 []models.Task
-	if ret.Get(0) != nil {
-		r0 = ret.Get(0).([]models.Task)
-	}
-	return r0, ret.Error(1)
-}
-
-// CountByLabel provides a mock function with given fields: labelID, assignedToID
-func (_m *TaskRepository) CountByLabel(labelID uint, assignedToID *uint) (int64, error) {
-	ret := _m.Called(labelID, assignedToID)
-
-	return ret.Get(0).(int64), ret.Error(1)
 }
 
 // ListByFilter provides a mock function with given fields: filter, offset, limit, sortBy, sortOrder, preloads

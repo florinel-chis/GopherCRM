@@ -91,8 +91,8 @@ func TestLookupIndexesServeLookupsSQLite(t *testing.T) {
 			_, err := leadRepo.GetLatestByEmail("lead0042@plan.test")
 			return err
 		}},
-		{"GetByClassification", "idx_leads_classification", "leads", func() error {
-			_, err := leadRepo.GetByClassification(models.LeadClassificationSpam, 20, 20)
+		{"ListByFilter/classification", "idx_leads_classification", "leads", func() error {
+			_, err := leadRepo.ListByFilter(LeadListFilter{Classification: models.LeadClassificationSpam}, 20, 20, "", "")
 			return err
 		}},
 		{"CountByClassification", "idx_leads_classification", "leads", func() error {

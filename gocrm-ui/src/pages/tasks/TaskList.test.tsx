@@ -53,9 +53,9 @@ describe('TaskList label filter', () => {
     return calls[calls.length - 1][0];
   };
 
-  // The server applies label_id INSTEAD of search, so leaving a search term on
-  // screen while a label filter is active would advertise a narrowing that is
-  // not being applied.
+  // The server combines label_id with search, but the page keeps one narrowing
+  // at a time by choice: a label filter clears the search term and disables the
+  // box.
   it('clears the search term when a label chip is used as a filter', async () => {
     render(<TaskList />);
 

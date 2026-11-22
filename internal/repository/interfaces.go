@@ -142,12 +142,13 @@ type RoleAuditRepository interface {
 	WithTx(tx *gorm.DB) RoleAuditRepository
 }
 
-// LeadListFilter narrows GET /leads when a status filter is given (#426).
-// Every field is optional and they combine with AND: a nil OwnerID is every
-// owner, while a non-nil one restricts to that owner; an empty Search,
-// Classification or Status is no filter. Status and Classification are matched
-// exactly (callers validate Status first); Search is a substring matched
-// against first_name, last_name, email, company, phone and notes. The
+// LeadListFilter narrows GET /leads and GET /leads/export (#426, #618): it is
+// the one list predicate of the lead repository. Every field is optional and
+// they combine with AND: a nil OwnerID is every owner, while a non-nil one
+// restricts to that owner; an empty Search, Classification or Status is no
+// filter. Status and Classification are matched exactly (callers validate
+// Status first); Search is a literal substring (the LIKE wildcards are escaped)
+// matched against first_name, last_name, email, company, phone and notes. The
 // predicate is part of the query, so it applies before offset and limit, and
 // the count uses the same predicate.
 type LeadListFilter struct {
@@ -165,8 +166,6 @@ type LeadRepository interface {
 	// ListByExternalID returns the live leads whose external_id equals
 	// externalID, lowest id first, at most limit rows, owner preloaded.
 	ListByExternalID(externalID string, limit int) ([]models.Lead, error)
-	GetByOwnerID(ownerID uint, offset, limit int) ([]models.Lead, error)
-	GetByClassification(classification models.LeadClassification, offset, limit int) ([]models.Lead, error)
 	Update(lead *models.Lead) error
 	// Delete erases the lead and everything that is the same person: the
 	// customer it was converted into and that customer's login and leads.
@@ -175,14 +174,9 @@ type LeadRepository interface {
 	// one (ErrConvertedLeadNeedsAdmin, an apperrors.ErrForbidden) without
 	// changing anything.
 	DeleteUnconverted(ctx context.Context, id uint) error
-	ListWithPreloads(offset, limit int, preloads ...string) ([]models.Lead, error)
-	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
-	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
-	CountSearch(query string) (int64, error)
 	Count() (int64, error)
 	CountByClassification(classification models.LeadClassification) (int64, error)
-	CountByOwnerID(ownerID uint) (int64, error)
-	// Filtered collections of GET /leads (#426). Both share one predicate;
+	// The one list query of GET /leads (#426, #618). Both share one predicate;
 	// rows are ordered by the validated sort column then id, or id ascending.
 	ListByFilter(filter LeadListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Lead, error)
 	CountByFilter(filter LeadListFilter) (int64, error)
@@ -505,14 +499,15 @@ type WebhookRepository interface {
 	ListDeliveries(ctx context.Context, filter WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
 }
 
-// TaskListFilter narrows GET /tasks when a status or priority filter is given
-// (#427). Every field is optional and the fields combine with AND: a nil
-// AssigneeID means no assignee filter, while a non-nil one restricts to that
-// assignee; a LabelID of 0 means no label filter; an empty Search, Status or
-// Priority is no filter. Status and Priority are matched exactly (callers
-// validate them first); Search is a substring matched against title or
-// description. The predicate is part of the query, so it applies before offset
-// and limit, and the count uses the same predicate.
+// TaskListFilter narrows GET /tasks and GET /tasks/my (#427, #618): it is the
+// one list predicate of the task repository. Every field is optional and the
+// fields combine with AND: a nil AssigneeID means no assignee filter, while a
+// non-nil one restricts to that assignee; a LabelID of 0 means no label filter;
+// an empty Search, Status or Priority is no filter. Status and Priority are
+// matched exactly (callers validate them first); Search is a literal substring
+// (the LIKE wildcards are escaped) matched against title or description. The
+// predicate is part of the query, so it applies before offset and limit, and
+// the count uses the same predicate.
 type TaskListFilter struct {
 	AssigneeID *uint
 	LabelID    uint
@@ -524,15 +519,8 @@ type TaskListFilter struct {
 type TaskRepository interface {
 	Create(task *models.Task) error
 	GetByID(id uint) (*models.Task, error)
-	GetByAssignedToID(assignedToID uint, offset, limit int) ([]models.Task, error)
 	Update(task *models.Task) error
 	Delete(id uint) error
-	List(offset, limit int) ([]models.Task, error)
-	ListSortedWithPreloads(offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
-	Search(query string, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
-	CountSearch(query string) (int64, error)
-	Count() (int64, error)
-	CountByAssignedToID(assignedToID uint) (int64, error)
 	CountPending() (int64, error)
 	// Dashboard analytics. A nil assignedToID means "every assignee"; a non-nil
 	// one narrows the result to that user, which is how the non-admin scoping is
@@ -546,18 +534,14 @@ type TaskRepository interface {
 	// clears it — so a caller that must leave the labels alone uses Update.
 	CreateWithLabels(task *models.Task, labels []models.Label) error
 	UpdateWithLabels(task *models.Task, labels []models.Label) error
-	// ListByLabel and CountByLabel narrow to the tasks carrying one label. A nil
-	// assignedToID means every assignee, matching ListUpcoming's convention, so
-	// the non-admin scoping is pushed down to SQL.
-	ListByLabel(labelID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
-	CountByLabel(labelID uint, assignedToID *uint) (int64, error)
-	// ListByDeal and CountByDeal narrow to the live tasks of one deal, with the
-	// same assignee convention. The order ends in the id, and a sort column
+	// ListByDeal and CountByDeal narrow to the live tasks of one deal; a nil
+	// assignedToID means every assignee, matching ListUpcoming. The order ends in the id, and a sort column
 	// outside the tasks allowlist is refused.
 	ListByDeal(dealID uint, assignedToID *uint, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	CountByDeal(dealID uint, assignedToID *uint) (int64, error)
-	// Filtered collections of GET /tasks (#427). Both share one predicate;
-	// rows are ordered by the validated sort column then id, or id ascending.
+	// The one list query of GET /tasks and GET /tasks/my (#427, #618). Both
+	// share one predicate; rows are ordered by the validated sort column then
+	// id, or id ascending.
 	ListByFilter(filter TaskListFilter, offset, limit int, sortBy, sortOrder string, preloads ...string) ([]models.Task, error)
 	CountByFilter(filter TaskListFilter) (int64, error)
 	WithTx(tx *gorm.DB) TaskRepository

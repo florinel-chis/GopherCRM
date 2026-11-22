@@ -23,10 +23,9 @@ type LeadExportParams struct {
 // ExportForActor returns exactly the leads the actor may list, unpaginated, for
 // the CSV export (#234). The scope is the lead list's (LeadHandler.List):
 //
-//   - an admin gets every live lead under the list's parameter precedence, the
-//     first present wins: a non-empty search (with the sort, without the
-//     classification), else an exact classification (id ascending, no sort),
-//     else the sort, else id ascending;
+//   - an admin gets every live lead matching the list's combined filters: a
+//     non-empty search and an exact classification are ANDed, and the rows
+//     follow the sort when one is given, else ascending id order;
 //   - a sales user gets only its own leads in ascending id order, and every
 //     parameter it sent is ignored, as the list ignores them for that role;
 //   - every other role (support, customer, unknown) and a sales actor without
@@ -48,16 +47,9 @@ func (s *leadService) ExportForActor(actor LeadViewer, params LeadExportParams) 
 	var filter repository.LeadExportFilter
 	switch {
 	case actor.Role == models.RoleAdmin:
-		switch {
-		case params.Search != "":
-			filter.Search = params.Search
-			if params.SortBy != "" {
-				filter.SortBy = params.SortBy
-				filter.SortOrder = params.SortOrder
-			}
-		case params.Classification != "":
-			filter.Classification = models.LeadClassification(params.Classification)
-		case params.SortBy != "":
+		filter.Search = params.Search
+		filter.Classification = models.LeadClassification(params.Classification)
+		if params.SortBy != "" {
 			filter.SortBy = params.SortBy
 			filter.SortOrder = params.SortOrder
 		}

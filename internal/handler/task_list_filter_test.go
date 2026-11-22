@@ -107,9 +107,9 @@ func TestTaskListFilterHandler(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	})
 
-	t.Run("admin label_id still wins over search", func(t *testing.T) {
+	t.Run("admin label_id and search combine", func(t *testing.T) {
 		svc := newStrictTaskService(t)
-		svc.On("ListFiltered", repository.TaskListFilter{Status: "pending", LabelID: 3}, 0, 20, "", "asc").
+		svc.On("ListFiltered", repository.TaskListFilter{Status: "pending", LabelID: 3, Search: "tok"}, 0, 20, "", "asc").
 			Return(rows, int64(1), nil).Once()
 
 		router := newTaskListFilterRouter(t, svc, models.RoleAdmin, 1)
@@ -143,24 +143,56 @@ func TestTaskListFilterHandler(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	})
 
-	t.Run("empty status and priority take the existing branch", func(t *testing.T) {
+	t.Run("empty status and priority are no filter", func(t *testing.T) {
 		svc := newStrictTaskService(t)
-		svc.On("List", 0, 20).Return(rows, int64(1), nil).Once()
+		svc.On("ListFiltered", repository.TaskListFilter{}, 0, 20, "", "asc").Return(rows, int64(1), nil).Once()
 
 		router := newTaskListFilterRouter(t, svc, models.RoleAdmin, 1)
 		w, _ := getTaskListFilter(t, router, "/tasks?status=&priority=")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-		svc.AssertNotCalled(t, "ListFiltered")
 	})
 
-	t.Run("empty filters keep the non-admin branch", func(t *testing.T) {
+	t.Run("empty filters keep a non-admin on its own tasks", func(t *testing.T) {
 		svc := newStrictTaskService(t)
-		svc.On("GetByAssignee", callerID, 0, 20).Return(rows, int64(1), nil).Once()
+		assignee := callerID
+		svc.On("ListFiltered", repository.TaskListFilter{AssigneeID: &assignee}, 0, 20, "", "").Return(rows, int64(1), nil).Once()
 
 		router := newTaskListFilterRouter(t, svc, models.RoleSupport, callerID)
 		w, _ := getTaskListFilter(t, router, "/tasks?status=&priority=")
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	})
+
+	// #618: without a status or priority the parameters a caller may use still
+	// combine in the one list call.
+	combined := []struct {
+		name    string
+		role    models.UserRole
+		userID  uint
+		url     string
+		filter  repository.TaskListFilter
+		sortBy  string
+		sortOrd string
+	}{
+		{"admin label_id combines with search", models.RoleAdmin, 1,
+			"/tasks?label_id=7&search=anything", repository.TaskListFilter{LabelID: 7, Search: "anything"}, "", "asc"},
+		{"admin without parameters lists every task", models.RoleAdmin, 1,
+			"/tasks", repository.TaskListFilter{}, "", "asc"},
+		{"support ignores search and the sort without label_id", models.RoleSupport, 12,
+			"/tasks?search=x&sort_by=title", repository.TaskListFilter{AssigneeID: taskListAssignee(12)}, "", ""},
+		{"support keeps the sort with label_id", models.RoleSupport, 12,
+			"/tasks?label_id=7&sort_by=title", repository.TaskListFilter{AssigneeID: taskListAssignee(12), LabelID: 7}, "title", "asc"},
+	}
+	for _, tc := range combined {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newStrictTaskService(t)
+			svc.On("ListFiltered", tc.filter, 0, 20, tc.sortBy, tc.sortOrd).Return(rows, int64(1), nil).Once()
+
+			router := newTaskListFilterRouter(t, svc, tc.role, tc.userID)
+			w, body := getTaskListFilter(t, router, tc.url)
+			require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+			assert.Equal(t, int64(1), body.Data.Total)
+		})
+	}
 
 	t.Run("a repeated parameter uses its first value", func(t *testing.T) {
 		svc := newStrictTaskService(t)

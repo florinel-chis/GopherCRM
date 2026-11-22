@@ -7,6 +7,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -171,14 +172,15 @@ func (suite *TaskLabelServiceTestSuite) TestUpdateWithLabels_UnknownIDRejectsThe
 	suite.mockTaskRepo.AssertNotCalled(suite.T(), "UpdateWithLabels", mock.Anything, mock.Anything)
 }
 
-func (suite *TaskLabelServiceTestSuite) TestListByLabel_ListsAndCountsAcrossEveryAssignee() {
+func (suite *TaskLabelServiceTestSuite) TestListFiltered_LabelListsAndCountsAcrossEveryAssignee() {
 	tasks := []models.Task{{BaseModel: models.BaseModel{ID: 1}, Title: "Tagged"}}
 
-	suite.mockTaskRepo.On("ListByLabel", uint(3), (*uint)(nil), 0, 20, "title", "asc", []string{"AssignedTo", "Labels", "Lead", "Deal"}).
+	filter := repository.TaskListFilter{LabelID: 3}
+	suite.mockTaskRepo.On("ListByFilter", filter, 0, 20, "title", "asc", []string{"AssignedTo", "Labels", "Lead", "Deal"}).
 		Return(tasks, nil)
-	suite.mockTaskRepo.On("CountByLabel", uint(3), (*uint)(nil)).Return(int64(1), nil)
+	suite.mockTaskRepo.On("CountByFilter", filter).Return(int64(1), nil)
 
-	got, total, err := suite.service.ListByLabel(3, 0, 20, "title", "asc")
+	got, total, err := suite.service.ListFiltered(filter, 0, 20, "title", "asc")
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), int64(1), total)
 	assert.Len(suite.T(), got, 1)
@@ -186,17 +188,16 @@ func (suite *TaskLabelServiceTestSuite) TestListByLabel_ListsAndCountsAcrossEver
 
 // The assignee narrowing is pushed down to SQL rather than filtered afterwards,
 // so the pointer has to arrive at the repository.
-func (suite *TaskLabelServiceTestSuite) TestListByLabelForAssignee_PushesTheAssigneeDown() {
+func (suite *TaskLabelServiceTestSuite) TestListFiltered_LabelPushesTheAssigneeDown() {
 	assignee := uint(8)
 
-	suite.mockTaskRepo.On("ListByLabel", uint(3), mock.MatchedBy(func(id *uint) bool {
-		return id != nil && *id == assignee
-	}), 0, 20, "", "", []string{"AssignedTo", "Labels", "Lead", "Deal"}).Return([]models.Task{}, nil)
-	suite.mockTaskRepo.On("CountByLabel", uint(3), mock.MatchedBy(func(id *uint) bool {
-		return id != nil && *id == assignee
-	})).Return(int64(0), nil)
+	pushedDown := mock.MatchedBy(func(f repository.TaskListFilter) bool {
+		return f.LabelID == 3 && f.AssigneeID != nil && *f.AssigneeID == assignee
+	})
+	suite.mockTaskRepo.On("ListByFilter", pushedDown, 0, 20, "", "", []string{"AssignedTo", "Labels", "Lead", "Deal"}).Return([]models.Task{}, nil)
+	suite.mockTaskRepo.On("CountByFilter", pushedDown).Return(int64(0), nil)
 
-	_, total, err := suite.service.ListByLabelForAssignee(assignee, 3, 0, 20, "", "")
+	_, total, err := suite.service.ListFiltered(repository.TaskListFilter{AssigneeID: &assignee, LabelID: 3}, 0, 20, "", "")
 	assert.NoError(suite.T(), err)
 	assert.Zero(suite.T(), total)
 }

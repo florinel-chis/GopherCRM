@@ -158,10 +158,10 @@ export const Component: React.FC = () => {
   const activeLabel = (labels || []).find(label => label.id === filters.label_id) ?? null;
 
   const handleLabelFilterChange = useCallback((label: Label | null) => {
-    // The server applies label_id INSTEAD of search — the two never intersect —
-    // so applying a label filter drops the search term rather than leaving a
-    // populated box claiming a narrowing that is not happening. The box itself
-    // is disabled below for as long as the label filter is active.
+    // The server combines label_id with search, but this page keeps one
+    // narrowing at a time by choice: applying a label filter drops the search
+    // term, and the box itself is disabled below for as long as the label
+    // filter is active.
     setFilters(prev => ({
       ...prev,
       label_id: label?.id,
