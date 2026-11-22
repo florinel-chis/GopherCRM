@@ -303,6 +303,7 @@ AEO_FILES = {'internal/service/aeo_service.go', 'internal/service/aeo_profile.go
              'internal/service/aeo_prompt_generation.go', 'internal/service/aeo_runs.go',
              'internal/service/aeo_reports.go', 'internal/service/aeo_normalize.go',
              'internal/service/aeo_credentials.go', 'internal/service/aeo_runtime.go',
+             'internal/service/aeo_export.go',
              'internal/repository/aeo_repository.go', 'internal/handler/aeo_handler.go',
              'internal/mocks/AEORepository.go', 'internal/mocks/AEOService.go',
              'cmd/aeo_runtime.go'}
