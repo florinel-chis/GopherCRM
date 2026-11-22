@@ -10,6 +10,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -34,6 +35,17 @@ type taskService struct {
 	// it runs inside the update transaction right after the locking read of
 	// the task row.
 	afterTaskLock func(id uint)
+	// beforeTaskDeleteTx is an instance-local test seam (#516), nil in
+	// production: it runs in a wired Delete after the not-found pre-read and
+	// before the delete transaction opens.
+	beforeTaskDeleteTx func(id uint)
+	// webhooks is the outbound webhook emitter (#516), set by
+	// WithTaskWebhooks only together with a transaction manager: Create emits
+	// task.created, UpdateWithLabels task.updated when a stored value or the
+	// label set changed, and Delete task.deleted, each in the task's
+	// transaction. NewTaskService sets it to webhook.Nop, so it is never nil;
+	// with Nop every path behaves as without webhooks.
+	webhooks webhook.Emitter
 }
 
 // TaskServiceOption configures NewTaskService beyond its required
@@ -49,6 +61,33 @@ func WithTaskRowLock(txManager *utils.TransactionManager) TaskServiceOption {
 	return func(s *taskService) { s.txManager = txManager }
 }
 
+// WithTaskWebhooks makes the task writes emit their webhook events through e
+// in the write's transaction, run by txManager (#516): Create and
+// CreateWithLabels insert the task (and its labels) and emit task.created;
+// UpdateWithLabels runs the locked write of WithTaskRowLock and emits
+// task.updated when the WebhookState written differs from the locked row's or,
+// when the label set is replaced, the distinct label ids differ from the set
+// read under lock (GetLabelIDsForUpdate); Delete re-reads the task under lock,
+// soft-deletes it and emits task.deleted for every active endpoint subscribed
+// to it (#531), so a delete that lost a race answers not-found and emits
+// nothing. A non-nil txManager is stored as the service's transaction manager
+// either way; the emitter is set only when both e and txManager are non-nil.
+func WithTaskWebhooks(e webhook.Emitter, txManager *utils.TransactionManager) TaskServiceOption {
+	return func(s *taskService) {
+		if txManager != nil {
+			s.txManager = txManager
+		}
+		if e != nil && txManager != nil {
+			s.webhooks = e
+		}
+	}
+}
+
+// webhooksWired reports whether the task writes emit webhook events.
+func (s *taskService) webhooksWired() bool {
+	return s.webhooks != webhook.Nop && s.txManager != nil
+}
+
 func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.UserRepository, leadRepo repository.LeadRepository, customerRepo repository.CustomerRepository, labelRepo repository.LabelRepository, dealRepo repository.DealRepository, opts ...TaskServiceOption) TaskService {
 	s := &taskService{
 		taskRepo:     taskRepo,
@@ -57,6 +96,7 @@ func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.User
 		customerRepo: customerRepo,
 		labelRepo:    labelRepo,
 		dealRepo:     dealRepo,
+		webhooks:     webhook.Nop,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -64,8 +104,9 @@ func NewTaskService(taskRepo repository.TaskRepository, userRepo repository.User
 	return s
 }
 
-// errTaskLockingReadUnavailable is returned by an update built WithTaskRowLock
-// whose task repository offers no locking read; nothing is written.
+// errTaskLockingReadUnavailable is returned by an update built WithTaskRowLock,
+// or a delete built WithTaskWebhooks (#516), whose task repository offers no
+// locking read; nothing is written.
 var errTaskLockingReadUnavailable = errors.New("task repository has no locking read")
 
 // Create persists a task without touching its label set. It has no acting
@@ -150,7 +191,9 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actor
 	// response, so GORM never saves them as associations of the new task.
 	task.Lead = nil
 	task.Deal = nil
-	if len(labels) == 0 {
+	if s.webhooksWired() {
+		err = s.createWithWebhook(task, labels)
+	} else if len(labels) == 0 {
 		err = s.taskRepo.Create(task)
 	} else {
 		err = s.taskRepo.CreateWithLabels(task, labels)
@@ -167,6 +210,34 @@ func (s *taskService) CreateWithLabels(task *models.Task, labelIDs []uint, actor
 	}).Info("Task created successfully")
 
 	return nil
+}
+
+// createWithWebhook inserts the task, with its labels when there are any, and
+// emits task.created in one transaction (#516): the task, its task_labels rows
+// and the outbox rows commit together or not at all. On failure task.ID is
+// reset to 0, as nothing was stored.
+func (s *taskService) createWithWebhook(task *models.Task, labels []models.Label) error {
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		txTasks := s.taskRepo.WithTx(tx)
+		var err error
+		if len(labels) == 0 {
+			err = txTasks.Create(task)
+		} else {
+			err = txTasks.CreateWithLabels(task, labels)
+		}
+		if err != nil {
+			return err
+		}
+		return s.webhooks.Bind(tx).Created(ctx, webhook.Task, task.ID)
+	})
+	if err != nil {
+		task.ID = 0
+	}
+	return err
 }
 
 func (s *taskService) GetByID(id uint) (*models.Task, error) {
@@ -367,6 +438,11 @@ func (s *taskService) UpdateWithLabels(task *models.Task, labelIDs *[]uint, lead
 // connection, so a read on another repository here would wait on itself. The
 // other checks ran before, on the unlocked pre-read, exactly as without the
 // option.
+//
+// With webhooks wired (#516) it also reads the stored label ids under lock
+// when withLabels, and after the write emits task.updated when the locked
+// row's WebhookState differs from the task written, or when withLabels and the
+// locked label set differs from the distinct ids of labels.
 func (s *taskService) writeLocked(logger *logrus.Entry, task *models.Task, withLabels bool, labels []models.Label) error {
 	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
 		tx, ok := utils.GetTxFromContext(ctx)
@@ -390,11 +466,53 @@ func (s *taskService) writeLocked(logger *logrus.Entry, task *models.Task, withL
 			logger.Warn("Cannot change status of completed task")
 			return fmt.Errorf("cannot change status of completed task: %w", apperrors.ErrCompletedTaskModify)
 		}
-		if withLabels {
-			return txTasks.UpdateWithLabels(task, labels)
+		wired := s.webhooksWired()
+		var lockedLabels []uint
+		if wired && withLabels {
+			if lockedLabels, err = locker.GetLabelIDsForUpdate(task.ID); err != nil {
+				return err
+			}
 		}
-		return txTasks.Update(task)
+		if withLabels {
+			err = txTasks.UpdateWithLabels(task, labels)
+		} else {
+			err = txTasks.Update(task)
+		}
+		if err != nil || !wired {
+			return err
+		}
+		changed := locked.WebhookState() != task.WebhookState()
+		if !changed && withLabels {
+			changed = !sameLabelSet(lockedLabels, labels)
+		}
+		if !changed {
+			return nil
+		}
+		return s.webhooks.Bind(tx).Updated(ctx, webhook.Task, task.ID)
 	})
+}
+
+// sameLabelSet reports whether the stored label ids and the labels to write
+// name the same set: order and duplicates do not matter, and two empty sets
+// are the same.
+func sameLabelSet(stored []uint, labels []models.Label) bool {
+	want := make(map[uint]struct{}, len(labels))
+	for _, label := range labels {
+		want[label.ID] = struct{}{}
+	}
+	have := make(map[uint]struct{}, len(stored))
+	for _, id := range stored {
+		have[id] = struct{}{}
+	}
+	if len(want) != len(have) {
+		return false
+	}
+	for id := range want {
+		if _, ok := have[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // settleDealLink decides the deal_id an update commits, writes it onto the task
@@ -568,13 +686,57 @@ func (s *taskService) Delete(id uint) error {
 		return err
 	}
 
-	if err := s.taskRepo.Delete(id); err != nil {
+	if !s.webhooksWired() {
+		if err := s.taskRepo.Delete(id); err != nil {
+			utils.LogServiceResponse(logger, err)
+			return err
+		}
+		logger.WithField("task_id", id).Info("Task deleted successfully")
+		return nil
+	}
+
+	if s.beforeTaskDeleteTx != nil {
+		s.beforeTaskDeleteTx(id)
+	}
+	if err := s.deleteWithWebhook(id); err != nil {
+		if isNotFound(err) {
+			logger.Warn("Task deleted meanwhile")
+			return fmt.Errorf("task %d not found: %w", id, apperrors.ErrNotFound)
+		}
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
 
 	logger.WithField("task_id", id).Info("Task deleted successfully")
 	return nil
+}
+
+// deleteWithWebhook is the wired delete (#516): one transaction that re-reads
+// the live task under lock (GetByIDForUpdate), soft-deletes it and emits
+// task.deleted. taskRepository.Delete succeeds on a row that is already gone,
+// so the locking read is what keeps a second task.deleted from going out: a
+// concurrent delete waits on the lock (MySQL/MariaDB) or on the one pooled
+// connection (SQLite) and then finds no live row, which is
+// gorm.ErrRecordNotFound, with nothing deleted and nothing emitted.
+func (s *taskService) deleteWithWebhook(id uint) error {
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		txTasks := s.taskRepo.WithTx(tx)
+		locker, ok := txTasks.(repository.TaskLockingReader)
+		if !ok {
+			return errTaskLockingReadUnavailable
+		}
+		if _, err := locker.GetByIDForUpdate(id); err != nil {
+			return err
+		}
+		if err := txTasks.Delete(id); err != nil {
+			return err
+		}
+		return s.webhooks.Bind(tx).Deleted(ctx, webhook.Task, id)
+	})
 }
 
 // ListFiltered lists one page of the tasks matching filter, with their

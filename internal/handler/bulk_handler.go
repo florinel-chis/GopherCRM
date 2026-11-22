@@ -151,7 +151,7 @@ func (h *BulkHandler) BulkUpdateTicketStatus(c *gin.Context) {
 
 // BulkUpdateTaskStatus godoc
 // @Summary Update the status of several tasks at once
-// @Description Set the same status on up to 100 tasks in one all-or-nothing transaction. Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Repeated ids are collapsed. If any listed task is missing (404, error.details.missing_ids), not assigned to a non-admin caller (403, error.details.forbidden_ids) or completed while the target status is not completed (400, error.details.completed_ids), nothing is written; the checks report in that order. No automation event is recorded; once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed.
+// @Description Set the same status on up to 100 tasks in one all-or-nothing transaction. Roles: every authenticated role; admins may update any task, every other role only tasks assigned to them. Repeated ids are collapsed. If any listed task is missing (404, error.details.missing_ids), not assigned to a non-admin caller (403, error.details.forbidden_ids) or completed while the target status is not completed (400, error.details.completed_ids), nothing is written; the checks report in that order. No automation event is recorded. Each listed task whose stored status differed from the new one gets a task.updated webhook event (one delivery per active endpoint subscribed to it) in the same transaction; a task already in that status and a refused batch get none. Once the id, status and role checks have passed, an audit row is written to the bulk operation log and marked completed or failed.
 // @Tags tasks
 // @Accept json
 // @Produce json

@@ -340,4 +340,26 @@ func TestWebhookAPISQLite(t *testing.T) {
 		require.True(t, ok, raw)
 		assert.Contains(t, details, "event_types", raw)
 	})
+
+	t.Run("the fifteen event types, tasks included (#516)", func(t *testing.T) {
+		unsorted := []string{"task.updated", "ticket.deleted", "deal.updated", "lead.created", "customer.updated", "task.created",
+			"deal.created", "ticket.created", "lead.deleted", "customer.created", "deal.deleted", "task.deleted", "ticket.updated",
+			"lead.updated", "customer.deleted"}
+		sorted := []interface{}{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated",
+			"lead.created", "lead.deleted", "lead.updated", "task.created", "task.deleted", "task.updated",
+			"ticket.created", "ticket.deleted", "ticket.updated"}
+		status, envelope, raw := do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
+			"url": "https://example.com:" + port + "/fifteen", "event_types": unsorted})
+		require.Equal(t, http.StatusCreated, status, raw)
+		data := envelope.Data.(map[string]interface{})
+		assert.Equal(t, sorted, data["event_types"])
+		id := uint(data["id"].(float64))
+
+		status, envelope, raw = do("admin", http.MethodGet, fmt.Sprintf("/webhooks/endpoints/%d", id), nil)
+		require.Equal(t, http.StatusOK, status, raw)
+		assert.Equal(t, sorted, envelope.Data.(map[string]interface{})["event_types"])
+
+		status, _, raw = do("admin", http.MethodGet, "/webhooks/deliveries?event_type=task.deleted", nil)
+		assert.Equal(t, http.StatusOK, status, raw)
+	})
 }

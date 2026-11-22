@@ -157,16 +157,23 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 	deal := &models.Deal{Title: "State deal", Stage: models.DealStageProposal, AmountCents: 1000, Currency: "EUR", Probability: 40,
 		ExpectedCloseDate: &closeDate, CompanyID: &company.ID, CustomerID: &customer.ID, LeadID: &lead.ID, OwnerID: owner.ID}
 	require.NoError(t, db.Create(deal).Error)
+	label := &models.Label{Name: "State label", Color: "#112233"}
+	require.NoError(t, db.Create(label).Error)
+	task := &models.Task{Title: "State task", Description: "Task", Status: models.TaskStatusPending, Priority: models.TaskPriorityHigh,
+		DueDate: &due, AssignedToID: owner.ID, LeadID: &lead.ID, DealID: &deal.ID}
+	require.NoError(t, NewTaskRepository(db).CreateWithLabels(task, []models.Label{*label}))
 
 	leadState := webhookStateColumns(t, db, &models.Lead{}, models.LeadWebhookState{})
 	customerState := webhookStateColumns(t, db, &models.Customer{}, models.CustomerWebhookState{})
 	ticketState := webhookStateColumns(t, db, &models.Ticket{}, models.TicketWebhookState{})
 	dealState := webhookStateColumns(t, db, &models.Deal{}, models.DealWebhookState{})
+	taskState := webhookStateColumns(t, db, &models.Task{}, models.TaskWebhookState{})
 
 	leads := captureUpdateColumns(t, db, "leads")
 	customers := captureUpdateColumns(t, db, "customers")
 	tickets := captureUpdateColumns(t, db, "tickets")
 	deals := captureUpdateColumns(t, db, "deals")
+	tasks := captureUpdateColumns(t, db, "tasks")
 
 	t.Run("leadRepository.Update writes exactly the lead state", func(t *testing.T) {
 		stored, err := NewLeadRepository(db).GetByID(lead.ID)
@@ -198,6 +205,16 @@ func TestWebhookStateCoversUpdateColumns(t *testing.T) {
 		stored.Notes = "changed"
 		require.NoError(t, NewDealRepository(db).Update(stored))
 		assertNoWebhookStateDrift(t, "dealRepository.Update", deals.take(), dealState, true)
+	})
+
+	t.Run("taskRepository.Update writes exactly the task state", func(t *testing.T) {
+		// Read back with its preloads (labels included), as the service hands it.
+		stored, err := NewTaskRepository(db).GetByID(task.ID)
+		require.NoError(t, err)
+		require.Len(t, stored.Labels, 1)
+		stored.Description = "changed"
+		require.NoError(t, NewTaskRepository(db).Update(stored))
+		assertNoWebhookStateDrift(t, "taskRepository.Update", tasks.take(), taskState, true)
 	})
 
 	t.Run("leadRepository.ConvertToCustomer writes only lead state columns", func(t *testing.T) {

@@ -365,7 +365,7 @@ func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint,
 		return nil, bulkStatusForbidden("Insufficient permissions", nil)
 	}
 
-	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(_ context.Context, txRepo repository.BulkStatusRepository, _ repository.AutomationRepository, _ webhook.TxEmitter) error {
+	return s.runBulkStatusUpdate(ctx, actorID, "tasks", unique, func(ctx context.Context, txRepo repository.BulkStatusRepository, _ repository.AutomationRepository, hooks webhook.TxEmitter) error {
 		tasks, err := txRepo.GetTasksByIDs(unique)
 		if err != nil {
 			return err
@@ -398,7 +398,19 @@ func (s *bulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint,
 				"Cannot change the status of completed tasks").WithDetail("completed_ids", completed)
 		}
 
-		return txRepo.SetTaskStatus(unique, status)
+		if err := txRepo.SetTaskStatus(unique, status); err != nil {
+			return err
+		}
+		// One task.updated webhook event per task whose locked status
+		// differed (#516), in the batch transaction. A refused batch returned
+		// above, before any write, and emits nothing.
+		changed := make([]uint, 0, len(tasks))
+		for _, task := range tasks {
+			if task.Status != status {
+				changed = append(changed, task.ID)
+			}
+		}
+		return hooks.Updated(ctx, webhook.Task, changed...)
 	})
 }
 
@@ -412,9 +424,9 @@ type bulkStatusService struct {
 	// transaction, origin bulk. Nil means no automation.
 	automation repository.AutomationRepository
 	// webhooks is the outbound webhook emitter (#408), set by
-	// WithBulkWebhooks: the lead and ticket batches emit lead.updated /
-	// ticket.updated for every record whose status changed, inside the batch
-	// transaction. NewBulkStatusService sets it to webhook.Nop, so it is
+	// WithBulkWebhooks: the lead, ticket and (#516) task batches emit
+	// lead.updated / ticket.updated / task.updated for every record whose
+	// status changed, inside the batch transaction. NewBulkStatusService sets it to webhook.Nop, so it is
 	// never nil.
 	webhooks webhook.Emitter
 	// afterLeadLock is an instance-local test seam (#182), nil in production:
@@ -437,11 +449,11 @@ func WithBulkAutomationEvents(repo repository.AutomationRepository) BulkStatusSe
 	return func(s *bulkStatusService) { s.automation = repo }
 }
 
-// WithBulkWebhooks makes the bulk lead and ticket status updates emit one
-// lead.updated / ticket.updated webhook event through e for every record
-// whose locked status differed from the requested one, inside the batch
-// transaction (#408). Bulk task status emits nothing. A nil e means
-// webhook.Nop: no webhooks.
+// WithBulkWebhooks makes the bulk lead, ticket and task status updates emit
+// one lead.updated / ticket.updated / task.updated (#516) webhook event
+// through e for every record whose locked status differed from the requested
+// one, inside the batch transaction (#408). A nil e means webhook.Nop: no
+// webhooks.
 func WithBulkWebhooks(e webhook.Emitter) BulkStatusServiceOption {
 	return func(s *bulkStatusService) {
 		if e == nil {

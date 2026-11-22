@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Task webhook events (#516).** Tasks join the webhook catalogue with three thin events:
+  `task.created` (`POST /tasks` and the automation create-task step, in the step transaction),
+  `task.updated` (`PUT /tasks/{id}` when a stored value changed or `label_ids` named another set of
+  labels, order and repeats aside; `POST /tasks/bulk/status`, one event per task whose status
+  changed) and `task.deleted` (`DELETE /tasks/{id}`). Each is written in the transaction of the task
+  write, one pending delivery per active endpoint subscribed to it; an update compares the task row
+  and label set read under lock in that transaction with what it writes. Like the other deleted
+  events, `task.deleted` goes to every active endpoint subscribed to it, including one that never
+  received an event for the task, and it goes out exactly once: the delete re-reads the task under
+  lock, so a delete that loses a race with another delete answers 404 and sends nothing. The
+  payload is thin (the task id) and carries no lead data; a consumer reads `GET /tasks/{id}`, where
+  the lead redaction applies. A label delete, which removes the label from every task, sends no
+  `task.updated`. All fifteen event types take 212 bytes and fit the existing `varchar(512)`
+  column, so there is no migration. Settings > Webhooks offers the three task events.
 - **Deal webhook events (#515).** Deals join the webhook catalogue with three thin events:
   `deal.created` (`POST /deals`), `deal.updated` (`PUT /deals/{id}` when a stored value changed,
   `POST /deals/{id}/stage` to another stage, and the automation assign-owner step when it changes

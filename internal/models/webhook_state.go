@@ -185,3 +185,35 @@ func (d *Deal) WebhookState() DealWebhookState {
 		OwnerID:           d.OwnerID,
 	}
 }
+
+// TaskWebhookState is the state task.updated compares (#516): the columns
+// taskRepository.Update (Save, Labels omitted) writes, which include the
+// status the bulk task status batch writes. DueDate compares as an instant.
+// The label set is no column of the task: UpdateWithLabels compares it apart,
+// against the ids read under lock through GetLabelIDsForUpdate.
+type TaskWebhookState struct {
+	Title        string
+	Description  string
+	Status       TaskStatus
+	Priority     TaskPriority
+	DueDate      WebhookTime
+	AssignedToID uint
+	LeadID       uint
+	CustomerID   uint
+	DealID       uint
+}
+
+// WebhookState returns the task's state for the task.updated event.
+func (t *Task) WebhookState() TaskWebhookState {
+	return TaskWebhookState{
+		Title:        t.Title,
+		Description:  t.Description,
+		Status:       t.Status,
+		Priority:     t.Priority,
+		DueDate:      webhookTime(t.DueDate),
+		AssignedToID: t.AssignedToID,
+		LeadID:       webhookID(t.LeadID),
+		CustomerID:   webhookID(t.CustomerID),
+		DealID:       webhookID(t.DealID),
+	}
+}
