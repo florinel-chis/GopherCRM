@@ -1156,6 +1156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Web app: removed the unused `authApi.refreshToken` helper (session refresh runs only through the
+  API client) and a stale placeholder test in `LeadList.test.tsx` (#625).
 - The automation engine service file is split by responsibility (#619): `automation_engine.go` keeps
   the engine type and its constructor, and the lifecycle, dispatch, schedule, run-lease, step,
   email-step and stale-run recovery code moves unchanged into `automation_lifecycle.go`,
