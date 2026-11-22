@@ -191,7 +191,7 @@ func (e *AutomationEngine) runSteps(ctx context.Context, run models.AutomationRu
 			}
 			return
 		}
-		release, err := e.owner.admit()
+		release, err := e.owner.Admit()
 		if err != nil {
 			e.releaseRun(run)
 			return

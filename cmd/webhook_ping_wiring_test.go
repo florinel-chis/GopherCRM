@@ -22,6 +22,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 func TestWebhookPingProductionWiring(t *testing.T) {
@@ -29,18 +30,19 @@ func TestWebhookPingProductionWiring(t *testing.T) {
 	source, err := os.ReadFile("main.go")
 	require.NoError(t, err)
 	call := string(source)
-	start := strings.Index(call, "service.NewWebhookService(")
+	start := strings.Index(call, "webhook.NewWebhookService(")
 	require.GreaterOrEqual(t, start, 0, "main.go builds the webhook service")
 	call = call[start:]
 	end := strings.Index(call, "\n\n")
 	require.Greater(t, end, 0)
-	assert.Contains(t, call[:end], "service.WithWebhookPingClients(", "main.go wires the test ping to the egress guard")
+	assert.Contains(t, call[:end], "webhook.WithWebhookPingClients(", "main.go wires the test ping to the egress guard")
+	assert.Contains(t, call[:end], "WithWebhookPingClients(egress.New(", "the test ping uses the public-only egress guard")
 
 	boot := bootAutomation(t, false)
 	admin := &models.User{Email: "admin@webhook-ping-wiring.test", Password: "x", FirstName: "Ada", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
 	require.NoError(t, models.DB.Create(admin).Error)
 
-	box := utils.NewSecretBox(boot.cfg.API.APIKeySecret, service.WebhookSecretContext)
+	box := utils.NewSecretBox(boot.cfg.API.APIKeySecret, webhook.WebhookSecretContext)
 	sealed, err := box.Seal("whsec_" + "c2lnbmluZy1rZXktb2YtdGhlLXdpcmluZy10ZXN0")
 	require.NoError(t, err)
 	endpoint := &models.WebhookEndpoint{URL: "https://localhost/hook", EventTypes: models.WebhookEventTypes{models.WebhookEventLeadCreated},

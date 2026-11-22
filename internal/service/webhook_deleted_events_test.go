@@ -101,7 +101,7 @@ func (e *webhookEnv) customerLogin(customerID uint) *models.User {
 // decide who receives a deleted event; the subtests use them to show that.
 func (e *webhookEnv) announce(endpointID uint, eventType string, recordID uint) {
 	e.t.Helper()
-	eventID, err := newWebhookEventID()
+	eventID, err := webhook.NewEventID()
 	require.NoError(e.t, err)
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	row := models.WebhookDelivery{EndpointID: endpointID, EventID: eventID, EventType: eventType, RecordID: recordID,
@@ -201,11 +201,11 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		created := env.deliveries(models.WebhookEventLeadCreated, lead.ID)
 		require.Len(t, created, 2, "a and c hold lead.created")
 		now := time.Now().UTC()
-		old := now.Add(-WebhookDeliveryRetention - time.Hour)
+		old := now.Add(-webhook.WebhookDeliveryRetention - time.Hour)
 		require.NoError(t, db.Model(&models.WebhookDelivery{}).
 			Where("event_type = ? AND record_id = ?", models.WebhookEventLeadCreated, lead.ID).
 			UpdateColumns(map[string]interface{}{"status": models.WebhookDeliverySucceeded, "updated_at": old}).Error)
-		pruned, err := env.repo.PruneFinished(ctx, now.Add(-WebhookDeliveryRetention))
+		pruned, err := env.repo.PruneFinished(ctx, now.Add(-webhook.WebhookDeliveryRetention))
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, pruned, int64(2))
 		require.Empty(t, env.deliveries(models.WebhookEventLeadCreated, lead.ID), "the lead.created rows were pruned")
@@ -238,7 +238,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, erased[0].LastHTTPStatus, deleted[0].LastHTTPStatus)
 
 		for _, row := range []models.WebhookDelivery{erased[0], deleted[0]} {
-			body, err := WebhookBody(&row)
+			body, err := webhook.WebhookBody(&row)
 			require.NoError(t, err)
 			var decoded map[string]interface{}
 			require.NoError(t, json.Unmarshal(body, &decoded))
@@ -250,7 +250,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 			assert.Equal(t, []string{"id", "occurred_at", "record_id", "type"}, keys)
 			assert.Equal(t, row.EventType, decoded["type"])
 		}
-		body, err := WebhookBody(&erased[0])
+		body, err := webhook.WebhookBody(&erased[0])
 		require.NoError(t, err)
 		for _, personal := range []string{lead.Email, lead.FirstName, lead.LastName, lead.Phone} {
 			require.NotEmpty(t, personal)

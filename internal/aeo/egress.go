@@ -1,22 +1,14 @@
 package aeo
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
-	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"net/netip"
-	"net/url"
-	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 )
 
 // The egress guard is the single outbound path for every AEO provider. A
@@ -38,11 +30,11 @@ import (
 // and https://pkg.go.dev/net/http#Transport.
 
 // Sentinel errors for policy refusals. Provider errors unwrap to them, so
-// callers can classify with errors.Is.
+// callers can classify with errors.Is. They are the internal/egress values.
 var (
-	ErrEndpointNotPermitted    = errors.New("aeo: provider endpoint is not permitted by the egress policy")
-	ErrDestinationNotPermitted = errors.New("aeo: provider destination address is not permitted by the egress policy")
-	ErrRedirectNotFollowed     = errors.New("aeo: provider redirect was not followed")
+	ErrEndpointNotPermitted    = egress.ErrEndpointNotPermitted
+	ErrDestinationNotPermitted = egress.ErrDestinationNotPermitted
+	ErrRedirectNotFollowed     = egress.ErrRedirectNotFollowed
 )
 
 // officialOrigins is the default trust: each engine's own HTTPS API origin.
@@ -57,20 +49,19 @@ var officialOrigins = map[string]string{
 
 // Resolver looks up the addresses of a host name. *net.Resolver satisfies it;
 // tests inject a scripted one.
-type Resolver interface {
-	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
-}
+type Resolver = egress.Resolver
 
 // DialFunc opens a connection. The guard only ever passes it a validated
 // "address:port" literal, never a host name.
-type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
+type DialFunc = egress.DialFunc
 
-// EgressGuard enforces the operator egress policy for provider clients.
+// EgressGuard enforces the operator egress policy for provider clients. The
+// dial-time checks come from the internal/egress guard it wraps.
 type EgressGuard struct {
-	policy   config.AEOEgressPolicy
-	resolver Resolver
-	dial     DialFunc
-	rootCAs  *x509.CertPool
+	policy  config.AEOEgressPolicy
+	guard   *egress.Guard
+	rootCAs *x509.CertPool
+	seams   []egress.Option
 }
 
 // EgressOption customizes a guard. The options replace the network seams only;
@@ -79,45 +70,37 @@ type EgressOption func(*EgressGuard)
 
 // WithEgressResolver replaces the DNS resolver.
 func WithEgressResolver(resolver Resolver) EgressOption {
-	return func(g *EgressGuard) {
-		if resolver != nil {
-			g.resolver = resolver
-		}
-	}
+	return func(g *EgressGuard) { g.seams = append(g.seams, egress.WithResolver(resolver)) }
 }
 
 // WithEgressDialer replaces the connection dialer.
 func WithEgressDialer(dial DialFunc) EgressOption {
-	return func(g *EgressGuard) {
-		if dial != nil {
-			g.dial = dial
-		}
-	}
+	return func(g *EgressGuard) { g.seams = append(g.seams, egress.WithDialer(dial)) }
 }
 
 // WithEgressRootCAs replaces the trusted certificate roots. Certificates and
 // host names are still verified against them.
 func WithEgressRootCAs(pool *x509.CertPool) EgressOption {
-	return func(g *EgressGuard) { g.rootCAs = pool }
+	return func(g *EgressGuard) {
+		g.rootCAs = pool
+		g.seams = append(g.seams, egress.WithRootCAs(pool))
+	}
 }
 
 // NewEgressGuard builds a guard for the given operator policy.
 func NewEgressGuard(policy config.AEOEgressPolicy, opts ...EgressOption) *EgressGuard {
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	guard := &EgressGuard{policy: policy, resolver: net.DefaultResolver, dial: dialer.DialContext}
+	guard := &EgressGuard{policy: policy}
 	for _, opt := range opts {
 		opt(guard)
 	}
+	guard.guard = egress.New(guard.seams...)
+	guard.seams = nil
 	return guard
 }
 
 // egressRule is the one origin a provider client may reach, and how its
 // addresses are judged.
-type egressRule struct {
-	config.AEOEndpoint
-	local    bool
-	prefixes []netip.Prefix
-}
+type egressRule = egress.Rule
 
 // ruleFor matches a base URL against the trust of one engine. Nothing here
 // performs network I/O.
@@ -142,7 +125,7 @@ func (g *EgressGuard) ruleFor(policyKey, baseURL string) (egressRule, error) {
 	}
 	for _, local := range g.policy.LocalOrigins {
 		if local.Provider == policyKey && local.SameOrigin(endpoint) {
-			return egressRule{AEOEndpoint: local.AEOEndpoint, local: true, prefixes: local.Prefixes}, nil
+			return egressRule{AEOEndpoint: local.AEOEndpoint, Local: true, Prefixes: local.Prefixes}, nil
 		}
 	}
 	return egressRule{}, ErrEndpointNotPermitted
@@ -170,269 +153,13 @@ func (g *EgressGuard) httpClient(policyKey, baseURL string) (*http.Client, error
 		IdleConnTimeout:       30 * time.Second,
 	}
 	return &http.Client{
-		Transport:     &guardedTransport{rule: rule, next: transport},
+		Transport:     &egress.Transport{Rule: rule, Next: transport},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return ErrRedirectNotFollowed },
 	}, nil
 }
 
 // dialContext resolves and validates every address on each new connection and
-// dials only a validated literal.
-func (g *EgressGuard) dialContext(rule egressRule) func(ctx context.Context, network, address string) (net.Conn, error) {
-	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil || !sameHost(host, rule.Host) || port != rule.Port {
-			return nil, ErrDestinationNotPermitted
-		}
-		portNumber, err := strconv.ParseUint(port, 10, 16)
-		if err != nil {
-			return nil, ErrDestinationNotPermitted
-		}
-
-		var addrs []netip.Addr
-		if literal, err := netip.ParseAddr(host); err == nil {
-			addrs = []netip.Addr{literal}
-		} else {
-			// The approved host, in its canonical lower-case form.
-			addrs, err = g.resolver.LookupNetIP(ctx, "ip", rule.Host)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if len(addrs) == 0 {
-			return nil, &net.DNSError{Err: "no addresses", Name: host, IsNotFound: true}
-		}
-
-		// One unacceptable answer fails the connection: a mixed public and
-		// private answer is how rebinding is staged.
-		validated := make([]netip.Addr, 0, len(addrs))
-		for _, addr := range addrs {
-			if !rule.permits(addr) {
-				return nil, ErrDestinationNotPermitted
-			}
-			validated = append(validated, addr.Unmap())
-		}
-
-		var lastErr error
-		for _, addr := range validated {
-			conn, err := g.dial(ctx, network, netip.AddrPortFrom(addr, uint16(portNumber)).String())
-			if err == nil {
-				return conn, nil
-			}
-			lastErr = err
-			if ctx.Err() != nil {
-				break
-			}
-		}
-		return nil, lastErr
-	}
-}
-
-// permits judges one resolved address against the rule.
-func (r egressRule) permits(addr netip.Addr) bool {
-	if !addr.IsValid() || addr.Zone() != "" {
-		return false
-	}
-	addr = addr.Unmap()
-	if alwaysBlockedAddress(addr) {
-		return false
-	}
-	if r.local {
-		for _, prefix := range r.prefixes {
-			if prefix.Contains(addr) {
-				return true
-			}
-		}
-		return false
-	}
-	return publicAddress(addr)
-}
-
-// permitsURL reports whether a request URL targets exactly the rule's origin.
-func (r egressRule) permitsURL(u *url.URL) bool {
-	if u == nil || u.User != nil || !strings.EqualFold(u.Scheme, r.Scheme) || strings.Contains(u.Host, "%") {
-		return false
-	}
-	port := u.Port()
-	if port == "" {
-		port = "80"
-		if strings.EqualFold(u.Scheme, "https") {
-			port = "443"
-		}
-	}
-	return port == r.Port && sameHost(u.Hostname(), r.Host)
-}
-
-// sameHost compares host names case-insensitively and address literals by
-// value, so "[FD12::0001]" and "fd12::1" are one host.
-func sameHost(a, b string) bool {
-	addrA, errA := netip.ParseAddr(a)
-	addrB, errB := netip.ParseAddr(b)
-	if errA == nil || errB == nil {
-		return errA == nil && errB == nil && addrA == addrB
-	}
-	return strings.EqualFold(a, b)
-}
-
-// alwaysBlockedAddress covers destinations no policy may open.
-func alwaysBlockedAddress(addr netip.Addr) bool {
-	if addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsInterfaceLocalMulticast() {
-		return true
-	}
-	if addr == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
-		return true
-	}
-	for _, metadata := range config.AEOMetadataAddresses {
-		if addr == metadata {
-			return true
-		}
-	}
-	return false
-}
-
-var nonPublicIPv4 = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-}
-
-var globalUnicastIPv6 = netip.MustParsePrefix("2000::/3")
-
-// nonPublicIPv6 lists special-purpose ranges inside 2000::/3: IETF protocol
-// assignments (including Teredo), documentation, and 6to4, which embeds an
-// IPv4 address.
-var nonPublicIPv6 = []netip.Prefix{
-	netip.MustParsePrefix("2001::/23"),
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("3ffe::/16"),
-	netip.MustParsePrefix("3fff::/20"),
-}
-
-// publicAddress accepts globally routable unicast only. IPv6 is allow-listed
-// to 2000::/3, which excludes loopback, unique-local, NAT64 and IPv4-compatible
-// forms; IPv4-mapped addresses are judged as the IPv4 address they carry.
-func publicAddress(addr netip.Addr) bool {
-	addr = addr.Unmap()
-	if addr.Is4() {
-		for _, prefix := range nonPublicIPv4 {
-			if prefix.Contains(addr) {
-				return false
-			}
-		}
-		return true
-	}
-	if !globalUnicastIPv6.Contains(addr) {
-		return false
-	}
-	for _, prefix := range nonPublicIPv6 {
-		if prefix.Contains(addr) {
-			return false
-		}
-	}
-	return true
-}
-
-// guardedTransport checks every request against the approved origin and turns
-// any 3xx response into a terminal failure.
-type guardedTransport struct {
-	rule egressRule
-	next http.RoundTripper
-}
-
-func (t *guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	latch := egressLatchFrom(req.Context())
-	if err := latch.get(); err != nil {
-		closeRequestBody(req)
-		return nil, err
-	}
-	if !t.rule.permitsURL(req.URL) {
-		closeRequestBody(req)
-		return nil, latch.set(ErrEndpointNotPermitted)
-	}
-
-	resp, err := t.next.RoundTrip(req)
-	if err != nil {
-		if errors.Is(err, ErrDestinationNotPermitted) {
-			latch.set(ErrDestinationNotPermitted)
-		}
-		return nil, err
-	}
-	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		// The Location and body are provider-controlled and are discarded
-		// unread beyond a small drain.
-		_, _ = io.CopyN(io.Discard, resp.Body, 4<<10)
-		_ = resp.Body.Close()
-		return nil, latch.set(&redirectError{statusCode: resp.StatusCode})
-	}
-	return resp, nil
-}
-
-func closeRequestBody(req *http.Request) {
-	if req.Body != nil {
-		_ = req.Body.Close()
-	}
-}
-
-// redirectError records a refused redirect with its numeric status only.
-type redirectError struct {
-	statusCode int
-}
-
-func (e *redirectError) Error() string {
-	return fmt.Sprintf("aeo: provider redirect (HTTP %d) was not followed", e.statusCode)
-}
-
-func (e *redirectError) Unwrap() error { return ErrRedirectNotFollowed }
-
-// egressLatch remembers a policy refusal for one logical provider query. The
-// SDKs retry transport errors once; the latch makes that retry fail locally,
-// so a refused redirect or destination never causes a second request.
-type egressLatch struct {
-	mu  sync.Mutex
-	err error
-}
-
-type egressLatchKey struct{}
-
-func withEgressLatch(ctx context.Context) context.Context {
-	return context.WithValue(ctx, egressLatchKey{}, &egressLatch{})
-}
-
-func egressLatchFrom(ctx context.Context) *egressLatch {
-	latch, _ := ctx.Value(egressLatchKey{}).(*egressLatch)
-	return latch
-}
-
-func (l *egressLatch) get() error {
-	if l == nil {
-		return nil
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.err
-}
-
-func (l *egressLatch) set(err error) error {
-	if l == nil {
-		return err
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.err == nil {
-		l.err = err
-	}
-	return err
+// dials only a validated literal (egress.Guard.DialContext).
+func (g *EgressGuard) dialContext(rule egressRule) DialFunc {
+	return g.guard.DialContext(rule)
 }

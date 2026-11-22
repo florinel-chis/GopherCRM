@@ -1,4 +1,4 @@
-package service
+package webhook
 
 import (
 	"context"
@@ -11,12 +11,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/florinel-chis/gophercrm/internal/aeo"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 )
 
@@ -74,7 +73,7 @@ const (
 
 // WebhookEventTypesRule is the refusal message of event_types, built from the
 // webhook catalogue.
-var WebhookEventTypesRule = webhook.SubscribeRule()
+var WebhookEventTypesRule = SubscribeRule()
 
 // ValidateWebhookURL checks an endpoint URL before anything is stored: https,
 // a host, no userinfo, query or fragment, at most 2048 characters, and an IP
@@ -84,7 +83,7 @@ func ValidateWebhookURL(raw string) error {
 	if raw == "" || utf8.RuneCountInString(raw) > models.WebhookEndpointURLMaxLength {
 		return &WebhookValidationError{Field: "url", Message: WebhookURLRule}
 	}
-	if aeo.CheckPublicURL(raw) != nil {
+	if egress.CheckPublicURL(raw) != nil {
 		return &WebhookValidationError{Field: "url", Message: WebhookURLRule}
 	}
 	return nil
@@ -96,7 +95,7 @@ func ValidateWebhookEventTypes(values []string) (models.WebhookEventTypes, error
 		return nil, &WebhookValidationError{Field: "event_types", Message: WebhookEventTypesRule}
 	}
 	for _, value := range values {
-		if !webhook.IsEventType(value) {
+		if !IsEventType(value) {
 			return nil, &WebhookValidationError{Field: "event_types", Message: WebhookEventTypesRule}
 		}
 	}
@@ -123,6 +122,42 @@ func (p WebhookEndpointPatch) Empty() bool {
 	return p.URL == nil && p.EventTypes == nil && p.IsActive == nil
 }
 
+// WebhookService is the admin registry of outbound webhook endpoints and the
+// delivery log (#345). Invalid input is a *WebhookValidationError (it unwraps
+// to apperrors.ErrValidation), an unknown id apperrors.ErrNotFound, and a
+// service built without its repository or secret box ErrWebhooksUnavailable
+// (TestEndpoint also without its ping client factory). RedeliverDelivery
+// answers ErrWebhookDeliveryNotRedeliverable for a pending or sending row and
+// ErrWebhookEndpointUnavailable for a deleted or inactive endpoint.
+type WebhookService interface {
+	// CreateEndpoint validates the URL and event types, generates the signing
+	// secret, stores it sealed and returns it this once.
+	CreateEndpoint(ctx context.Context, input WebhookEndpointInput) (*models.WebhookEndpointCreated, error)
+	GetEndpoint(ctx context.Context, id uint) (*models.WebhookEndpoint, error)
+	ListEndpoints(ctx context.Context, offset, limit int, sortBy, sortOrder string) ([]models.WebhookEndpoint, int64, error)
+	// UpdateEndpoint writes the fields the patch carries; it never changes
+	// the secret (RotateEndpointSecret does).
+	UpdateEndpoint(ctx context.Context, id uint, patch WebhookEndpointPatch) (*models.WebhookEndpoint, error)
+	// RotateEndpointSecret replaces the signing secret and returns the new
+	// one this once; the replaced secret keeps signing next to it for
+	// WebhookSecretOverlap (#503).
+	RotateEndpointSecret(ctx context.Context, id uint) (*models.WebhookEndpointSecretRotated, error)
+	// DeleteEndpoint hard-deletes the endpoint and its delivery rows in one
+	// transaction, endpoint row locked first.
+	DeleteEndpoint(ctx context.Context, id uint) error
+	// ListDeliveries returns one page of the delivery log, newest first.
+	ListDeliveries(ctx context.Context, filter repository.WebhookDeliveryFilter, offset, limit int) ([]models.WebhookDelivery, int64, error)
+	// TestEndpoint sends one signed webhook.ping request to the endpoint,
+	// active or not, synchronously and without writing anything. A refused,
+	// failed or unsigned attempt is a failed result, not an error; a service
+	// built without WithWebhookPingClients returns ErrWebhooksUnavailable.
+	TestEndpoint(ctx context.Context, id uint) (*models.WebhookPingResult, error)
+	// RedeliverDelivery puts a succeeded or failed delivery back into the
+	// queue (pending, attempts 0, due now, same event_id) with one
+	// conditional UPDATE and returns the requeued row.
+	RedeliverDelivery(ctx context.Context, id uint) (*models.WebhookDelivery, error)
+}
+
 type webhookService struct {
 	repo      repository.WebhookRepository
 	txManager *utils.TransactionManager
@@ -138,10 +173,20 @@ type webhookService struct {
 type WebhookServiceOption func(*webhookService)
 
 // WithWebhookPingClients wires the test ping (TestEndpoint) to clients, the
-// same egress guard deliveries use ((*aeo.EgressGuard).PublicHTTPClient).
+// same egress guard deliveries use ((*egress.Guard).PublicHTTPClient).
 // Without it TestEndpoint returns ErrWebhooksUnavailable.
 func WithWebhookPingClients(clients WebhookClientFactory) WebhookServiceOption {
 	return func(s *webhookService) { s.pingClients = clients }
+}
+
+// WithWebhookPingTimeout bounds one test ping by d instead of
+// WebhookRequestTimeout. A non-positive d keeps the default.
+func WithWebhookPingTimeout(d time.Duration) WebhookServiceOption {
+	return func(s *webhookService) {
+		if d > 0 {
+			s.pingTimeout = d
+		}
+	}
 }
 
 // NewWebhookService builds the endpoint registry. box seals the secrets
@@ -159,8 +204,8 @@ func webhookLog(operation string) *logrus.Entry {
 	return utils.Logger.WithField("operation", operation)
 }
 
-// newWebhookSecret returns whsec_ plus the base64 of 32 random bytes.
-func newWebhookSecret() (string, error) {
+// NewWebhookSecret returns whsec_ plus the base64 of 32 random bytes.
+func NewWebhookSecret() (string, error) {
 	raw := make([]byte, webhookSecretBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("webhook secret: %w", err)
@@ -194,7 +239,7 @@ func (s *webhookService) CreateEndpoint(ctx context.Context, input WebhookEndpoi
 		active = *input.IsActive
 	}
 
-	secret, err := newWebhookSecret()
+	secret, err := NewWebhookSecret()
 	if err != nil {
 		logger.WithField("error_code", "secret_generation_failed").Error("Webhook secret could not be generated")
 		return nil, err
@@ -214,7 +259,7 @@ func (s *webhookService) CreateEndpoint(ctx context.Context, input WebhookEndpoi
 }
 
 func (s *webhookService) notFound(id uint, err error) error {
-	if isNotFound(err) {
+	if apperrors.IsNotFound(err) {
 		return fmt.Errorf("webhook endpoint %d not found: %w", id, apperrors.ErrNotFound)
 	}
 	return err
@@ -266,7 +311,7 @@ func (s *webhookService) UpdateEndpoint(ctx context.Context, id uint, patch Webh
 		columns["is_active"] = *patch.IsActive
 	}
 	if err := s.repo.UpdateEndpoint(ctx, id, columns); err != nil {
-		if !isNotFound(err) {
+		if !apperrors.IsNotFound(err) {
 			logger.WithError(utils.LogError(err)).Error("Failed to update webhook endpoint")
 		}
 		return nil, s.notFound(id, err)
@@ -293,7 +338,7 @@ func (s *webhookService) DeleteEndpoint(ctx context.Context, id uint) error {
 		err = s.repo.DeleteEndpoint(ctx, id)
 	}
 	if err != nil {
-		if !isNotFound(err) {
+		if !apperrors.IsNotFound(err) {
 			logger.WithError(utils.LogError(err)).Error("Failed to delete webhook endpoint")
 		}
 		return s.notFound(id, err)
@@ -309,8 +354,8 @@ func (s *webhookService) ListDeliveries(ctx context.Context, filter repository.W
 	if filter.Status != "" && !models.IsWebhookDeliveryStatus(filter.Status) {
 		return nil, 0, &WebhookValidationError{Field: "status", Message: "must be pending, sending, succeeded or failed"}
 	}
-	if filter.EventType != "" && !webhook.IsEventType(filter.EventType) {
-		return nil, 0, &WebhookValidationError{Field: "event_type", Message: webhook.FilterRule()}
+	if filter.EventType != "" && !IsEventType(filter.EventType) {
+		return nil, 0, &WebhookValidationError{Field: "event_type", Message: FilterRule()}
 	}
 	return s.repo.ListDeliveries(ctx, filter, offset, limit)
 }
@@ -337,7 +382,7 @@ func (s *webhookService) TestEndpoint(ctx context.Context, id uint) (*models.Web
 	if err != nil {
 		return nil, s.notFound(id, err)
 	}
-	eventID, err := newWebhookEventID()
+	eventID, err := NewEventID()
 	if err != nil {
 		return nil, err
 	}
@@ -396,7 +441,7 @@ func (s *webhookService) RotateEndpointSecret(ctx context.Context, id uint) (*mo
 	if err := s.available(); err != nil {
 		return nil, err
 	}
-	secret, err := newWebhookSecret()
+	secret, err := NewWebhookSecret()
 	if err != nil {
 		logger.WithField("error_code", "secret_generation_failed").Error("Webhook secret could not be generated")
 		return nil, err
@@ -408,7 +453,7 @@ func (s *webhookService) RotateEndpointSecret(ctx context.Context, id uint) (*mo
 	}
 	now := time.Now().UTC()
 	if err := s.repo.RotateEndpointSecret(ctx, id, sealed, now.Add(WebhookSecretOverlap), now); err != nil {
-		if !isNotFound(err) {
+		if !apperrors.IsNotFound(err) {
 			logger.WithError(utils.LogError(err)).Error("Failed to rotate webhook endpoint secret")
 		}
 		return nil, s.notFound(id, err)
@@ -438,7 +483,7 @@ func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*model
 	}
 	delivery, err := s.repo.GetDelivery(ctx, id)
 	if err != nil {
-		if isNotFound(err) {
+		if apperrors.IsNotFound(err) {
 			return nil, deliveryNotFound()
 		}
 		return nil, err
@@ -449,7 +494,7 @@ func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*model
 		"endpoint_id": delivery.EndpointID,
 	})
 	endpoint, err := s.repo.GetEndpoint(ctx, delivery.EndpointID)
-	if err != nil && !isNotFound(err) {
+	if err != nil && !apperrors.IsNotFound(err) {
 		return nil, err
 	}
 	if err != nil || !endpoint.IsActive {
@@ -462,7 +507,7 @@ func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*model
 			return nil, err
 		}
 		if _, readErr := s.repo.GetDelivery(ctx, id); readErr != nil {
-			if isNotFound(readErr) {
+			if apperrors.IsNotFound(readErr) {
 				return nil, deliveryNotFound()
 			}
 			return nil, readErr
@@ -473,14 +518,10 @@ func (s *webhookService) RedeliverDelivery(ctx context.Context, id uint) (*model
 	logger.WithField("error_code", "").Info("Webhook delivery queued for redelivery")
 	requeued, err := s.repo.GetDelivery(ctx, id)
 	if err != nil {
-		if isNotFound(err) {
+		if apperrors.IsNotFound(err) {
 			return nil, deliveryNotFound()
 		}
 		return nil, err
 	}
 	return requeued, nil
 }
-
-// newWebhookEventID returns evt_ followed by 32 lowercase hex characters from
-// crypto/rand (webhook.NewEventID).
-func newWebhookEventID() (string, error) { return webhook.NewEventID() }

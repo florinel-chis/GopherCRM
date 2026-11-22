@@ -129,6 +129,7 @@ elif sys.argv[1] == 'test':
         self.assertIn('TestAEOHandlerTestSuite', selected['internal/handler'])
         self.assertIn('TestHealthPayloadReportsTheBuildRevision', selected['cmd'])
         self.assertTrue(selected['internal/aeo'])
+        self.assertIn('TestEgressPublicClient', selected['internal/egress'])
         self.assertTrue(selected['internal/config'])
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(go_checks.GateError):
             profiles.run('aeo')

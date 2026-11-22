@@ -8,6 +8,7 @@ import (
 	openaiopt "github.com/openai/openai-go/v3/option"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 )
 
 // OpenAICompatConfig describes one engine that speaks the OpenAI
@@ -100,7 +101,7 @@ func (p *OpenAICompatProvider) Query(ctx context.Context, prompt string) (Provid
 	if p.blocked != nil {
 		return ProviderAnswer{}, SanitizeProviderError(p.Name(), p.blocked)
 	}
-	resp, err := p.client.Chat.Completions.New(withEgressLatch(ctx), openai.ChatCompletionNewParams{
+	resp, err := p.client.Chat.Completions.New(egress.WithLatch(ctx), openai.ChatCompletionNewParams{
 		Model:     openai.ChatModel(p.cfg.Model),
 		MaxTokens: openai.Int(maxAnswerTokens),
 		Messages: []openai.ChatCompletionMessageParamUnion{

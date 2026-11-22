@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/mailer"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -103,7 +104,7 @@ type AutomationEngine struct {
 	mailer        mailer.Mailer
 	txManager     *utils.TransactionManager
 	now           func() time.Time
-	owner         *automationOwner
+	owner         *lifecycle.Owner
 
 	// webhooks writes the lead.updated / ticket.updated rows of an
 	// assign_owner step that changed the record (#408), bound to the step

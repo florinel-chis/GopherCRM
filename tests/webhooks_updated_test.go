@@ -58,7 +58,7 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 	companyRepo := repository.NewCompanyRepository(db)
 	webhookRepo := repository.NewWebhookRepository(db)
 	webhookEmitter := webhook.NewEmitter(webhookRepo)
-	box := utils.NewSecretBox("webhooks-updated-api-master-secret-0123456789", service.WebhookSecretContext)
+	box := utils.NewSecretBox("webhooks-updated-api-master-secret-0123456789", webhook.WebhookSecretContext)
 
 	authService := service.NewAuthService(userRepo, repository.NewAPIKeyRepository(db),
 		config.JWTConfig{Secret: "webhooks-updated-api-jwt-secret-0123456789", ExpiryHours: 1})
@@ -81,7 +81,7 @@ func TestWebhookUpdatedAPISQLite(t *testing.T) {
 	handler.SetupLeadRoutes(protected, handler.NewLeadHandler(leadService))
 	handler.SetupCustomerRoutes(protected, handler.NewCustomerHandler(customerService))
 	handler.SetupTicketRoutes(protected, handler.NewTicketHandler(ticketService, customerService))
-	handler.SetupWebhookRoutes(protected, handler.NewWebhookHandler(service.NewWebhookService(webhookRepo, txManager, box)))
+	handler.SetupWebhookRoutes(protected, handler.NewWebhookHandler(webhook.NewWebhookService(webhookRepo, txManager, box)))
 
 	admin := &models.User{Email: "admin@webhooks-updated-api.test", Password: "x", FirstName: "Api", LastName: "Admin", Role: models.RoleAdmin, IsActive: true}
 	require.NoError(t, db.Create(admin).Error)

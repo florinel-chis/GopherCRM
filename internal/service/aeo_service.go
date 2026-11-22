@@ -11,6 +11,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/aeo"
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 )
@@ -139,7 +140,7 @@ type aeoService struct {
 
 	// lifecycle owns every run this service starts: admission, the shared run
 	// context and the join at shutdown. See aeo_runtime.go.
-	lifecycle *aeoRunOwner
+	lifecycle *lifecycle.Owner
 
 	// providerStatuses is the full engine roster, including the ones with no
 	// credentials. The service cannot derive it from providers — an engine with

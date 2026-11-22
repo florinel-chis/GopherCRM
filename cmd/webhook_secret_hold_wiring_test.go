@@ -19,6 +19,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 func TestWebhookSecretHoldHealthWiring(t *testing.T) {
@@ -26,7 +27,7 @@ func TestWebhookSecretHoldHealthWiring(t *testing.T) {
 
 	// Sealed with another master secret than the configured one, as after a
 	// change of API_KEY_SECRET.
-	otherBox := utils.NewSecretBox(boot.cfg.API.APIKeySecret+"-before-the-change", service.WebhookSecretContext)
+	otherBox := utils.NewSecretBox(boot.cfg.API.APIKeySecret+"-before-the-change", webhook.WebhookSecretContext)
 	sealed, err := otherBox.Seal("whsec_c2VjcmV0LWtleS1vZi10aGUtaG9sZC10ZXN0")
 	require.NoError(t, err)
 	const endpointURL = "https://localhost/hold-wiring-private-path"
@@ -42,8 +43,8 @@ func TestWebhookSecretHoldHealthWiring(t *testing.T) {
 		Role: models.RoleAdmin, IsActive: true}
 	require.NoError(t, models.DB.Create(admin).Error)
 
-	var built *service.WebhookRuntime
-	webhookRuntimeBuilt = func(rt *service.WebhookRuntime) { built = rt }
+	var built *webhook.WebhookRuntime
+	webhookRuntimeBuilt = func(rt *webhook.WebhookRuntime) { built = rt }
 	t.Cleanup(func() { webhookRuntimeBuilt = nil })
 
 	backgroundCtx, stopBackground := context.WithCancel(context.Background())

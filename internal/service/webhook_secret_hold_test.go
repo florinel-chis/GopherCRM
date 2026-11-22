@@ -19,6 +19,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // The per-pass secret check (#559): an active endpoint whose current signing
@@ -86,16 +87,16 @@ func runWebhookSecretHold(t *testing.T, db *gorm.DB) {
 	clock := newWebhookClock(time.Now().UTC().Truncate(time.Millisecond))
 	due := func() time.Time { return clock.Now().Add(-time.Second) }
 
-	wrongBox := utils.NewSecretBox(webhookOtherMasterSecret, WebhookSecretContext)
+	wrongBox := utils.NewSecretBox(webhookOtherMasterSecret, webhook.WebhookSecretContext)
 	// wrongService is the endpoint registry of the process that runs with the
 	// other master secret: its rotations seal with that key.
-	wrongService := NewWebhookService(env.repo, env.txManager, wrongBox)
+	wrongService := webhook.NewWebhookService(env.repo, env.txManager, wrongBox)
 
-	wrongRuntime := func(opts ...WebhookRuntimeOption) *WebhookRuntime {
-		return NewWebhookRuntime(env.repo, consumer.guard(nil), wrongBox, append([]WebhookRuntimeOption{WithWebhookClock(clock.Now)}, opts...)...)
+	wrongRuntime := func(opts ...webhook.WebhookRuntimeOption) *webhook.WebhookRuntime {
+		return webhook.NewWebhookRuntime(env.repo, consumer.guard(nil), wrongBox, append([]webhook.WebhookRuntimeOption{webhook.WithWebhookClock(clock.Now)}, opts...)...)
 	}
-	rightRuntime := func(opts ...WebhookRuntimeOption) *WebhookRuntime {
-		return env.runtime(consumer.guard(nil), append([]WebhookRuntimeOption{WithWebhookClock(clock.Now)}, opts...)...)
+	rightRuntime := func(opts ...webhook.WebhookRuntimeOption) *webhook.WebhookRuntime {
+		return env.runtime(consumer.guard(nil), append([]webhook.WebhookRuntimeOption{webhook.WithWebhookClock(clock.Now)}, opts...)...)
 	}
 	requestsTo := func(path string) int {
 		n := 0
@@ -248,11 +249,11 @@ func runWebhookSecretHold(t *testing.T, db *gorm.DB) {
 
 	t.Run("(d) a held backlog does not fill the discovery batch", func(t *testing.T) {
 		held := env.endpoint(consumer.url("/hold-d-held"), true, models.WebhookEventLeadCreated)
-		readable, err := wrongService.CreateEndpoint(ctx, WebhookEndpointInput{URL: consumer.url("/hold-d-readable"),
+		readable, err := wrongService.CreateEndpoint(ctx, webhook.WebhookEndpointInput{URL: consumer.url("/hold-d-readable"),
 			EventTypes: []string{models.WebhookEventLeadCreated}, IsActive: boolPtr(true)})
 		require.NoError(t, err)
 		t.Cleanup(func() { retire(t, held.ID); retire(t, readable.ID) })
-		for i := 0; i < webhookDiscoveryBatch+5; i++ {
+		for i := 0; i < webhook.WebhookDiscoveryBatch+5; i++ {
 			seedPoolDelivery(t, env, held.ID, recordID, clock.Now().Add(-time.Hour).Add(time.Duration(i)*time.Millisecond))
 		}
 		row := seedPoolDelivery(t, env, readable.ID, recordID, due())
@@ -275,7 +276,7 @@ func runWebhookSecretHold(t *testing.T, db *gorm.DB) {
 		row := seedPoolDelivery(t, env, endpoint.ID, recordID, due())
 		dials := consumer.dials.Load()
 
-		rt := NewWebhookRuntime(unreadableSecretRepository{env.repo}, consumer.guard(nil), env.box, WithWebhookClock(clock.Now))
+		rt := webhook.NewWebhookRuntime(unreadableSecretRepository{env.repo}, consumer.guard(nil), env.box, webhook.WithWebhookClock(clock.Now))
 		result, err := rt.RunOnce(ctx)
 		require.NoError(t, err)
 		assert.Zero(t, result.HeldEndpoints, "the check opened the stored secret")
@@ -289,7 +290,7 @@ func runWebhookSecretHold(t *testing.T, db *gorm.DB) {
 		assert.Equal(t, 1, stored.Attempts)
 		assert.Equal(t, models.WebhookErrorSecretUnavailable, stored.ErrorCode)
 		require.NotNil(t, stored.NextAttemptAt)
-		assert.True(t, stored.NextAttemptAt.Equal(clock.Now().Add(WebhookRetryBase)),
+		assert.True(t, stored.NextAttemptAt.Equal(clock.Now().Add(webhook.WebhookRetryBase)),
 			"next attempt at the finish + 1 min, got %v", stored.NextAttemptAt)
 		assert.Equal(t, dials, consumer.dials.Load(), "nothing is dialled")
 		assertCircuitUntouched(t, endpoint.ID)
@@ -302,7 +303,7 @@ func runWebhookSecretHold(t *testing.T, db *gorm.DB) {
 		logger.SetOutput(sink)
 		logger.SetFormatter(&logrus.JSONFormatter{})
 		logger.SetLevel(logrus.DebugLevel)
-		rt := wrongRuntime(WithWebhookLogger(logger))
+		rt := wrongRuntime(webhook.WithWebhookLogger(logger))
 
 		entries := func(t *testing.T) []map[string]interface{} {
 			t.Helper()

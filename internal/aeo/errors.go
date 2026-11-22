@@ -15,6 +15,7 @@ import (
 	anthropic "github.com/anthropics/anthropic-sdk-go"
 	openai "github.com/openai/openai-go/v3"
 
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
@@ -167,10 +168,9 @@ func classifyProviderError(name string, err error) *ProviderError {
 		return failure(FailureEmptyResponse, nil)
 	}
 
-	var redirect *redirectError
-	if errors.As(err, &redirect) {
+	if status, ok := egress.RedirectStatus(err); ok {
 		result := failure(FailureRedirectNotFollowed, ErrRedirectNotFollowed)
-		result.StatusCode = redirect.statusCode
+		result.StatusCode = status
 		return result
 	}
 	if errors.Is(err, ErrRedirectNotFollowed) {

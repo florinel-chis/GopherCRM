@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
+	"github.com/florinel-chis/gophercrm/internal/lifecycle"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
@@ -21,17 +21,9 @@ import (
 type AutomationRuntime struct {
 	engine   *AutomationEngine
 	interval time.Duration
-
-	mu      sync.Mutex
-	started bool
-	cancel  context.CancelFunc
-	// exited is closed by the worker goroutine when it returns; nil until the
-	// first Start. Stop joins it, and a closed (or nil) channel makes a
-	// repeated Stop a no-op whatever the caller's context.
-	exited chan struct{}
-	// wake lets a caller (a test, mostly) trigger a tick without waiting for
-	// the interval.
-	wake chan struct{}
+	// loop is the worker goroutine; it also ends when the engine's owned
+	// context does.
+	loop *lifecycle.Loop
 }
 
 // NewAutomationRuntime wraps the engine with a worker that ticks every
@@ -40,7 +32,9 @@ func NewAutomationRuntime(engine *AutomationEngine, interval time.Duration) *Aut
 	if interval < time.Second {
 		interval = time.Second
 	}
-	return &AutomationRuntime{engine: engine, interval: interval, wake: make(chan struct{}, 1)}
+	r := &AutomationRuntime{engine: engine, interval: interval}
+	r.loop = lifecycle.NewLoop("automation worker", interval, r.tick, lifecycle.WithDone(engine.Context().Done()))
+	return r
 }
 
 // Engine is the engine the worker drives.
@@ -54,42 +48,9 @@ func (r *AutomationRuntime) SweepStaleRuns(ctx context.Context) (recovered int, 
 
 // Start arms the worker on a context derived from ctx and from the engine's
 // owned context, so either the process-wide background cancel or Stop ends
-// it. The first tick runs immediately. Starting twice is a no-op.
-func (r *AutomationRuntime) Start(ctx context.Context) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.started {
-		return
-	}
-	r.started = true
-	workerCtx, cancel := context.WithCancel(ctx)
-	r.cancel = cancel
-	exited := make(chan struct{})
-	r.exited = exited
-	go r.loop(workerCtx, exited)
-}
-
-func (r *AutomationRuntime) loop(ctx context.Context, exited chan<- struct{}) {
-	defer close(exited)
-	owned := r.engine.Context()
-	ticker := time.NewTicker(r.interval)
-	defer ticker.Stop()
-	r.tick(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-owned.Done():
-			return
-		case <-ticker.C:
-		case <-r.wake:
-		}
-		if ctx.Err() != nil || owned.Err() != nil {
-			return
-		}
-		r.tick(ctx)
-	}
-}
+// it. The first tick runs immediately. Starting twice, or after Stop, is a
+// no-op.
+func (r *AutomationRuntime) Start(ctx context.Context) { r.loop.Start(ctx) }
 
 func (r *AutomationRuntime) tick(ctx context.Context) {
 	if err := r.engine.Tick(ctx); err != nil && ctx.Err() == nil {
@@ -98,57 +59,38 @@ func (r *AutomationRuntime) tick(ctx context.Context) {
 }
 
 // Wake asks the worker for a tick now. It does nothing when no worker runs.
-func (r *AutomationRuntime) Wake() {
-	select {
-	case r.wake <- struct{}{}:
-	default:
-	}
-}
+func (r *AutomationRuntime) Wake() { r.loop.Wake() }
 
 // Running reports whether the worker goroutine has been started and not yet
-// stopped.
-func (r *AutomationRuntime) Running() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.started
-}
+// stopped. It stays false after Stop, whatever a later Start does.
+func (r *AutomationRuntime) Running() bool { return r.loop.Running() }
+
+// endedContext is a context that has already ended: a Loop.Stop on it cancels
+// the loop and returns without waiting.
+var endedContext = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
 
 // Stop closes admission, cancels the worker context and waits for the
 // goroutine and every admitted unit of work to finish, or for ctx to end. A
 // step whose transaction is in flight finishes or rolls back before Stop
 // returns; nothing is written afterwards. Repeated calls are safe: once the
 // worker has exited and the engine has drained, Stop returns nil even on a
-// context that has already ended.
+// context that has already ended. A stopped worker is never armed again.
 func (r *AutomationRuntime) Stop(ctx context.Context) error {
-	r.mu.Lock()
-	cancel := r.cancel
-	exited := r.exited
-	r.started = false
-	r.mu.Unlock()
-
 	// The worker context goes first so the loop claims no further run while
 	// admission closes; Shutdown then closes admission, cancels the owned
-	// context and waits for every admitted step to release.
-	if cancel != nil {
-		cancel()
-	}
+	// context and waits for every admitted step to release, and the worker
+	// goroutine is joined last.
+	_ = r.loop.Stop(endedContext)
 	var errs []error
 	if err := r.engine.Shutdown(ctx); err != nil {
 		errs = append(errs, err)
 	}
-	if exited == nil {
-		// Never started: there is no goroutine to join.
-		return errors.Join(errs...)
-	}
-	select {
-	case <-exited:
-		return errors.Join(errs...)
-	default:
-	}
-	select {
-	case <-exited:
-	case <-ctx.Done():
-		errs = append(errs, errors.New("automation worker did not stop before the deadline: "+ctx.Err().Error()))
+	if err := r.loop.Stop(ctx); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }

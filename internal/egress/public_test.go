@@ -1,4 +1,4 @@
-package aeo
+package egress
 
 import (
 	"context"
@@ -17,14 +17,14 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 )
 
-// #345: (*EgressGuard).PublicHTTPClient, the webhook sender's only outbound
+// #345: (*Guard).PublicHTTPClient, the webhook sender's only outbound
 // path. It reuses the dial-time checks but never the AEO trust.
 
 const publicHookHost = "hooks.example.com"
 
-func publicGuard(t *testing.T, fi *fakeInternet, allowed, local string) *EgressGuard {
+func publicGuard(t *testing.T, fi *fakeInternet, _, _ string) *Guard {
 	t.Helper()
-	return fi.guard(t, allowed, local)
+	return New(WithResolver(fi), WithDialer(fi.dial), WithRootCAs(fi.roots))
 }
 
 func postThrough(t *testing.T, client *http.Client, url string) (*http.Response, error) {
@@ -86,7 +86,7 @@ func TestEgressPublicClient(t *testing.T) {
 			assertNoTraffic(t, fi)
 			assert.ErrorIs(t, CheckPublicURL(raw), ErrEndpointNotPermitted, raw)
 		}
-		var nilGuard *EgressGuard
+		var nilGuard *Guard
 		_, err := nilGuard.PublicHTTPClient(hookURL(publicHookHost))
 		assert.ErrorIs(t, err, ErrEndpointNotPermitted)
 	})
@@ -102,7 +102,7 @@ func TestEgressPublicClient(t *testing.T) {
 			fi.reset()
 			resolver := &scriptedResolver{answers: [][]netip.Addr{parseAddrs(answer...)}}
 			dialer := &recordingDialer{}
-			guard := NewEgressGuard(config.AEOEgressPolicy{}, WithEgressResolver(resolver), WithEgressDialer(dialer.dial), WithEgressRootCAs(fi.roots))
+			guard := New(WithResolver(resolver), WithDialer(dialer.dial), WithRootCAs(fi.roots))
 			client, err := guard.PublicHTTPClient(hookURL(publicHookHost))
 			require.NoError(t, err)
 			_, err = postThrough(t, client, hookURL(publicHookHost))
@@ -116,8 +116,8 @@ func TestEgressPublicClient(t *testing.T) {
 	t.Run("IPv4-mapped public answers are dialled as IPv4", func(t *testing.T) {
 		resolver := &scriptedResolver{answers: [][]netip.Addr{parseAddrs("::ffff:93.184.216.34")}}
 		dialer := &recordingDialer{}
-		guard := NewEgressGuard(config.AEOEgressPolicy{}, WithEgressResolver(resolver), WithEgressDialer(dialer.dial))
-		conn, err := guard.dialContext(egressRule{AEOEndpoint: config.AEOEndpoint{Scheme: "https", Host: publicHookHost, Port: "443"}})(
+		guard := New(WithResolver(resolver), WithDialer(dialer.dial))
+		conn, err := guard.DialContext(Rule{AEOEndpoint: config.AEOEndpoint{Scheme: "https", Host: publicHookHost, Port: "443"}})(
 			context.Background(), "tcp", publicHookHost+":443")
 		require.NoError(t, err)
 		_ = conn.Close()
@@ -134,7 +134,7 @@ func TestEgressPublicClient(t *testing.T) {
 
 		// A literal is still judged at dial time.
 		dialer := &recordingDialer{}
-		guard := NewEgressGuard(config.AEOEgressPolicy{}, WithEgressDialer(dialer.dial))
+		guard := New(WithDialer(dialer.dial))
 		client, err := guard.PublicHTTPClient("https://10.0.0.5/hook")
 		require.NoError(t, err)
 		_, err = postThrough(t, client, "https://10.0.0.5/hook")
@@ -147,11 +147,7 @@ func TestEgressPublicClient(t *testing.T) {
 		fi.mu.Lock()
 		fi.answers["llm.example.com"] = parseAddrs("10.1.2.3")
 		fi.mu.Unlock()
-		origin := config.AEOEndpoint{Scheme: "https", Host: "llm.example.com", Port: serverPort}
-		allowed := config.AEOEgressOrigin{Provider: config.AEOEgressCustom, AEOEndpoint: origin}
-		local := config.AEOEgressOrigin{Provider: config.AEOEgressCustom, AEOEndpoint: origin, Prefixes: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
-		policy := config.AEOEgressPolicy{AllowedOrigins: []config.AEOEgressOrigin{allowed}, LocalOrigins: []config.AEOEgressOrigin{local}}
-		guard := NewEgressGuard(policy, WithEgressResolver(fi), WithEgressDialer(fi.dial), WithEgressRootCAs(fi.roots))
+		guard := New(WithResolver(fi), WithDialer(fi.dial), WithRootCAs(fi.roots))
 		client, err := guard.PublicHTTPClient(hookURL("llm.example.com"))
 		require.NoError(t, err)
 		_, err = postThrough(t, client, hookURL("llm.example.com"))
@@ -199,8 +195,8 @@ func TestEgressPublicClient(t *testing.T) {
 	t.Run("each connection resolves the host again", func(t *testing.T) {
 		resolver := &scriptedResolver{answers: [][]netip.Addr{parseAddrs("93.184.216.34"), parseAddrs("127.0.0.1")}}
 		dialer := &recordingDialer{}
-		guard := NewEgressGuard(config.AEOEgressPolicy{}, WithEgressResolver(resolver), WithEgressDialer(dialer.dial))
-		dial := guard.dialContext(egressRule{AEOEndpoint: config.AEOEndpoint{Scheme: "https", Host: publicHookHost, Port: "443"}})
+		guard := New(WithResolver(resolver), WithDialer(dialer.dial))
+		dial := guard.DialContext(Rule{AEOEndpoint: config.AEOEndpoint{Scheme: "https", Host: publicHookHost, Port: "443"}})
 		conn, err := dial(context.Background(), "tcp", publicHookHost+":443")
 		require.NoError(t, err)
 		_ = conn.Close()

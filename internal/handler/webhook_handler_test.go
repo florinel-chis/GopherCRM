@@ -24,6 +24,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // #345: the /webhooks routes on the real Auth and RequireRole middleware with
@@ -32,8 +33,8 @@ import (
 type fakeWebhookService struct {
 	mu       sync.Mutex
 	calls    []string
-	created  service.WebhookEndpointInput
-	patch    service.WebhookEndpointPatch
+	created  webhook.WebhookEndpointInput
+	patch    webhook.WebhookEndpointPatch
 	filter   repository.WebhookDeliveryFilter
 	sortBy   string
 	notFound bool
@@ -87,7 +88,7 @@ func (f *fakeWebhookService) RotateEndpointSecret(_ context.Context, id uint) (*
 	return &models.WebhookEndpointSecretRotated{WebhookEndpoint: *fakeWebhookEndpoint(id), Secret: fakeRotatedSecret}, nil
 }
 
-func (f *fakeWebhookService) CreateEndpoint(_ context.Context, input service.WebhookEndpointInput) (*models.WebhookEndpointCreated, error) {
+func (f *fakeWebhookService) CreateEndpoint(_ context.Context, input webhook.WebhookEndpointInput) (*models.WebhookEndpointCreated, error) {
 	f.record("create")
 	f.created = input
 	return &models.WebhookEndpointCreated{WebhookEndpoint: *fakeWebhookEndpoint(1), Secret: "whsec_c2VjcmV0"}, nil
@@ -107,7 +108,7 @@ func (f *fakeWebhookService) ListEndpoints(_ context.Context, _, _ int, sortBy, 
 	return []models.WebhookEndpoint{*fakeWebhookEndpoint(1)}, 1, nil
 }
 
-func (f *fakeWebhookService) UpdateEndpoint(_ context.Context, id uint, patch service.WebhookEndpointPatch) (*models.WebhookEndpoint, error) {
+func (f *fakeWebhookService) UpdateEndpoint(_ context.Context, id uint, patch webhook.WebhookEndpointPatch) (*models.WebhookEndpoint, error) {
 	f.record("update")
 	f.patch = patch
 	if err := f.missing(id); err != nil {
@@ -399,7 +400,7 @@ func TestWebhookHandlerValidation(t *testing.T) {
 		router := gin.New()
 		protected := router.Group("/api/v1")
 		protected.Use(middleware.Auth(webhookAuth{}))
-		SetupWebhookRoutes(protected, NewWebhookHandler(service.NewWebhookService(nil, nil, nil)))
+		SetupWebhookRoutes(protected, NewWebhookHandler(webhook.NewWebhookService(nil, nil, nil)))
 		rec, envelope := serveWebhook(t, router, http.MethodPost, "/webhooks/endpoints/1/test", admin, "")
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		require.NotNil(t, envelope.Error)
@@ -446,7 +447,7 @@ func TestWebhookHandlerValidation(t *testing.T) {
 		router := gin.New()
 		protected := router.Group("/api/v1")
 		protected.Use(middleware.Auth(webhookAuth{}))
-		SetupWebhookRoutes(protected, NewWebhookHandler(service.NewWebhookService(nil, nil, nil)))
+		SetupWebhookRoutes(protected, NewWebhookHandler(webhook.NewWebhookService(nil, nil, nil)))
 		rec, envelope := serveWebhook(t, router, http.MethodGet, "/webhooks/endpoints", admin, "")
 		assert.Equal(t, http.StatusInternalServerError, rec.Code)
 		require.NotNil(t, envelope.Error)
@@ -478,8 +479,8 @@ func TestWebhookRedeliverHandler(t *testing.T) {
 		message string
 	}{
 		{"an unknown delivery is 404", fmt.Errorf("webhook delivery 9 not found: %w", apperrors.ErrNotFound), http.StatusNotFound, utils.ErrCodeNotFound, "Webhook delivery not found"},
-		{"a pending or sending delivery is 409", service.ErrWebhookDeliveryNotRedeliverable, http.StatusConflict, utils.ErrCodeConflict, "Webhook delivery is pending or being sent"},
-		{"a deleted or inactive endpoint is 409", service.ErrWebhookEndpointUnavailable, http.StatusConflict, utils.ErrCodeConflict, "Webhook endpoint is deleted or inactive"},
+		{"a pending or sending delivery is 409", webhook.ErrWebhookDeliveryNotRedeliverable, http.StatusConflict, utils.ErrCodeConflict, "Webhook delivery is pending or being sent"},
+		{"a deleted or inactive endpoint is 409", webhook.ErrWebhookEndpointUnavailable, http.StatusConflict, utils.ErrCodeConflict, "Webhook endpoint is deleted or inactive"},
 		{"an unexpected error is 500 without the cause", errors.New("driver canary-cause"), http.StatusInternalServerError, utils.ErrCodeInternal, ""},
 	}
 	for _, c := range cases {

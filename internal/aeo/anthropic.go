@@ -8,6 +8,7 @@ import (
 	anthropicopt "github.com/anthropics/anthropic-sdk-go/option"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 )
 
 // anthropicTextBlockType is the discriminator of a text content block. Answers
@@ -74,7 +75,7 @@ func (p *AnthropicProvider) Query(ctx context.Context, prompt string) (ProviderA
 	if p.blocked != nil {
 		return ProviderAnswer{}, SanitizeProviderError(p.Name(), p.blocked)
 	}
-	message, err := p.client.Messages.New(withEgressLatch(ctx), anthropic.MessageNewParams{
+	message, err := p.client.Messages.New(egress.WithLatch(ctx), anthropic.MessageNewParams{
 		Model:     anthropic.Model(p.model),
 		MaxTokens: maxAnswerTokens,
 		Messages: []anthropic.MessageParam{

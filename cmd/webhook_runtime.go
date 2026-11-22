@@ -3,31 +3,30 @@ package main
 import (
 	"context"
 
-	"github.com/florinel-chis/gophercrm/internal/aeo"
-	"github.com/florinel-chis/gophercrm/internal/config"
+	"github.com/florinel-chis/gophercrm/internal/egress"
 	"github.com/florinel-chis/gophercrm/internal/repository"
-	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 // webhookRuntimeBuilt is a test hook: it receives the runtime setupDependencies
 // builds, so the wiring roots can run a pass on demand. Nil in production.
-var webhookRuntimeBuilt func(*service.WebhookRuntime)
+var webhookRuntimeBuilt func(*webhook.WebhookRuntime)
 
 // webhookBackground owns the outbound webhook delivery runtime (#345). It runs
 // on every replica: claims are conditional, so replicas only compete for the
 // same rows. Stop is joined through combineStops before the database closes.
 type webhookBackground struct {
-	runtime *service.WebhookRuntime
+	runtime *webhook.WebhookRuntime
 }
 
 // newWebhookBackground builds the runtime with the real public-only egress
 // guard (no AEO allowlist or local exception applies to it) and the secret
 // box of the endpoint secrets; opts (the worker pool size) pass through to
-// service.NewWebhookRuntime.
-func newWebhookBackground(repo repository.WebhookRepository, box *utils.SecretBox, opts ...service.WebhookRuntimeOption) *webhookBackground {
-	guard := aeo.NewEgressGuard(config.AEOEgressPolicy{})
-	runtime := service.NewWebhookRuntime(repo, guard, box, opts...)
+// webhook.NewWebhookRuntime.
+func newWebhookBackground(repo repository.WebhookRepository, box *utils.SecretBox, opts ...webhook.WebhookRuntimeOption) *webhookBackground {
+	guard := egress.New()
+	runtime := webhook.NewWebhookRuntime(repo, guard, box, opts...)
 	if webhookRuntimeBuilt != nil {
 		webhookRuntimeBuilt(runtime)
 	}
@@ -35,7 +34,7 @@ func newWebhookBackground(repo repository.WebhookRepository, box *utils.SecretBo
 }
 
 // start runs the first pass at once and then one every
-// service.WebhookPollInterval.
+// webhook.WebhookPollInterval.
 func (b *webhookBackground) start(ctx context.Context) {
 	b.runtime.Start(ctx)
 }

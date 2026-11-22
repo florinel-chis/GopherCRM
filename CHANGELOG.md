@@ -1156,6 +1156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The outbound-request guard, the webhook runtime and the background lifecycle have their own
+  packages (#617).** The dial-time checks, the redirect refusal and the public-only client move
+  from `internal/aeo` to `internal/egress`, and the AEO provider guard builds on them. The webhook
+  delivery runtime, signing and endpoint service move from `internal/service` to
+  `internal/webhook`, which no longer depends on `internal/aeo` or `internal/service`. The webhook
+  sender, the stale bulk-operation sweep, the form retention purge, the automation worker and AEO
+  run ownership share one start/stop and admission type in `internal/lifecycle` (`Loop`,
+  `Owner`). Three small lifecycle differences: the automation worker's stop timeout error now
+  wraps the context error (same text), a stopped automation worker is no longer armed again by a
+  later `Start`, and a repeated AEO shutdown after the drain always returns nil. Behaviour, log
+  lines and error texts are otherwise unchanged.
+
 - **Lead assignment, lead conversion and the automation assign-owner step send updated webhook
   events (#616).** `POST /leads/{id}/assign` now writes `lead.updated` when the owner changed
   (assigning the current owner again sends nothing), `POST /leads/{id}/convert` writes
