@@ -27,7 +27,39 @@ the people one by one.
    - **Application (client) ID**: this is `<application (client) id>`.
    - **Directory (tenant) ID**: this is `<tenant id>`.
 
-## 2. Create a client secret
+## 2. Create a client credential: a certificate (recommended) or a client secret
+
+GopherCRM proves to Entra ID that it is the registered application when it exchanges the sign-in
+code for tokens. Microsoft recommends a certificate over a client secret: GopherCRM then signs a
+short-lived client assertion with the certificate's private key, and no shared secret is sent.
+Choose one of the two options. If both are saved in GopherCRM, the certificate is used.
+
+### Option A: a certificate (recommended)
+
+1. Create a certificate and its private key. A certificate from your organisation's certificate
+   authority works; a self-signed one is enough for Entra ID. With OpenSSL, on a trusted machine:
+
+   ```
+   openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes -subj "/CN=GopherCRM single sign-on" -keyout gophercrm-sso.key -out gophercrm-sso.crt
+   ```
+
+   This writes the certificate to `gophercrm-sso.crt` and its unencrypted RSA private key to
+   `gophercrm-sso.key`. GopherCRM needs an RSA key of at least 2048 bits, not encrypted with a
+   passphrase.
+2. In the application, open **Certificates & secrets** → **Certificates** → **Upload
+   certificate**, choose `gophercrm-sso.crt`, enter a description and choose **Add**. Upload only
+   the certificate, never the key.
+3. Note the **Thumbprint** Entra ID shows for the certificate and its expiry date. After you save
+   the certificate in GopherCRM (step 6), Settings → Single sign-on shows the same thumbprint:
+   compare the two.
+4. Keep `gophercrm-sso.key` secret: do not commit it to git, do not paste it into chat or email,
+   and delete local copies once it is saved in GopherCRM (keep one in your password manager or key
+   vault if you need it again). GopherCRM stores the key encrypted and never shows it again.
+5. Renew before the expiry date, or single sign-on stops working: create a new certificate, upload
+   it here next to the old one, save the new certificate and key in GopherCRM (step 6), check that
+   a sign-in works, and then delete the old certificate here.
+
+### Option B: a client secret
 
 1. In the application, open **Certificates & secrets** → **Client secrets** → **New client
    secret**.
@@ -84,7 +116,12 @@ mapping. It is case-sensitive.
 3. Open Settings → Single sign-on and enter:
    - **Issuer URL**: `https://login.microsoftonline.com/<tenant id>/v2.0`
    - **Client ID**: `<application (client) id>`
-   - **Client secret**: the secret value from step 2
+   - With a certificate (step 2, option A): paste the whole content of `gophercrm-sso.crt` into
+     **Client certificate (PEM)** and the whole content of `gophercrm-sso.key` into **Client
+     private key (PEM)**. Paste only this one certificate, not a chain of certificates. After the
+     save, the line under the fields shows the thumbprint and the expiry: compare the thumbprint
+     with the one in Entra ID. Leave **Client secret** empty.
+   - With a client secret (step 2, option B): **Client secret**: the secret value from step 2
    - **Scopes**: leave the default `openid profile email`
 4. Under **Role mapping**, choose **Add mapping** twice:
    - **Claim** `roles`, **Value** `CRM.Admin`, **Role** Admin
@@ -93,7 +130,8 @@ mapping. It is case-sensitive.
 6. Switch **Enabled** on and choose **Save**.
 
 The same configuration can come from the server's environment instead (a value saved in Settings
-wins). Replace the role ids with those from step 6.2:
+wins). The certificate has no environment variable: it is entered in Settings only. Replace the
+role ids with those from step 6.2:
 
 ```
 OIDC_ENABLED=true
@@ -112,8 +150,8 @@ OIDC_ROLE_MAPPING=[{"claim":"roles","value":"CRM.Admin","role_id":<Admin role id
 4. If a sign-in fails, read the reason in Settings → Sign-in audit and look it up in the
    [troubleshooting table](single-sign-on.md#troubleshooting).
 
-Keep your local administrator account. It is the way back in if the secret expires or the mapping
-is wrong.
+Keep your local administrator account. It is the way back in if the certificate or the secret
+expires or the mapping is wrong.
 
 ## 8. Provision accounts through SCIM (optional)
 

@@ -18,7 +18,7 @@ blocked until the page is built.
   `internal/handler/webhook_handler.go`, `gocrm-ui/e2e/tests/settings-webhooks.spec.ts` (the
   webhook screen, TC-SET-036 to TC-SET-040)
 - `gocrm-ui/src/pages/settings/SSOSettings.tsx`, `gocrm-ui/src/api/endpoints/ssoSettings.ts`,
-  `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041)
+  `internal/handler/sso_settings_handler.go` (the single sign-on screen, TC-SET-041 and TC-SET-043)
 - `gocrm-ui/src/pages/settings/SCIMTokens.tsx`, `gocrm-ui/src/components/OneTimeSecretDialog.tsx`,
   `gocrm-ui/src/api/endpoints/scimTokens.ts`, `internal/handler/scim_token_handler.go`,
   `gocrm-ui/e2e/tests/settings-scim-tokens.spec.ts` (the SCIM provider token screen, TC-SET-042)
@@ -888,6 +888,35 @@ can succeed.
 - **Known issue:** `PUT /settings/sso` is a full replacement, so the first save stores the
   environment-derived values shown as settings; a later `OIDC_*` change no longer applies to them.
 - **Automation:** automated — Vitest `src/pages/settings/SSOSettings.test.tsx`, `src/routes/index.permissions.test.tsx` "open the single sign-on screen only with settings.sso_manage", `src/layouts/MainLayout.permissions.test.tsx` "shows Single sign-on under Settings only to a caller holding settings.sso_manage"
+
+### TC-SET-043 — Set, show and clear the single sign-on client certificate
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Signed in with `settings.sso_manage`; no client certificate is stored; a
+  certificate and its unencrypted RSA-2048 private key were generated for the test (never a
+  committed key).
+- **Steps:**
+  1. Open Settings > Single sign-on.
+  2. Paste the certificate into "Client certificate (PEM)" and the key into "Client private key
+     (PEM)", and press Save.
+  3. Reload the screen and read `GET /settings/sso`.
+  4. Paste only a certificate (or a key that does not match it) and press Save.
+  5. Press "Clear client certificate" and press Save.
+- **Expected:** Step 1: the two inputs are empty and `sso-certificate-status` reads "No client
+  certificate is set". Step 2: the PUT carries both `client_certificate` and `client_private_key`;
+  the answer is 200 and holds neither PEM; both inputs are empty afterwards and the status reads
+  "A client certificate is set (thumbprint <T>, expires <date>); it is used instead of the client
+  secret", where <T> is the uppercase hex SHA-1 of the certificate; an expired stored certificate
+  also says that it has expired. Step 3: the same status; the GET body carries
+  `client_certificate_set` true, the same thumbprint, `client_certificate_expires_at` and
+  `sources.client_certificate` "settings", and neither the page nor the body contains the key.
+  Step 4: 400 `VALIDATION_ERROR` with the refusal under the matching input
+  (`details.client_private_key` or `details.client_certificate`), no message quoting the pasted
+  value, and nothing stored. Step 5: before the save the status reads "The client certificate will
+  be cleared when you save"; the PUT carries both keys as "", and afterwards the status reads "No
+  client certificate is set". A save that leaves both inputs empty sends neither key and keeps the
+  stored pair.
+- **Automation:** automated — Playwright `gocrm-ui/e2e/tests/sso.spec.ts` "S15: a client certificate is saved on the settings screen, shown by its thumbprint, its key never"; Vitest `src/pages/settings/SSOSettings.test.tsx` "client certificate"; Go `internal/handler/sso_settings_handler_test.go` `TestSSOSettingsHandlerClientCertificate`, `internal/service/sso_settings_test.go` `TestSSOSettingsClientCertificate`, `internal/service/auth_oidc_test.go` `TestOIDCClientAssertion` (the client assertion of the code exchange)
 
 ### TC-SET-042 — Create, show once and revoke a SCIM provider token
 - **Priority:** P1

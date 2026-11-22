@@ -35,7 +35,18 @@ export interface SSOSettingsBody {
   scopes: string[];
   role_mapping: SSORoleMapping[];
   client_secret?: string;
+  /** PEM; sent together with client_private_key ("" and "" clear the pair). */
+  client_certificate?: string;
+  client_private_key?: string;
   confirm_issuer_change?: boolean;
+}
+
+/** What GET /settings/sso adds to the body: the write-only values are reported, never returned. */
+export interface SSOSettingsState extends SSOSettingsBody {
+  client_secret_set: boolean;
+  client_certificate_set: boolean;
+  client_certificate_thumbprint: string;
+  client_certificate_expires_at: string;
 }
 
 export interface UserRow {
@@ -106,7 +117,7 @@ export class APIClient {
     expect(response.status(), `PUT /settings/sso: ${await response.text()}`).toBe(200);
   }
 
-  async getSSO(): Promise<SSOSettingsBody & { client_secret_set: boolean }> {
+  async getSSO(): Promise<SSOSettingsState> {
     const response = await this.get('/settings/sso');
     expect(response.status()).toBe(200);
     return (await response.json()).data;
@@ -179,6 +190,8 @@ export const SSO_OFF: SSOSettingsBody = {
   scopes: [],
   role_mapping: [],
   client_secret: '',
+  client_certificate: '',
+  client_private_key: '',
   // Sign-ins of the suite link accounts under the test issuer, so clearing it
   // is an issuer change that needs the confirmation.
   confirm_issuer_change: true,

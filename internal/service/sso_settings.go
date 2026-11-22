@@ -2,11 +2,17 @@ package service
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -37,6 +43,12 @@ const (
 	SSOScopesMax            = 20
 	SSORoleMappingMax       = 200
 	SSORoleMappingValueMax  = 256
+
+	SSOClientCertificateMaxBytes = 16384
+	SSOClientPrivateKeyMaxBytes  = 16384
+	// SSOClientKeyMinBits is the smallest RSA key the client certificate may
+	// carry.
+	SSOClientKeyMinBits = 2048
 )
 
 // ssoDefaultScopes applies when neither a setting nor OIDC_SCOPES names any.
@@ -59,6 +71,21 @@ type SSOConfigSources struct {
 	ClientSecret  string `json:"client_secret"`
 	Scopes        string `json:"scopes"`
 	RoleMapping   string `json:"role_mapping"`
+	// ClientCertificate is settings or default: the certificate has no
+	// environment fallback.
+	ClientCertificate string `json:"client_certificate"`
+}
+
+// SSOClientCertificate is a usable stored client certificate and its RSA
+// private key. While one is in force, the code exchange authenticates with a
+// signed client assertion (private_key_jwt) instead of the client secret.
+type SSOClientCertificate struct {
+	Certificate *x509.Certificate
+	PrivateKey  *rsa.PrivateKey
+	// ThumbprintSHA1 is the uppercase hex SHA-1 of the certificate DER, as
+	// the identity provider shows it.
+	ThumbprintSHA1 string
+	NotAfter       time.Time
 }
 
 // EffectiveSSOConfig is the single sign-on configuration in force: stored
@@ -82,13 +109,20 @@ type EffectiveSSOConfig struct {
 	// ID tokens are verified against jwks_uri?appid=<client id>. Environment
 	// only, never a stored setting.
 	EntraAppSigningKeys bool
-	Sources             SSOConfigSources
+	// ClientCertificate is the stored client certificate pair, or nil when
+	// none is stored or the stored pair is not usable. An expired certificate
+	// stays in force: the identity provider refuses it, and the expiry shows.
+	ClientCertificate *SSOClientCertificate
+	Sources           SSOConfigSources
 }
 
 // SSOSettingsUpdate is a full replacement of the stored single sign-on
 // settings. An empty field clears the stored value, so the environment
 // applies again; Enabled nil and AllowPassword nil clear theirs too.
 // ClientSecret nil keeps the stored secret and "" clears it.
+// ClientCertificate and ClientPrivateKey go together: both nil keep the stored
+// pair, both "" clear it and both non-empty replace it; any other combination
+// is refused.
 type SSOSettingsUpdate struct {
 	Enabled       *bool
 	AllowPassword *bool
@@ -97,6 +131,10 @@ type SSOSettingsUpdate struct {
 	ClientSecret  *string
 	Scopes        []string
 	RoleMapping   []SSORoleMapping
+	// ClientCertificate is one PEM CERTIFICATE block; ClientPrivateKey its
+	// unencrypted RSA key (PKCS#8 or PKCS#1 PEM) of at least 2048 bits.
+	ClientCertificate *string
+	ClientPrivateKey  *string
 	// ConfirmIssuerChange confirms a save that changes the effective issuer
 	// while user_identities rows exist under the current one. Without it such
 	// a save is refused with an *SSOIssuerChangeError.
@@ -178,6 +216,7 @@ type ssoSettingsService struct {
 	roles   repository.RoleRepository
 	links   SSOIssuerLinks
 	base    config.SSOConfig
+	now     func() time.Time
 }
 
 // NewSSOSettingsService builds the service over the configuration service
@@ -185,7 +224,7 @@ type ssoSettingsService struct {
 // role repository, the identity links counted before an issuer change and
 // the boot-time OIDC_* fallbacks.
 func NewSSOSettingsService(configs ConfigurationService, roles repository.RoleRepository, links SSOIssuerLinks, base config.SSOConfig) SSOSettingsService {
-	return &ssoSettingsService{configs: configs, roles: roles, links: links, base: base}
+	return &ssoSettingsService{configs: configs, roles: roles, links: links, base: base, now: time.Now}
 }
 
 func ssoLogger() *logrus.Entry {
@@ -226,6 +265,7 @@ func (s *ssoSettingsService) SSOConfig(ctx context.Context) (EffectiveSSOConfig,
 	out.ClientSecret, out.Sources.ClientSecret = s.effectiveSecret()
 	out.Scopes, out.Sources.Scopes = s.effectiveScopes()
 	out.RoleMapping, out.Sources.RoleMapping = s.effectiveRoleMapping()
+	out.ClientCertificate, out.Sources.ClientCertificate = s.effectiveClientCertificate()
 	out.GraphMaxPages = effectiveGraphMaxPages(s.base.GraphMaxPages)
 	out.EntraAppSigningKeys = s.base.EntraAppSigningKeys
 	return out, nil
@@ -329,6 +369,157 @@ func (s *ssoSettingsService) effectiveSecret() (string, string) {
 		return s.base.ClientSecret, SSOSourceEnv
 	}
 	return "", SSOSourceDefault
+}
+
+// effectiveClientCertificate reads the stored pair. Both empty is unset. A pair
+// that cannot be read, is incomplete, does not parse or does not match is
+// treated as unset too, with one warning that names only the row.
+func (s *ssoSettingsService) effectiveClientCertificate() (*SSOClientCertificate, string) {
+	unusable := func(key string) (*SSOClientCertificate, string) {
+		ssoLogger().WithField("config_key", key).
+			Warn("Stored single sign-on client certificate is not usable and is treated as unset")
+		return nil, SSOSourceDefault
+	}
+	certPEM, err := s.configs.GetSecret(models.ConfigKeySSOClientCertificate)
+	if err != nil && !apperrors.IsNotFound(err) {
+		return unusable(models.ConfigKeySSOClientCertificate)
+	}
+	keyPEM, err := s.configs.GetSecret(models.ConfigKeySSOClientPrivateKey)
+	if err != nil && !apperrors.IsNotFound(err) {
+		return unusable(models.ConfigKeySSOClientPrivateKey)
+	}
+	switch {
+	case certPEM == "" && keyPEM == "":
+		return nil, SSOSourceDefault
+	case certPEM == "":
+		return unusable(models.ConfigKeySSOClientCertificate)
+	case keyPEM == "":
+		return unusable(models.ConfigKeySSOClientPrivateKey)
+	}
+	// The zero time skips the expiry check: an expired stored certificate
+	// stays in force.
+	pair, fields := parseSSOClientCertificate(certPEM, keyPEM, time.Time{})
+	if _, refused := fields["client_certificate"]; refused {
+		return unusable(models.ConfigKeySSOClientCertificate)
+	}
+	if len(fields) > 0 {
+		return unusable(models.ConfigKeySSOClientPrivateKey)
+	}
+	return pair, SSOSourceSettings
+}
+
+// Refusal messages of the client certificate pair. They never quote a value.
+const (
+	ssoCertNotPEM     = "must be one PEM block of type CERTIFICATE holding an X.509 certificate"
+	ssoCertExpired    = "has expired"
+	ssoKeyNotPEM      = "must be one PEM block of type PRIVATE KEY (PKCS#8) or RSA PRIVATE KEY (PKCS#1)"
+	ssoKeyEncrypted   = "must not be encrypted"
+	ssoKeyNotRSA      = "must be an RSA key"
+	ssoKeyTooSmall    = "must be an RSA key of at least 2048 bits"
+	ssoKeyMismatch    = "does not match client_certificate"
+	ssoPairWithKey    = "must be sent together with client_private_key"
+	ssoPairWithCert   = "must be sent together with client_certificate"
+	ssoPEMBlockPrefix = "-----BEGIN "
+)
+
+// singlePEMBlock decodes text that is exactly one PEM block, surrounding
+// whitespace aside. pem.Decode accepts CRLF line endings.
+func singlePEMBlock(text string) *pem.Block {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(trimmed, ssoPEMBlockPrefix) {
+		return nil
+	}
+	block, rest := pem.Decode([]byte(trimmed))
+	if block == nil || strings.TrimSpace(string(rest)) != "" {
+		return nil
+	}
+	return block
+}
+
+// parseSSOClientCertificate validates a certificate and private key pair and
+// returns it parsed, or the refused fields (client_certificate,
+// client_private_key). A non-zero now also refuses an expired certificate.
+func parseSSOClientCertificate(certPEM, keyPEM string, now time.Time) (*SSOClientCertificate, map[string]string) {
+	fields := map[string]string{}
+	if len(certPEM) > SSOClientCertificateMaxBytes {
+		fields["client_certificate"] = fmt.Sprintf("must be at most %d bytes", SSOClientCertificateMaxBytes)
+	}
+	if len(keyPEM) > SSOClientPrivateKeyMaxBytes {
+		fields["client_private_key"] = fmt.Sprintf("must be at most %d bytes", SSOClientPrivateKeyMaxBytes)
+	}
+	if len(fields) > 0 {
+		return nil, fields
+	}
+
+	var cert *x509.Certificate
+	if block := singlePEMBlock(certPEM); block == nil || block.Type != "CERTIFICATE" || len(block.Headers) > 0 {
+		fields["client_certificate"] = ssoCertNotPEM
+	} else if parsed, err := x509.ParseCertificate(block.Bytes); err != nil {
+		fields["client_certificate"] = ssoCertNotPEM
+	} else if !now.IsZero() && !parsed.NotAfter.After(now) {
+		fields["client_certificate"] = ssoCertExpired
+	} else {
+		cert = parsed
+	}
+
+	key, message := parseSSOClientPrivateKey(keyPEM)
+	if message != "" {
+		fields["client_private_key"] = message
+	}
+	if cert != nil && key != nil {
+		if certKey, ok := cert.PublicKey.(*rsa.PublicKey); !ok || !certKey.Equal(&key.PublicKey) {
+			fields["client_private_key"] = ssoKeyMismatch
+		}
+	}
+	if len(fields) > 0 {
+		return nil, fields
+	}
+	// The thumbprint is the SHA-1 identifier identity providers display.
+	sum := sha1.Sum(cert.Raw)
+	return &SSOClientCertificate{
+		Certificate:    cert,
+		PrivateKey:     key,
+		ThumbprintSHA1: strings.ToUpper(hex.EncodeToString(sum[:])),
+		NotAfter:       cert.NotAfter,
+	}, nil
+}
+
+// parseSSOClientPrivateKey returns the RSA key, or a fixed refusal message.
+func parseSSOClientPrivateKey(keyPEM string) (*rsa.PrivateKey, string) {
+	block := singlePEMBlock(keyPEM)
+	if block == nil {
+		return nil, ssoKeyNotPEM
+	}
+	if block.Type == "ENCRYPTED PRIVATE KEY" || block.Headers["Proc-Type"] != "" || block.Headers["DEK-Info"] != "" {
+		return nil, ssoKeyEncrypted
+	}
+	var parsed interface{}
+	switch block.Type {
+	case "PRIVATE KEY":
+		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, ssoKeyNotPEM
+		}
+		parsed = key
+	case "RSA PRIVATE KEY":
+		key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, ssoKeyNotPEM
+		}
+		parsed = key
+	case "EC PRIVATE KEY":
+		return nil, ssoKeyNotRSA
+	default:
+		return nil, ssoKeyNotPEM
+	}
+	key, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		return nil, ssoKeyNotRSA
+	}
+	if key.N.BitLen() < SSOClientKeyMinBits {
+		return nil, ssoKeyTooSmall
+	}
+	return key, ""
 }
 
 func (s *ssoSettingsService) effectiveScopes() ([]string, string) {
@@ -481,6 +672,7 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 	}
 	validateSSOScopes(update.Scopes, fields)
 	mapping := validateSSORoleMapping(update.RoleMapping, fields)
+	certWrites := s.validateClientCertificate(update, fields)
 
 	if len(fields) > 0 {
 		return &SSOSettingsError{Kind: ErrSSOSettingsInvalid, Fields: fields}
@@ -537,6 +729,9 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 	if update.ClientSecret != nil {
 		writes = append(writes, ssoWrite{models.ConfigKeySSOClientSecret, *update.ClientSecret})
 	}
+	// The certificate goes before its key. A read between the two writes sees
+	// a mismatched or incomplete pair, which is treated as unset.
+	writes = append(writes, certWrites...)
 	// A failure part-way must never leave SSO enabled over a half-written
 	// configuration: enabling writes the switch last, disabling first.
 	enabled := ssoWrite{models.ConfigKeySSOEnabled, enabledText}
@@ -552,6 +747,42 @@ func (s *ssoSettingsService) Update(ctx context.Context, update SSOSettingsUpdat
 		}
 	}
 	return nil
+}
+
+// validateClientCertificate checks the certificate pair of an update and
+// returns its writes (none when the pair is kept). Refusals go into fields.
+func (s *ssoSettingsService) validateClientCertificate(update SSOSettingsUpdate, fields map[string]string) []ssoWrite {
+	cert, key := update.ClientCertificate, update.ClientPrivateKey
+	switch {
+	case cert == nil && key == nil:
+		return nil
+	case cert == nil:
+		fields["client_certificate"] = ssoPairWithKey
+		return nil
+	case key == nil:
+		fields["client_private_key"] = ssoPairWithCert
+		return nil
+	case *cert == "" && *key == "":
+		return []ssoWrite{{models.ConfigKeySSOClientCertificate, ""}, {models.ConfigKeySSOClientPrivateKey, ""}}
+	case *cert == "":
+		fields["client_certificate"] = ssoPairWithKey
+		return nil
+	case *key == "":
+		fields["client_private_key"] = ssoPairWithCert
+		return nil
+	}
+	_, refused := parseSSOClientCertificate(*cert, *key, s.now())
+	for field, message := range refused {
+		fields[field] = message
+	}
+	if len(refused) > 0 {
+		return nil
+	}
+	// The values are stored as sent, trimmed: re-reading them parses the same.
+	return []ssoWrite{
+		{models.ConfigKeySSOClientCertificate, strings.TrimSpace(*cert)},
+		{models.ConfigKeySSOClientPrivateKey, strings.TrimSpace(*key)},
+	}
 }
 
 // checkIssuerChange refuses a save whose effective issuer differs from the

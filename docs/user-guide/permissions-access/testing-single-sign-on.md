@@ -18,7 +18,9 @@ steps. Before you test, check that you have:
 - **The Web redirect URI** `APP_BASE_URL/auth/callback`, that is `<APP_BASE_URL>/auth/callback`
   exactly, with no trailing slash (section 1, step 4). Entra ID accepts `http` only for
   localhost, so a local test uses for example http://localhost:5173/auth/callback.
-- **A client secret** (section 2). Copy its **Value**, not the Secret ID.
+- **A client secret or a certificate** (section 2). For a secret, copy its **Value**, not the
+  Secret ID. A certificate and its private key are entered in Settings → Single sign-on only; there
+  is no environment variable for them.
 - **Admin consent** granted for the API permissions (section 3).
 - **App roles** `CRM.Admin` and `CRM.Sales` (section 4).
 - **Assignment required** set to **Yes**, and **one test person** assigned an app role
@@ -30,7 +32,8 @@ Open Settings → Single sign-on (`/settings/sso`) as a local administrator and 
 
 - **Issuer URL**: `https://login.microsoftonline.com/<tenant id>/v2.0`
 - **Client ID**: `<application (client) id>`
-- **Client secret**: the secret's Value
+- **Client secret**: the secret's Value, or, with a certificate, **Client certificate (PEM)** and
+  **Client private key (PEM)** (section 6 of the how-to)
 - **Scopes**: leave the default `openid profile email`
 
 For the **Role mapping** rows you need the GopherCRM role ids. `GET /api/v1/roles` lists them, or

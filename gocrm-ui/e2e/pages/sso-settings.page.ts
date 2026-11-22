@@ -35,6 +35,22 @@ export class SSOSettingsPage {
     return this.page.getByTestId('sso-secret-status');
   }
 
+  get clientCertificate() {
+    return this.page.getByLabel('Client certificate (PEM)', { exact: true });
+  }
+
+  get clientPrivateKey() {
+    return this.page.getByLabel('Client private key (PEM)', { exact: true });
+  }
+
+  get certificateStatus() {
+    return this.page.getByTestId('sso-certificate-status');
+  }
+
+  get clearCertificateButton() {
+    return this.page.getByRole('button', { name: 'Clear client certificate', exact: true });
+  }
+
   /** The confirmation a save that changes the issuer in force opens (#556). */
   get issuerChangeDialog() {
     return this.page.getByRole('dialog', { name: 'Change the issuer?' });

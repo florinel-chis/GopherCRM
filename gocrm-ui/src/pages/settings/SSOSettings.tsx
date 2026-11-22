@@ -35,6 +35,7 @@ import {
   type SSOSettingsUpdate,
 } from '@/api/endpoints';
 import { apiErrorMessage, getAPIError, getHTTPStatus } from '@/utils/apiError';
+import { formatDate } from '@/utils/date';
 
 // The query keys never carry the client secret: the GET answer has none.
 const ssoSettingsKey = ['sso-settings'] as const;
@@ -82,6 +83,33 @@ const unconfirmedIssuerLinks = (error: unknown): number | null => {
   return typeof links === 'number' ? links : 0;
 };
 
+// The client certificate fields whose refusal is shown under their input.
+type CertificateField = 'client_certificate' | 'client_private_key';
+
+const certificateFieldErrors = (error: unknown): Partial<Record<CertificateField, string>> => {
+  const details = getHTTPStatus(error) === 400 ? getAPIError(error)?.details : undefined;
+  const out: Partial<Record<CertificateField, string>> = {};
+  for (const field of ['client_certificate', 'client_private_key'] as const) {
+    const message = details?.[field];
+    if (typeof message === 'string' && message) out[field] = message;
+  }
+  return out;
+};
+
+const certificateStatusText = (settings: SSOSettingsData, clearing: boolean): string => {
+  if (clearing) return 'The client certificate will be cleared when you save';
+  if (!settings.client_certificate_set) return 'No client certificate is set';
+  const expires = formatDate(settings.client_certificate_expires_at, 'PP');
+  let text =
+    `A client certificate is set (thumbprint ${settings.client_certificate_thumbprint}, expires ${expires}); ` +
+    'it is used instead of the client secret';
+  const expiresAt = new Date(settings.client_certificate_expires_at);
+  if (!Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) {
+    text += '. It has expired, so sign-in fails until a new certificate is saved';
+  }
+  return text;
+};
+
 const linksText = (links: number): string =>
   links === 1
     ? '1 account link uses the current issuer.'
@@ -105,6 +133,12 @@ export const SSOSettings: React.FC = () => {
   // cleared after every save and never shown anywhere but in the input.
   const [secret, setSecret] = useState('');
   const [clearSecret, setClearSecret] = useState(false);
+  // The certificate and its private key, like the secret, exist only in this
+  // state while they are pasted, and are emptied after every save.
+  const [certificatePEM, setCertificatePEM] = useState('');
+  const [privateKeyPEM, setPrivateKeyPEM] = useState('');
+  const [clearCertificate, setClearCertificate] = useState(false);
+  const [certificateErrors, setCertificateErrors] = useState<Partial<Record<CertificateField, string>>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   // A refused issuer change: the count and the body to resend on confirm.
   const [issuerChange, setIssuerChange] = useState<{ links: number; body: SSOSettingsUpdate } | null>(null);
@@ -120,6 +154,10 @@ export const SSOSettings: React.FC = () => {
     onSuccess: (updated) => {
       setSecret('');
       setClearSecret(false);
+      setCertificatePEM('');
+      setPrivateKeyPEM('');
+      setClearCertificate(false);
+      setCertificateErrors({});
       setSaveError(null);
       queryClient.setQueryData(ssoSettingsKey, updated);
       setForm(toForm(updated));
@@ -131,6 +169,7 @@ export const SSOSettings: React.FC = () => {
         setIssuerChange({ links, body });
         return;
       }
+      setCertificateErrors(certificateFieldErrors(error));
       setSaveError(
         apiErrorMessage(error, 'The single sign-on settings could not be saved.', {
           details: true,
@@ -162,6 +201,7 @@ export const SSOSettings: React.FC = () => {
   const save = (event: React.FormEvent) => {
     event.preventDefault();
     setSaveError(null);
+    setCertificateErrors({});
     const body: SSOSettingsUpdate = {
       enabled: form.enabled,
       allow_password: form.allow_password,
@@ -179,6 +219,15 @@ export const SSOSettings: React.FC = () => {
       body.client_secret = secret;
     } else if (clearSecret) {
       body.client_secret = '';
+    }
+    // Both keys or neither: a pasted value sends the pair, Clear sends both
+    // empty, and otherwise the stored pair is kept.
+    if (certificatePEM !== '' || privateKeyPEM !== '') {
+      body.client_certificate = certificatePEM;
+      body.client_private_key = privateKeyPEM;
+    } else if (clearCertificate) {
+      body.client_certificate = '';
+      body.client_private_key = '';
     }
     mutation.mutate(body);
   };
@@ -295,6 +344,60 @@ export const SSOSettings: React.FC = () => {
                 }}
               >
                 Clear client secret
+              </Button>
+            </Box>
+          </Box>
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              A client certificate replaces the client secret in the token request: GopherCRM signs a client
+              assertion with its private key. Paste only the leaf certificate, not a chain, and its unencrypted
+              RSA private key (2048 bits or more).
+            </Typography>
+            <Stack spacing={2}>
+              <TextField
+                label="Client certificate (PEM)"
+                value={certificatePEM}
+                onChange={(event) => {
+                  setCertificatePEM(event.target.value);
+                  setClearCertificate(false);
+                }}
+                error={Boolean(certificateErrors.client_certificate)}
+                helperText={certificateErrors.client_certificate ?? 'Leave both empty to keep the current certificate'}
+                multiline
+                minRows={3}
+                autoComplete="off"
+                slotProps={{ htmlInput: { spellCheck: false } }}
+                fullWidth
+              />
+              <TextField
+                label="Client private key (PEM)"
+                value={privateKeyPEM}
+                onChange={(event) => {
+                  setPrivateKeyPEM(event.target.value);
+                  setClearCertificate(false);
+                }}
+                error={Boolean(certificateErrors.client_private_key)}
+                helperText={certificateErrors.client_private_key ?? 'Stored encrypted and never shown again'}
+                multiline
+                minRows={3}
+                autoComplete="off"
+                slotProps={{ htmlInput: { spellCheck: false } }}
+                fullWidth
+              />
+            </Stack>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
+              <Typography variant="body2" data-testid="sso-certificate-status">
+                {certificateStatusText(settings, clearCertificate && certificatePEM === '' && privateKeyPEM === '')}
+              </Typography>
+              <Button
+                size="small"
+                onClick={() => {
+                  setCertificatePEM('');
+                  setPrivateKeyPEM('');
+                  setClearCertificate(true);
+                }}
+              >
+                Clear client certificate
               </Button>
             </Box>
           </Box>

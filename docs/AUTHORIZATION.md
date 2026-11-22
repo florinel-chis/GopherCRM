@@ -1146,8 +1146,8 @@ rules, rotation, revocation and deactivation.
 
 ## Phase 2 design note
 
-This section is a design note for #261. Since #434 the single sign-on settings exist: seven
-reserved configuration entries (the seventh, `allow_password`, since #457), the `OIDC_*` environment fallbacks behind them, the admin-only
+This section is a design note for #261. Since #434 the single sign-on settings exist: nine
+reserved configuration entries (`allow_password` since #457, the client certificate and its key since #633), the `OIDC_*` environment fallbacks behind them, the admin-only
 `GET/PUT /settings/sso` pair guarded by `settings.sso_manage`, and the `SSOConfig` accessor that
 returns the effective values:
 
@@ -1166,6 +1166,15 @@ returns the effective values:
   applies is a change too.
 - `security.sso.client_id` (`OIDC_CLIENT_ID`).
 - `security.sso.client_secret` (`OIDC_CLIENT_SECRET`), encrypted at rest and never returned.
+- `security.sso.client_certificate` and `security.sso.client_private_key` (#633, no environment
+  variable), encrypted at rest and never returned: one PEM certificate and its unencrypted RSA key
+  (PKCS#8 or PKCS#1, at least 2048 bits), saved and cleared together, each at most 16384 bytes. A
+  save checks that the certificate parses and has not expired and that the key matches it, and
+  refuses field by field (`client_certificate`, `client_private_key`) without storing anything.
+  The response reports `client_certificate_set`, the uppercase hex SHA-1 thumbprint and the expiry.
+  A stored pair that cannot be read, decrypted or parsed, or that is incomplete or mismatched, is
+  treated as unset with one warning naming only the row; an expired stored certificate stays in
+  force.
 - `security.sso.scopes` (`OIDC_SCOPES`), default `openid profile email`.
 - `security.sso.role_mapping` (`OIDC_ROLE_MAPPING`), encrypted at rest; an unreadable stored
   mapping is empty, never the environment one.
@@ -1202,7 +1211,11 @@ provider exactly. The SPA then posts the `code` and `state` to `POST /auth/oidc/
 spends the attempt (its own committed statement: a state works once, even when the sign-in is
 then refused), refuses a callback without the sign-in cookie or with another one (below),
 refuses an attempt started against another issuer than the one configured now,
-exchanges the code with the verifier, and checks the ID token's signature, `iss`, `aud`, `exp`
+exchanges the code with the verifier (authenticated with the client secret, or, while a client
+certificate is set, with a `private_key_jwt` client assertion instead: RFC 7523, PS256, the
+certificate named by its `x5t` and `x5t#S256` thumbprints, `aud` the token endpoint, `iss` and
+`sub` the client id, a fresh `jti`, valid five minutes, with `client_id` in the form and no
+client secret or Authorization header), and checks the ID token's signature, `iss`, `aud`, `exp`
 and nonce. Success answers the same `token`, `refresh_token` and `user` as `POST /auth/login`.
 Single sign-on off is 404; on but unconfigured, undiscoverable (including a
 redirect or a timeout; the issuer client follows no redirect and ignores `HTTP(S)_PROXY`) or with
@@ -1368,7 +1381,7 @@ starts with no usable password; it can set and use one only while `allow_passwor
 
 1. In the Okta Admin Console, under Applications, create an app integration: sign-in method
    **OIDC - OpenID Connect**, application type **Web Application**, grant type **Authorization
-   Code** (GopherCRM always sends PKCE S256 and the client secret).
+   Code** (GopherCRM always sends PKCE S256, and the client secret unless a client certificate is set).
 2. Set the **Sign-in redirect URI** to `https://crm.example.com/auth/callback` (APP_BASE_URL
    `https://crm.example.com` followed by `/auth/callback`, exactly). Note the client id and client
    secret.
@@ -1457,11 +1470,16 @@ Settings > Single sign-on (`/settings/sso`, shown and opened only with `settings
 edits `GET`/`PUT /settings/sso`: the Enabled switch, the "Allow password sign-in and password
 reset for accounts linked to single sign-on" switch (#457) with an always-shown offboarding
 warning, the issuer URL, the client ID, the scopes
-(one field, separated by spaces), the client secret and the role mapping. Each field says when
+(one field, separated by spaces), the client secret, the client certificate and its private key
+(#633) and the role mapping. Each field says when
 its value comes from the environment or the default. The client secret is write-only: the page
 shows only "A client secret is set" or "No client secret is set", the input always starts empty,
 a typed secret is sent once and cleared after the save, "Clear client secret" sends an empty
-secret, and a save without either keeps the stored one. The role mapping rows (claim `groups` or
+secret, and a save without either keeps the stored one. The client certificate and private key
+inputs behave the same way and are sent together: both when either is filled, both empty after
+"Clear client certificate", neither otherwise; the status line `sso-certificate-status` shows the
+thumbprint and the expiry of a set certificate (and says when it has expired), and a refused field
+is shown under its input. The role mapping rows (claim `groups` or
 `roles`, a value, a role from the role list) are kept and sent in the order shown, and the first
 matching row wins; a row whose role the list does not name, or every row when the role list
 cannot be loaded, keeps its role id ("Role #id"). `PUT /settings/sso` is a full replacement, so
@@ -1503,8 +1521,10 @@ and a missing `state` or `nonce`; a valid request shows a small form (subject, e
 groups). Its token endpoint requires the client secret (basic or post), the same `redirect_uri`
 and a verifier whose S256 hash is the challenge, spends a code once, and returns an RS256 ID token
 with the authorization request's nonce. Its own checks are covered by
-`go test ./scripts/e2e/oidc-issuer` and by the spec's last scenario, which acts as a client
-itself.
+`go test ./scripts/e2e/oidc-issuer` and by the spec's scenario S12, which acts as a client
+itself. The test issuer accepts only the client secret, so the spec's client certificate scenario
+(S15, #633) covers the settings screen only; the client assertion itself is covered over real HTTP
+by `TestOIDCClientAssertion` in `internal/service`.
 
 The issuer serves the run's per-run test certificate (the one the AEO provider fixture uses). Only
 the `-tags=gophercrm_e2e` backend can trust it, and only with `GOPHERCRM_E2E_AEO_TLS=1`:

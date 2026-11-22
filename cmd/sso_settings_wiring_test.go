@@ -68,7 +68,7 @@ func TestSSOSettingsWiredFromEnvironment(t *testing.T) {
 		}
 		return out
 	}
-	require.Len(t, ssoRows(), 7, "the seven settings are seeded")
+	require.Len(t, ssoRows(), 9, "the nine settings are seeded")
 
 	status, raw, envelope := do(http.MethodGet, "/settings/sso", "")
 	require.Equal(t, http.StatusOK, status, raw)

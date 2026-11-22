@@ -2,9 +2,21 @@ package service
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
@@ -16,7 +28,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// fakeSSOConfigs is a ConfigurationService holding the seven SSO rows in
+// fakeSSOConfigs is a ConfigurationService holding the nine SSO rows in
 // plaintext. It records the order of SetSSO writes, can fail a read per key,
 // and can fail the n-th write.
 type fakeSSOConfigs struct {
@@ -138,6 +150,7 @@ func TestSSOConfig(t *testing.T) {
 		assert.Equal(t, SSOConfigSources{
 			Enabled: SSOSourceDefault, AllowPassword: SSOSourceDefault, IssuerURL: SSOSourceDefault, ClientID: SSOSourceDefault,
 			ClientSecret: SSOSourceDefault, Scopes: SSOSourceDefault, RoleMapping: SSOSourceDefault,
+			ClientCertificate: SSOSourceDefault,
 		}, cfg.Sources)
 	})
 
@@ -162,6 +175,7 @@ func TestSSOConfig(t *testing.T) {
 		assert.Equal(t, SSOConfigSources{
 			Enabled: SSOSourceSettings, AllowPassword: SSOSourceSettings, IssuerURL: SSOSourceSettings, ClientID: SSOSourceSettings,
 			ClientSecret: SSOSourceSettings, Scopes: SSOSourceSettings, RoleMapping: SSOSourceSettings,
+			ClientCertificate: SSOSourceDefault,
 		}, cfg.Sources)
 	})
 
@@ -178,6 +192,7 @@ func TestSSOConfig(t *testing.T) {
 		assert.Equal(t, SSOConfigSources{
 			Enabled: SSOSourceEnv, AllowPassword: SSOSourceEnv, IssuerURL: SSOSourceEnv, ClientID: SSOSourceEnv,
 			ClientSecret: SSOSourceEnv, Scopes: SSOSourceEnv, RoleMapping: SSOSourceEnv,
+			ClientCertificate: SSOSourceDefault,
 		}, cfg.Sources)
 	})
 
@@ -258,6 +273,19 @@ func TestSSOConfig(t *testing.T) {
 		assert.Equal(t, SSOSourceEnv, cfg.Sources.ClientID)
 		assert.Equal(t, SSOSourceEnv, cfg.Sources.ClientSecret)
 		assert.Equal(t, SSOSourceEnv, cfg.Sources.Scopes)
+	})
+
+	t.Run("client certificate: a stored pair is in force next to the secret", func(t *testing.T) {
+		pair := validSSOTestCertificate(t)
+		configs := newFakeSSOConfigs()
+		configs.values[models.ConfigKeySSOClientCertificate] = pair.certPEM
+		configs.values[models.ConfigKeySSOClientPrivateKey] = pair.keyPEM
+		cfg, err := NewSSOSettingsService(configs, knownRoles(), noIssuerLinks(), envSSO()).SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate)
+		assert.Equal(t, sha1Thumbprint(pair.cert), cfg.ClientCertificate.ThumbprintSHA1)
+		assert.Equal(t, SSOSourceSettings, cfg.Sources.ClientCertificate)
+		assert.Equal(t, "env-secret-value", cfg.ClientSecret, "the secret is still resolved")
 	})
 
 	t.Run("invalid env issuer and invalid env mapping are treated as unset", func(t *testing.T) {
@@ -437,6 +465,23 @@ func TestSSOSettingsUpdate(t *testing.T) {
 		assert.Equal(t, "", configs.values[models.ConfigKeySSOClientSecret])
 	})
 
+	t.Run("the certificate pair is written only when sent", func(t *testing.T) {
+		pair := validSSOTestCertificate(t)
+		configs := newFakeSSOConfigs()
+		svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+		require.NoError(t, svc.Update(ssoCtx(), validSSOUpdate()))
+		assert.NotContains(t, configs.writes, models.ConfigKeySSOClientCertificate)
+		assert.NotContains(t, configs.writes, models.ConfigKeySSOClientPrivateKey)
+
+		update := validSSOUpdate()
+		update.ClientCertificate, update.ClientPrivateKey = strPtr(pair.certPEM), strPtr(pair.keyPEM)
+		configs.writes = nil
+		require.NoError(t, svc.Update(ssoCtx(), update))
+		assert.Contains(t, configs.writes, models.ConfigKeySSOClientCertificate)
+		assert.Contains(t, configs.writes, models.ConfigKeySSOClientPrivateKey)
+		assert.Equal(t, strings.TrimSpace(pair.certPEM), configs.values[models.ConfigKeySSOClientCertificate])
+	})
+
 	t.Run("an empty update clears every stored value", func(t *testing.T) {
 		configs := newFakeSSOConfigs()
 		svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), envSSO())
@@ -598,6 +643,42 @@ func TestSSOSettingsUpdateIssuerChange(t *testing.T) {
 // over the SQLite configuration repository: the client secret and the role
 // mapping are stored as ciphertext.
 func TestSSOSettingsSecretEncryptedAtRest(t *testing.T) {
+	db, configs := newSQLiteSSOConfigs(t)
+	svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+
+	const secret = "plaintext-client-secret-0434"
+	const group = "plaintext-group-object-id-0434"
+	pair := validSSOTestCertificate(t)
+	update := validSSOUpdate()
+	update.ClientSecret = strPtr(secret)
+	update.RoleMapping = []SSORoleMapping{{Claim: "groups", Value: group, RoleID: 2}}
+	update.ClientCertificate = strPtr(pair.certPEM)
+	update.ClientPrivateKey = strPtr(pair.keyPEM)
+	require.NoError(t, svc.Update(ssoCtx(), update))
+
+	for _, key := range []string{models.ConfigKeySSOClientSecret, models.ConfigKeySSORoleMapping,
+		models.ConfigKeySSOClientCertificate, models.ConfigKeySSOClientPrivateKey} {
+		var row models.Configuration
+		require.NoError(t, db.Where("config_key = ?", key).First(&row).Error)
+		assert.True(t, strings.HasPrefix(row.Value, "enc:v1:"), "%s is sealed", key)
+		assert.NotContains(t, row.Value, secret, key)
+		assert.NotContains(t, row.Value, group, key)
+		assert.NotContains(t, row.Value, "BEGIN", key)
+	}
+
+	cfg, err := svc.SSOConfig(ssoCtx())
+	require.NoError(t, err)
+	assert.Equal(t, secret, cfg.ClientSecret)
+	assert.Equal(t, []SSORoleMapping{{Claim: "groups", Value: group, RoleID: 2}}, cfg.RoleMapping)
+	assert.True(t, cfg.Enabled)
+	require.NotNil(t, cfg.ClientCertificate)
+	assert.Equal(t, sha1Thumbprint(pair.cert), cfg.ClientCertificate.ThumbprintSHA1)
+}
+
+// newSQLiteSSOConfigs is the shipped configuration service over the SQLite
+// configuration repository, with the defaults seeded.
+func newSQLiteSSOConfigs(t *testing.T) (*gorm.DB, ConfigurationService) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -608,29 +689,7 @@ func TestSSOSettingsSecretEncryptedAtRest(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(&models.Configuration{}))
 	repo := repository.NewConfigurationRepository(db)
 	require.NoError(t, repo.InitializeDefaults())
-	configs := NewConfigurationService(repo, testConfigurationSecretBox())
-	svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
-
-	const secret = "plaintext-client-secret-0434"
-	const group = "plaintext-group-object-id-0434"
-	update := validSSOUpdate()
-	update.ClientSecret = strPtr(secret)
-	update.RoleMapping = []SSORoleMapping{{Claim: "groups", Value: group, RoleID: 2}}
-	require.NoError(t, svc.Update(ssoCtx(), update))
-
-	for _, key := range []string{models.ConfigKeySSOClientSecret, models.ConfigKeySSORoleMapping} {
-		var row models.Configuration
-		require.NoError(t, db.Where("config_key = ?", key).First(&row).Error)
-		assert.True(t, strings.HasPrefix(row.Value, "enc:v1:"), "%s is sealed", key)
-		assert.NotContains(t, row.Value, secret, key)
-		assert.NotContains(t, row.Value, group, key)
-	}
-
-	cfg, err := svc.SSOConfig(ssoCtx())
-	require.NoError(t, err)
-	assert.Equal(t, secret, cfg.ClientSecret)
-	assert.Equal(t, []SSORoleMapping{{Claim: "groups", Value: group, RoleID: 2}}, cfg.RoleMapping)
-	assert.True(t, cfg.Enabled)
+	return db, NewConfigurationService(repo, testConfigurationSecretBox())
 }
 
 // countingSSOConfigs records every key read, to prove the password policy
@@ -750,4 +809,316 @@ func TestSSOSettingsUpdateAllowPassword(t *testing.T) {
 		require.ErrorIs(t, err, ErrSSOSettingsInvalid)
 		assert.Empty(t, configs.writes)
 	})
+}
+
+// ssoTestCertificate is a generated client certificate and its key, in PEM.
+type ssoTestCertificate struct {
+	cert     *x509.Certificate
+	key      *rsa.PrivateKey
+	certPEM  string
+	keyPEM   string // PKCS#8
+	pkcs1PEM string
+}
+
+// newSSOTestCertificate generates a self-signed certificate over a new RSA
+// key of bits, valid from notBefore to notAfter.
+func newSSOTestCertificate(t *testing.T, bits int, notBefore, notAfter time.Time) ssoTestCertificate {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
+	require.NoError(t, err)
+	return newSSOTestCertificateForKey(t, key, &key.PublicKey, notBefore, notAfter)
+}
+
+func newSSOTestCertificateForKey(t *testing.T, key *rsa.PrivateKey, public any, notBefore, notAfter time.Time) ssoTestCertificate {
+	t.Helper()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: "gophercrm-test"},
+		NotBefore:    notBefore,
+		NotAfter:     notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, public, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	require.NoError(t, err)
+	return ssoTestCertificate{
+		cert:     cert,
+		key:      key,
+		certPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})),
+		keyPEM:   string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})),
+		pkcs1PEM: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+	}
+}
+
+func validSSOTestCertificate(t *testing.T) ssoTestCertificate {
+	t.Helper()
+	now := time.Now()
+	return newSSOTestCertificate(t, 2048, now.Add(-time.Hour), now.Add(365*24*time.Hour))
+}
+
+// sha1Thumbprint is computed here from the DER, independently of the code.
+func sha1Thumbprint(cert *x509.Certificate) string {
+	sum := sha1.Sum(cert.Raw)
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// pemFragments are substrings of a PEM value that no message may contain:
+// each body line of 16 or more characters.
+func pemFragments(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		for _, line := range strings.Split(value, "\n") {
+			line = strings.TrimSpace(line)
+			if len(line) >= 16 && !strings.HasPrefix(line, "-----") {
+				out = append(out, line[:16])
+			}
+		}
+	}
+	return out
+}
+
+func TestSSOSettingsClientCertificate(t *testing.T) {
+	valid := validSSOTestCertificate(t)
+
+	withPair := func(certPEM, keyPEM string) SSOSettingsUpdate {
+		update := validSSOUpdate()
+		update.ClientCertificate = strPtr(certPEM)
+		update.ClientPrivateKey = strPtr(keyPEM)
+		return update
+	}
+
+	for name, keyPEM := range map[string]string{"PKCS#8": valid.keyPEM, "PKCS#1": valid.pkcs1PEM} {
+		t.Run("accepts a matching RSA-2048 pair, "+name, func(t *testing.T) {
+			configs := newFakeSSOConfigs()
+			svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+			require.NoError(t, svc.Update(ssoCtx(), withPair(valid.certPEM, keyPEM)))
+			cfg, err := svc.SSOConfig(ssoCtx())
+			require.NoError(t, err)
+			require.NotNil(t, cfg.ClientCertificate)
+			assert.Equal(t, sha1Thumbprint(valid.cert), cfg.ClientCertificate.ThumbprintSHA1)
+			assert.True(t, valid.cert.NotAfter.Equal(cfg.ClientCertificate.NotAfter))
+			assert.True(t, valid.key.Equal(cfg.ClientCertificate.PrivateKey))
+			assert.Equal(t, SSOSourceSettings, cfg.Sources.ClientCertificate)
+		})
+	}
+
+	t.Run("accepts CRLF line endings and a trailing newline", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+		crlf := func(value string) string { return strings.ReplaceAll(value, "\n", "\r\n") + "\r\n" }
+		require.NoError(t, svc.Update(ssoCtx(), withPair(crlf(valid.certPEM), crlf(valid.keyPEM))))
+		cfg, err := svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate)
+		assert.Equal(t, sha1Thumbprint(valid.cert), cfg.ClientCertificate.ThumbprintSHA1)
+	})
+
+	t.Run("write order: certificate, then key, then the enabled switch", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		require.NoError(t, NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{}).
+			Update(ssoCtx(), withPair(valid.certPEM, valid.keyPEM)))
+		n := len(configs.writes)
+		require.GreaterOrEqual(t, n, 3)
+		assert.Equal(t, []string{models.ConfigKeySSOClientCertificate, models.ConfigKeySSOClientPrivateKey, models.ConfigKeySSOEnabled},
+			configs.writes[n-3:])
+	})
+
+	t.Run("absent keeps the pair, empty clears it, a new pair replaces it", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+		require.NoError(t, svc.Update(ssoCtx(), withPair(valid.certPEM, valid.keyPEM)))
+
+		require.NoError(t, svc.Update(ssoCtx(), validSSOUpdate()))
+		assert.NotContains(t, configs.writes[len(configs.writes)-6:], models.ConfigKeySSOClientCertificate)
+		cfg, err := svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate, "kept")
+
+		other := validSSOTestCertificate(t)
+		require.NoError(t, svc.Update(ssoCtx(), withPair(other.certPEM, other.pkcs1PEM)))
+		cfg, err = svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate)
+		assert.Equal(t, sha1Thumbprint(other.cert), cfg.ClientCertificate.ThumbprintSHA1, "replaced")
+
+		require.NoError(t, svc.Update(ssoCtx(), withPair("", "")))
+		assert.Equal(t, "", configs.values[models.ConfigKeySSOClientCertificate])
+		assert.Equal(t, "", configs.values[models.ConfigKeySSOClientPrivateKey])
+		cfg, err = svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.Nil(t, cfg.ClientCertificate, "cleared")
+		assert.Equal(t, SSOSourceDefault, cfg.Sources.ClientCertificate)
+	})
+
+	now := time.Now()
+	small := newSSOTestCertificate(t, 1024, now.Add(-time.Hour), now.Add(time.Hour))
+	expired := newSSOTestCertificate(t, 2048, now.Add(-48*time.Hour), now.Add(-time.Hour))
+	mismatched := validSSOTestCertificate(t)
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	ecPKCS8, err := x509.MarshalPKCS8PrivateKey(ecKey)
+	require.NoError(t, err)
+	ecSEC1, err := x509.MarshalECPrivateKey(ecKey)
+	require.NoError(t, err)
+	//nolint:staticcheck // an encrypted legacy PEM block is what is being refused
+	encryptedBlock, err := x509.EncryptPEMBlock(rand.Reader, "RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(valid.key), []byte("pass"), x509.PEMCipherAES256)
+	require.NoError(t, err)
+	oversized := valid.certPEM + strings.Repeat(" ", SSOClientCertificateMaxBytes)
+
+	type refusal struct {
+		cert, key *string
+		field     string
+	}
+	cases := map[string]refusal{
+		"certificate is not PEM":            {strPtr("not a certificate"), strPtr(valid.keyPEM), "client_certificate"},
+		"certificate is a key block":        {strPtr(valid.keyPEM), strPtr(valid.keyPEM), "client_certificate"},
+		"certificate is a chain":            {strPtr(valid.certPEM + mismatched.certPEM), strPtr(valid.keyPEM), "client_certificate"},
+		"certificate is not parseable":      {strPtr("-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"), strPtr(valid.keyPEM), "client_certificate"},
+		"certificate has expired":           {strPtr(expired.certPEM), strPtr(expired.keyPEM), "client_certificate"},
+		"key is not PEM":                    {strPtr(valid.certPEM), strPtr("not a key"), "client_private_key"},
+		"key is encrypted (PKCS#8)":         {strPtr(valid.certPEM), strPtr(string(pem.EncodeToMemory(&pem.Block{Type: "ENCRYPTED PRIVATE KEY", Bytes: []byte{1, 2, 3}}))), "client_private_key"},
+		"key is encrypted (legacy PEM)":     {strPtr(valid.certPEM), strPtr(string(pem.EncodeToMemory(encryptedBlock))), "client_private_key"},
+		"key is ECDSA (PKCS#8)":             {strPtr(valid.certPEM), strPtr(string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: ecPKCS8}))), "client_private_key"},
+		"key is ECDSA (SEC 1)":              {strPtr(valid.certPEM), strPtr(string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: ecSEC1}))), "client_private_key"},
+		"key is RSA under 2048 bits":        {strPtr(small.certPEM), strPtr(small.keyPEM), "client_private_key"},
+		"key does not match":                {strPtr(valid.certPEM), strPtr(mismatched.keyPEM), "client_private_key"},
+		"only the certificate":              {strPtr(valid.certPEM), nil, "client_private_key"},
+		"only the key":                      {nil, strPtr(valid.keyPEM), "client_certificate"},
+		"certificate with an empty key":     {strPtr(valid.certPEM), strPtr(""), "client_private_key"},
+		"key with an empty certificate":     {strPtr(""), strPtr(valid.keyPEM), "client_certificate"},
+		"certificate over 16384 bytes":      {strPtr(oversized), strPtr(valid.keyPEM), "client_certificate"},
+		"key over 16384 bytes":              {strPtr(valid.certPEM), strPtr(valid.keyPEM + strings.Repeat(" ", SSOClientPrivateKeyMaxBytes)), "client_private_key"},
+		"certificate and key both mismatch": {strPtr(expired.certPEM), strPtr(mismatched.keyPEM), "client_certificate"},
+	}
+	for name, tc := range cases {
+		t.Run("refuses: "+name, func(t *testing.T) {
+			configs := newFakeSSOConfigs()
+			configs.values[models.ConfigKeySSOClientCertificate] = valid.certPEM
+			configs.values[models.ConfigKeySSOClientPrivateKey] = valid.keyPEM
+			roles := knownRoles(2)
+			update := validSSOUpdate()
+			update.ClientCertificate, update.ClientPrivateKey = tc.cert, tc.key
+			err := NewSSOSettingsService(configs, roles, noIssuerLinks(), config.SSOConfig{}).Update(ssoCtx(), update)
+			require.ErrorIs(t, err, ErrSSOSettingsInvalid)
+			var settingsErr *SSOSettingsError
+			require.ErrorAs(t, err, &settingsErr)
+			assert.Contains(t, settingsErr.Fields, tc.field)
+			assert.Empty(t, configs.writes, "nothing is stored")
+			assert.Empty(t, roles.lookup)
+			assert.Equal(t, valid.certPEM, configs.values[models.ConfigKeySSOClientCertificate])
+			assert.Equal(t, valid.keyPEM, configs.values[models.ConfigKeySSOClientPrivateKey])
+			var submitted []string
+			for _, value := range []*string{tc.cert, tc.key} {
+				if value != nil {
+					submitted = append(submitted, *value)
+				}
+			}
+			for _, message := range settingsErr.Fields {
+				assert.NotContains(t, message, "BEGIN")
+				for _, fragment := range pemFragments(submitted...) {
+					assert.NotContains(t, message, fragment)
+				}
+			}
+		})
+	}
+
+	t.Run("an expired stored certificate stays in force", func(t *testing.T) {
+		configs := newFakeSSOConfigs()
+		configs.values[models.ConfigKeySSOClientCertificate] = expired.certPEM
+		configs.values[models.ConfigKeySSOClientPrivateKey] = expired.keyPEM
+		cfg, err := NewSSOSettingsService(configs, knownRoles(), noIssuerLinks(), config.SSOConfig{}).SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		require.NotNil(t, cfg.ClientCertificate)
+		assert.True(t, cfg.ClientCertificate.NotAfter.Before(time.Now()))
+	})
+
+	t.Run("an unusable stored pair is unset and logged once without its content", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			cert, key string
+			readErr   string // key whose read fails
+			wantKey   string
+		}{
+			"unparseable certificate": {cert: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", key: valid.keyPEM, wantKey: models.ConfigKeySSOClientCertificate},
+			"mismatched key":          {cert: valid.certPEM, key: mismatched.keyPEM, wantKey: models.ConfigKeySSOClientPrivateKey},
+			"incomplete pair":         {cert: valid.certPEM, key: "", wantKey: models.ConfigKeySSOClientPrivateKey},
+			"unreadable key":          {cert: valid.certPEM, key: valid.keyPEM, readErr: models.ConfigKeySSOClientPrivateKey, wantKey: models.ConfigKeySSOClientPrivateKey},
+		} {
+			t.Run(name, func(t *testing.T) {
+				logs := captureServiceLogs(t)
+				configs := newFakeSSOConfigs()
+				configs.values[models.ConfigKeySSOClientSecret] = "stored-secret"
+				configs.values[models.ConfigKeySSOClientCertificate] = tc.cert
+				configs.values[models.ConfigKeySSOClientPrivateKey] = tc.key
+				if tc.readErr != "" {
+					configs.readErrs[tc.readErr] = errors.New("driver: connection refused at 10.0.0.9")
+				}
+				cfg, err := NewSSOSettingsService(configs, knownRoles(), noIssuerLinks(), config.SSOConfig{}).SSOConfig(ssoCtx())
+				require.NoError(t, err)
+				assert.Nil(t, cfg.ClientCertificate)
+				assert.Equal(t, SSOSourceDefault, cfg.Sources.ClientCertificate)
+				assert.Equal(t, "stored-secret", cfg.ClientSecret, "the secret flow applies")
+				assertOneUnusableCertificateWarning(t, logs.String(), tc.wantKey, tc.cert, tc.key)
+				assert.NotContains(t, logs.String(), "connection refused")
+			})
+		}
+	})
+
+	t.Run("an undecryptable stored certificate is unset and logged once", func(t *testing.T) {
+		db, configs := newSQLiteSSOConfigs(t)
+		svc := NewSSOSettingsService(configs, knownRoles(2), noIssuerLinks(), config.SSOConfig{})
+		update := withPair(valid.certPEM, valid.keyPEM)
+		update.ClientSecret = strPtr("stored-secret")
+		require.NoError(t, svc.Update(ssoCtx(), update))
+		const garbage = "enc:v1:bm90LWEtcmVhbC1jaXBoZXJ0ZXh0LXZhbHVl"
+		require.NoError(t, db.Model(&models.Configuration{}).Where("config_key = ?", models.ConfigKeySSOClientCertificate).
+			Update("value", garbage).Error)
+
+		logs := captureServiceLogs(t)
+		cfg, err := svc.SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.Nil(t, cfg.ClientCertificate)
+		assert.Equal(t, "stored-secret", cfg.ClientSecret)
+		assertOneUnusableCertificateWarning(t, logs.String(), models.ConfigKeySSOClientCertificate, valid.certPEM, valid.keyPEM, garbage[len("enc:v1:"):])
+	})
+
+	t.Run("nothing stored logs nothing", func(t *testing.T) {
+		logs := captureServiceLogs(t)
+		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), noIssuerLinks(), config.SSOConfig{}).SSOConfig(ssoCtx())
+		require.NoError(t, err)
+		assert.Nil(t, cfg.ClientCertificate)
+		assert.NotContains(t, logs.String(), "client certificate")
+	})
+}
+
+// assertOneUnusableCertificateWarning checks the captured JSON log: exactly one
+// entry with the unusable-certificate message, whose fields are only
+// component and config_key, and no PEM content anywhere.
+func assertOneUnusableCertificateWarning(t *testing.T, output, wantKey string, stored ...string) {
+	t.Helper()
+	const message = "Stored single sign-on client certificate is not usable and is treated as unset"
+	var found []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry), line)
+		if entry["msg"] == message {
+			found = append(found, entry)
+		}
+	}
+	require.Len(t, found, 1, output)
+	entry := found[0]
+	assert.Equal(t, "warning", entry["level"])
+	assert.Equal(t, "sso_settings", entry["component"])
+	assert.Equal(t, wantKey, entry["config_key"])
+	for field := range entry {
+		assert.Contains(t, []string{"level", "msg", "time", "component", "config_key"}, field)
+	}
+	assert.NotContains(t, output, "BEGIN")
+	for _, fragment := range pemFragments(stored...) {
+		assert.NotContains(t, output, fragment)
+	}
 }

@@ -59,7 +59,7 @@ the common ones.
 | GopherCRM → provider | Redirect URI: `APP_BASE_URL/auth/callback`, for example https://crm.example.com/auth/callback | The provider's application, as a Web redirect URI. It must match exactly, including `https` and with no trailing slash. |
 | Provider → GopherCRM | Issuer URL | **Issuer URL**. An absolute `https` URL, exactly as the provider publishes it. |
 | Provider → GopherCRM | Client ID | **Client ID** |
-| Provider → GopherCRM | Client secret | **Client secret** |
+| Provider → GopherCRM | Client secret, or a client certificate | **Client secret**, or **Client certificate (PEM)** and **Client private key (PEM)**. The certificate is uploaded at the provider and its private key stays with GopherCRM; while one is set it is used instead of the secret. |
 | Provider → GopherCRM | Scopes | **Scopes**, separated by spaces. The default is `openid profile email`; a list you enter must contain `openid`. |
 | Provider → GopherCRM | Group ids or app role values | **Role mapping**, one row per value, with the claim `roles` (app roles) or `groups` (groups). |
 
@@ -76,7 +76,8 @@ first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-i
 
 1. Open Settings → Single sign-on (`/settings/sso`).
 2. Fill in **Issuer URL**, **Client ID** and, if you need more than the default, **Scopes**.
-3. Type the **Client secret**.
+3. Type the **Client secret**, or paste a **Client certificate (PEM)** and its **Client private
+   key (PEM)** (see [Client certificate](#client-certificate)).
 4. Under **Role mapping**, click **Add mapping** for each row. In each row choose the **Claim**
    (`roles` or `groups`), type the **Value** exactly as the provider sends it, and pick the
    **Role**. Rows are checked from top to bottom and the first match wins, so put the most
@@ -99,6 +100,32 @@ first; for Entra ID follow [How to: Microsoft Entra ID](how-to-microsoft-entra-i
 **The client secret is write-only.** GopherCRM never shows it again. The page says "A client
 secret is set" or "No client secret is set". Leave the field empty to keep the stored secret, type
 a new one to replace it, or click **Clear client secret** to remove it.
+
+### Client certificate
+
+Instead of the client secret, GopherCRM can prove its identity to the provider with a certificate:
+it signs a short-lived client assertion (`private_key_jwt`) with the certificate's private key, and
+the token request then carries no client secret. Microsoft recommends this for Entra ID; the
+[Entra ID how-to](how-to-microsoft-entra-id.md) shows how to create and upload the certificate.
+
+| Field | What to enter |
+|---|---|
+| **Client certificate (PEM)** | One certificate in PEM form, starting with `-----BEGIN CERTIFICATE-----`: the certificate uploaded at the provider, not a chain. It must not have expired. At most 16384 bytes. |
+| **Client private key (PEM)** | The certificate's RSA private key in PEM form (PKCS#8 or PKCS#1), at least 2048 bits, not encrypted with a passphrase, and matching the certificate. At most 16384 bytes. |
+
+The two are saved together: paste both, or click **Clear client certificate** to remove both.
+Leave both empty to keep the stored certificate. A save with only one of them, a key that does not
+match the certificate, or a certificate that has expired is refused field by field and nothing is
+stored.
+
+**The private key is write-only.** GopherCRM stores the certificate and the key encrypted, never
+shows either again, and empties both fields after a save. The page says "No client certificate is
+set", or "A client certificate is set" with its thumbprint (the SHA-1 thumbprint the provider
+shows) and its expiry date. While a certificate is set it is used instead of the client secret; a
+stored secret is kept but not sent. A certificate that has expired stays in force and the provider
+refuses it, so renew it before the expiry date. A stored certificate that cannot be read (for
+example after `API_KEY_SECRET` was changed) counts as not set, and the client secret applies again.
+The certificate has no environment variable.
 
 **Environment fallbacks.** Each setting can also come from the server's environment:
 `OIDC_ENABLED`, `OIDC_ALLOW_PASSWORD`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`,
@@ -149,7 +176,7 @@ method and read the reason column.
 | "Single sign-on failed" for a first sign-in; reason `email_missing`. | The ID token carries no email claim. | Keep `email` in **Scopes**, give the person an email address at the provider, and for Entra ID add the optional claim email to the ID token if it is still missing. |
 | "Single sign-on failed"; reason `email_taken`. | Another GopherCRM account already uses that email address. Accounts are never linked by email. | See the [FAQ](faq.md#someone-already-has-a-password-account-can-they-switch-to-single-sign-on). |
 | "Single sign-on failed"; reason `no_mapping_match`. | No role mapping row matches the person's `roles` or `groups` values. | Compare the values recorded in the sign-in audit row with the mapping. Assign the person the app role or group at the provider, or add a row. Values are case-sensitive. |
-| "Single sign-on failed" after the provider page; reason `token_exchange_failed` (the API answers 503 `SSO_UNAVAILABLE`). | The provider refused the client secret: it is wrong, expired, or belongs to another application. | Create a new secret at the provider, type it into **Client secret** and save. |
+| "Single sign-on failed" after the provider page; reason `token_exchange_failed` (the API answers 503 `SSO_UNAVAILABLE`). | The provider refused the client secret or the client certificate: it is wrong, expired, or belongs to another application, or the certificate was not uploaded at the provider. | Create a new secret at the provider, type it into **Client secret** and save; or upload the certificate at the provider, compare its thumbprint with the one Settings → Single sign-on shows, and renew it if it has expired. |
 | "Single sign-on is unavailable. Sign in with your password." on the sign-in page (503 `SSO_UNAVAILABLE`). | The issuer cannot be reached or discovered, or a required setting is empty. | Check **Issuer URL**, **Client ID** and **Client secret**, and that the server can reach the issuer over https. |
 | Saving the settings fails on **Issuer URL**. | The issuer is not an absolute `https` URL of at most 512 bytes, or it carries credentials, a query or a fragment. | Enter the issuer exactly as the provider publishes it, starting with `https://`. An invalid `OIDC_ISSUER_URL` (one longer than 512 bytes included) is ignored with a warning in the server log. |
 | Saving opens **Change the issuer?** (the API answers 409 `ISSUER_CHANGE_UNCONFIRMED`). | The save changes the issuer in force while accounts are linked to the current issuer; the `affected_links` detail is the number of account links that stop matching. | Click **Change issuer** only if those people should be linked again under the new issuer; an API client resends the same body with `confirm_issuer_change` true. Otherwise click **Cancel**. |

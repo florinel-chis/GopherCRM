@@ -143,6 +143,8 @@ func TestDefaultConfigurations_OnlyCredentialKeysAreSensitive(t *testing.T) {
 		"integration.aeo.perplexity_api_key",
 		"security.sso.client_secret",
 		"security.sso.role_mapping",
+		"security.sso.client_certificate",
+		"security.sso.client_private_key",
 	}
 	var got []string
 	for _, config := range DefaultConfigurations() {
@@ -153,7 +155,7 @@ func TestDefaultConfigurations_OnlyCredentialKeysAreSensitive(t *testing.T) {
 	assert.ElementsMatch(t, want, got)
 }
 
-// The seven single sign-on settings ship empty ("not set here", so OIDC_*
+// The nine single sign-on settings ship empty ("not set here", so OIDC_*
 // applies) as system entries of the security category.
 func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 	sensitive := map[string]bool{
@@ -164,6 +166,9 @@ func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 		ConfigKeySSOClientSecret:  true,
 		ConfigKeySSOScopes:        false,
 		ConfigKeySSORoleMapping:   true,
+
+		ConfigKeySSOClientCertificate: true,
+		ConfigKeySSOClientPrivateKey:  true,
 	}
 	seen := map[string]Configuration{}
 	for _, config := range DefaultConfigurations() {
@@ -173,7 +178,7 @@ func TestDefaultConfigurations_SeedsSSOSettings(t *testing.T) {
 			seen[config.Key] = config
 		}
 	}
-	require.Len(t, seen, 7)
+	require.Len(t, seen, 9)
 	for key, isSensitive := range sensitive {
 		config, ok := seen[key]
 		if !assert.True(t, ok, "%s is seeded", key) {

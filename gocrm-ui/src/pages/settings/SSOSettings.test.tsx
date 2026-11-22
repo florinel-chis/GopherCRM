@@ -43,6 +43,9 @@ const stored: SSOSettingsData = {
     { claim: 'roles', value: 'crm-sales', role_id: 2 },
   ],
   client_secret_set: true,
+  client_certificate_set: false,
+  client_certificate_thumbprint: '',
+  client_certificate_expires_at: '',
   sources: {
     enabled: 'settings',
     allow_password: 'settings',
@@ -51,8 +54,26 @@ const stored: SSOSettingsData = {
     client_secret: 'settings',
     scopes: 'default',
     role_mapping: 'settings',
+    client_certificate: 'default',
   },
 };
+
+const CERT_PEM =
+  '-----BEGIN CERTIFICATE-----\nTUlJQ2VydGlmaWNhdGVGaXh0dXJl\n-----END CERTIFICATE-----\n';
+// Not a key: placeholder text in the PEM shape, the label built so that no
+// tracked file carries a PEM key header.
+const KEY_LABEL = ['PRIVATE', 'KEY'].join(' ');
+const KEY_PEM = `-----BEGIN ${KEY_LABEL}-----\nTm90QVJlYWxQcml2YXRlS2V5Rm9yVGVzdHM\n-----END ${KEY_LABEL}-----\n`;
+const THUMBPRINT = '3C5A3F0B2E9D4C1A7B6E8F9012345678ABCDEF01';
+
+const withCertificate: SSOSettingsData = {
+  ...stored,
+  client_certificate_set: true,
+  client_certificate_thumbprint: THUMBPRINT,
+  client_certificate_expires_at: '2099-01-15T10:00:00Z',
+  sources: { ...stored.sources, client_certificate: 'settings' },
+};
+
 
 const lastBody = () => {
   const calls = vi.mocked(ssoSettingsApi.update).mock.calls;
@@ -83,6 +104,19 @@ describe('SSOSettings', () => {
       scopes: body.scopes,
       role_mapping: body.role_mapping,
       client_secret_set: body.client_secret === undefined ? stored.client_secret_set : body.client_secret !== '',
+      ...(body.client_certificate === undefined
+        ? {}
+        : body.client_certificate === ''
+          ? {
+              client_certificate_set: false,
+              client_certificate_thumbprint: '',
+              client_certificate_expires_at: '',
+            }
+          : {
+              client_certificate_set: true,
+              client_certificate_thumbprint: THUMBPRINT,
+              client_certificate_expires_at: '2099-01-15T10:00:00Z',
+            }),
     }));
     vi.mocked(rolesApi.getRoles).mockResolvedValue(ROLES);
   });
@@ -232,6 +266,119 @@ describe('SSOSettings', () => {
     await save();
 
     expect(lastBody().role_mapping).toEqual([{ claim: 'groups', value: 'legacy', role_id: 42 }]);
+  });
+
+  describe('client certificate', () => {
+    it('reports that no client certificate is set and sends neither key by default', async () => {
+      await renderPage();
+      expect(screen.getByTestId('sso-certificate-status')).toHaveTextContent(
+        'No client certificate is set',
+      );
+      expect(screen.getByLabelText('Client certificate (PEM)')).toHaveValue('');
+      expect(screen.getByLabelText('Client private key (PEM)')).toHaveValue('');
+      await save();
+      expect(lastBody()).not.toHaveProperty('client_certificate');
+      expect(lastBody()).not.toHaveProperty('client_private_key');
+    });
+
+    it('shows the thumbprint and the expiry of a stored certificate', async () => {
+      vi.mocked(ssoSettingsApi.get).mockResolvedValue(withCertificate);
+      await renderPage();
+      const status = screen.getByTestId('sso-certificate-status');
+      expect(status).toHaveTextContent(
+        `A client certificate is set (thumbprint ${THUMBPRINT}, expires Jan 15, 2099); it is used instead of the client secret`,
+      );
+      expect(status).not.toHaveTextContent('expired');
+    });
+
+    it('makes an expired certificate visible', async () => {
+      vi.mocked(ssoSettingsApi.get).mockResolvedValue({
+        ...withCertificate,
+        client_certificate_expires_at: '2020-03-01T00:00:00Z',
+      });
+      await renderPage();
+      expect(screen.getByTestId('sso-certificate-status')).toHaveTextContent(
+        /expires Mar 1, 2020.*It has expired/,
+      );
+    });
+
+    it('sends both keys when one input is filled, and empties both inputs after the save', async () => {
+      const { container } = await renderPage();
+      fireEvent.change(screen.getByLabelText('Client certificate (PEM)'), {
+        target: { value: CERT_PEM },
+      });
+      fireEvent.change(screen.getByLabelText('Client private key (PEM)'), {
+        target: { value: KEY_PEM },
+      });
+      await save();
+      expect(lastBody().client_certificate).toBe(CERT_PEM);
+      expect(lastBody().client_private_key).toBe(KEY_PEM);
+      await waitFor(() =>
+        expect(screen.getByLabelText('Client private key (PEM)')).toHaveValue(''),
+      );
+      expect(screen.getByLabelText('Client certificate (PEM)')).toHaveValue('');
+      expect(screen.getByTestId('sso-certificate-status')).toHaveTextContent(
+        `thumbprint ${THUMBPRINT}`,
+      );
+      expect(container.innerHTML).not.toContain(KEY_LABEL);
+      expect(container.innerHTML).not.toContain('Tm90QVJlYWxQcml2YXRlS2V5');
+
+      vi.mocked(ssoSettingsApi.update).mockClear();
+      fireEvent.change(screen.getByLabelText('Client certificate (PEM)'), {
+        target: { value: CERT_PEM },
+      });
+      await save();
+      expect(lastBody()).toHaveProperty('client_certificate', CERT_PEM);
+      expect(lastBody()).toHaveProperty('client_private_key', '');
+    });
+
+    it('sends both keys empty after "Clear client certificate"', async () => {
+      vi.mocked(ssoSettingsApi.get).mockResolvedValue(withCertificate);
+      await renderPage();
+      fireEvent.click(screen.getByRole('button', { name: 'Clear client certificate' }));
+      expect(screen.getByTestId('sso-certificate-status')).toHaveTextContent(
+        'The client certificate will be cleared when you save',
+      );
+      await save();
+      expect(lastBody()).toHaveProperty('client_certificate', '');
+      expect(lastBody()).toHaveProperty('client_private_key', '');
+      await waitFor(() =>
+        expect(screen.getByTestId('sso-certificate-status')).toHaveTextContent(
+          'No client certificate is set',
+        ),
+      );
+    });
+
+    it('shows a refused key under its input and keeps the pasted values', async () => {
+      vi.mocked(ssoSettingsApi.update).mockRejectedValue(
+        Object.assign(new Error('400'), {
+          response: {
+            status: 400,
+            data: {
+              code: 'VALIDATION_ERROR',
+              message: 'Validation failed',
+              details: { client_private_key: 'does not match client_certificate' },
+            },
+          },
+        }),
+      );
+      await renderPage();
+      fireEvent.change(screen.getByLabelText('Client certificate (PEM)'), {
+        target: { value: CERT_PEM },
+      });
+      fireEvent.change(screen.getByLabelText('Client private key (PEM)'), {
+        target: { value: KEY_PEM },
+      });
+      await save();
+      const keyInput = screen.getByLabelText('Client private key (PEM)');
+      await waitFor(() => expect(keyInput).toHaveAttribute('aria-invalid', 'true'));
+      expect(keyInput).toHaveAccessibleDescription('does not match client_certificate');
+      expect(screen.getByLabelText('Client certificate (PEM)')).toHaveAttribute(
+        'aria-invalid',
+        'false',
+      );
+      expect(keyInput).toHaveValue(KEY_PEM);
+    });
   });
 
   it('shows the refused fields of a 400 answer', async () => {
