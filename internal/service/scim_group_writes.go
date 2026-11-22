@@ -9,9 +9,9 @@ import (
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
-	"github.com/florinel-chis/gophercrm/internal/scim"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
 )

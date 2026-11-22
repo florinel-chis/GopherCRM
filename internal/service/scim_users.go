@@ -6,9 +6,9 @@ import (
 	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
-	"github.com/florinel-chis/gophercrm/internal/scim"
 )
 
 // SCIMIssuerSource supplies the single sign-on issuer whose identities give

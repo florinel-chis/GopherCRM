@@ -3,7 +3,7 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/florinel-chis/gophercrm/internal/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -52,7 +52,7 @@ func SCIMAuth(tokens service.SCIMTokenService, audit service.AuthAuditService, l
 					Reason:  reason,
 				})
 			}
-			scim.WriteError(c, http.StatusUnauthorized, scimAuthFailedDetail)
+			scim.WriteError(c.Writer, http.StatusUnauthorized, scimAuthFailedDetail)
 			c.Abort()
 			return
 		}

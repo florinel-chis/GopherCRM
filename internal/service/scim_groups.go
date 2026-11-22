@@ -6,8 +6,8 @@ import (
 	"sort"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/repository"
-	"github.com/florinel-chis/gophercrm/internal/scim"
 )
 
 // SCIM 2.0 Groups (#506). A group is a distinct value of the effective

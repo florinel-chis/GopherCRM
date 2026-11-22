@@ -7,9 +7,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
-	"github.com/florinel-chis/gophercrm/internal/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
+	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -53,6 +55,21 @@ func NewSCIMUserHandler(users service.SCIMUserService, publicBaseURL string) *SC
 	return &SCIMUserHandler{users: users, publicBaseURL: publicBaseURL}
 }
 
+// scimUserData is the SCIM view of the account u, with externalID ("" omits
+// it in the resource).
+func scimUserData(u *models.User, externalID string) scim.UserData {
+	return scim.UserData{
+		ID:           strconv.FormatUint(uint64(u.ID), 10),
+		ExternalID:   externalID,
+		Email:        u.Email,
+		GivenName:    u.FirstName,
+		FamilyName:   u.LastName,
+		Active:       u.IsActive,
+		Created:      u.CreatedAt,
+		LastModified: u.UpdatedAt,
+	}
+}
+
 func scimUserLogger(c *gin.Context) *logrus.Entry {
 	base := utils.Logger
 	if base == nil {
@@ -68,7 +85,7 @@ func (h *SCIMUserHandler) Get(c *gin.Context) {
 		h.fail(c, err)
 		return
 	}
-	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
+	h.write(c, scim.NewUser(h.publicBaseURL, scimUserData(&record.User, record.ExternalID)))
 }
 
 // List answers GET /scim/v2/Users.
@@ -77,14 +94,14 @@ func (h *SCIMUserHandler) List(c *gin.Context) {
 	count, countPresent := c.GetQuery("count")
 	page, err := scim.ParsePaging(startIndex, startPresent, count, countPresent)
 	if err != nil {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidPagingDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidPagingDetail)
 		return
 	}
 	var userName *string
 	if raw, present := c.GetQuery("filter"); present {
 		value, err := scim.ParseUserFilter(raw)
 		if err != nil {
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidFilter, scimInvalidFilterDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidFilter, scimInvalidFilterDetail)
 			return
 		}
 		userName = &value
@@ -96,7 +113,7 @@ func (h *SCIMUserHandler) List(c *gin.Context) {
 	}
 	resources := make([]scim.User, 0, len(result.Users))
 	for i := range result.Users {
-		resources = append(resources, scim.NewUser(h.publicBaseURL, &result.Users[i].User, result.Users[i].ExternalID))
+		resources = append(resources, scim.NewUser(h.publicBaseURL, scimUserData(&result.Users[i].User, result.Users[i].ExternalID)))
 	}
 	h.write(c, scim.NewUserList(result.Total, result.StartIndex, resources))
 }
@@ -113,7 +130,7 @@ func (h *SCIMUserHandler) Create(c *gin.Context) {
 		h.failWrite(c, err)
 		return
 	}
-	resource := scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID)
+	resource := scim.NewUser(h.publicBaseURL, scimUserData(&record.User, record.ExternalID))
 	c.Header("Location", resource.Meta.Location)
 	h.writeStatus(c, http.StatusCreated, resource)
 }
@@ -131,7 +148,7 @@ func (h *SCIMUserHandler) Replace(c *gin.Context) {
 		h.failWrite(c, err)
 		return
 	}
-	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
+	h.write(c, scim.NewUser(h.publicBaseURL, scimUserData(&record.User, record.ExternalID)))
 }
 
 // Patch answers PATCH /scim/v2/Users/:id: 200 with the patched resource.
@@ -140,7 +157,7 @@ func (h *SCIMUserHandler) Replace(c *gin.Context) {
 func (h *SCIMUserHandler) Patch(c *gin.Context) {
 	raw, ok := readSCIMObject(c)
 	if !ok {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidPatchDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidPatchDetail)
 		return
 	}
 	patch, err := scim.ParseUserPatch(raw)
@@ -159,7 +176,7 @@ func (h *SCIMUserHandler) Patch(c *gin.Context) {
 		case scim.ScimTypeInvalidValue:
 			detail = scimInvalidValueDetail
 		}
-		scim.WriteErrorType(c, http.StatusBadRequest, patchErr.ScimType, detail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, patchErr.ScimType, detail)
 		return
 	}
 	record, err := h.users.Patch(scimWriteContext(c), c.Param("id"), patch)
@@ -167,7 +184,7 @@ func (h *SCIMUserHandler) Patch(c *gin.Context) {
 		h.failWrite(c, err)
 		return
 	}
-	h.write(c, scim.NewUser(h.publicBaseURL, &record.User, record.ExternalID))
+	h.write(c, scim.NewUser(h.publicBaseURL, scimUserData(&record.User, record.ExternalID)))
 }
 
 // Delete answers DELETE /scim/v2/Users/:id (#504): 204 with an empty body. It
@@ -229,7 +246,7 @@ func readSCIMObject(c *gin.Context) (json.RawMessage, bool) {
 func readSCIMUserBody(c *gin.Context) (service.SCIMUserInput, bool) {
 	var in service.SCIMUserInput
 	invalid := func() (service.SCIMUserInput, bool) {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidSyntaxDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidSyntaxDetail)
 		return service.SCIMUserInput{}, false
 	}
 	raw, ok := readSCIMObject(c)
@@ -285,11 +302,11 @@ func (h *SCIMUserHandler) writeStatus(c *gin.Context, status int, document any) 
 func (h *SCIMUserHandler) failWrite(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrSCIMLastAdmin):
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimLastAdminDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimLastAdminDetail)
 	case errors.Is(err, service.ErrSCIMInvalidValue):
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidValueDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidValueDetail)
 	case errors.Is(err, service.ErrSCIMUniqueness):
-		scim.WriteErrorType(c, http.StatusConflict, scim.ScimTypeUniqueness, scimUniquenessDetail)
+		scim.WriteErrorType(c.Writer, http.StatusConflict, scim.ScimTypeUniqueness, scimUniquenessDetail)
 	default:
 		h.fail(c, err)
 	}
@@ -299,9 +316,9 @@ func (h *SCIMUserHandler) failWrite(c *gin.Context, err error) {
 // request's values.
 func (h *SCIMUserHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, apperrors.ErrNotFound) {
-		scim.WriteError(c, http.StatusNotFound, scimUserNotFoundDetail)
+		scim.WriteError(c.Writer, http.StatusNotFound, scimUserNotFoundDetail)
 		return
 	}
 	scimUserLogger(c).WithError(utils.LogError(err)).Error("SCIM user request failed")
-	scim.WriteError(c, http.StatusInternalServerError, scimUserInternalErrorDetail)
+	scim.WriteError(c.Writer, http.StatusInternalServerError, scimUserInternalErrorDetail)
 }

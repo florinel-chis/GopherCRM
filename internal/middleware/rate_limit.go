@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
-	"github.com/florinel-chis/gophercrm/internal/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
@@ -212,7 +212,7 @@ func respondAPIRateLimited(c *gin.Context) {
 
 // respondSCIMRateLimited is the 429 of the SCIM limits: the RFC 7644 error body.
 func respondSCIMRateLimited(c *gin.Context) {
-	scim.WriteError(c, http.StatusTooManyRequests, "Too many requests. Please try again later.")
+	scim.WriteError(c.Writer, http.StatusTooManyRequests, "Too many requests. Please try again later.")
 }
 
 // middleware is the limiter with the API tiers' 429.

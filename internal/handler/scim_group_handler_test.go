@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
-	"github.com/florinel-chis/gophercrm/internal/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"

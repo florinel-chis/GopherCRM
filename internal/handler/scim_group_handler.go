@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
-	"github.com/florinel-chis/gophercrm/internal/scim"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -76,14 +76,14 @@ func (h *SCIMGroupHandler) List(c *gin.Context) {
 	count, countPresent := c.GetQuery("count")
 	page, err := scim.ParsePaging(startIndex, startPresent, count, countPresent)
 	if err != nil {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidPagingDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimInvalidPagingDetail)
 		return
 	}
 	var displayName *string
 	if raw, present := c.GetQuery("filter"); present {
 		value, err := scim.ParseGroupFilter(raw)
 		if err != nil {
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidFilter, scimGroupInvalidFilterDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidFilter, scimGroupInvalidFilterDetail)
 			return
 		}
 		displayName = &value
@@ -116,7 +116,7 @@ func (h *SCIMGroupHandler) Get(c *gin.Context) {
 func (h *SCIMGroupHandler) Create(c *gin.Context) {
 	raw, ok := readSCIMObject(c)
 	if !ok {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
 		return
 	}
 	body, err := scim.ParseGroupCreate(raw)
@@ -128,18 +128,18 @@ func (h *SCIMGroupHandler) Create(c *gin.Context) {
 		}
 		switch {
 		case createErr.ScimType == scim.ScimTypeInvalidSyntax:
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimGroupCreateSyntaxDetail)
 		case createErr.Members:
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateMembersDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateMembersDetail)
 		default:
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
 		}
 		return
 	}
 	record, err := h.groups.Create(c.Request.Context(), body.ExternalID, body.DisplayName)
 	if err != nil {
 		if errors.Is(err, service.ErrSCIMInvalidValue) {
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupCreateValueDetail)
 			return
 		}
 		h.fail(c, err)
@@ -154,7 +154,7 @@ func (h *SCIMGroupHandler) Create(c *gin.Context) {
 func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 	raw, ok := readSCIMObject(c)
 	if !ok {
-		scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidPatchDetail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidSyntax, scimInvalidPatchDetail)
 		return
 	}
 	patch, err := scim.ParseGroupPatch(raw)
@@ -173,7 +173,7 @@ func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 		case scim.ScimTypeInvalidValue:
 			detail = scimGroupInvalidValueDetail
 		}
-		scim.WriteErrorType(c, http.StatusBadRequest, patchErr.ScimType, detail)
+		scim.WriteErrorType(c.Writer, http.StatusBadRequest, patchErr.ScimType, detail)
 		return
 	}
 	_, err = h.groups.Patch(scimWriteContext(c), c.Param("id"), patch)
@@ -182,9 +182,9 @@ func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 		// it were ever also an invalidValue.
 		switch {
 		case errors.Is(err, service.ErrSCIMGroupLastAdmin):
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeMutability, scimGroupLastAdminDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeMutability, scimGroupLastAdminDetail)
 		case errors.Is(err, service.ErrSCIMInvalidValue):
-			scim.WriteErrorType(c, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupInvalidValueDetail)
+			scim.WriteErrorType(c.Writer, http.StatusBadRequest, scim.ScimTypeInvalidValue, scimGroupInvalidValueDetail)
 		default:
 			h.fail(c, err)
 		}
@@ -198,7 +198,7 @@ func (h *SCIMGroupHandler) Patch(c *gin.Context) {
 // body is not read.
 func (h *SCIMGroupHandler) MethodNotAllowed(c *gin.Context) {
 	c.Header("Allow", scimGroupResourceAllow)
-	scim.WriteError(c, http.StatusMethodNotAllowed, scimGroupMethodNotAllowedDetail)
+	scim.WriteError(c.Writer, http.StatusMethodNotAllowed, scimGroupMethodNotAllowedDetail)
 }
 
 func (h *SCIMGroupHandler) write(c *gin.Context, status int, document any) {
@@ -214,9 +214,9 @@ func (h *SCIMGroupHandler) write(c *gin.Context, status int, document any) {
 // request's values.
 func (h *SCIMGroupHandler) fail(c *gin.Context, err error) {
 	if errors.Is(err, apperrors.ErrNotFound) {
-		scim.WriteError(c, http.StatusNotFound, scimGroupNotFoundDetail)
+		scim.WriteError(c.Writer, http.StatusNotFound, scimGroupNotFoundDetail)
 		return
 	}
 	scimGroupLogger(c).WithError(utils.LogError(err)).Error(scimGroupInternalErrorLogMessage)
-	scim.WriteError(c, http.StatusInternalServerError, scimUserInternalErrorDetail)
+	scim.WriteError(c.Writer, http.StatusInternalServerError, scimUserInternalErrorDetail)
 }

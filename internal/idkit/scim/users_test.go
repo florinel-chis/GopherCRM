@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -120,13 +118,19 @@ func TestParsePaging(t *testing.T) {
 
 func TestUserResource(t *testing.T) {
 	cest := time.FixedZone("CEST", 2*60*60)
-	u := &models.User{Email: "jane@x.test", FirstName: "Jane", LastName: "Doe", IsActive: false}
-	u.ID = 42
-	u.CreatedAt = time.Date(2026, 11, 1, 10, 0, 0, 0, cest)
-	u.UpdatedAt = time.Date(2026, 11, 2, 11, 30, 0, 0, cest)
+	u := UserData{
+		ID:           "42",
+		ExternalID:   "sub-1",
+		Email:        "jane@x.test",
+		GivenName:    "Jane",
+		FamilyName:   "Doe",
+		Active:       false,
+		Created:      time.Date(2026, 11, 1, 10, 0, 0, 0, cest),
+		LastModified: time.Date(2026, 11, 2, 11, 30, 0, 0, cest),
+	}
 
 	for _, base := range []string{"https://crm.example.test", "https://crm.example.test/", "https://crm.example.test//"} {
-		body, err := json.Marshal(NewUser(base, u, "sub-1"))
+		body, err := json.Marshal(NewUser(base, u))
 		require.NoError(t, err)
 		assert.JSONEq(t, `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"id":"42","externalId":"sub-1",
 			"userName":"jane@x.test","name":{"givenName":"Jane","familyName":"Doe"},
@@ -134,7 +138,8 @@ func TestUserResource(t *testing.T) {
 			"meta":{"resourceType":"User","created":"2026-11-01T08:00:00Z","lastModified":"2026-11-02T09:30:00Z",
 			"location":"https://crm.example.test/scim/v2/Users/42"}}`, string(body), base)
 	}
-	body, err := json.Marshal(NewUser("https://crm.example.test", u, ""))
+	u.ExternalID = ""
+	body, err := json.Marshal(NewUser("https://crm.example.test", u))
 	require.NoError(t, err)
 	assert.NotContains(t, string(body), "externalId")
 
@@ -144,17 +149,14 @@ func TestUserResource(t *testing.T) {
 }
 
 func TestWriteErrorType(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	WriteErrorType(c, http.StatusBadRequest, ScimTypeInvalidFilter, `Only "this"`)
+	WriteErrorType(w, http.StatusBadRequest, ScimTypeInvalidFilter, `Only "this"`)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, ContentType, w.Header().Get("Content-Type"))
+	assert.Equal(t, ContentType, w.Result().Header.Get("Content-Type"))
 	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"scimType":"invalidFilter","status":"400","detail":"Only \"this\""}`, w.Body.String())
 }
 
 func TestWriteErrorTypeWriteTypes(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
 		status   int
 		scimType string
@@ -164,9 +166,9 @@ func TestWriteErrorTypeWriteTypes(t *testing.T) {
 		{http.StatusBadRequest, ScimTypeInvalidSyntax, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"scimType":"invalidSyntax","status":"400","detail":"d"}`},
 	} {
 		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		WriteErrorType(c, tc.status, tc.scimType, "d")
+		WriteErrorType(w, tc.status, tc.scimType, "d")
 		assert.Equal(t, tc.status, w.Code)
+		assert.Equal(t, ContentType, w.Result().Header.Get("Content-Type"))
 		assert.Equal(t, tc.want, w.Body.String())
 	}
 }

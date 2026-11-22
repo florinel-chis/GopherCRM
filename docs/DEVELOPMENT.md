@@ -81,7 +81,9 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   Entra rules, claim-to-role mapping, SCIM). They stay inside the main module until a second system
   uses them and must not reach gin, gorm, `internal/models`, `internal/repository`, `internal/utils`
   or logrus, directly or through other packages;
-  `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this.
+  `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this. The SCIM protocol
+  package now lives in `internal/idkit/scim`, and the handlers convert `models.User` to
+  `scim.UserData`.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
@@ -419,7 +421,7 @@ accepted requests per token id (`cfg.SCIM`, from `SCIM_RATE_LIMIT_PER_MINUTE` an
 `SCIM_RATE_LIMIT_BURST`, defaults 1500 and 150, capped at 6000 and 1000 by
 `config.NormalizeSCIMRateLimits`, which the constructor applies too), the SCIM refusal limit
 counts refusals per client address (10/min, burst 5), every method counts, and a request over
-either gets a 429 in the SCIM error shape with no audit row; then the three discovery documents (`internal/scim`,
+either gets a 429 in the SCIM error shape with no audit row; then the three discovery documents (`internal/idkit/scim`,
 `internal/handler/scim_handler.go`). Tokens live in `scim_tokens` as `utils.HashAPIKeyHMAC`
 hashes (`internal/service/scim_token.go`); the lookup is by hash and the row is accepted only
 when `hmac.Equal` holds, because MySQL and MariaDB compare `token_hash` case-insensitively. Each
@@ -450,14 +452,14 @@ is live, non-customer users with a `user_identities` row whose issuer equals the
 exactly, any `source`, applied in SQL by `whereManagedBy` with a `LENGTH` guard against the PAD SPACE
 collation, shared with `SCIMGroupMemberRepository` (#529); identities of a page in one
 `issuer = ? AND user_id IN ?` query). The replace, patch and delete and the group patch refuse an
-account that is not managed like an unknown id, judged right after the users lock. `internal/scim` holds the User
+account that is not managed like an unknown id, judged right after the users lock. `internal/idkit/scim` holds the User
 resource, `ParseUserFilter`, `ParsePaging`, `WriteErrorType` and `UserNameMatches`, the
 ASCII-only judge: never replace it with `strings.EqualFold`, whose Unicode folding matches
 U+212A and U+017F the way `utf8mb4_unicode_ci` does. Regression roots: `TestSCIMUsersSQLite` and
 `TestSCIMUsersMySQL` (`internal/service`, discovered by the auth checker; run the MySQL root on
 MariaDB too), `TestSCIMUserHandler` (`internal/handler`), `TestParseUserFilter`,
 `TestUserNameMatches`, `TestParsePaging`, `TestUserResource`, `TestWriteErrorType`
-(`internal/scim`) and `TestSCIMUsersWired` (`cmd`).
+(`internal/idkit/scim`) and `TestSCIMUsersWired` (`cmd`).
 
 **SCIM user writes (#470)** — `POST /scim/v2/Users` and `PUT /scim/v2/Users/:id` are mounted by
 `SetupSCIMRoutes`; `internal/handler/scim_user_handler.go` reads the body itself
@@ -477,13 +479,13 @@ one successful `auth_audit_log` row with method `scim` after the commit. Replace
 address with `SCIMUserRepository.EmailTakenByOther` (live or erased, `LOWER` on both sides).
 Regression roots: `TestSCIMUserWritesSQLite` and `TestSCIMUserWritesMySQL` (`internal/service`,
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserWriteHandler`
-(`internal/handler`), `TestWriteErrorTypeWriteTypes` (`internal/scim`) and
+(`internal/handler`), `TestWriteErrorTypeWriteTypes` (`internal/idkit/scim`) and
 `TestSCIMUserWritesWired` (`cmd`). The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#users-create-and-replace-470).
 
 **SCIM user patch (#471)** — `PATCH /scim/v2/Users/:id` is mounted by `SetupSCIMRoutes`;
 `SCIMUserHandler.Patch` reads the body as the writes do (64 KiB, one JSON object, no trailing
-data) and parses it with `scim.ParseUserPatch` (`internal/scim/patch.go`, pure), which returns a
+data) and parses it with `scim.ParseUserPatch` (`internal/idkit/scim/patch.go`, pure), which returns a
 `scim.UserPatch` of pointers (nil = untouched) or a `*scim.PatchError` whose `ScimType`
 (`invalidSyntax`, `invalidPath`, `noTarget`, `invalidValue`) the handler answers with a fixed
 detail that never echoes the path or value; service refusals go through `failWrite`. Paths and
@@ -508,7 +510,7 @@ repositories (`cmd/main.go` passes `refreshTokenRepo` and `apiKeyRepo`); without
 Delete and a deactivating Replace answer a wiring error (500) and write nothing.
 Regression roots: `TestSCIMUserPatchSQLite` and `TestSCIMUserPatchMySQL` (`internal/service`,
 discovered by the auth checker; run the MySQL root on MariaDB too), `TestSCIMUserPatchHandler`
-(`internal/handler`), `TestParsePatch` (`internal/scim`), `TestSCIMUserPatchWired` (`cmd`) and
+(`internal/handler`), `TestParsePatch` (`internal/idkit/scim`), `TestSCIMUserPatchWired` (`cmd`) and
 `TestConcurrencyDocSCIMUserPatch` (`internal/config`). The rules are in
 [AUTHORIZATION.md](AUTHORIZATION.md#users-patch-471).
 
@@ -530,7 +532,7 @@ DELETE 405 are mounted by `SetupSCIMRoutes` from the
 `SCIMGroupHandler` (`internal/handler/scim_group_handler.go`; its patch error switch tests
 `ErrSCIMGroupLastAdmin`, answered 400 `mutability`, before `ErrSCIMInvalidValue`). The groups are
 the distinct `groups`-claim values of the effective role mapping (`internal/service/scim_groups.go`,
-`SCIMGroupService`); the id is `scim.GroupID` (unpadded base64url), and `internal/scim/groups.go`
+`SCIMGroupService`); the id is `scim.GroupID` (unpadded base64url), and `internal/idkit/scim/groups.go`
 and `group_patch.go` hold the Group resource, `ParseGroupFilter`, `ParseGroupCreate`,
 `ExcludesMembers` (`excludedAttributes=members`) and `ParseGroupPatch`; `scimGroupService.Create`
 resolves `externalId`, then `displayName`, to a current value and writes nothing. Membership
@@ -556,7 +558,7 @@ and none is left, a deactivated account counting as none. Regression roots:
 discovered by the auth checker; run the MySQL root on MariaDB too; the `last_admin_race`
 subtests), `TestSCIMGroupHandler` and `TestSCIMDiscoveryDocuments` (`internal/handler`),
 `TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
-`TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
+`TestSCIMParseGroupPatch` (`internal/idkit/scim`), `TestSCIMGroupMemberSchemaSQLite`
 (`internal/models`), `TestSCIMGroupsWired` and the `scim_group_*` subtests of
 `TestCredentialRevocationProductionWiring` (`cmd`), `TestConcurrencyDocSCIMGroupPatch`
 (`internal/config`), and `TestSCIMGroupMembersMigrationFiles` (it held the newest-migration

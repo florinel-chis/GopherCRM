@@ -835,11 +835,11 @@ Regression roots: `TestSCIMRoutesWired`, `TestSCIMStrictTierWired`, `TestSCIMUse
 (`internal/service`; the MySQL roots also run on MariaDB and prove that the collations return
 the variants the Go judges drop, and that the padded and accented variants of a stored address
 are refused as taken), `TestParseUserFilter`, `TestUserNameMatches`, `TestUserResource`,
-`TestWriteErrorType` and `TestWriteErrorTypeWriteTypes` (`internal/scim`),
+`TestWriteErrorType` and `TestWriteErrorTypeWriteTypes` (`internal/idkit/scim`),
 `TestSCIMTokenSchemaSQLite` (`internal/models`) and `TestSCIMTokensMigration{Files,}`
 (`cmd/migrate`). The patch (#471) adds `TestSCIMUserPatchWired` (`cmd`),
 `TestSCIMUserPatchHandler` (`internal/handler`), `TestSCIMUserPatchSQLite`/`TestSCIMUserPatchMySQL`
-(`internal/service`, also run on MariaDB), `TestParsePatch` (`internal/scim`) and
+(`internal/service`, also run on MariaDB), `TestParsePatch` (`internal/idkit/scim`) and
 `TestConcurrencyDocSCIMUserPatch` (`internal/config`). The delete (#504) adds
 `TestSCIMUserDeleteWired` (`cmd`), `TestSCIMUserDeleteHandler` (`internal/handler`) and
 `TestSCIMUserDeleteSQLite`/`TestSCIMUserDeleteMySQL` (`internal/service`, also run on MariaDB),
@@ -1053,7 +1053,7 @@ Regression roots: `TestSCIMGroupsWired` (`cmd`), `TestSCIMGroupHandler` and
 `TestSCIMDiscoveryDocuments` (`internal/handler`), `TestSCIMGroupsSQLite`/`TestSCIMGroupsMySQL`
 (`internal/service`, also run on MariaDB, with the `last_admin_race` subtests),
 `TestSCIMGroupResource`, `TestSCIMGroupID`, `TestSCIMParseGroupFilter` and
-`TestSCIMParseGroupPatch` (`internal/scim`), `TestSCIMGroupMemberSchemaSQLite`
+`TestSCIMParseGroupPatch` (`internal/idkit/scim`), `TestSCIMGroupMemberSchemaSQLite`
 (`internal/models`) and `TestSCIMGroupMembersMigration{Files,}` (`cmd/migrate`).
 
 ## Least-privilege integration user

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/service"
 	"github.com/gin-gonic/gin"
@@ -555,5 +556,54 @@ func TestSCIMUserDeleteHandler(t *testing.T) {
 			assert.Equal(t, tc.detail, doc["detail"], tc.name)
 			assert.NotContains(t, w.Body.String(), secret, tc.name)
 		}
+	})
+}
+
+func TestSCIMUserData(t *testing.T) {
+	cest := time.FixedZone("CEST", 2*3600)
+	newUser := func(active bool) *models.User {
+		u := &models.User{Email: "ada@example.com", FirstName: "Ada", LastName: "Lovelace", IsActive: active}
+		u.ID = 42
+		u.CreatedAt = time.Date(2026, 11, 1, 10, 0, 0, 0, cest)
+		u.UpdatedAt = time.Date(2026, 11, 2, 11, 30, 0, 0, cest)
+		return u
+	}
+
+	t.Run("active with external id", func(t *testing.T) {
+		u := newUser(true)
+		got := scimUserData(u, "ext-42")
+		assert.Equal(t, "42", got.ID)
+		assert.Equal(t, "ext-42", got.ExternalID)
+		assert.Equal(t, "ada@example.com", got.Email)
+		assert.Equal(t, "Ada", got.GivenName)
+		assert.Equal(t, "Lovelace", got.FamilyName)
+		assert.True(t, got.Active)
+		assert.True(t, got.Created.Equal(u.CreatedAt), "created %v", got.Created)
+		assert.True(t, got.LastModified.Equal(u.UpdatedAt), "lastModified %v", got.LastModified)
+
+		body, err := json.Marshal(scim.NewUser("https://crm.example", scimUserData(u, "ext-42")))
+		require.NoError(t, err)
+		for _, want := range []string{
+			`"created":"2026-11-01T08:00:00Z"`,
+			`"lastModified":"2026-11-02T09:30:00Z"`,
+			`"givenName":"Ada"`,
+			`"familyName":"Lovelace"`,
+			`"externalId":"ext-42"`,
+			`"active":true`,
+		} {
+			assert.Contains(t, string(body), want)
+		}
+	})
+
+	t.Run("inactive without external id", func(t *testing.T) {
+		u := newUser(false)
+		got := scimUserData(u, "")
+		assert.False(t, got.Active)
+		assert.Equal(t, "", got.ExternalID)
+
+		body, err := json.Marshal(scim.NewUser("https://crm.example", got))
+		require.NoError(t, err)
+		assert.Contains(t, string(body), `"active":false`)
+		assert.NotContains(t, string(body), `"externalId"`)
 	})
 }
