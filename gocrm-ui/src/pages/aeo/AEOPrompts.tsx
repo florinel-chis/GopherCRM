@@ -49,12 +49,12 @@ import {
   Edit as EditIcon,
   PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
-import { AxiosError } from 'axios';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { apiErrorMessage, getAPIError, getHTTPStatus } from '@/utils/apiError';
 import {
   aeoApi,
   type AEOAnswer,
@@ -211,16 +211,14 @@ export const Component: React.FC = () => {
   // A duplicate text is a 409; the 100-active-prompt cap comes back as a 400
   // with the server's own wording, which is more useful than a generic message.
   const reportMutationError = (mutationError: unknown, fallback: string) => {
-    if (mutationError instanceof AxiosError) {
-      const message = (mutationError.response?.data as { message?: string } | undefined)?.message;
-      if (mutationError.response?.status === 409) {
-        showError(message || 'A prompt with this text already exists');
-        return;
-      }
-      if (mutationError.response?.status === 400 && message) {
-        showError(message);
-        return;
-      }
+    const status = getHTTPStatus(mutationError);
+    if (status === 409) {
+      showError(apiErrorMessage(mutationError, 'A prompt with this text already exists'));
+      return;
+    }
+    if (status === 400 && getAPIError(mutationError)?.message) {
+      showError(apiErrorMessage(mutationError, fallback));
+      return;
     }
     showError(fallback);
   };
@@ -269,16 +267,14 @@ export const Component: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['aeo', 'runs'] });
     },
     onError: (mutationError) => {
-      if (mutationError instanceof AxiosError) {
-        const message = (mutationError.response?.data as { message?: string } | undefined)?.message;
-        if (mutationError.response?.status === 409) {
-          showError(message || 'A run is already in progress');
-          return;
-        }
-        if (mutationError.response?.status === 503) {
-          showError(message || 'No AEO providers are configured');
-          return;
-        }
+      const status = getHTTPStatus(mutationError);
+      if (status === 409) {
+        showError(apiErrorMessage(mutationError, 'A run is already in progress'));
+        return;
+      }
+      if (status === 503) {
+        showError(apiErrorMessage(mutationError, 'No AEO providers are configured'));
+        return;
       }
       showError('Failed to start the run');
     },
@@ -294,10 +290,9 @@ export const Component: React.FC = () => {
       }
     },
     onError: (mutationError) => {
-      if (mutationError instanceof AxiosError && mutationError.response?.status === 503) {
+      if (getHTTPStatus(mutationError) === 503) {
         showError(
-          (mutationError.response?.data as { message?: string } | undefined)?.message ||
-            'Prompt generation is not configured on the server',
+          apiErrorMessage(mutationError, 'Prompt generation is not configured on the server'),
         );
         return;
       }

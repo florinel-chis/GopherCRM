@@ -31,3 +31,25 @@ export function getErrorMessage(error: unknown, fallback: string): string {
     ? error.message
     : fallback;
 }
+
+/**
+ * The message to show for a failed API call: the server's flat message when it
+ * is a non-empty string, otherwise `fallback`. With `details: true`, the field
+ * messages of a 400 answer are appended as `field value` entries joined by `; `;
+ * every other status shows the message alone.
+ */
+export function apiErrorMessage(
+  error: unknown,
+  fallback: string,
+  options?: { details?: boolean },
+): string {
+  const apiError = getAPIError(error);
+  const base = apiError?.message ? apiError.message : fallback;
+  if (!options?.details || getHTTPStatus(error) !== 400 || !apiError?.details) {
+    return base;
+  }
+  const entries = Object.entries(apiError.details).map(([field, value]) =>
+    typeof value === 'string' && value ? `${field} ${value}` : `${field} is invalid`,
+  );
+  return entries.length > 0 ? `${base}: ${entries.join('; ')}` : base;
+}

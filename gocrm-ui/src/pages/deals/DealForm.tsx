@@ -20,7 +20,6 @@ import {
   TextField as MuiTextField,
 } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
-import { AxiosError } from 'axios';
 import { FormTextField } from '@/components/form';
 import { CompanyAutocomplete } from '@/components/CompanyAutocomplete';
 import { CustomerAutocomplete } from '@/components/CustomerAutocomplete';
@@ -29,6 +28,7 @@ import { Loading } from '@/components/Loading';
 import { useUIConfigurationsQuery } from '@/hooks/useUIConfigurations';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { apiErrorMessage, getAPIError } from '@/utils/apiError';
 import { dealsApi, usersApi, type CreateDealData } from '@/api/endpoints';
 import {
   DEAL_STAGES,
@@ -91,13 +91,6 @@ const dealSchema = z.object({
 });
 
 type DealFormData = z.infer<typeof dealSchema>;
-
-// What the axios client leaves in `error.response.data`: the `error` object of
-// the API envelope ({code, message, details}), not the envelope itself.
-interface ApiErrorPayload {
-  code?: string;
-  message?: string;
-}
 
 type ReferenceField = 'company_id' | 'customer_id' | 'lead_id' | 'owner_id';
 const REFERENCE_FIELDS: ReferenceField[] = ['company_id', 'customer_id', 'lead_id', 'owner_id'];
@@ -267,24 +260,15 @@ export const Component: React.FC = () => {
   // owner rule (sales sending another owner_id). Anything else that carries a
   // message is shown as is.
   const reportError = (error: unknown, fallback: string) => {
-    if (error instanceof AxiosError) {
-      const payload = error.response?.data as ApiErrorPayload | undefined;
-      const serverMessage =
-        typeof payload?.message === 'string' && payload.message !== '' ? payload.message : undefined;
-      if (payload?.code === 'INVALID_REFERENCE' && serverMessage) {
-        const field = REFERENCE_FIELDS.find((candidate) => serverMessage.includes(candidate));
-        if (field) {
-          setReferenceErrors((prev) => ({ ...prev, [field]: serverMessage }));
-        }
-        showError(serverMessage);
-        return;
-      }
-      if (serverMessage) {
-        showError(serverMessage);
-        return;
+    const apiError = getAPIError(error);
+    const serverMessage = apiError?.message;
+    if (apiError?.code === 'INVALID_REFERENCE' && serverMessage) {
+      const field = REFERENCE_FIELDS.find((candidate) => serverMessage.includes(candidate));
+      if (field) {
+        setReferenceErrors((prev) => ({ ...prev, [field]: serverMessage }));
       }
     }
-    showError(fallback);
+    showError(apiErrorMessage(error, fallback));
   };
 
   const invalidateDeals = () => {

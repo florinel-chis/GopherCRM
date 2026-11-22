@@ -21,6 +21,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { Loading } from '@/components/Loading';
 import { authApi } from '@/api/endpoints';
 import { formatDate } from '@/utils/date';
+import { apiErrorMessage } from '@/utils/apiError';
 import type { User } from '@/types';
 
 // Mirrors the policy enforced by internal/utils/password.go and the sign-up
@@ -47,20 +48,6 @@ const ROLE_COLORS: Record<User['role'], 'error' | 'primary' | 'info' | 'default'
   support: 'info',
   customer: 'default',
   custom: 'default',
-};
-
-/**
- * Pulls the backend's own message out of an axios error. The API answers with
- * `{success:false, error:{code,message}}` and the client's error interceptor
- * replaces `response.data` with that inner `error` object — so the message
- * normally sits at `data.message`. The nested form is kept as a fallback for
- * responses the interceptor did not touch.
- */
-const serverMessage = (error: unknown, fallback: string): string => {
-  const data = (error as {
-    response?: { data?: { message?: string; error?: { message?: string } } };
-  })?.response?.data;
-  return data?.message || data?.error?.message || fallback;
 };
 
 export const Profile: React.FC = () => {
@@ -101,7 +88,7 @@ export const Profile: React.FC = () => {
       showSuccess('Password changed successfully');
       reset();
     } catch (err) {
-      setError(serverMessage(err, 'Password change failed. Please try again.'));
+      setError(apiErrorMessage(err, 'Password change failed. Please try again.'));
     }
   };
 

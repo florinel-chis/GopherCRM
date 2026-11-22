@@ -33,7 +33,7 @@ import { useConfiguration } from '@/hooks/useConfiguration';
 import { Loading } from '@/components/Loading';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { usePermissions } from '@/hooks/usePermissions';
-import { getAPIError } from '@/utils/apiError';
+import { apiErrorMessage } from '@/utils/apiError';
 import { ConfigValueEditor } from './ConfigValueEditor';
 import { initialDraft, isConfigurationValue, parseDraft, usesDraft } from './configValueDraft';
 
@@ -101,7 +101,7 @@ const ConfigurationSettings: React.FC = () => {
     } catch (error) {
       // An empty list would read as "No configurations found" in every tab.
       setConfigurations([]);
-      setLoadError(getAPIError(error)?.message || 'Failed to load configurations');
+      setLoadError(apiErrorMessage(error, 'Failed to load configurations'));
     } finally {
       setLoading(false);
     }
@@ -149,7 +149,7 @@ const ConfigurationSettings: React.FC = () => {
       if (value === null) throw new Error('A configuration value is required');
       await configurationsApi.set(editingConfig.key, { value });
     } catch (error) {
-      showError(getAPIError(error)?.message || 'Failed to update configuration');
+      showError(apiErrorMessage(error, 'Failed to update configuration'));
       return;
     }
     showSuccess('Configuration updated successfully');
@@ -167,7 +167,7 @@ const ConfigurationSettings: React.FC = () => {
     try {
       await configurationsApi.reset(config.key);
     } catch (error) {
-      showError(getAPIError(error)?.message || 'Failed to reset configuration');
+      showError(apiErrorMessage(error, 'Failed to reset configuration'));
       return;
     }
     showSuccess('Configuration reset to default');

@@ -36,6 +36,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { apiKeysApi, type GeneratedAPIKey } from '@/api/endpoints/apikeys';
 import type { APIKey } from '@/types';
 import { formatDate, DATE_FALLBACK } from '@/utils/date';
+import { apiErrorMessage } from '@/utils/apiError';
 
 /**
  * The latest expiry date the form offers, as `yyyy-MM-dd` in local time: one
@@ -63,18 +64,6 @@ const createKeySchema = z.object({
 });
 
 type CreateKeyFormData = z.infer<typeof createKeySchema>;
-
-/**
- * The client's error interceptor replaces `response.data` with the envelope's
- * inner `error` object, so the backend message normally sits at `data.message`;
- * the nested form is the fallback for responses it did not touch.
- */
-const serverMessage = (error: unknown, fallback: string): string => {
-  const data = (error as {
-    response?: { data?: { message?: string; error?: { message?: string } } };
-  })?.response?.data;
-  return data?.message || data?.error?.message || fallback;
-};
 
 /**
  * Turns the date-input value (`yyyy-MM-dd`) into the RFC3339 timestamp the API
@@ -125,7 +114,7 @@ export const APIKeys: React.FC = () => {
       setRevokeTarget(null);
     },
     onError: (error) => {
-      showError(serverMessage(error, 'Failed to revoke API key'));
+      showError(apiErrorMessage(error, 'Failed to revoke API key'));
       setRevokeTarget(null);
     },
   });
@@ -148,7 +137,7 @@ export const APIKeys: React.FC = () => {
       // the operator dismisses the reveal dialog.
       setGenerated(key);
     } catch (error) {
-      setCreateError(serverMessage(error, 'Failed to create API key'));
+      setCreateError(apiErrorMessage(error, 'Failed to create API key'));
     }
   };
 
@@ -194,7 +183,7 @@ export const APIKeys: React.FC = () => {
           // no keys" would read as a statement of fact about the keys that do
           // exist, and could send someone off to mint a duplicate.
           <Alert severity="error" sx={{ m: 2 }}>
-            {serverMessage(listError, 'Failed to load API keys. Please try again.')}
+            {apiErrorMessage(listError, 'Failed to load API keys. Please try again.')}
           </Alert>
         ) : (
           <TableContainer>

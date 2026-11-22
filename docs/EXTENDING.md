@@ -201,7 +201,9 @@ wrong mock lets a test pass for the wrong reason (`REVIEW.md`, last paragraph).
   The axios client (the response interceptor in `setupInterceptors`, `gocrm-ui/src/api/client.ts`)
   unwraps the success envelope, so endpoint functions receive `data` directly. Error envelopes are
   unwrapped flat ("Unwrap error response if it's in the wrapped format" in the same interceptor); read them with
-  `getAPIError` (`src/utils/apiError.ts`), which returns `{code, message, details}`.
+  `getAPIError` (`src/utils/apiError.ts`), which returns `{code, message, details}`. Pages show a server
+  message with `apiErrorMessage(error, fallback, { details })` from the same file and never read
+  `error.response.data` themselves; `details` adds the field messages of a 400 answer only.
 - Pages under `gocrm-ui/src/pages/<entity>/` (TanStack Query, react-hook-form with zod), lazily
   imported in `gocrm-ui/src/routes/index.tsx` behind `<ProtectedRoute requiredPermission="...">`
   with the permission key the API asks for the page's main call (products: the `products.view`,

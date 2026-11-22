@@ -251,9 +251,36 @@ describe('SSOSettings', () => {
     await save();
 
     expect(
-      await screen.findByText('role_mapping[0].role_id: names a role that does not exist'),
+      await screen.findByText(
+        'The role mapping names a role that does not exist: role_mapping[0].role_id names a role that does not exist',
+      ),
     ).toBeInTheDocument();
   });
+
+  it('shows only the server message of a rate-limited save', async () => {
+    vi.mocked(ssoSettingsApi.update).mockRejectedValue(
+      Object.assign(new Error('429'), {
+        response: {
+          status: 429,
+          data: {
+            code: 'TOO_MANY_REQUESTS',
+            message: 'Too many requests. Please try again later.',
+            details: { retry_after: '60s' },
+          },
+        },
+      }),
+    );
+    await renderPage();
+
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: SECRET } });
+    await save();
+
+    expect(
+      await screen.findByText('Too many requests. Please try again later.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/retry_after/)).toBeNull();
+  });
+
   describe('changing the issuer while accounts are linked', () => {
     const issuerChangeRefusal = (links: number) =>
       Object.assign(new Error('409'), {

@@ -99,6 +99,18 @@ describe('APIKeys', () => {
     expect(screen.queryByText(/no api keys yet/i)).not.toBeInTheDocument();
   });
 
+  it('falls back to its own message when the server message is not text', async () => {
+    vi.mocked(apiKeysApi.getAPIKeys).mockRejectedValue({
+      response: { status: 500, data: { message: {} } },
+    });
+
+    render(<APIKeys />);
+
+    expect(
+      await screen.findByText('Failed to load API keys. Please try again.'),
+    ).toBeInTheDocument();
+  });
+
   it('shows the plaintext key exactly once after creation and refreshes the list', async () => {
     const user = userEvent.setup();
     vi.mocked(apiKeysApi.createAPIKey).mockResolvedValue({

@@ -29,6 +29,7 @@ import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { scimTokensApi, type SCIMToken } from '@/api/endpoints/scimTokens';
 import { formatDate } from '@/utils/date';
+import { apiErrorMessage } from '@/utils/apiError';
 import { SCIMTokenSecretDialog } from './SCIMTokenSecretDialog';
 
 const SCIM_TOKENS_KEY = ['scim-tokens'] as const;
@@ -43,20 +44,6 @@ const createTokenSchema = z.object({
 });
 
 type CreateTokenFormData = z.infer<typeof createTokenSchema>;
-
-/**
- * The client's error interceptor replaces `response.data` with the envelope's
- * inner `error` object, so the backend message sits at `data.message`; a
- * validation error names the rule for the field in `data.details.name`.
- */
-const serverMessage = (error: unknown, fallback: string): string => {
-  const data = (error as {
-    response?: { data?: { message?: string; details?: { name?: unknown } } };
-  })?.response?.data;
-  const message = data?.message || fallback;
-  const nameRule = data?.details?.name;
-  return typeof nameRule === 'string' ? `${message}: name ${nameRule}` : message;
-};
 
 export const SCIMTokens: React.FC = () => {
   const queryClient = useQueryClient();
@@ -94,7 +81,7 @@ export const SCIMTokens: React.FC = () => {
       setRevokeTarget(null);
     },
     onError: (error) => {
-      showError(serverMessage(error, 'Failed to revoke the SCIM token'));
+      showError(apiErrorMessage(error, 'Failed to revoke the SCIM token'));
       setRevokeTarget(null);
     },
   });
@@ -112,7 +99,9 @@ export const SCIMTokens: React.FC = () => {
       setCreateOpen(false);
       setCreatedToken(created.token);
     } catch (error) {
-      setCreateError(serverMessage(error, 'Failed to create the SCIM token'));
+      setCreateError(
+        apiErrorMessage(error, 'Failed to create the SCIM token', { details: true }),
+      );
     }
   };
 
@@ -143,7 +132,7 @@ export const SCIMTokens: React.FC = () => {
           <Loading />
         ) : isError ? (
           <Alert severity="error" sx={{ m: 2 }}>
-            {serverMessage(listError, 'Failed to load the SCIM tokens. Please try again.')}
+            {apiErrorMessage(listError, 'Failed to load the SCIM tokens. Please try again.')}
           </Alert>
         ) : (
           <TableContainer>

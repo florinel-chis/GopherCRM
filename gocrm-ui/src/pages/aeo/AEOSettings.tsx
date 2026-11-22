@@ -24,11 +24,11 @@ import {
   Delete as DeleteIcon,
   PlayArrow as PlayArrowIcon,
 } from '@mui/icons-material';
-import { AxiosError } from 'axios';
 import { FormTextField } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { apiErrorMessage, getHTTPStatus } from '@/utils/apiError';
 import { aeoApi, type AEOProfile, type SaveAEOProfileData } from '@/api/endpoints/aeo';
 import { configurationsApi } from '@/api/endpoints/configurations';
 import { AEOProviderConnections } from './AEOProviderConnections';
@@ -429,16 +429,14 @@ export const Component: React.FC = () => {
       // 409 covers both "a run is already in progress" and "no brand profile
       // yet"; the server message distinguishes them. 503 means no provider key
       // is configured, which is an operator problem, not a user error.
-      if (error instanceof AxiosError) {
-        const message = (error.response?.data as { message?: string } | undefined)?.message;
-        if (error.response?.status === 409) {
-          showError(message || 'An AEO run is already in progress');
-          return;
-        }
-        if (error.response?.status === 503) {
-          showError(message || 'No AEO providers are configured');
-          return;
-        }
+      const status = getHTTPStatus(error);
+      if (status === 409) {
+        showError(apiErrorMessage(error, 'An AEO run is already in progress'));
+        return;
+      }
+      if (status === 503) {
+        showError(apiErrorMessage(error, 'No AEO providers are configured'));
+        return;
       }
       showError('Failed to start an AEO run');
     },

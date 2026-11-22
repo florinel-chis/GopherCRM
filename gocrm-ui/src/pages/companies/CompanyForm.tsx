@@ -15,11 +15,11 @@ import {
   TextField as MuiTextField,
 } from '@mui/material';
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
-import { AxiosError } from 'axios';
 import { FormTextField, FormSelect } from '@/components/form';
 import { Loading } from '@/components/Loading';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useSnackbar } from '@/hooks/useSnackbar';
+import { apiErrorMessage, getHTTPStatus } from '@/utils/apiError';
 import { companiesApi, usersApi, type CreateCompanyData } from '@/api/endpoints';
 import { COMPANY_EMPLOYEE_RANGES, type User } from '@/types';
 
@@ -51,13 +51,6 @@ const companySchema = z.object({
 });
 
 type CompanyFormData = z.infer<typeof companySchema>;
-
-// What the axios client leaves in `error.response.data`: the `error` object of
-// the API envelope ({code, message, details}), not the envelope itself.
-interface ApiErrorPayload {
-  code?: string;
-  message?: string;
-}
 
 const employeeRangeOptions = [
   { value: '', label: 'Not specified' },
@@ -137,22 +130,13 @@ export const Component: React.FC = () => {
   // A 409 names the domain conflict; the server's message goes on the field
   // that caused it. Anything else is reported through the snackbar.
   const reportError = (error: unknown, fallback: string) => {
-    if (error instanceof AxiosError) {
-      const payload = error.response?.data as ApiErrorPayload | undefined;
-      const serverMessage =
-        typeof payload?.message === 'string' && payload.message !== '' ? payload.message : undefined;
-      if (error.response?.status === 409) {
-        const message = serverMessage || 'A company with this domain already exists';
-        methods.setError('domain', { type: 'server', message });
-        showError(message);
-        return;
-      }
-      if (serverMessage) {
-        showError(serverMessage);
-        return;
-      }
+    if (getHTTPStatus(error) === 409) {
+      const message = apiErrorMessage(error, 'A company with this domain already exists');
+      methods.setError('domain', { type: 'server', message });
+      showError(message);
+      return;
     }
-    showError(fallback);
+    showError(apiErrorMessage(error, fallback));
   };
 
   // Without the picker owner_id is never sent: the API assigns the company

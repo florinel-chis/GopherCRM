@@ -34,7 +34,7 @@ import {
   type SSOSettings as SSOSettingsData,
   type SSOSettingsUpdate,
 } from '@/api/endpoints';
-import { getAPIError, getHTTPStatus } from '@/utils/apiError';
+import { apiErrorMessage, getAPIError, getHTTPStatus } from '@/utils/apiError';
 
 // The query keys never carry the client secret: the GET answer has none.
 const ssoSettingsKey = ['sso-settings'] as const;
@@ -88,17 +88,6 @@ const linksText = (links: number): string =>
     ? '1 account link uses the current issuer.'
     : `${links} account links use the current issuer.`;
 
-const errorLines = (error: unknown): string[] => {
-  const apiError = getAPIError(error);
-  if (getHTTPStatus(error) === 400 && apiError?.details) {
-    const lines = Object.entries(apiError.details).map(([field, message]) =>
-      `${field}: ${typeof message === 'string' ? message : 'is invalid'}`,
-    );
-    if (lines.length > 0) return lines;
-  }
-  return [apiError?.message || 'The single sign-on settings could not be saved.'];
-};
-
 export const SSOSettings: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess } = useSnackbar();
@@ -120,7 +109,7 @@ export const SSOSettings: React.FC = () => {
   // cleared after every save and never shown anywhere but in the input.
   const [secret, setSecret] = useState('');
   const [clearSecret, setClearSecret] = useState(false);
-  const [saveErrors, setSaveErrors] = useState<string[] | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   // A refused issuer change: the count and the body to resend on confirm.
   const [issuerChange, setIssuerChange] = useState<{ links: number; body: SSOSettingsUpdate } | null>(null);
 
@@ -135,7 +124,7 @@ export const SSOSettings: React.FC = () => {
     onSuccess: (updated) => {
       setSecret('');
       setClearSecret(false);
-      setSaveErrors(null);
+      setSaveError(null);
       queryClient.setQueryData(ssoSettingsKey, updated);
       setForm(toForm(updated));
       showSuccess('Single sign-on settings saved');
@@ -146,7 +135,11 @@ export const SSOSettings: React.FC = () => {
         setIssuerChange({ links, body });
         return;
       }
-      setSaveErrors(errorLines(error));
+      setSaveError(
+        apiErrorMessage(error, 'The single sign-on settings could not be saved.', {
+          details: true,
+        }),
+      );
     },
   });
 
@@ -156,7 +149,7 @@ export const SSOSettings: React.FC = () => {
   if (settingsQuery.isError || !form || !settingsQuery.data) {
     return (
       <Alert severity="error">
-        {getAPIError(settingsQuery.error)?.message || 'The single sign-on settings could not be loaded.'}
+        {apiErrorMessage(settingsQuery.error, 'The single sign-on settings could not be loaded.')}
       </Alert>
     );
   }
@@ -172,7 +165,7 @@ export const SSOSettings: React.FC = () => {
 
   const save = (event: React.FormEvent) => {
     event.preventDefault();
-    setSaveErrors(null);
+    setSaveError(null);
     const body: SSOSettingsUpdate = {
       enabled: form.enabled,
       allow_password: form.allow_password,
@@ -214,11 +207,9 @@ export const SSOSettings: React.FC = () => {
           The role list could not be loaded. Existing mappings keep their roles.
         </Alert>
       )}
-      {saveErrors && (
+      {saveError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {saveErrors.map((line) => (
-            <div key={line}>{line}</div>
-          ))}
+          {saveError}
         </Alert>
       )}
 
