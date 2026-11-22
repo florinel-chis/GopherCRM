@@ -77,6 +77,11 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
 - **Handlers** parse requests, call services, and return unified responses via
   `utils.RespondSuccess`/`RespondError`
 - **All API routes** are mounted under `/api/v1` (configurable via `API_PREFIX`)
+- **Identity layer**: `internal/idkit` and its subpackages hold the identity layer (OIDC sign-in,
+  Entra rules, claim-to-role mapping, SCIM). They stay inside the main module until a second system
+  uses them and must not reach gin, gorm, `internal/models`, `internal/repository`, `internal/utils`
+  or logrus, directly or through other packages;
+  `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
