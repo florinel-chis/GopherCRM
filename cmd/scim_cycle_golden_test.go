@@ -30,8 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
-	"github.com/florinel-chis/gophercrm/internal/scim"
 )
 
 var updateSCIMCycle = flag.Bool("update-scim-cycle", false, "rewrite testdata/scim_provisioning_cycle.json")

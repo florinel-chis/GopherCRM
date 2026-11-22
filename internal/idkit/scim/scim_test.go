@@ -5,17 +5,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestWriteError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	WriteError(c, http.StatusUnauthorized, `Authentication "failed"`)
+	WriteError(w, http.StatusUnauthorized, `Authentication "failed"`)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	assert.Equal(t, ContentType, w.Header().Get("Content-Type"))
+	assert.Equal(t, ContentType, w.Result().Header.Get("Content-Type"))
 	assert.Equal(t, `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"status":"401","detail":"Authentication \"failed\""}`, w.Body.String())
 }
 

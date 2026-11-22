@@ -26,6 +26,7 @@ func TestIDKitImportBoundary(t *testing.T) {
 	t.Run("current tree", func(t *testing.T) {
 		pkgs := listIDKit(t, root, "")
 		require.Contains(t, pkgs, module+"/internal/idkit", "go list ./internal/idkit/... did not list the package")
+		require.Contains(t, pkgs, module+"/internal/idkit/scim", "go list ./internal/idkit/... did not list the scim package")
 		found := violations(module, pkgs)
 		require.Empty(t, found, "forbidden dependencies:\n%s", strings.Join(found, "\n"))
 	})

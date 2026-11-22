@@ -1174,6 +1174,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when any non-test package under `internal/idkit` reaches gin, gorm, `internal/models`,
   `internal/repository`, `internal/utils` (the global `utils.Logger`) or logrus, directly or
   through other packages. Behaviour is unchanged.
+- **SCIM protocol package moved (#642).** The SCIM filter and patch parsers, schemas, discovery
+  documents, list responses and error bodies moved to `internal/idkit/scim` and no longer depend
+  on gin or the CRM models: the error writers take an `http.ResponseWriter` and the User resource
+  is built from `scim.UserData`, which the handlers fill from the CRM user. Behaviour is
+  unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

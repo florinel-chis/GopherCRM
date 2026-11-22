@@ -6,15 +6,16 @@
 // rules, and, for the Users patch of #471, the PatchOp parser, and, for the
 // Groups of #506, the Group resource and schema, its id encoding, the
 // displayName filter and the Group PatchOp parser. It has no state and no
-// database access.
+// database access, and depends on neither gin nor the CRM models: the error
+// writers take an http.ResponseWriter and the User resource is built from
+// UserData.
 package scim
 
 import (
 	"encoding/json"
+	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/gin-gonic/gin"
 )
 
 // ContentType is the media type of every SCIM answer (RFC 7644 §3.1).
@@ -48,13 +49,13 @@ type errorBody struct {
 
 // WriteError answers status with the SCIM error body and the SCIM content
 // type. It does not abort the chain; the caller does.
-func WriteError(c *gin.Context, status int, detail string) {
+func WriteError(w http.ResponseWriter, status int, detail string) {
 	body, err := json.Marshal(errorBody{Schemas: []string{ErrorSchema}, Status: strconv.Itoa(status), Detail: detail})
 	if err != nil {
 		// A struct of strings always marshals.
 		body = []byte(`{"schemas":["` + ErrorSchema + `"],"status":"` + strconv.Itoa(status) + `"}`)
 	}
-	c.Data(status, ContentType, body)
+	writeBody(w, status, body)
 }
 
 // SCIM error types of RFC 7644 §3.12 this provider answers with.
@@ -76,13 +77,21 @@ const (
 
 // WriteErrorType answers status with the SCIM error body carrying scimType,
 // and the SCIM content type. It does not abort the chain; the caller does.
-func WriteErrorType(c *gin.Context, status int, scimType, detail string) {
+func WriteErrorType(w http.ResponseWriter, status int, scimType, detail string) {
 	body, err := json.Marshal(errorBody{Schemas: []string{ErrorSchema}, ScimType: scimType, Status: strconv.Itoa(status), Detail: detail})
 	if err != nil {
 		// A struct of strings always marshals.
 		body = []byte(`{"schemas":["` + ErrorSchema + `"],"status":"` + strconv.Itoa(status) + `"}`)
 	}
-	c.Data(status, ContentType, body)
+	writeBody(w, status, body)
+}
+
+// writeBody sets the SCIM content type, keeping every other header the
+// caller set, then writes status and body.
+func writeBody(w http.ResponseWriter, status int, body []byte) {
+	w.Header().Set("Content-Type", ContentType)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // Meta is the meta attribute of a discovery document.

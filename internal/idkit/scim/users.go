@@ -1,10 +1,7 @@
 package scim
 
 import (
-	"strconv"
 	"time"
-
-	"github.com/florinel-chis/gophercrm/internal/models"
 )
 
 // UserNameAttribute is the name attribute of a User resource.
@@ -44,23 +41,43 @@ type User struct {
 	Meta       UserMeta          `json:"meta"`
 }
 
+// UserData is what the User resource is built from, free of the CRM's own
+// account type.
+type UserData struct {
+	// ID is the resource id, served as given.
+	ID string
+	// ExternalID is the provider's id of the account; "" omits externalId.
+	ExternalID string
+	// Email is served as userName and as the one primary work address.
+	Email string
+	// GivenName is name.givenName.
+	GivenName string
+	// FamilyName is name.familyName.
+	FamilyName string
+	// Active is whether the account is active.
+	Active bool
+	// Created is served as meta.created, RFC 3339 in UTC.
+	Created time.Time
+	// LastModified is served as meta.lastModified, RFC 3339 in UTC.
+	LastModified time.Time
+}
+
 // NewUser builds the User resource of u, with meta.location under baseURL
-// (PUBLIC_BASE_URL, trailing slashes dropped) and externalID ("" omits it).
-func NewUser(baseURL string, u *models.User, externalID string) User {
-	id := strconv.FormatUint(uint64(u.ID), 10)
+// (PUBLIC_BASE_URL, trailing slashes dropped).
+func NewUser(baseURL string, u UserData) User {
 	return User{
 		Schemas:    []string{UserSchema},
-		ID:         id,
-		ExternalID: externalID,
+		ID:         u.ID,
+		ExternalID: u.ExternalID,
 		UserName:   u.Email,
-		Name:       UserNameAttribute{GivenName: u.FirstName, FamilyName: u.LastName},
+		Name:       UserNameAttribute{GivenName: u.GivenName, FamilyName: u.FamilyName},
 		Emails:     []UserEmail{{Value: u.Email, Type: "work", Primary: true}},
-		Active:     u.IsActive,
+		Active:     u.Active,
 		Meta: UserMeta{
 			ResourceType: "User",
-			Created:      u.CreatedAt.UTC().Format(time.RFC3339),
-			LastModified: u.UpdatedAt.UTC().Format(time.RFC3339),
-			Location:     location(baseURL, "/Users/"+id),
+			Created:      u.Created.UTC().Format(time.RFC3339),
+			LastModified: u.LastModified.UTC().Format(time.RFC3339),
+			Location:     location(baseURL, "/Users/"+u.ID),
 		},
 	}
 }
