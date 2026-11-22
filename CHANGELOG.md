@@ -1169,6 +1169,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Identity package boundary (#641).** The new `internal/idkit` package will hold the sign-in,
+  role mapping and SCIM code. `TestIDKitImportBoundary` in `internal/idkit/boundary_test.go` fails
+  when any non-test package under `internal/idkit` reaches gin, gorm, `internal/models`,
+  `internal/repository`, `internal/utils` (the global `utils.Logger`) or logrus, directly or
+  through other packages. Behaviour is unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.
