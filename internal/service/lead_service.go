@@ -133,7 +133,7 @@ func checkLeadOwner(logger *logrus.Entry, users repository.UserRepository, leadI
 	if ownerID == 0 {
 		return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalUnknown)
 	}
-	owner, err := users.GetByID(ownerID)
+	owner, err := users.GetByIDWithCurrentRole(ownerID)
 	if err != nil {
 		if isNotFound(err) {
 			return refuseLeadOwner(logger, leadID, ownerID, leadOwnerRefusalUnknown)
@@ -160,11 +160,15 @@ func refuseLeadOwner(logger *logrus.Entry, leadID, ownerID uint, reason string) 
 }
 
 // lockedUserRead returns a user repository bound to tx whose reads take a row
-// lock, or nil when no user repository is wired. The lock is what makes the
-// read current on MySQL: a plain read inside REPEATABLE READ answers from the
-// snapshot of the transaction's first plain read (a company check, for one), so
-// a deactivation committed after it would still look active. It does not stop a
-// later deactivation; a shared protocol with user writes is #183.
+// lock, or nil when no user repository is wired. A plain read inside REPEATABLE
+// READ answers from the snapshot of the transaction's first plain read (a
+// company check, for one), so a deactivation or a role change committed after
+// it would still be invisible. The owner's users row is therefore locked FOR
+// UPDATE, and GetByIDWithCurrentRole reads the custom role and its permissions
+// with a shared lock: both reads are current on MySQL/MariaDB. A role write in
+// flight makes the check wait, while lead writes for other holders of the same
+// role are not serialised against each other. It does not stop a later
+// deactivation; a shared protocol with user writes is #183.
 func (s *leadService) lockedUserRead(tx *gorm.DB) repository.UserRepository {
 	if s.userRepo == nil {
 		return nil

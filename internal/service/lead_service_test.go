@@ -60,6 +60,7 @@ func (suite *LeadServiceTestSuite) SetupTest() {
 	suite.mockUserRepo.On("WithTx", mock.Anything).Return(suite.mockUserRepo).Maybe()
 	// User 1 owns the leads these cases create: an active sales user.
 	suite.mockUserRepo.On("GetByID", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}, Role: models.RoleSales, IsActive: true}, nil).Maybe()
+	suite.mockUserRepo.On("GetByIDWithCurrentRole", uint(1)).Return(&models.User{BaseModel: models.BaseModel{ID: 1}, Role: models.RoleSales, IsActive: true}, nil).Maybe()
 }
 
 func (suite *LeadServiceTestSuite) TearDownTest() {

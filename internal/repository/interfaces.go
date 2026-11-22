@@ -17,6 +17,10 @@ type TransactionManager interface {
 type UserRepository interface {
 	Create(user *models.User) error
 	GetByID(id uint) (*models.User, error)
+	// GetByIDWithCurrentRole reads like GetByID, but reads the custom role and
+	// its permissions with a shared lock, so they are current inside a
+	// REPEATABLE READ transaction. Used by the lead owner check only.
+	GetByIDWithCurrentRole(id uint) (*models.User, error)
 	GetByEmail(email string) (*models.User, error)
 	// GetByEmailUnscoped includes soft-deleted rows. Required for duplicate-email
 	// pre-checks, since the unique index on users.email is not scoped to deleted_at.

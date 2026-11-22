@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // #344: the user repository edits of #259 S2 — role_id updatable, the custom
@@ -298,5 +299,87 @@ func runUserRepositoryRoleColumns(t *testing.T, db *gorm.DB, useMySQL bool) {
 				}
 			}
 		}
+	})
+
+	t.Run("GetByIDWithCurrentRole fills the custom role with ordered permissions", func(t *testing.T) {
+		userID := createCustomRoleUser(t, db, "current-role@example.com", fieldOps.ID, false)
+
+		got, err := users.GetByIDWithCurrentRole(userID)
+		require.NoError(t, err)
+		require.NotNil(t, got.RoleID)
+		require.NotNil(t, got.CustomRole, "the custom role is filled")
+		assert.Equal(t, fieldOps.ID, got.CustomRole.ID)
+		assert.Equal(t, "Field Ops", got.CustomRole.Name)
+		assert.Equal(t, []string{"deals.read=all", "leads.read=own"}, permissionKeys(got.CustomRole.Permissions))
+	})
+
+	t.Run("GetByIDWithCurrentRole of a user with role_id NULL has no custom role", func(t *testing.T) {
+		user := newUser(t, "current-role-plain@example.com", models.RoleSales, true)
+		got, err := users.GetByIDWithCurrentRole(user.ID)
+		require.NoError(t, err)
+		assert.Equal(t, user.ID, got.ID)
+		assert.Nil(t, got.RoleID)
+		assert.Nil(t, got.CustomRole)
+	})
+
+	t.Run("GetByIDWithCurrentRole of an unknown id is gorm.ErrRecordNotFound", func(t *testing.T) {
+		_, err := users.GetByIDWithCurrentRole(99999999)
+		assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	})
+
+	t.Run("GetByIDWithCurrentRole through a locking handle shares the role rows", func(t *testing.T) {
+		userID := createCustomRoleUser(t, db, "current-role-locking@example.com", fieldOps.ID, false)
+
+		// The clause map shows the lock strength on both engines; on MySQL
+		// the rendered text must also parse, which running the reads proves.
+		type queried struct {
+			table    string
+			strength string
+		}
+		var (
+			mu        sync.Mutex
+			recording bool
+			seen      []queried
+		)
+		const recorder = "test:user_role_columns_current_role_clause"
+		require.NoError(t, db.Callback().Query().Before("gorm:query").Register(recorder, func(tx *gorm.DB) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !recording {
+				return
+			}
+			q := queried{table: tx.Statement.Table}
+			if c, ok := tx.Statement.Clauses["FOR"]; ok {
+				if locking, ok := c.Expression.(clause.Locking); ok {
+					q.strength = locking.Strength
+				}
+			}
+			seen = append(seen, q)
+		}))
+		t.Cleanup(func() { _ = db.Callback().Query().Remove(recorder) })
+
+		var got *models.User
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			mu.Lock()
+			recording = true
+			mu.Unlock()
+			var err error
+			got, err = users.WithTx(LockingRead(tx)).GetByIDWithCurrentRole(userID)
+			mu.Lock()
+			recording = false
+			mu.Unlock()
+			return err
+		}))
+		require.NotNil(t, got.CustomRole)
+		assert.Equal(t, []string{"deals.read=all", "leads.read=own"}, permissionKeys(got.CustomRole.Permissions))
+
+		mu.Lock()
+		statements := append([]queried(nil), seen...)
+		mu.Unlock()
+		assert.Equal(t, []queried{
+			{table: "users", strength: clause.LockingStrengthUpdate},
+			{table: "roles", strength: clause.LockingStrengthShare},
+			{table: "role_permissions", strength: clause.LockingStrengthShare},
+		}, statements, "users locked, then roles and role_permissions shared, in that order")
 	})
 }
