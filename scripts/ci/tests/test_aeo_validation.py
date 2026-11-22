@@ -56,6 +56,15 @@ class AEOSelectionTests(unittest.TestCase):
         self.assertEqual(v.plan([path])['profile'], 'full')
         self.assertEqual(v.plan([path, 'internal/service/aeo_service.go'], aeo_roots=True)['profile'], 'aeo')
 
+    def test_export_handler_file_selects_the_aeo_profile(self):
+        # The AEO export handler (#244) is an AEO runtime path too (#683).
+        path = 'internal/handler/aeo_export.go'
+        selected = v.plan([path], aeo_roots=True)
+        self.assertEqual(selected['profile'], 'aeo')
+        self.assertEqual(set(selected['specs']), v.AEO_SPECS)
+        self.assertEqual(v.plan([path])['profile'], 'full')
+        self.assertEqual(v.plan([path, 'internal/service/aeo_service.go'], aeo_roots=True)['profile'], 'aeo')
+
     def test_main_proof_and_required_roots_use_actual_git_candidates(self):
         # Reproduce the application fix in the live checkout. The proof matrix
         # must keep using its frozen input even after the application evolves.

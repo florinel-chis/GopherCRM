@@ -305,6 +305,7 @@ AEO_FILES = {'internal/service/aeo_service.go', 'internal/service/aeo_profile.go
              'internal/service/aeo_credentials.go', 'internal/service/aeo_runtime.go',
              'internal/service/aeo_export.go',
              'internal/repository/aeo_repository.go', 'internal/handler/aeo_handler.go',
+             'internal/handler/aeo_export.go',
              'internal/mocks/AEORepository.go', 'internal/mocks/AEOService.go',
              'cmd/aeo_runtime.go'}
 AEO_PATH = re.compile(r'(?:internal/aeo/[a-z0-9_]+|internal/(?:service|repository|handler)/aeo[a-z0-9_]*_test|cmd/aeo[a-z0-9_]*_test)\.go$')
