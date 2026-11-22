@@ -2,6 +2,7 @@ import { test, expect, request as playwrightRequest, type Page } from '@playwrig
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
 import { APIClient } from '../helpers/sso';
+import { LOADED } from '../helpers/api';
 
 /**
  * Settings > Sign-in audit (#455), end to end: the admin signs in through the
@@ -16,8 +17,6 @@ import { APIClient } from '../helpers/sso';
  */
 test.describe.configure({ mode: 'serial' });
 
-// The first assertion after a login, a navigation or a data load.
-const LOADED = { timeout: 30 * 1000 };
 const SALES_PASSWORD = 'Audit!Sales2026x';
 
 const SIGN_INS = /\/audit\/sign-ins$/;

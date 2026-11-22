@@ -1,6 +1,7 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pages/deals.page';
+import { apiResponse } from '../helpers/api';
 
 /**
  * The admin flow from product to accepted quote (issue #167, AC-10): create a
@@ -12,11 +13,6 @@ import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pa
  * the only e2e change the task allows; a `quotes.page.ts` is the natural next
  * step when a second quotes spec appears.
  */
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET') =>
-  page.waitForResponse(
-    (response) => pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 test.describe('Admin - Quotes', () => {
   let adminAuth: AdminAuthHelper;

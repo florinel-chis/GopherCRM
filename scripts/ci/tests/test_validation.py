@@ -752,8 +752,19 @@ class ValidationSelectionTests(unittest.TestCase):
         # do not compete with the Go tests for the processor (#403).
         makefile = (ROOT / 'Makefile').read_text()
         self.assertIn('\nverify: verify-hygiene verify-frontend verify-backend verify-api-docs\n', makefile)
-        self.assertIn('verify-frontend:\n\tcd gocrm-ui && npm ci && npm run build && npm run lint && '
+        self.assertIn('verify-frontend:\n\tcd gocrm-ui && npm ci && npm run build && '
+                      'npx tsc -p tsconfig.e2e.json --noEmit && npm run lint && '
                       'npm test -- --run --maxWorkers=3\n', makefile)
+
+    def test_the_frontend_gate_type_checks_the_end_to_end_code_outside_the_build(self):
+        # The Playwright specs, page objects, helpers and configs are type-checked by their own
+        # config in make verify-frontend (#621); the production build (tsc -b) does not reference it.
+        config = json.loads((ROOT / 'gocrm-ui' / 'tsconfig.e2e.json').read_text())
+        self.assertEqual(['e2e', 'playwright.config.ts', 'playwright.config.slow.ts',
+                          'playwright.config.screenshots.ts'], config['include'])
+        self.assertTrue(config['compilerOptions']['noEmit'])
+        self.assertTrue(config['compilerOptions']['strict'])
+        self.assertNotIn('tsconfig.e2e', (ROOT / 'gocrm-ui' / 'tsconfig.json').read_text())
 
     def test_browser_jobs_never_run_in_pull_request_ci_and_the_required_names_agree(self):
         # 11 November 2026: end-to-end tests run for releases only, never in pull-request CI.

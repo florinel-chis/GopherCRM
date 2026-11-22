@@ -1,6 +1,7 @@
-import { test, expect, type Page, type Response } from '@playwright/test';
+import { test, expect, type Response } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pages/deals.page';
+import { apiResponse } from '../helpers/api';
 
 /**
  * Fractional quote line quantities in the web UI (issue #346): the line dialog
@@ -16,11 +17,6 @@ import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pa
 const QUANTITY_ERROR = 'Quantity must be a number from 0.001 to 1,000,000 with at most three decimals';
 const QUANTITY_HINT = 'From 0.001 to 1,000,000, up to three decimals';
 const API_QUANTITY_MESSAGE = 'quantity must be a number from 0.001 to 1000000 with at most 3 decimal places';
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET') =>
-  page.waitForResponse(
-    (response) => pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 const money = (cents: number) => expectedAmountText((cents / 100).toFixed(2), 'EUR');
 

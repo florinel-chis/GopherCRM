@@ -1,6 +1,7 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pages/deals.page';
+import { apiResponse } from '../helpers/api';
 
 /**
  * Quote tax in the web UI (issue #325): a line added with a 21 % tax rate goes
@@ -10,11 +11,6 @@ import { DealsPage, generateDealData, expectedAmountText, runStamp } from '../pa
  *
  * This spec stands beside admin-quotes.spec.ts, which runs unchanged.
  */
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET') =>
-  page.waitForResponse(
-    (response) => pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 test.describe('Admin - Quote tax', () => {
   let adminAuth: AdminAuthHelper;

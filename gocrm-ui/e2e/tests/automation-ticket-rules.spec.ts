@@ -1,7 +1,8 @@
-import { test, expect, request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, request as playwrightRequest, type APIRequestContext } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
+import { apiResponse } from '../helpers/api';
 
 /**
  * Ticket rules in the rule form (#312) against the real API: the seeded admin
@@ -13,11 +14,6 @@ import { API_BASE_URL } from '../helpers/env';
  * The rule stays disabled, so the automation worker inside the e2e backend
  * never starts a run for it, and it is deleted through the API afterwards.
  */
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET' | 'DELETE') =>
-  page.waitForResponse(
-    (response) => pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 interface StoredStep {
   position: number;

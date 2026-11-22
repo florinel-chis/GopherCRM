@@ -59,7 +59,7 @@ verify-backend:
 	go test -race -tags=gophercrm_e2e ./internal/middleware ./internal/aeo
 
 verify-frontend:
-	cd gocrm-ui && npm ci && npm run build && npm run lint && npm test -- --run --maxWorkers=3
+	cd gocrm-ui && npm ci && npm run build && npx tsc -p tsconfig.e2e.json --noEmit && npm run lint && npm test -- --run --maxWorkers=3
 
 # e2e resets the gocrm_e2e database, starts the backend on a free port and runs
 # Playwright against it; CI runs the same script. SPECS narrows the run (paths

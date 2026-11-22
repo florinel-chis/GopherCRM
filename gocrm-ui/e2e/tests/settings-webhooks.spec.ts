@@ -3,11 +3,11 @@ import {
   expect,
   request as playwrightRequest,
   type APIRequestContext,
-  type Page,
 } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
+import { apiResponse, LOADED } from '../helpers/api';
 
 /**
  * Settings > Webhooks, end to end: an admin registers an endpoint, sees its
@@ -38,19 +38,12 @@ interface EndpointRow {
   is_active: boolean;
 }
 
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET' | 'DELETE') =>
-  page.waitForResponse(
-    (response) =>
-      pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method,
-  );
-
 const ENDPOINTS = /\/webhooks\/endpoints$/;
 const ENDPOINT = /\/webhooks\/endpoints\/\d+$/;
 const DELIVERIES = /\/webhooks\/deliveries$/;
 
 // The first assertion after a login, a navigation or a request that loads
 // data: the default 5 s is too short on a loaded machine.
-const LOADED = { timeout: 30 * 1000 };
 
 test.describe('Admin - Settings > Webhooks', () => {
   let api: APIRequestContext;
