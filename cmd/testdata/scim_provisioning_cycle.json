@@ -1,0 +1,509 @@
+{
+  "steps": [
+    {
+      "name": "users_lookup_empty",
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName+eq+%22cycle.person%40crm.example.test%22",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "Resources": [],
+        "itemsPerPage": 0,
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+        ],
+        "startIndex": 1,
+        "totalResults": 0
+      }
+    },
+    {
+      "name": "users_create",
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\",\"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User\"],\"externalId\":\"0b5e7d2c-0636-4f1a-8e3d-00000000c1c1\",\"userName\":\"cycle.person@crm.example.test\",\"active\":true,\"emails\":[{\"primary\":true,\"type\":\"work\",\"value\":\"cycle.person@crm.example.test\"}],\"meta\":{\"resourceType\":\"User\"},\"name\":{\"formatted\":\"Cycle Person\",\"familyName\":\"Person\",\"givenName\":\"Cycle\"},\"roles\":[{\"primary\":false,\"type\":\"WindowsAzureActiveDirectoryRole\",\"value\":\"CRM.Sales\"}]}",
+      "status": 201,
+      "content_type": "application/scim+json",
+      "location": "https://crm.example.test/scim/v2/Users/2",
+      "etag": "",
+      "body": {
+        "active": true,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cycle"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "users_create_duplicate",
+      "method": "POST",
+      "path": "/scim/v2/Users",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\",\"urn:ietf:params:scim:schemas:extension:enterprise:2.0:User\"],\"externalId\":\"0b5e7d2c-0636-4f1a-8e3d-00000000c1c1\",\"userName\":\"cycle.person@crm.example.test\",\"active\":true,\"emails\":[{\"primary\":true,\"type\":\"work\",\"value\":\"cycle.person@crm.example.test\"}],\"meta\":{\"resourceType\":\"User\"},\"name\":{\"formatted\":\"Cycle Person\",\"familyName\":\"Person\",\"givenName\":\"Cycle\"},\"roles\":[{\"primary\":false,\"type\":\"WindowsAzureActiveDirectoryRole\",\"value\":\"CRM.Sales\"}]}",
+      "status": 409,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "detail": "The userName or externalId is already in use",
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:Error"
+        ],
+        "scimType": "uniqueness",
+        "status": "409"
+      }
+    },
+    {
+      "name": "users_get",
+      "method": "GET",
+      "path": "/scim/v2/Users/2",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": true,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cycle"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "users_lookup_found",
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName+eq+%22cycle.person%40crm.example.test%22",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "Resources": [
+          {
+            "active": true,
+            "emails": [
+              {
+                "primary": true,
+                "type": "work",
+                "value": "cycle.person@crm.example.test"
+              }
+            ],
+            "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+            "id": "2",
+            "meta": {
+              "created": "\u003ctimestamp\u003e",
+              "lastModified": "\u003ctimestamp\u003e",
+              "location": "https://crm.example.test/scim/v2/Users/2",
+              "resourceType": "User"
+            },
+            "name": {
+              "familyName": "Person",
+              "givenName": "Cycle"
+            },
+            "schemas": [
+              "urn:ietf:params:scim:schemas:core:2.0:User"
+            ],
+            "userName": "cycle.person@crm.example.test"
+          }
+        ],
+        "itemsPerPage": 1,
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+        ],
+        "startIndex": 1,
+        "totalResults": 1
+      }
+    },
+    {
+      "name": "users_patch_path",
+      "method": "PATCH",
+      "path": "/scim/v2/Users/2",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"Replace\",\"path\":\"name.givenName\",\"value\":\"Cyclist\"}]}",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": true,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cyclist"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "users_patch_no_path",
+      "method": "PATCH",
+      "path": "/scim/v2/Users/2",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"Replace\",\"value\":{\"name.familyName\":\"Rider\",\"active\":true}}]}",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": true,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Rider",
+          "givenName": "Cyclist"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "users_replace",
+      "method": "PUT",
+      "path": "/scim/v2/Users/2",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:User\"],\"externalId\":\"0b5e7d2c-0636-4f1a-8e3d-00000000c1c1\",\"userName\":\"cycle.person@crm.example.test\",\"active\":true,\"name\":{\"familyName\":\"Person\",\"givenName\":\"Cycle\"},\"roles\":[{\"value\":\"CRM.Sales\"}]}",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": true,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cycle"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "groups_lookup",
+      "method": "GET",
+      "path": "/scim/v2/Groups?excludedAttributes=members\u0026filter=displayName+eq+%22CRM+Sales%22",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "Resources": [],
+        "itemsPerPage": 0,
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+        ],
+        "startIndex": 1,
+        "totalResults": 0
+      }
+    },
+    {
+      "name": "groups_create",
+      "method": "POST",
+      "path": "/scim/v2/Groups",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:schemas:core:2.0:Group\",\"http://schemas.microsoft.com/2006/11/ResourceManagement/ADSCIM/2.0/Group\"],\"externalId\":\"8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159\",\"displayName\":\"CRM Sales\",\"meta\":{\"resourceType\":\"Group\"}}",
+      "status": 201,
+      "content_type": "application/scim+json",
+      "location": "https://crm.example.test/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+      "etag": "",
+      "body": {
+        "displayName": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159",
+        "id": "OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+        "members": [],
+        "meta": {
+          "location": "https://crm.example.test/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+          "resourceType": "Group"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:Group"
+        ]
+      }
+    },
+    {
+      "name": "groups_add_member",
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"Add\",\"path\":\"members\",\"value\":[{\"value\":\"2\"}]}]}",
+      "status": 204,
+      "content_type": "",
+      "location": "",
+      "etag": "",
+      "body": ""
+    },
+    {
+      "name": "groups_get",
+      "method": "GET",
+      "path": "/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "displayName": "8aa1a0c0-c4c3-4bc0-b4a5-2ef676900159",
+        "id": "OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+        "members": [
+          {
+            "value": "2"
+          }
+        ],
+        "meta": {
+          "location": "https://crm.example.test/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+          "resourceType": "Group"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:Group"
+        ]
+      }
+    },
+    {
+      "name": "groups_remove_member",
+      "method": "PATCH",
+      "path": "/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"Remove\",\"path\":\"members\",\"value\":[{\"value\":\"2\"}]}]}",
+      "status": 204,
+      "content_type": "",
+      "location": "",
+      "etag": "",
+      "body": ""
+    },
+    {
+      "name": "groups_delete",
+      "method": "DELETE",
+      "path": "/scim/v2/Groups/OGFhMWEwYzAtYzRjMy00YmMwLWI0YTUtMmVmNjc2OTAwMTU5",
+      "request_body": "",
+      "status": 405,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "detail": "Groups come from the single sign-on role mapping and cannot be deleted through SCIM",
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:Error"
+        ],
+        "status": "405"
+      }
+    },
+    {
+      "name": "users_get_missing",
+      "method": "GET",
+      "path": "/scim/v2/Users/999999",
+      "request_body": "",
+      "status": 404,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "detail": "User not found",
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:Error"
+        ],
+        "status": "404"
+      }
+    },
+    {
+      "name": "users_filter_invalid",
+      "method": "GET",
+      "path": "/scim/v2/Users?filter=userName+eq",
+      "request_body": "",
+      "status": 400,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "detail": "Only the filter userName eq \"value\" is supported",
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:Error"
+        ],
+        "scimType": "invalidFilter",
+        "status": "400"
+      }
+    },
+    {
+      "name": "users_patch_malformed",
+      "method": "PATCH",
+      "path": "/scim/v2/Users/2",
+      "request_body": "{",
+      "status": 400,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "detail": "The request body is not a valid SCIM PatchOp",
+        "schemas": [
+          "urn:ietf:params:scim:api:messages:2.0:Error"
+        ],
+        "scimType": "invalidSyntax",
+        "status": "400"
+      }
+    },
+    {
+      "name": "users_deactivate",
+      "method": "PATCH",
+      "path": "/scim/v2/Users/2",
+      "request_body": "{\"schemas\":[\"urn:ietf:params:scim:api:messages:2.0:PatchOp\"],\"Operations\":[{\"op\":\"Replace\",\"path\":\"active\",\"value\":\"False\"}]}",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": false,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cycle"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    },
+    {
+      "name": "users_delete",
+      "method": "DELETE",
+      "path": "/scim/v2/Users/2",
+      "request_body": "",
+      "status": 204,
+      "content_type": "",
+      "location": "",
+      "etag": "",
+      "body": ""
+    },
+    {
+      "name": "users_get_after_delete",
+      "method": "GET",
+      "path": "/scim/v2/Users/2",
+      "request_body": "",
+      "status": 200,
+      "content_type": "application/scim+json",
+      "location": "",
+      "etag": "",
+      "body": {
+        "active": false,
+        "emails": [
+          {
+            "primary": true,
+            "type": "work",
+            "value": "cycle.person@crm.example.test"
+          }
+        ],
+        "externalId": "0b5e7d2c-0636-4f1a-8e3d-00000000c1c1",
+        "id": "2",
+        "meta": {
+          "created": "\u003ctimestamp\u003e",
+          "lastModified": "\u003ctimestamp\u003e",
+          "location": "https://crm.example.test/scim/v2/Users/2",
+          "resourceType": "User"
+        },
+        "name": {
+          "familyName": "Person",
+          "givenName": "Cycle"
+        },
+        "schemas": [
+          "urn:ietf:params:scim:schemas:core:2.0:User"
+        ],
+        "userName": "cycle.person@crm.example.test"
+      }
+    }
+  ]
+}
