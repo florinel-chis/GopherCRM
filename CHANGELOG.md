@@ -1286,7 +1286,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an existing account with the mapped role, provision a new one) and `idkit.Profile`; GopherCRM
   implements it with the governed role write and the provisioning in
   `internal/service/auth_oidc_host.go`, and `NewOIDCService` now wires the #646 adapters into the
-  sign-in. The sign-in audit check also scans `internal/idkit/sso`. Answers, audit rows, role
+  sign-in. The unusable password of a first sign-in is still hashed before the transaction
+  starts. The sign-in audit check also scans `internal/idkit/sso`. Answers, audit rows, role
   audit rows, refusal codes, log lines and the lock order are unchanged, and the sign-in golden
   file is byte-identical.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and

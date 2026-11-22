@@ -751,7 +751,9 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `state_hash`, then one conditional `UPDATE` by id (`used_at IS NULL AND expires_at > now`, which
   also blanks the nonce and verifier), its own committed statement before the transaction and
   before the issuer is contacted. No row is locked by the read; a competing claim between the read
-  and the `UPDATE` leaves zero affected rows and the generic refusal. The governed transaction (`oidcSignInRunner.WithTransaction`,
+  and the `UPDATE` leaves zero affected rows and the generic refusal. The unusable password of a first sign-in is hashed with bcrypt before
+  the transaction (`oidcPasswordFirstRunner.WithTransaction`), once per callback, so no lock is
+  held during it. The governed transaction (`oidcSignInRunner.WithTransaction`,
   `internal/service/auth_oidc_host.go`) then locks the `users` rows of the active admins
   (`LockActiveAdmins`); the link rule (`Service.signInAccount`, `internal/idkit/sso/link.go`)
   reads the `user_identities` row of the exact `(issuer, subject)` pair with a

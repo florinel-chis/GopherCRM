@@ -1548,6 +1548,15 @@ func TestConcurrencyDocOIDCSignIn(t *testing.T) {
 	inOrder(signIn, "tx.lockUsers(", "tx.lockRoles(", "apperrors.ErrLastAdmin", "tx.record(")
 	provision := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (s *oidcAccountStore) Provision(")
 	inOrder(provision, "tx.lockRoles(", "tx.users.EmailExistsFoldedUnscoped(", "tx.users.Create(", "tx.record(")
+	// bcrypt runs before the transaction, never under the admin-set and
+	// role locks: the outer runner hashes, then starts the governed one.
+	for name, body := range map[string]string{"runner": runner, "Provision": provision, "SignIn": signIn} {
+		assert.NotContains(t, body, "oidcUnusablePasswordHash(", "%s hashes inside the transaction", name)
+	}
+	first := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (r *oidcPasswordFirstRunner) WithTransaction(")
+	inOrder(first, "oidcUnusablePasswordHash(", "r.next.WithTransaction(")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/service/auth_oidc.go", "func NewOIDCService("),
+		"&oidcPasswordFirstRunner{next: &oidcSignInRunner{")
 }
 
 // TestConcurrencyDocSCIMUserWrites pins the SCIM user create and replace flow

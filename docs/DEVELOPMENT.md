@@ -113,7 +113,8 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   `NewIDKitAuditSink` (only with `WithOIDCAudit`), `NewIDKitConfigSource`,
   `NewIDKitLogger` (component `oidc_sign_in`), the account store `oidcAccountStore` (the
   governed role write of an existing account and the provisioning of a new one) and the governed
-  transaction `oidcSignInRunner` as the `TxRunner`.
+  transaction `oidcSignInRunner` as the `TxRunner`, behind `oidcPasswordFirstRunner`, which
+  hashes the unusable password of a first sign-in before the transaction starts.
   Two test kits sit next to the layer, and only tests import them: `internal/idkit/oidctest`,
   an in-process TLS OpenID Connect issuer (`internal/idkit/oidctest/issuer.go` `oidctest.New`)
   with no provider-specific code, and `internal/idkit/scim/scimtest`, a SCIM client over an

@@ -473,6 +473,30 @@ func (r *oidcSignInRunner) WithTransaction(ctx context.Context, fn func(ctx cont
 	})
 }
 
+// oidcPasswordFirstRunner computes the unusable password of a first sign-in
+// (oidcUnusablePasswordHash) once per callback, after the token checks and
+// before next starts the transaction, so bcrypt never runs while the admin
+// set and the role rows are locked. A replay of the transaction reuses it;
+// oidcAccountStore.Provision reads it from ctx.
+type oidcPasswordFirstRunner struct {
+	next idkit.TxRunner
+}
+
+func (r *oidcPasswordFirstRunner) WithTransaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	passwordHash, err := oidcUnusablePasswordHash()
+	if err != nil {
+		return err
+	}
+	return r.next.WithTransaction(context.WithValue(ctx, oidcPasswordHashKey{}, passwordHash), fn)
+}
+
+// oidcPasswordHashKey carries the hash oidcPasswordFirstRunner computed.
+type oidcPasswordHashKey struct{}
+
+// errOIDCPasswordNotPrepared is a wiring fault: Provision ran without the
+// hash oidcPasswordFirstRunner puts on ctx.
+var errOIDCPasswordNotPrepared = errors.New("single sign-on account password not prepared before the transaction")
+
 // oidcAccountStore is the account store of the OIDC sign-in: the governed
 // role write of an existing account and the provisioning of a new one, both
 // on the governed transaction oidcSignInRunner put on ctx. The sign-in
@@ -564,9 +588,9 @@ func (s *oidcAccountStore) SignIn(ctx context.Context, accountID string, roleID 
 // Provision creates an active user with the mapped role and its audit row,
 // refused when any user, erased ones included, holds the address in any
 // letter case: an email never links to an existing account. The password is
-// the bcrypt hash of discarded random bytes (oidcUnusablePasswordHash), so
-// the account has no usable password. A replayed attempt inserts a fresh
-// row.
+// the bcrypt hash of discarded random bytes, computed before the
+// transaction by oidcPasswordFirstRunner, so the account has no usable
+// password. A replayed attempt inserts a fresh row.
 func (s *oidcAccountStore) Provision(ctx context.Context, profile idkit.Profile, roleID uint) (string, error) {
 	governed, err := oidcGovernedFrom(ctx)
 	if err != nil {
@@ -593,9 +617,9 @@ func (s *oidcAccountStore) Provision(ctx context.Context, profile idkit.Profile,
 		// Never linked to the existing account, live or erased.
 		return "", oidcRefuse(AuthAuditReasonEmailTaken)
 	}
-	passwordHash, err := oidcUnusablePasswordHash()
-	if err != nil {
-		return "", err
+	passwordHash, ok := ctx.Value(oidcPasswordHashKey{}).(string)
+	if !ok || passwordHash == "" {
+		return "", errOIDCPasswordNotPrepared
 	}
 	if s.beforeInsert != nil {
 		s.beforeInsert()

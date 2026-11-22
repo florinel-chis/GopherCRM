@@ -195,7 +195,7 @@ func NewOIDCService(
 		Attempts:        NewIDKitAttemptStore(attempts),
 		Identities:      NewIDKitIdentityStore(identities),
 		Accounts:        s.accounts,
-		Tx:              &oidcSignInRunner{governance: governance},
+		Tx:              &oidcPasswordFirstRunner{next: &oidcSignInRunner{governance: governance}},
 		Clock:           idkit.ClockFunc(func() time.Time { return s.now() }),
 		Logger:          NewIDKitLogger("oidc_sign_in"),
 		RedirectURL:     s.redirectURI(),
