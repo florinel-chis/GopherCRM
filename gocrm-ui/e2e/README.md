@@ -278,8 +278,8 @@ type in a spec fails that check without running a browser.
   sign a page object is missing a method.
 - Selector style: `input[name="..."]` for fields, `button[type="submit"]` for form submission,
   `row.getByRole('button', { name: /^Edit\b/ })` (and `View`, `Delete`) for table row actions,
-  `[role="dialog"]` for confirmation modals. The tickets, deals and labels page objects still
-  find row actions by their MUI icon test ids.
+  `[role="dialog"]` for confirmation modals. The labels page has its own row buttons and finds
+  them by their exact names, `'Edit label'` and `'Delete label'`.
 - Generate entity data with the faker helpers in `fixtures/admin-user.ts`
   (`generateLeadData`, `generateCustomerData`, `generateTicketData`, `generateTaskData`,
   `generateUserData`). They embed a timestamp and a random suffix in each email so parallel or
