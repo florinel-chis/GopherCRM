@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { UI_BASE_URL } from '../helpers/env';
 import { APIClient } from '../helpers/sso';
+import { LOADED } from '../helpers/api';
 
 /**
  * Settings > Role audit (#552), end to end: the admin creates a sales user
@@ -17,8 +18,6 @@ import { APIClient } from '../helpers/sso';
  */
 test.describe.configure({ mode: 'serial' });
 
-// The first assertion after a login, a navigation or a data load.
-const LOADED = { timeout: 30 * 1000 };
 const SALES_PASSWORD = 'Audit!Sales2026x';
 
 test.describe('Admin - Settings > Role audit', () => {

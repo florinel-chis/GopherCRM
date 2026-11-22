@@ -1,7 +1,8 @@
-import { test, expect, request as playwrightRequest, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, request as playwrightRequest, type APIRequestContext } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
+import { apiResponse } from '../helpers/api';
 
 /**
  * The form builder's submission action (#335) against the real API: the seeded
@@ -14,12 +15,6 @@ import { API_BASE_URL } from '../helpers/env';
  * The form stays a draft, so it is never served publicly, and it is deleted
  * through the API afterwards.
  */
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT') =>
-  page.waitForResponse(
-    (response) =>
-      pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 test.describe('Admin - Form builder ticket action', () => {
   const formName = `E2E ticket form ${Date.now()}`;

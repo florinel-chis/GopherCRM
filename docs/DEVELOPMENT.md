@@ -2249,7 +2249,8 @@ go test -run TestFunctionName ./internal/service/
 ```
 
 Use current command output for test counts and coverage; historical counts are not release gates.
-`make verify` runs hygiene checks, then frontend build/lint/unit tests (Vitest on three workers), then the Go
+`make verify` runs hygiene checks, then frontend build, the end-to-end type-check (`tsc -p tsconfig.e2e.json`),
+lint and unit tests (Vitest on three workers), then the Go
 formatting check and Go build/vet/race tests, then the API reference check. The frontend gate runs before the
 race-enabled Go tests so the two do not compete for the processor.
 The runner's local validation picks a profile from the changed paths; its bounded profiles

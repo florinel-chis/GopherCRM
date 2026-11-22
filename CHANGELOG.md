@@ -1156,6 +1156,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **End-to-end code is type-checked in `make verify-frontend` (#621).** The new
+  `gocrm-ui/tsconfig.e2e.json` covers `e2e/` (specs, page objects, helpers) and the three
+  `playwright.config*.ts` files, and `make verify-frontend`, which the `frontend` CI job runs,
+  runs that type-check (`npx tsc -p` on that config) after the production build. The response-wait
+  helper (`apiResponse`) and the load-timeout constant (`LOADED`) that ten specs each defined are
+  shared from `gocrm-ui/e2e/helpers/api.ts`. Browser tests still run only for releases.
+
 - **Shared role and paged-list hooks in the web app (#624).** `gocrm-ui/src/hooks/useRoles.ts` is
   the one role-list query (key `['roles']`) for Settings > Roles, the user form and the single
   sign-on settings, so a role created or changed in Settings > Roles now shows up in the single

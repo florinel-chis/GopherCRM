@@ -2,6 +2,7 @@ import { test, expect, request as playwrightRequest, type APIRequestContext, typ
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
+import { apiResponse } from '../helpers/api';
 
 /**
  * The admin flow through the follow-up automation screens: build a disabled
@@ -14,11 +15,6 @@ import { API_BASE_URL } from '../helpers/env';
  * the rule. The rule is saved disabled, so the automation worker running
  * inside the e2e backend never starts a run for it.
  */
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'POST' | 'PUT' | 'GET' | 'DELETE') =>
-  page.waitForResponse(
-    (response) => pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method
-  );
 
 // The bell polls the count once a minute and the test timeout is 30 s, so
 // every wait for it is registered before the navigation that triggers it.

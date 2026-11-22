@@ -1,6 +1,7 @@
-import { test, expect, request as playwrightRequest, type Page } from '@playwright/test';
+import { test, expect, request as playwrightRequest } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
+import { apiResponse, LOADED } from '../helpers/api';
 
 /**
  * Settings > SCIM tokens (#490), end to end: the admin opens the screen from
@@ -15,19 +16,10 @@ import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
  */
 test.describe.configure({ mode: 'serial' });
 
-// The first assertion after a login, a navigation or a data load.
-const LOADED = { timeout: 30 * 1000 };
-
 const TOKENS = /\/settings\/scim\/tokens$/;
 const TOKEN = /\/settings\/scim\/tokens\/\d+$/;
 const SERVICE_PROVIDER_CONFIG = `${new URL(API_BASE_URL).origin}/scim/v2/ServiceProviderConfig`;
 const DATE_FALLBACK = '—';
-
-const apiResponse = (page: Page, pathPattern: RegExp, method: 'GET' | 'POST' | 'DELETE') =>
-  page.waitForResponse(
-    (response) =>
-      pathPattern.test(new URL(response.url()).pathname) && response.request().method() === method,
-  );
 
 const scimStatus = async (token: string): Promise<number> => {
   const context = await playwrightRequest.newContext();

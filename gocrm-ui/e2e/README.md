@@ -259,7 +259,7 @@ Counts are per `test(...)` block and will drift; `npx playwright test --list` is
 e2e/
 ├── global-setup.ts     # Seeds the admin account via cmd/create-admin (same DB_DRIVER/DB_PATH or DB_NAME as the backend)
 ├── fixtures/           # admin-user.ts (credentials + faker generators), test-data.ts
-├── helpers/            # admin-auth.ts — login helper for the admin suites; sso.ts — admin API helpers for sso.spec.ts
+├── helpers/            # admin-auth.ts — login helper for the admin suites; api.ts — shared API response wait (apiResponse) and load timeout (LOADED); sso.ts — admin API helpers for sso.spec.ts
 ├── pages/              # Page Object Models: one per screen, selectors live here
 ├── scripts/            # cleanup-admin-test-data.sh
 └── tests/              # Specs — behaviour assertions only
@@ -267,6 +267,10 @@ e2e/
 
 Two Playwright configs: `playwright.config.ts` (default) and `playwright.config.slow.ts`, used by the
 `test:e2e:admin` and `test:e2e:slow` scripts when longer timeouts are needed.
+
+`make verify-frontend` type-checks the e2e code, the page objects, the helpers and the three
+`playwright.config*.ts` files with `npx tsc -p tsconfig.e2e.json --noEmit`, so a broken import or
+type in a spec fails that check without running a browser.
 
 ## Conventions
 
