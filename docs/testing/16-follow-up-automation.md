@@ -29,7 +29,7 @@ Priorities: 22 P0, 17 P1, 2 P2.
 - `internal/service/automation_service.go`, `automation_validation.go`, `automation_engine.go`, `automation_condition.go`,
   `automation_dry_run.go`, `automation_runtime.go`, `automation_events.go`,
   `notification_service.go`; the event hooks in `lead_service.go`, `deal_service.go`,
-  `form_service.go` and `bulk_status_service.go`
+  `form_public.go`, `form_confirmation.go`, `form_lead_link.go` and `bulk_status_service.go`
 - `internal/repository/automation_repository.go`, `notification_repository.go`, `erasure.go`,
   `erasure_cascade.go`, `internal/utils/sort.go`
 - `cmd/main.go`, `cmd/automation_runtime.go`, `internal/config/config.go`

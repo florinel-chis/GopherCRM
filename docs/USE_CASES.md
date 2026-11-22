@@ -38,7 +38,7 @@ These caveats apply to every recipe that takes in leads through forms.
 
 - **Repeat enquiries do not create a new lead.** The newest live lead with the same email gets a
   note appended and a `lead_updated` automation event. Its owner, `source` and status stay as they
-  were (`formService.applySubmissionLead` (`internal/service/form_service.go`)). Matching is
+  were (`formService.applySubmissionLead` (`internal/service/form_lead_link.go`)). Matching is
   installation-wide, not per form
   (`leadRepository.GetLatestByEmail` (`internal/repository/lead_repository.go`)). A rule that routes on `source` sees the form that
   created the lead, not the form just submitted. To act on every enquiry, trigger on
@@ -51,7 +51,7 @@ These caveats apply to every recipe that takes in leads through forms.
   Staff see the rows on the submission and in `GET /forms/deliveries`; admin and sales retry by hand.
 - **Double opt-in confirms an email address. It does not record consent.** A form with consent
   text refuses a submission without the consent flag
-  (`formService.validateValues` (`internal/service/form_service.go`)). The submission row does not
+  (`formService.validateValues` (`internal/service/form_validation.go`)). The submission row does not
   store the consent text or its version (`FormSubmission` (`internal/models/form.go`)). Keep your own record of what
   the consent text said and when it changed.
 - **Spam and unconfirmed submissions are kept until you set a retention.** They hold visitor values
@@ -72,8 +72,8 @@ These caveats apply to every recipe that takes in leads through forms.
   HTTP request's context (`docs/DEVELOPMENT.md`, "Request context (#107)", #194). A visitor who closes the tab while
   the transaction is still open leaves no submission behind and does not spend a confirmation
   token. The form transaction commits before the notification and follow-up mail are sent and
-  before the response is written (`formService.storeReceivedSubmission` (`internal/service/form_service.go`) and
-  `formService.ConfirmSubmission` (`internal/service/form_service.go`)), so a disconnect after the commit leaves the
+  before the response is written (`formService.storeReceivedSubmission` (`internal/service/form_public.go`) and
+  `formService.ConfirmSubmission` (`internal/service/form_confirmation.go`)), so a disconnect after the commit leaves the
   submission stored and the token spent. A client that sees no response cannot conclude that
   nothing was written.
 - **Conversion follows the administrator's rules.** Converting a lead to a customer requires its
@@ -98,7 +98,7 @@ and turns some into deals and quotes.
    emails, a default lead owner, allowed origins, double opt-in, and a follow-up mail that can carry
    a content link (`Form` (`internal/models/form.go`); screens in `gocrm-ui/src/pages/forms/`).
    The default owner must be an active admin or sales user
-   (`formService.checkLeadOwner` (`internal/service/form_service.go`)). Under **Submission action** the admin chooses what a
+   (`formService.checkLeadOwner` (`internal/service/form_admin.go`)). Under **Submission action** the admin chooses what a
    submission creates: a lead (this recipe), a support ticket for the live customer with the
    submitted address (#213, #335), or nothing. A ticket form requires double opt-in and has no lead
    owner; the builder switches double opt-in on and refuses to save without it.
@@ -109,24 +109,24 @@ and turns some into deals and quotes.
    has an allowlist and you use the hosted page, the CRM's own host must be in the allowed origins,
    because the hosted page submits from the CRM origin
    (`requestOrigin` (`internal/handler/form_public_handler.go`);
-   `originAllowed` (`internal/service/form_service.go`)). Test both embed paths from a real browser.
+   `originAllowed` (`internal/service/form_antispam.go`)). Test both embed paths from a real browser.
 3. Spam layers run in a fixed order: validation, then the HMAC time trap (3 seconds to 24 hours),
    origin, honeypot, and optional reCAPTCHA v3
-   (`formService.SubmitPublic` (`internal/service/form_service.go`); `internal/forms/`). A spam verdict gets the same
+   (`formService.SubmitPublic` (`internal/service/form_public.go`); `internal/forms/`). A spam verdict gets the same
    response as a genuine submission and is stored with `status=spam`.
 4. With double opt-in, `GET /forms/public/confirm` renders a button and only the POST spends the
    token. The token claim, the lead write and the submission update are one transaction, and mail
-   goes out after the commit (`formService.ConfirmSubmission` (`internal/service/form_service.go`);
+   goes out after the commit (`formService.ConfirmSubmission` (`internal/service/form_confirmation.go`);
    `internal/service/form_confirmation_regression_test.go`).
 5. A new lead gets `source` = the form name and `owner` = the form's default owner. A repeat gets
    a note instead (see the shared caveats). Sales users see only the leads they own; admins see
    every lead (`CanViewLead` (`internal/service/lead_visibility.go`)). A form that creates
    leads must have a default owner: `ValidateDefinition` refuses `create_lead` without one
    (`Form.ValidateDefinition` (`internal/models/form.go`), called from
-   `formService.prepare` (`internal/service/form_service.go`)). A form
+   `formService.prepare` (`internal/service/form_admin.go`)). A form
    with lead creation turned off may have no owner; its submissions are stored and no lead is
-   written (`formService.storeReceivedSubmission` (`internal/service/form_service.go`) and
-   `formService.confirmInTransaction` (`internal/service/form_service.go`) check `CreateLead`).
+   written (`formService.storeReceivedSubmission` (`internal/service/form_public.go`) and
+   `formService.confirmInTransaction` (`internal/service/form_confirmation.go`) check `CreateLead`).
 6. Automation reacts to `lead_created` (and `lead_updated` for repeats), or to `lead_form_submitted`
    for every finalised enquiry, optionally narrowed to one form with `trigger.form_id`. Typical
    steps: a condition on `source` or on the enquiry's `utm_campaign`, `create_task`, `notify`,
@@ -486,7 +486,7 @@ planning around an issue number.
 | Gap | Recipes | Evidence | Issue |
 |---|---|---|---|
 | Lead reassignment from the lead list (no UI control; API routes exist) | 1, 2 | `gocrm-ui/src/api/endpoints/leads.ts` (`assignLead`) | — |
-| Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `applyFormAttribution` (`internal/service/form_attribution.go`); `formService.applySubmissionLead` (`internal/service/form_service.go`); `FormSubmission` (`internal/models/form.go`) | #220 |
+| Delivered: per-submission attribution columns, and `lead_form_submitted` per finalised submission with `trigger.form_id`. Still open: first- or last-touch attribution on the lead, and the embed script filling hidden `utm_*` fields | 1, 3, 6 | `applyFormAttribution` (`internal/service/form_attribution.go`); `formService.applySubmissionLead` (`internal/service/form_lead_link.go`); `FormSubmission` (`internal/models/form.go`) | #220 |
 | Form mail is retried by hand only: no automatic retry or backoff, and `sent` means accepted by the relay (no bounce confirmation) | 1, 3, 6 | `formService.RetryDelivery` (`internal/service/form_mail_delivery.go`) | — |
 | Delivered: erasure scrubs unlinked submissions of the erased address; ticket free text is kept, behind a documented operator redaction procedure. Still open: unlinked submissions of other addresses stay until the retention purge | 1, 4 | `docs/DEVELOPMENT.md`, "Deleting personal data" (`scrubUnlinkedSubmissions`, "matches no erased row", "Operator procedure for ticket text") | #214 |
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |

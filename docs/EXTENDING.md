@@ -401,7 +401,7 @@ missing (see the roadmap).
 ## 7. Add a form field type
 
 Constant (`FormFieldText` and its siblings) and `validateFieldType` in `internal/models/form.go`; submitted-value validation
-in `formService.validateValues` (`internal/service/form_service.go`), called from `formService.SubmitPublic` (`internal/service/form_service.go`); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
+in `formService.validateValues` (`internal/service/form_validation.go`), called from `formService.SubmitPublic` (`internal/service/form_public.go`); the embed renderer `internal/handler/assets/form_embed.js` (embedded with go:embed, no build
 step); the hosted page `internal/handler/form_public_html.go`. In the frontend, extend the closed
 `FormFieldType` union (`gocrm-ui/src/api/endpoints/forms.ts`) first: the builder imports it, and
 `tsc` rejects a new option without it. Then add the option to `fieldTypes` and to the `type`
