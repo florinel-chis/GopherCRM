@@ -7,7 +7,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // txUnit is what a write running in one transaction works with: the
@@ -26,13 +25,6 @@ type txUnit struct {
 	// Automation writes automation events through Tx, or is nil when the
 	// service runs without automation.
 	Automation repository.AutomationRepository
-}
-
-// LockingRead returns a handle on the transaction whose reads take a row lock
-// (SELECT ... FOR UPDATE; SQLite drops the clause). The fresh Session keeps
-// the clause off every later statement on Tx.
-func (u txUnit) LockingRead() *gorm.DB {
-	return u.Tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
 }
 
 // txDeps holds what a service needs to run its writes as txUnits: the

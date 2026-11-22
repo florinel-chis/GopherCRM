@@ -136,7 +136,7 @@ func (r *customerRepository) Update(customer *models.Customer) error {
 		// still show as live a row whose erasure has committed since, and the
 		// lost write would be reported as a success.
 		var live models.Customer
-		err := lockingRead(r.db).Select("id").Where("id = ? AND deleted_at IS NULL", customer.ID).Take(&live).Error
+		err := LockingRead(r.db).Select("id").Where("id = ? AND deleted_at IS NULL", customer.ID).Take(&live).Error
 		if err != nil {
 			return err
 		}

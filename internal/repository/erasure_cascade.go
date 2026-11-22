@@ -37,7 +37,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // leadErasurePlan lists what counts as personal data on a lead.
@@ -720,14 +719,6 @@ func shouldRestartErasure(err error) bool {
 	return true
 }
 
-// lockingRead returns a handle for a read that locks the rows it returns
-// (FOR UPDATE on MySQL/MariaDB; SQLite drops the clause and serialises writers
-// on its single connection anyway). The fresh Session keeps the clause from
-// leaking into the next statement on the same handle.
-func lockingRead(tx *gorm.DB) *gorm.DB {
-	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
-}
-
 // lockedErasureRows are the rows the lock stages returned, by id. An id that
 // was locked for but names no row is absent from its map.
 type lockedErasureRows struct {
@@ -874,7 +865,7 @@ func (c *erasureCascade) lockGraph(tx *gorm.DB, graph *erasureGraph) (*lockedEra
 	err := c.lockStage(erasureStageLeads, func() error {
 		for _, id := range graph.leads {
 			var lead models.Lead
-			err := lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id).Error
+			err := LockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
@@ -896,7 +887,7 @@ func (c *erasureCascade) lockGraph(tx *gorm.DB, graph *erasureGraph) (*lockedEra
 	err = c.lockStage(erasureStageCustomers, func() error {
 		for _, id := range graph.customers {
 			var customer models.Customer
-			err := lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id).Error
+			err := LockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
@@ -917,7 +908,7 @@ func (c *erasureCascade) lockGraph(tx *gorm.DB, graph *erasureGraph) (*lockedEra
 	err = c.lockStage(erasureStageUsers, func() error {
 		for _, id := range graph.linkedUsers {
 			var user models.User
-			err := lockingRead(tx).Unscoped().Select("id", "role").First(&user, id).Error
+			err := LockingRead(tx).Unscoped().Select("id", "role").First(&user, id).Error
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				continue
 			}
@@ -999,7 +990,7 @@ func (c *erasureCascade) lockCredentials(tx *gorm.DB, userIDs []uint) error {
 			for start := 0; start < len(ids); start += erasureCredentialLockChunk {
 				chunk := ids[start:min(start+erasureCredentialLockChunk, len(ids))]
 				var lockedIDs []uint
-				if err := lockingRead(tx).Unscoped().Model(stage.model()).
+				if err := LockingRead(tx).Unscoped().Model(stage.model()).
 					Where("id IN ?", chunk).Order("id").Pluck("id", &lockedIDs).Error; err != nil {
 					return fmt.Errorf("locking %s of the erased users: %w", stage.table, err)
 				}

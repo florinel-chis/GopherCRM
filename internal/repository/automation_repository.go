@@ -30,12 +30,6 @@ func (r *automationRepository) WithTx(tx *gorm.DB) AutomationRepository {
 	return &automationRepository{db: tx}
 }
 
-// locking is a fresh session carrying `FOR UPDATE`, as the quote repository
-// does: Clauses alone returns a statement GORM keeps reusing.
-func (r *automationRepository) locking() *gorm.DB {
-	return r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
-}
-
 // ErrAutomationRunNotOwned is returned by RenewRunLease when the run is no
 // longer running under the given owner (#237): it was cancelled, finished,
 // recovered by another engine's stale sweep or re-claimed. The executor that
@@ -83,7 +77,7 @@ func (r *automationRepository) GetRuleByID(id uint) (*models.AutomationRule, err
 
 func (r *automationRepository) GetRuleByIDForUpdate(id uint) (*models.AutomationRule, error) {
 	var rule models.AutomationRule
-	if err := r.locking().First(&rule, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&rule, id).Error; err != nil {
 		return nil, err
 	}
 	return &rule, nil
@@ -356,7 +350,7 @@ func (r *automationRepository) attachRuleNames(runs []*models.AutomationRun) err
 
 func (r *automationRepository) GetRunByIDForUpdate(id uint) (*models.AutomationRun, error) {
 	var run models.AutomationRun
-	if err := r.locking().First(&run, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&run, id).Error; err != nil {
 		return nil, err
 	}
 	return &run, nil
@@ -696,7 +690,7 @@ func (r *automationRepository) ListRunSteps(runID uint) ([]models.AutomationRunS
 // change. A soft-deleted (erased) lead is a not-found.
 func (r *automationRepository) GetLeadForUpdate(id uint) (*models.Lead, error) {
 	var lead models.Lead
-	if err := r.locking().First(&lead, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&lead, id).Error; err != nil {
 		return nil, err
 	}
 	return &lead, nil
@@ -704,7 +698,7 @@ func (r *automationRepository) GetLeadForUpdate(id uint) (*models.Lead, error) {
 
 func (r *automationRepository) GetDealForUpdate(id uint) (*models.Deal, error) {
 	var deal models.Deal
-	if err := r.locking().First(&deal, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&deal, id).Error; err != nil {
 		return nil, err
 	}
 	return &deal, nil
@@ -745,7 +739,7 @@ func (r *automationRepository) SetDealOwner(id uint, ownerID uint, now time.Time
 // lock covers the ticket row alone. A soft-deleted ticket is a not-found.
 func (r *automationRepository) GetTicketForUpdate(id uint) (*models.Ticket, error) {
 	var ticket models.Ticket
-	if err := r.locking().First(&ticket, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&ticket, id).Error; err != nil {
 		return nil, err
 	}
 	return &ticket, nil

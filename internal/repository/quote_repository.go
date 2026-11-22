@@ -6,7 +6,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type quoteRepository struct {
@@ -48,16 +47,9 @@ func (r *quoteRepository) GetByID(id uint) (*models.Quote, error) {
 	return &quote, nil
 }
 
-// locking is a fresh session carrying `FOR UPDATE`: Clauses alone returns a
-// statement GORM keeps reusing, and its state would leak into the statements
-// that follow on the same handle. The SQLite dialector drops the clause.
-func (r *quoteRepository) locking() *gorm.DB {
-	return r.db.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})
-}
-
 func (r *quoteRepository) GetByIDForUpdate(id uint) (*models.Quote, error) {
 	var quote models.Quote
-	if err := r.locking().First(&quote, id).Error; err != nil {
+	if err := LockingRead(r.db).First(&quote, id).Error; err != nil {
 		return nil, err
 	}
 	return &quote, nil
@@ -277,7 +269,7 @@ func (r *quoteRepository) CountLines(quoteID uint) (int64, error) {
 // sees the latest committed rows, which is what the send decision needs.
 func (r *quoteRepository) CountLinesForUpdate(quoteID uint) (int64, error) {
 	var count int64
-	err := r.locking().Model(&models.QuoteLine{}).Where("quote_id = ?", quoteID).Count(&count).Error
+	err := LockingRead(r.db).Model(&models.QuoteLine{}).Where("quote_id = ?", quoteID).Count(&count).Error
 	return count, err
 }
 

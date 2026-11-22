@@ -187,7 +187,7 @@ func (s *customerService) Update(ctx context.Context, customer *models.Customer)
 func (s *customerService) updateLocked(ctx context.Context, customer *models.Customer, logger *logrus.Entry) error {
 	err := s.tx.Run(ctx, func(ctx context.Context, u txUnit) error {
 		// The repository's preloads of this read are plain reads.
-		locked, err := s.customerRepo.WithTx(u.LockingRead()).GetByID(customer.ID)
+		locked, err := s.customerRepo.WithTx(repository.LockingRead(u.Tx)).GetByID(customer.ID)
 		if err != nil {
 			return err
 		}

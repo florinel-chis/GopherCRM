@@ -176,11 +176,11 @@ unless set), the optional automation repository and the base repositories to bin
 `txDeps.Run(ctx, fn)` calls `WithTransaction` once on the caller's context, resolves the
 transaction once (`utils.ErrNoTransaction` if it is missing) and hands `fn` a `txUnit`: `Tx`, the
 repositories bound with `WithTx(Tx)`, `Webhooks` (`emitter.Bind(Tx)`) and `Automation`
-(`automationTx`, nil without an automation repository); `txUnit.LockingRead` is the
-`FOR UPDATE` handle with its fresh `Session`. `fn`'s error is returned unchanged. Called inside
-an enclosing transaction it nests under a savepoint. The customer service is the first user
-(`CustomerService.Create` and `Update`); the other services keep their own transaction code
-for now. Regression root: `TestTxUnit` (`internal/service`).
+(`automationTx`, nil without an automation repository); a locking read binds a repository to
+`repository.LockingRead(u.Tx)`, the `FOR UPDATE` handle with its fresh `Session`. `fn`'s error is
+returned unchanged. Called inside an enclosing transaction it nests under a savepoint. The
+customer service is the first user (`CustomerService.Create` and `Update`); the other services
+keep their own transaction code for now. Regression root: `TestTxUnit` (`internal/service`).
 
 **Request context (#107)** — lead conversion (including the handler's ownership read), lead
 assignment (`LeadService.Assign`, #255), the public form submission and confirmation, the
@@ -565,8 +565,10 @@ issued only to a live, active owner.
 - **Reset request.** `RequestPasswordReset` keeps its plain `GetByEmail` (an unknown or inactive
   address stops there), then runs one `WithTransactionAndRetry` transaction
   (`resetRequestMaxRetries` 3) on `context.Background()` that reads the owner by primary key
-  through the user repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})` on a fresh
+  through the user repository bound to `repository.LockingRead(tx)`, the locking clause on a fresh
   `Session` (`lockLiveCredentialOwner`; `FOR UPDATE` on MySQL/MariaDB, a plain read on SQLite).
+  The lock falls on the `users` row only: `UserRepository.GetByID` reads the owner's custom role
+  and its permissions without a lock, on the same transaction.
   A missing, erased (soft-deleted) or inactive locked row writes nothing. With
   `WithAuthIdentities` (`internal/service/auth_service.go`; `cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
   repository skips the check) a plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read then
@@ -1991,7 +1993,7 @@ reason, so a caller cannot probe which ids exist or what they hold. The reason (
 `role`) goes to the log with the ids and nothing else. An erased user's row still satisfies the
 foreign key, but no scoped read finds it, so it counts as unknown; a lookup that fails for a database
 reason stays a 500. The read runs inside the writing transaction and takes a row lock (the user
-repository bound to `tx.Clauses(clause.Locking{Strength: "UPDATE"})`): a plain read in MySQL's
+repository bound to `repository.LockingRead(tx)`): a plain read in MySQL's
 REPEATABLE READ transaction would answer from the snapshot of an earlier plain read, such as the
 company check, and miss a deactivation committed since. That makes the check current, not permanent:
 a deactivation after it can still leave an inactive owner, because lead writes and user deactivation

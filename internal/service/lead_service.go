@@ -13,7 +13,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type leadService struct {
@@ -170,7 +169,7 @@ func (s *leadService) lockedUserRead(tx *gorm.DB) repository.UserRepository {
 	if s.userRepo == nil {
 		return nil
 	}
-	return s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{}))
+	return s.userRepo.WithTx(repository.LockingRead(tx))
 }
 
 // checkCompanyLink rejects a company_id that matches no live company with
@@ -253,7 +252,7 @@ func (s *leadService) GetByIDContext(ctx context.Context, id uint) (*models.Lead
 // its single connection). The fresh Session keeps the clause off every later
 // statement on tx: writes go through s.leadRepo.WithTx(tx).
 func (s *leadService) lockedLeadRead(tx *gorm.DB) repository.LeadRepository {
-	return s.leadRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{}))
+	return s.leadRepo.WithTx(repository.LockingRead(tx))
 }
 
 // Update applies a partial update. The lead is re-read with a row lock inside

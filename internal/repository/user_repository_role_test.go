@@ -220,4 +220,83 @@ func runUserRepositoryRoleColumns(t *testing.T, db *gorm.DB, useMySQL bool) {
 		_, err = roles.GetByID(other.ID)
 		assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
 	})
+
+	t.Run("GetByID through a locking handle locks only the users row", func(t *testing.T) {
+		userID := createCustomRoleUser(t, db, "locking-custom@example.com", fieldOps.ID, false)
+
+		// The SQLite dialector drops the locking clause from the SQL text, so
+		// the statement's clause map is what shows a locking read on both
+		// engines. Only statements of this subtest's transaction are kept.
+		type queried struct {
+			table   string
+			locking bool
+		}
+		var (
+			mu        sync.Mutex
+			recording bool
+			seen      []queried
+		)
+		const recorder = "test:user_role_columns_locking_clause"
+		require.NoError(t, db.Callback().Query().Before("gorm:query").Register(recorder, func(tx *gorm.DB) {
+			mu.Lock()
+			defer mu.Unlock()
+			if recording {
+				_, locking := tx.Statement.Clauses["FOR"]
+				seen = append(seen, queried{table: tx.Statement.Table, locking: locking})
+			}
+		}))
+		t.Cleanup(func() { _ = db.Callback().Query().Remove(recorder) })
+
+		var got *models.User
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			mu.Lock()
+			recording = true
+			mu.Unlock()
+			capture.reset()
+			var err error
+			got, err = users.WithTx(LockingRead(tx)).GetByID(userID)
+			mu.Lock()
+			recording = false
+			mu.Unlock()
+			return err
+		}))
+		rendered := capture.all()
+
+		require.NotNil(t, got.CustomRole, "the custom role is filled")
+		assert.Equal(t, fieldOps.ID, got.CustomRole.ID)
+		assert.Equal(t, []string{"deals.read=all", "leads.read=own"}, permissionKeys(got.CustomRole.Permissions))
+
+		mu.Lock()
+		statements := append([]queried(nil), seen...)
+		mu.Unlock()
+		byTable := map[string]queried{}
+		for _, q := range statements {
+			byTable[q.table] = q
+		}
+		require.Len(t, statements, 3, "users, roles and role_permissions: %v", statements)
+		for _, table := range []string{"users", "roles", "role_permissions"} {
+			_, ok := byTable[table]
+			require.True(t, ok, "a %s statement: %v", table, statements)
+		}
+		assert.True(t, byTable["users"].locking, "the users read is a locking read")
+		assert.False(t, byTable["roles"].locking, "the roles read takes no lock")
+		assert.False(t, byTable["role_permissions"].locking, "the permissions read takes no lock")
+
+		if useMySQL {
+			require.Len(t, rendered, 3, "rendered statements: %v", rendered)
+			for _, sql := range rendered {
+				lower := strings.ToLower(sql)
+				switch {
+				case strings.Contains(lower, "from `role_permissions`"):
+					assert.NotContains(t, lower, "for update", sql)
+				case strings.Contains(lower, "from `roles`"):
+					assert.NotContains(t, lower, "for update", sql)
+				case strings.Contains(lower, "from `users`"):
+					assert.Contains(t, lower, "for update", sql)
+				default:
+					t.Errorf("unexpected statement %q", sql)
+				}
+			}
+		}
+	})
 }

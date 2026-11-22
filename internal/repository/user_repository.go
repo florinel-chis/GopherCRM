@@ -52,6 +52,11 @@ func (r *userRepository) Create(user *models.User) error {
 // GetByID reads one live user. A user with role_id NULL costs exactly one
 // SELECT, against users; a custom-role user also gets CustomRole with its
 // permissions (ordered by permission_key) filled (#344).
+//
+// The users read runs on the repository's handle, so a repository bound to
+// LockingRead(tx) locks the users row. The role and its permissions are read
+// on a NewDB session of that handle: the same transaction connection and
+// context, without the handle's clauses, so they are read without a lock.
 func (r *userRepository) GetByID(id uint) (*models.User, error) {
 	var user models.User
 	err := r.db.First(&user, id).Error
@@ -60,7 +65,7 @@ func (r *userRepository) GetByID(id uint) (*models.User, error) {
 	}
 	if user.RoleID != nil {
 		var role models.Role
-		err := r.db.Preload("Permissions", func(db *gorm.DB) *gorm.DB {
+		err := r.db.Session(&gorm.Session{NewDB: true}).Preload("Permissions", func(db *gorm.DB) *gorm.DB {
 			return db.Order("permission_key ASC")
 		}).First(&role, *user.RoleID).Error
 		if err != nil {
