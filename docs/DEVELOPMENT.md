@@ -3402,7 +3402,11 @@ closed-set table in `scripts/ci/check-api-docs.py`.
 ### Automation runtime
 
 Follow-up automation (#164) is the second owner of background work. `internal/service/
-automation_engine.go` executes rules, `automation_runtime.go` owns the worker goroutine, and
+automation_engine.go` holds the engine type that executes rules, with its lifecycle, dispatch,
+schedule, run-lease, step, email-step and stale-run recovery code in `automation_lifecycle.go`,
+`automation_dispatch.go`, `automation_schedule.go`, `automation_run_lease.go`,
+`automation_steps.go`, `automation_email_step.go` and `automation_recovery.go`;
+`automation_runtime.go` owns the worker goroutine, and
 `cmd/automation_runtime.go` wires both into `setupDependencies`, which returns one drain handle
 (`combineStops`) that `main` runs before `models.CloseDatabase`. The combined handle stops the
 automation worker, the form retention purge, the stale bulk operation sweep (#196), the password

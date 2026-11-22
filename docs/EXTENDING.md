@@ -335,10 +335,11 @@ block), five origins (`Event origins.`) and six step types (`Step types.`).
    name short.
 2. Validation in `validateStep` (`internal/service/automation_validation.go`).
 3. Dry run in `AutomationEngine.DryRun` (`internal/service/automation_dry_run.go`).
-4. Execution in `AutomationEngine.planStep` (`internal/service/automation_engine.go`): build a `stepPlan` whose
+4. Execution in `AutomationEngine.planStep` (`internal/service/automation_steps.go`): build a `stepPlan` whose
    `effect` writes through the transaction-bound repositories, so it commits or rolls back with the
-   run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`,
-   called from `executeStep`); copy that path for any external side effect. Several replicas may
+   run's progress. Mail is the exception and has its own crash semantics (`executeEmailStep`
+   (`internal/service/automation_email_step.go`), called from `executeStep`
+   (`internal/service/automation_steps.go`)); copy that path for any external side effect. Several replicas may
    run the worker (#237), so every run write after the claim goes through the owner-fenced
    `AdvanceRun`/`ReleaseRun` (the `advance` helper) and an external side effect needs the same
    owner checks as the email step: the locking check of the run row in its first transaction and
@@ -367,7 +368,7 @@ block), five origins (`Event origins.`) and six step types (`Step types.`).
    from that map before `validateTrigger` runs (`automationService.validateRule` (`internal/service/automation_validation.go`)), so without
    this step a rule on the new event cannot be saved.
 5. A new entity type also needs its own entry in that map, `loadRecord` and `lockRecord`
-   (`automation_engine.go`), the erasure cancel for that entity, and validation of values in
+   (`internal/service/automation_steps.go`), the erasure cancel for that entity, and validation of values in
    `validateTrigger`/`validAutomationValue` (`internal/service/automation_validation.go`). Tickets (#242) are the
    third worked entity and show the variants: a run's owner taken from another column
    (`recordFromTicket`, `assigned_to_id`), condition fields and placeholder allowlists of their own
