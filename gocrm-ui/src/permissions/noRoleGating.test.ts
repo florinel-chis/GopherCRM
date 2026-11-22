@@ -25,7 +25,7 @@ const isRoleGate = (line: string): boolean => ROLE_GATE_PATTERNS.some((pattern) 
 // assignee or a form owner), not of the signed-in one.
 const ALLOWED: Array<{ file: string; line: RegExp }> = [
   { file: 'pages/automation/StaffUserAutocomplete.tsx', line: /^const isAssignable = / },
-  { file: 'pages/forms/FormBuilder.tsx', line: /candidate\.is_active && \(candidate\.role === / },
+  { file: 'pages/forms/SubmissionActionSection.tsx', line: /candidate\.is_active && \(candidate\.role === / },
 ];
 
 const sourceFiles = (dir: string): string[] =>

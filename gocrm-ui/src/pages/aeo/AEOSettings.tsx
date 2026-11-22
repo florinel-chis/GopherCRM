@@ -115,7 +115,7 @@ interface StringListEditorProps {
 }
 
 // Small chip editor used for brand aliases, owned domains and per-competitor
-// aliases. FormBuilder.tsx carries a near-identical copy (with error and helper
+// aliases. pages/forms/StringListEditor.tsx carries a near-identical copy (with error and helper
 // text props); the two are not shared yet.
 const StringListEditor: React.FC<StringListEditorProps> = ({
   label,
