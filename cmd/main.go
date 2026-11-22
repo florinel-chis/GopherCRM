@@ -110,7 +110,7 @@ import (
 // @tag.name forms
 // @tag.description Embeddable lead-capture forms and their submissions (staff side).
 // @tag.name webhooks
-// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals and tasks (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted).
+// @tag.description Outbound webhooks (admin): endpoint registry with signing secrets, and the delivery log of the created, updated and deleted events of leads, customers, tickets, deals, tasks and companies (lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated, company.deleted).
 // @tag.name public-forms
 // @tag.description Unauthenticated endpoints reached by visitors of the sites a form is embedded on: definition, submission, embed script, view page and double opt-in confirmation. Some return JavaScript or HTML instead of the JSON envelope; CORS is open to any origin without credentials.
 // @tag.name public-quotes
@@ -377,7 +377,9 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// customer.created / customer.updated outbox rows (#345, #408).
 	customerService := service.NewCustomerService(customerRepo, userRepo, companyRepo, txManager,
 		service.WithCustomerWebhooks(webhookEmitter))
-	companyService := service.NewCompanyService(companyRepo, userRepo, txManager)
+	// The company writes enqueue company.created, company.updated and
+	// company.deleted in their transaction (#517).
+	companyService := service.NewCompanyService(companyRepo, userRepo, txManager, service.WithCompanyWebhooks(webhookEmitter))
 	// A staff comment may be emailed to the ticket's customer (#219): the
 	// delivery record is written in the comment's transaction and the mail
 	// goes out after the commit through the shared mailer, its subject naming

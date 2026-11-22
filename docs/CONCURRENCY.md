@@ -29,7 +29,7 @@ it. QA still reviews each entry against the code paths it cites.
 Three chains are specified. A transaction that locks rows of one chain takes them left to right.
 
 - `companies → leads → customers → deals` (#182, implemented): companies by primary key
-  (`CompanyRepository.LockLive`, `internal/repository/company_repository.go:64`), leads by id
+  (`CompanyRepository.LockLive`, `internal/repository/company_repository.go:78`), leads by id
   ascending, then customers, then deals. Written down at `internal/service/lead_company_lock.go:15`.
 - `users → refresh_tokens`, `users → password_reset_tokens` and `users → api_keys` (implemented
   for every session and credential-issuing transaction): the owner's `users` row first, by primary
@@ -441,13 +441,16 @@ confirm and the gaps of the re-check.
 
 ### Company delete
 
-- **Rows locked:** the `companies` row (`LockLive`, `internal/service/company_service.go:122`),
+- **Rows locked:** the `companies` row (`LockLive`, `internal/service/company_service.go:236`),
   then every `leads`, `customers` and `deals` row that names it (`UnlinkLeads`, `UnlinkCustomers`,
-  `UnlinkDeals`, `internal/repository/company_repository.go:160-180`), then the company's soft
-  delete.
-- **Order:** a plain pre-read outside the transaction (`internal/service/company_service.go:104`)
+  `UnlinkDeals`, `internal/repository/company_repository.go:174-192`), then the company's soft
+  delete. With webhooks wired (#517) the `company.deleted` event follows the soft delete
+  (`internal/service/company_service.go:263`): a plain read of the active `webhook_endpoints`, then
+  one `INSERT` into `webhook_deliveries` with a row for every active endpoint subscribed to it;
+  neither table is locked, and the unlinked leads, customers and deals get no event.
+- **Order:** a plain pre-read outside the transaction (`internal/service/company_service.go:218`)
   → companies → leads → customers → deals.
-- **Transaction:** `WithTransaction` (`internal/service/company_service.go:116`).
+- **Transaction:** `WithTransaction` (`internal/service/company_service.go:230`).
 - **Retry:** none today. Target: the #183 retry rule.
 - **Status:** implemented
 

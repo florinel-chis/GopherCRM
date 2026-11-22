@@ -462,7 +462,7 @@ It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-a
 
 Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint in
 **Settings > Webhooks** (`/settings/webhooks`) or with `POST /api/v1/webhooks/endpoints` and picks
-any of fifteen event types:
+any of eighteen event types:
 
 | Event | Sent when |
 |---|---|
@@ -471,24 +471,27 @@ any of fifteen event types:
 | `ticket.created` | a ticket is created through the API, or a confirmed form submission opens one (a duplicate key sends nothing) |
 | `deal.created` | a deal is created with `POST /api/v1/deals` |
 | `task.created` | a task is created with `POST /api/v1/tasks`, or by an automation create-task step |
+| `company.created` | a company is created with `POST /api/v1/companies` |
 | `lead.updated` | `PUT /api/v1/leads/{id}` changed at least one stored value of the lead, `POST /api/v1/leads/{id}/assign` changed its owner, `POST /api/v1/leads/{id}/convert` converted it (next to `customer.created`), `POST /api/v1/leads/bulk/status` changed its status (one event per lead), or an automation assign-owner step changed its owner |
 | `customer.updated` | `PUT /api/v1/customers/{id}` changed at least one stored value of the customer |
 | `ticket.updated` | `PUT /api/v1/tickets/{id}` changed at least one stored value of the ticket, `POST /api/v1/tickets/bulk/status` changed its status (one event per ticket), or an automation assign-owner step changed its assignee |
 | `deal.updated` | `PUT /api/v1/deals/{id}` changed at least one stored value of the deal, `POST /api/v1/deals/{id}/stage` moved it to another stage, or an automation assign-owner step changed its owner |
 | `task.updated` | `PUT /api/v1/tasks/{id}` changed at least one stored value of the task or its label set (order and repeats of `label_ids` do not count), or `POST /api/v1/tasks/bulk/status` changed its status (one event per task) |
+| `company.updated` | `PUT /api/v1/companies/{id}` changed at least one stored value of the company |
 | `lead.deleted` | `DELETE /api/v1/leads/{id}`, and every erasure that reaches the lead: erasing the customer it was converted into, or that customer's login (`DELETE /api/v1/customers/{id}`, `DELETE /api/v1/users/{id}`) |
 | `customer.deleted` | `DELETE /api/v1/customers/{id}`, and the erasure of a lead converted into the customer or of the customer's login (`DELETE /api/v1/leads/{id}` by an admin, `DELETE /api/v1/users/{id}`) |
 | `ticket.deleted` | `DELETE /api/v1/tickets/{id}` |
 | `deal.deleted` | `DELETE /api/v1/deals/{id}` |
 | `task.deleted` | `DELETE /api/v1/tasks/{id}` (sent once: a delete that loses a race with another delete of the same task answers 404 and sends nothing) |
+| `company.deleted` | `DELETE /api/v1/companies/{id}` (the only event it sends: the leads, customers and deals it unlinks get no updated event) |
 
 An update that sends only the values already stored answers 200 and sends nothing, and assigning
 a lead to its current owner sends nothing either, nor does moving a deal to the stage it is already
-in. The updated events come from those five `PUT` routes (`PUT /api/v1/tasks/{id}` also when only
+in. The updated events come from those six `PUT` routes (`PUT /api/v1/companies/{id}` among them) (`PUT /api/v1/tasks/{id}` also when only
 the label set changed), lead assignment and conversion, the deal stage endpoint, the three bulk
 status endpoints and the automation assign-owner step only: deleting or erasing a record,
 assigning a customer, a ticket comment, a repeat form enquiry, the other automation steps, a
-company delete that unlinks its leads, customers and deals, the erasure of a customer or lead that
+company delete that unlinks its leads, customers and deals (it sends `company.deleted` only), the erasure of a customer or lead that
 overwrites the text of the deals linked to it, and a label delete, which removes the label from
 every task carrying it, send no updated event. The event says that the record changed, not what
 changed: fetch the record to see its current state.

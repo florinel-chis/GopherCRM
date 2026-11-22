@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Company webhook events (#517).** Companies join the webhook catalogue with three thin events:
+  `company.created` (`POST /companies`), `company.updated` (`PUT /companies/{id}` only when a stored
+  value changed, compared with the company row read under lock in the update's transaction) and
+  `company.deleted` (`DELETE /companies/{id}`). Each is written in the transaction of the company
+  write, one pending delivery per active endpoint subscribed to it. Like the other deleted events
+  (#531), `company.deleted` goes to every active endpoint subscribed to it, including one that never
+  received an event for the company. A company delete sends only `company.deleted`: clearing
+  `company_id` on its leads, customers and deals sends no `lead.updated`, `customer.updated` or
+  `deal.updated`. The payload is thin (the company id). An update of a company deleted after the
+  handler's read answers 404. All eighteen event types take 260 bytes and fit the existing
+  `varchar(512)` column, so there is no migration. Settings > Webhooks offers the three company
+  events.
 - **Task webhook events (#516).** Tasks join the webhook catalogue with three thin events:
   `task.created` (`POST /tasks` and the automation create-task step, in the step transaction),
   `task.updated` (`PUT /tasks/{id}` when a stored value changed or `label_ids` named another set of

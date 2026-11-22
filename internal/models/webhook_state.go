@@ -217,3 +217,42 @@ func (t *Task) WebhookState() TaskWebhookState {
 		DealID:       webhookID(t.DealID),
 	}
 }
+
+// CompanyWebhookState is the state company.updated compares (#517): the
+// columns companyRepository.Update (Save, Owner omitted) writes. The owner
+// record and the customer, lead and deal counts are no columns of the company
+// and stay out.
+type CompanyWebhookState struct {
+	Name          string
+	Domain        string
+	Website       string
+	Industry      string
+	EmployeeRange string
+	Phone         string
+	Address       string
+	City          string
+	State         string
+	Country       string
+	PostalCode    string
+	Notes         string
+	OwnerID       uint
+}
+
+// WebhookState returns the company's state for the company.updated event.
+func (c *Company) WebhookState() CompanyWebhookState {
+	return CompanyWebhookState{
+		Name:          c.Name,
+		Domain:        c.Domain,
+		Website:       c.Website,
+		Industry:      c.Industry,
+		EmployeeRange: c.EmployeeRange,
+		Phone:         c.Phone,
+		Address:       c.Address,
+		City:          c.City,
+		State:         c.State,
+		Country:       c.Country,
+		PostalCode:    c.PostalCode,
+		Notes:         c.Notes,
+		OwnerID:       webhookID(c.OwnerID),
+	}
+}

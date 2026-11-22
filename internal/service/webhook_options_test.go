@@ -98,4 +98,20 @@ func TestWebhookOptionsNilArguments(t *testing.T) {
 		assert.Same(t, tm, s.txManager)
 		assert.True(t, s.webhooksWired())
 	})
+
+	t.Run("the company service holds Nop by default and with a nil emitter, else the emitter", func(t *testing.T) {
+		s := NewCompanyService(nil, nil, tm).(*companyService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		s = NewCompanyService(nil, nil, tm, WithCompanyWebhooks(nil)).(*companyService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		live := webhook.NewEmitter(repository.NewWebhookRepository(nil))
+		require.NotEqual(t, webhook.Nop, live)
+		s = NewCompanyService(nil, nil, tm, WithCompanyWebhooks(live)).(*companyService)
+		assert.Equal(t, live, s.webhooks)
+		assert.Same(t, tm, s.txManager)
+		assert.True(t, s.webhooksWired())
+		assert.False(t, (&companyService{}).webhooksWired(), "a service built without the constructor is unwired")
+	})
 }

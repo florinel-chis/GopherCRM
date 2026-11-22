@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
+	"github.com/florinel-chis/gophercrm/internal/webhook"
 )
 
 type companyService struct {
@@ -26,14 +28,56 @@ type companyService struct {
 	// afterDeleteUnlink runs after the unlinks and the soft delete, before the
 	// commit, so a test can park the delete while it holds its locks.
 	afterDeleteUnlink func(id uint)
+
+	// webhooks is the outbound webhook emitter (#517), set by
+	// WithCompanyWebhooks: Create emits company.created, Update
+	// company.updated when a stored value changed, and Delete company.deleted,
+	// each in the company's transaction. NewCompanyService sets it to
+	// webhook.Nop; with Nop every path behaves as without webhooks.
+	webhooks webhook.Emitter
 }
 
-func NewCompanyService(companyRepo repository.CompanyRepository, userRepo repository.UserRepository, txManager *utils.TransactionManager) CompanyService {
-	return &companyService{
+// CompanyServiceOption configures NewCompanyService beyond its required
+// dependencies.
+type CompanyServiceOption func(*companyService)
+
+// WithCompanyWebhooks makes the company writes emit their webhook events
+// through e (#517), in the write's transaction: Create inserts the company and
+// emits company.created; Update locks the company row first
+// (CompanyLockingReader) and emits company.updated when the WebhookState
+// written differs from the locked row's; Delete emits company.deleted for every
+// active endpoint subscribed to it (#531) after the unlinks and the soft
+// delete, and no updated event for the leads, customers and deals it unlinks.
+// A nil e keeps webhook.Nop.
+func WithCompanyWebhooks(e webhook.Emitter) CompanyServiceOption {
+	return func(s *companyService) {
+		if e != nil {
+			s.webhooks = e
+		}
+	}
+}
+
+// webhooksWired reports whether the company writes emit webhook events. A
+// service built without NewCompanyService (nil emitter) is unwired.
+func (s *companyService) webhooksWired() bool {
+	return s.webhooks != nil && s.webhooks != webhook.Nop
+}
+
+// errCompanyLockingReadUnavailable is returned by a wired Update whose company
+// repository offers no locking read; nothing is written.
+var errCompanyLockingReadUnavailable = errors.New("company repository has no locking read")
+
+func NewCompanyService(companyRepo repository.CompanyRepository, userRepo repository.UserRepository, txManager *utils.TransactionManager, opts ...CompanyServiceOption) CompanyService {
+	s := &companyService{
 		companyRepo: companyRepo,
 		userRepo:    userRepo,
 		txManager:   txManager,
+		webhooks:    webhook.Nop,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *companyService) Create(company *models.Company) error {
@@ -44,13 +88,39 @@ func (s *companyService) Create(company *models.Company) error {
 		return err
 	}
 
-	if err := s.companyRepo.Create(company); err != nil {
+	var err error
+	if s.webhooksWired() {
+		err = s.createWithWebhook(company)
+	} else {
+		err = s.companyRepo.Create(company)
+	}
+	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
 
 	logger.WithField("company_id", company.ID).Info("Company created successfully")
 	return nil
+}
+
+// createWithWebhook inserts the company and emits company.created in one
+// transaction (#517): the company and its outbox rows commit together or not
+// at all. On failure company.ID is reset to 0, as nothing was stored.
+func (s *companyService) createWithWebhook(company *models.Company) error {
+	err := s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		if err := s.companyRepo.WithTx(tx).Create(company); err != nil {
+			return err
+		}
+		return s.webhooks.Bind(tx).Created(ctx, webhook.Company, company.ID)
+	})
+	if err != nil {
+		company.ID = 0
+	}
+	return err
 }
 
 func (s *companyService) GetByID(id uint) (*models.Company, error) {
@@ -76,13 +146,53 @@ func (s *companyService) Update(company *models.Company) error {
 		return err
 	}
 
-	if err := s.companyRepo.Update(company); err != nil {
+	var err error
+	if s.webhooksWired() {
+		err = s.updateWithWebhook(company)
+	} else {
+		err = s.companyRepo.Update(company)
+	}
+	if err != nil {
 		utils.LogServiceResponse(logger, err)
 		return err
 	}
 
 	logger.Info("Company updated successfully")
 	return nil
+}
+
+// updateWithWebhook is the wired update (#517): one transaction that reads
+// the live company under lock (CompanyLockingReader), writes it and emits
+// company.updated when the written WebhookState differs from the locked
+// row's, so an update that sends the stored values emits nothing. A company
+// missing or deleted by the time the lock is taken is apperrors.ErrNotFound
+// with nothing written.
+func (s *companyService) updateWithWebhook(company *models.Company) error {
+	return s.txManager.WithTransaction(context.Background(), func(ctx context.Context) error {
+		tx, ok := utils.GetTxFromContext(ctx)
+		if !ok {
+			return utils.ErrNoTransaction
+		}
+		repo := s.companyRepo.WithTx(tx)
+		locker, ok := repo.(repository.CompanyLockingReader)
+		if !ok {
+			return errCompanyLockingReadUnavailable
+		}
+		locked, err := locker.GetByIDForUpdate(company.ID)
+		if err != nil {
+			if isNotFound(err) {
+				return fmt.Errorf("company %d not found: %w", company.ID, apperrors.ErrNotFound)
+			}
+			return err
+		}
+		if err := repo.Update(company); err != nil {
+			return err
+		}
+		if locked.WebhookState() == company.WebhookState() {
+			return nil
+		}
+		return s.webhooks.Bind(tx).Updated(ctx, webhook.Company, company.ID)
+	})
 }
 
 // Delete soft-deletes the company after clearing company_id on every lead,
@@ -98,6 +208,10 @@ func (s *companyService) Update(company *models.Company) error {
 // committed first is unlinked here; one that waits on the company lock finds
 // it deleted. A company deleted between the plain pre-read and the lock is
 // apperrors.ErrNotFound with nothing written.
+//
+// With webhooks wired (#517) the transaction writes company.deleted for every
+// active endpoint subscribed to it after the soft delete; the unlinked leads,
+// customers and deals get no updated event.
 func (s *companyService) Delete(id uint) error {
 	logger := utils.LogServiceCall(utils.Logger.WithField("company_id", id), "CompanyService", "Delete")
 
@@ -144,6 +258,11 @@ func (s *companyService) Delete(id uint) error {
 				return fmt.Errorf("company %d not found: %w", id, apperrors.ErrNotFound)
 			}
 			return err
+		}
+		if s.webhooksWired() {
+			if err := s.webhooks.Bind(tx).Deleted(ctx, webhook.Company, id); err != nil {
+				return err
+			}
 		}
 		if s.afterDeleteUnlink != nil {
 			s.afterDeleteUnlink(id)

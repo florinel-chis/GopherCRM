@@ -34,6 +34,20 @@ func (r *companyRepository) GetByID(id uint) (*models.Company, error) {
 	return &company, nil
 }
 
+// GetByIDForUpdate is the locking read of a company update (#517): the bare
+// live company row, no owner and no counts, with `FOR UPDATE` on MySQL/MariaDB
+// (a plain read on SQLite, where the dialector drops the clause). Called on
+// the repository WithTx returned, it locks the row for the rest of the
+// transaction. It implements CompanyLockingReader. A soft-deleted or missing
+// company is gorm.ErrRecordNotFound.
+func (r *companyRepository) GetByIDForUpdate(id uint) (*models.Company, error) {
+	var company models.Company
+	if err := r.db.Clauses(clause.Locking{Strength: "UPDATE"}).First(&company, id).Error; err != nil {
+		return nil, err
+	}
+	return &company, nil
+}
+
 func (r *companyRepository) Update(company *models.Company) error {
 	// Omit the association so a stale Owner copy on the struct is never written
 	// back over the users table; the owner is carried by OwnerID alone.

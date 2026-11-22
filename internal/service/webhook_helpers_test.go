@@ -277,6 +277,7 @@ type webhookEnv struct {
 	tickets   TicketService
 	deals     DealService
 	tasks     TaskService
+	companies CompanyService
 	forms     FormService
 	bulk      BulkStatusService
 	// users erases users ungoverned (Delete); governedUsers through the role
@@ -349,6 +350,12 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	}
 	e.tasks = NewTaskService(repository.NewTaskRepository(db), userRepo, leadRepo, customerRepo, repository.NewLabelRepository(db),
 		repository.NewDealRepository(db), taskOpts...)
+	// The company service as cmd/main.go builds it (#517).
+	var companyOpts []CompanyServiceOption
+	if hooks != nil {
+		companyOpts = append(companyOpts, WithCompanyWebhooks(emitter))
+	}
+	e.companies = NewCompanyService(companyRepo, userRepo, e.txManager, companyOpts...)
 	e.users = NewUserService(userRepo)
 	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),
 		repository.NewRoleAuditRepository(db), e.txManager))

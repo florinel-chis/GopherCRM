@@ -366,6 +366,17 @@ type DealLockingReader interface {
 	GetByIDForUpdate(id uint) (*models.Deal, error)
 }
 
+// CompanyLockingReader is the locking read of a company update (#517):
+// companyService.Update, when webhooks are wired, reads the company through
+// it inside its transaction and compares its WebhookState with the one it
+// writes. The production companyRepository implements it (FOR UPDATE on
+// MySQL/MariaDB, a plain read on SQLite); it is kept apart from
+// CompanyRepository so the mocks need no change. A soft-deleted or missing
+// company is gorm.ErrRecordNotFound.
+type CompanyLockingReader interface {
+	GetByIDForUpdate(id uint) (*models.Company, error)
+}
+
 // TicketMailDeliveryOutcome is what FinishPending writes on a pending ticket
 // comment mail delivery (#219).
 type TicketMailDeliveryOutcome struct {

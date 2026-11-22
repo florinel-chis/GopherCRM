@@ -51,6 +51,10 @@ func TestWebhookStateNullableIDs(t *testing.T) {
 					t.Errorf("task states equal = %v, want %v", got, tc.equal)
 				}
 			}
+			companyA, companyB := &Company{OwnerID: tc.a}, &Company{OwnerID: tc.b}
+			if got := companyA.WebhookState() == companyB.WebhookState(); got != tc.equal {
+				t.Errorf("company states equal = %v, want %v", got, tc.equal)
+			}
 		})
 	}
 }

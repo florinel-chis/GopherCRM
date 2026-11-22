@@ -4492,6 +4492,9 @@ definitions:
         - task.created
         - task.updated
         - task.deleted
+        - company.created
+        - company.updated
+        - company.deleted
         example: lead.created
         readOnly: true
         type: string
@@ -4526,7 +4529,7 @@ definitions:
         type: string
       record_id:
         description: 'Id of the created, updated or deleted lead, customer, ticket,
-          deal or task: the only record datum sent.'
+          deal, task or company: the only record datum sent.'
         example: 42
         readOnly: true
         type: integer
@@ -4572,6 +4575,9 @@ definitions:
         - ticket.created
         items:
           enum:
+          - company.created
+          - company.deleted
+          - company.updated
           - customer.created
           - customer.deleted
           - customer.updated
@@ -4652,6 +4658,9 @@ definitions:
         - ticket.created
         items:
           enum:
+          - company.created
+          - company.deleted
+          - company.updated
           - customer.created
           - customer.deleted
           - customer.updated
@@ -4737,6 +4746,9 @@ definitions:
         - ticket.created
         items:
           enum:
+          - company.created
+          - company.deleted
+          - company.updated
           - customer.created
           - customer.deleted
           - customer.updated
@@ -8828,10 +8840,11 @@ definitions:
   internal_handler.WebhookEndpointCreateRequest:
     properties:
       event_types:
-        description: 'Event types to subscribe to: 1 to 15 of lead.created, lead.updated,
+        description: 'Event types to subscribe to: 1 to 18 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
           ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted,
-          task.created, task.updated and task.deleted; duplicates collapse.'
+          task.created, task.updated, task.deleted, company.created, company.updated
+          and company.deleted; duplicates collapse.'
         example:
         - lead.created
         - ticket.created
@@ -8852,6 +8865,9 @@ definitions:
           - task.created
           - task.updated
           - task.deleted
+          - company.created
+          - company.updated
+          - company.deleted
           type: string
         type: array
       is_active:
@@ -8872,10 +8888,11 @@ definitions:
   internal_handler.WebhookEndpointUpdateRequest:
     properties:
       event_types:
-        description: 'New subscribed subset: 1 to 15 of lead.created, lead.updated,
+        description: 'New subscribed subset: 1 to 18 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
           ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted,
-          task.created, task.updated and task.deleted.'
+          task.created, task.updated, task.deleted, company.created, company.updated
+          and company.deleted.'
         example:
         - lead.created
         items:
@@ -8895,6 +8912,9 @@ definitions:
           - task.created
           - task.updated
           - task.deleted
+          - company.created
+          - company.updated
+          - company.deleted
           type: string
         type: array
       is_active:
@@ -13123,6 +13143,7 @@ paths:
         Create a company. Roles: admin and sales.
         Validation, in order: binding (name required, employee_range from its set), column widths (name 200, domain 255, website 255, industry 100, employee_range 20, phone 50, address 255, city, state and country 100, postal_code 20 characters; notes 65535 bytes), then the service: the trimmed name must not be empty, the domain is normalised and must be a bare host, the website must be an http or https URL, the owner must be a live user, and the domain must be free among live companies.
         Owner: a sales user may only name itself and becomes the owner when owner_id is absent or 0; an admin may name any live user, or leave the company unowned by omitting it. The owner may be any live account; its role is not checked.
+        A company.created webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction as the company.
         The response is the stored company re-read with its owner and counts (all 0 for a new company).
       parameters:
       - description: The company to create
@@ -13225,7 +13246,11 @@ paths:
         is set to NULL on every lead, customer and deal that pointed at it; those
         records and their free-text company field are otherwise untouched. Companies
         hold no personal data, so this is not an erasure. A deleted company''s domain
-        becomes free for a new company.'
+        becomes free for a new company. A company.deleted webhook event (one delivery
+        per active endpoint subscribed to it, including endpoints that never received
+        an event for the company) is written in the same transaction; no lead.updated,
+        customer.updated or deal.updated event is written for the unlinked leads,
+        customers and deals.'
       parameters:
       - description: Company ID
         in: path
@@ -13402,6 +13427,7 @@ paths:
       - application/json
       description: |-
         Replace a company's fields. Roles: admin and sales; a sales user may update any company, not only the ones it owns. The body is the new state of every text field: a field left out is stored empty, which is how a domain or a note is cleared. The validation of create applies; the company may keep its own domain. owner_id: absent keeps the owner, 0 clears it (admin only), another id sets it (sales: only its own id). The owner, also a kept one, must still be a live user: a company whose stored owner account was deleted is refused with 400 INVALID_REFERENCE until owner_id is changed.
+        When the update changed at least one stored value of the company (compared with the row read under lock in the update's transaction), a company.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends the stored values writes none. A company deleted after the handler's read and before that lock answers 404 NOT_FOUND with nothing written.
         The response is the company re-read with its owner and counts.
       parameters:
       - description: Company ID
@@ -26582,6 +26608,9 @@ paths:
         - task.created
         - task.updated
         - task.deleted
+        - company.created
+        - company.updated
+        - company.deleted
         in: query
         name: event_type
         type: string
@@ -26865,7 +26894,7 @@ paths:
       - application/json
       description: |-
         Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
-        From then on every lead, customer, ticket, deal or task created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step) and every lead, customer, ticket, deal or task changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
+        From then on every lead, customer, ticket, deal, task or company created (through the API, a lead conversion, a form or, for a task, POST /tasks and the automation create-task step; for a company, POST /companies) and every lead, customer, ticket, deal, task or company changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, PUT /tasks/{id} (a changed label set counts), PUT /companies/{id}, the lead, ticket and task bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, a task deleted by DELETE /tasks/{id}, a company deleted by DELETE /companies/{id} (company.deleted only: clearing company_id on its leads, customers and deals enqueues no updated event), and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
         The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
         Roles: admin.
       parameters:
@@ -27436,9 +27465,10 @@ tags:
   name: forms
 - description: 'Outbound webhooks (admin): endpoint registry with signing secrets,
     and the delivery log of the created, updated and deleted events of leads, customers,
-    tickets, deals and tasks (lead.created, lead.updated, lead.deleted, customer.created,
-    customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted,
-    deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted).'
+    tickets, deals, tasks and companies (lead.created, lead.updated, lead.deleted,
+    customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated,
+    ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated,
+    task.deleted, company.created, company.updated, company.deleted).'
   name: webhooks
 - description: 'Unauthenticated endpoints reached by visitors of the sites a form
     is embedded on: definition, submission, embed script, view page and double opt-in

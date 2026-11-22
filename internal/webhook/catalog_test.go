@@ -12,26 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var fifteenTypes = []string{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted",
-	"deal.updated", "lead.created", "lead.deleted", "lead.updated", "task.created", "task.deleted", "task.updated",
-	"ticket.created", "ticket.deleted", "ticket.updated"}
+var eighteenTypes = []string{"company.created", "company.deleted", "company.updated", "customer.created",
+	"customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated", "lead.created",
+	"lead.deleted", "lead.updated", "task.created", "task.deleted", "task.updated", "ticket.created",
+	"ticket.deleted", "ticket.updated"}
 
 func TestCatalogue(t *testing.T) {
-	t.Run("the default registers fifteen sorted event types", func(t *testing.T) {
-		assert.Equal(t, fifteenTypes, webhook.AllEventTypes())
+	t.Run("the default registers eighteen sorted event types", func(t *testing.T) {
+		assert.Equal(t, eighteenTypes, webhook.AllEventTypes())
 		assert.True(t, sort.StringsAreSorted(webhook.AllEventTypes()))
 		// Every type subscribed fits the varchar(512) column.
 		all, err := models.WebhookEventTypes(webhook.AllEventTypes()).Value()
 		require.NoError(t, err)
-		assert.Len(t, all, 212)
+		assert.Len(t, all, 260)
 		// The slice is a copy.
 		types := webhook.AllEventTypes()
 		types[0] = "changed"
-		assert.Equal(t, fifteenTypes, webhook.AllEventTypes())
+		assert.Equal(t, eighteenTypes, webhook.AllEventTypes())
 	})
 
 	t.Run("the event type check compares exactly", func(t *testing.T) {
-		for _, known := range fifteenTypes {
+		for _, known := range eighteenTypes {
 			assert.True(t, webhook.IsEventType(known), known)
 		}
 		for _, unknown := range []string{"Customer.Created", "lead.archived", "webhook.ping", models.WebhookEventPing, "", "lead"} {
@@ -51,9 +52,9 @@ func TestCatalogue(t *testing.T) {
 	})
 
 	t.Run("the validation messages", func(t *testing.T) {
-		assert.Equal(t, "must list 1 to 15 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated and task.deleted",
+		assert.Equal(t, "must list 1 to 18 of lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated and company.deleted",
 			webhook.SubscribeRule())
-		assert.Equal(t, "must be lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated or task.deleted",
+		assert.Equal(t, "must be lead.created, lead.updated, lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted, deal.created, deal.updated, deal.deleted, task.created, task.updated, task.deleted, company.created, company.updated or company.deleted",
 			webhook.FilterRule())
 	})
 
