@@ -1250,9 +1250,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`private_key_jwt`) code exchange (`oidc.Client`, `oidc.ClientAssertion`), the claim parsing
   and subject and name rules (`oidc.Claims`, `oidc.ValidSubject`, `oidc.ProfileNames`) and the
   sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`). The OIDC service, the SCIM
-  Users writes and the sign-in audit call the new package; the Entra ID rules, the userinfo group
-  resolution, the attempt storage and the sign-in flow stay in `internal/service`. Answers, audit
-  rows and refusal codes are unchanged.
+  Users writes and the sign-in audit call the new package; the userinfo group resolution, the
+  attempt storage and the sign-in flow stay in `internal/service` (the Entra ID rules followed in
+  #644). Answers, audit rows and refusal codes are unchanged.
+- **Entra ID package (#644).** The Microsoft Entra ID helpers moved from
+  `internal/service/auth_oidc.go` and `internal/service/sso_settings.go` to `internal/idkit/entra`:
+  the issuer and tenant checks (`entra.IsIssuer`, `entra.Tenant`), the tenant/object-id link hint
+  for SCIM-created accounts (`entra.LinkHint`), and the Microsoft Graph group lookup with its
+  paging, origin, page-size, page-count and deadline bounds (`entra.GroupResolver`,
+  `entra.EffectiveMaxPages`). The strict string-array decoder that the Graph and userinfo group
+  reads share is now `oidc.StrictStringArray`. Answers, audit rows and refusal codes are
+  unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

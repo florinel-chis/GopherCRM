@@ -90,7 +90,11 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   and PKCE values, the client secret or certificate code exchange, the claim rules and the
   sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`); it defines no refusal codes
   and logs nothing, so the codes stay in `internal/service/auth_audit_vocabulary.go` and the
-  logging in the service.
+  logging in the service. The Entra ID rules live in `internal/idkit/entra`: the issuer and
+  tenant checks (`entra.IsIssuer`, `entra.Tenant`), the oid/tid link hint (`entra.LinkHint`) and
+  the Microsoft Graph group-overage resolution with its paging, origin, page-size, page-count and
+  deadline limits (`entra.GroupResolver`, `entra.EffectiveMaxPages`); it trusts one tenant, the
+  configured issuer's, and likewise defines no refusal codes and logs nothing.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
@@ -417,7 +421,8 @@ callback claimed it) (#453). Regression roots: `TestOIDCSignInSQLite` and `TestO
 (`internal/service/auth_oidc_test.go`, one shared subtest table against an in-process TLS issuer
 that checks the PKCE verifier and the redirect URI; the MySQL root skips without
 `TEST_MYSQL_DSN` and is discovered by the auth checker), `TestOIDCHTTPClient`
-(`internal/idkit/oidc`),
+(`internal/idkit/oidc`), `TestOIDCEntraTenant` and `TestOIDCResolveEntraGroups`
+(`internal/idkit/entra`),
 `TestOIDCHandler` (`internal/handler`), `TestOIDCRoutesWired` (`cmd`) and
 `TestUserIdentitiesMigration{Files,}` (`cmd/migrate`). The user-facing rules (first-match
 mapping, overage, subject whitespace, JIT, erasure) are in

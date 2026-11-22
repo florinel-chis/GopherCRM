@@ -17,6 +17,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -100,7 +101,7 @@ type EffectiveSSOConfig struct {
 	RoleMapping   []SSORoleMapping
 	// GraphMaxPages bounds the Microsoft Graph pages one Entra ID sign-in
 	// reads on a group overage: OIDC_GRAPH_MAX_PAGES when it is 1..50, else
-	// oidcGraphDefaultMaxPages. Environment only, never a stored setting.
+	// entra.DefaultMaxPages. Environment only, never a stored setting.
 	GraphMaxPages int
 	// EntraAppSigningKeys is OIDC_ENTRA_APP_SIGNING_KEYS: an Entra ID issuer's
 	// ID tokens are verified against jwks_uri?appid=<client id>. Environment
@@ -268,19 +269,10 @@ func (s *ssoSettingsService) SSOConfig(ctx context.Context) (EffectiveSSOConfig,
 	return out, nil
 }
 
-// Bounds of OIDC_GRAPH_MAX_PAGES.
-const (
-	oidcGraphDefaultMaxPages = 10
-	oidcGraphMaxPagesLimit   = 50
-)
-
 // effectiveGraphMaxPages keeps a value of 1..50 and replaces anything else
-// (unset, 0, negative, too large) with the default.
+// (unset, 0, negative, too large) with the default (entra.EffectiveMaxPages).
 func effectiveGraphMaxPages(raw int) int {
-	if raw < 1 || raw > oidcGraphMaxPagesLimit {
-		return oidcGraphDefaultMaxPages
-	}
-	return raw
+	return entra.EffectiveMaxPages(raw)
 }
 
 // effectiveAllowPassword resolves security.sso.allow_password like Enabled:

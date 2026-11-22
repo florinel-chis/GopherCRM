@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"mime"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/models"
@@ -70,9 +70,10 @@ import (
 // The generic OpenID Connect client helpers (the issuer HTTP client, the
 // cached provider, the state, nonce and PKCE values, the secret or
 // certificate code exchange, the claim rules and the error types) live in
-// internal/idkit/oidc; this file keeps the host's side: settings, attempts,
-// the Entra ID rules, the Graph and userinfo group resolution, auditing and
-// logging.
+// internal/idkit/oidc, and the Entra ID rules (the issuer and tenant checks,
+// the oid/tid link hint and the Microsoft Graph group resolution with its
+// limits) in internal/idkit/entra; this file keeps the host's side: settings,
+// attempts, the userinfo group resolution, auditing and logging.
 
 // Errors of the OIDC sign-in, classified with errors.Is.
 var (
@@ -123,24 +124,6 @@ const (
 	oidcEmailMaxBytes      = 255
 	oidcCallbackPath       = "/auth/callback"
 	oidcRandomPasswordSize = 32
-)
-
-// Microsoft Graph group resolution of an Entra ID group overage (#450).
-const (
-	// oidcEntraIssuerHost is the host of the Entra ID global cloud. Sovereign
-	// clouds (login.microsoftonline.us, login.chinacloudapi.cn) are left out
-	// because their Graph host differs.
-	oidcEntraIssuerHost = "login.microsoftonline.com"
-	oidcGraphBaseURL    = "https://graph.microsoft.com"
-	// oidcGraphTimeout is ONE deadline over every Graph page of a sign-in.
-	oidcGraphTimeout = 5 * time.Second
-	// oidcGraphScope is the delegated permission Start adds for an Entra ID
-	// issuer whose role mapping uses groups: User.Read, the least-privileged
-	// permission for /me/getMemberObjects.
-	oidcGraphScope           = "https://graph.microsoft.com/User.Read"
-	oidcGraphMemberObjects   = "/v1.0/me/getMemberObjects"
-	oidcGraphPageMaxBytes    = 1 << 20
-	oidcGraphMemberObjectsIn = `{"securityEnabledOnly":true}`
 )
 
 // Userinfo group resolution of an ID token without a groups claim (#451).
@@ -263,9 +246,9 @@ func NewOIDCService(
 		appBaseURL:    strings.TrimRight(appBaseURL, "/"),
 		now:           time.Now,
 
-		entraIssuerHost: oidcEntraIssuerHost,
-		graphBaseURL:    oidcGraphBaseURL,
-		graphTimeout:    oidcGraphTimeout,
+		entraIssuerHost: entra.IssuerHost,
+		graphBaseURL:    entra.GraphBaseURL,
+		graphTimeout:    entra.GraphTimeout,
 		userinfoTimeout: oidcUserInfoTimeout,
 	}
 	for _, opt := range opts {
@@ -352,7 +335,7 @@ func ssoConfigured(cfg EffectiveSSOConfig) bool {
 // only when OIDC_ENTRA_APP_SIGNING_KEYS is on and the issuer is Entra ID.
 func (s *oidcService) providerKey(cfg EffectiveSSOConfig) idkitoidc.ProviderKey {
 	key := idkitoidc.ProviderKey{Issuer: cfg.IssuerURL}
-	if cfg.EntraAppSigningKeys && oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
+	if cfg.EntraAppSigningKeys && entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) {
 		key.AppKeys, key.ClientID = true, cfg.ClientID
 	}
 	return key
@@ -408,41 +391,15 @@ func (s *oidcService) exchangeCode(ctx context.Context, provider *oidc.Provider,
 // never stored.
 func (s *oidcService) requestScopes(cfg EffectiveSSOConfig) []string {
 	scopes := append([]string(nil), cfg.Scopes...)
-	if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) || !rolemap.UsesGroups(cfg.RoleMapping) {
+	if !entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) || !rolemap.UsesGroups(cfg.RoleMapping) {
 		return scopes
 	}
 	for _, scope := range scopes {
-		if scope == oidcGraphScope {
+		if scope == entra.GraphScope {
 			return scopes
 		}
 	}
-	return append(scopes, oidcGraphScope)
-}
-
-// oidcIsEntraIssuer reports whether the issuer URL's host (without port,
-// any letter case) is exactly entraHost. A host that merely starts with it
-// or a path that names it does not count.
-func oidcIsEntraIssuer(issuerURL, entraHost string) bool {
-	if entraHost == "" {
-		return false
-	}
-	parsed, err := url.Parse(issuerURL)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(parsed.Hostname(), entraHost)
-}
-
-// oidcEntraTenant is the first path segment of the issuer URL, the tenant of
-// an Entra ID issuer (https://login.microsoftonline.com/<tenant>/v2.0), or ""
-// when the URL does not parse or that segment is empty.
-func oidcEntraTenant(issuerURL string) string {
-	parsed, err := url.Parse(issuerURL)
-	if err != nil {
-		return ""
-	}
-	segment, _, _ := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
-	return segment
+	return append(scopes, entra.GraphScope)
 }
 
 func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
@@ -629,7 +586,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 			return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
 		}
 		if _, overage := names[SSOClaimGroups]; overage && rolemap.UsesGroups(cfg.RoleMapping) {
-			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
+			if !entra.IsIssuer(cfg.IssuerURL, s.entraIssuerHost) {
 				return nil, facts, oidcRefuse(AuthAuditReasonGroupOverage)
 			}
 			resolveGroups = true
@@ -655,7 +612,8 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		return nil, facts, oidcRefuse(AuthAuditReasonIssuerInvalid)
 	}
 	if resolveGroups {
-		resolved, err := s.resolveEntraGroups(ctx, token.AccessToken, cfg.GraphMaxPages)
+		resolver := entra.GroupResolver{BaseURL: s.graphBaseURL, Timeout: s.graphTimeout, Client: idkitoidc.NewHTTPClient(s.rootCAs)}
+		resolved, err := resolver.MemberObjects(ctx, token.AccessToken, cfg.GraphMaxPages)
 		if err != nil {
 			return nil, facts, oidcRefuse(AuthAuditReasonGroupsUnavailable)
 		}
@@ -681,14 +639,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	// The oid links to a SCIM-created account only under an Entra ID issuer
 	// and only when the token's tenant is the configured issuer's tenant,
 	// compared byte for byte; a non-string claim counts as absent.
-	scimSubject := ""
-	if oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
-		tid := idkitoidc.String(claims.TID)
-		oid := idkitoidc.String(claims.OID)
-		if tid != "" && tid == oidcEntraTenant(cfg.IssuerURL) && idkitoidc.ValidSubject(oid) {
-			scimSubject = oid
-		}
-	}
+	scimSubject := entra.LinkHint(cfg.IssuerURL, s.entraIssuerHost, idkitoidc.String(claims.TID), idkitoidc.String(claims.OID))
 
 	passwordHash, err := oidcUnusablePasswordHash()
 	if err != nil {
@@ -713,144 +664,8 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 	return tokens, facts, err
 }
 
-// Failures of the Microsoft Graph group resolution. They never carry a URL,
-// a token, a status text or a response body.
-var (
-	errGraphNoAccessToken = errors.New("graph: no access token")
-	errGraphRequest       = errors.New("graph: request failed")
-	errGraphStatus        = errors.New("graph: unexpected status")
-	errGraphBody          = errors.New("graph: malformed response")
-	errGraphTooLarge      = errors.New("graph: response too large")
-	errGraphNextLink      = errors.New("graph: next link refused")
-	errGraphTooManyPages  = errors.New("graph: too many pages")
-)
-
-// graphMemberObjectsPage is one page of getMemberObjects.
-type graphMemberObjectsPage struct {
-	Value    json.RawMessage `json:"value"`
-	NextLink string          `json:"@odata.nextLink"`
-}
-
-// resolveEntraGroups reads the security-group object ids of the signed-in
-// person from Microsoft Graph (POST /v1.0/me/getMemberObjects with
-// securityEnabledOnly) with the access token of the code exchange. One
-// deadline (graphTimeout) covers every page; at most maxPages requests are
-// sent, each to an https URL on the host of graphBaseURL, through the issuer
-// client (no redirects, no proxy). The token is only put into the request
-// header; it is never logged, stored or put into an error.
-func (s *oidcService) resolveEntraGroups(ctx context.Context, accessToken string, maxPages int) ([]string, error) {
-	if accessToken == "" {
-		return nil, errGraphNoAccessToken
-	}
-	if maxPages < 1 {
-		maxPages = oidcGraphDefaultMaxPages
-	}
-	base, err := url.Parse(s.graphBaseURL)
-	if err != nil || base.Scheme != "https" || base.Host == "" {
-		return nil, errGraphNextLink
-	}
-	ctx, cancel := context.WithTimeout(ctx, s.graphTimeout)
-	defer cancel()
-	client := idkitoidc.NewHTTPClient(s.rootCAs)
-
-	ids := []string{}
-	next := strings.TrimRight(s.graphBaseURL, "/") + oidcGraphMemberObjects
-	for page := 1; ; page++ {
-		if page > maxPages {
-			return nil, errGraphTooManyPages
-		}
-		if !graphSameOrigin(next, base) {
-			return nil, errGraphNextLink
-		}
-		values, nextLink, err := graphMemberObjectsRequest(ctx, client, next, accessToken)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, values...)
-		if nextLink == "" {
-			return ids, nil
-		}
-		next = nextLink
-	}
-}
-
-// graphSameOrigin accepts an absolute https URL whose host, port included,
-// is base's.
-func graphSameOrigin(raw string, base *url.URL) bool {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
-		return false
-	}
-	return strings.EqualFold(graphHostPort(parsed), graphHostPort(base))
-}
-
-// graphHostPort is the URL's host with its port, the https default made
-// explicit, so https://h and https://h:443 compare equal.
-func graphHostPort(u *url.URL) string {
-	port := u.Port()
-	if port == "" {
-		port = "443"
-	}
-	return net.JoinHostPort(u.Hostname(), port)
-}
-
-func graphMemberObjectsRequest(ctx context.Context, client *http.Client, target, accessToken string) ([]string, string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, target, strings.NewReader(oidcGraphMemberObjectsIn))
-	if err != nil {
-		return nil, "", errGraphRequest
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("Authorization", "Bearer "+accessToken)
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, "", errGraphRequest
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, "", errGraphStatus
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, oidcGraphPageMaxBytes+1))
-	if err != nil {
-		return nil, "", errGraphRequest
-	}
-	if len(body) > oidcGraphPageMaxBytes {
-		return nil, "", errGraphTooLarge
-	}
-	var page graphMemberObjectsPage
-	if err := json.Unmarshal(body, &page); err != nil {
-		return nil, "", errGraphBody
-	}
-	values, ok := graphStringArray(page.Value)
-	if !ok {
-		return nil, "", errGraphBody
-	}
-	return values, page.NextLink, nil
-}
-
-// graphStringArray decodes a value that must be a JSON array whose every
-// element is a string; absent, null and any other element are refused.
-func graphStringArray(raw json.RawMessage) ([]string, bool) {
-	trimmed := strings.TrimSpace(string(raw))
-	if !strings.HasPrefix(trimmed, "[") {
-		return nil, false
-	}
-	var elements []json.RawMessage
-	if err := json.Unmarshal(raw, &elements); err != nil {
-		return nil, false
-	}
-	values := make([]string, 0, len(elements))
-	for _, element := range elements {
-		var value string
-		if !strings.HasPrefix(strings.TrimSpace(string(element)), `"`) || json.Unmarshal(element, &value) != nil {
-			return nil, false
-		}
-		values = append(values, value)
-	}
-	return values, true
-}
-
-// Failures of the userinfo group resolution. Like the Graph errors they never
+// Failures of the userinfo group resolution. Like the Graph errors
+// (internal/idkit/entra) they never
 // carry a URL, a token, a status text or a response body.
 var (
 	errUserInfoNoAccessToken = errors.New("userinfo: no access token")
@@ -926,7 +741,7 @@ func (s *oidcService) resolveUserInfoGroups(ctx context.Context, provider *oidc.
 	if !found {
 		return []string{}, nil
 	}
-	groups, ok := graphStringArray(rawGroups)
+	groups, ok := idkitoidc.StrictStringArray(rawGroups)
 	if !ok {
 		return nil, errUserInfoBody
 	}

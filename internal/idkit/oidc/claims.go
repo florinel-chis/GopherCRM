@@ -46,6 +46,29 @@ func StringArray(raw json.RawMessage) ([]string, bool) {
 	return values, true
 }
 
+// StrictStringArray decodes a value that must be a JSON array whose every
+// element is a string; absent, null and any other element (null included)
+// are refused. Unlike StringArray it refuses an absent value and [null].
+func StrictStringArray(raw json.RawMessage) ([]string, bool) {
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "[") {
+		return nil, false
+	}
+	var elements []json.RawMessage
+	if err := json.Unmarshal(raw, &elements); err != nil {
+		return nil, false
+	}
+	values := make([]string, 0, len(elements))
+	for _, element := range elements {
+		var value string
+		if !strings.HasPrefix(strings.TrimSpace(string(element)), `"`) || json.Unmarshal(element, &value) != nil {
+			return nil, false
+		}
+		values = append(values, value)
+	}
+	return values, true
+}
+
 // String is a string claim, or "" when it is absent or not a string.
 func String(raw json.RawMessage) string {
 	var value string

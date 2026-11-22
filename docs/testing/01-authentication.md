@@ -1227,7 +1227,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   `groups_unavailable`, nothing written; no more requests than the page bound, and the other
   host receives none. Step 5: signed in with no Graph request. The access token never appears in
   the logs or in any table.
-- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `graph_overage_match`, `graph_overage_no_match`, `graph_error`, `graph_timeout`, `graph_paging_bound`, `graph_foreign_host`, `graph_redirect`, `graph_no_overage`, `graph_roles_mapping`, `graph_scope_requested`, `graph_token_privacy`; `TestOIDCGraphDefaults`, `TestOIDCResolveEntraGroups`
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` subtests `graph_overage_match`, `graph_overage_no_match`, `graph_error`, `graph_timeout`, `graph_paging_bound`, `graph_foreign_host`, `graph_redirect`, `graph_no_overage`, `graph_roles_mapping`, `graph_scope_requested`, `graph_token_privacy`; `TestOIDCGraphDefaults`; `TestOIDCResolveEntraGroups` and `TestEntraGroupResolverLimits` (`internal/idkit/entra`)
 
 ### TC-AUTH-059 — Groups are read from userinfo when the ID token has none
 - **Priority:** P1
@@ -1809,7 +1809,8 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   the generic 401 with the audit reason `email_taken`, `account_inactive` and `account_erased`,
   with nothing written. Two concurrent first sign-ins of the same `sub` commit exactly one link.
 - **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}` (`scim_oid_*`),
-  `TestOIDCEntraTenant`, `TestSCIMUserWrites{SQLite,MySQL}` (`create`)
+  `TestOIDCEntraTenant` and `TestEntraLinkHint` (`internal/idkit/entra`),
+  `TestSCIMUserWrites{SQLite,MySQL}` (`create`)
 
 ### TC-AUTH-088 — The SCIM Groups are the groups-claim values of the role mapping
 - **Priority:** P1
