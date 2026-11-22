@@ -12,8 +12,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ErrAPIKeyIssuanceUnavailable is returned by Generate on a service built
@@ -121,7 +119,7 @@ func (s *apiKeyService) Generate(userID uint, name string, expiresAt *time.Time)
 		// Owner first, by primary key, on a fresh Session of the locking
 		// handle so the clause does not leak into the insert.
 		owner, err := lockLiveCredentialOwner(
-			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.userRepo.WithTx(repository.LockingRead(tx)),
 			userID)
 		if err != nil {
 			return err

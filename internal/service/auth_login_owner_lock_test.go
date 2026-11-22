@@ -1074,6 +1074,107 @@ func runRotationConcurrentCredentialChanges(t *testing.T, f *llFixture, contende
 	}
 }
 
+// ----------------------------------------------------- custom role, no lock ---
+
+// llNoRoleWait bounds a sign-in or rotation that must not wait for another
+// transaction's lock on the owner's roles row.
+const llNoRoleWait = 10 * time.Second
+
+// TestSignInDoesNotLockCustomRoleMySQL holds FOR UPDATE on the roles row of a
+// custom-role user from a second connection and checks that a login and then
+// a refresh rotation of that user still return tokens: the owner read locks
+// the users row and reads the custom role and its permissions without a lock.
+func TestSignInDoesNotLockCustomRoleMySQL(t *testing.T) {
+	f := newLLFixture(t, openMigratedTestMySQL(t, 4))
+
+	seedCustomRoleOwner := func(t *testing.T) *models.User {
+		t.Helper()
+		f.seed(t)
+		roles := repository.NewRoleRepository(f.db)
+		role := &models.Role{Name: "Sign-in Role " + strings.ReplaceAll(t.Name(), "/", " ")}
+		require.NoError(t, roles.Create(role))
+		require.NoError(t, roles.ReplacePermissions(role.ID, []models.RolePermission{
+			{PermissionKey: "leads.read", Scope: models.PermissionScopeOwn},
+			{PermissionKey: "deals.read", Scope: models.PermissionScopeAll},
+		}))
+		hash, err := bcrypt.GenerateFromPassword([]byte(llPassword), bcrypt.MinCost)
+		require.NoError(t, err)
+		roleID := role.ID
+		user := &models.User{Email: "custom-role-sign-in@example.com", Password: string(hash), FirstName: "Custom",
+			LastName: "Role", Role: models.RoleCustom, RoleID: &roleID, IsActive: true}
+		require.NoError(t, f.db.WithContext(resetContext(t)).Create(user).Error)
+		return user
+	}
+
+	// whileRoleHeld runs flow while another transaction holds FOR UPDATE on the
+	// roles row, and requires tokens within llNoRoleWait. The holder rolls back
+	// and the flow's goroutine is awaited before it returns, on every path.
+	whileRoleHeld := func(t *testing.T, roleID uint, what string, flow func() (*AuthTokens, error)) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*resetTimeout)
+		defer cancel()
+		holder := f.db.WithContext(ctx).Begin()
+		require.NoError(t, holder.Error)
+		var locked []uint
+		if err := holder.Raw("SELECT id FROM roles WHERE id = ? FOR UPDATE", roleID).Scan(&locked).Error; err != nil {
+			holder.Rollback()
+			require.NoError(t, err)
+		}
+		if len(locked) != 1 {
+			holder.Rollback()
+			require.Len(t, locked, 1, "the holder locks the roles row")
+		}
+
+		ch := llStart(flow)
+		var result llResult
+		finished := false
+		defer func() {
+			// Release the lock first, then wait for the flow, so nothing is
+			// left running when the subtest ends.
+			holder.Rollback()
+			if !finished {
+				select {
+				case <-ch:
+				case <-time.After(2 * resetTimeout):
+					t.Errorf("%s did not finish after the holder rolled back", what)
+				}
+			}
+		}()
+		timer := time.NewTimer(llNoRoleWait)
+		defer timer.Stop()
+		select {
+		case result = <-ch:
+			finished = true
+		case <-timer.C:
+			t.Fatalf("%s waited for the lock on the custom role for %s", what, llNoRoleWait)
+		}
+		llNoDeadlock(t, result.err, what)
+		require.NoError(t, result.err, what)
+		require.NotNil(t, result.tokens, what)
+		assert.NotEmpty(t, result.tokens.AccessToken, what)
+		assert.NotEmpty(t, result.tokens.RefreshToken, what)
+	}
+
+	t.Run("login", func(t *testing.T) {
+		user := seedCustomRoleOwner(t)
+		whileRoleHeld(t, *user.RoleID, "the login", func() (*AuthTokens, error) {
+			return f.login.LoginWithTokens(user.Email, llPassword)
+		})
+	})
+
+	t.Run("refresh rotation", func(t *testing.T) {
+		user := seedCustomRoleOwner(t)
+		// The refresh token comes from a login before the role row is held, so
+		// only the rotation runs under the lock.
+		issued, err := f.login.LoginWithTokens(user.Email, llPassword)
+		require.NoError(t, err)
+		require.NotEmpty(t, issued.RefreshToken)
+		whileRoleHeld(t, *user.RoleID, "the rotation", func() (*AuthTokens, error) {
+			return f.login.RefreshAccessToken(issued.RefreshToken)
+		})
+	})
+}
+
 // --------------------------------------------------------------- AC-5 logs ---
 
 func TestLoginOwnerLockLogsOmitPersonalData(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/scim"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // SCIM 2.0 group patch (#506). One governed transaction, in the lock order
@@ -119,7 +118,7 @@ func parseSCIMMemberID(raw string) (uint, error) {
 // transaction. The fresh Session keeps the clause from leaking into the next
 // statement; SQLite drops the clause.
 func lockingMembers(repo repository.SCIMGroupMemberRepository, handle *gorm.DB) repository.SCIMGroupMemberRepository {
-	return repo.WithTx(handle.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{}))
+	return repo.WithTx(repository.LockingRead(handle))
 }
 
 // sortedIDs returns the keys of set, ascending.

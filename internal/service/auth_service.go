@@ -21,8 +21,6 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // Sentinel errors for the session lifecycle, classified with errors.Is().
@@ -343,7 +341,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 					return utils.ErrNoTransaction
 				}
 				return recordLoginFailureInTransaction(
-					s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+					s.userRepo.WithTx(repository.LockingRead(tx)),
 					user.ID, now)
 			}, loginMaxRetries)
 			if err != nil {
@@ -407,7 +405,7 @@ func (s *authService) authenticate(email, password string, withRefresh bool) (*A
 			// A fresh Session on the locking handle, as for the other session
 			// transactions: the clause must not leak into later statements.
 			issued, err := s.loginInTransaction(ctx,
-				s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+				s.userRepo.WithTx(repository.LockingRead(tx)),
 				identities, user.ID, verifiedHash, now, withRefresh)
 			if err != nil {
 				return err
@@ -1003,7 +1001,7 @@ func (s *authService) RefreshAccessToken(refreshToken string) (*AuthTokens, erro
 		// successor insert that follows on the same transaction.
 		rotated, ownerID, err := s.rotateRefreshTokenInTransaction(
 			s.refreshTokenRepo.WithTx(tx),
-			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.userRepo.WithTx(repository.LockingRead(tx)),
 			hash)
 		tokenOwnerID = ownerID
 		if errors.Is(err, errRefreshTokenReuse) {
@@ -1244,7 +1242,7 @@ func (s *authService) Logout(userID uint, refreshToken string) error {
 		}
 		var err error
 		ended, err = s.logoutInTransaction(
-			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.userRepo.WithTx(repository.LockingRead(tx)),
 			s.refreshTokenRepo.WithTx(tx),
 			userID, presentedHash)
 		return err
@@ -1388,7 +1386,7 @@ func (s *authService) ChangePassword(userID uint, currentPassword, newPassword, 
 		}
 		var err error
 		tokens, err = s.changePasswordInTransaction(
-			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.userRepo.WithTx(repository.LockingRead(tx)),
 			s.refreshTokenRepo.WithTx(tx), s.apiKeyRepo.WithTx(tx),
 			userID, verifiedHash, string(hashed), presentedHash)
 		return err
@@ -1649,7 +1647,7 @@ func (s *authService) IssuePasswordReset(email string) (uint, error) {
 		// Owner first, by primary key, never through the email index; a fresh
 		// Session so the locking clause does not leak into the token writes.
 		owner, err := lockLiveCredentialOwner(
-			s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})),
+			s.userRepo.WithTx(repository.LockingRead(tx)),
 			user.ID)
 		if err != nil {
 			return err
@@ -1804,7 +1802,7 @@ func (s *authService) CompletePasswordReset(token, newPassword string) (uint, er
 		// and conditions on it and the following Save would then build an
 		// invalid query (SQLite reports an ambiguous `users.id`).
 		userID, err = s.confirmPasswordResetInTransaction(
-			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"}).Session(&gorm.Session{})), s.refreshTokenRepo.WithTx(tx),
+			s.resetTokenRepo.WithTx(tx), s.userRepo.WithTx(repository.LockingRead(tx)), s.refreshTokenRepo.WithTx(tx),
 			s.apiKeyRepo.WithTx(tx), identities, hash, string(hashed))
 		return err
 	}, resetConfirmMaxRetries)

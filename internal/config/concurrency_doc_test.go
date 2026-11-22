@@ -448,9 +448,15 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.Contains(t, owner, "!owner.IsActive")
 	assert.Contains(t, owner, "apperrors.IsNotFound(err)")
 
+	// Every locking owner read goes through the one helper, which carries the
+	// clause on a fresh Session.
+	lockHelper := concurrencyDocFuncBody(t, "internal/repository/locking.go", "func LockingRead(")
+	assert.Contains(t, lockHelper, `clause.Locking{Strength: "UPDATE"}`)
+	assert.Contains(t, lockHelper, ".Session(&gorm.Session{})")
+
 	reset := concurrencyDocFuncBody(t, authService, "func (s *authService) IssuePasswordReset(")
 	assert.Contains(t, reset, "s.txManager.WithTransactionAndRetry(context.Background(),")
-	assert.Contains(t, reset, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, reset, "repository.LockingRead(tx)")
 	assert.Contains(t, reset, "resetRequestMaxRetries)")
 	assert.Contains(t, reset, "s.resetTokenRepo.WithTx(tx)")
 	resetLock := strings.Index(reset, "lockLiveCredentialOwner(")
@@ -465,7 +471,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 
 	generate := concurrencyDocFuncBody(t, apiKeyService, "func (s *apiKeyService) Generate(")
 	assert.Contains(t, generate, "s.txManager.WithTransactionAndRetry(context.Background(),")
-	assert.Contains(t, generate, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, generate, "repository.LockingRead(tx)")
 	assert.Contains(t, generate, "apiKeyCreateMaxRetries)")
 	assert.Contains(t, generate, "ErrAPIKeyIssuanceUnavailable")
 	keyLock := strings.Index(generate, "lockLiveCredentialOwner(")
@@ -497,7 +503,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	assert.NotContains(t, login, "no lock held across statements", "Login")
 	authenticate := concurrencyDocFuncBody(t, authService, "func (s *authService) authenticate(")
 	assert.Contains(t, authenticate, "s.txManager.WithTransactionAndRetry(")
-	assert.Contains(t, authenticate, "clause.Locking{Strength: \"UPDATE\"}")
+	assert.Contains(t, authenticate, "repository.LockingRead(tx)")
 	assert.Contains(t, authenticate, "s.loginInTransaction(")
 	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) LoginWithTokens("), "s.authenticate(")
 	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) Login("), "s.authenticate(")
@@ -514,7 +520,7 @@ func TestConcurrencyDocFlowFacts(t *testing.T) {
 	} {
 		body := concurrencyDocFuncBody(t, authService, sig)
 		assert.Contains(t, body, root, sig)
-		assert.Contains(t, body, "clause.Locking{Strength: \"UPDATE\"}", sig)
+		assert.Contains(t, body, "repository.LockingRead(tx)", sig)
 	}
 	assert.Contains(t, concurrencyDocFuncBody(t, authService, "func (s *authService) CompletePasswordReset("),
 		"}, resetConfirmMaxRetries)")
@@ -975,7 +981,7 @@ var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	{pinIssuePasswordReset, "WithTransactionAndRetry("},
 	{pinCompletePasswordReset, "WithTransactionAndRetry("},
 	// Login.
-	{pinAuthenticate, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinAuthenticate, `s.userRepo.WithTx(repository.LockingRead(tx))`},
 	{pinLoginInTransaction, "userRepo.GetByID(userID)"},
 	{pinLoginInTransaction, "userRepo.UpdateFields(owner.ID, fields)"},
 	{pinLoginInTransaction, "identities.ExistsForUser(owner.ID)"},
@@ -990,7 +996,7 @@ var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	{pinAuthenticate, "WithTransactionAndRetry("},
 	{"", "const loginMaxRetries = 3"},
 	// Refresh rotation.
-	{pinRefreshAccessToken, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinRefreshAccessToken, `s.userRepo.WithTx(repository.LockingRead(tx))`},
 	{pinRotateInTransaction, "userRepo.GetByID(stored.UserID)"},
 	{pinRotateInTransaction, "refreshRepo.ClaimForRotation(stored.ID)"},
 	{pinRotateInTransaction, "s.issueRefreshToken(refreshRepo, user.ID, session)"},
@@ -1006,7 +1012,7 @@ var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	{pinChangePassword, pinChangePassword},
 	{pinChangePasswordInTx, "revokeAllCredentials(credentialStores{"},
 	// Password-reset request.
-	{pinIssuePasswordReset, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinIssuePasswordReset, `s.userRepo.WithTx(repository.LockingRead(tx))`},
 	{pinLockLiveOwner, "userRepo.GetByID(userID)"},
 	{pinIssuePasswordReset, "s.identities.WithTx(tx).ExistsForUser(owner.ID)"},
 	{pinIssuePasswordReset, "checkIdentity := s.checkSSOIdentity()"},
@@ -1018,7 +1024,7 @@ var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	{"", "const resetRequestMaxRetries = 3"},
 	// Password-reset confirm.
 	{pinConfirmResetInTx, "resetRepo.MarkUsed(stored.ID)"},
-	{pinCompletePasswordReset, `s.userRepo.WithTx(tx.Clauses(clause.Locking{Strength: "UPDATE"})`},
+	{pinCompletePasswordReset, `s.userRepo.WithTx(repository.LockingRead(tx))`},
 	{pinConfirmResetInTx, "userRepo.GetByID(stored.UserID)"},
 	{pinConfirmResetInTx, "userRepo.UpdateFields(user.ID,"},
 	{pinConfirmResetInTx, "revokeAllCredentials(credentialStores{"},
@@ -1257,9 +1263,9 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 		require.LessOrEqual(t, n, len(lines))
 		assert.Contains(t, lines[n-1], statement, "%s:%d", cascade, n)
 	}
-	cited("leads (locking read by id", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at")`)
-	cited("customers (locking read by id", `lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at")`)
-	cited("users (locking read by id", `lockingRead(tx).Unscoped().Select("id", "role")`)
+	cited("leads (locking read by id", `LockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at")`)
+	cited("customers (locking read by id", `LockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at")`)
+	cited("users (locking read by id", `LockingRead(tx).Unscoped().Select("id", "role")`)
 
 	// Lead conversion queued behind an erasure: not found, 404.
 	conversion := concurrencyDocNormalize(bodies["Lead conversion"])
@@ -1276,12 +1282,12 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 	// read and the plain reverse reads are what the document says they are.
 	assert.Contains(t, leadErasurePlanBody(t, cascade), "BeforeScrub: cancelLeadAutomation")
 	assert.Contains(t, concurrencyDocFuncBody(t, concurrencyDocErasureFile, "func readErasedEmail("),
-		"lockingRead(tx).Unscoped()")
+		"LockingRead(tx).Unscoped()")
 	pluck := concurrencyDocFuncBody(t, cascade, "func convertedLeadsOf(")
 	assert.Contains(t, pluck, "db.Unscoped().Model(&models.Lead{}).\n\t\tWhere(\"customer_id = ?\", customerID)",
 		"the converted-lead pluck is a plain read")
-	assert.NotContains(t, pluck, "lockingRead")
-	assert.NotContains(t, concurrencyDocFuncBody(t, cascade, "func customersOfLogin("), "lockingRead")
+	assert.NotContains(t, pluck, "LockingRead")
+	assert.NotContains(t, concurrencyDocFuncBody(t, cascade, "func customersOfLogin("), "LockingRead")
 }
 
 // TestConcurrencyDocErasureOrder pins the one erasure protocol of #385 to the
@@ -1356,7 +1362,7 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 
 	// The discovery reads plainly and resolves the schema probes itself.
 	discover := concurrencyDocFuncBody(t, cascade, "func discoverErasureGraph(")
-	assert.NotContains(t, discover, "lockingRead")
+	assert.NotContains(t, discover, "LockingRead")
 	assert.Contains(t, discover, "probeAutomationTables(db)")
 
 	// One attempt: cancel (writes only), lock, re-read, credential locks, scrub.
@@ -1374,10 +1380,10 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 	// The graph locks: leads, customers, users, by primary key, the refusal
 	// decided on the locked lead.
 	lock := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockGraph(")
-	inOrder(lock, "c.lockStage(erasureStageLeads,", `lockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id)`,
+	inOrder(lock, "c.lockStage(erasureStageLeads,", `LockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at").First(&lead, id)`,
 		"return ErrConvertedLeadNeedsAdmin", "c.lockStage(erasureStageCustomers,",
-		`lockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id)`, "c.lockStage(erasureStageUsers,",
-		`lockingRead(tx).Unscoped().Select("id", "role").First(&user, id)`)
+		`LockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at").First(&customer, id)`, "c.lockStage(erasureStageUsers,",
+		`LockingRead(tx).Unscoped().Select("id", "role").First(&user, id)`)
 	assert.Equal(t, 3, strings.Count(lock, "First(&"), "each graph row is read once, under its lock")
 	// deleted_at is selected (the erasure listener's live-row rule, #437) but
 	// never filtered on.
@@ -1389,9 +1395,9 @@ func TestConcurrencyDocErasureOrder(t *testing.T) {
 	// ids by a plain read, locks by primary key.
 	credentials := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockCredentials(")
 	inOrder(credentials, "erasureStageRefreshTokens", "erasureStagePasswordResets", "erasureStageAPIKeys",
-		`Where("user_id IN ?", userIDs).Order("id").Pluck("id", &ids)`, "lockingRead(tx).Unscoped().Model(stage.model())",
+		`Where("user_id IN ?", userIDs).Order("id").Pluck("id", &ids)`, "LockingRead(tx).Unscoped().Model(stage.model())",
 		`Where("id IN ?", chunk).Order("id")`)
-	assert.Equal(t, 1, strings.Count(credentials, "lockingRead("), "only the read by primary key locks")
+	assert.Equal(t, 1, strings.Count(credentials, "LockingRead("), "only the read by primary key locks")
 	stages := readRepositoryFile(t, cascade)
 	for _, stage := range []string{
 		`erasureStageLeads          = "leads"`, `erasureStageCustomers      = "customers"`, `erasureStageUsers          = "users"`,

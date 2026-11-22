@@ -56,7 +56,7 @@ func (r *formTicketRepository) LockLiveCustomerByEmail(address string) (*models.
 		return nil, gorm.ErrRecordNotFound
 	}
 	var customer models.Customer
-	err := lockingRead(r.db).Unscoped().
+	err := LockingRead(r.db).Unscoped().
 		Where("deleted_at IS NULL AND email IN ?", formTicketCustomerAddresses(address)).
 		Order("id").Limit(1).Take(&customer).Error
 	if err != nil {
@@ -129,7 +129,7 @@ func (r *formTicketRepository) insertTicketAndKey(ticket *models.Ticket, key *mo
 // inserted. No row is gorm.ErrRecordNotFound.
 func (r *formTicketRepository) GetKeyForUpdate(formID uint, key string) (*models.FormTicketKey, error) {
 	var row models.FormTicketKey
-	if err := lockingRead(r.db).Where("form_id = ? AND idempotency_key = ?", formID, key).Take(&row).Error; err != nil {
+	if err := LockingRead(r.db).Where("form_id = ? AND idempotency_key = ?", formID, key).Take(&row).Error; err != nil {
 		return nil, err
 	}
 	return &row, nil

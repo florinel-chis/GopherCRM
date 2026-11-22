@@ -35,7 +35,7 @@ func (r *customerExternalIDRepository) WithTx(tx *gorm.DB) CustomerExternalIDRep
 // lock waits for the erasure, which then reads as not found).
 func (r *customerExternalIDRepository) LockLiveCustomer(ctx context.Context, customerID uint) error {
 	var customer models.Customer
-	return lockingRead(r.db.WithContext(ctx)).Select("id").Where("id = ?", customerID).Take(&customer).Error
+	return LockingRead(r.db.WithContext(ctx)).Select("id").Where("id = ?", customerID).Take(&customer).Error
 }
 
 func (r *customerExternalIDRepository) Create(ctx context.Context, mapping *models.CustomerExternalID) error {

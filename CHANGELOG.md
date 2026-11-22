@@ -1156,6 +1156,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **One helper for locking reads (#637).** `repository.LockingRead(tx)` is the one place that builds
+  the `FOR UPDATE` handle on a fresh `Session`; the services (sign-in, refresh, password reset,
+  password change, logout, API-key create, lead owner and lead checks, SCIM group membership,
+  customer update) and the erasure, quote, automation, form-ticket and external-id repositories use
+  it instead of their own copies. A user read through a locking handle now locks only the `users`
+  row: `UserRepository.GetByID` reads the custom role and its permissions without a lock, so a
+  sign-in or refresh of a custom-role user does not wait for a lock held on its role. Otherwise
+  behaviour is unchanged.
+
 - Web app: one shared dialog, `OneTimeSecretDialog` in `src/components/OneTimeSecretDialog.tsx`,
   shows a value that is shown only once: a new API key, a new SCIM token and a new webhook signing
   secret (#620). It replaces the two per-screen dialogs and the inline API key dialog. The three

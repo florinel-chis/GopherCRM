@@ -236,7 +236,7 @@ func softDeleteErased(tx *gorm.DB, plan erasurePlan, id uint) error {
 		return errors.New("soft-deleting an erased row: refusing a zero id")
 	}
 	var live []int64
-	if err := lockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
+	if err := LockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
 		Pluck("deleted_at IS NULL", &live).Error; err != nil {
 		return fmt.Errorf("reading the deletion state of row %d before erasure: %w", id, err)
 	}
@@ -273,7 +273,7 @@ func (primaryKeyOnlySoftDelete) MergeClause(*clause.Clause) {}
 // error names the row by id only.
 func readErasedEmail(tx *gorm.DB, plan erasurePlan, id uint) (string, error) {
 	var emails []sql.NullString
-	if err := lockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
+	if err := LockingRead(tx).Unscoped().Model(plan.newModel()).Where("id = ?", id).
 		Pluck(plan.EmailColumn, &emails).Error; err != nil {
 		return "", fmt.Errorf("reading the address of row %d before erasure: %w", id, err)
 	}

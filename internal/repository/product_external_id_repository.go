@@ -36,7 +36,7 @@ func (r *productExternalIDRepository) WithTx(tx *gorm.DB) ProductExternalIDRepos
 // first and the create's lock reads no live row.
 func (r *productExternalIDRepository) LockLiveProduct(ctx context.Context, productID uint) error {
 	var product models.Product
-	return lockingRead(r.db.WithContext(ctx)).Select("id").Where("id = ?", productID).Take(&product).Error
+	return LockingRead(r.db.WithContext(ctx)).Select("id").Where("id = ?", productID).Take(&product).Error
 }
 
 func (r *productExternalIDRepository) Create(ctx context.Context, mapping *models.ProductExternalID) error {
