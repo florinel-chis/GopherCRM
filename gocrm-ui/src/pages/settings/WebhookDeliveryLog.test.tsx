@@ -233,4 +233,28 @@ describe('WebhookDeliveryLog', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Validation failed');
   });
+
+  it('keeps the current rows on screen while the next page loads', async () => {
+    const nextPage = [delivery({ id: 3, event_type: 'lead.deleted', record_id: 555 })];
+    let release: (value: { rows: WebhookDelivery[]; total: number }) => void = () => {};
+    vi.mocked(webhooksApi.listDeliveries).mockImplementation((params) =>
+      params?.offset === 20
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ rows, total: 45 }),
+    );
+    render(<WebhookDeliveryLog />);
+    await screen.findByText('ticket.updated');
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() => expect(lastParams()).toMatchObject({ offset: 20, limit: 20 }));
+    expect(screen.getAllByTestId('webhook-delivery-row')).toHaveLength(3);
+    expect(screen.getByText('ticket.updated')).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+
+    release({ rows: nextPage, total: 45 });
+    expect(await screen.findByText('lead.deleted')).toBeInTheDocument();
+    expect(screen.getAllByTestId('webhook-delivery-row')).toHaveLength(1);
+  });
 });

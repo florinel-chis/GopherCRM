@@ -1156,6 +1156,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Shared role and paged-list hooks in the web app (#624).** `gocrm-ui/src/hooks/useRoles.ts` is
+  the one role-list query (key `['roles']`) for Settings > Roles, the user form and the single
+  sign-on settings, so a role created or changed in Settings > Roles now shows up in the single
+  sign-on role-mapping dropdown without a reload. `gocrm-ui/src/api/list.ts` holds the shared
+  `ListResult<T>` page shape, `toListResult` and `withoutUnset` (unset filters are left out of the
+  query). `gocrm-ui/src/hooks/usePagedList.ts` holds the page and rows-per-page state and the move
+  back to the last existing page; the webhook endpoints, webhook deliveries, sign-in audit and role
+  audit lists use it and keep the current rows on screen while the next page loads. Frontend only:
+  no API change.
 - **Form builder page split into modules (#626).** `gocrm-ui/src/pages/forms/FormBuilder.tsx` keeps
   the route component, the form state, the queries and mutations, the Basics and Fields sections and
   the buttons. The schema and the value conversions moved to `formBuilderSchema.ts`, the chip list

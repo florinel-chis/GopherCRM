@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Box,
@@ -25,6 +25,7 @@ import { Add as AddIcon } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
 import { rolesApi, type Role } from '@/api/endpoints';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useRoles } from '@/hooks/useRoles';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { getAPIError } from '@/utils/apiError';
 import { CloneRoleDialog } from './CloneRoleDialog';
@@ -48,11 +49,7 @@ export const Component: React.FC = () => {
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [deleteError, setDeleteError] = useState('');
 
-  const {
-    data: roles,
-    isLoading,
-    isError,
-  } = useQuery({ queryKey: ['roles'], queryFn: rolesApi.getRoles });
+  const { data: roles, isLoading, isError } = useRoles();
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => rolesApi.deleteRole(id),

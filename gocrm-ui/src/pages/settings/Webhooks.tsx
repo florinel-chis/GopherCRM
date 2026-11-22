@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import React, { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   Box,
@@ -26,6 +26,7 @@ import {
 } from '@mui/icons-material';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Loading } from '@/components/Loading';
+import { usePagedList } from '@/hooks/usePagedList';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
   webhooksApi,
@@ -48,8 +49,6 @@ const EndpointsTab: React.FC = () => {
   const queryClient = useQueryClient();
   const { showSuccess, showError } = useSnackbar();
 
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
   const [formTarget, setFormTarget] = useState<FormTarget>(null);
   const [deleteTarget, setDeleteTarget] = useState<WebhookEndpoint | null>(null);
   // The signing secret of the endpoint just registered. It exists in this
@@ -58,16 +57,26 @@ const EndpointsTab: React.FC = () => {
   const [secret, setSecret] = useState<string | null>(null);
 
   // Newest first, so an endpoint just registered is on the first page.
-  const params: WebhookEndpointListParams = {
-    offset: page * rowsPerPage,
-    limit: rowsPerPage,
+  const paramsFor = (pageWindow: { offset: number; limit: number }): WebhookEndpointListParams => ({
+    ...pageWindow,
     sort_by: 'id',
     sort_order: 'desc',
-  };
+  });
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: webhookKeys.endpoints(params),
-    queryFn: () => webhooksApi.listEndpoints(params),
+  const {
+    rows,
+    total,
+    isLoading,
+    isError,
+    error,
+    displayPage,
+    rowsPerPage,
+    onPageChange,
+    onRowsPerPageChange,
+    resetPage,
+  } = usePagedList({
+    queryKey: (pageWindow) => webhookKeys.endpoints(paramsFor(pageWindow)),
+    queryFn: (pageWindow) => webhooksApi.listEndpoints(paramsFor(pageWindow)),
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: webhookKeys.all });
@@ -99,20 +108,6 @@ const EndpointsTab: React.FC = () => {
   });
 
   const closeSecret = () => setSecret(null);
-
-  const rows = data?.rows ?? [];
-  const total = data?.total ?? 0;
-  const lastPage = Math.max(0, Math.ceil(total / rowsPerPage) - 1);
-  // An empty page of a list that still has rows (the last row of a later
-  // page was deleted): move to the last page that exists. Only ever
-  // backwards, so an answer that contradicts itself cannot loop.
-  const pastLastPage = rows.length === 0 && total > 0 && page > lastPage;
-
-  useEffect(() => {
-    if (pastLastPage) {
-      setPage(lastPage);
-    }
-  }, [pastLastPage, lastPage]);
 
   return (
     <Box>
@@ -218,13 +213,10 @@ const EndpointsTab: React.FC = () => {
               component="div"
               rowsPerPageOptions={[10, 20, 50, 100]}
               count={total}
-              page={Math.min(page, lastPage)}
+              page={displayPage}
               rowsPerPage={rowsPerPage}
-              onPageChange={(_event, next) => setPage(next)}
-              onRowsPerPageChange={(event) => {
-                setRowsPerPage(Number(event.target.value));
-                setPage(0);
-              }}
+              onPageChange={onPageChange}
+              onRowsPerPageChange={onRowsPerPageChange}
             />
           </>
         )}
@@ -239,7 +231,7 @@ const EndpointsTab: React.FC = () => {
           // Only the secret is kept, and the list is fetched again instead of
           // being patched with the answer that carries it.
           setSecret(created.secret);
-          setPage(0);
+          resetPage();
           void refresh();
         }}
         onUpdated={() => {

@@ -1,5 +1,6 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
+import { toListResult, type ListResult } from '../list';
 
 // The role audit log: GET /roles/audit, guarded by roles.audit_view.
 // roleAudit.test.ts holds the two lists below equal to the action and
@@ -44,18 +45,12 @@ export interface RoleAuditListParams {
   limit: number;
 }
 
-export interface RoleAuditListResult {
-  rows: RoleAuditEntry[];
-  total: number;
-}
-
 export const roleAuditApi = {
   // Newest first (created_at, then id, descending); the order is the API's.
-  list: async ({ offset, limit }: RoleAuditListParams): Promise<RoleAuditListResult> => {
+  list: async ({ offset, limit }: RoleAuditListParams): Promise<ListResult<RoleAuditEntry>> => {
     const response = (await api.get<RoleAuditEntry[]>('/roles/audit', {
       params: { offset, limit },
     })) as ApiResponseWithMeta<RoleAuditEntry[]>;
-    const rows = Array.isArray(response.data) ? response.data : [];
-    return { rows, total: response.meta?.total ?? rows.length };
+    return toListResult(response);
   },
 };

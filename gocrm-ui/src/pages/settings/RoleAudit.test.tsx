@@ -183,4 +183,28 @@ describe('RoleAudit', () => {
     render(<RoleAudit />);
     expect(await screen.findByText('Insufficient permissions')).toBeInTheDocument();
   });
+
+  it('keeps the current rows on screen while the next page loads', async () => {
+    const nextPage = [entry({ id: 2, role_name: 'Next page role' })];
+    let release: (value: { rows: RoleAuditEntry[]; total: number }) => void = () => {};
+    vi.mocked(roleAuditApi.list).mockImplementation((params) =>
+      params.offset === 20
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ rows, total: 45 }),
+    );
+    render(<RoleAudit />);
+    await screen.findByText('Account erased');
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() => expect(lastParams()).toEqual({ offset: 20, limit: 20 }));
+    expect(screen.getAllByTestId('role-audit-row')).toHaveLength(rows.length);
+    expect(screen.getByText('Account erased')).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+
+    release({ rows: nextPage, total: 45 });
+    expect(await screen.findByText('Next page role')).toBeInTheDocument();
+    expect(screen.getAllByTestId('role-audit-row')).toHaveLength(1);
+  });
 });

@@ -1,5 +1,6 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
+import { toListResult, withoutUnset, type ListResult } from '../list';
 
 // Outbound webhooks: the endpoint registry and the delivery log. Every route
 // needs webhooks.manage.
@@ -82,27 +83,10 @@ export interface WebhookDeliveryListParams {
   limit: number;
 }
 
-export interface WebhookListResult<T> {
-  rows: T[];
-  total: number;
-}
-
-const toListResult = <T>(response: ApiResponseWithMeta<T[]>): WebhookListResult<T> => {
-  const rows = Array.isArray(response.data) ? response.data : [];
-  return { rows, total: response.meta?.total ?? rows.length };
-};
-
-// The API refuses an unknown status or event type, so an unset filter is left
-// out of the query instead of being sent empty.
-const withoutUnset = <T extends object>(params: T): Partial<T> =>
-  Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-  ) as Partial<T>;
-
 export const webhooksApi = {
   listEndpoints: async (
     params: WebhookEndpointListParams,
-  ): Promise<WebhookListResult<WebhookEndpoint>> => {
+  ): Promise<ListResult<WebhookEndpoint>> => {
     const response = (await api.get<WebhookEndpoint[]>('/webhooks/endpoints', {
       params: withoutUnset(params),
     })) as ApiResponseWithMeta<WebhookEndpoint[]>;
@@ -133,7 +117,7 @@ export const webhooksApi = {
   // Newest first (id descending); the order is the API's.
   listDeliveries: async (
     params: WebhookDeliveryListParams,
-  ): Promise<WebhookListResult<WebhookDelivery>> => {
+  ): Promise<ListResult<WebhookDelivery>> => {
     const response = (await api.get<WebhookDelivery[]>('/webhooks/deliveries', {
       params: withoutUnset(params),
     })) as ApiResponseWithMeta<WebhookDelivery[]>;

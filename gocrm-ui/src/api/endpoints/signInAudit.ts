@@ -1,5 +1,6 @@
 import { api } from '../client';
 import type { ApiResponseWithMeta } from '../client';
+import { toListResult, withoutUnset, type ListResult } from '../list';
 
 // The sign-in audit log (#455): GET /audit/sign-ins, guarded by
 // audit.sign_ins_view. The three lists below are the only values the API
@@ -113,22 +114,13 @@ export interface SignInAuditListParams {
   limit: number;
 }
 
-export interface SignInAuditListResult {
-  rows: SignInAuditEntry[];
-  total: number;
-}
-
 export const signInAuditApi = {
   // Newest first (created_at, then id, descending); the order is the API's.
   // Only the filters that are set are sent, with offset and limit.
-  list: async (params: SignInAuditListParams): Promise<SignInAuditListResult> => {
-    const query = Object.fromEntries(
-      Object.entries(params).filter(([, value]) => value !== undefined && value !== ''),
-    );
+  list: async (params: SignInAuditListParams): Promise<ListResult<SignInAuditEntry>> => {
     const response = (await api.get<SignInAuditEntry[]>('/audit/sign-ins', {
-      params: query,
+      params: withoutUnset(params),
     })) as ApiResponseWithMeta<SignInAuditEntry[]>;
-    const rows = Array.isArray(response.data) ? response.data : [];
-    return { rows, total: response.meta?.total ?? rows.length };
+    return toListResult(response);
   },
 };
