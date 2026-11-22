@@ -1953,6 +1953,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The labels, deals and tickets browser-test page objects find row actions by role and accessible
+  name (`Edit label`/`Delete label` on the labels page, `View`/`Edit`/`Delete` on the deal and
+  ticket lists) instead of by MUI icon test ids, which the production build the browser tests run
+  against since #604 does not render, so their edit, view and delete clicks no longer time out
+  (#692).
 - **The lead owner check sees a custom-role change committed during the lead write (#677).** On
   MySQL/MariaDB the owner check of `POST /leads`, `PUT /leads/{id}` and `POST /leads/{id}/assign`
   read the owner's custom role and its permissions from the snapshot fixed by the transaction's

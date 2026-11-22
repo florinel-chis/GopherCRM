@@ -104,12 +104,12 @@ export class LabelsPage {
   }
 
   async openEditDialog(name: string) {
-    await this.row(name).locator('[data-testid="EditIcon"]').click();
+    await this.row(name).getByRole('button', { name: 'Edit label' }).click();
     await this.nameInput.waitFor({ state: 'visible' });
   }
 
   async openDeleteDialog(name: string) {
-    await this.row(name).locator('[data-testid="DeleteIcon"]').click();
+    await this.row(name).getByRole('button', { name: 'Delete label' }).click();
     await this.deleteDialog.waitFor({ state: 'visible' });
   }
 
