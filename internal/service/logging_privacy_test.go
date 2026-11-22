@@ -45,7 +45,7 @@ func TestServiceLoggingPrivacy_SuccessAndSearch(t *testing.T) {
 		repo := new(mocks.LeadRepository)
 		users := new(mocks.UserRepository)
 		lead := &models.Lead{Email: email, Notes: text, OwnerID: 7}
-		users.On("GetByID", uint(7)).Return(&models.User{Role: models.RoleSales, IsActive: true}, nil)
+		users.On("GetByIDWithCurrentRole", uint(7)).Return(&models.User{Role: models.RoleSales, IsActive: true}, nil)
 		repo.On("Create", lead).Return(nil).Run(func(mock.Arguments) { lead.ID = 41 })
 		require.NoError(t, NewLeadService(repo, nil, nil, users, nil).Create(lead))
 		assert.NotContains(t, output.String(), email)

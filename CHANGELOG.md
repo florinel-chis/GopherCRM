@@ -1838,6 +1838,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The lead owner check sees a custom-role change committed during the lead write (#677).** On
+  MySQL/MariaDB the owner check of `POST /leads`, `PUT /leads/{id}` and `POST /leads/{id}/assign`
+  read the owner's custom role and its permissions from the snapshot fixed by the transaction's
+  first plain read, so an owner whose role had just lost `assignment.form_owner` could still be
+  accepted. The check now reads them through `UserRepository.GetByIDWithCurrentRole`, which takes
+  a shared lock on the `roles` row and its `role_permissions` rows after the owner's locked `users`
+  row, so the change is seen and the write is refused with 400 `INVALID_REFERENCE`. A role write in
+  flight makes the check wait; other lead writes for holders of the same role do not wait for each
+  other. `GetByID`, and with it sign-in and refresh, is unchanged.
 - `TestTaskRowLockProductionWiring` (test only, #663) now registers its query callback before the
   router starts the background runtimes and no longer removes it while they may still run, so the
   race detector no longer reports the bulk-operation recovery sweep reading gorm's callback list

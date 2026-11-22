@@ -260,7 +260,7 @@ governed user write does the same around its nested erasure.
   primary key. A migrator probe counts as a plain read: on MySQL 8 a select on
   `information_schema` fixes the snapshot (on MariaDB 10.11 it does not), and the reverse
   re-read would then miss a customer linked to the login before the locks were granted.
-- **Transaction:** `userRepository.Delete` (`internal/repository/user_repository.go:200`) →
+- **Transaction:** `userRepository.Delete` (`internal/repository/user_repository.go:230`) →
   `eraseGraph` (`internal/repository/erasure_cascade.go:673`) → `runErasureUnit`
   (`internal/repository/erasure.go:429`): a root transaction of its own, or a checked SAVEPOINT
   inside the caller's transaction. On `DELETE /users/{id}` the caller is the governed user write
@@ -418,16 +418,25 @@ confirm and the gaps of the re-check.
 
 - **Rows locked:** the `companies` rows of the stored and of the sent `company_id`, the `leads`
   row (`lockedLeadRead`) and, when `owner_id` changes, the new owner's `users` row (`lockedUserRead`,
-  `internal/service/lead_service.go:168`).
-- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:310`)
-  → companies, ascending id (`internal/service/lead_service.go:321`) → the locked lead and the
-  locked owner (`internal/service/lead_service.go:342`). Same chain and the same
-  `errLeadCompanyMoved` check as the conversion, bounded by `leadCompanyMaxRestarts`.
-- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:297`) inside
-  `runLeadCompanyAttempts` (`internal/service/lead_service.go:296`).
+  `internal/service/lead_service.go:172`) and, for a custom-role owner, a shared lock on the
+  owner's `roles` row and then its `role_permissions` rows (`UserRepository.GetByIDWithCurrentRole`).
+  The plain read of `company_id` fixes the REPEATABLE READ snapshot, so a plain role read would
+  answer with the permissions as they stood before it; the shared lock reads the committed rows,
+  so a role change committed before the owner check is seen. It waits for a role write in flight
+  and does not serialise lead writes for other holders of the same role.
+- **Order:** in each attempt a plain read of `company_id` (`internal/service/lead_service.go:314`)
+  → companies, ascending id (`internal/service/lead_service.go:325`) → the locked lead and the
+  locked owner (`internal/service/lead_service.go:346`) → the owner's custom `roles` row → its
+  `role_permissions` rows (both shared). Same chain and the same `errLeadCompanyMoved` check as the
+  conversion, bounded by `leadCompanyMaxRestarts`.
+- **Transaction:** `WithTransaction` per attempt (`internal/service/lead_service.go:301`) inside
+  `runLeadCompanyAttempts` (`internal/service/lead_service.go:300`).
 - **Retry:** `runLeadCompanyAttempts` restarts the whole root at most `leadCompanyMaxRestarts` times,
   on `errLeadCompanyMoved` only; each attempt is a plain `WithTransaction`, so there is no deadlock
-  retry: error 1213 or 1205 reaches the caller.
+  retry: error 1213 or 1205 reaches the caller. A role delete locks the role's holders in `users`
+  again after it holds the `roles` row, while the owner check holds the owner's `users` row and
+  then asks for a shared lock on that `roles` row; a concurrent delete of the owner's role can
+  therefore make the lead write fail with a deadlock error, which is not replayed.
 - **Status:** implemented
 
 ### Company delete
@@ -654,10 +663,10 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   account or that writes `role`, `role_id` or `is_active`, activate, deactivate and
   `DELETE /users/{id}`; `governedWrite`, `internal/service/user_governed_writes.go:259`, and
   `CreateAs`, `internal/service/user_governed_writes.go:120`) locks the `users` rows of the active
-  admins (`LockActiveAdmins`, `internal/repository/user_repository.go:303`: a plain read discovers
+  admins (`LockActiveAdmins`, `internal/repository/user_repository.go:409`: a plain read discovers
   the ids, then a locking read by primary key in id order, never through `idx_users_role`), the
   `users` rows of the actor and the target (`LockLiveByIDs`,
-  `internal/repository/user_repository.go:341`, one locking read by primary key in id order) and
+  `internal/repository/user_repository.go:447`, one locking read by primary key in id order) and
   the `roles` rows of the actor's, the target's and the requested custom role with their
   `role_permissions` rows (`RoleRepository.LockByIDs`,
   `internal/repository/role_repository.go:227`: the roles by primary key in id order, then their
@@ -668,7 +677,7 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   (`internal/repository/role_repository.go:140`, `:178` in the same file) lock the `roles` row
   again by primary key before they delete its `role_permissions` rows. The role delete also takes
   a locking read of the live users holding the role, by `role_id`
-  (`LockLiveRoleHolders`, `internal/repository/user_repository.go:362`), before the roles and
+  (`LockLiveRoleHolders`, `internal/repository/user_repository.go:468`), before the roles and
   again after them (`internal/service/role_service.go:358`, `:382` in the same file).
 - **Order:** admin set → users (id ascending) → roles (id ascending), with a role's
   `role_permissions` rows after its `roles` row. A role write starts at the actor's `users` row:

@@ -1995,7 +1995,10 @@ foreign key, but no scoped read finds it, so it counts as unknown; a lookup that
 reason stays a 500. The read runs inside the writing transaction and takes a row lock (the user
 repository bound to `repository.LockingRead(tx)`): a plain read in MySQL's
 REPEATABLE READ transaction would answer from the snapshot of an earlier plain read, such as the
-company check, and miss a deactivation committed since. That makes the check current, not permanent:
+company check, and miss a deactivation committed since. The owner's custom role and its permissions
+are read in the same transaction with a shared lock (`UserRepository.GetByIDWithCurrentRole`, #677),
+so a role change committed before the check is seen too; a role write in flight makes the check wait.
+That makes the check current, not permanent:
 a deactivation after it can still leave an inactive owner, because lead writes and user deactivation
 share no lock protocol yet (#183). An update checks only an owner that differs from the stored one,
 so a lead whose owner has left stays editable; an assignment always checks the user it names. The

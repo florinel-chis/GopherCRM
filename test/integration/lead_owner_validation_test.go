@@ -630,6 +630,10 @@ func (r failingOwnerLookup) WithTx(*gorm.DB) repository.UserRepository { return 
 
 func (r failingOwnerLookup) GetByID(uint) (*models.User, error) { return nil, errOwnerLookupFailed }
 
+func (r failingOwnerLookup) GetByIDWithCurrentRole(uint) (*models.User, error) {
+	return nil, errOwnerLookupFailed
+}
+
 func TestLeadOwnerLookupFailureIsServerErrorSQLite(t *testing.T) {
 	e := newLeadOwnerEnv(t, false)
 	e.router = e.buildRouter(failingOwnerLookup{e.users})

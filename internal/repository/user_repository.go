@@ -76,6 +76,36 @@ func (r *userRepository) GetByID(id uint) (*models.User, error) {
 	return &user, nil
 }
 
+// GetByIDWithCurrentRole reads one live user like GetByID, but reads the
+// custom role and its permissions with a shared lock (SharedLockingRead) on a
+// NewDB session of the repository's handle, so inside a REPEATABLE READ
+// transaction they are current rather than the transaction's snapshot. The
+// users read runs on the repository's handle, so a repository bound to
+// LockingRead(tx) locks the users row first: users, then roles, then
+// role_permissions. Results and errors are those of GetByID. Only the lead
+// owner check uses it; sign-in and refresh keep GetByID and its plain role read.
+func (r *userRepository) GetByIDWithCurrentRole(id uint) (*models.User, error) {
+	var user models.User
+	if err := r.db.First(&user, id).Error; err != nil {
+		return nil, err
+	}
+	if user.RoleID == nil {
+		return &user, nil
+	}
+	var role models.Role
+	if err := SharedLockingRead(r.db.Session(&gorm.Session{NewDB: true})).First(&role, *user.RoleID).Error; err != nil {
+		return nil, fmt.Errorf("load custom role of user %d: %w", user.ID, err)
+	}
+	perms := []models.RolePermission{}
+	if err := SharedLockingRead(r.db.Session(&gorm.Session{NewDB: true})).
+		Where("role_id = ?", role.ID).Order("permission_key ASC").Find(&perms).Error; err != nil {
+		return nil, fmt.Errorf("load custom role of user %d: %w", user.ID, err)
+	}
+	role.Permissions = perms
+	user.CustomRole = &role
+	return &user, nil
+}
+
 func (r *userRepository) GetByEmail(email string) (*models.User, error) {
 	var user models.User
 	err := r.db.Where("email = ?", email).First(&user).Error
