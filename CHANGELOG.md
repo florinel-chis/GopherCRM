@@ -1238,6 +1238,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on gin or the CRM models: the error writers take an `http.ResponseWriter` and the User resource
   is built from `scim.UserData`, which the handlers fill from the CRM user. Behaviour is
   unchanged.
+- **Role mapping package (#645).** The first-match rule that maps the `groups` and `roles` claims
+  to a role moved to `internal/idkit/rolemap` (`rolemap.Rule`, `rolemap.Match`,
+  `rolemap.UsesGroups`). The OIDC sign-in callback, the SCIM Users writes and the SCIM group patch
+  all call `rolemap.Match`. The stored mapping format, the settings API and behaviour are
+  unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

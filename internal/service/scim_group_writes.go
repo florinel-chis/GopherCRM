@@ -9,6 +9,7 @@ import (
 	"time"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -290,7 +291,7 @@ func (s *scimGroupService) Patch(ctx context.Context, rawID string, p SCIMGroupP
 				if final[id] {
 					groups = append(groups, group)
 				}
-				if roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, nil); matched {
+				if roleID, matched := rolemap.Match(cfg.RoleMapping, groups, nil); matched {
 					mappedIDs[id] = roleID
 				}
 			}

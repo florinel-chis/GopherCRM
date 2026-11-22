@@ -17,6 +17,7 @@ import (
 
 	"github.com/florinel-chis/gophercrm/internal/config"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -32,8 +33,8 @@ const (
 
 // Claims a role mapping may match on.
 const (
-	SSOClaimGroups = "groups"
-	SSOClaimRoles  = "roles"
+	SSOClaimGroups = rolemap.ClaimGroups
+	SSOClaimRoles  = rolemap.ClaimRoles
 )
 
 // Limits of the single sign-on settings.
@@ -55,11 +56,7 @@ const (
 var ssoDefaultScopes = []string{"openid", "profile", "email"}
 
 // SSORoleMapping maps one value of an ID-token claim to a role id.
-type SSORoleMapping struct {
-	Claim  string `json:"claim"`
-	Value  string `json:"value"`
-	RoleID uint   `json:"role_id"`
-}
+type SSORoleMapping = rolemap.Rule
 
 // SSOConfigSources says, per field, where the effective value came from:
 // settings, env or default.

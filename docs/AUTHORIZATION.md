@@ -1014,7 +1014,7 @@ gets no role change, no `users` write and no audit row, and the last-admin rule 
 losing the admin role.
 
 **Roles.** Each added or removed managed account gets the role of the sign-in's first-match rule
-on the groups claim, over its groups after the change (`oidcMatchRole` with the groups only); a
+on the groups claim, over its groups after the change (`rolemap.Match` (`internal/idkit/rolemap/rolemap.go`) with the groups only); a
 mapping to a missing role row or to the customer role refuses the patch with `invalidValue`. Since
 #530 an active account left in no mapped group is deactivated instead: `is_active` false, its role
 and `role_id` kept, no `user_role_changed` row, and `revokeAllCredentials` ends every access token,

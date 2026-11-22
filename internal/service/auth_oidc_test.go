@@ -2502,12 +2502,6 @@ func TestOIDCSubjectAndClaimRules(t *testing.T) {
 	}
 	assert.Equal(t, "ab", truncateUTF8("abé", 3), "cut on a rune boundary")
 	assert.Equal(t, "abé", truncateUTF8("abé", 4))
-	mapping := []SSORoleMapping{{Claim: SSOClaimRoles, Value: "r", RoleID: 1}, {Claim: SSOClaimGroups, Value: "g", RoleID: 2}}
-	id, ok := oidcMatchRole(mapping, []string{"g"}, []string{"r"})
-	assert.True(t, ok)
-	assert.Equal(t, uint(1), id, "the first entry in stored order decides")
-	_, ok = oidcMatchRole(mapping, []string{"G"}, nil)
-	assert.False(t, ok, "values compare case-sensitively")
 }
 
 func TestOIDCGraphDefaults(t *testing.T) {
@@ -2538,10 +2532,6 @@ func TestOIDCGraphDefaults(t *testing.T) {
 	}
 
 	groups := []SSORoleMapping{{Claim: SSOClaimGroups, Value: "g", RoleID: 1}}
-	roles := []SSORoleMapping{{Claim: SSOClaimRoles, Value: "r", RoleID: 1}}
-	assert.True(t, mappingUsesGroups(append(roles, groups...)))
-	assert.False(t, mappingUsesGroups(roles))
-	assert.False(t, mappingUsesGroups(nil))
 	assert.Equal(t, "https://graph.microsoft.com/User.Read", oidcGraphScope)
 	entra := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", oidcGraphScope}, RoleMapping: groups}
 	assert.Equal(t, []string{"openid", oidcGraphScope}, svc.requestScopes(entra), "not added when already configured")
