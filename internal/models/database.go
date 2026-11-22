@@ -51,12 +51,22 @@ func MigrateDatabase() error {
 	return MigrateDatabaseWith(DB)
 }
 
+// mysqlTableOptions are the table options every SQL migration writes. On
+// MySQL and MariaDB (one dialector) AutoMigrate creates each new table with
+// them, so its collation never comes from the schema default. A table
+// that already exists keeps its collation.
+const mysqlTableOptions = "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+
 // MigrateDatabaseWith is MigrateDatabase on an explicit handle instead of the
 // global DB, so two pools (two replicas booting at once) can be exercised in
 // one test process.
 func MigrateDatabaseWith(db *gorm.DB) error {
 	return database.Migrate(db, func(tx *gorm.DB) error {
-		if err := autoMigrateModels(tx); err != nil {
+		migrator := tx
+		if tx.Dialector.Name() == "mysql" {
+			migrator = tx.Set("gorm:table_options", mysqlTableOptions)
+		}
+		if err := autoMigrateModels(migrator); err != nil {
 			return err
 		}
 		if err := ensureCustomerExternalIDCollation(tx); err != nil {

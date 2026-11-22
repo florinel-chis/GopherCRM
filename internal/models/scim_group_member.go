@@ -44,8 +44,8 @@ const scimGroupMemberCollation = "utf8mb4_bin"
 
 // ensureSCIMGroupMemberCollation gives group_value the binary collation on
 // MySQL/MariaDB, as ensureUserIdentityCollation does for user_identities.
-// AutoMigrate creates the table with the database's default collation
-// (case-insensitive), under which the groups Sales and sales would share
+// MigrateDatabase's AutoMigrate creates the table as utf8mb4_unicode_ci
+// (case- and accent-insensitive), under which the groups Sales and sales would share
 // membership rows. The SQL migration creates the column with utf8mb4_bin
 // already; this guard covers a schema that only AutoMigrate created. It reads
 // information_schema first and issues the ALTER only when the column differs.

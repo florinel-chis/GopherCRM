@@ -16,18 +16,21 @@ import (
 )
 
 // #213: FormTicketRepository on the full production schema (models.MigrateDatabase,
-// foreign keys on). The MySQL roots create their schema with utf8mb4_unicode_ci,
-// the collation the SQL migrations give customers.email, and skip without
-// TEST_MYSQL_DSN.
+// foreign keys on). The MySQL roots create their schema with utf8mb4_general_ci
+// on purpose: that default is not the collation the tables must carry, and
+// MigrateDatabase pins every table it creates to utf8mb4_unicode_ci, the
+// collation the SQL migrations write. They skip without TEST_MYSQL_DSN.
 
 var formTicketRepoSeq atomic.Uint64
 
 // formTicketRepoDB is a file-backed SQLite database with foreign keys on and
-// one connection, or a disposable MySQL schema in utf8mb4_unicode_ci with four
-// connections. migrateFormTicketDB gives it the production schema.
+// one connection, or a disposable MySQL schema whose default collation is
+// deliberately utf8mb4_general_ci, with four connections. migrateFormTicketDB
+// gives it the production schema, and MigrateDatabase pins the tables to
+// utf8mb4_unicode_ci.
 var formTicketRepoDB = testsupport.Group(
 	testsupport.OnSQLite(testsupport.File("form-ticket.db", testsupport.BusyTimeout)),
-	testsupport.OnMySQL(testsupport.MaxOpenConns(4), testsupport.SchemaCharset("utf8mb4", "utf8mb4_unicode_ci")),
+	testsupport.OnMySQL(testsupport.MaxOpenConns(4), testsupport.SchemaCharset("utf8mb4", "utf8mb4_general_ci")),
 )
 
 // migrateFormTicketDB runs models.MigrateDatabase on db, with the global
@@ -239,6 +242,25 @@ func TestFormTicketCustomerMatchSQLite(t *testing.T) {
 func TestFormTicketCustomerMatchMySQL(t *testing.T) {
 	db := migrateFormTicketDB(t, testsupport.Open(t, testsupport.MySQL, "form_ticket", formTicketRepoDB))
 	repo := NewFormTicketRepository(db)
+
+	// The schema default differs from the collation the tables must carry,
+	// so the checks below cannot pass by inheritance.
+	var schemaCollation string
+	require.NoError(t, db.Raw(`SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA
+		WHERE SCHEMA_NAME = DATABASE()`).Scan(&schemaCollation).Error)
+	require.Equal(t, "utf8mb4_general_ci", schemaCollation)
+
+	var offTables []string
+	require.NoError(t, db.Raw(`SELECT CONCAT(TABLE_NAME, ' (', COALESCE(TABLE_COLLATION, 'NULL'), ')') FROM information_schema.TABLES
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+		AND (TABLE_COLLATION IS NULL OR TABLE_COLLATION <> 'utf8mb4_unicode_ci') ORDER BY TABLE_NAME`).Scan(&offTables).Error)
+	require.Empty(t, offTables, "MigrateDatabase creates every table in utf8mb4_unicode_ci")
+
+	var offColumns []string
+	require.NoError(t, db.Raw(`SELECT CONCAT(TABLE_NAME, '.', COLUMN_NAME, ' (', COLLATION_NAME, ')') FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND COLLATION_NAME IS NOT NULL
+		AND COLLATION_NAME NOT IN ('utf8mb4_unicode_ci', 'utf8mb4_bin') ORDER BY TABLE_NAME, COLUMN_NAME`).Scan(&offColumns).Error)
+	require.Empty(t, offColumns, "no column carries a collation other than utf8mb4_unicode_ci or the guards' utf8mb4_bin")
 
 	var collation string
 	require.NoError(t, db.Raw(`SELECT COLLATION_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()

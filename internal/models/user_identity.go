@@ -65,8 +65,8 @@ const userIdentityCollation = "utf8mb4_bin"
 
 // ensureUserIdentityCollation gives issuer and subject the binary collation on
 // MySQL/MariaDB, as ensureCustomerExternalIDCollation does for the customer
-// mappings. AutoMigrate creates the table with the database's default
-// collation (case-insensitive), under which a subject differing only in
+// mappings. MigrateDatabase's AutoMigrate creates the table as
+// utf8mb4_unicode_ci (case- and accent-insensitive), under which a subject differing only in
 // letter case would collide with, and be found as, another person's identity.
 // The SQL migration creates the columns with utf8mb4_bin already; this guard
 // covers a schema that only AutoMigrate created. It reads information_schema
