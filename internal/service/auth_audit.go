@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -212,7 +213,7 @@ func authAuditAggregateKey(row *models.AuthAuditLog) string {
 	}
 	key := row.Method + "|" + row.Reason + "|" + strconv.FormatUint(uint64(userID), 10) + "|" +
 		row.ClientNetwork + "|" + row.CreatedAt.UTC().Truncate(time.Minute).Format("2006-01-02T15:04")
-	return truncateUTF8(key, models.AuthAuditAggregateKeyMaxLength)
+	return idkitoidc.TruncateUTF8(key, models.AuthAuditAggregateKeyMaxLength)
 }
 
 // row is the stored form of entry with the request facts of ctx, the time
@@ -223,7 +224,7 @@ func (s *authAuditService) row(ctx context.Context, entry AuthAuditEntry) *model
 		CreatedAt:       s.now().UTC(),
 		Method:          entry.Method,
 		Outcome:         entry.Outcome,
-		Reason:          truncateUTF8(entry.Reason, models.AuthAuditReasonMaxLength),
+		Reason:          idkitoidc.TruncateUTF8(entry.Reason, models.AuthAuditReasonMaxLength),
 		UserID:          optionalID(entry.UserID),
 		AttemptID:       optionalID(entry.AttemptID),
 		APIKeyID:        optionalID(entry.APIKeyID),
@@ -394,7 +395,7 @@ func authAuditClaimJSON(values []string) *string {
 	}
 	cut := make([]string, len(values))
 	for i, value := range values {
-		cut[i] = truncateUTF8(value, authAuditClaimValueMaxBytes)
+		cut[i] = idkitoidc.TruncateUTF8(value, authAuditClaimValueMaxBytes)
 	}
 	for {
 		raw, err := json.Marshal(cut)
@@ -437,18 +438,10 @@ func authRefusal(reason string, userID uint, err error) error {
 	return &authRefusalError{reason: reason, userID: userID, err: err}
 }
 
-// ssoUnavailableError is a 503 of the single sign-on with its reason code:
-// not_configured, discovery_failed or token_exchange_failed. It reads and
-// compares as ErrSSOUnavailable.
-type ssoUnavailableError struct {
-	code string
-}
-
-func (e *ssoUnavailableError) Error() string { return ErrSSOUnavailable.Error() }
-
-func (e *ssoUnavailableError) Is(target error) bool { return target == ErrSSOUnavailable }
-
-func ssoUnavailable(code string) error { return &ssoUnavailableError{code: code} }
+// ssoUnavailable is a 503 of the single sign-on with its reason code
+// (not_configured, discovery_failed or token_exchange_failed), an
+// idkitoidc.UnavailableError. It reads and compares as ErrSSOUnavailable.
+func ssoUnavailable(code string) error { return &idkitoidc.UnavailableError{Code: code} }
 
 // AuthAuditReason is the audit reason of a sign-in error and the user id it
 // carries (0 when unknown): the typed refusals' own codes, sso_disabled for
@@ -462,13 +455,17 @@ func AuthAuditReason(err error) (reason string, userID uint) {
 	if errors.As(err, &refusal) {
 		return refusal.reason, refusal.userID
 	}
-	var oidcRefusal *oidcRefusalError
+	var oidcRefusal *idkitoidc.RefusalError
 	if errors.As(err, &oidcRefusal) {
-		return oidcRefusal.code, oidcRefusal.userID
+		var account *oidcAccountRefusal
+		if errors.As(err, &account) {
+			userID = account.userID
+		}
+		return oidcRefusal.Code, userID
 	}
-	var unavailable *ssoUnavailableError
+	var unavailable *idkitoidc.UnavailableError
 	if errors.As(err, &unavailable) {
-		return unavailable.code, 0
+		return unavailable.Code, 0
 	}
 	switch {
 	case errors.Is(err, ErrSSODisabled):

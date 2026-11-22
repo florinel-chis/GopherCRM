@@ -85,7 +85,12 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   package now lives in `internal/idkit/scim`, and the handlers convert `models.User` to
   `scim.UserData`. The claim-to-role mapping lives in `internal/idkit/rolemap`: `rolemap.Match`
   (`internal/idkit/rolemap/rolemap.go`) is the one first-match rule used by the OIDC callback, the
-  SCIM Users writes and the SCIM group patch.
+  SCIM Users writes and the SCIM group patch. The generic OpenID Connect client helpers live in
+  `internal/idkit/oidc`: the issuer HTTP client, the cached discovered provider, the state, nonce
+  and PKCE values, the client secret or certificate code exchange, the claim rules and the
+  sign-in error types (`oidc.RefusalError`, `oidc.UnavailableError`); it defines no refusal codes
+  and logs nothing, so the codes stay in `internal/service/auth_audit_vocabulary.go` and the
+  logging in the service.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
@@ -384,11 +389,12 @@ audit rows (`auth_audit_log`, #454) older than `AUTH_AUDIT_RETENTION_DAYS` (defa
 transaction and logs `audit_id` with the outcome. A successful `POST /auth/login` or
 `POST /auth/refresh` writes one such row too; a refused one (#553), and a refused `ApiKey`
 (#466), adds to the row of its bucket (`attempts`, one row per method, reason, account, client
-network and UTC minute; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`newOIDCHTTPClient`) has a 10 s
+network and UTC minute; see the *Sign-in audit log* section of `docs/AUTHORIZATION.md`). The issuer client (`oidc.NewHTTPClient`, `internal/idkit/oidc/httpclient.go`) has a 10 s
 timeout, follows no redirect and ignores `HTTP(S)_PROXY`; `NewOIDCService` builds it once, after
 the options, and every sign-in shares it. Tests trust their TLS issuer through
 `WithOIDCRootCAs`, and there is no option that replaces the client. `oidcService.discover` keeps
-one discovered issuer (`oidcProviderCache`) for `oidcProviderCacheTTL` (24 h), keyed by issuer,
+one discovered issuer (`oidc.ProviderCache`, `internal/idkit/oidc/provider.go`) for
+`oidc.ProviderCacheTTL` (24 h), keyed by issuer,
 app-key mode (`OIDC_ENTRA_APP_SIGNING_KEYS` on an Entra ID issuer) and, in that mode, client id;
 a failed discovery is never kept and the mutex is held while a miss fetches. The fake issuer of
 `internal/service/auth_oidc_test.go` counts discovery and JWKS requests: the subtests
@@ -410,7 +416,8 @@ logged. Every `oidc_sign_in` line carries `request_id` (the handler passes it on
 callback claimed it) (#453). Regression roots: `TestOIDCSignInSQLite` and `TestOIDCSignInMySQL`
 (`internal/service/auth_oidc_test.go`, one shared subtest table against an in-process TLS issuer
 that checks the PKCE verifier and the redirect URI; the MySQL root skips without
-`TEST_MYSQL_DSN` and is discovered by the auth checker), `TestOIDCHTTPClient`,
+`TEST_MYSQL_DSN` and is discovered by the auth checker), `TestOIDCHTTPClient`
+(`internal/idkit/oidc`),
 `TestOIDCHandler` (`internal/handler`), `TestOIDCRoutesWired` (`cmd`) and
 `TestUserIdentitiesMigration{Files,}` (`cmd/migrate`). The user-facing rules (first-match
 mapping, overage, subject whitespace, JIT, erasure) are in

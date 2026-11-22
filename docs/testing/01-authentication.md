@@ -1087,7 +1087,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   no `password_reset_tokens` row and no mail (#444), and a token of that account is refused by
   `/auth/password-reset/confirm` with the generic 400 and stays unspent. With the setting on the
   account is treated like a local one (TC-AUTH-057).
-- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/names_split_from_name`, `/names_absent`, `TestOIDCProfileNames`, `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
+- **Automation:** automated — Go: `TestOIDCSignIn{SQLite,MySQL}/first_sign_in_provisions`, `/names_split_from_name`, `/names_absent`, `TestOIDCProfileNames` (`internal/idkit/oidc`), `/second_sign_in_reapplies_mapping`; step 3: `TestPasswordResetSSOAccount{SQLite,MySQL}`, `TestPasswordResetSSOAccountWired`
 
 ### TC-AUTH-051 — An IdP email that matches an existing account is never linked
 - **Priority:** P0
@@ -1142,7 +1142,7 @@ redirect URI. Each case holds on SQLite, MySQL 8 and MariaDB 10.11 alike.
   unavailable" (the issuer client follows no redirect). Step 2: **400** `VALIDATION_ERROR`. No
   answer sets a cookie, and the logs of a successful and a failed callback carry none of the code,
   state, ID token, email or subject.
-- **Automation:** automated — Go: `cmd/auth_oidc_wiring_test.go` `TestOIDCRoutesWired`; `TestOIDCHandler`; `TestOIDCSignInSQLite/issuer_redirect`, `/log_privacy`; `TestOIDCHTTPClient`
+- **Automation:** automated — Go: `cmd/auth_oidc_wiring_test.go` `TestOIDCRoutesWired`; `TestOIDCHandler`; `TestOIDCSignInSQLite/issuer_redirect`, `/log_privacy`; `TestOIDCHTTPClient` (`internal/idkit/oidc`)
 
 ### TC-AUTH-055 — The login page offers single sign-on only while it is on
 - **Priority:** P1
