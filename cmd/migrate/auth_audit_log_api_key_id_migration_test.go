@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -39,8 +38,7 @@ func withoutAuthAuditAPIKeyID(schema tableSchema) tableSchema {
 // TestAuthAuditLogAPIKeyIDMigrationFiles needs no database: the pair exists
 // with its headers, the up half adds exactly the one column behind an
 // INFORMATION_SCHEMA probe, the down half drops only it, the model declares
-// the same, and it is the newest migration of the directory, which
-// latestMigrationVersion names.
+// the same, and it follows the previous migration.
 func TestAuthAuditLogAPIKeyIDMigrationFiles(t *testing.T) {
 	dir := filepath.Join("..", "..", "migrations")
 	up, err := os.ReadFile(filepath.Join(dir, authAuditLogAPIKeyIDMigrationName+".up.sql"))
@@ -87,21 +85,9 @@ func TestAuthAuditLogAPIKeyIDMigrationFiles(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "column:api_key_id", tag)
 
-	// The newest migration of the directory, and the version the fresh and
-	// upgrade roots expect (moved here from TestWebhookEndpointPauseMigrationFiles).
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	newest := ""
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name(), ".up.sql") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	assert.Equal(t, authAuditLogAPIKeyIDMigrationName+".up.sql", newest, "the newest migration")
-	version, err := strconv.Atoi(strings.SplitN(newest, "_", 2)[0])
-	require.NoError(t, err)
-	assert.Equal(t, authAuditLogAPIKeyIDVersion, version)
-	assert.Equal(t, authAuditLogAPIKeyIDVersion, latestMigrationVersion)
+	// The newest-migration and latestMigrationVersion assertions moved to
+	// TestWebhookEventTypesWidthMigrationFiles (#515).
+	assert.Less(t, authAuditLogAPIKeyIDVersion, latestMigrationVersion, "a newer migration follows it")
 	assert.Equal(t, authAuditLogAPIKeyIDPreviousVersion+1, authAuditLogAPIKeyIDVersion)
 }
 

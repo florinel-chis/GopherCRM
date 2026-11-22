@@ -275,6 +275,7 @@ type webhookEnv struct {
 	leads     LeadService
 	customers CustomerService
 	tickets   TicketService
+	deals     DealService
 	forms     FormService
 	bulk      BulkStatusService
 	// users erases users ungoverned (Delete); governedUsers through the role
@@ -324,6 +325,7 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 	leadOpts := []LeadServiceOption{WithLeadAutomationEvents(automation)}
 	customerOpts := []CustomerServiceOption{}
 	ticketOpts := []TicketServiceOption{WithTicketAutomationEvents(automation, e.txManager)}
+	dealOpts := []DealServiceOption{WithDealAutomationEvents(automation)}
 	formOpts := []FormServiceOption{WithFormAutomationEvents(automation),
 		WithFormTicketIntake(repository.NewFormTicketRepository(db), e.txManager)}
 	emitter := webhook.NewEmitter(hooks)
@@ -332,10 +334,12 @@ func (e *webhookEnv) wire(hooks repository.WebhookRepository) {
 		customerOpts = append(customerOpts, WithCustomerWebhooks(emitter))
 		ticketOpts = append(ticketOpts, WithTicketWebhooks(emitter, e.txManager))
 		formOpts = append(formOpts, WithFormWebhooks(emitter))
+		dealOpts = append(dealOpts, WithDealWebhooks(emitter))
 	}
 	e.leads = NewLeadService(leadRepo, customerRepo, companyRepo, userRepo, e.txManager, leadOpts...)
 	e.customers = NewCustomerService(customerRepo, userRepo, companyRepo, e.txManager, customerOpts...)
 	e.tickets = NewTicketService(repository.NewTicketRepository(db), customerRepo, userRepo, ticketOpts...)
+	e.deals = NewDealService(repository.NewDealRepository(db), companyRepo, customerRepo, leadRepo, userRepo, nil, e.txManager, dealOpts...)
 	e.users = NewUserService(userRepo)
 	e.governedUsers = NewUserService(userRepo, WithUserRoleGovernance(repository.NewRoleRepository(db),
 		repository.NewRoleAuditRepository(db), e.txManager))

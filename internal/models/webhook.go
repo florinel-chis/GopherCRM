@@ -11,11 +11,12 @@ import (
 
 // Outbound webhooks (#345). An admin registers HTTPS endpoints, each with its
 // own signing secret and a subset of the event types below. Every create path
-// of a lead, a customer or a ticket, and since #408 every update of one that
-// changed a stored value, writes one webhook_deliveries row per active
-// subscribed endpoint inside its writing transaction (an outbox). Since #437 a
-// ticket delete and every erasure of a lead or a customer write a deleted
-// event for every active subscribed endpoint (#531). A background runtime
+// of a lead, a customer, a ticket or (since #515) a deal, and since #408 every
+// update of one that changed a stored value, writes one webhook_deliveries row
+// per active subscribed endpoint inside its writing transaction (an outbox).
+// Since #437 a ticket delete and every erasure of a lead or a customer, and
+// since #515 a deal delete, write a deleted event for every active subscribed
+// endpoint (#531). A background runtime
 // delivers the committed rows. Both tables hold ids, event
 // types, statuses and timestamps only: a delivery carries the record id, and a
 // consumer fetches the record through the API, where erasure and visibility
@@ -83,8 +84,9 @@ const (
 	// WebhookMaxAttempts is the attempt cap of one delivery: the attempt that
 	// reaches it stores failed and is never retried.
 	WebhookMaxAttempts = 10
-	// webhookEventTypesColumnMaxBytes mirrors varchar(255).
-	webhookEventTypesColumnMaxBytes = 255
+	// webhookEventTypesColumnMaxBytes mirrors varchar(512) (#515; migration
+	// 20261129120007). Every event type subscribed takes 173 bytes.
+	webhookEventTypesColumnMaxBytes = 512
 )
 
 // WebhookEventTypes is the subscribed subset of an endpoint. It is stored as a
@@ -184,7 +186,7 @@ type WebhookEndpoint struct {
 	// Target URL: https, no credentials, query string or fragment, at most 2048 characters; the host must resolve to public addresses only.
 	URL string `gorm:"type:varchar(2048);not null" json:"url" maxLength:"2048" example:"https://hooks.example.com/gophercrm"`
 	// Subscribed event types, deduplicated and sorted.
-	EventTypes WebhookEventTypes `gorm:"type:varchar(255);not null" json:"event_types" swaggertype:"array,string" enums:"customer.created,customer.deleted,customer.updated,lead.created,lead.deleted,lead.updated,ticket.created,ticket.deleted,ticket.updated" example:"lead.created,ticket.created"`
+	EventTypes WebhookEventTypes `gorm:"type:varchar(512);not null" json:"event_types" swaggertype:"array,string" enums:"customer.created,customer.deleted,customer.updated,deal.created,deal.deleted,deal.updated,lead.created,lead.deleted,lead.updated,ticket.created,ticket.deleted,ticket.updated" example:"lead.created,ticket.created"`
 	// Sealed signing secret; never serialised.
 	SecretSealed string `gorm:"type:varchar(255);not null" json:"-" swaggerignore:"true"`
 	// Sealed signing secret replaced by the last rotation; never serialised.
@@ -243,8 +245,8 @@ type WebhookDelivery struct {
 	// Event id (evt_ followed by 32 hex characters), shared by every endpoint's row of one event; sent as webhook-id and as the body's id.
 	EventID string `gorm:"type:varchar(64);not null;uniqueIndex:idx_webhook_deliveries_endpoint_event,priority:2" json:"event_id" example:"evt_4f1c2a9be07d4c4fa1c3d2e5f6a7b8c9" readonly:"true"`
 	// Event type.
-	EventType string `gorm:"type:varchar(32);not null" json:"event_type" enums:"lead.created,lead.updated,lead.deleted,customer.created,customer.updated,customer.deleted,ticket.created,ticket.updated,ticket.deleted" example:"lead.created" readonly:"true"`
-	// Id of the created, updated or deleted lead, customer or ticket: the only record datum sent.
+	EventType string `gorm:"type:varchar(32);not null" json:"event_type" enums:"lead.created,lead.updated,lead.deleted,customer.created,customer.updated,customer.deleted,ticket.created,ticket.updated,ticket.deleted,deal.created,deal.updated,deal.deleted" example:"lead.created" readonly:"true"`
+	// Id of the created, updated or deleted lead, customer, ticket or deal: the only record datum sent.
 	RecordID uint `gorm:"not null" json:"record_id" example:"42" readonly:"true"`
 	// When the record was created, updated or deleted (RFC 3339, UTC).
 	OccurredAt time.Time `gorm:"not null" json:"occurred_at" example:"2026-11-20T09:30:00.123Z" readonly:"true"`

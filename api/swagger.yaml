@@ -4486,6 +4486,9 @@ definitions:
         - ticket.created
         - ticket.updated
         - ticket.deleted
+        - deal.created
+        - deal.updated
+        - deal.deleted
         example: lead.created
         readOnly: true
         type: string
@@ -4519,8 +4522,8 @@ definitions:
         readOnly: true
         type: string
       record_id:
-        description: 'Id of the created, updated or deleted lead, customer or ticket:
-          the only record datum sent.'
+        description: 'Id of the created, updated or deleted lead, customer, ticket
+          or deal: the only record datum sent.'
         example: 42
         readOnly: true
         type: integer
@@ -4569,6 +4572,9 @@ definitions:
           - customer.created
           - customer.deleted
           - customer.updated
+          - deal.created
+          - deal.deleted
+          - deal.updated
           - lead.created
           - lead.deleted
           - lead.updated
@@ -4643,6 +4649,9 @@ definitions:
           - customer.created
           - customer.deleted
           - customer.updated
+          - deal.created
+          - deal.deleted
+          - deal.updated
           - lead.created
           - lead.deleted
           - lead.updated
@@ -4722,6 +4731,9 @@ definitions:
           - customer.created
           - customer.deleted
           - customer.updated
+          - deal.created
+          - deal.deleted
+          - deal.updated
           - lead.created
           - lead.deleted
           - lead.updated
@@ -8804,9 +8816,10 @@ definitions:
   internal_handler.WebhookEndpointCreateRequest:
     properties:
       event_types:
-        description: 'Event types to subscribe to: 1 to 9 of lead.created, lead.updated,
+        description: 'Event types to subscribe to: 1 to 12 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
-          ticket.updated and ticket.deleted; duplicates collapse.'
+          ticket.updated, ticket.deleted, deal.created, deal.updated and deal.deleted;
+          duplicates collapse.'
         example:
         - lead.created
         - ticket.created
@@ -8821,6 +8834,9 @@ definitions:
           - ticket.created
           - ticket.updated
           - ticket.deleted
+          - deal.created
+          - deal.updated
+          - deal.deleted
           type: string
         type: array
       is_active:
@@ -8841,9 +8857,9 @@ definitions:
   internal_handler.WebhookEndpointUpdateRequest:
     properties:
       event_types:
-        description: 'New subscribed subset: 1 to 9 of lead.created, lead.updated,
+        description: 'New subscribed subset: 1 to 12 of lead.created, lead.updated,
           lead.deleted, customer.created, customer.updated, customer.deleted, ticket.created,
-          ticket.updated and ticket.deleted.'
+          ticket.updated, ticket.deleted, deal.created, deal.updated and deal.deleted.'
         example:
         - lead.created
         items:
@@ -8857,6 +8873,9 @@ definitions:
           - ticket.created
           - ticket.updated
           - ticket.deleted
+          - deal.created
+          - deal.updated
+          - deal.deleted
           type: string
         type: array
       is_active:
@@ -16454,7 +16473,7 @@ paths:
         Create a deal. Roles: admin and sales.
         Validation, in order: binding (title required, stage from its set, amount_cents 0 to 10^12, currency three upper-case letters, probability 0 to 100, owner_id at least 1); title 200, lost_reason 255 and source 100 characters and notes 65535 bytes; expected_close_date YYYY-MM-DD; then the service (blank title after trimming) and the links: owner_id, company_id, customer_id and lead_id must name live rows, and lead_id a lead the caller may see (a hidden lead is reported like a missing one).
         Defaults and stage rules: stage qualification; currency from the deals.default_currency setting (EUR as shipped; an unusable setting falls back to EUR); probability from the stage (qualification 10, proposal 40, negotiation 70), won always 100 and lost always 0; closed_at set when the stage is won or lost; lost_reason kept only when lost. owner_id defaults to the caller; a sales user may only name itself.
-        Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage) and the deal_created automation event.
+        Side effects, in one transaction: the first stage-history row (from_stage null, to_stage the initial stage), the deal_created automation event and a deal.created webhook event (one delivery per active endpoint subscribed to it).
         The response is the deal re-read with owner, company, customer and lead loaded; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
       parameters:
       - description: The deal to create
@@ -16549,7 +16568,9 @@ paths:
         deleted row. They are overwritten (title [redacted], notes and lost_reason
         empty) only when the linked customer or lead is erased through DELETE /customers/{id},
         /leads/{id} or /users/{id}, which reaches deleted deals too. No automation
-        event is recorded.'
+        event is recorded. A deal.deleted webhook event (one delivery per active endpoint
+        subscribed to it, including endpoints that never received an event for the
+        deal) is written in the same transaction as the soft delete.'
       parameters:
       - description: Deal ID
         in: path
@@ -16731,7 +16752,7 @@ paths:
         Replace a deal's fields. Roles: admin (any deal) and sales (only the deals it owns).
         The body is the new state of title, amount_cents (absent means 0), expected_close_date, lost_reason, source and notes: a field left out is stored empty, 0 or cleared. stage, currency, owner_id absent keep the stored value. company_id, customer_id and lead_id absent keep the stored link, 0 clears it, another id sets it (a live row, else 400 INVALID_REFERENCE). Links are checked only when they change, so a deal keeps links to erased records and stays editable; a lead_id that is sent is always checked, even when unchanged, and must name a lead the caller may see; a stored lead link the caller may not see is kept unchecked when lead_id is absent. owner_id: a sales user may only send its own id; an admin any live user (checked only when it changes).
         A stage different from the stored one follows the rules of POST /deals/{id}/stage (probability defaults to the new stage's unless sent, won 100, lost 0, closed_at set or cleared, lost_reason kept only on lost) and writes a stage-history row. The same stage writes no history row: closed_at stays, probability changes only when sent (still pinned for won and lost), and lost_reason survives only on a lost deal.
-        Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes.
+        Side effects, in one transaction: the deal_updated automation event, plus deal_stage_changed and the history row when the stage changes. When the update changed at least one stored value of the deal (a stage change always does), a deal.updated webhook event (one delivery per active endpoint subscribed to it) is written in the same transaction; an update that sends only the stored values writes none.
         The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
       parameters:
       - description: Deal ID
@@ -17074,7 +17095,7 @@ paths:
       - application/json
       description: |-
         Move a deal to a stage. Roles: admin (any deal) and sales (only the deals it owns). probability defaults to the new stage's (qualification 10, proposal 40, negotiation 70) unless sent; won is always 100 and lost always 0. Entering won or lost sets closed_at to now (also on won to lost); entering an open stage clears it. lost_reason is stored (trimmed) when the new stage is lost, absent keeping the reason already stored, and cleared otherwise. Asking for the stage the deal is already in is a 200 that writes nothing (no history row, no event) and ignores probability and lost_reason.
-        Side effects, in one transaction: one stage-history row and the deal_stage_changed automation event (no deal_updated event).
+        Side effects, in one transaction: one stage-history row, the deal_stage_changed automation event (no deal_updated automation event) and a deal.updated webhook event (one delivery per active endpoint subscribed to it). The same stage again writes no webhook event either.
         The response is the deal re-read with its associations; lead_id and lead appear only when the caller may see the linked lead (admins every lead, sales users the leads they own), decided on every read.
       parameters:
       - description: Deal ID
@@ -26523,6 +26544,9 @@ paths:
         - ticket.created
         - ticket.updated
         - ticket.deleted
+        - deal.created
+        - deal.updated
+        - deal.deleted
         in: query
         name: event_type
         type: string
@@ -26806,7 +26830,7 @@ paths:
       - application/json
       description: |-
         Registers an outbound webhook endpoint and generates its signing secret (whsec_ followed by the base64 of 32 random bytes). The secret is returned once, in this response: it is stored encrypted and no other route shows it; only POST /webhooks/endpoints/{id}/rotate-secret replaces it and returns the new one, once.
-        From then on every lead, customer or ticket created (through the API, a lead conversion or a form) and every lead, customer or ticket changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, the lead and ticket bulk status endpoints or the automation assign-owner step on a lead or ticket (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
+        From then on every lead, customer, ticket or deal created (through the API, a lead conversion or a form) and every lead, customer, ticket or deal changed by PUT /leads/{id}, POST /leads/{id}/assign, POST /leads/{id}/convert (lead.updated next to customer.created), PUT /customers/{id}, PUT /tickets/{id}, PUT /deals/{id}, POST /deals/{id}/stage, the lead and ticket bulk status endpoints or the automation assign-owner step on a lead, ticket or deal (only when a stored value actually changed) enqueues one delivery per active endpoint subscribed to its event type, in the writing transaction. A ticket deleted by DELETE /tickets/{id}, a deal deleted by DELETE /deals/{id}, and every lead or customer erased (DELETE /leads/{id}, DELETE /customers/{id}, DELETE /users/{id} and their cascades), enqueues the deleted event for every active endpoint subscribed to it, whether or not that endpoint received an earlier event for the record. Deliveries are POSTed after the commit with a thin JSON body {id, type, occurred_at, record_id} and the Standard Webhooks headers webhook-id, webhook-timestamp and webhook-signature (v1, HMAC-SHA256 over id.timestamp.body). A non-2xx answer, a redirect (never followed), a timeout (10 s) or a refused destination is retried with exponential backoff (1 minute doubling, at most 6 hours) up to 10 attempts.
         The URL must be https without credentials, query string or fragment, at most 2048 characters; an IP-literal host must be public, and a host name that resolves to a private, loopback, link-local or metadata address is refused at every delivery (destination_refused).
         Roles: admin.
       parameters:
@@ -27376,9 +27400,10 @@ tags:
 - description: Embeddable lead-capture forms and their submissions (staff side).
   name: forms
 - description: 'Outbound webhooks (admin): endpoint registry with signing secrets,
-    and the delivery log of the created, updated and deleted events of leads, customers
-    and tickets (lead.created, lead.updated, lead.deleted, customer.created, customer.updated,
-    customer.deleted, ticket.created, ticket.updated, ticket.deleted).'
+    and the delivery log of the created, updated and deleted events of leads, customers,
+    tickets and deals (lead.created, lead.updated, lead.deleted, customer.created,
+    customer.updated, customer.deleted, ticket.created, ticket.updated, ticket.deleted,
+    deal.created, deal.updated, deal.deleted).'
   name: webhooks
 - description: 'Unauthenticated endpoints reached by visitors of the sites a form
     is embedded on: definition, submission, embed script, view page and double opt-in

@@ -63,6 +63,8 @@ func TestWebhookEndpointPauseSQLiteUpgrade(t *testing.T) {
 	}
 	before := readRaw()
 	require.NotZero(t, before.ID)
+	_, preColumns := webhookColumns(t, "webhook_endpoints")
+	require.Equal(t, "varchar(255)", strings.ToLower(preColumns["event_types"].Type), "the fixture predates #515")
 
 	require.NoError(t, MigrateDatabase())
 
@@ -75,7 +77,9 @@ func TestWebhookEndpointPauseSQLiteUpgrade(t *testing.T) {
 	assert.Equal(t, 0, columns["paused_until"].NotNull, "paused_until is nullable")
 	assert.Nil(t, columns["paused_until"].Dflt, "paused_until has no default")
 
+	assert.Equal(t, "varchar(512)", strings.ToLower(columns["event_types"].Type), "the table rebuild widened event_types (#515)")
 	assert.Equal(t, before, readRaw(), "every existing column is byte-identical")
+	assert.Equal(t, "lead.created,ticket.created", readRaw().EventTypes, "the stored event_types survives the rebuild")
 	var healthy int64
 	require.NoError(t, DB.Raw(`SELECT COUNT(*) FROM webhook_endpoints WHERE id = ? AND consecutive_failures = 0
 		AND paused_until IS NULL`, before.ID).Scan(&healthy).Error)

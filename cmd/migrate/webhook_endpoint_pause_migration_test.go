@@ -132,10 +132,10 @@ func TestWebhookEndpointPauseMigration(t *testing.T) {
 	// as MigrateDatabase builds it on top of that head (want).
 	reference := openMigrationTestDB(t, baseDSN, "wep_ref")
 	require.NoError(t, reference.m.Migrate(webhookEndpointPausePreviousVersion))
-	before := snapshotTable(t, reference, webhookEndpointsTable)
+	before := snapshotEndpointsBeforeWidening(t, reference)
 	require.Empty(t, ownedColumns(before, webhookEndpointPauseColumns), "the previous head has no pause columns")
 	runMigrateDatabase(t, reference.dsn)
-	want := snapshotTable(t, reference, webhookEndpointsTable)
+	want := snapshotEndpointsBeforeWidening(t, reference)
 	require.Len(t, want.Columns, len(before.Columns)+2)
 	assert.Equal(t, before, withoutColumns(want, webhookEndpointPauseColumns), "the migration owns only the two columns")
 	owned := ownedColumns(want, webhookEndpointPauseColumns)
@@ -153,14 +153,14 @@ func TestWebhookEndpointPauseMigration(t *testing.T) {
 	t.Run("Fresh", func(t *testing.T) {
 		tdb := openMigrationTestDB(t, baseDSN, "wep_fresh")
 		require.NoError(t, tdb.m.Migrate(webhookEndpointPauseVersion), "the up applies on an empty database")
-		assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "a fresh SQL schema carries what MigrateDatabase builds")
+		assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb), "a fresh SQL schema carries what MigrateDatabase builds")
 		id := insertPauseEndpointRow(t, tdb, "https://example.com/fresh")
 		assertPauseEndpointRowKept(t, tdb, id, "https://example.com/fresh")
 
 		require.NoError(t, tdb.m.Steps(-1))
-		assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable), "rollback removes the two columns only")
+		assert.Equal(t, before, snapshotEndpointsBeforeWidening(t, tdb), "rollback removes the two columns only")
 		require.NoError(t, tdb.m.Migrate(webhookEndpointPauseVersion))
-		assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+		assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb))
 		require.ErrorIs(t, tdb.m.Migrate(webhookEndpointPauseVersion), migrate.ErrNoChange)
 
 		require.NoError(t, tdb.m.Down())
@@ -178,7 +178,7 @@ func TestWebhookEndpointPauseMigration(t *testing.T) {
 			if autoMigrateFirst {
 				// A new binary started before the operator migrated.
 				runMigrateDatabase(t, tdb.dsn)
-				assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+				assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb))
 			}
 
 			require.NoError(t, tdb.m.Migrate(webhookEndpointPauseVersion), "the migration must apply (autoMigrateFirst=%t)", autoMigrateFirst)
@@ -186,11 +186,11 @@ func TestWebhookEndpointPauseMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(webhookEndpointPauseVersion), version)
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "the SQL migration and MigrateDatabase produce the same table")
+			assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb), "the SQL migration and MigrateDatabase produce the same table")
 			assertPauseEndpointRowKept(t, tdb, id, url)
 
 			runMigrateDatabase(t, tdb.dsn)
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable), "MigrateDatabase does not change the table")
+			assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb), "MigrateDatabase does not change the table")
 			require.ErrorIs(t, tdb.m.Migrate(webhookEndpointPauseVersion), migrate.ErrNoChange)
 
 			// Rollback keeps the row and removes only what #569 added.
@@ -199,14 +199,14 @@ func TestWebhookEndpointPauseMigration(t *testing.T) {
 			require.NoError(t, err)
 			assert.False(t, dirty)
 			assert.Equal(t, uint(webhookEndpointPausePreviousVersion), version)
-			assert.Equal(t, before, snapshotTable(t, tdb, webhookEndpointsTable), "rollback removes the two columns only")
+			assert.Equal(t, before, snapshotEndpointsBeforeWidening(t, tdb), "rollback removes the two columns only")
 			var count int
 			require.NoError(t, tdb.sql.QueryRow("SELECT COUNT(*) FROM webhook_endpoints WHERE id = ? AND secret_sealed = 'enc:v1:kept-sealed'", id).Scan(&count))
 			assert.Equal(t, 1, count, "rollback keeps the endpoint row")
 
 			// And it applies again from there.
 			require.NoError(t, tdb.m.Migrate(webhookEndpointPauseVersion), "reapply")
-			assert.Equal(t, want, snapshotTable(t, tdb, webhookEndpointsTable))
+			assert.Equal(t, want, snapshotEndpointsBeforeWidening(t, tdb))
 			assertPauseEndpointRowKept(t, tdb, id, url)
 			require.ErrorIs(t, tdb.m.Migrate(webhookEndpointPauseVersion), migrate.ErrNoChange)
 		})

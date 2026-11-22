@@ -2,6 +2,7 @@ package models
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/florinel-chis/gophercrm/internal/config"
@@ -52,6 +53,8 @@ func TestWebhookSecretRotationSQLiteUpgrade(t *testing.T) {
 	}
 	before := readRaw()
 	require.NotZero(t, before.ID)
+	_, preColumns := webhookColumns(t, "webhook_endpoints")
+	require.Equal(t, "varchar(255)", strings.ToLower(preColumns["event_types"].Type), "the fixture predates #515")
 
 	require.NoError(t, MigrateDatabase())
 
@@ -63,7 +66,9 @@ func TestWebhookSecretRotationSQLiteUpgrade(t *testing.T) {
 		assert.Nil(t, columns[column].Dflt, "%s has no default", column)
 	}
 
+	assert.Equal(t, "varchar(512)", strings.ToLower(columns["event_types"].Type), "the table rebuild widened event_types (#515)")
 	assert.Equal(t, before, readRaw(), "url, event_types, secret_sealed and is_active are byte-identical")
+	assert.Equal(t, "lead.created,ticket.created", readRaw().EventTypes, "the stored event_types survives the rebuild")
 	var nulls int64
 	require.NoError(t, DB.Raw(`SELECT COUNT(*) FROM webhook_endpoints WHERE id = ? AND previous_secret_sealed IS NULL
 		AND previous_secret_expires_at IS NULL`, before.ID).Scan(&nulls).Error)

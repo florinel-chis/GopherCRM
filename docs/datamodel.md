@@ -1260,7 +1260,7 @@ pruned 30 days after their last change.
 | id | uint | Yes | auto | primary key | |
 | created_at, updated_at | datetime | No | | `datetime(3)` | GORM timestamps |
 | url | string | Yes | | `varchar(2048)` | https, no userinfo, query or fragment; never logged |
-| event_types | string | Yes | | `varchar(255)` | canonical comma-separated sorted subset of `customer.created`, `customer.deleted`, `customer.updated`, `lead.created`, `lead.deleted`, `lead.updated`, `ticket.created`, `ticket.deleted`, `ticket.updated` (all nine are 134 bytes); JSON array |
+| event_types | string | Yes | | `varchar(512)` (widened from `varchar(255)` by `20261129120007_widen_webhook_event_types`, #515) | canonical comma-separated sorted subset of `customer.created`, `customer.deleted`, `customer.updated`, `deal.created`, `deal.deleted`, `deal.updated`, `lead.created`, `lead.deleted`, `lead.updated`, `ticket.created`, `ticket.deleted`, `ticket.updated` (all 12 are 173 bytes); JSON array |
 | secret_sealed | string | Yes | | `varchar(255)` | `utils.SecretBox` (context `webhook-endpoint-secret`) of `whsec_` + base64(32 bytes); `json:"-"` |
 | is_active | bool | Yes | none | `tinyint(1)` | no column default (GORM would replace an explicit false); the service writes true when omitted |
 | previous_secret_sealed | string | No | NULL | `varchar(255)` | the sealed secret the last rotation replaced (#503), same box and context; `json:"-"` |
@@ -1276,8 +1276,8 @@ pruned 30 days after their last change.
 | created_at, updated_at | datetime | No | | `datetime(3)`; `idx_webhook_deliveries_updated_at` | `updated_at` is the prune cutoff |
 | endpoint_id | uint | Yes | | `idx_webhook_deliveries_endpoint_event` (unique, with `event_id`) | |
 | event_id | string | Yes | | `varchar(64)` | `evt_` + 32 hex, shared by every endpoint's row of one event |
-| event_type | string | Yes | | `varchar(32)` | `lead.created`, `lead.updated`, `lead.deleted`, `customer.created`, `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted` (the longest, `customer.deleted`, is 16 characters) |
-| record_id | uint | Yes | | | id of the created, updated or deleted lead, customer or ticket |
+| event_type | string | Yes | | `varchar(32)` | `lead.created`, `lead.updated`, `lead.deleted`, `customer.created`, `customer.updated`, `customer.deleted`, `ticket.created`, `ticket.updated`, `ticket.deleted`, `deal.created`, `deal.updated`, `deal.deleted` (the longest, `customer.deleted`, is 16 characters) |
+| record_id | uint | Yes | | | id of the created, updated or deleted lead, customer, ticket or deal |
 | occurred_at | datetime | Yes | | `datetime(3)`, UTC | time of the enqueue in the creating, updating or deleting transaction |
 | status | string | Yes | `pending` | `varchar(20)`; `idx_webhook_deliveries_status_next (status, next_attempt_at)` | `pending`, `sending`, `succeeded`, `failed` |
 | attempts | int | Yes | 0 | | at most 10 |

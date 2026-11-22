@@ -3,9 +3,11 @@ package service
 import (
 	"testing"
 
+	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/florinel-chis/gophercrm/internal/webhook"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The webhook options keep the contract their comments state when an argument
@@ -52,5 +54,20 @@ func TestWebhookOptionsNilArguments(t *testing.T) {
 
 		s = NewTicketService(nil, nil, nil, WithTicketWebhooks(emitter, tm)).(*ticketService)
 		assert.True(t, s.ticketWritesInTx())
+	})
+
+	t.Run("the deal service holds Nop by default and with a nil emitter, else the emitter", func(t *testing.T) {
+		s := NewDealService(nil, nil, nil, nil, nil, nil, tm).(*dealService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		s = NewDealService(nil, nil, nil, nil, nil, nil, tm, WithDealWebhooks(nil)).(*dealService)
+		assert.Equal(t, webhook.Nop, s.webhooks)
+		assert.False(t, s.webhooksWired())
+		// webhook.NewEmitter(nil) is Nop itself; a repository makes a real one.
+		live := webhook.NewEmitter(repository.NewWebhookRepository(nil))
+		require.NotEqual(t, webhook.Nop, live)
+		s = NewDealService(nil, nil, nil, nil, nil, nil, tm, WithDealWebhooks(live)).(*dealService)
+		assert.Equal(t, live, s.webhooks)
+		assert.True(t, s.webhooksWired())
 	})
 }

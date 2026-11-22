@@ -311,4 +311,33 @@ func TestWebhookAPISQLite(t *testing.T) {
 	var left int64
 	require.NoError(t, db.Model(&models.WebhookDelivery{}).Count(&left).Error)
 	assert.Zero(t, left)
+
+	t.Run("the twelve event types, deals included (#515)", func(t *testing.T) {
+		unsorted := []string{"ticket.deleted", "deal.updated", "lead.created", "customer.updated", "deal.created", "ticket.created",
+			"lead.deleted", "customer.created", "deal.deleted", "ticket.updated", "lead.updated", "customer.deleted"}
+		sorted := []interface{}{"customer.created", "customer.deleted", "customer.updated", "deal.created", "deal.deleted", "deal.updated",
+			"lead.created", "lead.deleted", "lead.updated", "ticket.created", "ticket.deleted", "ticket.updated"}
+		status, envelope, raw := do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
+			"url": "https://example.com:" + port + "/all", "event_types": unsorted})
+		require.Equal(t, http.StatusCreated, status, raw)
+		data := envelope.Data.(map[string]interface{})
+		assert.Equal(t, sorted, data["event_types"])
+		id := uint(data["id"].(float64))
+
+		status, envelope, raw = do("admin", http.MethodGet, fmt.Sprintf("/webhooks/endpoints/%d", id), nil)
+		require.Equal(t, http.StatusOK, status, raw)
+		assert.Equal(t, sorted, envelope.Data.(map[string]interface{})["event_types"])
+
+		status, _, raw = do("admin", http.MethodGet, "/webhooks/deliveries?event_type=deal.deleted", nil)
+		assert.Equal(t, http.StatusOK, status, raw)
+
+		status, envelope, raw = do("admin", http.MethodPost, "/webhooks/endpoints", map[string]interface{}{
+			"url": "https://example.com:" + port + "/archived", "event_types": []string{"deal.archived"}})
+		require.Equal(t, http.StatusBadRequest, status, raw)
+		require.NotNil(t, envelope.Error)
+		assert.Equal(t, utils.ErrCodeValidation, envelope.Error.Code)
+		details, ok := envelope.Error.Details.(map[string]interface{})
+		require.True(t, ok, raw)
+		assert.Contains(t, details, "event_types", raw)
+	})
 }

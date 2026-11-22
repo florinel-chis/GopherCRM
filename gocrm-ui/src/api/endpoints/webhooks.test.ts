@@ -65,11 +65,14 @@ describe('webhook lists against the API specification', () => {
     expect([...WEBHOOK_EVENT_TYPES].sort()).toEqual([...documented].sort());
   });
 
-  it('WEBHOOK_EVENT_TYPES lists the nine event types, sorted', () => {
+  it('WEBHOOK_EVENT_TYPES lists the twelve event types, sorted', () => {
     expect([...WEBHOOK_EVENT_TYPES]).toEqual([
       'customer.created',
       'customer.deleted',
       'customer.updated',
+      'deal.created',
+      'deal.deleted',
+      'deal.updated',
       'lead.created',
       'lead.deleted',
       'lead.updated',

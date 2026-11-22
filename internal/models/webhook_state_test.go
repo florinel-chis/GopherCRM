@@ -33,6 +33,15 @@ func TestWebhookStateNullableIDs(t *testing.T) {
 			if got := ticketA.WebhookState() == ticketB.WebhookState(); got != tc.equal {
 				t.Errorf("ticket states equal = %v, want %v", got, tc.equal)
 			}
+			for _, pair := range [][2]*Deal{
+				{{CompanyID: tc.a}, {CompanyID: tc.b}},
+				{{CustomerID: tc.a}, {CustomerID: tc.b}},
+				{{LeadID: tc.a}, {LeadID: tc.b}},
+			} {
+				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
+					t.Errorf("deal states equal = %v, want %v", got, tc.equal)
+				}
+			}
 		})
 	}
 }
@@ -60,6 +69,15 @@ func TestWebhookStateTicketDueAt(t *testing.T) {
 			a, b := &Ticket{DueAt: tc.a}, &Ticket{DueAt: tc.b}
 			if got := a.WebhookState() == b.WebhookState(); got != tc.equal {
 				t.Errorf("ticket states equal = %v, want %v", got, tc.equal)
+			}
+			// The deal's two nullable instants follow the same rule.
+			for _, pair := range [][2]*Deal{
+				{{ExpectedCloseDate: tc.a}, {ExpectedCloseDate: tc.b}},
+				{{ClosedAt: tc.a}, {ClosedAt: tc.b}},
+			} {
+				if got := pair[0].WebhookState() == pair[1].WebhookState(); got != tc.equal {
+					t.Errorf("deal states equal = %v, want %v", got, tc.equal)
+				}
 			}
 		})
 	}

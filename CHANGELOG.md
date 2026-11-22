@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Deal webhook events (#515).** Deals join the webhook catalogue with three thin events:
+  `deal.created` (`POST /deals`), `deal.updated` (`PUT /deals/{id}` when a stored value changed,
+  `POST /deals/{id}/stage` to another stage, and the automation assign-owner step when it changes
+  the owner) and `deal.deleted` (`DELETE /deals/{id}`). Each is written in the transaction of the
+  deal write, one pending delivery per active endpoint subscribed to it; an update compares the
+  deal row read under lock in that transaction with the row written. Like the other deleted
+  events, `deal.deleted` goes to every active endpoint subscribed to it, including one that never
+  received an event for the deal. A company delete that unlinks deals and the erasure scrub of
+  deal text send no `deal.updated`. An endpoint can now subscribe to twelve event types, which
+  take 173 bytes, so `webhook_endpoints.event_types` widens from `varchar(255)` to `varchar(512)`
+  (migration `20261129120007_widen_webhook_event_types`; SQLite widens it at startup). Its down
+  migration refuses, under any `sql_mode`, while an endpoint's `event_types` is longer than 255
+  bytes, and truncates nothing: shorten those subscriptions first. Settings > Webhooks offers the
+  three deal events.
 - **Single sign-on with a client certificate (#633).** Settings > Single sign-on accepts a client
   certificate and its RSA private key (PEM, at least 2048 bits, PKCS#8 or PKCS#1, unencrypted) next
   to the client secret, stored encrypted in the new reserved settings

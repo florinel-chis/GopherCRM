@@ -128,17 +128,17 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	env := newWebhookEnv(t, db, nil)
 	env.wire(env.repo)
 	ctx := context.Background()
-	nine := webhook.AllEventTypes()
-	require.Len(t, nine, 9)
+	allTypes := webhook.AllEventTypes()
+	require.Len(t, allTypes, 12)
 	announcing := append(append([]string{}, webhookCreatedTypes...), webhookUpdatedTypes...)
 	// a: everything. b: the deleted types only, so it never receives a
 	// created or updated event, yet receives every deleted event. c: not
 	// subscribed to a deleted type. d: inactive (its earlier rows are written
 	// directly); it is the check that the outbox still filters on is_active.
-	a := env.endpoint("https://example.com/a", true, nine...)
+	a := env.endpoint("https://example.com/a", true, allTypes...)
 	b := env.endpoint("https://example.com/b", true, webhookDeletedTypes...)
 	c := env.endpoint("https://example.com/c", true, announcing...)
-	d := env.endpoint("https://example.com/d", false, nine...)
+	d := env.endpoint("https://example.com/d", false, allTypes...)
 	admin := models.PermissionScopeAll
 
 	t.Run("lead erasure", func(t *testing.T) {

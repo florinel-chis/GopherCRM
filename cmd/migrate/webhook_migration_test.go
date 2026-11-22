@@ -112,6 +112,9 @@ func snapshotWebhookTables(t *testing.T, tdb *migrationTestDB) map[string]tableS
 	for _, table := range webhookMigrationTables {
 		out[table] = snapshotTable(t, tdb, table)
 	}
+	// The width of event_types belongs to 20261129120007 (#515) and is
+	// compared by TestWebhookEventTypesWidthMigration.
+	out[webhookEndpointsTable] = withEventTypesBeforeWidening(out[webhookEndpointsTable])
 	return out
 }
 

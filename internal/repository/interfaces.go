@@ -351,6 +351,17 @@ type TaskLockingReader interface {
 	GetByIDForUpdate(id uint) (*models.Task, error)
 }
 
+// DealLockingReader is the locking read of a deal write (#515): dealService
+// Update and ChangeStage, when webhooks are wired, read the deal through it
+// inside their transaction and compare its WebhookState with the one they
+// write. The production dealRepository implements it (FOR UPDATE on
+// MySQL/MariaDB, a plain read on SQLite); it is kept apart from DealRepository
+// so the mocks need no change. A soft-deleted or missing deal is
+// gorm.ErrRecordNotFound.
+type DealLockingReader interface {
+	GetByIDForUpdate(id uint) (*models.Deal, error)
+}
+
 // TicketMailDeliveryOutcome is what FinishPending writes on a pending ticket
 // comment mail delivery (#219).
 type TicketMailDeliveryOutcome struct {

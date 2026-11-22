@@ -18,6 +18,7 @@ const (
 	Lead     Entity = "lead"
 	Customer Entity = "customer"
 	Ticket   Entity = "ticket"
+	Deal     Entity = "deal"
 )
 
 // Action is what happened to a record. Its value is the suffix of the event
@@ -68,10 +69,10 @@ func NewCatalogue(entities ...Entity) Catalogue {
 }
 
 // defaultCatalogue is the only registration of the shipped entities.
-var defaultCatalogue = NewCatalogue(Lead, Customer, Ticket)
+var defaultCatalogue = NewCatalogue(Lead, Customer, Ticket, Deal)
 
-// Default returns the catalogue of the shipped entities: lead, customer and
-// ticket.
+// Default returns the catalogue of the shipped entities: lead, customer,
+// ticket and deal, in that registration order.
 func Default() Catalogue { return defaultCatalogue }
 
 // Registers reports whether e is registered.

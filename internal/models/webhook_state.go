@@ -145,3 +145,43 @@ func (t *Ticket) WebhookState() TicketWebhookState {
 		DueAt:        webhookTime(t.DueAt),
 	}
 }
+
+// DealWebhookState is the state deal.updated compares (#515): the columns
+// dealRepository.Update (Save) writes, which include the one the automation
+// SetDealOwner writes. ExpectedCloseDate and ClosedAt compare as instants.
+type DealWebhookState struct {
+	Title             string
+	Stage             DealStage
+	AmountCents       int64
+	Currency          string
+	Probability       int
+	ExpectedCloseDate WebhookTime
+	ClosedAt          WebhookTime
+	LostReason        string
+	Source            string
+	Notes             string
+	CompanyID         uint
+	CustomerID        uint
+	LeadID            uint
+	OwnerID           uint
+}
+
+// WebhookState returns the deal's state for the deal.updated event.
+func (d *Deal) WebhookState() DealWebhookState {
+	return DealWebhookState{
+		Title:             d.Title,
+		Stage:             d.Stage,
+		AmountCents:       d.AmountCents,
+		Currency:          d.Currency,
+		Probability:       d.Probability,
+		ExpectedCloseDate: webhookTime(d.ExpectedCloseDate),
+		ClosedAt:          webhookTime(d.ClosedAt),
+		LostReason:        d.LostReason,
+		Source:            d.Source,
+		Notes:             d.Notes,
+		CompanyID:         webhookID(d.CompanyID),
+		CustomerID:        webhookID(d.CustomerID),
+		LeadID:            webhookID(d.LeadID),
+		OwnerID:           d.OwnerID,
+	}
+}
