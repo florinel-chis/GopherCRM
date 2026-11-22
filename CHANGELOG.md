@@ -1783,6 +1783,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The validation planner now treats the AEO service files split out of `aeo_service.go` in #651
+  (`aeo_profile.go`, `aeo_prompts.go`, `aeo_prompt_generation.go`, `aeo_runs.go`,
+  `aeo_reports.go`, `aeo_normalize.go` under `internal/service/`) as AEO paths, so an AEO-only
+  change to them selects the bounded `aeo` validation profile again instead of `contextual`, or
+  `full` when mixed with other AEO files (#665).
 - The Microsoft Entra ID provisioning guidance now gives Entra ID's default `externalId` source as
   `mailNickname` (docs only, #628). The how-to
   (`docs/user-guide/permissions-access/how-to-microsoft-entra-id.md`) gains a SCIM provisioning

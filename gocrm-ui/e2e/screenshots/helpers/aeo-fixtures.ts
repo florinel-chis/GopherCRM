@@ -23,7 +23,7 @@ import type {
  * Only the answers are invented (deterministically, so re-running the suite
  * gives the same images apart from dates, which are relative to the capture
  * day). Every figure the pages show is aggregated from those answers with the
- * backend's own rules (internal/service/aeo_service.go), so the dashboard,
+ * backend's own rules (internal/service/aeo_reports.go), so the dashboard,
  * prompt list, drawer and citations page agree with each other:
  *   - rates are percentages in 0..100 with one decimal;
  *   - visibility = answers mentioning a company / answers;
@@ -204,7 +204,7 @@ function competitorBlurb(name: string): string {
   }
 }
 
-// --- aggregations (mirroring internal/service/aeo_service.go) ------------------
+// --- aggregations (mirroring internal/service/aeo_reports.go) ------------------
 
 const inWindow = (days: number) => history.filter((h) => h.age < days).map((h) => h.answer);
 const companies = [BRAND, ...COMPETITORS.map((c) => c.name)];
