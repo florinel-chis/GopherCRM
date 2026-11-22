@@ -24,6 +24,11 @@ import { customersApi, type CustomerFilters } from '@/api/endpoints';
 import type { Customer } from '@/types';
 import { formatDate } from '@/utils/date';
 
+// The row's identity, shared by its overflow-menu label and the accessible
+// names of its view, edit and delete buttons.
+const customerLabel = (customer: Customer): string =>
+  customer.company_name || customer.contact_name;
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -108,7 +113,7 @@ export const Component: React.FC = () => {
   // menu closes over its own row.
   const renderRowActions = (customer: Customer) => (
     <RowActionsMenu
-      label={`More actions for ${customer.company_name || customer.contact_name}`}
+      label={`More actions for ${customerLabel(customer)}`}
       actions={
         canCreateTicket
           ? [
@@ -204,6 +209,7 @@ export const Component: React.FC = () => {
         }
         onDelete={(customer) => setDeleteDialog({ open: true, customer })}
         rowActions={renderRowActions}
+        getRowLabel={customerLabel}
       />
 
       <ConfirmDialog

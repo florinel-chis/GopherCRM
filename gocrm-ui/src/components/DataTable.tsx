@@ -80,6 +80,12 @@ export interface DataTableProps<T> {
    * it never reach onRowClick.
    */
   rowActions?: (row: T) => React.ReactNode;
+  /**
+   * The row's identity for the accessible names of its view, edit and delete
+   * buttons ("Edit Acme Ltd"). Without it, or when it returns a blank string,
+   * the buttons are named "View", "Edit" and "Delete".
+   */
+  getRowLabel?: (row: T) => string;
 }
 
 type Order = 'asc' | 'desc';
@@ -259,7 +265,12 @@ export function DataTable<T extends { id?: string | number }>({
   title,
   actions,
   rowActions,
+  getRowLabel,
 }: DataTableProps<T>) {
+  const actionName = (verb: 'View' | 'Edit' | 'Delete', row: T): string => {
+    const label = getRowLabel?.(row)?.trim();
+    return label ? `${verb} ${label}` : verb;
+  };
   const [internalOrder, setInternalOrder] = useState<Order>('asc');
   const [internalOrderBy, setInternalOrderBy] = useState<string>('');
   const [internalSelected, setInternalSelected] = useState<(string | number)[]>(selected);
@@ -421,6 +432,7 @@ export function DataTable<T extends { id?: string | number }>({
                         {onRowClick && (
                           <IconButton
                             size="small"
+                            aria-label={actionName('View', row)}
                             onClick={(e) => {
                               e.stopPropagation();
                               onRowClick(row);
@@ -432,6 +444,7 @@ export function DataTable<T extends { id?: string | number }>({
                         {onEdit && (
                           <IconButton
                             size="small"
+                            aria-label={actionName('Edit', row)}
                             onClick={(e) => {
                               e.stopPropagation();
                               onEdit(row);
@@ -443,6 +456,7 @@ export function DataTable<T extends { id?: string | number }>({
                         {onDelete && (
                           <IconButton
                             size="small"
+                            aria-label={actionName('Delete', row)}
                             onClick={(e) => {
                               e.stopPropagation();
                               onDelete(row);

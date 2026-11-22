@@ -277,7 +277,9 @@ type in a spec fails that check without running a browser.
 - Keep selectors in `pages/`, assertions in `tests/`. A spec that reaches for a raw CSS selector is a
   sign a page object is missing a method.
 - Selector style: `input[name="..."]` for fields, `button[type="submit"]` for form submission,
-  `[data-testid="EditIcon"]` for row actions, `[role="dialog"]` for confirmation modals.
+  `row.getByRole('button', { name: /^Edit\b/ })` (and `View`, `Delete`) for table row actions,
+  `[role="dialog"]` for confirmation modals. The tickets, deals and labels page objects still
+  find row actions by their MUI icon test ids.
 - Generate entity data with the faker helpers in `fixtures/admin-user.ts`
   (`generateLeadData`, `generateCustomerData`, `generateTicketData`, `generateTaskData`,
   `generateUserData`). They embed a timestamp and a random suffix in each email so parallel or

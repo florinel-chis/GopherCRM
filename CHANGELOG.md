@@ -1156,6 +1156,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Table row action buttons have names (#688).** The view, edit and delete buttons of a table row
+  are named View, Edit and Delete, followed by the record's name where the list shows it ("Edit
+  Acme Ltd"), so screen readers announce them and the browser tests find them by name.
+
 - **End-to-end code is type-checked in `make verify-frontend` (#621).** The new
   `gocrm-ui/tsconfig.e2e.json` covers `e2e/` (specs, page objects, helpers) and the three
   `playwright.config*.ts` files, and `make verify-frontend`, which the `frontend` CI job runs,

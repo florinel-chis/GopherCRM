@@ -56,6 +56,11 @@ const getRoleColor = (role: User['role']) => {
   }
 };
 
+// The row's identity, shared by its overflow-menu label and the accessible
+// names of its view, edit and delete buttons.
+const userLabel = (user: User): string =>
+  `${user.first_name} ${user.last_name}`.trim() || user.email;
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -185,7 +190,7 @@ export const Component: React.FC = () => {
   // account, so that item is disabled rather than offered.
   const renderRowActions = (user: User) => (
     <RowActionsMenu
-      label={`More actions for ${`${user.first_name} ${user.last_name}`.trim() || user.email}`}
+      label={`More actions for ${userLabel(user)}`}
       actions={[
         user.is_active
           ? {
@@ -326,6 +331,7 @@ export const Component: React.FC = () => {
         onEdit={canUpdate ? (user) => navigate(`/users/${user.id}/edit`) : undefined}
         onDelete={canDelete ? (user) => setDeleteDialog({ open: true, user }) : undefined}
         rowActions={canActivate ? renderRowActions : undefined}
+        getRowLabel={userLabel}
       />
 
       <ConfirmDialog

@@ -1,5 +1,8 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+/** The verbs that start the accessible names of DataTable's row buttons. */
+type RowActionVerb = 'View' | 'Edit' | 'Delete';
+
 export interface CompanyFormData {
   name: string;
   domain?: string;
@@ -221,24 +224,31 @@ export class CompaniesPage {
     return row;
   }
 
-  private async clickRowAction(row: Locator, iconTestId: string) {
-    const button = row.locator(`[data-testid="${iconTestId}"]`).first();
+  /**
+   * Clicks one of a row's view, edit or delete buttons, found by role and by
+   * the accessible name DataTable gives it ("Edit Acme Ltd") through a
+   * retrying expectation: the table can render before its rows paint, and a
+   * missing button must fail the test instead of sending the click elsewhere.
+   * There is no positional fallback; strict mode fails if a name matches twice.
+   */
+  private async clickRowAction(row: Locator, verb: RowActionVerb) {
+    const button = row.getByRole('button', { name: new RegExp(`^${verb}\\b`) });
     await expect(button).toBeVisible({ timeout: 10000 });
     await button.click();
   }
 
   async clickEditOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'EditIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'Edit');
     await this.page.waitForURL('**/companies/**/edit');
   }
 
   async clickViewOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'VisibilityIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'View');
     await this.page.waitForURL(/\/companies\/\d+$/);
   }
 
   async clickDeleteOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'DeleteIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'Delete');
   }
 
   /**

@@ -1,5 +1,8 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+/** The verbs that start the accessible names of DataTable's row buttons. */
+type RowActionVerb = 'View' | 'Edit' | 'Delete';
+
 export class CustomersPage {
   readonly page: Page;
 
@@ -147,28 +150,30 @@ export class CustomersPage {
   }
 
   /**
-   * Clicks one of a row's action icons.
+   * Clicks one of a row's view, edit or delete buttons, found by role and by
+   * the accessible name DataTable gives it ("Edit Acme Ltd").
    *
-   * The icon is addressed through a retrying expectation rather than a
+   * The button is addressed through a retrying expectation rather than a
    * one-shot `isVisible()` check: after a `goto()` the table can render before
    * the rows paint, and the non-retrying check used to fall through to a
-   * positional-button fallback that clicked the wrong control.
+   * positional-button fallback that clicked the wrong control. There is no
+   * such fallback; strict mode fails if a name ever matches two buttons.
    */
-  private async clickRowAction(row: Locator, iconTestId: string) {
-    const button = row.locator(`[data-testid="${iconTestId}"]`).first();
+  private async clickRowAction(row: Locator, verb: RowActionVerb) {
+    const button = row.getByRole('button', { name: new RegExp(`^${verb}\\b`) });
     await expect(button).toBeVisible({ timeout: 10000 });
     await button.click();
   }
 
   async clickEditOnRow(rowIndex: number = 0) {
-    // DataTable has icon buttons for view/edit/delete
-    await this.clickRowAction(this.tableRows.nth(rowIndex), 'EditIcon');
+    // Picks the row by position, then its Edit button by name.
+    await this.clickRowAction(this.tableRows.nth(rowIndex), 'Edit');
     await this.page.waitForURL('**/customers/**/edit');
   }
 
   /** Edits the customer carrying `uniqueText` (typically its email). */
   async clickEditOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'EditIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'Edit');
     await this.page.waitForURL('**/customers/**/edit');
   }
 
@@ -177,27 +182,27 @@ export class CustomersPage {
    *
    * Clicking the row itself is not reliable — the click lands on whichever cell
    * sits under the row centre (checkbox / action buttons), which swallows it —
-   * so the row's view (visibility) icon is used, the same mechanism the leads
+   * so the row's View button is used, the same mechanism the leads
    * and tasks page objects use.
    */
   async clickViewOnRow(rowIndex: number = 0) {
-    await this.clickRowAction(this.tableRows.nth(rowIndex), 'VisibilityIcon');
+    await this.clickRowAction(this.tableRows.nth(rowIndex), 'View');
     await this.page.waitForURL(/\/customers\/\d+$/);
   }
 
   /** Opens the detail view of the customer carrying `uniqueText`. */
   async clickViewOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'VisibilityIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'View');
     await this.page.waitForURL(/\/customers\/\d+$/);
   }
 
   async clickDeleteOnRow(rowIndex: number = 0) {
-    await this.clickRowAction(this.tableRows.nth(rowIndex), 'DeleteIcon');
+    await this.clickRowAction(this.tableRows.nth(rowIndex), 'Delete');
   }
 
   /** Opens the delete confirmation for the customer carrying `uniqueText`. */
   async clickDeleteOnRowMatching(uniqueText: string) {
-    await this.clickRowAction(await this.rowMatching(uniqueText), 'DeleteIcon');
+    await this.clickRowAction(await this.rowMatching(uniqueText), 'Delete');
   }
 
   /**

@@ -86,6 +86,10 @@ const getClassificationColor = (classification: string) => {
   }
 };
 
+// The row's identity, shared by its overflow-menu label and the accessible
+// names of its view, edit and delete buttons.
+const leadLabel = (lead: Lead): string => lead.company_name || lead.contact_name;
+
 export const Component: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -278,7 +282,7 @@ export const Component: React.FC = () => {
 
   const renderRowActions = (lead: Lead) => (
     <RowActionsMenu
-      label={`More actions for ${lead.company_name || lead.contact_name}`}
+      label={`More actions for ${leadLabel(lead)}`}
       actions={conversionActions(lead)}
     />
   );
@@ -465,6 +469,7 @@ export const Component: React.FC = () => {
         onEdit={(lead) => navigate(`/leads/${lead.id}/edit`)}
         onDelete={(lead) => setDeleteDialog({ open: true, lead })}
         rowActions={renderRowActions}
+        getRowLabel={leadLabel}
       />
 
       <ConfirmDialog

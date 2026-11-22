@@ -291,3 +291,88 @@ describe('DataTable rowActions', () => {
     expect(onEdit).toHaveBeenCalledWith(mockData[0]);
   });
 });
+
+describe('DataTable row action names', () => {
+  const rowOf = (name: string): HTMLElement => {
+    const row = screen.getByText(name).closest('tr');
+    if (!row) throw new Error(`no row for ${name}`);
+    return row;
+  };
+
+  it('names the view, edit and delete buttons with the bare verbs without getRowLabel', () => {
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        onRowClick={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    );
+    const row = within(rowOf('John Doe'));
+    expect(row.getByRole('button', { name: 'View' })).toHaveAccessibleName('View');
+    expect(row.getByRole('button', { name: 'Edit' })).toHaveAccessibleName('Edit');
+    expect(row.getByRole('button', { name: 'Delete' })).toHaveAccessibleName('Delete');
+  });
+
+  it('adds the row label to the button names with getRowLabel', () => {
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        onRowClick={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        getRowLabel={(r) => r.name}
+      />
+    );
+    const row = within(rowOf('John Doe'));
+    expect(row.getByRole('button', { name: 'View John Doe' })).toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Edit John Doe' })).toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Delete John Doe' })).toBeInTheDocument();
+    expect(row.queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(row.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+  });
+
+  it('falls back to the bare verbs when the label is blank', () => {
+    render(
+      <DataTable columns={columns} data={mockData} onEdit={vi.fn()} getRowLabel={() => '   '} />
+    );
+    const row = within(rowOf('John Doe'));
+    expect(row.getByRole('button', { name: 'Edit' })).toHaveAccessibleName('Edit');
+  });
+
+  it('calls each named button its own handler once with that row', () => {
+    const onRowClick = vi.fn();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <DataTable
+        columns={columns}
+        data={mockData}
+        onRowClick={onRowClick}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        getRowLabel={(r) => r.name}
+      />
+    );
+    const row = within(rowOf('Jane Smith'));
+
+    fireEvent.click(row.getByRole('button', { name: 'Edit Jane Smith' }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith(mockData[1]);
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    fireEvent.click(row.getByRole('button', { name: 'Delete Jane Smith' }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledWith(mockData[1]);
+    expect(onRowClick).not.toHaveBeenCalled();
+
+    fireEvent.click(row.getByRole('button', { name: 'View Jane Smith' }));
+    expect(onRowClick).toHaveBeenCalledTimes(1);
+    expect(onRowClick).toHaveBeenCalledWith(mockData[1]);
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+});
