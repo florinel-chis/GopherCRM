@@ -23,14 +23,13 @@ import {
   TextField,
   Alert,
   Tooltip,
-  InputAdornment,
 } from '@mui/material';
 import {
   Add as AddIcon,
-  ContentCopy as ContentCopyIcon,
   DeleteOutline as DeleteOutlineIcon,
 } from '@mui/icons-material';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { OneTimeSecretDialog } from '@/components/OneTimeSecretDialog';
 import { Loading } from '@/components/Loading';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import { apiKeysApi, type GeneratedAPIKey } from '@/api/endpoints/apikeys';
@@ -144,18 +143,6 @@ export const APIKeys: React.FC = () => {
   const closeGenerated = () => {
     setGenerated(null);
     queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-  };
-
-  const copyKey = async () => {
-    if (!generated) {
-      return;
-    }
-    try {
-      await navigator.clipboard?.writeText(generated.key);
-      showSuccess('API key copied to clipboard');
-    } catch {
-      showError('Could not copy the key. Select and copy it manually.');
-    }
   };
 
   const keys = data?.data ?? [];
@@ -309,43 +296,21 @@ export const APIKeys: React.FC = () => {
         </Box>
       </Dialog>
 
-      <Dialog
-        open={!!generated}
+      <OneTimeSecretDialog
+        title="Your new API key"
+        label="API key"
+        copyLabel="Copy API key"
+        copiedMessage="API key copied to clipboard"
+        testId="generated-api-key"
+        secret={generated?.key ?? null}
         onClose={closeGenerated}
-        fullWidth
-        maxWidth="sm"
-        aria-labelledby="generated-api-key-title"
-      >
-        <DialogTitle id="generated-api-key-title">Your new API key</DialogTitle>
-        <DialogContent>
-          <Alert severity="warning" sx={{ mb: 2 }}>
+        warning={
+          <>
             Copy this key now — it will never be shown again. Only a hash is stored, so a lost key
             can only be replaced, not recovered.
-          </Alert>
-          <TextField
-            label="API key"
-            value={generated?.key ?? ''}
-            fullWidth
-            autoComplete="off"
-            inputProps={{ readOnly: true, 'data-testid': 'generated-api-key' }}
-            InputProps={{
-              sx: { fontFamily: 'monospace' },
-              endAdornment: (
-                <InputAdornment position="end">
-                  <IconButton aria-label="Copy API key" onClick={copyKey} edge="end">
-                    <ContentCopyIcon />
-                  </IconButton>
-                </InputAdornment>
-              ),
-            }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closeGenerated} variant="contained">
-            Done
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={!!revokeTarget}

@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import userEvent from '@testing-library/user-event';
-import { render, screen, waitFor, within, requireElement } from '@/test/test-utils';
+import { render, screen, waitFor, within, requireElement, fireEvent } from '@/test/test-utils';
 import { Component as APIKeys } from './APIKeys';
 import { apiKeysApi } from '@/api/endpoints/apikeys';
 import type { APIKey } from '@/types';
@@ -65,6 +65,26 @@ describe('APIKeys', () => {
     vi.clearAllMocks();
     vi.mocked(apiKeysApi.getAPIKeys).mockResolvedValue(listing([activeKey, revokedKey]));
   });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Creates a key through the form and waits for the reveal dialog. */
+  const revealNewKey = async (user: ReturnType<typeof userEvent.setup>) => {
+    vi.mocked(apiKeysApi.createAPIKey).mockResolvedValue({
+      ...activeKey,
+      id: 3,
+      name: 'Zapier sync',
+      key: 'gcrm_plaintext_key_value',
+    });
+    render(<APIKeys />);
+    await screen.findByText('CI pipeline');
+    await user.click(screen.getByRole('button', { name: /create api key/i }));
+    await user.type(await screen.findByLabelText(/^name/i), 'Zapier sync');
+    await user.click(screen.getByRole('button', { name: /^create$/i }));
+    return screen.findByTestId('generated-api-key');
+  };
 
   it('lists the caller own keys with status and dates', async () => {
     render(<APIKeys />);
@@ -147,6 +167,44 @@ describe('APIKeys', () => {
       expect(screen.queryByTestId('generated-api-key')).not.toBeInTheDocument();
     });
     expect(await screen.findByText('Zapier sync')).toBeInTheDocument();
+  });
+
+  it('keeps the new key on screen through Escape and a click outside, until Done', async () => {
+    const user = userEvent.setup();
+    const revealed = await revealNewKey(user);
+    expect(revealed).toHaveValue('gcrm_plaintext_key_value');
+
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Your new API key' }), {
+      key: 'Escape',
+      code: 'Escape',
+    });
+    const backdrop = requireElement(document.querySelector('.MuiBackdrop-root'));
+    fireEvent.mouseDown(backdrop);
+    fireEvent.click(backdrop);
+
+    // Give a closing transition the chance to run before asserting it did not.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByTestId('generated-api-key')).toHaveValue('gcrm_plaintext_key_value');
+
+    await user.click(screen.getByRole('button', { name: /done/i }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('generated-api-key')).not.toBeInTheDocument();
+    });
+  });
+
+  it('reports a failed copy when the browser has no clipboard', async () => {
+    const user = userEvent.setup();
+    await revealNewKey(user);
+    vi.stubGlobal('navigator', { ...navigator, clipboard: undefined });
+
+    await user.click(screen.getByRole('button', { name: 'Copy API key' }));
+
+    await waitFor(() => {
+      expect(showError).toHaveBeenCalledWith(
+        'Could not copy to the clipboard. Select and copy it manually.',
+      );
+    });
+    expect(showSuccess).not.toHaveBeenCalledWith('API key copied to clipboard');
   });
 
   it('sends the chosen expiry as an end-of-day RFC3339 timestamp', async () => {

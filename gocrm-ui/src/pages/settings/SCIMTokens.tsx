@@ -30,7 +30,7 @@ import { useSnackbar } from '@/hooks/useSnackbar';
 import { scimTokensApi, type SCIMToken } from '@/api/endpoints/scimTokens';
 import { formatDate } from '@/utils/date';
 import { apiErrorMessage } from '@/utils/apiError';
-import { SCIMTokenSecretDialog } from './SCIMTokenSecretDialog';
+import { OneTimeSecretDialog } from '@/components/OneTimeSecretDialog';
 
 const SCIM_TOKENS_KEY = ['scim-tokens'] as const;
 
@@ -231,7 +231,21 @@ export const SCIMTokens: React.FC = () => {
         </Box>
       </Dialog>
 
-      <SCIMTokenSecretDialog token={createdToken} onClose={closeCreated} />
+      <OneTimeSecretDialog
+        title="Your new SCIM token"
+        label="SCIM token"
+        copyLabel="Copy SCIM token"
+        copiedMessage="SCIM token copied to clipboard"
+        testId="scim-token-value"
+        secret={createdToken}
+        onClose={closeCreated}
+        warning={
+          <>
+            Copy this token now. It is shown only once and cannot be retrieved again: only a hash
+            is stored. If it is lost, revoke it and create a new one.
+          </>
+        }
+      />
 
       <ConfirmDialog
         open={!!revokeTarget}
