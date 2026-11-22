@@ -570,12 +570,12 @@ issued only to a live, active owner.
   The lock falls on the `users` row only: `UserRepository.GetByID` reads the owner's custom role
   and its permissions without a lock, on the same transaction.
   A missing, erased (soft-deleted) or inactive locked row writes nothing. With
-  `WithAuthIdentities` (`internal/service/auth_service.go`; `cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
+  `WithAuthIdentities` (`internal/service/auth_sso_policy.go`; `cmd/main.go` passes `repository.NewUserIdentityRepository`; a nil
   repository skips the check) a plain `UserIdentityRepository.WithTx(tx).ExistsForUser` read then
   refuses an account with a linked OpenID Connect identity the same way (#444, `error_code`
   `sso_account`), and the confirm refuses such an account's token with `ErrInvalidResetToken`
   too. Both run that read only while `security.sso.allow_password` is off (#457): the policy,
-  `WithAuthSSOPasswordPolicy` (`internal/service/auth_service.go`; `cmd/main.go` passes the SSO
+  `WithAuthSSOPasswordPolicy` (`internal/service/auth_sso_policy.go`; `cmd/main.go` passes the SSO
   settings service; nil means off), is
   read once before the transaction begins, never inside it, because the SQLite pool holds one
   connection. With the setting on the read is skipped and a linked account is treated like a
@@ -2376,8 +2376,9 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   discovered through `git ls-files`, so a new doc is covered the moment it is tracked (pass file
   names as arguments to check only those; a file named explicitly is checked in full). The one
   exempt doc is `docs/CONCURRENCY.md`, listed in the script's `EXEMPT_FILES` with the test that
-  pins it: `internal/config/concurrency_doc_test.go` pins every `internal/service/auth_service.go`
-  citation there to its enclosing function and a text fragment of the cited line (#581), and
+  pins it: `internal/config/concurrency_doc_test.go` pins every citation of the auth
+  service files there (`internal/service/auth_service.go` and the per-flow files split from it, #639) to its file,
+  its enclosing function and a text fragment of the cited line (#581), and
   checks citations of other files only to lie inside their file. Every other doc goes through all three rules. Every backticked
   repository path must be a tracked file or directory, judged by `git ls-files` only, so an
   untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must

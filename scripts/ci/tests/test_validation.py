@@ -131,6 +131,16 @@ class ValidationSelectionTests(unittest.TestCase):
         self.assertEqual(plan(paths, full=True)['profile'], 'full')
         self.assertEqual(plan(['scripts/ci/check-auth.py'])['profile'], 'auth')
 
+    def test_each_auth_service_file_selects_the_auth_profile(self):
+        # #639: the auth service is split into one file per flow; a change to
+        # any one of them alone selects auth, as auth_service.go did.
+        for name in ('service', 'sso_policy', 'login', 'tokens', 'apikey', 'refresh', 'logout',
+                     'password_change', 'password_reset'):
+            path = f'internal/service/auth_{name}.go'
+            with self.subTest(path=path):
+                self.assertTrue((ROOT / path).is_file(), path)
+                self.assertEqual(plan([path])['profile'], 'auth')
+
     def test_api_docs_gate_runs_in_every_profile_and_sources_decide_api_coverage(self):
         gate = ('make', 'verify-api-docs')
         for profile in ('runner', 'auth', 'auth-persistence', 'transaction', 'migration', 'aeo', 'mailer'):

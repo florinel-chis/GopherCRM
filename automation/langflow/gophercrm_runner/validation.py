@@ -72,7 +72,11 @@ MIGRATION_WORKFLOW_FILES = {
     'scripts/release/tests/test_release.py', 'scripts/release/tests/test_sql_coverage.py',
 }
 AUTH_FILES = {
-    'internal/service/auth_service.go', 'internal/handler/auth_handler.go',
+    'internal/service/auth_service.go', 'internal/service/auth_sso_policy.go',
+    'internal/service/auth_login.go', 'internal/service/auth_tokens.go',
+    'internal/service/auth_apikey.go', 'internal/service/auth_refresh.go',
+    'internal/service/auth_logout.go', 'internal/service/auth_password_change.go',
+    'internal/service/auth_password_reset.go', 'internal/handler/auth_handler.go',
     'internal/handler/auth_registration.go', 'scripts/ci/check-auth.py',
 }
 AUTH_TEST = re.compile(r'(?:internal/(?:service|handler)/auth[a-z0-9_]*_test|tests/auth[a-z0-9_]*_test)\.go$')

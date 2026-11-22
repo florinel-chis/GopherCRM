@@ -97,7 +97,9 @@ or an explicit full/release plan. Documentation review still checks the changed 
 Maintainers should explicitly choose full validation for high-risk semantic changes even
 when their paths are mapped; the selector does not infer security impact from issue prose.
 
-The bounded `auth` profile covers `auth_service.go`, `auth_handler.go`,
+The bounded `auth` profile covers `auth_service.go` and the files split from it
+(`auth_sso_policy.go`, `auth_login.go`, `auth_tokens.go`, `auth_apikey.go`, `auth_refresh.go`,
+`auth_logout.go`, `auth_password_change.go`, `auth_password_reset.go`), `auth_handler.go`,
 `auth_registration.go`, auth test files in their service/handler packages and `tests/`,
 and the auth-check script itself. Docs and runner changes may accompany them; any other
 application path retains the full fallback unless it qualifies for the separate
@@ -108,7 +110,7 @@ vet for the selected Go packages, then uncached race tests selected from auth/se
 service logging-privacy, middleware, token-repository, password, HTTP integration and
 `test/integration/erasure_test.go` files. The logging-privacy and erasure tests cover login
 log redaction and API-key rejection for erased or deactivated owners; both exercise
-`auth_service.go` directly. Test roots are discovered from those files, so newly added auth regressions are
+the auth service directly (the login code in `auth_login.go`, the API-key validation in `auth_apikey.go`). Test roots are discovered from those files, so newly added auth regressions are
 included. Every root must report an exact pass; missing, duplicate or skipped roots and
 skipped descendants fail. The file patterns are explicit: a new test location must be added
 to the check policy. Retained password-reset and rotation sources include SQL regressions,

@@ -365,7 +365,7 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
->   `authService.sessionTokenSecret` (`internal/service/auth_service.go`)) and the UI silently trades them for new access
+>   `authService.sessionTokenSecret` (`internal/service/auth_tokens.go`)) and the UI silently trades them for new access
 >   tokens signed with the new secret (the 401 handling in `setupInterceptors` and `refreshFor`, `gocrm-ui/src/api/client.ts`). To end every session,
 >   rotate `API_KEY_SECRET` as well, with the consequences above. Per user, logout, a password
 >   change, a password reset and a deactivation revoke that user's refresh tokens and end the access
@@ -404,7 +404,7 @@ effect were retired in #224; startup deletes them (`models.RetiredConfigurationK
   created without `assigned_to_id` is assigned to its creator
   (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)).
 - `security.session_timeout_hours` — the access-token lifetime comes from `JWT_EXPIRY_HOURS` (default 24, `Load` (`internal/config/config.go`), used in
-  `authService.GenerateJWT` (`internal/service/auth_service.go`)) and the refresh-token lifetime from
+  `authService.GenerateJWT` (`internal/service/auth_tokens.go`)) and the refresh-token lifetime from
   `REFRESH_TOKEN_EXPIRY_DAYS` (default 30, `Load`). `JWT_ACCESS_TOKEN_MINUTES` is read
   (`Load`) but used by nothing.
 
