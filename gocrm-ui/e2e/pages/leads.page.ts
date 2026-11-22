@@ -60,20 +60,25 @@ export class LeadsPage {
     return this.page.locator('button:has-text("Cancel")');
   }
 
-  // Helper method for Material-UI Select components
+  /**
+   * Picks an option of one of the form's selects. The select is opened by its
+   * accessible name (MUI names the combobox by its label followed by the
+   * current value, so the label is matched as a substring), the option is
+   * picked from the open listbox, and the listbox closing is the completion signal.
+   */
   async selectMuiOption(fieldName: string, value: string) {
-    // Click on the select trigger to open dropdown
-    const selectField = this.page.locator(`[name="${fieldName}"]`).locator('..');
-    await selectField.click();
-
-    // Wait for dropdown to open and select the option
-    await this.page.waitForTimeout(500);
-    const option = this.page.locator(`li[data-value="${value}"]`);
-    await option.click();
-
-    // Wait for dropdown to close
-    await this.page.waitForTimeout(300);
+    const label = LeadsPage.selectLabels[fieldName] ?? fieldName;
+    await this.page.getByRole('combobox', { name: label }).click();
+    const listbox = this.page.getByRole('listbox');
+    await listbox.locator(`li[data-value="${value}"]`).click();
+    await expect(listbox).toBeHidden();
   }
+
+  /** The labels LeadForm gives its selects, keyed by field name. */
+  private static readonly selectLabels: Record<string, string> = {
+    source: 'Lead Source',
+    status: 'Status',
+  };
 
   // Actions
   async goto() {
@@ -219,19 +224,9 @@ export class LeadsPage {
     await this.page.waitForLoadState('networkidle');
   }
 
+  /** Types the search term; callers assert the narrowed rows with retrying expectations. */
   async searchLeads(searchTerm: string) {
     await this.searchInput.fill(searchTerm);
-    await this.page.waitForTimeout(500);
-  }
-
-  async filterByStatus(status: string) {
-    // MUI Select filter on list page
-    const filterSelect = this.page.locator('[role="combobox"]').first();
-    await filterSelect.click();
-    await this.page.waitForTimeout(500);
-    const option = this.page.locator(`li[data-value="${status}"]`);
-    await option.click();
-    await this.page.waitForTimeout(500);
   }
 
   async getLeadCount(): Promise<number> {
@@ -240,26 +235,6 @@ export class LeadsPage {
       return await this.tableRows.count();
     } catch {
       return 0;
-    }
-  }
-
-  async getErrorMessage(): Promise<string | null> {
-    const alert = this.page.locator('.MuiAlert-message');
-    try {
-      await alert.waitFor({ state: 'visible', timeout: 5000 });
-      return await alert.textContent();
-    } catch {
-      return null;
-    }
-  }
-
-  async getSuccessMessage(): Promise<string | null> {
-    const alert = this.page.locator('.MuiAlert-message');
-    try {
-      await alert.waitFor({ state: 'visible', timeout: 5000 });
-      return await alert.textContent();
-    } catch {
-      return null;
     }
   }
 }

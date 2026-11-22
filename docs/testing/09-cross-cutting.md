@@ -646,7 +646,7 @@ into a sign-out test.
   header shows the MUI sort arrow and the visually hidden "sorted ascending"/"sorted descending"
   text.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/leads-sorting-search.spec.ts` "should
-  sort by Created column descending" and "should toggle sort order on double click" cover leads
+  sort by Created column ascending on the first click" and "should toggle sort order on double click" cover leads
   only; G21 asks for the other columns.
 
 ### TC-XCUT-038 — Task status and priority dropdowns filter server-side
@@ -883,8 +883,10 @@ into a sign-out test.
 - **Preconditions:** Logged in as the seeded admin.
 - **Steps:** For `/leads/new`, `/customers/new`, `/tasks/new` and `/users/new`, click **Save** with
   every field empty.
-- **Expected:** Each form shows its zod/react-hook-form field errors, no POST is issued, and the URL
-  still ends in `/new`.
+- **Expected:** The browser's own check stops the first submit (the required inputs carry
+  `required`). With that check switched off, each form shows its zod/react-hook-form field errors
+  ("Company name is required" on leads and customers, "Title is required" on tasks, "First name is
+  required" on users). In both cases no POST is issued and the URL still ends in `/new`.
 - **Automation:** automated — `gocrm-ui/e2e/tests/admin-entity-suite.spec.ts` "admin can handle error
   scenarios gracefully"
 
@@ -903,5 +905,6 @@ into a sign-out test.
   fixture every RBAC case in this file depends on; it belongs in a shared helper rather than in each
   spec.
 - **Automation:** automated (partial) — `gocrm-ui/e2e/tests/admin-entity-suite.spec.ts` "admin can
-  manage user roles and access control" creates the three accounts but never logs in as them. The
+  create a user for each role" asserts each 201 with the requested role and the role in the list
+  row, but never logs in as the accounts. The
   login half is planned for `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new).

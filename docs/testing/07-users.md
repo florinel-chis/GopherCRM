@@ -338,8 +338,9 @@ Expected field still describes it and a **Known issue** line records the defect.
 - **Steps:**
   1. Open `/users/new`.
   2. Click "Create User" without typing anything.
-- **Expected:** The zod resolver blocks the submit: no network request is made, the URL stays
-  `/users/new`, and the Email, Password, First Name and Last Name fields show inline errors
+- **Expected:** The browser's own check stops the submit first (the required inputs carry
+  `required`); with that check switched off, the zod resolver blocks it: no network request is
+  made, the URL stays `/users/new`, and the Email, Password, First Name and Last Name fields show inline errors
   ("Invalid email address", "Password must be at least 8 characters", "First name is required",
   "Last name is required"). The Role select defaults to "Sales" and therefore never errors; its
   options are the roles of `GET /roles` (#381), and the form is shown once they have loaded.

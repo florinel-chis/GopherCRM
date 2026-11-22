@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
+import { apiResponse, LOADED } from '../helpers/api';
+import { recordCreates, submitEmptyForm } from '../helpers/forms';
 import { CustomersPage } from '../pages/customers.page';
 import { generateCustomerData } from '../fixtures/admin-user';
 
@@ -37,7 +39,10 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.goto();
     await customersPage.clickNewCustomer();
     await customersPage.fillCustomerForm(data);
-    await customersPage.saveAndWaitForResponse();
+    const created = await customersPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
+    const customerId = (await created.json())?.data?.id;
+    expect(typeof customerId).toBe('number');
 
     // Go back and edit THE customer just created. Editing row 0 instead picked
     // whichever customer sorted first, and saving it failed whenever its stored
@@ -48,10 +53,15 @@ test.describe('Admin - Customers Management', () => {
     // Update company name
     await customersPage.companyNameInput.clear();
     await customersPage.companyNameInput.fill('Updated Company Inc.');
+    const updatePromise = apiResponse(page, new RegExp(`/customers/${customerId}$`), 'PUT');
     await customersPage.saveButton.click();
+    expect((await updatePromise).status()).toBe(200);
+    await page.waitForURL(/\/customers(?!.*edit)/, LOADED);
 
-    // Verify we navigated away from the edit page
-    await page.waitForURL(/\/customers(?!.*edit)/, { timeout: 10000 });
+    // The saved company name is what the list shows for this customer.
+    await customersPage.goto();
+    const ownRow = await customersPage.rowMatching(data.email);
+    await expect(ownRow).toContainText('Updated Company Inc.', LOADED);
   });
 
   test('admin can view customer details', async ({ page }) => {
@@ -64,6 +74,8 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.goto();
     await customersPage.clickViewOnRowMatching(data.email);
     expect(page.url()).toMatch(/\/customers\/\d+$/);
+    await expect(page.getByRole('heading', { name: data.companyName, exact: true })).toBeVisible(LOADED);
+    await expect(page.getByRole('link', { name: data.email })).toBeVisible();
   });
 
   test('admin can delete a customer', async () => {
@@ -94,21 +106,45 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.goto();
     await customersPage.clickNewCustomer();
     await customersPage.fillCustomerForm(data);
-    await customersPage.saveAndWaitForResponse();
+    const created = await customersPage.saveAndWaitForResponse();
+    expect(created.status()).toBe(201);
 
     await customersPage.goto();
+    const searched = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname.endsWith('/customers') &&
+        new URL(response.url()).searchParams.get('search') === data.companyName,
+    );
     await customersPage.searchCustomers(data.companyName);
-    await page.waitForTimeout(1000);
+    const response = await searched;
+    expect(response.status()).toBe(200);
+    // The server narrowed the list to this one customer, so the single row
+    // below is the search result and not the unfiltered first page.
+    expect((await response.json()).data.customers).toHaveLength(1);
+
+    await expect(customersPage.tableRows).toHaveCount(1, LOADED);
+    await expect(customersPage.tableRows.first()).toContainText(data.companyName);
   });
 
   test('admin sees validation errors for invalid customer data', async ({ page }) => {
     await customersPage.goto();
     await customersPage.clickNewCustomer();
+    const creates = recordCreates(page, '/customers');
 
     // Try to save without required fields
-    await customersPage.saveButton.click();
+    await submitEmptyForm(page, customersPage.companyNameInput, customersPage.saveButton);
 
-    // Should stay on form page
+    for (const message of [
+      'Company name is required',
+      'Contact name is required',
+      'Invalid email address',
+      'Phone number is required',
+    ]) {
+      await expect(page.getByText(message, { exact: true })).toBeVisible();
+    }
+    // The form refused to submit: nothing reached the API.
+    expect(creates).toHaveLength(0);
     expect(page.url()).toContain('/customers/new');
   });
 
@@ -204,19 +240,19 @@ test.describe('Admin - Customers Management', () => {
     await customersPage.goto();
     await customersPage.clickNewCustomer();
     await customersPage.fillCustomerForm(data);
-    await customersPage.saveAndWaitForResponse();
+    const first = await customersPage.saveAndWaitForResponse();
+    expect(first.status()).toBe(201);
 
     // Try same email
     await customersPage.goto();
     await customersPage.clickNewCustomer();
     const dupData = { ...generateCustomerData(), email: data.email };
     await customersPage.fillCustomerForm(dupData);
-    await customersPage.saveButton.click();
+    const duplicate = await customersPage.saveAndWaitForResponse();
+    expect(duplicate.status()).toBe(409);
 
-    // Should show error or stay on form
-    await page.waitForTimeout(2000);
-    const url = page.url();
-    const error = await customersPage.getErrorMessage();
-    expect(url.includes('/new') || (error && error.toLowerCase().includes('email'))).toBeTruthy();
+    // The form shows the server's message and stays open.
+    await expect(customersPage.alertWithText('customer with this email already exists')).toBeVisible(LOADED);
+    await expect(page).toHaveURL(/\/customers\/new$/);
   });
 });

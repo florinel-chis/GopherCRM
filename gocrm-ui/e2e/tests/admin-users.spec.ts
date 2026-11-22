@@ -5,6 +5,8 @@ import { UsersPage } from '../pages/users.page';
 import { generateUserData } from '../fixtures/admin-user';
 import { LoginPage } from '../pages/login.page';
 import { API_BASE_URL, UI_BASE_URL } from '../helpers/env';
+import { LOADED } from '../helpers/api';
+import { recordCreates, submitEmptyForm } from '../helpers/forms';
 
 test.describe('Admin - Users Management', () => {
   let adminAuth: AdminAuthHelper;
@@ -148,11 +150,21 @@ test.describe('Admin - Users Management', () => {
   test('admin sees validation errors for invalid user data', async ({ page }) => {
     await usersPage.goto();
     await usersPage.clickNewUser();
+    const creates = recordCreates(page, '/users');
 
     // Try to save without required fields
-    await usersPage.saveButton.click();
+    await submitEmptyForm(page, usersPage.emailInput, usersPage.saveButton);
 
-    // Should stay on form page
+    for (const message of [
+      'Invalid email address',
+      'Password must be at least 8 characters',
+      'First name is required',
+      'Last name is required',
+    ]) {
+      await expect(page.getByText(message, { exact: true })).toBeVisible();
+    }
+    // The form refused to submit: nothing reached the API.
+    expect(creates).toHaveLength(0);
     expect(page.url()).toContain('/users/new');
   });
 
@@ -161,6 +173,7 @@ test.describe('Admin - Users Management', () => {
 
     await usersPage.goto();
     await usersPage.clickNewUser();
+    const creates = recordCreates(page, '/users');
 
     await usersPage.fillUserForm({
       ...userData,
@@ -169,7 +182,8 @@ test.describe('Admin - Users Management', () => {
 
     await usersPage.saveButton.click();
 
-    // Should stay on form page
+    await expect(page.getByText("Passwords don't match", { exact: true })).toBeVisible();
+    expect(creates).toHaveLength(0);
     expect(page.url()).toContain('/users/new');
   });
 
@@ -225,7 +239,8 @@ test.describe('Admin - Users Management', () => {
       ...userData,
       confirmPassword: userData.password
     });
-    await usersPage.saveAndWaitForResponse();
+    const first = await usersPage.saveAndWaitForResponse();
+    expect(first.status()).toBe(201);
 
     // Try to create second user with same email
     await usersPage.goto();
@@ -240,13 +255,14 @@ test.describe('Admin - Users Management', () => {
       ...duplicateUserData,
       confirmPassword: duplicateUserData.password
     });
-    await usersPage.saveButton.click();
+    const duplicate = await usersPage.saveAndWaitForResponse();
+    expect(duplicate.status()).toBe(409);
 
-    // Should show error or stay on form
-    await page.waitForTimeout(2000);
-    const url = page.url();
-    const error = await usersPage.getErrorMessage();
-    expect(url.includes('/new') || (error && error.toLowerCase().includes('email'))).toBeTruthy();
+    // The form shows the server's message and stays open.
+    await expect(
+      page.getByRole('alert').filter({ hasText: 'user with this email already exists' })
+    ).toBeVisible(LOADED);
+    await expect(page).toHaveURL(/\/users\/new$/);
   });
 
   test('admin can manage user permissions through roles', async ({ page }) => {

@@ -85,6 +85,15 @@ export class RegisterPage {
     return await responsePromise;
   }
 
+  /**
+   * The helper text under a field (MUI gives it the id `<field id>-helper-text`).
+   * Holds the field's validation message while it has one; use it with
+   * retrying expectations.
+   */
+  fieldError(fieldName: string): Locator {
+    return this.page.locator(`#${fieldName}-helper-text`);
+  }
+
   async getErrorMessage(fieldName: string): Promise<string | null> {
     const field = this.page.locator(`input[name="${fieldName}"]`);
     const errorElement = field.locator('xpath=../..').locator('.MuiFormHelperText-root.Mui-error');

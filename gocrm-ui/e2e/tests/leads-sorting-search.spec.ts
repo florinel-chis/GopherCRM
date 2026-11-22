@@ -3,6 +3,7 @@ import { AdminAuthHelper } from '../helpers/admin-auth';
 import { LeadsPage } from '../pages/leads.page';
 import { testAdminCredentials } from '../fixtures/admin-user';
 import { API_BASE_URL } from '../helpers/env';
+import { LOADED } from '../helpers/api';
 
 
 // The search assertions below look for this exact lead, so the suite provisions
@@ -112,18 +113,19 @@ test.describe('Leads List - Sorting and Search', () => {
     await expect(leadsPage.pageTitle).toBeVisible();
     await expect(leadsPage.leadsTable).toBeVisible();
 
-    const rowCount = await leadsPage.tableRows.count();
-    expect(rowCount).toBeGreaterThan(0);
+    // A rendered lead, not a loading placeholder: skeleton rows carry no email.
+    await expect(leadsPage.tableRows.filter({ hasText: '@' }).first()).toBeVisible(LOADED);
   });
 
-  test('should sort by Created column descending', async ({ page }) => {
+  test('should sort by Created column ascending on the first click', async ({ page }) => {
     const leadsPage = new LeadsPage(page);
     await leadsPage.goto();
 
     await expect(leadsPage.leadsTable).toBeVisible();
     await leadsPage.tableRows.first().waitFor({ state: 'visible' });
 
-    const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
+    const createdHeaderCell = page.locator('th').filter({ hasText: 'Created' }).first();
+    const createdHeader = createdHeaderCell.locator('span[role="button"]').first();
     await expect(createdHeader).toBeVisible();
 
     const responsePromise = page.waitForResponse(
@@ -132,14 +134,14 @@ test.describe('Leads List - Sorting and Search', () => {
     await createdHeader.click();
     const response = await responsePromise;
 
-    const requestUrl = response.request().url();
-    expect(requestUrl).toContain('sort_by=created_at');
+    const params = new URL(response.request().url()).searchParams;
+    expect(params.get('sort_by')).toBe('created_at');
+    expect(params.get('sort_order')).toBe('asc');
+    expect(response.request().url()).toContain('sort_order=asc');
     expect(response.status()).toBe(200);
 
-    await page.waitForLoadState('networkidle');
-
-    const rowCount = await leadsPage.tableRows.count();
-    expect(rowCount).toBeGreaterThan(0);
+    await expect(createdHeaderCell).toHaveAttribute('aria-sort', 'ascending', LOADED);
+    await expect(leadsPage.tableRows.filter({ hasText: '@' }).first()).toBeVisible();
   });
 
   test('should toggle sort order on double click', async ({ page }) => {
@@ -188,14 +190,10 @@ test.describe('Leads List - Sorting and Search', () => {
     const response = await responsePromise;
     expect(response.status()).toBe(200);
 
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
-
-    const rowCount = await leadsPage.tableRows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(1);
-
-    const tableText = await leadsPage.leadsTable.textContent();
-    expect(tableText).toContain('anders.t@conversio.dk');
+    // A row with the term renders, and every rendered row carries it.
+    await expect(leadsPage.tableRows.filter({ hasText: 'anders.t@conversio.dk' }).first()).toBeVisible(LOADED);
+    await expect(leadsPage.tableRows.filter({ hasNotText: 'anders.t@conversio.dk' })).toHaveCount(0);
+    expect(await leadsPage.tableRows.count()).toBeGreaterThanOrEqual(1);
   });
 
   test('should search for a lead by company name', async ({ page }) => {
@@ -216,14 +214,10 @@ test.describe('Leads List - Sorting and Search', () => {
     const response = await responsePromise;
     expect(response.status()).toBe(200);
 
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
-
-    const rowCount = await leadsPage.tableRows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(1);
-
-    const tableText = await leadsPage.leadsTable.textContent();
-    expect(tableText).toContain('Conversio');
+    // A row with the term renders, and every rendered row carries it.
+    await expect(leadsPage.tableRows.filter({ hasText: 'Conversio' }).first()).toBeVisible(LOADED);
+    await expect(leadsPage.tableRows.filter({ hasNotText: 'Conversio' })).toHaveCount(0);
+    expect(await leadsPage.tableRows.count()).toBeGreaterThanOrEqual(1);
   });
 
   test('should search and sort together', async ({ page }) => {
@@ -239,9 +233,8 @@ test.describe('Leads List - Sorting and Search', () => {
                   response.request().method() === 'GET'
     );
     await leadsPage.searchInput.fill('conversio');
-    await responsePromise;
-
-    await page.waitForLoadState('networkidle');
+    expect((await responsePromise).status()).toBe(200);
+    await expect(leadsPage.tableRows.filter({ hasText: 'Conversio' }).first()).toBeVisible(LOADED);
 
     const createdHeader = page.locator('th').filter({ hasText: 'Created' }).locator('span').first();
 
@@ -297,11 +290,12 @@ test.describe('Leads List - Sorting and Search', () => {
     const response = await responsePromise;
 
     expect(response.status()).toBe(200);
+    // The server found nothing.
+    expect((await response.json()).data.leads ?? []).toHaveLength(0);
 
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
-
-    const rowCount = await leadsPage.tableRows.count();
-    expect(rowCount).toBe(0);
+    // The table is mounted and shows no rows: a loading page has no table, and
+    // a loading table shows skeleton rows, so neither state satisfies both.
+    await expect(leadsPage.leadsTable).toBeVisible(LOADED);
+    await expect(leadsPage.tableRows).toHaveCount(0);
   });
 });

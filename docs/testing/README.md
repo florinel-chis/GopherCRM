@@ -210,7 +210,7 @@ fail in ways that look like application bugs.
    (`/dashboard/stats` is guarded now). Every claim in these documents was traced to code, and new
    cases should be grounded the same way.
 11. **Per-test budgets need headroom over honest runtimes.** The admin-entity-suite workflow tests
-   (CRM workflow, bulk operations, cross-entity search) legitimately run 60–110 s end to end, and
+   (CRM workflow, batch creation, cross-entity search) legitimately run 60–110 s end to end, and
    `playwright.config.slow.ts` capped tests at 60 s — so three of them failed on infrastructure,
    which reads exactly like an application regression until the timings are measured. The budget
    is now 180 s. When a previously green long test starts "failing", check whether it hit the
