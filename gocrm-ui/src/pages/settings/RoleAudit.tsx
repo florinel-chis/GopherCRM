@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React from 'react';
 import {
   Alert,
   Box,
@@ -14,6 +13,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Loading } from '@/components/Loading';
+import { usePagedList } from '@/hooks/usePagedList';
 import { roleAuditApi, type RoleAuditAction, type RoleAuditMethod } from '@/api/endpoints';
 import { formatDate } from '@/utils/date';
 import { getAPIError } from '@/utils/apiError';
@@ -49,29 +49,22 @@ const DASH = '—';
  * first). Read-only; the rows hold ids and role names only.
  */
 export const RoleAudit: React.FC = () => {
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
-
-  const params = { offset: page * rowsPerPage, limit: rowsPerPage };
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['role-audit', params],
-    queryFn: () => roleAuditApi.list(params),
+  const {
+    rows,
+    total,
+    isLoading,
+    isError,
+    error,
+    displayPage,
+    rowsPerPage,
+    onPageChange,
+    onRowsPerPageChange,
+  } = usePagedList({
+    queryKey: (params) => ['role-audit', params],
+    queryFn: (params) => roleAuditApi.list(params),
     // A log is read for what happened just now.
     staleTime: 0,
   });
-
-  const rows = data?.rows ?? [];
-  const total = data?.total ?? 0;
-  const lastPage = Math.max(0, Math.ceil(total / rowsPerPage) - 1);
-  // An empty page past the end of a log that still has rows: move back to
-  // the last page that exists.
-  const pastLastPage = rows.length === 0 && total > 0 && page > lastPage;
-
-  useEffect(() => {
-    if (pastLastPage) {
-      setPage(lastPage);
-    }
-  }, [pastLastPage, lastPage]);
 
   return (
     <Box>
@@ -135,13 +128,10 @@ export const RoleAudit: React.FC = () => {
               component="div"
               rowsPerPageOptions={[10, 20, 50, 100]}
               count={total}
-              page={Math.min(page, lastPage)}
+              page={displayPage}
               rowsPerPage={rowsPerPage}
-              onPageChange={(_event, next) => setPage(next)}
-              onRowsPerPageChange={(event) => {
-                setRowsPerPage(Number(event.target.value));
-                setPage(0);
-              }}
+              onPageChange={onPageChange}
+              onRowsPerPageChange={onRowsPerPageChange}
             />
           </>
         )}

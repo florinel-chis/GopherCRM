@@ -8,9 +8,9 @@ import { Box, Paper, Typography, Button, Stack, Divider, Alert } from '@mui/mate
 import { Save as SaveIcon, Cancel as CancelIcon } from '@mui/icons-material';
 import { FormTextField, FormSelect, FormSwitch, type SelectOption } from '@/components/form';
 import { Loading } from '@/components/Loading';
+import { useRoles } from '@/hooks/useRoles';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
-  rolesApi,
   usersApi,
   type CreateUserData,
   type Role,
@@ -157,11 +157,7 @@ export const Component: React.FC = () => {
     enabled: isEditMode,
   });
 
-  const rolesQuery = useQuery({
-    queryKey: ['roles'],
-    queryFn: rolesApi.getRoles,
-    enabled: canEditRole,
-  });
+  const rolesQuery = useRoles({ enabled: canEditRole });
   const roles = rolesQuery.data;
   const rolesLoaded = !canEditRole || roles !== undefined;
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Alert,
@@ -19,6 +19,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Loading } from '@/components/Loading';
+import { usePagedList } from '@/hooks/usePagedList';
 import {
   webhooksApi,
   WEBHOOK_DELIVERY_STATUSES,
@@ -54,30 +55,38 @@ interface Filters {
  */
 export const WebhookDeliveryLog: React.FC = () => {
   const [filters, setFilters] = useState<Filters>({ endpointId: '', status: '', eventType: '' });
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
 
-  // A changed filter always starts again from the first page.
-  const changeFilters = (patch: Partial<Filters>) => {
-    setFilters((prev) => ({ ...prev, ...patch }));
-    setPage(0);
-  };
-
-  const params: WebhookDeliveryListParams = {
+  const paramsFor = (pageWindow: { offset: number; limit: number }): WebhookDeliveryListParams => ({
     endpoint_id: filters.endpointId === '' ? undefined : filters.endpointId,
     status: filters.status === '' ? undefined : filters.status,
     event_type: filters.eventType === '' ? undefined : filters.eventType,
-    offset: page * rowsPerPage,
-    limit: rowsPerPage,
-  };
+    ...pageWindow,
+  });
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: webhookKeys.deliveries(params),
-    queryFn: () => webhooksApi.listDeliveries(params),
+  const {
+    rows,
+    total,
+    isLoading,
+    isError,
+    error,
+    displayPage,
+    rowsPerPage,
+    onPageChange,
+    onRowsPerPageChange,
+    resetPage,
+  } = usePagedList({
+    queryKey: (pageWindow) => webhookKeys.deliveries(paramsFor(pageWindow)),
+    queryFn: (pageWindow) => webhooksApi.listDeliveries(paramsFor(pageWindow)),
     // A log is read for what happened just now: a page or filter shown before
     // is fetched again instead of being answered from the cache.
     staleTime: 0,
   });
+
+  // A changed filter always starts again from the first page.
+  const changeFilters = (patch: Partial<Filters>) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    resetPage();
+  };
 
   const endpointOptions = useQuery({
     queryKey: webhookKeys.endpointOptions(),
@@ -89,20 +98,6 @@ export const WebhookDeliveryLog: React.FC = () => {
         sort_order: 'desc',
       }),
   });
-
-  const rows = data?.rows ?? [];
-  const total = data?.total ?? 0;
-  const lastPage = Math.max(0, Math.ceil(total / rowsPerPage) - 1);
-  // An empty page of a log that still has rows (deliveries were pruned or
-  // their endpoint was deleted): move to the last page that exists. Only ever
-  // backwards, so an answer that contradicts itself cannot loop.
-  const pastLastPage = rows.length === 0 && total > 0 && page > lastPage;
-
-  useEffect(() => {
-    if (pastLastPage) {
-      setPage(lastPage);
-    }
-  }, [pastLastPage, lastPage]);
 
   return (
     <Box>
@@ -241,13 +236,10 @@ export const WebhookDeliveryLog: React.FC = () => {
               component="div"
               rowsPerPageOptions={[10, 20, 50, 100]}
               count={total}
-              page={Math.min(page, lastPage)}
+              page={displayPage}
               rowsPerPage={rowsPerPage}
-              onPageChange={(_event, next) => setPage(next)}
-              onRowsPerPageChange={(event) => {
-                setRowsPerPage(Number(event.target.value));
-                setPage(0);
-              }}
+              onPageChange={onPageChange}
+              onRowsPerPageChange={onRowsPerPageChange}
             />
           </>
         )}

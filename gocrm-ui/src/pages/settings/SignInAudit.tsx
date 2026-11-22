@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from 'react';
 import {
   Alert,
   Box,
@@ -20,6 +19,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Loading } from '@/components/Loading';
+import { usePagedList } from '@/hooks/usePagedList';
 import {
   signInAuditApi,
   SIGN_IN_AUDIT_METHODS,
@@ -66,45 +66,43 @@ const userIdParam = (value: string): number | undefined =>
  */
 export const SignInAudit: React.FC = () => {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
 
-  // A changed filter always starts again from the first page.
-  const changeFilters = (patch: Partial<Filters>) => {
-    setFilters((prev) => ({ ...prev, ...patch }));
-    setPage(0);
-  };
-
-  const params: SignInAuditListParams = {
+  const filterParams = {
     method: filters.method === '' ? undefined : filters.method,
     outcome: filters.outcome === '' ? undefined : filters.outcome,
     reason: filters.reason === '' ? undefined : filters.reason,
     user_id: userIdParam(filters.userId),
     from: localDateTimeToUTC(filters.from),
     to: localDateTimeToUTC(filters.to),
-    offset: page * rowsPerPage,
-    limit: rowsPerPage,
   };
+  const paramsFor = (pageWindow: { offset: number; limit: number }): SignInAuditListParams => ({
+    ...filterParams,
+    ...pageWindow,
+  });
 
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['sign-in-audit', params],
-    queryFn: () => signInAuditApi.list(params),
+  const {
+    rows,
+    total,
+    isLoading,
+    isError,
+    error,
+    displayPage,
+    rowsPerPage,
+    onPageChange,
+    onRowsPerPageChange,
+    resetPage,
+  } = usePagedList({
+    queryKey: (pageWindow) => ['sign-in-audit', paramsFor(pageWindow)],
+    queryFn: (pageWindow) => signInAuditApi.list(paramsFor(pageWindow)),
     // A log is read for what happened just now.
     staleTime: 0,
   });
 
-  const rows = data?.rows ?? [];
-  const total = data?.total ?? 0;
-  const lastPage = Math.max(0, Math.ceil(total / rowsPerPage) - 1);
-  // An empty page of a log that still has rows (rows were pruned): move to
-  // the last page that exists, only ever backwards.
-  const pastLastPage = rows.length === 0 && total > 0 && page > lastPage;
-
-  useEffect(() => {
-    if (pastLastPage) {
-      setPage(lastPage);
-    }
-  }, [pastLastPage, lastPage]);
+  // A changed filter always starts again from the first page.
+  const changeFilters = (patch: Partial<Filters>) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    resetPage();
+  };
 
   const userIdInvalid = filters.userId !== '' && userIdParam(filters.userId) === undefined;
 
@@ -292,13 +290,10 @@ export const SignInAudit: React.FC = () => {
               component="div"
               rowsPerPageOptions={[10, 20, 50, 100]}
               count={total}
-              page={Math.min(page, lastPage)}
+              page={displayPage}
               rowsPerPage={rowsPerPage}
-              onPageChange={(_event, next) => setPage(next)}
-              onRowsPerPageChange={(event) => {
-                setRowsPerPage(Number(event.target.value));
-                setPage(0);
-              }}
+              onPageChange={onPageChange}
+              onRowsPerPageChange={onRowsPerPageChange}
             />
           </>
         )}

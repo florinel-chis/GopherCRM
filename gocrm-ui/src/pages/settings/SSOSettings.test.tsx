@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor, within } from '@/test/test-utils';
 import { Component as SSOSettings } from './SSOSettings';
 import { rolesApi, ssoSettingsApi, type SSOSettings as SSOSettingsData } from '@/api/endpoints';
 import type { Role } from '@/api/endpoints/roles';
+import { createProductionQueryClient } from '@/test/productionQueryClient';
+import { withClient } from '@/test/dealQueryCache';
 
 vi.mock('@/api/endpoints', () => ({
   ssoSettingsApi: {
@@ -345,5 +347,22 @@ describe('SSOSettings', () => {
       expect(ssoSettingsApi.update).toHaveBeenCalledTimes(1);
       expect(screen.getByLabelText('Issuer URL')).toHaveValue('https://other.example/tenant');
     });
+  });
+
+  it('offers a role written in Settings > Roles once the shared role list is invalidated', async () => {
+    const client = createProductionQueryClient();
+    render(withClient(client, <SSOSettings />));
+    await screen.findByLabelText('Issuer URL');
+    await waitFor(() => expect(rolesApi.getRoles).toHaveBeenCalledTimes(1));
+
+    // A role write elsewhere invalidates ['roles'], as RoleEditor, RoleList and
+    // CloneRoleDialog do.
+    vi.mocked(rolesApi.getRoles).mockResolvedValue([...ROLES, role(4, 'partners')]);
+    await client.invalidateQueries({ queryKey: ['roles'] });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add mapping' }));
+    const row = within(screen.getByTestId('sso-mapping-row-2'));
+    fireEvent.mouseDown(row.getByRole('combobox', { name: 'Role' }));
+    expect(await screen.findByRole('option', { name: 'partners' })).toBeInTheDocument();
   });
 });

@@ -189,4 +189,28 @@ describe('SignInAudit', () => {
     render(<SignInAudit />);
     expect(await screen.findByText('Validation failed')).toBeInTheDocument();
   });
+
+  it('keeps the current rows on screen while the next page loads', async () => {
+    const nextPage = [entry({ id: 2, request_id: 'req-next-page' })];
+    let release: (value: { rows: SignInAuditEntry[]; total: number }) => void = () => {};
+    vi.mocked(signInAuditApi.list).mockImplementation((params) =>
+      params.offset === 20
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ rows, total: 45 }),
+    );
+    render(<SignInAudit />);
+    await screen.findByText('req-7f3a');
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() => expect(lastParams()).toMatchObject({ offset: 20, limit: 20 }));
+    expect(screen.getAllByTestId('sign-in-audit-row')).toHaveLength(3);
+    expect(screen.getByText('req-7f3a')).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+
+    release({ rows: nextPage, total: 45 });
+    expect(await screen.findByText('req-next-page')).toBeInTheDocument();
+    expect(screen.getAllByTestId('sign-in-audit-row')).toHaveLength(1);
+  });
 });

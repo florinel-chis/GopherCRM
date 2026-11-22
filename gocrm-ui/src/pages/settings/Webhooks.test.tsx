@@ -337,4 +337,32 @@ describe('Webhooks', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Internal server error');
     expect(screen.queryByText('No webhook endpoints yet.')).not.toBeInTheDocument();
   });
+
+  it('keeps the current rows on screen while the next page loads', async () => {
+    const nextPage: WebhookEndpoint = { ...active, id: 2, url: 'https://next.example.com/hook' };
+    let release: (value: { rows: WebhookEndpoint[]; total: number }) => void = () => {};
+    vi.mocked(webhooksApi.listEndpoints).mockImplementation((params) =>
+      params?.offset === 20
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve({ rows: [inactive, active], total: 25 }),
+    );
+    render(<Webhooks />);
+    await screen.findByText(inactive.url);
+
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await waitFor(() =>
+      expect(webhooksApi.listEndpoints).toHaveBeenCalledWith(
+        expect.objectContaining({ offset: 20, limit: 20 }),
+      ),
+    );
+    expect(screen.getByText(inactive.url)).toBeInTheDocument();
+    expect(screen.getByText(active.url)).toBeInTheDocument();
+    expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+
+    release({ rows: [nextPage], total: 25 });
+    expect(await screen.findByText(nextPage.url)).toBeInTheDocument();
+    expect(screen.queryByText(inactive.url)).not.toBeInTheDocument();
+  });
 });

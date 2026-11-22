@@ -24,9 +24,9 @@ import {
 } from '@mui/material';
 import { Add as AddIcon, DeleteOutline as DeleteOutlineIcon } from '@mui/icons-material';
 import { Loading } from '@/components/Loading';
+import { useRoles } from '@/hooks/useRoles';
 import { useSnackbar } from '@/hooks/useSnackbar';
 import {
-  rolesApi,
   ssoSettingsApi,
   type SSOClaim,
   type SSORoleMapping,
@@ -38,7 +38,6 @@ import { apiErrorMessage, getAPIError, getHTTPStatus } from '@/utils/apiError';
 
 // The query keys never carry the client secret: the GET answer has none.
 const ssoSettingsKey = ['sso-settings'] as const;
-const ssoRolesKey = ['sso-settings', 'roles'] as const;
 
 const SSO_CLAIMS: SSOClaim[] = ['groups', 'roles'];
 
@@ -98,11 +97,8 @@ export const SSOSettings: React.FC = () => {
     // A refetch would reset the form under the admin's edits.
     refetchOnWindowFocus: false,
   });
-  const rolesQuery = useQuery({
-    queryKey: ssoRolesKey,
-    queryFn: rolesApi.getRoles,
-    refetchOnWindowFocus: false,
-  });
+  // The shared role list, so a role written in Settings > Roles is offered here at once.
+  const rolesQuery = useRoles();
 
   const [form, setForm] = useState<FormState | null>(null);
   // The new client secret exists only in this state while it is typed; it is
