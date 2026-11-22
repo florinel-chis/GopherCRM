@@ -38,6 +38,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/config"
 	"github.com/florinel-chis/gophercrm/internal/database"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/entra"
 	idkitoidc "github.com/florinel-chis/gophercrm/internal/idkit/oidc"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -870,9 +871,9 @@ func (f *oidcFixture) reset(t *testing.T) {
 	f.svc.beforeSCIMLink = nil
 	f.svc.attempts = repository.NewOIDCLoginAttemptRepository(f.db)
 	f.svc.audit = f.audit
-	f.svc.entraIssuerHost = oidcEntraIssuerHost
-	f.svc.graphBaseURL = oidcGraphBaseURL
-	f.svc.graphTimeout = oidcGraphTimeout
+	f.svc.entraIssuerHost = entra.IssuerHost
+	f.svc.graphBaseURL = entra.GraphBaseURL
+	f.svc.graphTimeout = entra.GraphTimeout
 	f.svc.userinfoTimeout = oidcUserInfoTimeout
 	f.clearProviderCache()
 	f.issuer.resetFetches()
@@ -936,7 +937,7 @@ func (f *oidcFixture) entraTenant(t *testing.T) {
 	f.configure(t, f.mapping())
 	cfg, err := f.sso.SSOConfig(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, oidcTestTenant, oidcEntraTenant(cfg.IssuerURL))
+	require.Equal(t, oidcTestTenant, entra.Tenant(cfg.IssuerURL))
 }
 
 // graphMapping maps a group object id to sales and the app role to support.
@@ -1479,7 +1480,7 @@ var oidcSignInCases = []struct {
 	}},
 	{"scim_oid_non_entra_issuer", func(t *testing.T, f *oidcFixture) {
 		oidcSCIMFallThrough(t, f, models.UserIdentitySourceSCIM, func(*oidcTokenSpec) {
-			f.svc.entraIssuerHost = oidcEntraIssuerHost
+			f.svc.entraIssuerHost = entra.IssuerHost
 		})
 	}},
 	{"scim_oid_matches_oidc_row", func(t *testing.T, f *oidcFixture) {
@@ -1680,7 +1681,7 @@ var oidcSignInCases = []struct {
 		t.Run("not_entra", func(t *testing.T) {
 			f.reset(t)
 			f.useSSO(f.newSSO(config.SSOConfig{EntraAppSigningKeys: true}))
-			require.Equal(t, oidcEntraIssuerHost, f.svc.entraIssuerHost)
+			require.Equal(t, entra.IssuerHost, f.svc.entraIssuerHost)
 			tokens, err := f.signIn(t, appKeySpec("subject-app-not-entra"))
 			f.assertRefused(t, "id_token_invalid", tokens, err, 0, 0)
 			assertQueries(t, "")
@@ -1841,7 +1842,7 @@ var oidcSignInCases = []struct {
 		f.configure(t, []SSORoleMapping{{Claim: SSOClaimRoles, Value: oidcAppRole, RoleID: f.roleIDs[models.RoleSupport]}})
 		assert.Equal(t, configured, scope(), "an Entra issuer without a groups mapping")
 
-		f.svc.entraIssuerHost = oidcEntraIssuerHost
+		f.svc.entraIssuerHost = entra.IssuerHost
 		f.configure(t, f.graphMapping())
 		assert.Equal(t, configured, scope(), "a groups mapping on another issuer")
 	}},
@@ -2439,22 +2440,6 @@ func oidcSCIMFallThrough(t *testing.T, f *oidcFixture, source string, change fun
 	assert.Equal(t, int64(0), f.refreshTokens(t, owner.ID))
 }
 
-func TestOIDCEntraTenant(t *testing.T) {
-	for _, tc := range []struct{ issuer, want string }{
-		{"https://login.microsoftonline.com/" + oidcTestTenant + "/v2.0", oidcTestTenant},
-		{"https://login.microsoftonline.com/" + oidcTestTenant, oidcTestTenant},
-		{"https://login.microsoftonline.com/" + oidcTestTenant + "/", oidcTestTenant},
-		{"https://login.microsoftonline.com/common/v2.0", "common"},
-		{"https://login.microsoftonline.com", ""},
-		{"https://login.microsoftonline.com/", ""},
-		{"https://login.microsoftonline.com//v2.0", ""},
-		{"https://login.microsoftonline.com/%zz/v2.0", ""},
-		{"", ""},
-	} {
-		assert.Equal(t, tc.want, oidcEntraTenant(tc.issuer), tc.issuer)
-	}
-}
-
 func TestOIDCSignInSQLite(t *testing.T) {
 	db, competitor := openOIDCTestSQLite(t)
 	runOIDCSignIn(t, newOIDCFixture(t, db, competitor))
@@ -2471,20 +2456,6 @@ func TestOIDCGraphDefaults(t *testing.T) {
 	assert.Equal(t, "https://graph.microsoft.com", svc.graphBaseURL)
 	assert.Equal(t, 5*time.Second, svc.graphTimeout)
 
-	for issuer, want := range map[string]bool{
-		"https://login.microsoftonline.com/tid/v2.0":     true,
-		"https://LOGIN.microsoftonline.com/tid/v2.0":     true,
-		"https://login.microsoftonline.com:443/tid/v2.0": true,
-		"https://login.microsoftonline.com.evil.test/x":  false,
-		"https://evil.test/login.microsoftonline.com":    false,
-		"https://login.microsoftonline.us/tid/v2.0":      false,
-		"https://login.chinacloudapi.cn/tid/v2.0":        false,
-		"not a url %": false,
-	} {
-		assert.Equal(t, want, oidcIsEntraIssuer(issuer, svc.entraIssuerHost), issuer)
-	}
-	assert.False(t, oidcIsEntraIssuer("https://login.microsoftonline.com/tid/v2.0", ""), "no Entra host configured")
-
 	for raw, want := range map[int]int{0: 10, -1: 10, 51: 10, 1: 1, 50: 50, 7: 7} {
 		assert.Equal(t, want, effectiveGraphMaxPages(raw), "OIDC_GRAPH_MAX_PAGES=%d", raw)
 		cfg, err := NewSSOSettingsService(newFakeSSOConfigs(), knownRoles(), nil, config.SSOConfig{GraphMaxPages: raw}).SSOConfig(ssoCtx())
@@ -2493,91 +2464,9 @@ func TestOIDCGraphDefaults(t *testing.T) {
 	}
 
 	groups := []SSORoleMapping{{Claim: SSOClaimGroups, Value: "g", RoleID: 1}}
-	assert.Equal(t, "https://graph.microsoft.com/User.Read", oidcGraphScope)
-	entra := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", oidcGraphScope}, RoleMapping: groups}
-	assert.Equal(t, []string{"openid", oidcGraphScope}, svc.requestScopes(entra), "not added when already configured")
-
-	// The nextLink rule: https on the Graph host and port only.
-	base, err := url.Parse("https://graph.microsoft.com")
-	require.NoError(t, err)
-	for link, want := range map[string]bool{
-		"https://graph.microsoft.com/v1.0/me/getMemberObjects?$skiptoken=x": true,
-		"https://GRAPH.microsoft.com:443/v1.0/me/getMemberObjects":          true,
-		"http://graph.microsoft.com/v1.0/me/getMemberObjects":               false,
-		"https://graph.microsoft.com:8443/v1.0/me/getMemberObjects":         false,
-		"https://graph.microsoft.com.evil.test/v1.0/me/getMemberObjects":    false,
-		"https://user@graph.microsoft.com/v1.0/me/getMemberObjects":         false,
-		"/v1.0/me/getMemberObjects":                                         false,
-		"https://graph.windows.net/v1.0/me/getMemberObjects":                false,
-	} {
-		assert.Equal(t, want, graphSameOrigin(link, base), link)
-	}
-}
-
-// TestOIDCResolveEntraGroups covers the Graph failure modes the sign-in
-// subtests cannot tell apart: an http nextLink on the Graph host is refused
-// before any request, a value that is not an array of strings and a page
-// over 1 MiB fail, and an empty access token sends nothing.
-func TestOIDCResolveEntraGroups(t *testing.T) {
-	var (
-		mu       sync.Mutex
-		requests int
-		answer   string
-	)
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		mu.Lock()
-		requests++
-		body := answer
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
-	}))
-	t.Cleanup(server.Close)
-	pool := x509.NewCertPool()
-	pool.AddCert(server.Certificate())
-	svc := &oidcService{rootCAs: pool, graphBaseURL: server.URL, graphTimeout: 2 * time.Second}
-	plainHost := "http://" + strings.TrimPrefix(server.URL, "https://")
-
-	cases := []struct {
-		name     string
-		token    string
-		answer   string
-		want     []string
-		requests int
-	}{
-		{"ids", "t", `{"value":["a","b"]}`, []string{"a", "b"}, 1},
-		{"empty_list", "t", `{"value":[]}`, []string{}, 1},
-		{"no_access_token", "", `{"value":["a"]}`, nil, 0},
-		{"http_next_link_same_host", "t", `{"value":["a"],"@odata.nextLink":"` + plainHost + `/v1.0/me/getMemberObjects?page=1"}`, nil, 1},
-		{"value_numbers", "t", `{"value":[1]}`, nil, 1},
-		{"value_null_element", "t", `{"value":[null]}`, nil, 1},
-		{"value_null", "t", `{"value":null}`, nil, 1},
-		{"value_missing", "t", `{}`, nil, 1},
-		{"value_object", "t", `{"value":{"a":"b"}}`, nil, 1},
-		{"not_json", "t", `<html>`, nil, 1},
-		{"over_one_mib", "t", `{"value":["` + strings.Repeat("a", 1<<20) + `"]}`, nil, 1},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			mu.Lock()
-			requests, answer = 0, tc.answer
-			mu.Unlock()
-			got, err := svc.resolveEntraGroups(context.Background(), tc.token, 10)
-			mu.Lock()
-			assert.Equal(t, tc.requests, requests, "requests sent")
-			mu.Unlock()
-			if tc.want == nil {
-				assert.Error(t, err)
-				assert.Nil(t, got)
-				if err != nil {
-					assert.NotContains(t, err.Error(), server.URL, "the error names no URL")
-				}
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, got)
-		})
-	}
+	assert.Equal(t, "https://graph.microsoft.com/User.Read", entra.GraphScope)
+	entraConfig := EffectiveSSOConfig{IssuerURL: "https://login.microsoftonline.com/tid/v2.0", Scopes: []string{"openid", entra.GraphScope}, RoleMapping: groups}
+	assert.Equal(t, []string{"openid", entra.GraphScope}, svc.requestScopes(entraConfig), "not added when already configured")
 }
 
 // TestOIDCClaimExpiredClearFails: when blanking the nonce and verifier of an

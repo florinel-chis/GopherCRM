@@ -23,6 +23,19 @@ func TestOIDCSubjectAndClaimRules(t *testing.T) {
 	assert.Equal(t, "abé", TruncateUTF8("abé", 4))
 }
 
+func TestStrictStringArray(t *testing.T) {
+	for raw, want := range map[string][]string{`["a","b"]`: {"a", "b"}, `[]`: {}} {
+		got, ok := StrictStringArray(json.RawMessage(raw))
+		assert.True(t, ok, raw)
+		assert.Equal(t, want, got, raw)
+	}
+	for _, raw := range []string{``, `null`, `[null]`, `[1]`, `{}`, `"a"`} {
+		got, ok := StrictStringArray(json.RawMessage(raw))
+		assert.False(t, ok, "%q", raw)
+		assert.Nil(t, got, "%q", raw)
+	}
+}
+
 func TestOIDCProfileNames(t *testing.T) {
 	long := strings.Repeat("é", 60) // 120 bytes
 	cases := []struct {
