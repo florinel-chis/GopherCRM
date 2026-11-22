@@ -25,6 +25,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
@@ -576,7 +577,7 @@ func (s *oidcService) clientAssertion(cert *SSOClientCertificate, clientID, toke
 // never stored.
 func (s *oidcService) requestScopes(cfg EffectiveSSOConfig) []string {
 	scopes := append([]string(nil), cfg.Scopes...)
-	if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) || !mappingUsesGroups(cfg.RoleMapping) {
+	if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) || !rolemap.UsesGroups(cfg.RoleMapping) {
 		return scopes
 	}
 	for _, scope := range scopes {
@@ -611,17 +612,6 @@ func oidcEntraTenant(issuerURL string) string {
 	}
 	segment, _, _ := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
 	return segment
-}
-
-// mappingUsesGroups reports whether any role mapping entry matches on the
-// groups claim.
-func mappingUsesGroups(mapping []SSORoleMapping) bool {
-	for _, entry := range mapping {
-		if entry.Claim == SSOClaimGroups {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
@@ -836,7 +826,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		if err := json.Unmarshal(claims.ClaimNames, &names); err != nil {
 			return nil, facts, oidcRefuse(AuthAuditReasonClaimsInvalid)
 		}
-		if _, overage := names[SSOClaimGroups]; overage && mappingUsesGroups(cfg.RoleMapping) {
+		if _, overage := names[SSOClaimGroups]; overage && rolemap.UsesGroups(cfg.RoleMapping) {
 			if !oidcIsEntraIssuer(cfg.IssuerURL, s.entraIssuerHost) {
 				return nil, facts, oidcRefuse(AuthAuditReasonGroupOverage)
 			}
@@ -852,7 +842,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		return nil, facts, oidcRefuse(AuthAuditReasonRolesMalformed)
 	}
 	facts.roles = oidcClaimValues(roles)
-	if !resolveGroups && !(mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0) {
+	if !resolveGroups && !(rolemap.UsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0) {
 		facts.groups = oidcClaimValues(groups)
 	}
 	subject := idToken.Subject
@@ -869,7 +859,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		}
 		groups = resolved
 		facts.groups = oidcClaimValues(groups)
-	} else if mappingUsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
+	} else if rolemap.UsesGroups(cfg.RoleMapping) && len(claims.Groups) == 0 {
 		resolved, err := s.resolveUserInfoGroups(ctx, provider, token.AccessToken, subject)
 		if err != nil {
 			if errors.Is(err, errUserInfoSubject) {
@@ -881,7 +871,7 @@ func (s *oidcService) callback(ctx context.Context, code, state, binding string)
 		facts.groups = oidcClaimValues(groups)
 	}
 
-	roleID, matched := oidcMatchRole(cfg.RoleMapping, groups, roles)
+	roleID, matched := rolemap.Match(cfg.RoleMapping, groups, roles)
 	if !matched {
 		return nil, facts, oidcRefuse(AuthAuditReasonNoMappingMatch)
 	}
@@ -1222,25 +1212,6 @@ func validOIDCSubject(sub string) bool {
 		}
 	}
 	return true
-}
-
-// oidcMatchRole is the first mapping entry, in stored order, whose claim
-// array holds its value exactly (case-sensitive).
-func oidcMatchRole(mapping []SSORoleMapping, groups, roles []string) (uint, bool) {
-	for _, entry := range mapping {
-		values := groups
-		if entry.Claim == SSOClaimRoles {
-			values = roles
-		} else if entry.Claim != SSOClaimGroups {
-			continue
-		}
-		for _, value := range values {
-			if value == entry.Value {
-				return entry.RoleID, true
-			}
-		}
-	}
-	return 0, false
 }
 
 // truncateUTF8 cuts s to at most max bytes on a rune boundary.

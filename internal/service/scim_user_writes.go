@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
+	"github.com/florinel-chis/gophercrm/internal/idkit/rolemap"
 	"github.com/florinel-chis/gophercrm/internal/idkit/scim"
 	"github.com/florinel-chis/gophercrm/internal/models"
 	"github.com/florinel-chis/gophercrm/internal/repository"
@@ -235,7 +236,7 @@ func (s *scimUserService) Create(ctx context.Context, in SCIMUserInput) (*SCIMUs
 	if issuer == "" || len(issuer) > oidcIssuerMaxBytes {
 		return nil, scimInvalid("no usable single sign-on issuer")
 	}
-	mapped, matched := oidcMatchRole(cfg.RoleMapping, nil, in.Roles)
+	mapped, matched := rolemap.Match(cfg.RoleMapping, nil, in.Roles)
 	if !matched {
 		return nil, scimInvalid("no roles mapping entry matches")
 	}
@@ -347,7 +348,7 @@ func (s *scimUserService) Replace(ctx context.Context, rawID string, in SCIMUser
 		return nil, fmt.Errorf("read the single sign-on settings: %w", err)
 	}
 	issuer := cfg.IssuerURL
-	mapped, matched := oidcMatchRole(cfg.RoleMapping, nil, in.Roles)
+	mapped, matched := rolemap.Match(cfg.RoleMapping, nil, in.Roles)
 	if !matched {
 		return nil, scimInvalid("no roles mapping entry matches")
 	}
@@ -479,7 +480,7 @@ func (s *scimUserService) Patch(ctx context.Context, rawID string, p SCIMUserPat
 	issuer := cfg.IssuerURL
 	var mapped *uint
 	if p.Roles != nil {
-		roleID, matched := oidcMatchRole(cfg.RoleMapping, nil, *p.Roles)
+		roleID, matched := rolemap.Match(cfg.RoleMapping, nil, *p.Roles)
 		if !matched {
 			return nil, scimInvalid("no roles mapping entry matches")
 		}

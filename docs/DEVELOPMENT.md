@@ -83,7 +83,9 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   or logrus, directly or through other packages;
   `internal/idkit/boundary_test.go` `TestIDKitImportBoundary` enforces this. The SCIM protocol
   package now lives in `internal/idkit/scim`, and the handlers convert `models.User` to
-  `scim.UserData`.
+  `scim.UserData`. The claim-to-role mapping lives in `internal/idkit/rolemap`: `rolemap.Match`
+  (`internal/idkit/rolemap/rolemap.go`) is the one first-match rule used by the OIDC callback, the
+  SCIM Users writes and the SCIM group patch.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint
@@ -472,7 +474,7 @@ and `apperrors.ErrNotFound` (404). `internal/service/scim_user_writes.go` holds 
 repository (#471), the transaction manager and the sign-in audit writer; without the option both
 answer a wiring error, 500). Both run in
 `roleGovernance.run` with the lock order of the OIDC sign-in, take the role from the `roles`
-entries of the SSO mapping (`oidcMatchRole` with no groups), refuse a missing or `customer`
+entries of the SSO mapping (`rolemap.Match` (`internal/idkit/rolemap/rolemap.go`) with no groups), refuse a missing or `customer`
 mapped role, keep the last-admin rule, record `user_role_changed` with
 `Actor{AuthMethod: AuthMethodSCIM}` (actor id 0, stored as NULL by `governedTx.record`) and write
 one successful `auth_audit_log` row with method `scim` after the commit. Replace checks a changed
@@ -542,8 +544,8 @@ is the `scim_group_members` table (`models.SCIMGroupMember`, `ensureSCIMGroupMem
 (`internal/service/scim_group_writes.go`) runs `admin set → users → roles → scim_group_members →
 refresh_tokens → api_keys → role_audit_log` in `roleGovernance.run`; it reads the group's rows and the members' other groups
 with a `FOR UPDATE` handle so MySQL's REPEATABLE READ snapshot, taken before the admin-set wait,
-is not used. It recomputes each added or removed visible member's role with `oidcMatchRole(mapping,
-groups, nil)` and `scimMappedRole`. Since #530 an active member that gets no match is deactivated
+is not used. It recomputes each added or removed visible member's role with `rolemap.Match`
+(`internal/idkit/rolemap/rolemap.go`) over its groups and no roles, and `scimMappedRole`. Since #530 an active member that gets no match is deactivated
 instead (`is_active` false, role kept, `revokeAllCredentials` on the locked row; an inactive one
 gets no `users` write), and a role write whose old permission set exceeds the new one
 (`permissionsExceed(escalationSet(old), escalationSet(new))`) calls `endSessions` after its
