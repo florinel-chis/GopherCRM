@@ -1301,6 +1301,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`NewSCIMServer`) and `SetupSCIMRoutes` mounts the server with `gin.WrapH` on the same routes
   behind the unchanged SCIM token authentication. Answers, audit rows and log lines are
   unchanged, and the provisioning-cycle golden file is byte-identical.
+- **Identity package example and README (#650).** `internal/idkit/example` is a runnable host
+  of the identity package: in-memory implementations of every host interface and of the SCIM
+  server's `Users` and `Groups`, and a small `net/http` app that serves the OpenID Connect start
+  and callback and the SCIM server behind a bearer token. Its tests drive it end to end against
+  the `oidctest` issuer, shaped as a generic OpenID Connect provider with a groups claim, through
+  the `scimtest` client (`go test ./internal/idkit/example`). `internal/idkit/README.md`
+  describes the packages, the host interfaces, the sign-in and SCIM rules, issuer support, the
+  test kits, the limits and the licences, and the package comments under `internal/idkit` now
+  name the host application generically and carry no issue numbers. GopherCRM behaviour is
+  unchanged.
 - **Lead route descriptions name the route guard (#698).** The `POST /leads` and
   `GET /leads/export` descriptions in the OpenAPI spec now name the route guard built from that
   route's `permissions.RouteKeys` entry instead of the `/leads` group guard that #680 removed.

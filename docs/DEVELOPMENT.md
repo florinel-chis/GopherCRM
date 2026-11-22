@@ -119,7 +119,10 @@ Handler (Gin HTTP) → Service (business logic) → Repository (GORM data access
   an in-process TLS OpenID Connect issuer (`internal/idkit/oidctest/issuer.go` `oidctest.New`)
   with no provider-specific code, and `internal/idkit/scim/scimtest`, a SCIM client over an
   `http.Handler` that sends the bearer token and the SCIM media type and decodes SCIM error bodies
-  (`internal/idkit/scim/scimtest/client.go` `scimtest.Client`).
+  (`internal/idkit/scim/scimtest/client.go` `scimtest.Client`). `internal/idkit/README.md` describes the
+  packages, the host interfaces, the sign-in and SCIM rules and the limits of the layer, and
+  `internal/idkit/example` is a runnable host over in-memory stores that serves the sign-in and
+  the SCIM server; run its end-to-end tests with `go test ./internal/idkit/example`.
 
 **Frontend** (`gocrm-ui/`): React 19 + TypeScript + MUI + Vite. Axios client in `src/api/client.ts`
 (base URL from `VITE_API_BASE_URL`, default `http://localhost:8080/api/v1`), per-entity endpoint

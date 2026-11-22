@@ -12,7 +12,7 @@ const (
 	GroupPatchReplace = "replace"
 )
 
-// GroupPatchOp is one operation of a Group patch (#506), in canonical
+// GroupPatchOp is one operation of a Group patch, in canonical
 // lower case. Values are the member ids it names, as sent. All is set only on
 // a remove of path members without a value: every member goes.
 type GroupPatchOp struct {

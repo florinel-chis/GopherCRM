@@ -27,4 +27,10 @@
 //
 // Two test kits sit next to the layer: oidctest, an in-process OpenID
 // Connect issuer, and scim/scimtest, a SCIM client; only tests import them.
+//
+// Package example is a runnable host over in-memory stores: a net/http app
+// that serves the sign-in and the SCIM server, with tests that drive it end
+// to end (go test ./internal/idkit/example). README.md in this directory
+// describes the packages, the host interfaces, the sign-in and SCIM rules
+// and the limits of the layer.
 package idkit
