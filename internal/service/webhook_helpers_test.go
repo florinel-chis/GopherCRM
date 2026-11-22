@@ -221,10 +221,13 @@ func (c *webhookConsumer) guard(extra map[string][]netip.Addr) *aeo.EgressGuard 
 // failingWebhookRepository wraps the real repository: EnqueueDeliveries
 // writes the rows and then returns the injected error, so the creating
 // transaction must roll back the record and the rows together. failures
-// bounds how many calls fail (0 = every call).
+// bounds how many calls fail (0 = every call); succeed, set by
+// newFailingWebhookRepositoryAfter, lets that many first calls succeed before
+// the failing ones.
 type failingWebhookRepository struct {
 	repository.WebhookRepository
 	err      error
+	succeed  int32
 	failures int32
 	calls    *atomic.Int32
 }
@@ -233,15 +236,24 @@ func newFailingWebhookRepository(inner repository.WebhookRepository, err error, 
 	return &failingWebhookRepository{WebhookRepository: inner, err: err, failures: failures, calls: &atomic.Int32{}}
 }
 
+// newFailingWebhookRepositoryAfter lets the first succeed calls through and
+// fails every later one.
+func newFailingWebhookRepositoryAfter(inner repository.WebhookRepository, err error, succeed int32) *failingWebhookRepository {
+	return &failingWebhookRepository{WebhookRepository: inner, err: err, succeed: succeed, calls: &atomic.Int32{}}
+}
+
 func (f *failingWebhookRepository) WithTx(tx *gorm.DB) repository.WebhookRepository {
-	return &failingWebhookRepository{WebhookRepository: f.WebhookRepository.WithTx(tx), err: f.err, failures: f.failures, calls: f.calls}
+	return &failingWebhookRepository{WebhookRepository: f.WebhookRepository.WithTx(tx), err: f.err, succeed: f.succeed, failures: f.failures, calls: f.calls}
 }
 
 func (f *failingWebhookRepository) EnqueueDeliveries(ctx context.Context, deliveries []models.WebhookDelivery) error {
 	if err := f.WebhookRepository.EnqueueDeliveries(ctx, deliveries); err != nil {
 		return err
 	}
-	n := f.calls.Add(1)
+	n := f.calls.Add(1) - f.succeed
+	if n <= 0 {
+		return nil
+	}
 	if f.failures == 0 || n <= f.failures {
 		return f.err
 	}

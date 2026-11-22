@@ -472,7 +472,7 @@ func setupDependencies(backgroundCtx context.Context, router *gin.RouterGroup, s
 	// and conditional advances; the runtime owns the worker goroutine and is
 	// the second drain handle main receives. The worker is started only when
 	// AUTOMATION_ENABLED is on; the API and the event capture work either way.
-	automationEngine := service.NewAutomationEngine(automationRepo, notificationRepo, taskRepo, userRepo, appMailer, txManager)
+	automationEngine := service.NewAutomationEngine(automationRepo, notificationRepo, taskRepo, userRepo, appMailer, txManager, service.WithAutomationWebhooks(webhookEmitter))
 	automationService := service.NewAutomationService(automationRepo, userRepo, automationEngine, txManager)
 	notificationService := service.NewNotificationService(notificationRepo)
 	var automationRuntime *service.AutomationRuntime

@@ -15,8 +15,9 @@ import (
 )
 
 // The updated events (#408): lead.updated, customer.updated and
-// ticket.updated are written in the transaction of the update and of the
-// lead and ticket bulk status batches, one per record whose stored values
+// ticket.updated are written in the transaction of the update, of the lead
+// assignment and conversion, of the automation assign_owner step and of the
+// lead and ticket bulk status batches, one per record whose WebhookState
 // changed, on SQLite and on a disposable TEST_MYSQL_DSN schema (the MySQL
 // roots skip without the variable and fail when it is unreachable).
 
@@ -94,6 +95,9 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 	c := env.endpoint("https://example.com/c", true, webhookCreatedTypes...)
 	d := env.endpoint("https://example.com/d", false, six...)
 	admin := env.owner.ID
+	other := &models.User{Email: env.uniqueEmail("assignee"), Password: "x", FirstName: "As", LastName: "Signee",
+		Role: models.RoleSales, IsActive: true}
+	require.NoError(t, db.Create(other).Error)
 
 	t.Run("lead update", func(t *testing.T) {
 		lead := env.seedLead()
@@ -253,27 +257,54 @@ func runWebhookUpdatedFanOut(t *testing.T, db *gorm.DB) {
 		deletedTicket := env.seedTicket(models.TicketStatusOpen)
 		require.NoError(t, env.tickets.Delete(deletedTicket.ID))
 
-		converted, err := env.leads.ConvertToCustomer(ctx, env.seedLead().ID, &models.Customer{})
-		require.NoError(t, err)
-
 		commented := env.seedTicket(models.TicketStatusOpen)
 		require.NoError(t, env.tickets.CreateComment(&models.TicketComment{TicketID: commented.ID, AuthorUserID: admin, Body: "A first response"}))
 
-		assignedLead := env.seedLead()
-		_, err = env.leads.Assign(ctx, assignedLead.ID, admin, LeadViewer{UserID: admin, Role: models.RoleAdmin})
-		require.NoError(t, err)
 		assignedCustomer := env.seedCustomer()
-		_, err = env.customers.Assign(assignedCustomer.ID, admin)
+		_, err := env.customers.Assign(assignedCustomer.ID, admin)
 		require.NoError(t, err)
 
 		assert.Zero(t, env.updatedDeliveries(), "none of these is an update event")
-		assertFanOut(t, env, models.WebhookEventCustomerCreated, converted.ID, a.ID, c.ID)
 		// The delete and the erasures write their deleted events for a, the
 		// one active endpoint subscribed to the deleted types (#531).
 		assertFanOut(t, env, models.WebhookEventLeadDeleted, erasedLead.ID, a.ID)
 		assertFanOut(t, env, models.WebhookEventCustomerDeleted, erasedCustomer.ID, a.ID)
 		assertFanOut(t, env, models.WebhookEventTicketDeleted, deletedTicket.ID, a.ID)
-		assert.Equal(t, int64(5), env.allDeliveries(), "the conversion's customer.created rows and the deleted rows only")
+		assert.Equal(t, int64(3), env.allDeliveries(), "the deleted rows only")
+	})
+
+	t.Run("lead assign to another owner", func(t *testing.T) {
+		env.clearDeliveries()
+		lead := env.seedLead()
+		assigned, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		require.NoError(t, err)
+		assert.Equal(t, other.ID, assigned.OwnerID)
+		assert.Equal(t, other.ID, storedLead(t, db, lead.ID).OwnerID)
+		assertFanOut(t, env, models.WebhookEventLeadUpdated, lead.ID, a.ID, b.ID)
+		assert.Equal(t, int64(2), env.allDeliveries(), "one lead.updated row per subscribed active endpoint")
+	})
+
+	t.Run("lead assign to its current owner", func(t *testing.T) {
+		env.clearDeliveries()
+		lead := env.seedLead()
+		_, err := env.leads.Assign(ctx, lead.ID, admin, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		require.NoError(t, err)
+		assert.Equal(t, admin, storedLead(t, db, lead.ID).OwnerID)
+		assert.Zero(t, env.allDeliveries(), "an assignment that changes nothing writes no row")
+	})
+
+	t.Run("lead conversion", func(t *testing.T) {
+		env.clearDeliveries()
+		lead := env.seedLead()
+		converted, err := env.leads.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
+		require.NoError(t, err)
+		stored := storedLead(t, db, lead.ID)
+		assert.Equal(t, models.LeadStatusConverted, stored.Status)
+		require.NotNil(t, stored.CustomerID)
+		assert.Equal(t, converted.ID, *stored.CustomerID)
+		assertFanOut(t, env, models.WebhookEventLeadUpdated, lead.ID, a.ID, b.ID)
+		assertFanOut(t, env, models.WebhookEventCustomerCreated, converted.ID, a.ID, c.ID)
+		assert.Equal(t, int64(4), env.allDeliveries(), "each event fanned out once")
 	})
 
 	t.Run("raw event_types bound", func(t *testing.T) {
@@ -379,6 +410,61 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 		assert.Zero(t, env.allDeliveries())
 	})
 
+	t.Run("LeadService.Assign", func(t *testing.T) {
+		lead := env.seedLead()
+		other := &models.User{Email: env.uniqueEmail("assignee"), Password: "x", FirstName: "As", LastName: "Signee",
+			Role: models.RoleSales, IsActive: true}
+		require.NoError(t, db.Create(other).Error)
+		_, err := env.leads.Assign(ctx, lead.ID, other.ID, LeadViewer{UserID: admin, Role: models.RoleAdmin})
+		require.ErrorIs(t, err, injectedFailure)
+		assert.Equal(t, admin, storedLead(t, db, lead.ID).OwnerID, "the assignment rolled back")
+		assert.Zero(t, env.count(&models.AutomationEvent{}, "entity_type = ? AND entity_id = ?", models.AutomationEntityLead, lead.ID),
+			"its automation event rolled back too")
+		assert.Zero(t, env.allDeliveries())
+	})
+
+	t.Run("lead conversion", func(t *testing.T) {
+		// customer.created is written first and succeeds; lead.updated is
+		// the second insert and fails, so the case shows that it runs inside
+		// the conversion attempt.
+		failing := newFailingWebhookRepositoryAfter(env.repo, injectedFailure, 1)
+		env.wire(failing)
+		defer env.wire(newFailingWebhookRepository(env.repo, injectedFailure, 0))
+
+		lead := env.seedLead()
+		customersBefore := env.count(&models.Customer{}, "")
+		_, err := env.leads.ConvertToCustomer(ctx, lead.ID, &models.Customer{})
+		require.ErrorIs(t, err, injectedFailure)
+		assert.Equal(t, int32(2), failing.calls.Load(), "customer.created succeeded, lead.updated failed")
+		assert.Equal(t, customersBefore, env.count(&models.Customer{}, ""), "no customer was created")
+		stored := storedLead(t, db, lead.ID)
+		assert.Equal(t, models.LeadStatusNew, stored.Status, "the lead is not converted")
+		assert.Nil(t, stored.CustomerID)
+		assert.Zero(t, env.allDeliveries(), "the customer.created rows rolled back with the attempt")
+	})
+
+	t.Run("automation assign_owner step", func(t *testing.T) {
+		auto := newAutomationEnv(t, db)
+		auto.rebuildWith(WithAutomationWebhooks(webhook.NewEmitter(newFailingWebhookRepository(env.repo, injectedFailure, 0))))
+		support := auto.createUser("support", models.RoleSupport, true)
+		leadRule := auto.leadRule(models.AutomationEventLeadCreated, assignStep(auto.other.ID))
+		ticketRule := auto.createRule(models.AutomationEntityTicket, models.AutomationEventTicketCreated, models.AutomationTrigger{}, assignStep(support.ID))
+
+		lead := env.seedLead()
+		leadRun := auto.startEntityRun(leadRule, models.AutomationEntityLead, lead.ID)
+		ticket := env.seedTicket(models.TicketStatusOpen)
+		ticketRun := auto.startEntityRun(ticketRule, models.AutomationEntityTicket, ticket.ID)
+		// The failed steps are the point; what ExecuteDue reports about them
+		// is not.
+		_ = auto.engine.ExecuteDue(ctx)
+
+		assert.Equal(t, admin, storedLead(t, db, lead.ID).OwnerID, "the lead's owner rolled back")
+		assert.Nil(t, storedTicket(t, db, ticket.ID).AssignedToID, "the ticket's assignee rolled back")
+		assert.Empty(t, auto.stepsOf(leadRun.ID), "the lead step rolled back")
+		assert.Empty(t, auto.stepsOf(ticketRun.ID), "the ticket step rolled back")
+		assert.Zero(t, env.allDeliveries())
+	})
+
 	t.Run("the runtime then sends nothing", func(t *testing.T) {
 		assertSentNothing(t, env)
 	})
@@ -455,5 +541,110 @@ func runWebhookUpdatedAtomicity(t *testing.T, db *gorm.DB) {
 		// one per endpoint (#531).
 		assert.Equal(t, int64(2), env.count(&models.WebhookDelivery{}, "event_type = ?", models.WebhookEventCustomerDeleted))
 		assert.Equal(t, int64(2), env.allDeliveries())
+	})
+}
+
+func TestWebhookUpdatedAutomationSQLite(t *testing.T) {
+	runWebhookUpdatedAutomation(t, openTicketIntakeDB(t, false))
+}
+
+func TestWebhookUpdatedAutomationMySQL(t *testing.T) {
+	runWebhookUpdatedAutomation(t, openTicketIntakeDB(t, true))
+}
+
+// rebuildWith replaces the engine and the service like rebuild, with the
+// engine options given.
+func (e *automationEnv) rebuildWith(opts ...AutomationEngineOption) {
+	e.engine = NewAutomationEngine(e.repo, e.notifications, e.tasks, e.users, e.mailer, e.txManager, opts...)
+	e.engine.SetClock(e.clock.Now)
+	e.svc = NewAutomationService(e.repo, e.users, e.engine, e.txManager).(*automationService)
+	e.svc.now = e.clock.Now
+}
+
+// startEntityRun is startRun for a lead or a ticket: it records the rule's
+// trigger event for the record, dispatches it and returns the one run of the
+// rule it started, still pending, removing the sibling runs of other rules.
+func (e *automationEnv) startEntityRun(rule *models.AutomationRule, entityType string, entityID uint) *models.AutomationRun {
+	e.t.Helper()
+	before := len(e.runsOf(rule.ID))
+	event := e.recordEvent(entityType, entityID, rule.TriggerType, "", "", models.AutomationOriginUser)
+	e.dispatch()
+	runs := e.runsOf(rule.ID)
+	require.Len(e.t, runs, before+1, "the event starts exactly one run of the rule")
+	require.NoError(e.t, e.db.
+		Where("event_id = ? AND rule_id <> ? AND status = ?", event.ID, rule.ID, models.AutomationRunPending).
+		Delete(&models.AutomationRun{}).Error)
+	return &runs[len(runs)-1]
+}
+
+// runWebhookUpdatedAutomation: the automation assign_owner step (#408)
+// writes lead.updated on a lead run and ticket.updated on a ticket run, in the
+// step transaction, when it changed the record; a step that sets the owner
+// or assignee the record already has, and an engine built without
+// WithAutomationWebhooks, write no row.
+func runWebhookUpdatedAutomation(t *testing.T, db *gorm.DB) {
+	env := newWebhookEnv(t, db, nil)
+	env.wire(env.repo)
+	all := webhook.AllEventTypes()
+	a := env.endpoint("https://example.com/a", true, all...)
+	b := env.endpoint("https://example.com/b", true, webhookUpdatedTypes...)
+	env.endpoint("https://example.com/c", true, webhookCreatedTypes...)
+	env.endpoint("https://example.com/d", false, all...)
+
+	auto := newAutomationEnv(t, db)
+	auto.rebuildWith(WithAutomationWebhooks(webhook.NewEmitter(env.repo)))
+	support := auto.createUser("support", models.RoleSupport, true)
+	leadRule := auto.leadRule(models.AutomationEventLeadCreated, assignStep(auto.other.ID))
+	ticketRule := auto.createRule(models.AutomationEntityTicket, models.AutomationEventTicketCreated, models.AutomationTrigger{}, assignStep(support.ID))
+
+	runStep := func(t *testing.T, engineEnv *automationEnv, rule *models.AutomationRule, entityType string, id uint) {
+		t.Helper()
+		run := engineEnv.startEntityRun(rule, entityType, id)
+		engineEnv.executeDue()
+		assert.Equal(t, models.AutomationRunCompleted, engineEnv.run(run.ID).Status)
+		steps := engineEnv.stepsOf(run.ID)
+		require.Len(t, steps, 1)
+		assert.Equal(t, models.AutomationOutcomeSucceeded, steps[0].Outcome)
+	}
+
+	lead := env.seedLead()
+	ticket := env.seedTicket(models.TicketStatusOpen)
+
+	t.Run("assign_owner on a lead run", func(t *testing.T) {
+		env.clearDeliveries()
+		runStep(t, auto, leadRule, models.AutomationEntityLead, lead.ID)
+		assert.Equal(t, auto.other.ID, storedLead(t, db, lead.ID).OwnerID)
+		assertFanOut(t, env, models.WebhookEventLeadUpdated, lead.ID, a.ID, b.ID)
+		assert.Equal(t, int64(2), env.allDeliveries())
+	})
+
+	t.Run("assign_owner on a ticket run", func(t *testing.T) {
+		env.clearDeliveries()
+		runStep(t, auto, ticketRule, models.AutomationEntityTicket, ticket.ID)
+		stored := storedTicket(t, db, ticket.ID)
+		require.NotNil(t, stored.AssignedToID)
+		assert.Equal(t, support.ID, *stored.AssignedToID)
+		assertFanOut(t, env, models.WebhookEventTicketUpdated, ticket.ID, a.ID, b.ID)
+		assert.Equal(t, int64(2), env.allDeliveries())
+	})
+
+	t.Run("the same target again writes no row", func(t *testing.T) {
+		env.clearDeliveries()
+		runStep(t, auto, leadRule, models.AutomationEntityLead, lead.ID)
+		runStep(t, auto, ticketRule, models.AutomationEntityTicket, ticket.ID)
+		assert.Equal(t, auto.other.ID, storedLead(t, db, lead.ID).OwnerID)
+		assert.Zero(t, env.allDeliveries(), "an unchanged owner or assignee is no update")
+	})
+
+	t.Run("an engine without the option writes no row", func(t *testing.T) {
+		env.clearDeliveries()
+		plain := newAutomationEnv(t, db)
+		freshLead := env.seedLead()
+		freshTicket := env.seedTicket(models.TicketStatusOpen)
+		runStep(t, plain, leadRule, models.AutomationEntityLead, freshLead.ID)
+		runStep(t, plain, ticketRule, models.AutomationEntityTicket, freshTicket.ID)
+		assert.Equal(t, auto.other.ID, storedLead(t, db, freshLead.ID).OwnerID, "the step still ran")
+		require.NotNil(t, storedTicket(t, db, freshTicket.ID).AssignedToID)
+		assert.Zero(t, env.allDeliveries(), "no outbox row without the option")
 	})
 }

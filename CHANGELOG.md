@@ -1156,6 +1156,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Lead assignment, lead conversion and the automation assign-owner step send updated webhook
+  events (#616).** `POST /leads/{id}/assign` now writes `lead.updated` when the owner changed
+  (assigning the current owner again sends nothing), `POST /leads/{id}/convert` writes
+  `lead.updated` next to `customer.created`, and the automation `assign_owner` step writes
+  `lead.updated` on a lead run and `ticket.updated` on a ticket run when it changed the owner or
+  assignee, each in the transaction of the write. Before, these paths sent no updated event. Each
+  of the lead, customer and ticket models now defines the state its updated event compares
+  (`WebhookState()`), and a test keeps that state in step with the columns the update writes;
+  the lead and ticket states now also compare `customer_id`, which their updates write. Customer
+  assignment, ticket comments, a repeat form enquiry and a company delete still send no updated
+  event.
+
 - **Leads and tasks list through one query path each (#618).** `GET /leads`, `GET /leads/export`
   and `GET /tasks` build one filter, and the repository answers it with one shared predicate for
   the rows and the total; the parameters a caller may use are always combined. For admins that

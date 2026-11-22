@@ -194,7 +194,7 @@ func (s *customerService) updateLocked(ctx context.Context, customer *models.Cus
 		if err := u.Customers.Update(customer); err != nil {
 			return err
 		}
-		if !customerStoredValuesChanged(locked, customer) {
+		if locked.WebhookState() == customer.WebhookState() {
 			return nil
 		}
 		return u.Webhooks.Updated(ctx, webhook.Customer, customer.ID)
@@ -211,27 +211,6 @@ func (s *customerService) updateLocked(ctx context.Context, customer *models.Cus
 	}
 	logger.Info("Customer updated successfully")
 	return nil
-}
-
-// customerStoredValuesChanged reports whether an update changed any of the
-// columns customerRepository.Update writes: the rule of the customer.updated
-// webhook event (#408). updated_at is not part of it.
-func customerStoredValuesChanged(before, after *models.Customer) bool {
-	return before.FirstName != after.FirstName ||
-		before.LastName != after.LastName ||
-		before.Email != after.Email ||
-		before.Phone != after.Phone ||
-		before.Company != after.Company ||
-		before.Website != after.Website ||
-		before.Position != after.Position ||
-		before.Address != after.Address ||
-		before.City != after.City ||
-		before.State != after.State ||
-		before.Country != after.Country ||
-		before.PostalCode != after.PostalCode ||
-		before.Notes != after.Notes ||
-		!equalUintPtr(before.CompanyID, after.CompanyID) ||
-		!equalUintPtr(before.AssignedToID, after.AssignedToID)
 }
 
 // Delete erases the customer's personal data and then soft-deletes the row. It

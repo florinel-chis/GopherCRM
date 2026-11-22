@@ -3949,31 +3949,41 @@ commits. Code: `internal/models/webhook.go`,
   commits one row set), `TicketService.Create` and form ticket intake with outcome `created` (never
   `duplicate`). A failure after the record insert rolls back the record and every row. Without the
   options every path is unchanged.
-- **Updated events (#408).** The same options and `WithBulkWebhooks(e)` (passed to the one
-  `NewBulkStatusService` call in `cmd/main.go`) make five update paths write `*.updated` rows in
-  the transaction of the write: `LeadService.Update` (`applyUpdate`, `lead.updated`; without a
-  transaction manager the update stays non-transactional and writes none),
+- **Updated events (#408).** The same options, `WithBulkWebhooks(e)` (passed to the one
+  `NewBulkStatusService` call in `cmd/main.go`) and `WithAutomationWebhooks(e)` (passed to the one
+  `NewAutomationEngine` call there) make these update paths write `*.updated` rows in the
+  transaction of the write: `LeadService.Update` (`applyUpdate`, `lead.updated`; without a
+  transaction manager the update stays non-transactional and writes none), `LeadService.Assign`
+  (`lead.updated` when the owner changed), `LeadService.ConvertToCustomer` (`lead.updated` next to
+  `customer.created`, inside each retry attempt, so a replayed conversion commits one of each),
   `CustomerService.Update` (`updateLocked`, `customer.updated`), `TicketService.Update`
-  (`updateWithEvents`, `ticket.updated`), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
+  (`updateWithEvents`, `ticket.updated`), the automation `assign_owner` step (`lead.updated` on a
+  lead run, `ticket.updated` on a ticket run, in the step transaction; a deal run and a dry run
+  write none), and `BulkSetLeadStatus` / `BulkSetTicketStatus` (one event,
   with its own event id, per record whose locked status differed from the requested one;
   one `Updated` call with every changed id reads the endpoints once per batch and inserts every row in one statement).
-  **The rule:** an event is written iff the committed write changed at least one stored column of
-  the record, comparing the row read under lock inside the writing transaction with the row written,
-  `updated_at` excluded (`leadStoredValuesChanged`: first_name, last_name, email, phone, company,
-  position, source, status, classification, external_id, notes, company_id, owner_id;
-  `customerStoredValuesChanged`: the fifteen columns `customerRepository.Update` writes;
-  `ticketStoredValuesChanged`: title, description, status, priority, assigned_to_id, resolution,
-  due_at as an instant). An update that sends the stored values still answers 200 and still records
-  its automation events; it only writes no webhook row. The handlers do read-modify-write from a
-  plain read made before the transaction, so a write that reverts a column another request
-  committed in between counts as a change and emits an event: that is the rule, not a defect. A
-  refusal (closed-ticket reopen, bad assignee, unknown `company_id`, status `converted`, duplicate
-  email, a customer that is no longer live) returns before any outbox write. Deliberately silent
-  (no updated event): delete and erasure (they write the deleted events below instead),
-  `ConvertToCustomer` (`customer.created` only), `LeadService.Assign`,
-  `CustomerService.Assign`, ticket comments (the first-response stamp included), customer external
-  ids, the form repeat-enquiry note append, automation rule steps, a company delete unlinking
-  `company_id`, and bulk task status.
+  **The rule:** an event is written iff the committed write changed the record's `WebhookState()`
+  (`internal/models`: `Lead`, `Customer` and `Ticket` each return a struct
+  compared with `==`), comparing the state of the row read under lock inside the writing
+  transaction with the state written. Each state holds exactly the columns the model's
+  repository update writes, minus id, created_at, updated_at and deleted_at (lead: first_name,
+  last_name, email, phone, company, position, source, status, classification, external_id, notes,
+  owner_id, customer_id, company_id; customer: the fifteen columns `customerRepository.Update`
+  writes; ticket: title, description, status, priority, customer_id, assigned_to_id, resolution,
+  due_at as an instant), nullable ids compared by value. `TestWebhookStateCoversUpdateColumns`
+  (`internal/repository`) captures the columns of those updates, of `ConvertToCustomer` and of the
+  automation `SetLeadOwner` / `SetTicketAssignee`, and fails when they and the state drift apart: a
+  column added to an update must be added to its state. An update that sends the stored values
+  still answers 200 and still records its automation events; it only writes no webhook row, and
+  assigning a lead to its current owner writes none either. The handlers do read-modify-write from
+  a plain read made before the transaction, so a write that reverts a column another request
+  committed in between (a concurrent conversion's customer_id included) counts as a change and
+  emits an event: that is the rule, not a defect. A refusal (closed-ticket reopen, bad assignee,
+  unknown `company_id`, status `converted`, duplicate email, a customer that is no longer live)
+  returns before any outbox write. Deliberately silent (no updated event): delete and erasure (they
+  write the deleted events below instead), `CustomerService.Assign`, ticket comments (the
+  first-response stamp included), customer external ids, the form repeat-enquiry note append, the
+  other automation rule steps, a company delete unlinking `company_id`, and bulk task status.
 - **Deleted events (#437, #531).** `TxEmitter.Deleted` (`internal/webhook/emitter.go`)
   de-duplicates the record ids and writes them as `Created` and `Updated` do: one plain read of the active endpoints subscribed to the
   deleted type (`ListActiveEndpointsFor`), then one insert of one `pending` row per (endpoint,

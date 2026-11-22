@@ -380,6 +380,11 @@ func (s *leadService) convertAttempt(ctx context.Context, logger *logrus.Entry, 
 	if err := s.webhooks.Bind(tx).Created(ctx, webhook.Customer, customerData.ID); err != nil {
 		return err
 	}
+	// And the lead's lead.updated rows (#408), in the same attempt. The attempt
+	// refused a converted lead above, so status and customer_id always change.
+	if err := s.webhooks.Bind(tx).Updated(ctx, webhook.Lead, leadID); err != nil {
+		return err
+	}
 
 	if hooks.beforeCommit != nil {
 		hooks.beforeCommit(leadCompanyOpConvert, leadID)
