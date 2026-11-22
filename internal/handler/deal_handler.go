@@ -346,13 +346,13 @@ func (h *DealHandler) Pipeline(c *gin.Context) {
 		return
 	}
 
-	// The service narrows a sales caller to itself, as the list does.
-	role, ok := callRole(c, permissions.DealsView)
-	if !ok {
+	// The service narrows an own-scope caller to itself, as the list does.
+	scope := permissionScope(c, permissions.DealsView)
+	if scope == "" {
 		utils.RespondForbidden(c, "Insufficient permissions")
 		return
 	}
-	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), role)
+	pipeline, err := h.dealService.Pipeline(filter, c.GetUint("user_id"), scope)
 	if err != nil {
 		h.respondError(c, logger, err)
 		return

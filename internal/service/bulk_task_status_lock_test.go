@@ -17,6 +17,7 @@ import (
 
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/sirupsen/logrus"
@@ -97,7 +98,7 @@ func (e *bulkTaskLockEnv) update(id uint, change func(*models.Task)) error {
 }
 
 func (e *bulkTaskLockEnv) bulkSet(actor *models.User, id uint, status models.TaskStatus) error {
-	_, err := e.bulk.BulkSetTaskStatus(context.Background(), actor.ID, actor.Role, []uint{id}, status)
+	_, err := e.bulk.BulkSetTaskStatus(context.Background(), actor.ID, permissions.ForUser(actor).Scope(permissions.TasksUpdate), []uint{id}, status)
 	return err
 }
 

@@ -44,7 +44,7 @@ func TestAutomationTicketLogsOmitPersonalData(t *testing.T) {
 	require.NoError(t, env.ticketSvc.Update(current))
 	// Capture: a bulk status batch.
 	other := env.createTicket(env.support, models.TicketStatusOpen)
-	_, err = bulk.BulkSetTicketStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{other.ID}, models.TicketStatusResolved)
+	_, err = bulk.BulkSetTicketStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{other.ID}, models.TicketStatusResolved)
 	require.NoError(t, err)
 
 	// Dispatch and execution up to the wait.

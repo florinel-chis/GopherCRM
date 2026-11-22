@@ -68,7 +68,7 @@ func TestLeadExportHandler(t *testing.T) {
 	utils.Logger = logrus.New()
 	utils.Logger.SetLevel(logrus.PanicLevel)
 
-	admin := service.LeadViewer{UserID: 1, Role: models.RoleAdmin}
+	admin := service.LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}
 
 	t.Run("service_failure_is_the_json_500_envelope", func(t *testing.T) {
 		svc := new(mocks.LeadService)
@@ -143,7 +143,7 @@ func TestLeadExportHandler(t *testing.T) {
 
 	t.Run("sales_reaches_the_service_as_itself", func(t *testing.T) {
 		svc := new(mocks.LeadService)
-		sales := service.LeadViewer{UserID: 7, Role: models.RoleSales}
+		sales := service.LeadViewer{UserID: 7, Scope: models.PermissionScopeOwn}
 		svc.On("ExportForActor", sales, service.LeadExportParams{Search: "acme", SortOrder: "asc"}).Return([]models.Lead{}, nil).Once()
 		rec := leadExportGet(leadExportRouter(svc, 7, "sales"), "?search=acme")
 		assert.Equal(t, http.StatusOK, rec.Code)

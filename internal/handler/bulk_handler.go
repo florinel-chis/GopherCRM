@@ -83,14 +83,14 @@ func (h *BulkHandler) BulkUpdateLeadStatus(c *gin.Context) {
 		return
 	}
 
-	// The per-item scope travels as the role argument, built from leads.update.
-	role, ok := callRole(c, permissions.LeadsUpdate)
-	if !ok {
+	// The per-item scope is the caller's leads.update scope.
+	scope := permissionScope(c, permissions.LeadsUpdate)
+	if scope == "" {
 		utils.RespondForbidden(c, "Insufficient permissions")
 		return
 	}
 	result, err := h.bulkService.BulkSetLeadStatus(c.Request.Context(),
-		c.GetUint("user_id"), role, req.LeadIDs, req.Status)
+		c.GetUint("user_id"), scope, req.LeadIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk lead status update rejected")
 		respondBulkStatusError(c, err)
@@ -124,9 +124,8 @@ func (h *BulkHandler) BulkUpdateTicketStatus(c *gin.Context) {
 	// Mirrors the single-ticket update, which turns a caller without
 	// tickets.update away before it looks at the body at all: an unauthorized
 	// caller learns nothing about which payloads would have been well formed.
-	// The per-item scope travels as the role argument, built from that key.
-	currentUserRole, ok := callRole(c, permissions.TicketsUpdate)
-	if !hasPermission(c, permissions.TicketsUpdate) || !ok {
+	// The per-item scope is the caller's scope of that key.
+	if !hasPermission(c, permissions.TicketsUpdate) {
 		utils.RespondForbidden(c, refusalMessage(c, "Customers cannot update tickets",
 			"Sales users cannot update tickets", "Insufficient permissions"))
 		return
@@ -139,7 +138,7 @@ func (h *BulkHandler) BulkUpdateTicketStatus(c *gin.Context) {
 	}
 
 	result, err := h.bulkService.BulkSetTicketStatus(c.Request.Context(),
-		c.GetUint("user_id"), currentUserRole, req.TicketIDs, req.Status)
+		c.GetUint("user_id"), permissionScope(c, permissions.TicketsUpdate), req.TicketIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk ticket status update rejected")
 		respondBulkStatusError(c, err)
@@ -176,14 +175,14 @@ func (h *BulkHandler) BulkUpdateTaskStatus(c *gin.Context) {
 		return
 	}
 
-	// The per-item scope travels as the role argument, built from tasks.update.
-	role, ok := callRole(c, permissions.TasksUpdate)
-	if !ok {
+	// The per-item scope is the caller's tasks.update scope.
+	scope := permissionScope(c, permissions.TasksUpdate)
+	if scope == "" {
 		utils.RespondForbidden(c, "Insufficient permissions")
 		return
 	}
 	result, err := h.bulkService.BulkSetTaskStatus(c.Request.Context(),
-		c.GetUint("user_id"), role, req.TaskIDs, req.Status)
+		c.GetUint("user_id"), scope, req.TaskIDs, req.Status)
 	if err != nil {
 		logger.WithError(utils.LogError(err)).Warn("Bulk task status update rejected")
 		respondBulkStatusError(c, err)

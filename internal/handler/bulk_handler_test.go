@@ -25,7 +25,7 @@ import (
 type stubBulkStatusService struct {
 	called     bool
 	gotActorID uint
-	gotRole    models.UserRole
+	gotScope   models.PermissionScope
 	gotIDs     []uint
 	gotStatus  string
 	gotCtx     context.Context
@@ -33,27 +33,27 @@ type stubBulkStatusService struct {
 	err        error
 }
 
-func (s *stubBulkStatusService) record(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status string) {
+func (s *stubBulkStatusService) record(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status string) {
 	s.called = true
 	s.gotCtx = ctx
 	s.gotActorID = actorID
-	s.gotRole = role
+	s.gotScope = scope
 	s.gotIDs = ids
 	s.gotStatus = status
 }
 
-func (s *stubBulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(ctx, actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetLeadStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, scope, ids, string(status))
 	return s.result, s.err
 }
 
-func (s *stubBulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(ctx, actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetTicketStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, scope, ids, string(status))
 	return s.result, s.err
 }
 
-func (s *stubBulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, role models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
-	s.record(ctx, actorID, role, ids, string(status))
+func (s *stubBulkStatusService) BulkSetTaskStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error) {
+	s.record(ctx, actorID, scope, ids, string(status))
 	return s.result, s.err
 }
 
@@ -169,7 +169,7 @@ func (suite *BulkStatusHandlerTestSuite) TestBulkUpdateLeadStatus_Success() {
 
 	suite.True(suite.stub.called)
 	suite.Equal(uint(7), suite.stub.gotActorID)
-	suite.Equal(models.RoleAdmin, suite.stub.gotRole)
+	suite.Equal(models.PermissionScopeAll, suite.stub.gotScope)
 	suite.Equal([]uint{1, 2}, suite.stub.gotIDs)
 	suite.Equal("qualified", suite.stub.gotStatus)
 }

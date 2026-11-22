@@ -154,9 +154,9 @@ func (_m *DealService) History(dealID uint) ([]models.DealStageChange, error) {
 	return r0, ret.Error(1)
 }
 
-// Pipeline provides a mock function with given fields: filter, actorID, role
-func (_m *DealService) Pipeline(filter repository.DealPipelineFilter, actorID uint, role models.UserRole) (*models.DealPipeline, error) {
-	ret := _m.Called(filter, actorID, role)
+// Pipeline provides a mock function with given fields: filter, actorID, scope
+func (_m *DealService) Pipeline(filter repository.DealPipelineFilter, actorID uint, scope models.PermissionScope) (*models.DealPipeline, error) {
+	ret := _m.Called(filter, actorID, scope)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Pipeline")
@@ -169,9 +169,9 @@ func (_m *DealService) Pipeline(filter repository.DealPipelineFilter, actorID ui
 	return r0, ret.Error(1)
 }
 
-// DashboardPipeline provides a mock function with given fields: actorID, role
-func (_m *DealService) DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error) {
-	ret := _m.Called(actorID, role)
+// DashboardPipeline provides a mock function with given fields: actorID, scope
+func (_m *DealService) DashboardPipeline(actorID uint, scope models.PermissionScope) (*models.DealDashboardPipeline, error) {
+	ret := _m.Called(actorID, scope)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DashboardPipeline")

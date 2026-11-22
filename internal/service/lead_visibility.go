@@ -12,25 +12,26 @@ import (
 // LeadViewer is the caller a lead-visibility decision is made for.
 type LeadViewer struct {
 	UserID uint
-	Role   models.UserRole
-	// TaskScope, when set, is the scope the caller holds tasks.view at. Only
-	// TaskService.ListByDeal reads it, and only for a custom-role caller,
-	// whose deal visibility (Role) and task visibility are separate
-	// permissions; empty means "as Role says", which is every system role.
+	// Scope is the scope the caller holds the one key the call is governed by
+	// at: all, own, or "" when the key is not held.
+	Scope models.PermissionScope
+	// TaskScope is the scope the caller holds tasks.view at. Only
+	// TaskService.ListByDeal reads it: deal visibility (Scope, from
+	// deals.view) and task visibility are separate permissions there.
 	TaskScope models.PermissionScope
 }
 
 // CanViewLead is the one lead-visibility policy. It decides every association
 // that can carry a lead (tasks and deals), when the link is written and when
-// it is read back: an admin sees every lead, a sales user only the leads it
-// owns, and every other role (support, customer, or none) no lead at all.
-// A nil lead, one that is not loaded or no longer exists, is visible to
-// admins only.
+// it is read back: a viewer whose scope is all sees every lead, one whose
+// scope is own only the leads it owns, and one without the key no lead at
+// all. On the system matrix that is admin, sales and every other role. A nil
+// lead, one that is not loaded or no longer exists, is visible at all only.
 func CanViewLead(viewer LeadViewer, lead *models.Lead) bool {
-	switch viewer.Role {
-	case models.RoleAdmin:
+	switch viewer.Scope {
+	case models.PermissionScopeAll:
 		return true
-	case models.RoleSales:
+	case models.PermissionScopeOwn:
 		return lead != nil && viewer.UserID != 0 && lead.OwnerID == viewer.UserID
 	default:
 		return false
@@ -44,7 +45,7 @@ func CanViewLead(viewer LeadViewer, lead *models.Lead) bool {
 // the lead changed owner, or before the task was reassigned, stops showing as
 // soon as the policy says so. A lead_id without its lead (not preloaded, or a
 // preloaded lead that is not the linked one) is hidden from everyone but
-// admins.
+// a viewer whose scope is all.
 func RedactTaskLead(viewer LeadViewer, task *models.Task) {
 	if task == nil || (task.LeadID == nil && task.Lead == nil) {
 		return
@@ -90,8 +91,8 @@ func linkedLead(leadID *uint, lead *models.Lead) *models.Lead {
 }
 
 // checkLeadLink is the write side of CanViewLead: leadID must name a live lead
-// that the acting user may see. The actor's role is read from the user
-// repository rather than trusted from the caller. A lead that does not exist
+// that the acting user may see. The actor's permissions are read from the
+// user repository rather than trusted from the caller. A lead that does not exist
 // and one the actor may not see both get ErrLeadNotFound, so a write cannot be
 // used to probe for leads hidden from the caller. The lead is returned for
 // the caller to attach to its response.
@@ -115,16 +116,16 @@ func checkLeadLink(leadRepo repository.LeadRepository, userRepo repository.UserR
 }
 
 // leadViewerOf loads the acting user as the lead-visibility policy sees it.
-// No actor (id 0) and an unknown one are a viewer without a role, which sees
+// No actor (id 0) and an unknown one are a viewer without a scope, which sees
 // no lead.
 func leadViewerOf(userRepo repository.UserRepository, actorID uint) (LeadViewer, error) {
 	return viewerOf(userRepo, actorID, permissions.LeadsView)
 }
 
 // viewerOf loads the acting user and answers with the viewer one permission
-// key gives it: a system role as it is, a custom role by the scope its stored
-// permissions hold the key at (permissions.RoleForCall). An actor that does
-// not hold the key is a viewer without a role, which sees nothing.
+// key gives it: the scope its effective permission set (the system matrix, or
+// the custom role's stored grants) holds the key at. An actor that does not
+// hold the key is a viewer without a scope, which sees nothing.
 func viewerOf(userRepo repository.UserRepository, actorID uint, key string) (LeadViewer, error) {
 	if actorID == 0 {
 		return LeadViewer{}, nil
@@ -136,9 +137,5 @@ func viewerOf(userRepo repository.UserRepository, actorID uint, key string) (Lea
 		}
 		return LeadViewer{}, err
 	}
-	role, err := permissions.RoleForCall(key, permissions.ForUser(actor), string(actor.Role))
-	if err != nil {
-		return LeadViewer{UserID: actor.ID}, nil
-	}
-	return LeadViewer{UserID: actor.ID, Role: role}, nil
+	return LeadViewer{UserID: actor.ID, Scope: permissions.ForUser(actor).Scope(key)}, nil
 }

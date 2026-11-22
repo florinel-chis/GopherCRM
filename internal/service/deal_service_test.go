@@ -19,6 +19,7 @@ import (
 	apperrors "github.com/florinel-chis/gophercrm/internal/errors"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	"github.com/florinel-chis/gophercrm/internal/repository"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
@@ -839,24 +840,25 @@ func TestDealService_PipelineScoping(t *testing.T) {
 
 	f := newDealPipelineService(t)
 	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}).Return([]models.DealPipelineRow{}, nil).Once()
-	pipeline, err := f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 1, models.RoleAdmin)
+	pipeline, err := f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 1, models.PermissionScopeAll)
 	require.NoError(t, err)
 	assert.Len(t, pipeline.Stages, 5)
 
 	f.repo.On("Pipeline", repository.DealPipelineFilter{}).Return([]models.DealPipelineRow{}, nil).Once()
-	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 1, models.RoleAdmin)
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 1, models.PermissionScopeAll)
 	require.NoError(t, err, "admin without an owner filter sees everybody")
 
 	own := uint(7)
 	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own, CompanyID: &company}).Return([]models.DealPipelineRow{}, nil).Once()
-	_, err = f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 7, models.RoleSales)
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{OwnerID: &asked, CompanyID: &company}, 7, models.PermissionScopeOwn)
 	require.NoError(t, err)
 	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own}).Return([]models.DealPipelineRow{}, nil).Once()
-	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, models.RoleSales)
+	_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, models.PermissionScopeOwn)
 	require.NoError(t, err, "sales without an owner filter still sees only itself")
 
+	// Support, customer and a caller without a role hold no deals.view.
 	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer, ""} {
-		_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, role)
+		_, err = f.service.Pipeline(repository.DealPipelineFilter{}, 7, permissions.ForSystemRole(string(role)).Scope(permissions.DealsView))
 		assert.Truef(t, errors.Is(err, apperrors.ErrForbidden), "%q: got %v", role, err)
 	}
 }
@@ -877,7 +879,7 @@ func TestDealService_DashboardPipeline(t *testing.T) {
 		{Currency: "USD", DealCount: 1, AmountCents: 5},
 		{Currency: "EUR", DealCount: 2, AmountCents: 7},
 	}, nil).Once()
-	result, err := f.service.DashboardPipeline(1, models.RoleAdmin)
+	result, err := f.service.DashboardPipeline(1, models.PermissionScopeAll)
 	require.NoError(t, err)
 	assert.Len(t, result.Stages, 5)
 	assert.Equal(t, []models.DealPipelineTotal{{Currency: "EUR", AmountCents: 333, WeightedCents: 110}}, result.Stages[1].Totals)
@@ -889,13 +891,13 @@ func TestDealService_DashboardPipeline(t *testing.T) {
 	own := uint(7)
 	f.repo.On("Pipeline", repository.DealPipelineFilter{OwnerID: &own}).Return([]models.DealPipelineRow{}, nil).Once()
 	f.repo.On("WonBetween", &own, september, october).Return([]models.DealWonRow{}, nil).Once()
-	result, err = f.service.DashboardPipeline(7, models.RoleSales)
+	result, err = f.service.DashboardPipeline(7, models.PermissionScopeOwn)
 	require.NoError(t, err)
 	assert.NotNil(t, result.WonThisMonth.Totals, "no won deal is [] not null")
 	assert.Equal(t, int64(0), result.WonThisMonth.Count)
 
 	for _, role := range []models.UserRole{models.RoleSupport, models.RoleCustomer} {
-		_, err = f.service.DashboardPipeline(9, role)
+		_, err = f.service.DashboardPipeline(9, permissions.ForSystemRole(string(role)).Scope(permissions.DealsView))
 		assert.Truef(t, errors.Is(err, apperrors.ErrForbidden), "%s: got %v", role, err)
 	}
 	f.repo.AssertNumberOfCalls(t, "Pipeline", 2)
@@ -903,6 +905,6 @@ func TestDealService_DashboardPipeline(t *testing.T) {
 
 	// A repository failure is passed on, not turned into an empty widget.
 	f.repo.On("Pipeline", repository.DealPipelineFilter{}).Return(nil, errors.New("boom")).Once()
-	_, err = f.service.DashboardPipeline(1, models.RoleAdmin)
+	_, err = f.service.DashboardPipeline(1, models.PermissionScopeAll)
 	assert.EqualError(t, err, "boom")
 }

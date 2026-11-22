@@ -14,6 +14,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/middleware"
 	"github.com/florinel-chis/gophercrm/internal/mocks"
 	"github.com/florinel-chis/gophercrm/internal/models"
+	"github.com/florinel-chis/gophercrm/internal/permissions"
 	servicemocks "github.com/florinel-chis/gophercrm/internal/service/mocks"
 	"github.com/florinel-chis/gophercrm/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -826,8 +827,8 @@ func dashboardPipelineFixture() *models.DealDashboardPipeline {
 	}
 }
 
-// Admin and sales reach the service with their own id and role (the service
-// scopes sales to itself); support passes the dashboard guard but is refused
+// Admin and sales reach the service with their own id and deals.view scope
+// (the service scopes own to the caller); support passes the dashboard guard but is refused
 // by the handler before any data is read, and customer is stopped by the
 // guard. The mock is primed only for the allowed roles, so a check that
 // opened up would also fail on the unexpected call.
@@ -843,7 +844,7 @@ func (suite *DashboardHandlerTestSuite) TestGetPipeline_RoleMatrix() {
 	} {
 		suite.SetupTest()
 		if tc.status == http.StatusOK {
-			suite.mockDealService.On("DashboardPipeline", uint(1), tc.role).Return(dashboardPipelineFixture(), nil).Once()
+			suite.mockDealService.On("DashboardPipeline", uint(1), permissions.ForSystemRole(string(tc.role)).Scope(permissions.DealsView)).Return(dashboardPipelineFixture(), nil).Once()
 		}
 
 		rec := suite.doGet(suite.newRouterWithRole(tc.role), "/dashboard/pipeline")
@@ -857,7 +858,7 @@ func (suite *DashboardHandlerTestSuite) TestGetPipeline_RoleMatrix() {
 // The JSON the dashboard receives: five stages in order, totals as arrays
 // (never null), and the won-this-month tile.
 func (suite *DashboardHandlerTestSuite) TestGetPipeline_ResponseShape() {
-	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleAdmin).Return(dashboardPipelineFixture(), nil)
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.PermissionScopeAll).Return(dashboardPipelineFixture(), nil)
 
 	rec := suite.doGet(suite.newRouterWithRole(models.RoleAdmin), "/dashboard/pipeline")
 
@@ -896,12 +897,12 @@ func (suite *DashboardHandlerTestSuite) TestGetPipeline_ResponseShape() {
 // The service's own refusal is a 403 too, and any other failure a 500 that
 // does not echo the error.
 func (suite *DashboardHandlerTestSuite) TestGetPipeline_ServiceErrors() {
-	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleSales).
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.PermissionScopeOwn).
 		Return(nil, fmt.Errorf("wrapped: %w", apperrors.ErrForbidden)).Once()
 	rec := suite.doGet(suite.newRouterWithRole(models.RoleSales), "/dashboard/pipeline")
 	assert.Equal(suite.T(), http.StatusForbidden, rec.Code)
 
-	suite.mockDealService.On("DashboardPipeline", uint(1), models.RoleAdmin).
+	suite.mockDealService.On("DashboardPipeline", uint(1), models.PermissionScopeAll).
 		Return(nil, errors.New("database is on fire")).Once()
 	rec = suite.doGet(suite.newRouterWithRole(models.RoleAdmin), "/dashboard/pipeline")
 	assert.Equal(suite.T(), http.StatusInternalServerError, rec.Code)

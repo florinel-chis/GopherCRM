@@ -274,24 +274,30 @@ The ten self-service routes need authentication only:
 Adding a route or a permission: [EXTENDING.md](EXTENDING.md#10-add-a-role-or-a-permission),
 section 10.
 
-## Service-boundary adapter
+## Service-side scope
 
-Some services still decide by a `models.UserRole` argument. For those calls
-`permissions.RoleForCall` translates the caller, per call site, from exactly one key through the
-`callRoles` table. A system role passes unchanged. Any other caller is mapped by the scope it
-holds the key at; a key outside the table is an error (`ErrNoCallRole`), and so is a key the
-caller does not hold where the table names no role for that case (`ErrNotHeld`).
+A service call that a permission key governs receives the caller's id and the scope the caller
+holds that one key at: `all`, `own`, or not held. The handler reads it with `permissionScope` (or
+`viewerFor` for a `service.LeadViewer`), and a service that loads the actor itself reads
+`permissions.ForUser(actor).Scope(key)`. The service decides from that scope alone; no system role
+is passed through, so a custom role and a system role holding a key at the same scope get the same
+answer. On the system matrix admin holds all eight keys below at `all`, and the other roles hold
+them as the matrix says (sales `own` on most, support `own` on `tickets.update` and
+`tasks.update`, customer `own` on `tasks.update`).
 
 | Key | Held at `all` | Held at `own` | Not held | Used by |
 |---|---|---|---|---|
-| `leads.erase_converted` | admin | (no `own` scope) | sales | Lead delete: erasing a converted lead |
-| `deals.view` | admin | sales | error | Deal pipeline, dashboard pipeline, the deal-link viewer |
-| `leads.update` | admin | sales | error | Bulk lead status |
-| `tickets.update` | admin | support | error | Bulk ticket status |
-| `tasks.update` | admin | sales | error | Bulk task status |
-| `leads.view` | admin | sales | support | The lead viewer of `CanViewLead` and of lead-link redaction |
-| `leads.export` | admin | sales | error | Which leads the CSV export holds |
-| `automation.runs_view` | admin | sales | error | The automation run viewer |
+| `leads.erase_converted` | a converted lead may be erased | (no `own` scope) | only an unconverted lead | Lead delete: erasing a converted lead |
+| `deals.view` | every deal, the requested owner filter kept | the caller's deals | refused | Deal pipeline, dashboard pipeline, the deal-link viewer |
+| `leads.update` | every lead | the caller's leads | refused | Bulk lead status |
+| `tickets.update` | every ticket | tickets assigned to the caller | refused | Bulk ticket status |
+| `tasks.update` | every task | tasks assigned to the caller | refused | Bulk task status |
+| `leads.view` | every lead | the caller's leads | no lead | The lead viewer of `CanViewLead` and of lead-link redaction |
+| `leads.export` | every lead, under the list filters | the caller's leads | refused | Which leads the CSV export holds |
+| `automation.runs_view` | every run | runs on the caller's leads and deals | refused | The automation run viewer |
+
+`GET /deals/{id}/tasks` reads two keys: `deals.view` decides which deal the caller may open, and
+`tasks.view` (`all`, or else only the tasks assigned to the caller) which of its tasks it gets.
 
 ## Last-admin invariant
 

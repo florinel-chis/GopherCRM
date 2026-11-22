@@ -139,7 +139,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	b := env.endpoint("https://example.com/b", true, webhookDeletedTypes...)
 	c := env.endpoint("https://example.com/c", true, announcing...)
 	d := env.endpoint("https://example.com/d", false, nine...)
-	admin := models.RoleAdmin
+	admin := models.PermissionScopeAll
 
 	t.Run("lead erasure", func(t *testing.T) {
 		lead := env.announcedLead()
@@ -313,7 +313,7 @@ func runWebhookDeletedFanOut(t *testing.T, db *gorm.DB) {
 	t.Run("a refused non-admin erasure writes nothing", func(t *testing.T) {
 		lead, customer := env.convertedLead()
 		before := env.deletedRows()
-		err := env.leads.Delete(context.Background(), lead.ID, models.RoleSales)
+		err := env.leads.Delete(context.Background(), lead.ID, models.PermissionScope(""))
 		require.Error(t, err)
 		assert.ErrorIs(t, err, apperrors.ErrForbidden)
 		assert.Equal(t, before, env.deletedRows())
@@ -398,7 +398,7 @@ func runWebhookDeletedAtomicity(t *testing.T, db *gorm.DB) {
 	env.wire(env.repo)
 	ctx := context.Background()
 	env.endpoint("https://example.com/all", true, webhook.AllEventTypes()...)
-	admin := models.RoleAdmin
+	admin := models.PermissionScopeAll
 
 	// withFailingOutbox runs fn with an outbox whose insert writes the rows
 	// and then fails, and rewires the real one afterwards.

@@ -446,7 +446,7 @@ func TestLeadServiceErasureOfAMissingLeadIsNotFound(t *testing.T) {
 		utils.NewTransactionManager(db),
 	)
 
-	err := leadService.Delete(context.Background(), 4242, models.RoleAdmin)
+	err := leadService.Delete(context.Background(), 4242, models.PermissionScopeAll)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, apperrors.ErrNotFound)
 }
@@ -467,8 +467,8 @@ func TestLeadServiceErasureIsNotRepeatable(t *testing.T) {
 	owner := seedLeadOwner(t, db)
 	lead := seedLead(t, db, owner.ID, "twice@example.com")
 
-	require.NoError(t, leadService.Delete(context.Background(), lead.ID, models.RoleAdmin))
-	assert.ErrorIs(t, leadService.Delete(context.Background(), lead.ID, models.RoleAdmin), apperrors.ErrNotFound)
+	require.NoError(t, leadService.Delete(context.Background(), lead.ID, models.PermissionScopeAll))
+	assert.ErrorIs(t, leadService.Delete(context.Background(), lead.ID, models.PermissionScopeAll), apperrors.ErrNotFound)
 
 	assertColumnsFreeOf(t, db, "leads", leadPersonalData(lead)...)
 }

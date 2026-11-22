@@ -1169,6 +1169,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Services decide from the caller's permission scope (#681).** A service call governed by a
+  permission key now receives the caller's id and the scope (`all`, `own` or not held) of that one
+  key, and `CanViewLead`, `CanViewDeal`, the automation run history, the lead CSV export, the deal
+  and dashboard pipelines, lead erasure, `GET /deals/{id}/tasks` and the three bulk status
+  endpoints decide from it. The adapter that turned a permission set into a stand-in system role
+  (`permissions.RoleForCall`) is removed. Every system role and custom role keeps the access it had;
+  the lead export service log names the `scope` instead of the `role`. See "Service-side scope" in
+  `docs/AUTHORIZATION.md`.
 - **Protected routes register through `handler.Protected` (#680).** The helper in
   `internal/handler/protected_routes.go` looks every protected route up in
   `permissions.RouteKeys` or `permissions.SelfServiceRoutes` and builds its guard from that entry;

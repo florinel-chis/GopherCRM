@@ -240,7 +240,7 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 
 		release := holdOnlyConnection(t, env.db)
 		err := cancelWhileWaiting(t, poolWaiter(t, env.db), release, func(ctx context.Context) error {
-			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 			return err
 		})
 
@@ -257,7 +257,7 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+		_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 
 		require.ErrorIs(t, err, context.Canceled)
 		var stored models.Lead
@@ -383,7 +383,7 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 			done <- err
 		}()
 		finish := func() { holder.release(); <-done }
@@ -431,7 +431,7 @@ func runRequestCancellationScenarios(t *testing.T, open func(t *testing.T) *gorm
 
 		err := cancelWhileWaiting(t, func() bool { return holder.held() && pooled() }, holder.release,
 			func(ctx context.Context) error {
-				_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+				_, err := svc.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 				return err
 			})
 
@@ -585,7 +585,7 @@ func runRequestRootRequired(t *testing.T, db *gorm.DB) {
 
 	t.Run("bulk status", func(t *testing.T) {
 		err := nested(t, func(ctx context.Context) error {
-			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 			return err
 		})
 		require.ErrorIs(t, err, utils.ErrTransactionRootRequired)
@@ -698,7 +698,7 @@ func TestRequestCancellationMySQLLockWait(t *testing.T) {
 		// The history row is written before the transaction opens, so it
 		// exists once the batch's locking read of the lead is seen waiting.
 		err := cancelWhileWaiting(t, lockWaiter(t, env.db, bulkLeadLockingRead), release, func(ctx context.Context) error {
-			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.RoleAdmin, []uint{lead.ID}, models.LeadStatusContacted)
+			_, err := env.bulk.BulkSetLeadStatus(ctx, env.admin.ID, models.PermissionScopeAll, []uint{lead.ID}, models.LeadStatusContacted)
 			return err
 		})
 

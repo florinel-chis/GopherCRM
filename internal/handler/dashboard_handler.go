@@ -910,14 +910,14 @@ func (h *DashboardHandler) GetPipeline(c *gin.Context) {
 
 	// The deal widgets need deals.view next to the route's dashboard.view:
 	// support, which passes the dashboard guard, does not hold it.
-	role, ok := callRole(c, permissions.DealsView)
-	if !hasPermission(c, permissions.DealsView) || !ok {
+	scope := permissionScope(c, permissions.DealsView)
+	if scope == "" {
 		logger.WithField("role", callerRoleForLog(c)).Warn("Deal widgets refused")
 		utils.RespondForbidden(c, "Deals are available to the admin and sales roles only")
 		return
 	}
 
-	pipeline, err := h.dealService.DashboardPipeline(c.GetUint("user_id"), role)
+	pipeline, err := h.dealService.DashboardPipeline(c.GetUint("user_id"), scope)
 	if err != nil {
 		if errors.Is(err, apperrors.ErrForbidden) {
 			logger.WithError(utils.LogError(err)).Warn("Deal widgets refused")

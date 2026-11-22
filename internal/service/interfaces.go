@@ -149,10 +149,11 @@ type LeadService interface {
 	// an active admin or sales user. The owner is always checked, even when it
 	// is the lead's current one.
 	Assign(ctx context.Context, leadID, ownerID uint, actor LeadViewer) (*models.Lead, error)
-	// Delete erases the lead. Only an admin (actorRole) may erase a converted
-	// lead, because that erases the customer it became; anyone else is refused
-	// with an apperrors.ErrForbidden and nothing changes.
-	Delete(ctx context.Context, id uint, actorRole models.UserRole) error
+	// Delete erases the lead. Only a caller whose leads.erase_converted scope
+	// (eraseConverted) is all may erase a converted lead, because that erases
+	// the customer it became; anyone else is refused with an
+	// apperrors.ErrForbidden and nothing changes.
+	Delete(ctx context.Context, id uint, eraseConverted models.PermissionScope) error
 	// ListFiltered is the one list of GET /leads (#426, #618): the leads
 	// matching filter, with their owner, where rows and total share one
 	// predicate whose fields are ANDed and applied before offset and limit. The
@@ -173,10 +174,10 @@ type LeadService interface {
 	// is spelled the same on MySQL 8 and SQLite.
 	GetConversionTimestamps(since time.Time) ([]time.Time, error)
 	// ExportForActor returns every lead the actor may list, unpaginated, for
-	// GET /leads/export: an admin under the list's combined filters, a
-	// sales user only its own leads in id order with every parameter ignored,
-	// and an error matching apperrors.ErrForbidden for any other role, without
-	// a read.
+	// GET /leads/export, by actor.Scope (leads.export): all under the list's
+	// combined filters, own only the actor's leads in id order with every
+	// parameter ignored, and an error matching apperrors.ErrForbidden for a
+	// caller without the key, without a read.
 	ExportForActor(actor LeadViewer, params LeadExportParams) ([]models.Lead, error)
 }
 
@@ -335,8 +336,9 @@ type TaskService interface {
 	UpdateWithLabels(task *models.Task, labelIDs *[]uint, leadIDSent, dealIDSent bool, actorID uint) error
 	// ListByDeal backs GET /deals/{id}/tasks: apperrors.ErrDealNotFound for a
 	// missing or soft-deleted deal, apperrors.ErrForbidden for a deal the viewer
-	// may not see, every live task of the deal for an admin and only the tasks
-	// assigned to the caller for the sales owner.
+	// may not see (viewer.Scope is deals.view), and then every live task of the
+	// deal when viewer.TaskScope (tasks.view) is all, otherwise only the tasks
+	// assigned to the caller.
 	ListByDeal(viewer LeadViewer, dealID uint, offset, limit int, sortBy, sortOrder string) ([]models.Task, int64, error)
 }
 
@@ -423,14 +425,14 @@ type DealService interface {
 	History(dealID uint) ([]models.DealStageChange, error)
 	// Pipeline returns every stage in pipeline order with its deal count and
 	// per-currency totals (amount and weighted amount) over the live deals
-	// matching the filter. The caller's role scopes it: an admin gets the
-	// filter as given, a sales user always its own deals (filter.OwnerID is
-	// replaced by actorID), and any other role apperrors.ErrForbidden.
-	Pipeline(filter repository.DealPipelineFilter, actorID uint, role models.UserRole) (*models.DealPipeline, error)
+	// matching the filter. The caller's deals.view scope decides: all gets the
+	// filter as given, own always the caller's deals (filter.OwnerID is
+	// replaced by actorID), and "" apperrors.ErrForbidden.
+	Pipeline(filter repository.DealPipelineFilter, actorID uint, scope models.PermissionScope) (*models.DealPipeline, error)
 	// DashboardPipeline is Pipeline without filters plus the deals won in the
-	// current calendar month in UTC, with the same role scoping: admin all,
-	// sales own, anybody else (support included) apperrors.ErrForbidden.
-	DashboardPipeline(actorID uint, role models.UserRole) (*models.DealDashboardPipeline, error)
+	// current calendar month in UTC, with the same scoping: all every owner,
+	// own the caller's, "" (support included) apperrors.ErrForbidden.
+	DashboardPipeline(actorID uint, scope models.PermissionScope) (*models.DealDashboardPipeline, error)
 }
 
 // ProductService drives the catalogue. Create and Update trim the name,
@@ -572,11 +574,14 @@ type APIKeyService interface {
 // BulkStatusService backs the three routed bulk status endpoints. Each call is
 // all-or-nothing, authorized per record against the same rules the
 // single-record update applies, and, once it passes the initial checks
-// (status, list size, role), recorded as a bulk_operations row.
+// (status, list size, scope), recorded as a bulk_operations row. scope is the
+// caller's scope of the entity's update key (leads.update, tickets.update,
+// tasks.update): all updates any record, own only the caller's (owned leads,
+// assigned tickets and tasks), and "" is refused before the batch.
 type BulkStatusService interface {
-	BulkSetLeadStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
-	BulkSetTicketStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
-	BulkSetTaskStatus(ctx context.Context, actorID uint, actorRole models.UserRole, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetLeadStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.LeadStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTicketStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TicketStatus) (*models.BulkStatusUpdateResult, error)
+	BulkSetTaskStatus(ctx context.Context, actorID uint, scope models.PermissionScope, ids []uint, status models.TaskStatus) (*models.BulkStatusUpdateResult, error)
 }
 
 // AEOService drives the Answer Engine Optimization module: the brand profile,
@@ -690,10 +695,10 @@ type AutomationService interface {
 	// and no rule id or version.
 	DryRunDraft(rule *models.AutomationRule, entityType string, entityID uint) (*models.AutomationDryRunReport, error)
 
-	// ListRuns and GetRun apply the viewer's role scope inside the query: an
-	// admin sees every run, a sales user only runs whose lead or deal it owns
-	// (a run outside the scope is apperrors.ErrAutomationRunNotFound), and
-	// support and customer callers get apperrors.ErrForbidden before any query.
+	// ListRuns and GetRun apply the viewer's automation.runs_view scope inside
+	// the query: all sees every run, own only runs whose lead or deal the
+	// viewer owns (a run outside the scope is apperrors.ErrAutomationRunNotFound),
+	// and a viewer without the key gets apperrors.ErrForbidden before any query.
 	ListRuns(viewer LeadViewer, offset, limit int, filter repository.AutomationRunListFilter) ([]models.AutomationRun, int64, error)
 	GetRun(viewer LeadViewer, id uint) (*models.AutomationRun, error)
 	// CancelRun cancels a pending, waiting or running run with cancel_reason

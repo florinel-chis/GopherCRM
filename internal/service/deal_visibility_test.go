@@ -15,14 +15,14 @@ func TestCanViewDeal(t *testing.T) {
 		deal   *models.Deal
 		want   bool
 	}{
-		{"admin sees another user's deal", LeadViewer{UserID: 1, Role: models.RoleAdmin}, owned, true},
-		{"admin sees a nil deal", LeadViewer{UserID: 1, Role: models.RoleAdmin}, nil, true},
-		{"sales sees its own deal", LeadViewer{UserID: 7, Role: models.RoleSales}, owned, true},
-		{"sales does not see another rep's deal", LeadViewer{UserID: 8, Role: models.RoleSales}, owned, false},
-		{"sales does not see a nil deal", LeadViewer{UserID: 7, Role: models.RoleSales}, nil, false},
-		{"sales without an id sees no ownerless deal", LeadViewer{Role: models.RoleSales}, &models.Deal{}, false},
-		{"support sees no deal, even one it would own", LeadViewer{UserID: 7, Role: models.RoleSupport}, owned, false},
-		{"customer sees no deal", LeadViewer{UserID: 7, Role: models.RoleCustomer}, owned, false},
+		{"admin sees another user's deal", LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}, owned, true},
+		{"admin sees a nil deal", LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}, nil, true},
+		{"sales sees its own deal", LeadViewer{UserID: 7, Scope: models.PermissionScopeOwn}, owned, true},
+		{"sales does not see another rep's deal", LeadViewer{UserID: 8, Scope: models.PermissionScopeOwn}, owned, false},
+		{"sales does not see a nil deal", LeadViewer{UserID: 7, Scope: models.PermissionScopeOwn}, nil, false},
+		{"sales without an id sees no ownerless deal", LeadViewer{Scope: models.PermissionScopeOwn}, &models.Deal{}, false},
+		{"support sees no deal, even one it would own", LeadViewer{UserID: 7, Scope: ""}, owned, false},
+		{"customer sees no deal", LeadViewer{UserID: 7, Scope: ""}, owned, false},
 		{"an empty role sees no deal", LeadViewer{UserID: 7}, owned, false},
 	}
 	for _, tt := range tests {
@@ -35,23 +35,23 @@ func TestCanViewDeal(t *testing.T) {
 func TestRedactTaskDeal(t *testing.T) {
 	dealID, otherID := uint(88), uint(89)
 	deal := func() *models.Deal { return &models.Deal{BaseModel: models.BaseModel{ID: dealID}, OwnerID: 7} }
-	admin := LeadViewer{UserID: 1, Role: models.RoleAdmin}
-	owner := LeadViewer{UserID: 7, Role: models.RoleSales}
+	admin := LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}
+	owner := LeadViewer{UserID: 7, Scope: models.PermissionScopeOwn}
 
 	t.Run("a viewer who may see the deal keeps both", func(t *testing.T) {
 		for _, viewer := range []LeadViewer{admin, owner} {
 			task := &models.Task{DealID: &dealID, Deal: deal()}
 			RedactTaskDeal(viewer, task)
-			assert.NotNil(t, task.DealID, viewer.Role)
-			assert.NotNil(t, task.Deal, viewer.Role)
+			assert.NotNil(t, task.DealID, viewer.Scope)
+			assert.NotNil(t, task.Deal, viewer.Scope)
 		}
 	})
 
 	t.Run("a viewer who may not loses both", func(t *testing.T) {
 		for _, viewer := range []LeadViewer{
-			{UserID: 8, Role: models.RoleSales},
-			{UserID: 7, Role: models.RoleSupport},
-			{UserID: 7, Role: models.RoleCustomer},
+			{UserID: 8, Scope: models.PermissionScopeOwn},
+			{UserID: 7, Scope: ""},
+			{UserID: 7, Scope: ""},
 			{UserID: 7},
 		} {
 			task := &models.Task{DealID: &dealID, Deal: deal()}

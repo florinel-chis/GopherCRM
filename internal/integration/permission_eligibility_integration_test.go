@@ -115,7 +115,7 @@ func runPermissionEligibility(t *testing.T, useMySQL bool) {
 			// Handing an existing lead over goes through the same rule.
 			existing := env.lead(admin, models.LeadStatusNew, nil)
 			_, assignErr := env.leadService.Assign(context.Background(), existing.ID, c.user.ID,
-				service.LeadViewer{UserID: admin.ID, Role: models.RoleAdmin})
+				service.LeadViewer{UserID: admin.ID, Scope: models.PermissionScopeAll})
 			if c.formOwner {
 				require.NoError(t, err)
 				require.NoError(t, assignErr)

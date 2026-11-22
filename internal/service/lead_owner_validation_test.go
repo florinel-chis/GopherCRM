@@ -28,7 +28,7 @@ import (
 	"github.com/florinel-chis/gophercrm/internal/utils"
 )
 
-var leadOwnerAdmin = LeadViewer{UserID: 1, Role: models.RoleAdmin}
+var leadOwnerAdmin = LeadViewer{UserID: 1, Scope: models.PermissionScopeAll}
 
 // AC-12: an unwired check is a refusal, never a skipped check.
 func TestLeadOwnerCheckRefusedWhenUnwired(t *testing.T) {

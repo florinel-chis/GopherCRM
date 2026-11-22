@@ -148,12 +148,12 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 
 		// All-or-nothing status update: a missing id refuses the batch and
 		// records nothing for any item.
-		_, err := bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{first.ID, second.ID, 999999}, models.LeadStatusQualified)
+		_, err := bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{first.ID, second.ID, 999999}, models.LeadStatusQualified)
 		require.Error(t, err)
 		assert.Empty(t, env.eventsOf(models.AutomationEntityLead, first.ID))
 		assert.Empty(t, env.eventsOf(models.AutomationEntityLead, second.ID))
 
-		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{first.ID, second.ID}, models.LeadStatusQualified)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{first.ID, second.ID}, models.LeadStatusQualified)
 		require.NoError(t, err)
 		firstEvents := env.eventsOf(models.AutomationEntityLead, first.ID)
 		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged}, eventTypes(firstEvents))
@@ -167,14 +167,14 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 
 		// The same batch again: every lead is already qualified, so each
 		// records lead_updated and no status change.
-		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{first.ID, second.ID}, models.LeadStatusQualified)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{first.ID, second.ID}, models.LeadStatusQualified)
 		require.NoError(t, err)
 		firstEvents = env.eventsOf(models.AutomationEntityLead, first.ID)
 		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged, models.AutomationEventLeadUpdated}, eventTypes(firstEvents))
 
 		// A sales caller that owns neither lead is refused for the whole batch
 		// and nothing is recorded.
-		_, err = bulk.BulkSetLeadStatus(context.Background(), env.other.ID, models.RoleSales, []uint{first.ID, second.ID}, models.LeadStatusContacted)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.other.ID, models.PermissionScopeOwn, []uint{first.ID, second.ID}, models.LeadStatusContacted)
 		require.Error(t, err)
 		assert.Len(t, env.eventsOf(models.AutomationEntityLead, first.ID), 3)
 		assert.Len(t, env.eventsOf(models.AutomationEntityLead, second.ID), 2)
@@ -182,13 +182,13 @@ func runAutomationLeadEvents(t *testing.T, db *gorm.DB) {
 
 		// Conversion is the only way to reach converted (#104): the batch is
 		// refused and records nothing.
-		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{second.ID}, models.LeadStatusConverted)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{second.ID}, models.LeadStatusConverted)
 		require.Error(t, err)
 		assert.Len(t, env.eventsOf(models.AutomationEntityLead, second.ID), 2)
 		assert.Equal(t, models.LeadStatusQualified, env.lead(second.ID).Status)
 
 		// Any other move records the status change with origin bulk.
-		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.RoleAdmin, []uint{second.ID}, models.LeadStatusContacted)
+		_, err = bulk.BulkSetLeadStatus(context.Background(), env.admin.ID, models.PermissionScopeAll, []uint{second.ID}, models.LeadStatusContacted)
 		require.NoError(t, err)
 		secondEvents := env.eventsOf(models.AutomationEntityLead, second.ID)
 		require.Equal(t, []string{models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadUpdated, models.AutomationEventLeadStatusChanged}, eventTypes(secondEvents))
