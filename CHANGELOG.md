@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Settings > Webhooks has buttons for the three webhook admin routes of 1.3.0. Each endpoint row
+  has "Send test ping", which shows the outcome (`succeeded` with the HTTP status, or `failed` with
+  the error code and the HTTP status or "no response"), and "Rotate secret", which asks for a
+  confirmation and then shows the new signing secret once, with the time until which the previous
+  secret keeps verifying. Like the create secret, the new secret is kept only while its dialog is
+  open: never in the query or mutation cache, browser storage, the URL or the console. The
+  delivery log has an Actions column with a "Redeliver" button on `succeeded` and `failed` rows;
+  a refusal (409) shows the server's message. The create-time secret notice now points at Rotate
+  secret instead of deleting and registering the endpoint again. No API change (#727).
+
 ### Fixed
 
 - `TestWebhookEventTypesWidthMigration` (`cmd/migrate`) can no longer wait without bound on

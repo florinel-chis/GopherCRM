@@ -3,6 +3,7 @@ import {
   expect,
   request as playwrightRequest,
   type APIRequestContext,
+  type Page,
 } from '@playwright/test';
 import { AdminAuthHelper } from '../helpers/admin-auth';
 import { testAdminCredentials } from '../fixtures/admin-user';
@@ -11,12 +12,16 @@ import { apiResponse, LOADED } from '../helpers/api';
 
 /**
  * Settings > Webhooks, end to end: an admin registers an endpoint, sees its
- * signing secret once, edits and deletes it, and reads the delivery log with
- * its filters.
+ * signing secret once, edits and deletes it, rotates a signing secret, sends a
+ * test ping, and reads the delivery log with its filters.
  *
- * Every endpoint lives under the reserved `.invalid` top-level domain, which
- * never resolves, so no delivery leaves the machine: the rows stay `pending`
- * (briefly `sending`) and are retried against nothing.
+ * Every endpoint but one lives under the reserved `.invalid` top-level domain,
+ * which never resolves, so no delivery leaves the machine: the rows stay
+ * `pending` (briefly `sending`) and are retried against nothing. The ping
+ * endpoint is `https://localhost/...`, registered inactive (so it gets no
+ * delivery rows): the create check judges only IP literals, and the egress
+ * guard of the ping refuses the loopback address when it dials, so the ping
+ * fails with destination_refused and nothing is sent.
  *
  * Safe to retry against the same database: the endpoints of an earlier
  * attempt are deleted first, through the API, and again afterwards. Deleting
@@ -30,6 +35,8 @@ const URL_PREFIX = `https://${HOST}/`;
 const LIFECYCLE_URL = `${URL_PREFIX}a`;
 const LOG_URL_A = `${URL_PREFIX}log-a`;
 const LOG_URL_B = `${URL_PREFIX}log-b`;
+const ROTATE_URL = `${URL_PREFIX}rotate`;
+const PING_URL = 'https://localhost/e2e-hooks-ping';
 
 interface EndpointRow {
   id: number;
@@ -41,6 +48,8 @@ interface EndpointRow {
 const ENDPOINTS = /\/webhooks\/endpoints$/;
 const ENDPOINT = /\/webhooks\/endpoints\/\d+$/;
 const DELIVERIES = /\/webhooks\/deliveries$/;
+const ROTATE = /\/webhooks\/endpoints\/\d+\/rotate-secret$/;
+const PING = /\/webhooks\/endpoints\/\d+\/test$/;
 
 // The first assertion after a login, a navigation or a request that loads
 // data: the default 5 s is too short on a loaded machine.
@@ -58,7 +67,7 @@ test.describe('Admin - Settings > Webhooks', () => {
     });
     expect(listed.status()).toBe(200);
     const rows: EndpointRow[] = (await listed.json()).data ?? [];
-    return rows.filter((row) => row.url.includes(`//${HOST}/`));
+    return rows.filter((row) => row.url.includes(`//${HOST}/`) || row.url === PING_URL);
   };
 
   const removeOwnEndpoints = async () => {
@@ -68,13 +77,33 @@ test.describe('Admin - Settings > Webhooks', () => {
     }
   };
 
-  const registerEndpoint = async (url: string, eventTypes: string[]): Promise<EndpointRow> => {
+  const registerEndpoint = async (
+    url: string,
+    eventTypes: string[],
+    isActive = true,
+  ): Promise<EndpointRow & { secret: string }> => {
     const created = await api.post(`${API_BASE_URL}/webhooks/endpoints`, {
       headers,
-      data: { url, event_types: eventTypes },
+      data: { url, event_types: eventTypes, is_active: isActive },
     });
     expect(created.status()).toBe(201);
     return (await created.json()).data;
+  };
+
+  // No signing secret in the page text, a field or either storage.
+  const expectNoSecret = async (page: Page) => {
+    await expect(page.locator('body')).not.toContainText('whsec_');
+    const kept = await page.evaluate(() =>
+      JSON.stringify({
+        html: document.documentElement.outerHTML.includes('whsec_'),
+        fields: Array.from(document.querySelectorAll('input, textarea')).some((field) =>
+          (field as HTMLInputElement).value.includes('whsec_'),
+        ),
+        local: JSON.stringify({ ...localStorage }).includes('whsec_'),
+        session: JSON.stringify({ ...sessionStorage }).includes('whsec_'),
+      }),
+    );
+    expect(JSON.parse(kept)).toEqual({ html: false, fields: false, local: false, session: false });
   };
 
   test.beforeAll(async () => {
@@ -150,27 +179,13 @@ test.describe('Admin - Settings > Webhooks', () => {
 
     // 4. After a reload the endpoint is listed and the secret is nowhere: not
     //    in the page text, not in a field, not in either storage.
-    const expectNoSecret = async () => {
-      await expect(page.locator('body')).not.toContainText('whsec_');
-      const kept = await page.evaluate(() =>
-        JSON.stringify({
-          html: document.documentElement.outerHTML.includes('whsec_'),
-          fields: Array.from(document.querySelectorAll('input, textarea')).some((field) =>
-            (field as HTMLInputElement).value.includes('whsec_'),
-          ),
-          local: JSON.stringify({ ...localStorage }).includes('whsec_'),
-          session: JSON.stringify({ ...sessionStorage }).includes('whsec_'),
-        }),
-      );
-      expect(JSON.parse(kept)).toEqual({ html: false, fields: false, local: false, session: false });
-    };
-    await expectNoSecret();
+    await expectNoSecret(page);
     await page.reload();
     await expect(row).toBeVisible(LOADED);
     await expect(row).toContainText('lead.created');
     await expect(row).not.toContainText('lead.updated');
     await expect(row.getByText('Active', { exact: true })).toBeVisible();
-    await expectNoSecret();
+    await expectNoSecret(page);
 
     // 5. Edit: one more event and inactive; both survive a reload.
     await row.getByRole('button', { name: `Edit ${LIFECYCLE_URL}` }).click();
@@ -189,7 +204,7 @@ test.describe('Admin - Settings > Webhooks', () => {
     await expect(row).toContainText('lead.created');
     await expect(row).toContainText('lead.updated');
     await expect(row.getByText('Inactive', { exact: true })).toBeVisible();
-    await expectNoSecret();
+    await expectNoSecret(page);
     const stored = await ownEndpoints();
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
@@ -270,6 +285,7 @@ test.describe('Admin - Settings > Webhooks', () => {
       'Attempts',
       'Last attempt',
       'Last response code',
+      'Actions',
     ]);
 
     // Three rows, the update (the newest) first; every row is of this lead.
@@ -305,5 +321,85 @@ test.describe('Admin - Settings > Webhooks', () => {
     expect(sent.has('event_type')).toBe(false);
     await expect(page.getByText('No deliveries match these filters.')).toBeVisible(LOADED);
     await expect(rows).toHaveCount(0);
+  });
+
+  test('admin rotates a signing secret and sees the new one once', async ({ page }) => {
+    test.setTimeout(90 * 1000);
+    await removeOwnEndpoints();
+    const endpoint = await registerEndpoint(ROTATE_URL, ['lead.created']);
+    expect(endpoint.secret).toMatch(/^whsec_.{20,}$/);
+
+    const rotatePosts: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && ROTATE.test(new URL(request.url()).pathname)) {
+        rotatePosts.push(request.url());
+      }
+    });
+
+    await page.goto('/settings/webhooks');
+    const row = page.getByRole('row').filter({ hasText: ROTATE_URL });
+    await expect(row).toBeVisible(LOADED);
+
+    // 1. Cancel: the confirmation names the 24-hour window and sends nothing.
+    await row.getByRole('button', { name: `Rotate secret of ${ROTATE_URL}` }).click();
+    const confirm = page.getByRole('dialog', { name: 'Rotate signing secret' });
+    await expect(confirm).toContainText('24 hours');
+    await expect(confirm).toContainText(ROTATE_URL);
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirm).toBeHidden();
+    expect(rotatePosts).toHaveLength(0);
+
+    // 2. Rotate: a new secret, shown once, with the end of the previous one.
+    await row.getByRole('button', { name: `Rotate secret of ${ROTATE_URL}` }).click();
+    const rotated = apiResponse(page, ROTATE, 'POST');
+    await confirm.getByRole('button', { name: 'Rotate' }).click();
+    expect((await rotated).status()).toBe(200);
+    expect(rotatePosts).toHaveLength(1);
+
+    const dialog = page.getByRole('dialog', { name: 'New signing secret' });
+    await expect(dialog).toBeVisible(LOADED);
+    const field = dialog.getByTestId('webhook-rotated-secret');
+    await expect(field).toHaveValue(/^whsec_.{20,}$/);
+    expect(await field.inputValue()).not.toBe(endpoint.secret);
+    await expect(dialog.getByRole('button', { name: 'Copy signing secret' })).toBeVisible();
+    await expect(dialog.getByText(/cannot be shown again/i)).toBeVisible();
+    await expect(dialog.getByText(/The previous secret keeps verifying until .+\./)).toBeVisible();
+
+    // 3. Done: the secret is nowhere, also after a reload.
+    await dialog.getByRole('button', { name: 'Done' }).click();
+    await expect(dialog).toBeHidden();
+    await expectNoSecret(page);
+    await page.reload();
+    await expect(row).toBeVisible(LOADED);
+    await expectNoSecret(page);
+
+    // A later test never inherits an active subscriber.
+    await removeOwnEndpoints();
+  });
+
+  test('admin sends a test ping that the egress guard refuses', async ({ page }) => {
+    test.setTimeout(90 * 1000);
+    await removeOwnEndpoints();
+    // Inactive: no event is ever enqueued for it, so the log stays unchanged.
+    await registerEndpoint(PING_URL, ['lead.created'], false);
+
+    await page.goto('/settings/webhooks');
+    const row = page.getByRole('row').filter({ hasText: PING_URL });
+    await expect(row).toBeVisible(LOADED);
+
+    const pinged = apiResponse(page, PING, 'POST');
+    await row.getByRole('button', { name: `Send test ping to ${PING_URL}` }).click();
+    const response = await pinged;
+    expect(response.status()).toBe(200);
+    expect((await response.json()).data).toMatchObject({
+      outcome: 'failed',
+      error_code: 'destination_refused',
+      http_status: null,
+    });
+    await expect(page.getByText('Test ping failed: destination_refused (no response)')).toBeVisible(
+      LOADED,
+    );
+
+    await removeOwnEndpoints();
   });
 });

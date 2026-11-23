@@ -14,6 +14,7 @@ vi.mock('@/api/endpoints', async () => {
     webhooksApi: {
       listEndpoints: vi.fn(),
       listDeliveries: vi.fn(),
+      redeliverDelivery: vi.fn(),
     },
   };
 });
@@ -87,7 +88,7 @@ describe('WebhookDeliveryLog', () => {
     vi.mocked(webhooksApi.listDeliveries).mockResolvedValue({ rows, total: 45 });
   });
 
-  it('shows the six columns of each delivery in the order the API returned', async () => {
+  it('shows the seven columns of each delivery in the order the API returned', async () => {
     render(<WebhookDeliveryLog />);
     await screen.findByText('ticket.updated');
 
@@ -99,6 +100,7 @@ describe('WebhookDeliveryLog', () => {
       'Attempts',
       'Last attempt',
       'Last response code',
+      'Actions',
     ]);
 
     const cells = dataRows().map((row) =>
@@ -107,10 +109,27 @@ describe('WebhookDeliveryLog', () => {
         .map((cell) => cell.textContent),
     );
     expect(cells).toEqual([
-      ['ticket.updated', '300', 'failed', '10', formatDate('2026-11-21T12:00:00Z', 'PPp'), '503'],
-      // No attempt yet: the date fallback and a dash for the response code.
-      ['customer.created', '100', 'pending', '0', formatDate(null, 'PPp'), '-'],
-      ['lead.updated', '200', 'succeeded', '1', formatDate('2026-11-20T10:00:00Z', 'PPp'), '204'],
+      [
+        'ticket.updated',
+        '300',
+        'failed',
+        '10',
+        formatDate('2026-11-21T12:00:00Z', 'PPp'),
+        '503',
+        'Redeliver',
+      ],
+      // No attempt yet: the date fallback, a dash for the response code and
+      // no redeliver action.
+      ['customer.created', '100', 'pending', '0', formatDate(null, 'PPp'), '-', ''],
+      [
+        'lead.updated',
+        '200',
+        'succeeded',
+        '1',
+        formatDate('2026-11-20T10:00:00Z', 'PPp'),
+        '204',
+        'Redeliver',
+      ],
     ]);
     // Nothing beyond the API fields: no URL and no event id in the table.
     expect(table.textContent).not.toContain('example.com');
@@ -256,5 +275,77 @@ describe('WebhookDeliveryLog', () => {
     release({ rows: nextPage, total: 45 });
     expect(await screen.findByText('lead.deleted')).toBeInTheDocument();
     expect(screen.getAllByTestId('webhook-delivery-row')).toHaveLength(1);
+  });
+
+  describe('redeliver', () => {
+    it('offers Redeliver on succeeded and failed rows only', async () => {
+      vi.mocked(webhooksApi.listDeliveries).mockResolvedValue({
+        rows: [...rows, delivery({ id: 10, event_type: 'deal.updated', status: 'sending', attempts: 1 })],
+        total: 4,
+      });
+      render(<WebhookDeliveryLog />);
+      await screen.findByText('deal.updated');
+
+      expect(screen.getByRole('button', { name: 'Redeliver delivery 7' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Redeliver delivery 8' })).toBeInTheDocument();
+      // pending (9) and sending (10) rows have an empty action cell.
+      expect(screen.queryByRole('button', { name: 'Redeliver delivery 9' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Redeliver delivery 10' })).not.toBeInTheDocument();
+      const sendingRow = dataRows()[3];
+      expect(within(sendingRow).getAllByRole('cell').at(-1)?.textContent).toBe('');
+      expect(screen.getAllByRole('button', { name: /^Redeliver delivery/ })).toHaveLength(2);
+    });
+
+    it('queues a delivery again and reloads the log', async () => {
+      vi.mocked(webhooksApi.redeliverDelivery).mockResolvedValue(
+        delivery({ id: 7, event_type: 'ticket.updated', status: 'pending' }),
+      );
+      render(<WebhookDeliveryLog />);
+      await screen.findByText('ticket.updated');
+      const callsBefore = vi.mocked(webhooksApi.listDeliveries).mock.calls.length;
+
+      fireEvent.click(screen.getByRole('button', { name: 'Redeliver delivery 7' }));
+
+      await waitFor(() => expect(webhooksApi.redeliverDelivery).toHaveBeenCalledWith(7));
+      expect(await screen.findByText('Delivery queued for redelivery')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(vi.mocked(webhooksApi.listDeliveries).mock.calls.length).toBeGreaterThan(callsBefore),
+      );
+      expect(webhooksApi.redeliverDelivery).toHaveBeenCalledTimes(1);
+    });
+
+    it('shows the conflict message of the server', async () => {
+      vi.mocked(webhooksApi.redeliverDelivery).mockRejectedValue({
+        response: { status: 409, data: { message: 'Webhook endpoint is deleted or inactive' } },
+      });
+      render(<WebhookDeliveryLog />);
+      await screen.findByText('ticket.updated');
+
+      fireEvent.click(screen.getByRole('button', { name: 'Redeliver delivery 8' }));
+
+      await waitFor(() => expect(webhooksApi.redeliverDelivery).toHaveBeenCalledWith(8));
+      expect(await screen.findByText('Webhook endpoint is deleted or inactive')).toBeInTheDocument();
+    });
+
+    it('disables the button of the delivery while its request runs', async () => {
+      let release: (value: WebhookDelivery) => void = () => {};
+      vi.mocked(webhooksApi.redeliverDelivery).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      render(<WebhookDeliveryLog />);
+      await screen.findByText('ticket.updated');
+      const button = screen.getByRole('button', { name: 'Redeliver delivery 7' });
+
+      fireEvent.click(button);
+      await waitFor(() => expect(button).toBeDisabled());
+      expect(screen.getByRole('button', { name: 'Redeliver delivery 8' })).toBeEnabled();
+      release(delivery({ id: 7, status: 'pending' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Redeliver delivery 7' })).toBeEnabled(),
+      );
+    });
   });
 });

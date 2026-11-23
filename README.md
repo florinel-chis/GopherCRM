@@ -512,9 +512,12 @@ that had already been deleted.
 creates, edits, activates, deactivates and deletes them. It is shown to users whose role holds the
 `webhooks.manage` permission (the admin role, unless a custom role is given it). The signing secret
 of a new endpoint is shown once, right after it is created, with a copy button: it is not kept in
-the browser and neither the screen nor the API can show it again, so store it then. Deleting an
-endpoint removes its delivery log with it. The URL rules are checked by the server, and the form
-shows its refusal as is.
+the browser and neither the screen nor the API can show it again, so store it then. Each row also
+has a "Send test ping" button, which sends one test ping (below) and shows its outcome, and a
+"Rotate secret" button, which asks for a confirmation, rotates the signing secret (below) and shows
+the new secret once in the same way, with the time until which the previous secret keeps
+verifying. Deleting an endpoint removes its delivery log with it. The URL rules are checked by the
+server, and the form shows its refusal as is.
 
 **Thin payloads.** The body is exactly
 `{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
@@ -555,7 +558,7 @@ moment in that window without refusing a request. From `previous_secret_expires_
 new signature is sent, and the next delivery clears the replaced secret. A second rotation inside
 the window replaces the previous secret: at most two secrets ever sign. Rotation works on an
 inactive endpoint and never reads the stored secrets, so it also repairs an endpoint whose secret
-became unreadable. It is API-only for now: the Settings screen has no rotate control.
+became unreadable. The "Rotate secret" button of Settings > Webhooks calls this route.
 
 **Verifying the signature** (Standard Webhooks). Each request carries `webhook-id` (the event id),
 `webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`:
@@ -595,7 +598,9 @@ code and the next attempt. Finished rows are deleted 30 days after their last ch
 `POST /api/v1/webhooks/deliveries/:id/redeliver` sends a `succeeded` or `failed` delivery again:
 the same row goes back to `pending` with 0 attempts, due at once, and keeps its event id
 (`webhook-id`), so a consumer that deduplicates sees a repeat; a `pending` or `sending` delivery,
-or one whose endpoint is deleted or inactive, is refused with 409. The routes are listed under
+or one whose endpoint is deleted or inactive, is refused with 409. In the log each `succeeded` or
+`failed` row has a "Redeliver" button that calls this route and reloads the log; the screen shows
+a refusal's message. The routes are listed under
 [API Documentation](#webhooks-admin-only-sales-support-and-customer-get-403).
 
 ## Privacy: deleting a person erases their data
