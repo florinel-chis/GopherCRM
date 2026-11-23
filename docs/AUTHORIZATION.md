@@ -976,7 +976,7 @@ bearer check already refuses an inactive owner.
 **Transaction and audit.** One governed transaction in the order
 `admin set → users → refresh_tokens → api_keys → role_audit_log`, a prefix-compatible subsequence of the patch order; no
 `roles` row is locked because no role is written (see [CONCURRENCY.md](CONCURRENCY.md), flow
-"SCIM user patch"). The deactivation of an active account writes one `role_audit_log` row
+"SCIM user delete"). The deactivation of an active account writes one `role_audit_log` row
 `user_deactivated` (`auth_method` `scim`, `actor_user_id` NULL, #552). After the commit of a deactivation one
 `auth_audit_log` row (method `scim`, outcome `success`) names the account. A refusal writes
 nothing.

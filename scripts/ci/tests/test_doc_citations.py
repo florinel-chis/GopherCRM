@@ -165,15 +165,16 @@ class DocCitationCheckTest(unittest.TestCase):
         self.assertIn('line citation', out)
 
     def test_exempt_doc_may_cite_lines(self):
+        # #743 converted docs/CONCURRENCY.md, the last exempt doc: a line
+        # citation in it now fails the default run as in any other doc.
         self.write('docs/CONCURRENCY.md', 'See `pkg/sample.go:3` and `pkg/sample.go` `Nope`.\n')
         code, out = run(self.root)
-        self.assertEqual(code, 0, out)
-        self.assertTrue(out.startswith('OK:'), out)
-        # Passed explicitly, the exempt doc is checked in full.
+        self.assertEqual(code, 1, out)
+        self.assertIn('docs/CONCURRENCY.md:1: `pkg/sample.go:3`: line citation', out)
+        self.assertIn('unknown symbol Nope', out)
         code, out = run(self.root, 'docs/CONCURRENCY.md')
         self.assertEqual(code, 1, out)
         self.assertIn('line citation', out)
-        self.assertIn('unknown symbol Nope', out)
 
     def test_default_files_are_every_tracked_doc(self):
         for path in ('README.md', 'docs/A.md', 'docs/testing/B.md', 'docs/CONCURRENCY.md',
@@ -181,8 +182,9 @@ class DocCitationCheckTest(unittest.TestCase):
             self.write(path, '# doc\n')
         self.write('docs/X.md', '# untracked\n', track=False)
         self.assertEqual(sorted(gate.default_files(self.root)),
-                         ['README.md', 'docs/A.md', 'docs/testing/B.md', 'internal/idkit/README.md'])
-        self.assertEqual(set(gate.EXEMPT_FILES), {'docs/CONCURRENCY.md'})
+                         ['README.md', 'docs/A.md', 'docs/CONCURRENCY.md', 'docs/testing/B.md',
+                          'internal/idkit/README.md'])
+        self.assertEqual(gate.EXEMPT_FILES, {})
 
     def test_untracked_extra_default_file_is_not_checked(self):
         self.write('internal/idkit/README.md', 'See `pkg/absent.go`.\n', track=False)
@@ -270,11 +272,13 @@ class DocCitationCheckTest(unittest.TestCase):
 
     def test_converted_files_cover_every_converted_guide(self):
         # #487 converted the fork and extension guides, #488 the rest of the
-        # guides that cited code by line; each must stay under rule c.
+        # guides that cited code by line and #743 docs/CONCURRENCY.md; each
+        # must stay under rule c.
         expected = {
             'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
             'docs/SERVER_PROVISIONING.md', 'README.md',
             'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
+            'docs/CONCURRENCY.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())
         for name in expected:

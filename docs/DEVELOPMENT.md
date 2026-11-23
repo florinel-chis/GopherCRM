@@ -2495,12 +2495,11 @@ uncommitted edits a "none selected" is not a pass. Two consequences to know:
   names as arguments to check only those; a file named explicitly is checked in full). The one
   listed addition is `internal/idkit/README.md`, named in the script's `EXTRA_DEFAULT_FILES`; other
   `README.md` files outside `docs/` are not discovered. `CHANGELOG.md` is deliberately not checked:
-  its released entries are history and name files that were later removed or renamed. The one
-  exempt doc is `docs/CONCURRENCY.md`, listed in the script's `EXEMPT_FILES` with the test that
-  pins it: `internal/config/concurrency_doc_test.go` pins every citation of the auth
-  service files there (`internal/service/auth_service.go` and the per-flow files split from it, #639) to its file,
-  its enclosing function and a text fragment of the cited line (#581), and
-  checks citations of other files only to lie inside their file. Every other doc goes through all three rules. Every backticked
+  its released entries are history and name files that were later removed or renamed. No doc
+  is exempt: the script's `EXEMPT_FILES` is empty since `docs/CONCURRENCY.md` was converted to
+  symbol citations too (#743), and `internal/config/concurrency_doc_test.go` pins each of its
+  auth-service symbols (`internal/service/auth_service.go` and the per-flow files split from it,
+  #639) to the statement the doc cites it for (#581). Every doc goes through all three rules. Every backticked
   repository path must be a tracked file or directory, judged by `git ls-files` only, so an
   untracked or gitignored local file does not count and a local run agrees with CI; a `*` glob must
   match a tracked file, and a path with `<`, `>`, `{`, `}` or `$` is a placeholder. The gitignored
