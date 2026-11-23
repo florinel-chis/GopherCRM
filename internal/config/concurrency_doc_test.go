@@ -1485,7 +1485,7 @@ func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
 	start := strings.Index(changelog, "## [Unreleased]")
 	require.GreaterOrEqual(t, start, 0, "CHANGELOG.md has ## [Unreleased]")
 	unreleased := changelog[start+len("## [Unreleased]"):]
-	if next := strings.Index(unreleased, "\n## ["); next >= 0 {
+	if next := strings.Index(unreleased, "\n"+sinceReleaseStop); next >= 0 {
 		unreleased = unreleased[:next]
 	}
 	var entry bool

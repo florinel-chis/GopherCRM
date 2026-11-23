@@ -138,7 +138,8 @@ describe('AEO scheduled client reports deliberate cut (#320)', () => {
     const changelog = readRepo('CHANGELOG.md');
     const start = changelog.indexOf('## [Unreleased]');
     expect(start).toBeGreaterThanOrEqual(0);
-    const next = changelog.indexOf('\n## [', start + 1);
+    // Entries since 1.2.0: under Unreleased or a newer version.
+    const next = changelog.indexOf('\n## [1.2.0]', start + 1);
     const lines = changelog.slice(start, next === -1 ? undefined : next).split('\n');
 
     const bulletStarts = linesStartingWith(lines, '- ');
