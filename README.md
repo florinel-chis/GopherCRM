@@ -11,8 +11,11 @@ Go backend, React UI, SQLite or MySQL.
 a server they control, without per-seat licence fees.
 
 - **A complete CRM.** Leads that convert into customers, companies, deals on a five-stage pipeline
-  with a full stage history, support tickets, tasks with labels, and four roles (admin, sales,
-  support, customer).
+  with a full stage history, support tickets, tasks with labels, four fixed system roles (Admin,
+  Sales, Support, Customer) plus custom roles managed in Settings → Roles.
+- **Access control and sign-in.** Custom roles built from the permission catalogue, single sign-on
+  through OpenID Connect (for example Microsoft Entra ID or Okta), SCIM 2.0 provisioning of staff
+  accounts, signed outbound webhooks, and the sign-in and role audit logs.
 - **Lead capture built in.** Build forms in the CRM and embed them on any website with one script
   tag. Submissions become leads, behind layered spam protection (time trap, origin allowlist,
   honeypot, rate limits, optional reCAPTCHA v3) and an optional double opt-in. A double opt-in
@@ -51,9 +54,12 @@ If it's useful, a star helps others find it.
 ## Fork it
 
 GopherCRM is meant to be forked and adapted. A fork starts with the modules listed under Features,
-four roles (admin, sales, support, customer), and the machinery that keeps them working: 990
-top-level Go test functions, 22 Playwright specs, 12 MySQL migration pairs checked against
-MySQL 8 and MariaDB 10.11, and 5 CI workflows (measured on `4dfe404`; commands in
+four fixed system roles (Admin, Sales, Support, Customer) plus custom roles built from the
+permission catalogue in Settings → Roles or through the API, and the machinery that keeps them
+working:
+2155 top-level Go test functions, 35 Playwright specs, 46 MySQL migration pairs checked against
+MySQL 8 and MariaDB 10.11, and
+6 CI workflows (measured on `bbc5c81f`; commands in
 [FORKING.md](docs/FORKING.md#9-why-fork-instead-of-rebuild)).
 
 - [docs/FORKING.md](docs/FORKING.md) — first run, rebranding, configuration, deployment, CI and
@@ -83,7 +89,11 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 <details>
 <summary>The full feature list</summary>
 
-- 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control
+- 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control; API keys expire (at most one year)
+- 🪪 **Single Sign-On**: OpenID Connect sign-in (for example Microsoft Entra ID or Okta); the provider's groups or app roles map to the GopherCRM role at each sign-in; the client authenticates with a client secret or a client certificate; signing out also ends the identity-provider session, and front-channel logout ends the GopherCRM session when the person signs out at the provider ([single sign-on guide](docs/user-guide/permissions-access/single-sign-on.md))
+- 🔄 **SCIM Provisioning**: SCIM 2.0 create, update and deactivate of staff accounts and of the membership of the mapped groups; tokens under Settings → SCIM tokens ([SCIM provisioning guide](docs/user-guide/permissions-access/scim-provisioning.md))
+- 📡 **Webhooks**: Signed outbound events with a delivery log, a test ping, secret rotation and redelivery ([Integrations: webhooks](#integrations-webhooks))
+- 📜 **Audit Logs**: Settings → Sign-in audit and Settings → Role audit screens; sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`
 - 🛡️ **Security**: Account lockout, password complexity, sort-column allowlists against SQL injection, rate limiting with trusted-proxy handling
 - 🧹 **Right to Erasure**: Deleting a person overwrites their personal data before the row is soft-deleted (GDPR Art. 17)
 - 👥 **Lead Management**: Lead tracking with conversion to customers
@@ -99,7 +109,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 - 📝 **Forms**: Build contact, quote-request and lead-capture forms in the CRM and embed them on any website with one script tag — submissions land in the CRM, create leads, and can require double opt-in email confirmation before delivering gated content; layered spam protection (honeypot, time trap, rate limits, optional invisible reCAPTCHA v3). A double opt-in form can instead open a support ticket for the customer whose email matches the confirmed address (fixed ticket text, no submitted value), deduplicated by an `idempotency_key` that API clients send with the submission (the embed script sends one key per rendered form on every submission of the render: the hosted view's per-render key, or one it generates)
 - 🎨 **Modern UI**: React TypeScript frontend with Material-UI
 - 📊 **Dashboard**: Analytics and activity overview
-- 👤 **Role-Based Access**: four system roles (Admin, Sales, Support, Customer) plus custom roles built from the permission catalogue through the role API ([docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)); administrator guide: [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md)
+- 👤 **Role-Based Access**: four system roles (Admin, Sales, Support, Customer) plus custom roles built from the permission catalogue in Settings → Roles or through the API ([docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)); administrator guide: [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md)
 - 🔌 **RESTful API**: Clean architecture with comprehensive endpoints
 
 </details>
@@ -301,11 +311,30 @@ the `create-admin` CLI. The registration endpoint ignores any role supplied by t
 Tokens are stored in `sessionStorage` and expire with the browser tab unless you tick **Remember
 me** at login, which moves them to `localStorage`.
 
-### Admin Features
-Admin users have access to additional features:
-- User management
-- System configuration
-- All data access across the system
+### Administration and settings
+
+Screens are shown by permission, not by role: a user sees a screen when their role holds the
+permission it needs, and the system Admin role holds all of them. The administrator guide is
+[docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md).
+
+- **Users** (`users.view`): the user list and user pages; activating and deactivating an account
+  needs `users.activate`.
+- **Profile** (all users): your account details and the password change.
+- **API Keys** (own keys, staff accounts only): create and revoke your own API keys; a key
+  expires after at most one year.
+- **Configuration** (`settings.view`; changes need `settings.update`): the system settings by
+  category tab (see below).
+- **Roles** (`roles.view`; creating, cloning, editing and deleting need `roles.manage`): system and
+  custom roles and their permissions.
+- **Webhooks** (`webhooks.manage`): outbound webhook endpoints and the delivery log; see
+  [Integrations: webhooks](#integrations-webhooks).
+- **Single sign-on** (`settings.sso_manage`): the OpenID Connect issuer, client and role mapping.
+- **Sign-in audit** (`audit.sign_ins_view`): password, single sign-on, refresh and API-key sign-in
+  outcomes.
+- **Role audit** (`roles.audit_view`): role changes and account activation, deactivation, erasure
+  and email changes.
+- **SCIM tokens** (`settings.scim_manage`): the bearer tokens an identity provider's SCIM client
+  uses.
 
 ### Configuration Management
 
@@ -324,6 +353,7 @@ GopherCRM includes a powerful configuration management system that allows admini
    - **Customers**: Customer management settings
    - **Tickets**: Support ticket configuration
    - **Tasks**: Task management settings
+   - **Deals**: Deal settings (default currency)
    - **Integration**: Third-party integrations
 
 #### Configuration Features
@@ -709,8 +739,11 @@ npm run lint
 
 ## API Documentation
 
-All application routes are mounted under `/api/v1` (configurable via `API_PREFIX`). Every endpoint
-returns the unified envelope `{ success, data, error, meta }`.
+All application routes are mounted under `/api/v1` (configurable via `API_PREFIX`), except
+`/health` and the SCIM 2.0 server at `/scim/v2`. Every endpoint under the prefix returns the unified
+envelope `{ success, data, error, meta }`. The SCIM 2.0 server at `/scim/v2/...` is not in the
+swagger spec; see
+[docs/user-guide/permissions-access/scim-provisioning.md](docs/user-guide/permissions-access/scim-provisioning.md).
 
 The complete reference, with every operation's roles, parameters, error codes and schemas, is
 generated into `api/`: open `api/index.html` in a browser (a static page that works offline,
@@ -752,6 +785,10 @@ top-level `status` stays `healthy` and the answer stays 200 either way.
   looked up: a background queue (one worker, up to 100 waiting requests) issues the link and
   mails it, normally within seconds. Changing an account's login email ends the reset links issued
   before the change.
+- `GET /api/v1/auth/oidc/frontchannel-logout` - Single sign-on front-channel sign-out: the identity
+  provider loads it in the browser when the person signs out there, and it logs out the accounts
+  whose single sign-on session it names *(unauthenticated; 200 whether or not a session ended)*. Details in the
+  [API reference](api/index.html).
 - `POST /api/v1/auth/password-reset/confirm` - Redeem a single-use reset token (1 h expiry) and set
   a new password. The token claim, the password update, the lockout reset and the revocation of
   all refresh tokens are one transaction: a failed or rejected confirmation leaves the link
@@ -764,7 +801,10 @@ authentication and live on the moderate tier:
   the optional `{refresh_token}` body) and end every access token issued to the caller before the
   logout, in one transaction: `users.token_version` is incremented, and an older JWT then answers
   `401 Invalid credentials` like an expired one. This holds for Bearer and API-key callers, with or
-  without a body; API keys themselves keep working.
+  without a body; API keys themselves keep working. With single sign-on on, an optional
+  `id_token_hint` (the ID token `POST /auth/oidc/callback` returned) makes the answer also carry
+  `end_session_url`, the provider's sign-out URL, so the browser can end the provider's session
+  too.
 - `POST /api/v1/auth/change-password` - Verify the current password and set a new one (same
   complexity policy) in one transaction with the revocation of the user's refresh tokens; a
   failure before the commit leaves the password and every session unchanged (a failed COMMIT is
@@ -784,6 +824,11 @@ authentication and live on the moderate tier:
 - `PUT /api/v1/users/me` - Update current user profile
 - `GET /api/v1/users/:id` - Get specific user *(self or admin)*
 - `PUT /api/v1/users/:id` - Update user *(self or admin; only admins may change `role` or `is_active`; for a custom role, changing the email of a customer login with a linked customer record also needs `customers.update`)*
+- `POST /api/v1/users/:id/activate` - Activate a user, so the account can sign in again *(needs
+  `users.activate`; the admin system role holds it)*
+- `POST /api/v1/users/:id/deactivate` - Deactivate a user, the reversible alternative to erasure;
+  its tokens and API keys stop working *(needs `users.activate`; not your own account; never the
+  last active admin)*
 - `DELETE /api/v1/users/:id` - **Erase** user *(admin; cannot delete yourself; a customer-role user takes its customer records along; for a custom role, erasing a customer login with a linked customer record also needs `customers.delete`)*
 
 ### Leads *(entire group requires admin or sales)*
@@ -1031,8 +1076,10 @@ expired, or if its owner has been deactivated or erased.
 
 ### Dashboard *(entire group requires admin, sales or support)*
 - `GET /api/v1/dashboard/stats` - Aggregate counts (total leads, customers, open tickets, pending tasks, conversion rate)
-- `GET /api/v1/dashboard/leads-by-status` / `tickets-by-priority` / `tasks-by-status` - Grouped
-  counts in a chart-friendly `{labels, datasets}` shape
+- `GET /api/v1/dashboard/leads-by-status` - Lead counts per status in a chart-friendly
+  `{labels, datasets}` shape
+- `GET /api/v1/dashboard/tickets-by-priority` - Ticket counts per priority, same shape
+- `GET /api/v1/dashboard/tasks-by-status` - Task counts per status, same shape
 - `GET /api/v1/dashboard/sales-performance?period=week|month|quarter|year` - Lead conversions over
   time, bucketed per period
 - `GET /api/v1/dashboard/activities` - Recent activity feed synthesized from lead/ticket/task events
@@ -1045,7 +1092,7 @@ expired, or if its owner has been deactivated or erased.
   `won_this_month` (count and amounts per currency of the deals won in the current calendar month,
   UTC) *(admin sees all deals, sales its own; support and customer get 403 — no deal access)*
 
-### AEO *(entire group requires admin, sales or support; the profile, prompt and run routes are in the [API reference](api/index.html))*
+### AEO *(entire group requires admin, sales or support; all other AEO routes are in the [API reference](api/index.html))*
 - `GET /api/v1/aeo/export?format=csv|json&run_id=<id>|days=7|30|90` - Download one run's answers
   and citations, or a window's (default 30 days), as a CSV (one row per citation, no answer text)
   or JSON (runs, answers with their text and citations) attachment; at most 10,000 answers, a
@@ -1090,8 +1137,9 @@ expired, or if its owner has been deactivated or erased.
 - `PUT /api/v1/automation/rules/:id` - Replace a rule *(one transaction: version + 1, steps replaced,
   the rule's pending, waiting and running runs cancelled with `rule_changed`; the same 400 answers
   and `error.details.fields` as the create)*
-- `POST /api/v1/automation/rules/:id/enable` / `disable` - Switch a rule *(disabling cancels its
-  active runs with `rule_disabled`)*
+- `POST /api/v1/automation/rules/:id/enable` - Switch a rule on
+- `POST /api/v1/automation/rules/:id/disable` - Switch a rule off *(cancels its active runs with
+  `rule_disabled`)*
 - `DELETE /api/v1/automation/rules/:id` - Soft-delete a rule *(its active runs are cancelled with
   `rule_deleted`; runs and their logs stay)*
 - `POST /api/v1/automation/rules/:id/dry-run` - Simulate the rule `{entity_type, entity_id}` and get a
@@ -1143,6 +1191,54 @@ expired, or if its owner has been deactivated or erased.
   again (same row and event id, 0 attempts, due at once); 409 for a `pending` or `sending` delivery
   or a deleted or inactive endpoint
 
+### Roles and permissions *(details in the [API reference](api/index.html))*
+- `GET /api/v1/permissions/catalogue` - The permission tree a role can hold *(needs `roles.view` or
+  `users.assign_role`)*
+- `GET|POST /api/v1/roles` - List roles, system and custom, with their permissions and user count
+  *(`roles.view` or `users.assign_role`)*; create a custom role *(`roles.manage`)*
+- `GET|PUT|DELETE /api/v1/roles/:id` - Read a role *(`roles.view` or `users.assign_role`)*; rename
+  a custom role or replace its permissions, or delete one no live user holds *(`roles.manage`;
+  system roles are fixed)*
+- `POST /api/v1/roles/:id/clone` - Copy a role's permissions into a new custom role
+  *(`roles.manage`)*
+- `GET /api/v1/roles/audit` - The append-only role audit log *(`roles.audit_view`)*
+
+### Single sign-on and SCIM settings *(admin only: `settings.sso_manage` and `settings.scim_manage` belong to the admin system role; details in the [API reference](api/index.html))*
+- `GET|PUT /api/v1/settings/sso` - Read or replace the OpenID Connect settings; the client secret
+  and the client certificate are never returned
+- `GET|POST /api/v1/settings/scim/tokens` - List the SCIM provider tokens, or create one (shown
+  once, in that answer)
+- `DELETE /api/v1/settings/scim/tokens/:id` - Revoke a SCIM provider token (the row is kept)
+
+### Audit *(details in the [API reference](api/index.html))*
+- `GET /api/v1/audit/sign-ins` - The sign-in audit log, newest first *(`audit.sign_ins_view`; among
+  the system roles, admin only)*
+
+### Forms *(read: admin, sales, support; write: admin, sales; delete: admin; details in the [API reference](api/index.html))*
+- `GET|POST /api/v1/forms` - List forms with their submission counts; create a form *(admin,
+  sales)*
+- `GET|PUT|DELETE /api/v1/forms/:id` - Read a form; replace it *(admin, sales)*; soft-delete it
+  *(admin)*
+- `GET /api/v1/forms/:id/submissions` - The submissions of one form, spam included, newest first
+- `GET /api/v1/forms/submissions/:id` - One submission
+- `POST /api/v1/forms/deliveries/:id/retry` - Send a failed or stuck form mail again *(admin,
+  sales)*
+
+Public, unauthenticated routes, used by the embed script and the confirmation mail:
+
+- `GET /api/v1/forms/public/:key` - The definition of a published form
+- `GET /api/v1/forms/public/:key/view` - A hosted HTML page that shows the form
+- `POST /api/v1/forms/public/:key/submissions` - Submit a form
+- `GET /api/v1/forms/public/confirm` - The double opt-in confirmation page (never spends the token)
+- `POST /api/v1/forms/public/confirm` - Confirm a double opt-in submission
+- `GET /api/v1/forms/public/embed.js` - The embed script
+
+### Labels *(details in the [API reference](api/index.html))*
+- `GET|POST /api/v1/labels` - List every label *(every system role)*; create one *(admin, sales,
+  support)*
+- `PUT|DELETE /api/v1/labels/:id` - Rename or recolour a label *(admin, sales, support)*; delete
+  it and detach it from its tasks *(admin)*
+
 ### Bulk operations
 
 The only bulk endpoints are the entity-specific `bulk/status` routes listed above. There is no
@@ -1166,7 +1262,18 @@ gophercrm/
 │   ├── create-admin/            # CLI that provisions an admin account
 │   └── migrate/                 # Migration runner
 ├── internal/
+│   ├── aeo/                     # Answer engine providers, run engine and scheduler
 │   ├── config/                  # Environment configuration
+│   ├── database/                # The one place a database connection is opened
+│   ├── egress/                  # Outbound-request guard for AEO providers and webhooks
+│   ├── forms/                   # Form time-trap challenge and captcha verifier
+│   ├── idkit/                   # OpenID Connect sign-in, claim-to-role mapping and SCIM
+│   ├── integration/             # Permission and visibility integration tests
+│   ├── lifecycle/               # Start/stop types shared by the background runtimes
+│   ├── mailer/                  # Transactional mail (SMTP or log-only)
+│   ├── permissions/             # Permission catalogue and system-role matrices
+│   ├── testsupport/             # Test database helpers (SQLite, TEST_MYSQL_DSN)
+│   ├── webhook/                 # Webhook event catalogue and outbox emitter
 │   ├── models/                  # Domain models and database schemas
 │   ├── repository/              # Data access layer (incl. erasure.go, erasure_cascade.go)
 │   ├── service/                 # Business logic layer

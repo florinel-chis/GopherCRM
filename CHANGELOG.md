@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `README.md` is brought up to 1.3.0. It describes four system roles plus custom roles managed in
+  Settings → Roles, replaces "Admin Features" with an "Administration and settings" section that
+  names every Settings screen and the permission it needs, lists the Deals configuration tab and
+  re-measures the fork figures on `bbc5c81f`. The feature list gains single sign-on, SCIM
+  provisioning, webhooks, audit logs and API key expiry. The API overview names `/health` and
+  `/scim/v2` as the routes outside `API_PREFIX`, points to the SCIM provisioning page, spells out
+  every route of the API reference in full (roles and the permission catalogue, user activate and
+  deactivate, the single sign-on and SCIM token settings, the sign-in audit, front-channel logout,
+  forms and labels; AEO details stay in the reference) and documents `id_token_hint` and
+  `end_session_url` on logout. The project tree lists every `internal/` package. Docs only (#730).
 - User guide corrections in `docs/user-guide/permissions-access/`: the roles page gives the Admin
   role 76 permissions, the count of the system-role definition; the SCIM behaviour is described
   once, on the SCIM provisioning page, and the FAQ, the single sign-on page and the overview link
