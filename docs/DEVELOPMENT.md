@@ -2601,7 +2601,7 @@ request ID), utils (sort, password, response, crypto, context, transaction), con
 
 The E2E suite needs a real backend and database. Admin accounts
 cannot be self-registered — `gocrm-ui/e2e/global-setup.ts` seeds them by shelling out to
-`cmd/create-admin`. See `gocrm-ui/e2e/README.md` and [ADMIN_TESTING.md](ADMIN_TESTING.md).
+`cmd/create-admin`. See `gocrm-ui/e2e/README.md` and the test-case catalog in [testing/README.md](testing/README.md).
 
 ### System-role route matrix (#322)
 

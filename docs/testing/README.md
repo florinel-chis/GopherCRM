@@ -155,6 +155,10 @@ npm run test:e2e          # existing suite
 npm run screenshots       # documentation screenshot suite (docs/SCREENSHOTS.md)
 ```
 
+The standard run is `make e2e` from the repository root, which starts a disposable backend and
+database; [gocrm-ui/e2e/README.md](../../gocrm-ui/e2e/README.md) covers running it, running by hand,
+the seeded admin account and the cleanup script.
+
 Tests share one MySQL database and must run serially (`workers: 1`). See
 [docs/SCREENSHOTS.md](../SCREENSHOTS.md) for the visual reference captures the cases cite.
 
