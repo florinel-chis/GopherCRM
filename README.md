@@ -82,7 +82,7 @@ Three things catch most first runs from source (`cp .env.example .env`, then `go
 - 🔐 **Authentication**: JWT tokens and HMAC-SHA256 API Keys with role-based access control; API keys expire (at most one year)
 - 🪪 **Single Sign-On**: OpenID Connect sign-in (for example Microsoft Entra ID or Okta); the provider's groups or app roles map to the GopherCRM role at each sign-in; the client authenticates with a client secret or a client certificate; signing out also ends the identity-provider session, and front-channel logout ends the GopherCRM session when the person signs out at the provider ([single sign-on guide](docs/user-guide/permissions-access/single-sign-on.md))
 - 🔄 **SCIM Provisioning**: SCIM 2.0 create, update and deactivate of staff accounts and of the membership of the mapped groups; tokens under Settings → SCIM tokens ([SCIM provisioning guide](docs/user-guide/permissions-access/scim-provisioning.md))
-- 📡 **Webhooks**: Signed outbound events with a delivery log, a test ping, secret rotation and redelivery ([Integrations: webhooks](#integrations-webhooks))
+- 📡 **Webhooks**: Signed outbound events with a delivery log, a test ping, secret rotation and redelivery ([webhooks guide](docs/user-guide/permissions-access/webhooks.md))
 - 📜 **Audit Logs**: Settings → Sign-in audit and Settings → Role audit screens; sign-in audit rows are kept for `AUTH_AUDIT_RETENTION_DAYS`
 - 🛡️ **Security**: Account lockout, password complexity, sort-column allowlists against SQL injection, rate limiting with trusted-proxy handling
 - 🧹 **Right to Erasure**: Deleting a person overwrites their personal data before the row is soft-deleted (GDPR Art. 17)
@@ -294,16 +294,18 @@ permission it needs, and the system Admin role holds all of them. The administra
   needs `users.activate`.
 - **Profile** (all users): your account details and the password change.
 - **API Keys** (own keys, staff accounts only): create and revoke your own API keys; a key
-  expires after at most one year.
+  expires after at most one year; see
+  [docs/user-guide/permissions-access/api-keys.md](docs/user-guide/permissions-access/api-keys.md).
 - **Configuration** (`settings.view`; changes need `settings.update`): the system settings by
   category tab (see below).
 - **Roles** (`roles.view`; creating, cloning, editing and deleting need `roles.manage`): system and
   custom roles and their permissions.
 - **Webhooks** (`webhooks.manage`): outbound webhook endpoints and the delivery log; see
-  [Integrations: webhooks](#integrations-webhooks).
+  [docs/user-guide/permissions-access/webhooks.md](docs/user-guide/permissions-access/webhooks.md).
 - **Single sign-on** (`settings.sso_manage`): the OpenID Connect issuer, client and role mapping.
 - **Sign-in audit** (`audit.sign_ins_view`): password, single sign-on, refresh and API-key sign-in
-  outcomes.
+  outcomes; see
+  [docs/user-guide/permissions-access/sign-in-audit.md](docs/user-guide/permissions-access/sign-in-audit.md).
 - **Role audit** (`roles.audit_view`): role changes and account activation, deactivation, erasure
   and email changes.
 - **SCIM tokens** (`settings.scim_manage`): the bearer tokens an identity provider's SCIM client
@@ -464,148 +466,13 @@ It spends real credit, so it is never part of CI. Test cases: `docs/testing/11-a
 
 ## Integrations: webhooks
 
-Integrations no longer need to poll for new records. An admin registers an HTTPS endpoint in
-**Settings > Webhooks** (`/settings/webhooks`) or with `POST /api/v1/webhooks/endpoints` and picks
-any of twenty-one event types:
-
-| Event | Sent when |
-|---|---|
-| `lead.created` | a lead is created through the API, or a form creates a new lead (a repeat enquiry to an existing lead sends nothing) |
-| `customer.created` | a customer is created through the API or by converting a lead |
-| `ticket.created` | a ticket is created through the API, or a confirmed form submission opens one (a duplicate key sends nothing) |
-| `deal.created` | a deal is created with `POST /api/v1/deals` |
-| `task.created` | a task is created with `POST /api/v1/tasks`, or by an automation create-task step |
-| `company.created` | a company is created with `POST /api/v1/companies` |
-| `quote.created` | a quote is created with `POST /api/v1/quotes` |
-| `lead.updated` | `PUT /api/v1/leads/{id}` changed at least one stored value of the lead, `POST /api/v1/leads/{id}/assign` changed its owner, `POST /api/v1/leads/{id}/convert` converted it (next to `customer.created`), `POST /api/v1/leads/bulk/status` changed its status (one event per lead), or an automation assign-owner step changed its owner |
-| `customer.updated` | `PUT /api/v1/customers/{id}` changed at least one stored value of the customer |
-| `ticket.updated` | `PUT /api/v1/tickets/{id}` changed at least one stored value of the ticket, `POST /api/v1/tickets/bulk/status` changed its status (one event per ticket), or an automation assign-owner step changed its assignee |
-| `deal.updated` | `PUT /api/v1/deals/{id}` changed at least one stored value of the deal, `POST /api/v1/deals/{id}/stage` moved it to another stage, or an automation assign-owner step changed its owner |
-| `task.updated` | `PUT /api/v1/tasks/{id}` changed at least one stored value of the task or its label set (order and repeats of `label_ids` do not count), or `POST /api/v1/tasks/bulk/status` changed its status (one event per task) |
-| `company.updated` | `PUT /api/v1/companies/{id}` changed at least one stored value of the company |
-| `quote.updated` | `PUT /api/v1/quotes/{id}` changed at least one stored value of the quote, a line was added (`POST /api/v1/quotes/{id}/lines`) or removed (`DELETE /api/v1/quotes/{id}/lines/{lineId}`), `PUT /api/v1/quotes/{id}/lines/{lineId}` changed at least one stored value of the line, `POST /api/v1/quotes/{id}/status` moved it to another status, or the client accepted or declined it through its response link (`POST /api/v1/quotes/public/response`) |
-| `lead.deleted` | `DELETE /api/v1/leads/{id}`, and every erasure that reaches the lead: erasing the customer it was converted into, or that customer's login (`DELETE /api/v1/customers/{id}`, `DELETE /api/v1/users/{id}`) |
-| `customer.deleted` | `DELETE /api/v1/customers/{id}`, and the erasure of a lead converted into the customer or of the customer's login (`DELETE /api/v1/leads/{id}` by an admin, `DELETE /api/v1/users/{id}`) |
-| `ticket.deleted` | `DELETE /api/v1/tickets/{id}` |
-| `deal.deleted` | `DELETE /api/v1/deals/{id}` |
-| `task.deleted` | `DELETE /api/v1/tasks/{id}` (sent once: a delete that loses a race with another delete of the same task answers 404 and sends nothing) |
-| `company.deleted` | `DELETE /api/v1/companies/{id}` (the only event it sends: the leads, customers and deals it unlinks get no updated event) |
-| `quote.deleted` | `DELETE /api/v1/quotes/{id}` |
-
-An update that sends only the values already stored answers 200 and sends nothing, and assigning
-a lead to its current owner sends nothing either, nor does moving a deal to the stage it is already
-in. The updated events come from the `PUT` routes in the table (`PUT /api/v1/tasks/{id}` also when only
-the label set changed), lead assignment and conversion, the deal stage endpoint, the quote line
-endpoints, the quote status endpoint and the client's quote response, the three bulk
-status endpoints and the automation assign-owner step only: emailing a quote, the erasure of a
-customer or lead that overwrites the text of the quotes linked to it, deleting or erasing a record,
-assigning a customer, a ticket comment, a repeat form enquiry, the other automation steps, a
-company delete that unlinks its leads, customers and deals (it sends `company.deleted` only), the erasure of a customer or lead that
-overwrites the text of the deals linked to it, and a label delete, which removes the label from
-every task carrying it, send no updated event. The event says that the record changed, not what
-changed: fetch the record to see its current state.
-
-A deleted event goes to every active endpoint subscribed to it, whether or not that endpoint
-received an earlier event for the record: an endpoint subscribed to `lead.deleted` alone hears of
-every deleted lead, and an endpoint registered after a record was created, or whose earlier
-deliveries of it were pruned, still gets the deleted event. An erasure sends the same deleted event as a delete, with no reason and no personal
-data: one event per lead or customer the erasure removed, cascades included, and none for a record
-that had already been deleted.
-
-**Settings > Webhooks.** The screen lists the endpoints with their events and active flag, and
-creates, edits, activates, deactivates and deletes them. It is shown to users whose role holds the
-`webhooks.manage` permission (the admin role, unless a custom role is given it). The signing secret
-of a new endpoint is shown once, right after it is created, with a copy button: it is not kept in
-the browser and neither the screen nor the API can show it again, so store it then. Each row also
-has a "Send test ping" button, which sends one test ping (below) and shows its outcome, and a
-"Rotate secret" button, which asks for a confirmation, rotates the signing secret (below) and shows
-the new secret once in the same way, with the time until which the previous secret keeps
-verifying. Deleting an endpoint removes its delivery log with it. The URL rules are checked by the
-server, and the form shows its refusal as is.
-
-**Thin payloads.** The body is exactly
-`{"id":"evt_<32 hex>","type":"lead.created","occurred_at":"2026-11-20T09:30:00.123Z","record_id":42}`:
-no name, address or other personal data. Fetch the record through the API with your own
-credentials; visibility and erasure apply at that moment, so nothing personal leaves after a
-person is erased.
-
-**Delivery.** The event row is written in the same transaction as the record, so a create, an
-update or a delete that rolls back sends nothing. A background sender delivers committed events about every 5 seconds as a
-`POST` with `Content-Type: application/json` and `User-Agent: GopherCRM-Webhooks/1`. Any 2xx answer
-is success. A non-2xx answer, a redirect (never followed), a timeout (10 seconds), a connection
-failure or a refused destination is retried after 1, 2, 4, … minutes (at most 6 hours apart) until
-10 attempts have been made (about 8.5 hours); the event is then marked failed. Delivery is at least
-once. A sender works on several endpoints at a time but sends one endpoint's events one at a time,
-oldest first, so a slow endpoint does not hold up the others. A retry or a second replica can still
-deliver an endpoint's events out of order: deduplicate on `webhook-id` and do not rely on order.
-An endpoint whose sent requests fail 3 times in a row is paused: the sender skips all its events
-for 1 minute, then 2, 4, … up to 1 hour after each further failure, and the first 2xx answer ends
-the pause. The endpoint shows `consecutive_failures` and `paused_until`. Neither a redelivery nor
-a change to the endpoint ends a pause early, and the test ping ignores it.
-
-**Test ping.** `POST /api/v1/webhooks/endpoints/:id/test` sends one signed request to the endpoint
-at once, active or not, and answers with the outcome: `{"event_id":"evt_…","outcome":"succeeded",
-"http_status":200,"error_code":null}`, or `outcome` `failed` with the error code of a delivery
-(`http_status`, `redirect`, `timeout`, `connection_failed`, `destination_refused`) or
-`secret_unavailable`, and `http_status` null when no answer arrived. Its body is
-`{"id":"evt_<32 hex>","type":"webhook.ping","occurred_at":"…"}`, without `record_id`, signed like a
-delivery. It follows the same egress rules, 10-second timeout and no-redirect rule, is never
-retried, and is not written to the delivery log. `webhook.ping` is not an event type an endpoint
-can subscribe to.
-
-**Rotating the signing secret.** `POST /api/v1/webhooks/endpoints/:id/rotate-secret` generates a
-new secret and answers 200 with the endpoint, the new `secret` (shown this once) and
-`previous_secret_expires_at`, 24 hours from now. Until then the replaced secret keeps signing next
-to the new one: every delivery, retry, redelivery and test ping carries two signatures,
-`webhook-signature: v1,<new> v1,<previous>`, so a consumer can switch to the new secret at any
-moment in that window without refusing a request. From `previous_secret_expires_at` on only the
-new signature is sent, and the next delivery clears the replaced secret. A second rotation inside
-the window replaces the previous secret: at most two secrets ever sign. Rotation works on an
-inactive endpoint and never reads the stored secrets, so it also repairs an endpoint whose secret
-became unreadable. The "Rotate secret" button of Settings > Webhooks calls this route.
-
-**Verifying the signature** (Standard Webhooks). Each request carries `webhook-id` (the event id),
-`webhook-timestamp` (Unix seconds of this attempt; a retry is re-signed) and `webhook-signature`:
-one `v1,<base64>` value, or two space-separated ones (`v1,<new> v1,<previous>`) during a rotation
-window. Recompute it with your secret and accept the request when any value matches; the example
-below does:
-
-```python
-import base64, hashlib, hmac, time
-
-def verify(secret, headers, body: bytes, tolerance=300):
-    key = base64.b64decode(secret.removeprefix("whsec_"))
-    msg_id, ts = headers["webhook-id"], headers["webhook-timestamp"]
-    if abs(time.time() - int(ts)) > tolerance:      # refuse replays older than 5 minutes
-        return False
-    signed = f"{msg_id}.{ts}.".encode() + body
-    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
-    return any(hmac.compare_digest(expected, s.split(",", 1)[1])
-               for s in headers["webhook-signature"].split() if s.startswith("v1,"))
-```
-
-**Egress rules.** The URL must be `https`, at most 2048 characters, without credentials, query
-string or fragment. Every connection resolves the host again and refuses private, loopback, CGNAT,
-unique-local, link-local, metadata, multicast and unspecified addresses; proxy variables are
-ignored. The AEO egress allowlists do not apply to webhooks. The secret is stored encrypted with
-`API_KEY_SECRET` (or `JWT_SECRET`). After that secret changes, the sender holds the deliveries of
-every endpoint whose secret it can no longer open: they stay `pending` with their attempts
-unchanged, and go out once the secret can be read again, after a restart with the previous key or
-after the endpoint's secret is rotated. Meanwhile `GET /health` reports `webhooks.state` `paused`
-and one error line per held endpoint is logged.
-
-**Delivery log.** The "Delivery log" tab of Settings > Webhooks lists each event per endpoint,
-newest first, with its event type, record id, status, attempts, last attempt time and last
-response code, and filters by endpoint, status and event type. `GET /api/v1/webhooks/deliveries`
-returns the same rows (status `pending`, `sending`, `succeeded` or `failed`) and adds the error
-code and the next attempt. Finished rows are deleted 30 days after their last change.
-`POST /api/v1/webhooks/deliveries/:id/redeliver` sends a `succeeded` or `failed` delivery again:
-the same row goes back to `pending` with 0 attempts, due at once, and keeps its event id
-(`webhook-id`), so a consumer that deduplicates sees a repeat; a `pending` or `sending` delivery,
-or one whose endpoint is deleted or inactive, is refused with 409. In the log each `succeeded` or
-`failed` row has a "Redeliver" button that calls this route and reloads the log; the screen shows
-a refusal's message. The routes are listed under
-[API Documentation](#webhooks-admin-only-sales-support-and-customer-get-403).
+Integrations no longer need to poll for new records: GopherCRM sends a small signed HTTPS request
+to a registered endpoint when a lead, customer, ticket, deal, task, company or quote is created,
+updated or deleted (twenty-one event types). Endpoints, the test ping, secret rotation and the
+delivery log with redelivery are managed in **Settings > Webhooks** by users holding
+`webhooks.manage`, or through the API. The event table, delivery, retries and pausing, and how a
+receiving system verifies the signature are described in
+[docs/user-guide/permissions-access/webhooks.md](docs/user-guide/permissions-access/webhooks.md).
 
 ## Privacy: deleting a person erases their data
 
@@ -1159,7 +1026,8 @@ expired, or if its owner has been deactivated or erased.
   the new `secret`, shown only here, and `previous_secret_expires_at` (now + 24 h), until which
   every request is signed under both secrets (`v1,<new> v1,<previous>`)
 - `GET /api/v1/webhooks/deliveries` - The delivery log, newest first, filtered by `endpoint_id`,
-  `status` and `event_type`; see [Integrations: webhooks](#integrations-webhooks)
+  `status` and `event_type`; see the
+  [webhooks guide](docs/user-guide/permissions-access/webhooks.md#delivery-log)
 - `POST /api/v1/webhooks/deliveries/:id/redeliver` - Queue a `succeeded` or `failed` delivery
   again (same row and event id, 0 attempts, due at once); 409 for a `pending` or `sending` delivery
   or a deleted or inactive endpoint
@@ -1320,7 +1188,7 @@ gophercrm/
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |
 | [docs/datamodel.md](docs/datamodel.md) | Entity model and relationships |
 | [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) | Permission catalogue, system-role matrix, custom roles, role-change rules and the phase 2 sign-in design note |
-| [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md) | Administrator guide: roles and permissions, single sign-on, a Microsoft Entra ID walk-through and an FAQ |
+| [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md) | Administrator guide: roles and permissions, single sign-on, a Microsoft Entra ID walk-through, API keys, the sign-in audit, webhooks and an FAQ |
 | [docs/AEO_SECURITY.md](docs/AEO_SECURITY.md) | AEO provider egress policy, operator migration steps and failure diagnostics |
 | [api/index.html](api/index.html) | Offline API reference, generated from the OpenAPI spec [api/swagger.yaml](api/swagger.yaml) |
 | [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) | Screenshot catalog of every user-facing screen |

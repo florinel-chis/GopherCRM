@@ -467,7 +467,7 @@ row below is unit/integration only, which is why none is marked *covered*.
 
 Signed, thin events for created, (#408) updated and (#437) deleted leads, customers and tickets, (#515) for created, updated and deleted deals, (#516) for created, updated and deleted tasks, (#517) for created, updated and deleted companies, and (#518) for created, updated and deleted quotes; integrations no longer need to poll. Endpoints and
 the delivery log are managed in Settings > Webhooks (`/settings/webhooks`, #409) or through the admin API; both need
-`webhooks.manage`. Details: [README](../README.md#integrations-webhooks),
+`webhooks.manage`. Details: [webhooks guide](user-guide/permissions-access/webhooks.md),
 [DEVELOPMENT.md](DEVELOPMENT.md#outbound-webhooks-345).
 
 | # | Feature | Behaviour | E2E | Backend tests | Frontend | Integration | Status | Notes |

@@ -2,7 +2,9 @@
 
 The real guide must pass against the real repository; each token class is shown
 to report an unknown name in a small fixture guide, and to pass once the name
-is right; a missing page and a class with no token fail.
+is right; a missing page and a class with no token fail. Webhook event types
+resolve from the event catalogue, and the sign-in audit page must name exactly
+the methods and reason codes of the Go vocabulary.
 """
 
 import contextlib
@@ -55,6 +57,24 @@ SCIM_ROUTES = {
 }
 
 
+# The twenty-one event types of the shipped webhook catalogue, written out so
+# the parser is checked against a list it did not produce.
+WEBHOOK_EVENT_TYPES = {
+    '%s.%s' % (entity, action)
+    for entity in ('lead', 'customer', 'ticket', 'deal', 'task', 'company', 'quote')
+    for action in ('created', 'updated', 'deleted')
+}
+
+
+def audit_page(drop=(), extra=''):
+    """A sign-in audit page whose section names every method and reason code except drop."""
+    vocabulary, problems = gate.auth_audit_vocabulary(ROOT)
+    assert not problems, problems
+    codes = sorted((vocabulary['method'] | vocabulary['reason']) - set(drop))
+    return '# Sign-in audit\n\n%s\n\n%s\n%s\n## Next\n\n`not_checked_here`\n' % (
+        gate.AUDIT_SECTION, '\n'.join('- `%s`' % code for code in codes), extra)
+
+
 class UserGuideCheckTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -66,6 +86,7 @@ class UserGuideCheckTest(unittest.TestCase):
     def write_guide(self, extra='', base=BASE_PAGE):
         for page in gate.PAGES:
             (self.dir / page).write_text('# %s\n' % page, encoding='utf-8')
+        (self.dir / gate.AUDIT_PAGE).write_text(audit_page(), encoding='utf-8')
         (self.dir / 'overview.md').write_text(base + extra, encoding='utf-8')
 
     def assert_fails_naming(self, extra, token, kind):
@@ -167,15 +188,18 @@ class UserGuideCheckTest(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertEqual(routes, SCIM_ROUTES)
 
-    def fake_root(self, scim_routes_go=None, main_go=None):
+    def fake_root(self, scim_routes_go=None, main_go=None, catalog_go=None):
         root = self.dir / 'root'
-        for rel in ('api/swagger.json', 'gocrm-ui/src/routes/index.tsx', gate.SCIM_ROUTES_FILE, gate.SCIM_PREFIX_FILE):
+        for rel in ('api/swagger.json', 'gocrm-ui/src/routes/index.tsx', gate.SCIM_ROUTES_FILE, gate.SCIM_PREFIX_FILE,
+                    gate.WEBHOOK_CATALOGUE_FILE, gate.AUDIT_VOCABULARY_FILE):
             (root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / rel, root / rel)
         if scim_routes_go is not None:
             (root / gate.SCIM_ROUTES_FILE).write_text(scim_routes_go, encoding='utf-8')
         if main_go is not None:
             (root / gate.SCIM_PREFIX_FILE).write_text(main_go, encoding='utf-8')
+        if catalog_go is not None:
+            (root / gate.WEBHOOK_CATALOGUE_FILE).write_text(catalog_go, encoding='utf-8')
         return root
 
     def test_root_without_setup_scim_routes_fails(self):
@@ -205,6 +229,55 @@ class UserGuideCheckTest(unittest.TestCase):
         code, out = run(self.dir)
         self.assertEqual(code, 1, out)
         self.assertIn('no route token found', out)
+
+    def test_new_pages_are_checked(self):
+        for page in ('api-keys.md', 'sign-in-audit.md', 'webhooks.md'):
+            self.assertIn(page, gate.PAGES)
+
+    def test_parsed_event_types_are_the_catalogue(self):
+        types, problems = gate.webhook_event_types(ROOT)
+        self.assertEqual(problems, [])
+        self.assertEqual(types, WEBHOOK_EVENT_TYPES)
+
+    def test_known_event_types_pass(self):
+        self.write_guide('\n`deal.created`, `quote.deleted`, `company.updated`.\n')
+        code, out = run(self.dir)
+        self.assertEqual(code, 0, out)
+
+    def test_unknown_event_type(self):
+        self.assert_fails_naming('\n`lead.archived`\n', 'lead.archived', 'dotted key')
+
+    def test_catalogue_without_default_fails(self):
+        catalog = (ROOT / gate.WEBHOOK_CATALOGUE_FILE).read_text(encoding='utf-8')
+        without_default = catalog.replace('var defaultCatalogue = NewCatalogue(', 'var otherCatalogue = NewCatalogue(')
+        self.assertNotEqual(catalog, without_default)
+        root = self.fake_root(catalog_go=without_default)
+        self.write_guide()
+        code, out = run(self.dir, root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('no var defaultCatalogue', out)
+
+    def assert_audit_page_fails(self, page, *expected):
+        self.write_guide()
+        (self.dir / gate.AUDIT_PAGE).write_text(page, encoding='utf-8')
+        code, out = run(self.dir)
+        self.assertEqual(code, 1, out)
+        for line in expected:
+            self.assertIn(line, out)
+        return out
+
+    def test_unknown_sign_in_audit_code(self):
+        self.assert_audit_page_fails(audit_page(extra='- `not_a_reason`\n'),
+                                     'unknown sign-in audit code `not_a_reason`')
+
+    def test_missing_sign_in_audit_code(self):
+        out = self.assert_audit_page_fails(audit_page(drop=('token_reuse',)),
+                                           'missing sign-in audit code `token_reuse`')
+        self.assertEqual(out.count('sign-in audit code'), 1, out)
+
+    def test_sign_in_audit_page_without_section_fails(self):
+        page = audit_page().replace(gate.AUDIT_SECTION, '## Codes')
+        self.assert_audit_page_fails(page, 'no "%s" section' % gate.AUDIT_SECTION)
 
 
 if __name__ == '__main__':
