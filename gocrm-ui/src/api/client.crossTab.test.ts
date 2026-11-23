@@ -424,7 +424,7 @@ describe('ApiClient across tabs sharing a remembered session', () => {
     // Removed at once, without waiting for B's lock.
     expect(localStorage.getItem(SESSION_KEY)).toBeNull();
     await expect(signOut).resolves.toBeUndefined();
-    expect(revoke).toHaveBeenCalledWith(OLD);
+    expect(revoke).toHaveBeenCalledWith(OLD, undefined);
 
     refreshGate.resolve();
     const results = await waiters;

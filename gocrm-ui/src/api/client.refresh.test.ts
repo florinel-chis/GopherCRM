@@ -286,7 +286,7 @@ describe('ApiClient 401 refresh', () => {
     // The refresh spent r0 and committed a successor; the revocation is
     // authenticated with that successor, which is never stored.
     expect(revoke).toHaveBeenCalledTimes(1);
-    expect(revoke).toHaveBeenCalledWith('new');
+    expect(revoke).toHaveBeenCalledWith('new', undefined);
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     expect(sent.filter((s) => s.authorization === 'Bearer new')).toHaveLength(0);
@@ -341,7 +341,7 @@ describe('ApiClient 401 refresh', () => {
 
     await expect(ending).resolves.toBeUndefined();
     expect(await pending).toBeInstanceOf(SessionChangedError);
-    expect(revoke).toHaveBeenCalledWith('successor-access');
+    expect(revoke).toHaveBeenCalledWith('successor-access', undefined);
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
     expect(sessionStorage.getItem(TOKEN_KEY)).toBeNull();
@@ -719,7 +719,7 @@ describe('ApiClient with another tab replacing the shared session', () => {
     await tab.client.endSession(revoke);
 
     expect(revoke).toHaveBeenCalledTimes(1);
-    expect(revoke).toHaveBeenCalledWith(accountB);
+    expect(revoke).toHaveBeenCalledWith(accountB, undefined);
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 
@@ -750,7 +750,7 @@ describe('ApiClient with another tab replacing the shared session', () => {
 
     await expect(ending).resolves.toBeUndefined();
     expect(await change).toBeInstanceOf(SessionChangedError);
-    expect(revoke).toHaveBeenLastCalledWith(successorAccess);
+    expect(revoke).toHaveBeenLastCalledWith(successorAccess, undefined);
     expect(sent.filter((s) => s.url === '/auth/change-password')).toHaveLength(1);
     expect(localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(localStorage.getItem(REFRESH_TOKEN_KEY)).toBeNull();
@@ -779,8 +779,8 @@ describe('ApiClient with another tab replacing the shared session', () => {
 
     // The retained pair is A's; signing out B in this tab still revokes as B.
     await tab.client.endSession(revoke);
-    expect(revoke).toHaveBeenCalledWith(accountB);
-    expect(revoke).not.toHaveBeenCalledWith(jwtFor(1, 'a-pc'));
+    expect(revoke).toHaveBeenCalledWith(accountB, undefined);
+    expect(revoke).not.toHaveBeenCalledWith(jwtFor(1, 'a-pc'), undefined);
   });
 
   it('a password change answered after another tab signed out writes nothing', async () => {
