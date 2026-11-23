@@ -237,15 +237,15 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		t.Error("row 11.1 of docs/FEATURES.md must link ](AUTHORIZATION.md)")
 	}
 
-	// The Unreleased section, cut into bullets: a top-level "- " line with
-	// its continuation lines.
+	// The entries since 1.2.0 (Unreleased and newer versions), cut into
+	// bullets: a top-level "- " line with its continuation lines.
 	var bullets []string
 	inside := false
 	for _, line := range strings.Split(readGuideFile(t, "CHANGELOG.md"), "\n") {
 		switch {
 		case strings.HasPrefix(line, "## [Unreleased]"):
 			inside = true
-		case strings.HasPrefix(line, "## ["):
+		case strings.HasPrefix(line, "## [1.2.0]"):
 			inside = false
 		case !inside:
 		case strings.HasPrefix(line, "- "):
@@ -263,7 +263,7 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 		}
 	}
 	if !named {
-		t.Errorf("CHANGELOG.md needs an [Unreleased] bullet naming %s and #349", guidePath)
+		t.Errorf("CHANGELOG.md needs a bullet since 1.2.0 naming %s and #349", guidePath)
 	}
 
 	guide := readGuideFile(t, guidePath)

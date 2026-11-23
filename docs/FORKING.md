@@ -106,10 +106,11 @@ Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for 
 
 ### 1.4 Released and unreleased code
 
-The latest release is 1.2.0 (the `[1.2.0]` heading of `CHANGELOG.md`). Everything under `[Unreleased]`
-(the first heading of `CHANGELOG.md`, about 2,500 lines on `9133805`) is on `main` but in no tagged release: companies, deals,
-products and quotes, ticket comments, follow-up automation, the transactional token flows and more.
-A fork taken from `main` gets all of it. A fork taken from the `v1.2.0` tag gets none of it.
+The latest release is 1.3.0 (the `[1.3.0]` heading of `CHANGELOG.md`, tag `v1.3.0`). It has everything since
+1.2.0: companies, deals, products and quotes, ticket comments, follow-up automation, the transactional token flows,
+roles and permissions, API keys, webhooks, single sign-on and SCIM provisioning, and more. Anything under
+`[Unreleased]` (the first heading of `CHANGELOG.md`) is on `main` but in no tagged release yet. A fork taken from
+`main` gets all of it; a fork taken from the `v1.3.0` tag gets the released part.
 
 ## 2. First run
 
@@ -720,7 +721,7 @@ rebuild would probably repeat, and each fix has a regression test that fails wit
 What it does not buy you, stated plainly:
 
 - **Open issues:** the fork inherits them (section 1.3).
-- **Changelog:** a large unreleased section on top of 1.2.0 (section 1.4).
+- **Changelog:** the latest release is 1.3.0; newer work is under `[Unreleased]` (section 1.4).
 - **MySQL test server:** the regression tests need one before a local run proves the MySQL half.
 - **CI coupling:** CI depends on a Python package in `automation/langflow/` (section 6).
 - **Reading time:** the conventions are dense enough that your first change will take a while.

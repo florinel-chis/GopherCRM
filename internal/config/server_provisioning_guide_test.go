@@ -719,6 +719,10 @@ func TestServerProvisioningGuideSQLiteUnsupported(t *testing.T) {
 
 // subsectionBetween returns the lines from the first line starting with start
 // to the next line starting with stop.
+// sinceReleaseStop ends the changelog text that tests read for entries: these
+// changes came after 1.2.0, so they sit under Unreleased or a newer version.
+const sinceReleaseStop = "## [1.2.0]"
+
 func subsectionBetween(t *testing.T, doc, start, stop string) string {
 	t.Helper()
 	lines := strings.Split(strings.ReplaceAll(doc, "\r\n", "\n"), "\n")
@@ -751,7 +755,7 @@ func TestServerProvisioningGuideLinked(t *testing.T) {
 		assert.Contains(t, readRepositoryFile(t, rel), "SERVER_PROVISIONING.md", rel)
 	}
 
-	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", "## [")
+	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
 	assert.Contains(t, unreleased, "#231")
 	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
 }
@@ -864,7 +868,7 @@ func changelogEntry(t *testing.T, section, marker string) string {
 
 // TestServerProvisioningGuideTarballDecisionsChangelog pins #305 AC-3.
 func TestServerProvisioningGuideTarballDecisionsChangelog(t *testing.T) {
-	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", "## [")
+	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
 	assert.Contains(t, unreleased, "#305")
 	assert.Contains(t, unreleased, "SERVER_PROVISIONING.md")
 	assert.NotContains(t, unreleased, "scripts/deploy/samples", "item 1 of #305 is not delivered")

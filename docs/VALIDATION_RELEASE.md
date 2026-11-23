@@ -411,7 +411,10 @@ never point E2E commands at an application database.
 3. Run **Release** again on `main`, with the prepared version and **publish=true**. This is a
    fresh full validation of that exact dispatch commit, not reuse of an old rehearsal. Only
    after all gates pass does it create an annotated `vX.Y.Z` tag at that SHA and a draft release.
-   Curated changelog text is combined with GitHub's generated PR notes. Assets are downloaded
+   Curated changelog text is combined with GitHub's generated PR notes; an entry longer than
+   `NOTES_LIMIT` in `scripts/release/release.py` is condensed to its headings and entry titles
+   with a link to the full `CHANGELOG.md`, because GitHub caps a release body at 125,000
+   characters. Assets are downloaded
    and verified before the release becomes public. Existing tags/releases are never overwritten.
 4. The successful publication receipt triggers **Deploy**. It downloads the same artifact,
    verifies its checksums, archive metadata, tag SHA and successful Release run, and only

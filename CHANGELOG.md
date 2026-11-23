@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-23
+
 ### Added
 
 - **Single sign-on sign-out at the identity provider (#634).** Signing out of a single sign-on
@@ -2116,6 +2118,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Release notes fit GitHub's limit.** A changelog entry longer than 60,000 characters is
+  published as its headings and entry titles, with a link to the full changelog.
+
 - `TestMySQLBaseDSNFromEnvironmentOnly` (`cmd/migrate`) now checks the skip decision of the
   `TEST_MYSQL_DSN` helper through a pure decision function and a recording fake instead of
   skipping real subtests, so it emits no skip events and the release SQL gate
@@ -3861,7 +3866,8 @@ was tagged, and do not cover those three.
 - ESLint reports 40 errors and 137 warnings in the frontend, mostly unused Playwright fixture
   arguments and `any` types. These pre-date this work and were not touched. `tsc -b` is clean.
 
-[Unreleased]: https://github.com/florinel-chis/GopherCRM/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/florinel-chis/GopherCRM/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/florinel-chis/GopherCRM/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/florinel-chis/GopherCRM/releases/tag/v1.0.0

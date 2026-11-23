@@ -174,7 +174,8 @@ describe('VITE_APP_NAME build argument documentation', () => {
     const changelog = readRepo('CHANGELOG.md');
     const start = changelog.indexOf('## [Unreleased]');
     expect(start).toBeGreaterThanOrEqual(0);
-    const next = changelog.indexOf('\n## [', start + 1);
+    // Entries since 1.2.0: under Unreleased or a newer version.
+    const next = changelog.indexOf('\n## [1.2.0]', start + 1);
     const unreleased = collapse(changelog.slice(start, next === -1 ? undefined : next));
     for (const phrase of ['#303', 'VITE_APP_NAME', '#308', '#231', 'SERVER_PROVISIONING.md']) {
       expect(unreleased, phrase).toContain(phrase);

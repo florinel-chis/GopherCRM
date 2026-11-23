@@ -284,7 +284,7 @@ func TestComposeUIBuildArgsDocumented(t *testing.T) {
 	for _, rel := range []string{"docs/FORKING.md", "docs/USE_CASES.md", "docs/ROADMAP.md"} {
 		docs[rel] = normalizeDocText(readRepositoryFile(t, rel))
 	}
-	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", "## [")
+	unreleased := subsectionBetween(t, readRepositoryFile(t, "CHANGELOG.md"), "## [Unreleased]", sinceReleaseStop)
 	docs["CHANGELOG.md [Unreleased]"] = normalizeDocText(unreleased)
 
 	bullet := normalizeDocText(dockerViteAppNameBullet(t, docker))
