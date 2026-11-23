@@ -4,8 +4,15 @@ Documentation is assessed and updated in the same PR as the behavior it describe
 The independent reviewer checks that assessment before merge. The local runner then
 verifies that the reviewed documentation landed before completing the item or advancing
 a prepared batch. It never repairs documentation by writing directly to main.
+"What the impact map covers" (the deterministic map and the CI `documentation-impact` artifact)
+describes current behaviour; "Working prompt and MVP", "Assess, update, review, verify" and
+"Validation and observed lessons" are historical and describe the Langflow runner's
+reviewed-documentation mode.
 
 ## Working prompt and MVP
+
+> **Historical.** This section describes the Langflow runner's reviewed-documentation mode.
+> Ticket work no longer runs through that mode; the text is kept as a record of its design.
 
 > For every ticket or existing PR, identify documentation affected by the actual diff.
 > Update relevant product, API, configuration and operational guidance in the same PR.
@@ -23,6 +30,9 @@ after finishing active executions; setup does not overwrite their policies. Hist
 approvals are not relabelled as documentation-reviewed approvals.
 
 ## Assess, update, review, verify
+
+> **Historical.** This section describes the Langflow runner's reviewed-documentation mode.
+> Ticket work no longer runs through that mode; the text is kept as a record of its design.
 
 1. During task preparation, include the relevant documentation paths in the task's
    `scope_paths`. The implementation prompt includes preliminary suggestions from those
@@ -117,6 +127,9 @@ with reviewed mode enabled. The post-merge CI report does not launch another age
 
 ## Validation and observed lessons
 
+> **Historical.** This section describes the Langflow runner's reviewed-documentation mode.
+> Ticket work no longer runs through that mode; the text is kept as a record of its design.
+
 Workflow-only changes use hygiene, runner tests, dependency setup and health smoke under
 the [contextual policy](VALIDATION_RELEASE.md). Documentation maintenance does not independently
 trigger the full application suite. Releases retain their complete validation matrix.
@@ -143,7 +156,8 @@ Potential improvements after observing real executions:
 
 - Measure which documents the map misses or suggests unnecessarily; refine the map from
   those observations rather than adding every document to every PR.
-- Add safe registered generator commands and output-drift checks for generated references.
+- Done: the generated API reference has an output-drift check. `scripts/ci/check-api-docs.py`
+  (`make verify-api-docs`) regenerates it and fails when the committed copy differs.
 - Add incremental Markdown link/anchor checks that distinguish new breakage from existing debt.
 - Consider a periodic documentation audit separately; this MVP does not install a schedule or
   scan unrelated historic claims on every PR.

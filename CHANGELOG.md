@@ -44,6 +44,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   G13 resolved, G15 narrowed and G35 marked as a duplicate of G23. The Playwright count table is
   regenerated from `playwright test --list` (208 tests in 35 files), the Go, integration and
   Vitest count tables are marked as not recounted, and the header date is refreshed. Docs only.
+- The historical process documents are marked as historical and the review policy is up to date
+  (#745). `REVIEW.md` is dated, states the formatting and lint checks CI runs, and its review
+  passes name permission keys, custom roles, single sign-on, SCIM, API key lifetime, webhooks and
+  quote public links. The old refactoring guide is removed, along with its entry in
+  `scripts/ci/check-doc-citations.py`. The runner-era sections of `docs/DOCUMENTATION_WORKFLOW.md`
+  and `docs/VALIDATION_RELEASE.md` carry a historical banner, the runner history is grouped under
+  the historical section, and finished follow-ups are no longer listed as open. Docs only.
 
 ### Fixed
 

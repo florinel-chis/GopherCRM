@@ -1,5 +1,7 @@
 # Review policy
 
+Last reviewed: 2026-11-23.
+
 Changes reach `main` through a pull request with green CI and the code owner's approval
 (`.github/CODEOWNERS`). Reviewers, human or automated, work through the passes below and label
 each finding **Important** or **Nit**. A finding never approves or blocks a pull request on its
@@ -9,9 +11,16 @@ own; the code owner decides.
 
 - **Bugs:** logic errors, broken edge cases, regressions, error paths that turn a failure into a
   success or a "not found".
-- **Security:** authentication and role checks (admin, sales, support, customer), input
-  validation, sort and filter allowlists, secrets or personal data in logs or responses, the
-  public forms surface (`/forms/public/*`: CORS, rate limits, spam layers).
+- **Security:** authentication and role checks: the system roles (admin, sales, support,
+  customer), custom roles, and the permission keys with their scope (the route guard
+  `RouteKeys` (`internal/permissions/routes.go`) plus the scope a service applies to the rows it
+  returns). Input validation, sort and filter allowlists, secrets or personal data in logs or
+  responses, the public forms surface (`/forms/public/*`: CORS, rate limits, spam layers), the
+  OpenID Connect sign-in callback and front-channel sign-out
+  (`internal/handler/auth_oidc_handler.go`), SCIM bearer tokens (`internal/handler/scim_routes.go`),
+  API key lifetime and the recent sign-in required to create a key, webhook URLs and outbound
+  requests (`CheckPublicURL` (`internal/egress/public.go`)), and quote public links
+  (`internal/handler/quote_public_routes.go`).
 - **Data:** erasure keeps its guarantees (personal fields overwritten before soft delete, tokens
   purged), migrations that are safe on existing rows, and behaviour that holds on MySQL 8 and
   MariaDB 10.11 and not only on the SQLite test database.
@@ -33,9 +42,12 @@ test, a widened size limit), or add or change behaviour without the tests that p
 
 ## Skip
 
-Generated files (`api/swagger.*`, lockfiles), formatting (no formatter is enforced in CI yet), and
-the deliberate behaviours documented in the code (for example the success-shaped response for
-spam submissions and the generic 401 for locked or deactivated accounts).
+Generated files (`api/swagger.*`, lockfiles), formatting that CI's gates accept, and the
+deliberate behaviours documented in the code (for example the success-shaped response for
+spam submissions and the generic 401 for locked or deactivated accounts). CI already enforces Go
+formatting: `scripts/ci/check-go-format.py` (gofmt) runs in the Backend job and in
+`make verify-backend`, and the Frontend job runs ESLint with `--max-warnings=0` (`npm run lint`).
+Prettier is not run in CI.
 
 Mocks are not skipped: several under `internal/mocks/` are edited by hand despite their generated
 header, and a wrong mock lets a test pass for the wrong reason.
