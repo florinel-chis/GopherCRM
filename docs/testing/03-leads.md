@@ -888,7 +888,7 @@ the frontend gating.
   transaction rolls back, so no partial customer is left behind.
 - **Known issue:** A duplicate-email conflict is reported as 500 rather than the 409 that
   `apperrors.ErrDuplicateEmail` supports elsewhere (see the API-defect list in
-  `docs/ROADMAP.md`). Clean-up: delete both records the test created.
+  `docs/DEVELOPMENT.md`, "Defects found while documenting the API"). Clean-up: delete both records the test created.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
 ---
