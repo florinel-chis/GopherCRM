@@ -543,8 +543,11 @@ Follow [How to: single sign-on with Microsoft Entra ID](user-guide/permissions-a
 ### Do not promise
 
 SAML, several identity providers, groups created or renamed from Entra ID through SCIM, or that
-removing a person from a group deactivates or erases them (it never does; deactivate them at the
-provider, and erase the account in GopherCRM when the data must go).
+removing a person from a group leaves the account as it is. Removing them from one group gives
+them the role of the first mapping row that matches one of their remaining groups; removing them
+from their last mapped group deactivates the account, as SCIM `active` false does (signed out
+everywhere, API keys revoked), so keep integration and service accounts in a mapped group. A group change never erases an account:
+deactivate people at the provider, and erase the account in GopherCRM when the data must go.
 
 ## 8. Poor fits
 
