@@ -1,11 +1,9 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -15,13 +13,14 @@ import (
 
 // The tests in this file pin docs/CONCURRENCY.md (#323) to the code it
 // describes: its structure, the status and the key facts of every flow, the
-// lock chains, the retry rule, the #175 failure modes, every cited path and
-// line, the flow -> ticket map, and the links that point to it from
-// EXTENDING, DEVELOPMENT, ROADMAP, README and CHANGELOG. Every citation of
-// the auth service files (internal/service/auth_service.go and the per-flow
-// files split from it, #639) is pinned to its file, its enclosing function
-// and a text fragment of the cited line (#581); citations of other files are
-// only checked to lie inside their file. Where a fact is a property of the code (a
+// lock chains, the retry rule, the #175 failure modes, every cited path, the
+// flow -> ticket map, and the links that point to it from EXTENDING,
+// DEVELOPMENT, ROADMAP, README and CHANGELOG. The document cites code by path
+// and symbol, never by line (#743); scripts/ci/check-doc-citations.py checks
+// that each cited symbol is declared in its file. Every citation of the auth
+// service files (internal/service/auth_service.go and the per-flow files split
+// from it, #639) is a path-and-symbol pair pinned to a text fragment of the
+// cited function's body (#581). Where a fact is a property of the code (a
 // lock that is or is not taken, a helper that is or is not used) the code is
 // read too, so the document and the code cannot drift apart silently.
 
@@ -48,18 +47,23 @@ var concurrencyDocFlowsInOrder = []string{
 	"Password-reset request",
 	"Password-reset confirm",
 	"API-key create",
+	"API-key revoke",
 	"RBAC user-role and role writes",
 	"OIDC sign-in",
+	"Identity-provider sign-out",
 	"SCIM user create and replace",
 	"SCIM user patch",
+	"SCIM user delete",
 	"SCIM group patch",
 }
 
 var concurrencyDocFieldLabels = []string{"Rows locked", "Order", "Transaction", "Retry", "Status"}
 
-// concurrencyDocExpectedStatus is the status of every flow at a415cf1, with
-// Login implemented by #336 (C2), the password-reset request and API-key
-// create by #342 (C3) and the three erasures by #385 (C4).
+// concurrencyDocExpectedStatus is the status of every flow on the default
+// branch: Login implemented by #336 (C2), the password-reset request and
+// API-key create by #342 (C3), the three erasures by #385 (C4), and API-key
+// revoke, identity-provider sign-out and the SCIM user delete documented by
+// #743.
 var concurrencyDocExpectedStatus = map[string]string{
 	"User-rooted erasure":            "implemented",
 	"Customer-rooted erasure":        "implemented",
@@ -73,10 +77,13 @@ var concurrencyDocExpectedStatus = map[string]string{
 	"Password-reset request":         "implemented",
 	"Password-reset confirm":         "implemented",
 	"API-key create":                 "implemented",
+	"API-key revoke":                 "implemented",
 	"RBAC user-role and role writes": "implemented",
 	"OIDC sign-in":                   "implemented",
+	"Identity-provider sign-out":     "implemented",
 	"SCIM user create and replace":   "implemented",
 	"SCIM user patch":                "implemented",
+	"SCIM user delete":               "implemented",
 	"SCIM group patch":               "implemented",
 }
 
@@ -99,6 +106,8 @@ var concurrencyDocRetryFlows = map[string]struct{ constant, file, declaration st
 	"SCIM user create and replace": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #471: the SCIM user patch is a governed write.
 	"SCIM user patch": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
+	// #504: the SCIM user delete is a governed write.
+	"SCIM user delete": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #506: the SCIM group patch is a governed write.
 	"SCIM group patch": {"roleWriteMaxRetries", "internal/service/role_governance.go", ""},
 	// #385: every erasure root is one replayed transaction (a const block).
@@ -127,10 +136,13 @@ var concurrencyDocExpectedTicket = map[string]string{
 	"Password-reset request":         "C3",
 	"Password-reset confirm":         "C3",
 	"API-key create":                 "C3",
+	"API-key revoke":                 "#525",
 	"RBAC user-role and role writes": "#348",
 	"OIDC sign-in":                   "#435",
+	"Identity-provider sign-out":     "#634",
 	"SCIM user create and replace":   "#470",
 	"SCIM user patch":                "#471",
+	"SCIM user delete":               "#504",
 	"SCIM group patch":               "#506",
 }
 
@@ -913,41 +925,24 @@ func TestConcurrencyDocFailureModes175(t *testing.T) {
 
 var concurrencyDocCitation = regexp.MustCompile("`((?:internal|cmd|migrations|scripts|tests|test)/[^`\\s:]*)(?::([0-9][0-9,\\-]*))?`")
 
+// concurrencyDocLineCitation matches a line citation (path.go:N and the other
+// source extensions) or a bare `:N` continuation anywhere in the document.
+var concurrencyDocLineCitation = regexp.MustCompile("(\\.(go|ts|tsx|py|sh|sql):[0-9])|(`:[0-9])")
+
+// TestConcurrencyDocCitationsResolve checks that every cited path exists and
+// that no citation names a line (#743): line numbers drift whenever the cited
+// file changes, so the document cites code by path and symbol.
 func TestConcurrencyDocCitationsResolve(t *testing.T) {
 	root := repositoryRoot(t)
-	matches := concurrencyDocCitation.FindAllStringSubmatch(concurrencyDocText(t), -1)
+	text := concurrencyDocText(t)
+	matches := concurrencyDocCitation.FindAllStringSubmatch(text, -1)
 	require.GreaterOrEqual(t, len(matches), 40, "expected the document to cite its code paths")
 	for _, m := range matches {
-		rel, lines := m[1], m[2]
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
-		if !assert.NoError(t, err, "cited path %s", rel) || lines == "" {
-			continue
-		}
-		if !assert.False(t, info.IsDir(), "%s:%s cites lines of a directory", rel, lines) {
-			continue
-		}
-		data := readRepositoryFile(t, rel)
-		count := strings.Count(data, "\n")
-		if !strings.HasSuffix(data, "\n") {
-			count++
-		}
-		for _, part := range strings.Split(lines, ",") {
-			bounds := strings.SplitN(part, "-", 2)
-			start, err := strconv.Atoi(bounds[0])
-			if !assert.NoError(t, err, "%s:%s", rel, lines) {
-				continue
-			}
-			end := start
-			if len(bounds) == 2 {
-				end, err = strconv.Atoi(bounds[1])
-				if !assert.NoError(t, err, "%s:%s", rel, lines) {
-					continue
-				}
-			}
-			assert.True(t, start >= 1 && start <= end && end <= count,
-				"%s:%s lies outside the file's %d lines", rel, lines, count)
-		}
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(m[1])))
+		assert.NoError(t, err, "cited path %s", m[1])
+		assert.Equal(t, "", m[2], "%s cites line %s; cite the symbol instead", m[1], m[2])
 	}
+	assert.Empty(t, concurrencyDocLineCitation.FindAllString(text, -1), "%s carries a line citation", concurrencyDocFile)
 }
 
 // concurrencyDocAuthServiceFiles are the auth service files: auth_service.go
@@ -964,12 +959,8 @@ var concurrencyDocAuthServiceFiles = []string{
 	"internal/service/auth_password_reset.go",
 }
 
-// concurrencyDocAuthServiceCitation matches a `internal/service/<auth service
-// file>:N` span and, when it is followed by "`, `:M` in the same file", that
-// bare continuation too. Bare spans after other files are not matched.
-var concurrencyDocAuthServiceCitation = regexp.MustCompile(
-	"`(" + concurrencyDocAuthServiceFilePattern() + "):([0-9]+)`(?:,\\s+`:([0-9]+)`\\s+in\\s+the\\s+same\\s+file)?")
-
+// concurrencyDocAuthServiceFilePattern is an alternation of the auth service
+// files, each quoted for a regexp.
 func concurrencyDocAuthServiceFilePattern() string {
 	quoted := make([]string, len(concurrencyDocAuthServiceFiles))
 	for i, file := range concurrencyDocAuthServiceFiles {
@@ -979,10 +970,11 @@ func concurrencyDocAuthServiceFilePattern() string {
 }
 
 // concurrencyDocAuthServicePin pins one auth service citation of the
-// document: the citation must name file, and the cited line must contain
-// fragment and lie inside the function of that file whose declaration starts
-// with signature. An empty signature marks a top-level declaration, whose
-// fragment must occur exactly once in the file.
+// document: the document cites file and the symbol of signature as a
+// `file` `Symbol` pair, and the body of the function whose declaration starts
+// with signature contains fragment, the statement the document relies on. An
+// empty signature marks a top-level const, cited by its name, whose fragment
+// must occur exactly once in the file.
 type concurrencyDocAuthServicePin struct {
 	file      string
 	signature string
@@ -1005,8 +997,9 @@ const (
 	pinConfirmResetInTx      = "func (s *authService) confirmPasswordResetInTransaction("
 )
 
-// concurrencyDocAuthServicePins lists, in document order, one pin per
-// auth service citation of docs/CONCURRENCY.md (#581, #639).
+// concurrencyDocAuthServicePins lists, in document order, the statements the
+// auth service citations of docs/CONCURRENCY.md rely on (#581, #639); a cited
+// function may carry several pins.
 var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	// Retry rule: the login, request and confirm roots.
 	{"internal/service/auth_login.go", pinAuthenticate, "WithTransactionAndRetry("},
@@ -1069,76 +1062,54 @@ var concurrencyDocAuthServicePins = []concurrencyDocAuthServicePin{
 	{"internal/service/auth_refresh.go", pinRotateInTransaction, "// Lock the owner before claiming the token."},
 }
 
-func TestConcurrencyDocAuthServiceCitationsPinned(t *testing.T) {
+// concurrencyDocAuthServiceSymbol is the symbol the document cites for a
+// pin: authService.X for a method of authService, X for a function, and the
+// const name for a top-level const pin.
+func concurrencyDocAuthServiceSymbol(t *testing.T, pin concurrencyDocAuthServicePin) string {
+	t.Helper()
+	if pin.signature == "" {
+		m := regexp.MustCompile(`^const ([A-Za-z_][A-Za-z0-9_]*) =`).FindStringSubmatch(pin.fragment)
+		require.NotNil(t, m, "a pin without a signature pins a const: %q", pin.fragment)
+		return m[1]
+	}
+	m := regexp.MustCompile(`^func (?:\([a-z]+ \*?([A-Za-z_][A-Za-z0-9_]*)\) )?([A-Za-z_][A-Za-z0-9_]*)\($`).FindStringSubmatch(pin.signature)
+	require.NotNil(t, m, "unexpected pin signature %q", pin.signature)
+	if m[1] != "" {
+		return m[1] + "." + m[2]
+	}
+	return m[2]
+}
+
+// TestConcurrencyDocAuthServiceSymbolsPinned pins every auth service citation
+// of the document (#581, #639, #743): each pin's function is cited as a
+// `file` `Symbol` pair and still holds the statement the document relies on,
+// and every auth service span of the document is such a pair of a pinned
+// symbol, so a bare file span or a citation without a pin fails.
+func TestConcurrencyDocAuthServiceSymbolsPinned(t *testing.T) {
 	text := concurrencyDocText(t)
-	sources := map[string]string{}
-	for _, rel := range concurrencyDocAuthServiceFiles {
-		sources[rel] = readRepositoryFile(t, rel)
-	}
-
-	type citation struct {
-		docLine int
-		file    string
-		label   string
-		line    int
-	}
-	var citations []citation
-	for _, loc := range concurrencyDocAuthServiceCitation.FindAllStringSubmatchIndex(text, -1) {
-		file := text[loc[2]:loc[3]]
-		for _, g := range []int{4, 6} {
-			if loc[g] < 0 {
-				continue
-			}
-			n, err := strconv.Atoi(text[loc[g]:loc[g+1]])
-			require.NoError(t, err)
-			label := file + ":" + text[loc[g]:loc[g+1]]
-			if g == 6 {
-				label = "`:" + text[loc[g]:loc[g+1]] + "` (same file, " + file + ")"
-			}
-			citations = append(citations, citation{
-				docLine: strings.Count(text[:loc[g]], "\n") + 1,
-				file:    file,
-				label:   label,
-				line:    n,
-			})
-		}
-	}
-	require.Len(t, citations, len(concurrencyDocAuthServicePins),
-		"%s cites the auth service files %d times; pin every citation in concurrencyDocAuthServicePins",
-		concurrencyDocFile, len(citations))
-
-	for i, c := range citations {
-		pin := concurrencyDocAuthServicePins[i]
-		where := fmt.Sprintf("%s line %d cites %s", concurrencyDocFile, c.docLine, c.label)
-		if !assert.Equal(t, pin.file, c.file, "%s: the pinned statement lives in %s", where, pin.file) {
-			continue
-		}
-		src := sources[c.file]
-		lines := strings.Split(src, "\n")
-		if !assert.True(t, c.line >= 1 && c.line <= len(lines), "%s, outside the file", where) {
-			continue
-		}
-		actual := lines[c.line-1]
-		assert.Contains(t, actual, pin.fragment,
-			"%s: expected a line containing %q, got %q", where, pin.fragment, strings.TrimSpace(actual))
+	pinned := map[string]bool{}
+	for _, pin := range concurrencyDocAuthServicePins {
+		symbol := concurrencyDocAuthServiceSymbol(t, pin)
+		citation := "`" + pin.file + "` `" + symbol + "`"
+		pinned[citation] = true
+		assert.Contains(t, text, citation, "%s cites %s", concurrencyDocFile, citation)
 		if pin.signature == "" {
-			assert.Equal(t, 1, strings.Count(src, pin.fragment),
-				"%s: top-level fragment %q must occur exactly once in %s", where, pin.fragment, c.file)
+			assert.Equal(t, 1, strings.Count(readRepositoryFile(t, pin.file), pin.fragment),
+				"top-level fragment %q must occur exactly once in %s", pin.fragment, pin.file)
 			continue
 		}
-		idx := strings.Index(src, pin.signature)
-		if !assert.GreaterOrEqual(t, idx, 0, "%s: %s declares %q", where, c.file, pin.signature) {
-			continue
-		}
-		end := strings.Index(src[idx:], "\n}\n")
-		if !assert.GreaterOrEqual(t, end, 0, "%s: end of %q", where, pin.signature) {
-			continue
-		}
-		first := strings.Count(src[:idx], "\n") + 1
-		last := strings.Count(src[:idx+end+1], "\n") + 1
-		assert.True(t, c.line >= first && c.line <= last,
-			"%s: expected inside %q (lines %d-%d), got line %d %q",
-			where, pin.signature, first, last, c.line, strings.TrimSpace(actual))
+		assert.Contains(t, concurrencyDocFuncBody(t, pin.file, pin.signature), pin.fragment,
+			"%s, cited as %s, holds %q", pin.signature, citation, pin.fragment)
+	}
+
+	files := concurrencyDocAuthServiceFilePattern()
+	spans := regexp.MustCompile("`(?:"+files+")`").FindAllString(text, -1)
+	pairs := regexp.MustCompile("`(?:"+files+")` `[^`\n]+`").FindAllString(text, -1)
+	require.NotEmpty(t, pairs, "%s cites the auth service files", concurrencyDocFile)
+	assert.Equal(t, len(spans), len(pairs),
+		"every auth service file span of %s is directly followed by a symbol span", concurrencyDocFile)
+	for _, pair := range pairs {
+		assert.True(t, pinned[pair], "%s cites %s; pin it in concurrencyDocAuthServicePins", concurrencyDocFile, pair)
 	}
 }
 
@@ -1291,22 +1262,25 @@ func TestConcurrencyDocLeadErasureVsConversion(t *testing.T) {
 	assert.Contains(t, lead, "Neither ordering ends in error 1213")
 	assert.Contains(t, lead, "rolls back with `ErrErasureGraphChanged`, discovers again and erases the new customer too")
 
-	// The locks the Order line cites are the locking reads of lockGraph.
-	lines := strings.Split(readRepositoryFile(t, cascade), "\n")
-	cited := func(after, statement string) {
-		t.Helper()
-		at := strings.Index(order, after)
-		require.GreaterOrEqual(t, at, 0, after)
-		m := regexp.MustCompile("`(?:" + regexp.QuoteMeta(cascade) + ")?:([0-9]+)`").FindStringSubmatch(order[at:])
-		require.NotNil(t, m, "%q is cited with a line", after)
-		n, err := strconv.Atoi(m[1])
-		require.NoError(t, err)
-		require.LessOrEqual(t, n, len(lines))
-		assert.Contains(t, lines[n-1], statement, "%s:%d", cascade, n)
+	// The locks the Order line cites are the locking reads of lockGraph, cited
+	// by symbol after the lead lock (#743) and taken in that order.
+	at := strings.Index(order, "leads (locking read by id")
+	require.GreaterOrEqual(t, at, 0, "the Order line names the lead lock")
+	assert.Contains(t, order[at:], "`"+cascade+"` `erasureCascade.lockGraph`",
+		"the lead lock is cited as erasureCascade.lockGraph")
+	last := -1
+	lockGraph := concurrencyDocFuncBody(t, cascade, "func (c *erasureCascade) lockGraph(")
+	for _, statement := range []string{
+		`LockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at")`,
+		`LockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at")`,
+		`LockingRead(tx).Unscoped().Select("id", "role")`,
+	} {
+		idx := strings.Index(lockGraph, statement)
+		if assert.GreaterOrEqual(t, idx, 0, "lockGraph holds %q", statement) {
+			assert.Greater(t, idx, last, "%q comes after the read before it", statement)
+			last = idx
+		}
 	}
-	cited("leads (locking read by id", `LockingRead(tx).Unscoped().Select("id", "status", "customer_id", "deleted_at")`)
-	cited("customers (locking read by id", `LockingRead(tx).Unscoped().Select("id", "user_id", "deleted_at")`)
-	cited("users (locking read by id", `LockingRead(tx).Unscoped().Select("id", "role")`)
 
 	// Lead conversion queued behind an erasure: not found, 404.
 	conversion := concurrencyDocNormalize(bodies["Lead conversion"])
@@ -1604,6 +1578,9 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 	fields := concurrencyDocFlowFields(t)
 	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Order"]),
 		"admin set → users → roles → refresh_tokens → api_keys")
+	// The delete is its own flow (#743).
+	assert.NotContains(t, fields["SCIM user patch"]["Order"], "role_audit_log")
+	assert.NotContains(t, fields["SCIM user patch"]["Rows locked"], "scimUserService.Delete")
 
 	body := concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Patch(")
 	last := -1
@@ -1616,15 +1593,19 @@ func TestConcurrencyDocSCIMUserPatch(t *testing.T) {
 		}
 	}
 
-	// The SCIM delete (#504) is the same deactivation without a role write:
-	// admin set → users → refresh_tokens → api_keys → role_audit_log, a
-	// prefix-compatible subsequence; its user_deactivated row (#552) comes
-	// after the revocation.
-	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Rows locked"]), "scimUserService.Delete")
-	assert.Contains(t, concurrencyDocNormalize(fields["SCIM user patch"]["Order"]),
+}
+
+// TestConcurrencyDocSCIMUserDelete pins the SCIM user delete flow (#504): the
+// same deactivation as the patch without a role write, admin set → users →
+// refresh_tokens → api_keys → role_audit_log, a prefix-compatible subsequence;
+// its user_deactivated row (#552) comes after the revocation.
+func TestConcurrencyDocSCIMUserDelete(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, fields["SCIM user delete"]["Rows locked"], "scimUserService.Delete")
+	assert.Contains(t, fields["SCIM user delete"]["Order"],
 		"admin set → users → refresh_tokens → api_keys → role_audit_log")
-	body = concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Delete(")
-	last = -1
+	body := concurrencyDocFuncBody(t, "internal/service/scim_user_writes.go", "func (s *scimUserService) Delete(")
+	last := -1
 	for _, statement := range []string{"governance.run(ctx,", "lockAdminSet(tx)", "tx.lockUsers(", ".checkAfter(",
 		"tx.users.UpdateFields(", "revokeAllCredentials(", "tx.record(", "s.writes.recordSuccess("} {
 		at := strings.Index(body, statement)
@@ -1657,4 +1638,83 @@ func TestConcurrencyDocSCIMGroupPatch(t *testing.T) {
 			last = at
 		}
 	}
+}
+
+// TestConcurrencyDocHeader pins the header of the document (#743): it names
+// no fixed commit, since the documentation test keeps it current.
+func TestConcurrencyDocHeader(t *testing.T) {
+	text := concurrencyDocText(t)
+	end := strings.Index(text, "\n## Global lock order")
+	require.GreaterOrEqual(t, end, 0, "%s has ## Global lock order", concurrencyDocFile)
+	header := text[:end]
+	assert.Empty(t, regexp.MustCompile(`\b[0-9a-f]{7,40}\b`).FindAllString(header, -1), "the header names a commit")
+	assert.NotContains(t, header, "a415cf1")
+	assert.Contains(t, concurrencyDocNormalize(header), "a cited file or symbol that no longer exists")
+}
+
+// TestConcurrencyDocLockingHelpers pins the shared locking-read helpers and
+// the last-admin guard the document names (#743) to the code.
+func TestConcurrencyDocLockingHelpers(t *testing.T) {
+	text := concurrencyDocText(t)
+	for _, citation := range []string{
+		"`internal/repository/locking.go` `LockingRead`",
+		"`internal/repository/locking.go` `SharedLockingRead`",
+		"`internal/service/last_admin_guard.go` `lockAdminSet`",
+	} {
+		assert.Contains(t, text, citation)
+	}
+	fields := concurrencyDocFlowFields(t)
+	assert.Contains(t, fields["Lead update"]["Rows locked"], "SharedLockingRead")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/user_repository.go",
+		"func (r *userRepository) GetByIDWithCurrentRole("), "SharedLockingRead(")
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/locking.go", "func SharedLockingRead("),
+		"clause.LockingStrengthShare")
+
+	rbac := concurrencyDocNormalize(concurrencyDocFlowBodies(t)["RBAC user-role and role writes"])
+	assert.Contains(t, rbac, "adminSet.checkAfter")
+	assert.Contains(t, rbac, "adminSet.include")
+	const guard = "internal/service/last_admin_guard.go"
+	assert.Contains(t, concurrencyDocFuncBody(t, guard, "func lockAdminSet("), "LockActiveAdmins(")
+	concurrencyDocFuncBody(t, guard, "func (s adminSet) checkAfter(")
+	concurrencyDocFuncBody(t, guard, "func (s adminSet) include(")
+}
+
+// TestConcurrencyDocAPIKeyRevoke pins the API-key revoke flow (#525): one
+// conditional UPDATE of the key row, no transaction and no owner lock.
+func TestConcurrencyDocAPIKeyRevoke(t *testing.T) {
+	fields := concurrencyDocFlowFields(t)["API-key revoke"]
+	assert.Equal(t, "`no transaction`.", fields["Transaction"])
+	for _, want := range []string{"apiKeyRepository.Revoke", "revoked_at IS NULL", "No owner `users` lock is taken"} {
+		assert.Contains(t, fields["Rows locked"], want, "API-key revoke Rows locked")
+	}
+	assert.Contains(t, concurrencyDocFuncBody(t, "internal/repository/apikey_repository.go", "func (r *apiKeyRepository) Revoke("),
+		`"id = ? AND user_id = ? AND revoked_at IS NULL"`)
+	revoke := concurrencyDocFuncBody(t, "internal/service/apikey_service.go", "func (s *apiKeyService) Revoke(")
+	owned := strings.Index(revoke, "s.ownedKey(")
+	write := strings.Index(revoke, "s.apiKeyRepo.Revoke(")
+	assert.True(t, owned >= 0 && write > owned, "Revoke reads the owned key, then revokes it")
+	assert.NotContains(t, revoke, "WithTransaction")
+	assert.NotContains(t, revoke, "LockingRead")
+}
+
+// TestConcurrencyDocIdentityProviderSignOut pins the identity-provider
+// sign-out (#634): outside any transaction, a plain read of the owners, then
+// one logout per account, each with the Logout order users → refresh_tokens.
+func TestConcurrencyDocIdentityProviderSignOut(t *testing.T) {
+	flow := concurrencyDocNormalize(concurrencyDocFlowBodies(t)["Identity-provider sign-out"])
+	for _, want := range []string{"idkitSessionEnder.EndProviderSession", "authService.Logout", "users → refresh_tokens"} {
+		assert.Contains(t, flow, want, "Identity-provider sign-out")
+	}
+	end := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (e *idkitSessionEnder) EndProviderSession(")
+	last := -1
+	for _, statement := range []string{"utils.InTransaction(ctx)", "LiveUserIDsByProviderSession(", `e.auth.Logout(userID, "")`} {
+		at := strings.Index(end, statement)
+		if assert.GreaterOrEqual(t, at, 0, "%q is called", statement) {
+			assert.Greater(t, at, last, "%q comes after the statement before it", statement)
+			last = at
+		}
+	}
+	logout := concurrencyDocFuncBody(t, "internal/service/auth_logout.go", "func (s *authService) Logout(")
+	assert.Contains(t, logout, "s.txManager.WithTransaction(")
+	assert.Contains(t, logout, "repository.LockingRead(tx)")
 }

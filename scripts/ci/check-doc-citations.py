@@ -6,8 +6,8 @@ the docs cite code by file plus symbol or anchor, and this check resolves
 those citations against the tracked tree. Without FILE arguments it checks
 every tracked docs/**/*.md and README.md (from `git ls-files`, never a
 directory walk), plus the files in EXTRA_DEFAULT_FILES, except the files in
-EXEMPT_FILES; a file passed explicitly is checked in full, exempt or not. Spans are backtick spans outside fenced code
-blocks. Every checked file goes through all three rules.
+EXEMPT_FILES (none at present); a file passed explicitly is checked in full,
+exempt or not. Spans are backtick spans outside fenced code blocks. Every checked file goes through all three rules.
 
 a. Paths. A span, without a leading ./ and a trailing :N, :N-M or :N,M, is a
    path when it has no whitespace, contains /, does not start with /, and its
@@ -47,16 +47,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Docs that are not checked by default, each with the test that pins it.
-# internal/config/concurrency_doc_test.go pins every citation of the auth
-# service files (internal/service/auth_service.go and the per-flow files split
-# from it) in docs/CONCURRENCY.md to its file, its enclosing function and a
-# text fragment of the cited line; citations of other files
-# are only checked to lie inside their file. This is the only full
-# exemption. An exemption applies to discovered files only.
-EXEMPT_FILES = {
-    'docs/CONCURRENCY.md': 'internal/config/concurrency_doc_test.go',
-}
+# Docs that are not checked by default, each with the test that pins it. No
+# doc is exempt: docs/CONCURRENCY.md, the last one, was converted to symbol
+# citations (#743). An exemption would apply to discovered files only.
+EXEMPT_FILES = {}
 
 # Tracked docs outside docs/ that are checked by default as well. Discovery
 # does not widen to every README.md: only the files listed here are added,
@@ -70,7 +64,7 @@ EXTRA_DEFAULT_FILES = (
 
 # The guides whose line-number citations were converted to symbol citations:
 # the fork and extension guides (#487), then the use-case, provisioning and
-# smaller guides and the README (#488). Each must keep at least one checked
+# smaller guides and the README (#488), then docs/CONCURRENCY.md (#743). Each must keep at least one checked
 # path and one symbol pair, so a broken extractor cannot pass them empty.
 # docs/DOCKER.md keeps its Compose line citations (docker-compose*.yml:N),
 # which a Go test recomputes; they are not .go/.ts/.tsx/.py/.sh/.sql
@@ -85,6 +79,7 @@ CONVERTED_FILES = (
     'docs/DOCKER.md',
     'docs/datamodel.md',
     'docs/SETUP.md',
+    'docs/CONCURRENCY.md',
 )
 
 # Gitignored build outputs and local configuration the guides legitimately
@@ -318,8 +313,8 @@ def main(argv=None):
     parser.add_argument('--repo-root', default=None, help='default: the repository holding this script')
     parser.add_argument('files', nargs='*',
                         help='repo-relative doc files, checked in full; default: every tracked docs/**/*.md, '
-                             'README.md and %s except %s' % (', '.join(EXTRA_DEFAULT_FILES),
-                                                            ', '.join(sorted(EXEMPT_FILES))))
+                             'README.md and %s%s' % (', '.join(EXTRA_DEFAULT_FILES),
+                                                     ''.join(' except ' + name for name in sorted(EXEMPT_FILES))))
     args = parser.parse_args(argv)
     repo_root = Path(args.repo_root) if args.repo_root else default_repo_root()
     files = args.files

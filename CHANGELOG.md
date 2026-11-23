@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/CONCURRENCY.md` cites code by path and symbol instead of line numbers (#743), and
+  `scripts/ci/check-doc-citations.py` checks it like every other guide: its exemption is gone and
+  it is listed in `CONVERTED_FILES`. The header names no fixed commit. The doc names the shared
+  locking-read helpers (`LockingRead`, `SharedLockingRead`) and the last-admin guard
+  (`lockAdminSet`, `adminSet.checkAfter`), and has new flows for API-key revoke (#525),
+  identity-provider sign-out (#634) and the SCIM user delete (#504), split out of the SCIM user
+  patch. `internal/config/concurrency_doc_test.go` pins the doc by symbol: each cited auth-service
+  function is still checked for the statement the doc relies on.
 - Test catalog (#758): TC-LEAD-048 expects the 409 "customer with this email already exists" of a
   duplicate-email conversion; TC-AUTH-034/035 describe the Forgot Password and Reset Password
   pages, and the TC-AUTH-037 blocker no longer names a missing reset route; stale `docs/ROADMAP.md`
