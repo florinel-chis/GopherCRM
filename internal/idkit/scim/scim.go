@@ -1,12 +1,11 @@
-// Package scim holds the wire shapes of the SCIM 2.0 provider (#468): the
+// Package scim holds the wire shapes of the SCIM 2.0 provider: the
 // application/scim+json content type, the RFC 7644 §3.12 error body and the
 // three discovery documents of RFC 7643 (ServiceProviderConfig, Schemas and
-// ResourceTypes), and, for the Users read of #469, the User resource, the
-// userName filter grammar, the ASCII-only userName judge and the paging
-// rules, and, for the Users patch of #471, the PatchOp parser, and, for the
-// Groups of #506, the Group resource and schema, its id encoding, the
+// ResourceTypes); for Users, the User resource, the userName filter grammar,
+// the ASCII-only userName judge, the paging rules and the PatchOp parser;
+// for Groups, the Group resource and schema, its id encoding, the
 // displayName filter and the Group PatchOp parser. It has no state and no
-// database access, and depends on neither gin nor the CRM models: the error
+// database access, and depends on neither gin nor the host's models: the error
 // writers take an http.ResponseWriter and the User resource is built from
 // UserData.
 package scim
@@ -63,15 +62,14 @@ const (
 	ScimTypeInvalidFilter = "invalidFilter"
 	ScimTypeInvalidValue  = "invalidValue"
 	// ScimTypeUniqueness and ScimTypeInvalidSyntax answer the Users create
-	// and replace (#470).
+	// and replace.
 	ScimTypeUniqueness    = "uniqueness"
 	ScimTypeInvalidSyntax = "invalidSyntax"
-	// ScimTypeInvalidPath and ScimTypeNoTarget answer the Users patch
-	// (#471).
+	// ScimTypeInvalidPath and ScimTypeNoTarget answer the Users patch.
 	ScimTypeInvalidPath = "invalidPath"
 	ScimTypeNoTarget    = "noTarget"
 	// ScimTypeMutability answers the Groups patch whose result would leave
-	// no active admin (#506).
+	// no active admin.
 	ScimTypeMutability = "mutability"
 )
 
@@ -271,8 +269,8 @@ func userAttributes() []Attribute {
 	}
 }
 
-// groupAttributes are the core Group attributes this provider understands
-// (#506). displayName is the groups-claim value of the role mapping and
+// groupAttributes are the core Group attributes this provider understands.
+// displayName is the groups-claim value of the role mapping and
 // cannot be written; members holds the members' User ids.
 func groupAttributes() []Attribute {
 	return []Attribute{
@@ -294,7 +292,7 @@ func groupAttributes() []Attribute {
 }
 
 // NewSchemas is the /Schemas list: the core User schema, then the core Group
-// schema (#506).
+// schema.
 func NewSchemas(baseURL string) ListResponse[Schema] {
 	return newListResponse(
 		Schema{
@@ -317,7 +315,7 @@ func NewSchemas(baseURL string) ListResponse[Schema] {
 }
 
 // NewResourceTypes is the /ResourceTypes list: the User resource type, then
-// the Group resource type (#506). The ServiceProviderConfig is unchanged by
+// the Group resource type. The ServiceProviderConfig is unchanged by
 // Groups: RFC 7643 §5 lists no resources, and its patch and filter features
 // already cover them.
 func NewResourceTypes(baseURL string) ListResponse[ResourceType] {

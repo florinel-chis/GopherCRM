@@ -27,8 +27,8 @@ type GroupMeta struct {
 	Location     string `json:"location"`
 }
 
-// Group is the core Group resource (RFC 7643 §4.2) as this provider serves it
-// (#506): the id, the groups-claim value as displayName, and the members.
+// Group is the core Group resource (RFC 7643 §4.2) as this provider serves
+// it: the id, the groups-claim value as displayName, and the members.
 // members is never null; WithoutMembers omits the attribute.
 type Group struct {
 	Schemas     []string       `json:"schemas"`
@@ -97,8 +97,7 @@ func NewGroupList(total, startIndex int, groups []Group) ListResponse[Group] {
 	}
 }
 
-// ParseGroupFilter parses the only Group filter this provider supports
-// (#506):
+// ParseGroupFilter parses the only Group filter this provider supports:
 //
 //	displayName eq "<value>"
 //
@@ -157,7 +156,7 @@ func ExcludesMembers(raw string) bool {
 	return false
 }
 
-// GroupCreate is the outcome of a Group create body (#630): the externalId
+// GroupCreate is the outcome of a Group create body: the externalId
 // and displayName it carries, nil when absent or null. At least one is set.
 type GroupCreate struct {
 	ExternalID  *string

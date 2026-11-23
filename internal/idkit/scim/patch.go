@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-// UserPatch is the outcome of a SCIM PatchOp request on a User (#471): the
+// UserPatch is the outcome of a SCIM PatchOp request on a User: the
 // attributes the operations set, in their final state. nil means untouched.
 // UserName and Email both name the account's email; Email (from emails) is
 // nil whenever an operation set UserName, because userName is the email.
@@ -67,7 +67,7 @@ var patchPaths = []struct {
 	{"roles", targetRoles},
 }
 
-// ignoredPatchNames are User attributes the CRM does not store. An add or
+// ignoredPatchNames are User attributes the host does not store. An add or
 // replace on one of them, or on a path that starts with one of
 // ignoredPatchMultiValued followed by "[" or ".", or on the enterprise
 // extension, is accepted and changes nothing; so is a remove. Names match
@@ -86,7 +86,7 @@ var ignoredPatchMultiValued = []string{
 // every path below it ("<URN>:department") are ignored.
 const enterpriseUserURN = "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"
 
-// isIgnoredPatchPath reports whether path names an attribute the CRM does not
+// isIgnoredPatchPath reports whether path names an attribute the host does not
 // store, so that an operation on it is accepted and skipped.
 func isIgnoredPatchPath(path string) bool {
 	for _, name := range ignoredPatchNames {
@@ -210,7 +210,7 @@ type patchState struct {
 // on the paths active, userName, name, name.givenName, name.familyName,
 // emails, emails[type eq "work"].value and roles, both with a path and in the
 // path-less form whose value is an object of such paths (Okta, and Entra ID's
-// value-object form). Operations on attributes the CRM does not store
+// value-object form). Operations on attributes the host does not store
 // (isIgnoredPatchPath: externalId, displayName, title, phone numbers,
 // addresses, the enterprise extension and the like) are accepted and change
 // nothing, with a path or as a path-less key; with a path, add and replace

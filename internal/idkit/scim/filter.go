@@ -17,7 +17,7 @@ var ErrInvalidPaging = errors.New("startIndex and count must be integers")
 // userAttributePrefix is the schema URN an attribute path may carry.
 const userAttributePrefix = UserSchema + ":"
 
-// ParseUserFilter parses the only filter this provider supports (#469):
+// ParseUserFilter parses the only filter this provider supports:
 //
 //	<attr> <op> <value>
 //
@@ -60,7 +60,7 @@ func stringLiteralEnd(s string) int {
 	return -1
 }
 
-// UserNameMatches is the userName judge of #469: requested equals stored
+// UserNameMatches is the userName judge: requested equals stored
 // under ASCII-only case folding. Both must have the same byte length, and
 // every byte must be equal after mapping only 'A'-'Z' to 'a'-'z'; every other
 // byte, each byte of a multi-byte UTF-8 sequence included, must be identical.

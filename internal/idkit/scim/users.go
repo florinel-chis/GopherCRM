@@ -26,8 +26,8 @@ type UserMeta struct {
 	Location     string `json:"location"`
 }
 
-// User is the core User resource (RFC 7643 §4.1) as this provider serves it
-// (#469): the account's id, email as userName and as the one work address,
+// User is the core User resource (RFC 7643 §4.1) as this provider serves
+// it: the account's id, email as userName and as the one work address,
 // its names and whether it is active. externalId is omitted when empty. No
 // role, password or other attribute is served.
 type User struct {
@@ -41,7 +41,7 @@ type User struct {
 	Meta       UserMeta          `json:"meta"`
 }
 
-// UserData is what the User resource is built from, free of the CRM's own
+// UserData is what the User resource is built from, free of the host's own
 // account type.
 type UserData struct {
 	// ID is the resource id, served as given.
