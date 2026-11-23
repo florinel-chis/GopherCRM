@@ -19,9 +19,13 @@ moves faster than this page.
 
 ### 1.1 Modules
 
-Roles are `admin`, `sales`, `support` and `customer` (`UserRole` (`internal/models/user.go`)). Routing lives in
-`internal/handler/routes.go`, `aeo_routes.go`, `form_routes.go` and `form_public_routes.go`; the
-wiring is in `setupDependencies` (`cmd/main.go`).
+Roles are the four system roles `admin`, `sales`, `support` and `customer` (`UserRole` (`internal/models/user.go`)),
+plus custom roles an admin builds from the permission catalogue (`internal/permissions/catalogue.go`,
+`SetupRoleRoutes` (`internal/handler/routes.go`)). Routing lives in `internal/handler/routes.go`,
+`protected_routes.go`, `aeo_routes.go`, `form_routes.go`, `form_public_routes.go`,
+`quote_public_routes.go` and `scim_routes.go`; the wiring is in `setupDependencies` (`cmd/main.go`).
+SCIM is mounted under `/scim/v2`, outside the API prefix (`SetupSCIMRoutes` (`internal/handler/scim_routes.go`),
+`router.Group("/scim/v2")` in `cmd/main.go`).
 
 | Module | Who may use it | What is guaranteed | Test evidence |
 |---|---|---|---|
@@ -39,6 +43,11 @@ wiring is in `setupDependencies` (`cmd/main.go`).
 | Follow-up automation | rules admin; runs admin+sales (sales never sees ticket runs) | outbox event per lead/deal/ticket write (#242); conditional run advance after a locking read of the record; ticket delete cancels the ticket's open runs; lease-based claims with a stale sweep at boot and every tick (#237) | `internal/service/automation_runtime_test.go`, `internal/service/automation_run_lease*_test.go`, `cmd/automation_runtime_test.go`, `internal/service/ticket_automation_*_test.go` |
 | AEO (answer-engine tracking) | admin+sales+support; run and generate admin+sales | keys encrypted at rest; environment-only egress allowlist | `internal/service/aeo_service_test.go`, `aeo_egress_boundary_test.go`, `docs/AEO_SECURITY.md` |
 | GDPR erasure | deleting a user, customer or lead: admin, plus the owning sales user for an unconverted lead (`LeadHandler.Delete` (`internal/handler/lead_handler.go`)) | personal fields of that identity overwritten, then soft-deleted, in one transaction, together with the unlinked form submissions whose email matches it and their tokens and delivery rows (#214), and the staff-typed text of the deals and quotes linked to the erased customers and leads (title `[redacted]`, notes, lost reason and line descriptions reset) with the notifications about those deals (#245), and the unused response-link tokens of the quotes addressed to the erased customers are invalidated (#395). Ticket and task deletes are soft deletes that scrub no text (`ticketRepository.Delete` (`internal/repository/ticket_repository.go`), `taskRepository.Delete` (`internal/repository/task_repository.go`); a ticket delete also purges its mail deliveries and notifications and cancels its automation runs, #219/#242), so text that names a person stays; for tickets, DEVELOPMENT.md documents an operator redaction procedure to run before the erasure | `internal/repository/identity_erasure_test.go`, `unlinked_submission_erasure_test.go`, `automation_erasure_test.go`, `business_text_erasure_test.go`, `erasure_quote_tokens_test.go`, `tests/ticket_redaction_procedure_test.go`, `tests/business_text_erasure_test.go` |
+| Roles and permissions | catalogue and roles `roles.view` (or `users.assign_role` for reading); writes `roles.manage`; role audit log `roles.audit_view`; keys in `internal/permissions/catalogue.go`, routes in `SetupRoleRoutes` (`internal/handler/routes.go`) | custom roles built from the permission catalogue; the escalation rule, the system-role rule and the in-use rule are checked in the role service's transaction, and no role change, deactivation or erasure leaves zero active admins (the last-admin rule) ([AUTHORIZATION.md](AUTHORIZATION.md), [roles and permissions](user-guide/permissions-access/roles-and-permissions.md)) | `internal/integration/role_api_integration_test.go`, `role_escalation_integration_test.go`, `role_last_admin_integration_test.go` |
+| Single sign-on | settings admin only, behind `settings.sso_manage` (`SetupSSOSettingsRoutes` (`internal/handler/routes.go`)); sign-in public under `/auth/oidc` | OpenID Connect with one identity provider at a time, no SAML; the role comes from the role mapping at each sign-in; local password accounts keep signing in as the break-glass path ([single sign-on](user-guide/permissions-access/single-sign-on.md)) | `internal/idkit/sso/sso_test.go`, `internal/idkit/sso/logout_test.go`, `internal/handler/auth_oidc_handler_test.go` |
+| SCIM provisioning | the identity provider with a SCIM provider token on `/scim/v2`; tokens managed admin only, behind `settings.scim_manage` (`SetupSCIMTokenRoutes` (`internal/handler/scim_routes.go`)) | Users and Groups resources; groups are the role mapping's values; a provider DELETE deactivates ([SCIM provisioning](user-guide/permissions-access/scim-provisioning.md)) | `internal/handler/scim_user_handler_test.go`, `scim_group_handler_test.go`, `internal/idkit/scim/scim_test.go`, `cmd/scim_wiring_test.go` |
+| Webhooks | `webhooks.manage`, admin only (`SetupWebhookRoutes` (`internal/handler/routes.go`)) | created, updated and deleted events of the seven entities in `internal/webhook/catalog.go` (users emit none); signed deliveries and a delivery log, with a screen in Settings > Webhooks ([webhooks](user-guide/permissions-access/webhooks.md)) | `internal/handler/webhook_handler_test.go`, `internal/webhook/emitter_test.go`, `cmd/webhook_runtime_test.go` |
+| Sign-in and role audit | sign-in audit `audit.sign_ins_view` (`SetupAuthAuditRoutes` (`internal/handler/routes.go`)); role audit `roles.audit_view` | a sign-in audit log of how people and integrations sign in and why a sign-in was refused, plus password changes and resets, logouts and API key creation and revocation; an audit log of role changes ([sign-in audit](user-guide/permissions-access/sign-in-audit.md)) | `internal/handler/auth_audit_log_handler_test.go`, `internal/integration/role_audit_integration_test.go` |
 | Dashboard | admin+sales+support | activity lists scoped inside the query | `internal/repository/dashboard_queries_test.go` |
 | Configuration | `/configurations/ui` any user; the rest admin | seeding never overwrites a stored value; sensitive values encrypted and masked | `internal/repository/configuration_repository_test.go`, `internal/service/configuration_service_test.go` |
 
@@ -46,7 +55,7 @@ wiring is in `setupDependencies` (`cmd/main.go`).
 
 ### 1.2 Not present
 
-Checked by searching the tracked tree on `4dfe404`:
+Checked against the code on `98dabb04` (#733):
 
 - Outbound webhooks cover the created, updated and deleted events of leads, customers, tickets,
   deals, tasks, companies and quotes (`lead.created`, `lead.updated`, `lead.deleted`, `customer.created`,
@@ -58,7 +67,7 @@ Checked by searching the tracked tree on `4dfe404`:
   Settings > Webhooks (#409).
 - No MCP server.
 - API keys have no scopes of their own (`internal/models/apikey.go` holds only name, hash,
-  prefix, owner, expiry and an active flag): a key acts with its owner's current permissions. A
+  prefix, owner, last use, expiry, an active flag and a revocation time): a key acts with its owner's current permissions. A
   least-privilege credential is a dedicated user on a custom role, see
   [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user).
 - No ticket channel and no inbound mail (`internal/models/ticket.go`). Every ticket is created
@@ -71,16 +80,22 @@ Checked by searching the tracked tree on `4dfe404`:
   Chrome or Chromium (`QUOTE_PDF_CHROME_PATH`,
   off by default outside the Docker image; `docs/FEATURES.md` row 4d.14, #384), and tax is one
   rate per quote line only: no tax categories, reverse charge or
-  per-country rules, and the web UI does not show tax yet (`docs/FEATURES.md`, rows 4d.3 and 4d.7;
-  #324, #233).
+  per-country rules (`docs/FEATURES.md`, rows 4d.3 and 4d.7; #324, #233). The web UI shows and
+  edits the per-line rate and shows the line tax and the quote's tax totals since #325 (as recipe 5
+  of [USE_CASES.md](USE_CASES.md) says).
 - CSV export covers customers and leads only (`CustomerHandler.Export` (`internal/handler/customer_handler.go`),
-  `LeadHandler.Export` (`internal/handler/lead_handler.go`), #234); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
+  `LeadHandler.Export` (`internal/handler/lead_handler.go`), #234), besides the AEO results export
+  (`AEOHandler.Export` (`internal/handler/aeo_export.go`), #244); other list views, and PDF export of lists, are `docs/ROADMAP.md` "Data export" (the PDF of a
   single quote is delivered, #384).
 - Authentication is header-only (Bearer or ApiKey); no cookie credential is accepted, so CSRF does
   not apply and the server ships no CSRF protection (README "Known Limitations"). A cookie session
   added in a fork must ship with session-bound CSRF protection (#261).
-- An issued JWT ends early only through logout, a password change or a password reset, which
-  increment `users.token_version` (#236). A role change does not end it, and the token a refresh
+- An issued JWT ends early only through the events that increment `users.token_version` (#236):
+  logout (including the single sign-on front-channel logout, `GET /auth/oidc/frontchannel-logout`,
+  which logs the account out the same way), a password change, a password reset, deactivation (by
+  an administrator or through SCIM, where a provider DELETE deactivates too), a SCIM group change
+  that leaves the account in no mapped group, and a SCIM group change that gives it a role lacking
+  a permission the old one had; an erased account's tokens are refused as well. A role change made any other way does not end it, and the token a refresh
   rotation replaces stays valid until it expires (README "Known Limitations").
 - The automation worker (#237) and AEO runs with the daily schedule (#229) are coordinated across
   replicas on MySQL/MariaDB (README "Known Limitations"; section 5.4). Several processes on one
@@ -88,21 +103,11 @@ Checked by searching the tracked tree on `4dfe404`:
 
 ### 1.3 Open issues you inherit
 
-Open on 2026-10-31, 56 issues
-(`gh issue list --repo florinel-chis/GopherCRM --state open --limit 200 --json number --jq length`;
-without `--limit`, `gh` lists at most 30):
-
-- #94, the tracker of the architecture audit, was closed on 2026-10-31; all 27 audit tickets
-  (#95–#121) are closed too.
-- #181–#187 — review follow-ups, among them #183 (a shared concurrency protocol for erasure,
-  conversion and authentication), #184 (cross-tab token refresh) and #185
-  (`POST /leads/:id/assign`, routed now; no screen offers it yet).
-- #196 — bulk status operations whose outcome write failed stay stuck.
-- #197–#209 — improvements to the remediation runner (development tooling in
-  `automation/langflow/`). They do not affect the application.
-- #210–#224 and #226–#245 — gaps found while preparing this guide, cited where they apply below.
-
-Run `gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` for the current list.
+The fork inherits the open issues of the upstream repository. List them with
+`gh issue list --repo florinel-chis/GopherCRM --state open --limit 200` (add
+`--json number --jq length` for the count; without `--limit`, `gh` lists at most 30). The gaps
+this guide and [USE_CASES.md](USE_CASES.md) cite by issue number may have closed since; check
+each one there before planning around it.
 
 ### 1.4 Released and unreleased code
 
@@ -679,8 +684,7 @@ halves, as [EXTENDING.md](EXTENDING.md) explains.
 ### 7.5 Security fixes
 
 Watch the `### Security` headings in `CHANGELOG.md` and issues with the `security` label
-(`gh issue list --repo florinel-chis/GopherCRM --label security --limit 200`). On 2026-10-31 the
-open ones are #183, #210 and #211, plus #206 for the remediation runner.
+(`gh issue list --repo florinel-chis/GopherCRM --label security --limit 200`).
 
 ## 8. Fresh-fork acceptance walkthrough
 
@@ -706,31 +710,39 @@ Each step has an observable result. Do them in order on a new fork before you ta
 
 ## 9. Why fork instead of rebuild
 
-Measured on `4dfe404`. Commands:
-`git ls-files '*.go' | grep -v _test.go | xargs cat | wc -l`;
+Measured on `98dabb04`. Commands:
+`git ls-files '*.go' | grep -v _test.go | xargs cat | wc -l` (and `| wc -l` on the list for the files);
+`git ls-files 'gocrm-ui/src/*.ts' 'gocrm-ui/src/*.tsx' | grep -vE '\.test\.' | xargs cat | wc -l`;
+`git ls-files '*_test.go' | xargs cat | wc -l`;
 `git ls-files '*_test.go' | xargs grep -hE '^func Test[A-Za-z0-9_]*\(' | wc -l`;
-`git ls-files 'gocrm-ui/src/*.ts' 'gocrm-ui/src/*.tsx' | grep -vE '\.test\.'`;
-`git ls-files 'gocrm-ui/e2e/tests/*.spec.ts' | xargs grep -hE '^\s*test(\.(only|skip|fixme))?\('`;
-the `paths` object of `api/swagger.json`;
-`gh pr list --state merged --limit 500` and `gh issue list --state closed --limit 500`.
+`git ls-files 'gocrm-ui/src/*.test.ts' 'gocrm-ui/src/*.test.tsx' | wc -l`;
+`git ls-files 'gocrm-ui/e2e/tests/*.spec.ts' | xargs grep -hE '^\s*test(\.(only|skip|fixme))?\(' | wc -l`;
+the `paths` object of `api/swagger.json` (paths, and their `get`/`post`/`put`/`patch`/`delete` operations);
+the Total row of `docs/testing/README.md`;
+`ls migrations/*.up.sql | wc -l`;
+`ls .github/workflows/*.yml | wc -l` and, per workflow, `sed -n '/^jobs:/,$p' <workflow> | grep -cE '^  [A-Za-z0-9_-]+:$'`;
+the profiles `plan` (`automation/langflow/gophercrm_runner/validation.py`) can return;
+`gh pr list --state merged --limit 500` and `gh issue list --state closed --limit 500` for the history.
 
-- **Application code:** 48,263 lines of Go in 192 files and 30,259 lines of TypeScript/TSX in 160
-  files, covering 103 API paths and 149 operations (`api/swagger.json`), four roles, and leads,
-  customers, companies, deals, products and quotes, tickets, tasks, forms, follow-up automation,
-  AEO tracking and GDPR erasure.
-- **Tests:** 75,472 lines of Go tests in 217 files, more test code than application code. They
-  include 990 top-level `Test` functions, 107 Vitest files and 22 Playwright specs with 161 browser
-  tests, run against MySQL 8, MariaDB 10.11 and SQLite (`.github/workflows/ci.yml`). The manual
-  catalog in `docs/testing/` documents over 600 cases.
-- **Schema:** 12 SQL migration pairs, kept in parity with GORM AutoMigrate and checked by a
+- **Application code:** 93,660 lines of Go in 393 files and 37,652 lines of TypeScript/TSX in 205
+  files, covering 137 API paths and 193 operations (`api/swagger.json`), four system roles plus
+  custom roles, and leads, customers, companies, deals, products and quotes, tickets, tasks, forms,
+  follow-up automation, AEO tracking, GDPR erasure, single sign-on, SCIM provisioning, outbound
+  webhooks, roles and permissions, and the sign-in and role audit.
+- **Tests:** 203,292 lines of Go tests in 617 files, more test code than application code. They
+  include 2,160 top-level `Test` functions, 176 Vitest files and 35 Playwright specs with 208
+  browser tests, run against MySQL 8, MariaDB 10.11 and SQLite (`.github/workflows/ci.yml`). The
+  manual catalog in `docs/testing/` documents 799 cases.
+- **Schema:** 46 SQL migration pairs, kept in parity with GORM AutoMigrate and checked by a
   migrations workflow for fresh install, populated upgrade, rollback and reapply.
-- **Delivery machinery:** 5 GitHub workflows with 15 jobs; 9 validation profiles that pick the
+- **Delivery machinery:** 6 GitHub workflows with 17 jobs; 9 validation profiles that pick the
   checks from the diff; a no-skip SQL coverage gate; one e2e driver used identically locally and
   in CI; a release pipeline that rehearses before it publishes.
-- **History:** 129 merged pull requests between 2025-11-15 and 2026-10-31, and 58 closed issues.
-  They include all 27 tickets of an architecture audit (tracking issue #94), each recording its
-  delivering pull request and validation evidence. For example, #102 (single-use password-reset
-  claims, PR #145) records six SQLite/MySQL regression roots and 36 subtests passing without skips.
+- **History (as of 2026-10-31, not re-counted on the measured commit):** 129 merged pull requests
+  between 2025-11-15 and 2026-10-31, and 58 closed issues. They include all 27 tickets of an
+  architecture audit (tracking issue #94), each recording its delivering pull request and
+  validation evidence. For example, #102 (single-use password-reset claims, PR #145) records six
+  SQLite/MySQL regression roots and 36 subtests passing without skips.
 
 What this buys you is mostly not lines of code. Many of those pull requests fixed defects a
 rebuild would probably repeat, and each fix has a regression test that fails without it:

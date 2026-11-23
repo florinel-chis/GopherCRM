@@ -461,8 +461,10 @@ The bounded `aeo` profile excludes schema, shared configuration, frontend and de
   both; the setup, the keys per case, rotation and revocation are in
   [Least-privilege integration user](AUTHORIZATION.md#least-privilege-integration-user). A key of a
   system-role user is bound by that role: a support identity sees only tickets assigned to it,
-  and a sales identity gets 403 on ticket create (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)). The
-  lead external-id lookup is not routed (#215).
+  and a sales identity gets 403 on ticket create (`TicketHandler.Create` (`internal/handler/ticket_handler.go`)). An
+  integration finds a lead by its external id through `GET /leads?external_id=`
+  (`LeadHandler.List` (`internal/handler/lead_handler.go`); admin any lead, sales its own, exact
+  match, not unique).
 - **Export.** Copy `ListAllForExport`: one ordered statement with a total order, filtered and
   sorted through the allowlist; never `FindInBatches` with a non-id order.
 
