@@ -520,8 +520,9 @@ runs on SQLite, MySQL and MariaDB like the other admin suites.
   sales users and redirect sales away from /products/new and /products/1/edit";
   `gocrm-ui/src/layouts/MainLayout.test.tsx`: "MainLayout shows the Products and Quotes
   navigation entries for admin and sales and hides them for support and customer". The
-  support/customer and sales cases are Vitest-only until a role-login e2e helper exists
-  (lesson 8).
+  support/customer and sales cases are pinned in Vitest; their browser half is planned against
+  `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (extended), with the accounts from
+  `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` (lesson 8).
 
 ## 15.9 Product external-id mappings (#239)
 

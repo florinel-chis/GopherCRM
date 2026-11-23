@@ -16,7 +16,8 @@ and by the Playwright specs
 `gocrm-ui/e2e/tests/automation-rules.spec.ts` and `gocrm-ui/e2e/tests/automation-ticket-rules.spec.ts`,
 which cover the admin flow only (as in
 [15-products-quotes.md](15-products-quotes.md), the sales and support behaviour is pinned in
-Vitest because no role-login e2e helper exists).
+Vitest; no browser spec signs in as those roles yet, although `APIClient.createUser` in
+`gocrm-ui/e2e/helpers/sso.ts` can provide the accounts).
 
 41 cases: 41 automated (29 Go, 12 Vitest/Playwright), 0 planned, 0 blocked.
 Priorities: 22 P0, 17 P1, 2 P2.

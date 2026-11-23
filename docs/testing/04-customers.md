@@ -34,10 +34,11 @@ depend on that are flagged.
   `[redacted]`, notes and lost reasons empty, quote line descriptions reset to the product names)
   and deletes the notifications about those deals, keeping the rows, links, stages, statuses and
   totals (#245; `TestBusinessTextErasureAPISQLite` in `tests/business_text_erasure_test.go`).
-- Only `AdminAuthHelper` exists in `gocrm-ui/e2e/helpers/`. Sales and support sessions require a user
-  created through the admin Users page (`POST /users`) plus a new role-login helper; those cases are
-  marked accordingly. A customer-role session can be obtained from the public `/auth/register` flow,
-  which always mints a `customer`.
+- Sales and support sessions require a user created by an admin (`POST /users`):
+  `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` creates one and returns the row with its
+  id, `APIClient.login` signs it in and `APIClient.setActive` activates or deactivates it; those
+  cases are planned against `admin-customers.spec.ts`. A customer-role session can be obtained from
+  the public `/auth/register` flow, which always mints a `customer`.
 - `/customers/export` and `/customers/{id}/assign` have no UI control anywhere in the frontend, so
   the cases for them are API-level and need a request-context (`request.newContext()`) helper rather
   than page interaction.
@@ -85,7 +86,9 @@ depend on that are flagged.
 - **Expected:** The nav item is present (`MainLayout.tsx` shows it with `permission: 'customers.view'`, which sales holds),
   the request returns 200 and the same unfiltered set an admin sees — `CustomerHandler.List` applies
   no ownership filter for sales.
-- **Automation:** blocked — needs a role-login helper; only `AdminAuthHelper` exists
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-CUST-004 — Support user reads the list but its Edit and Delete icons fail
 - **Priority:** P0
@@ -107,7 +110,9 @@ depend on that are flagged.
 - **Known issue:** Frontend gating and backend gating disagree. The backend is correct; the UI offers
   three actions a support user cannot perform and reports the refusal with a generic message that does
   not mention permissions.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-CUST-005 — Customer-role user is redirected from /customers
 - **Priority:** P0
@@ -281,7 +286,8 @@ depend on that are flagged.
   route-level `middleware.RequireRole(admin, sales)` answers **403**.
 - **Automation:** automated (Vitest) — `src/routes/index.test.tsx` "lead and customer creation
   routes" and `CustomerList.rowActions.test.tsx` "shows Add Customer to …"; the browser case is
-  blocked on a role-login helper
+  planned against `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended), with a sales or support
+  account from `APIClient.createUser` (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-CUST-014 — Sales user can create a customer
 - **Priority:** P1
@@ -291,7 +297,9 @@ depend on that are flagged.
   1. `/customers` → "Add Customer", fill valid data, submit.
 - **Expected:** 201; navigation to `/customers`; the new record appears in the list. Sales is on the
   allowlist in both `routes.go` and the handler's own check.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-CUST-015 — Cancelling the create form discards input
 - **Priority:** P2
@@ -370,7 +378,9 @@ depend on that are flagged.
 - **Expected:** The edit form loads (the `GET /customers/{id}` read is permitted for support), but
   `PUT /api/v1/customers/{id}` returns **403** "Insufficient permissions to update customers". The
   route itself carries no `RequireRole`; the guard is inside `CustomerHandler.Update`.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-CUST-044 — A write that loses to an erasure restores nothing
 - **Priority:** P0
@@ -531,7 +541,9 @@ depend on that are flagged.
   the row remains in the list.
 - **Known issue:** The delete control is offered to a role that cannot use it, and the failed dialog
   is not dismissed.
-- **Automation:** blocked — needs a role-login helper
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended); the sales or
+  support account comes from `APIClient.createUser` and signs in through `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 
@@ -696,9 +708,11 @@ depend on that are flagged.
   once. Step 3 returns 200 and **every** non-erased customer, not one — the export path reads no
   pagination parameters, only `search`, `sort_by` and `sort_order`. Soft-deleted (erased) customers
   are absent.
-- **Automation:** blocked in Playwright — needs sales/support tokens, i.e. a role-login helper; the
-  customer-role and admin halves can be automated today. The 403/401 contract for every non-admin
-  role is asserted against the real routes by `tests/customer_export_csv_test.go`
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended), API-level:
+  sales and support tokens come from `APIClient.createUser` and `APIClient.login`
+  (`gocrm-ui/e2e/helpers/sso.ts`), the customer-role token from `/auth/register`. The 403/401
+  contract for every non-admin role is asserted against the real routes by
+  `tests/customer_export_csv_test.go`
 
 ### TC-CUST-036a — A sorted export of a large book is complete and deterministic
 - **Priority:** P0
@@ -760,7 +774,9 @@ depend on that are flagged.
   `assigned_to_id: <sales user id>`. Step 3 shows that id in the `assigned_to_id` CSV column.
   `AssignedToID` is a foreign key to a staff account, not personal data, so it deliberately survives
   erasure of the customer.
-- **Automation:** blocked — needs a helper that creates a sales user and reads back its id
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended), API-level; the
+  sales user comes from `APIClient.createUser` (`gocrm-ui/e2e/helpers/sso.ts`), which returns the
+  row with its id
 
 ### TC-CUST-039 — Assignment rejects support, customer, inactive and unknown assignees
 - **Priority:** P1
@@ -778,7 +794,9 @@ depend on that are flagged.
   (the `ErrAssigneeNotFound` sentinel is matched before the customer's). 5 → **404** "Customer not
   found". The distinction is deliberate: 404 means the account was not found at all, 400 means a real
   account was refused on its merits.
-- **Automation:** blocked — needs role/user-provisioning helpers
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-customers.spec.ts` (extended), API-level; the
+  users come from `APIClient.createUser` and are deactivated with `APIClient.setActive`
+  (`gocrm-ui/e2e/helpers/sso.ts`)
 
 ---
 

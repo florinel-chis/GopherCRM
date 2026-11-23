@@ -42,10 +42,11 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
   `ProtectedRoute requiredPermission="aeo.view"` wraps all four routes and the sidebar
   entry asks for the same key (admin, sales and support hold it); the manage and delete controls
   follow `aeo.manage` and `aeo.delete_prompts`.
-- **Only the admin account is available to e2e.** Sales and support accounts need an
-  admin-authenticated `POST /users` plus a role-login helper that still does not exist; a
-  *customer* is obtainable through public registration. Cases needing a non-admin, non-customer
-  session are marked *blocked* with that note — the same blocker 10-labels.md records.
+- **Non-admin accounts come from the test.** Sales and support accounts need an
+  admin-authenticated `POST /users`, which `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`
+  sends (`APIClient.login` signs the account in); a *customer* is obtainable through public
+  registration. Cases needing a sales or support session are planned against `aeo.spec.ts` with
+  those helpers, as in 10-labels.md.
 - **The reporting window is an enum, not a number.** `?days=` accepts only 7, 30 and 90
   (`aeoAllowedRangeDays`); anything else silently falls back to 30. The service clamps any range
   wider than 90 days regardless of how it was derived.
@@ -124,7 +125,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Steps:**
   1. Navigate to `/aeo/settings`.
 - **Expected:** The page loads (the per-route guard built from `RouteKeys` admits support to the reads) but every form control is disabled and neither **Save profile** nor **Run now** renders (`canManage = admin || sales`). A direct `PUT /api/v1/aeo/profile` as support returns 403.
-- **Automation:** blocked — no sales/support login helper; elevated roles only come from an admin-authenticated `POST /users`.
+- **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`; the support account comes from `APIClient.createUser` and signs in through the login form (`gocrm-ui/e2e/helpers/sso.ts`).
 
 ### TC-AEO-008 — Customer cannot reach the AEO section
 - **Priority:** P0
@@ -234,7 +235,7 @@ the build does **today**; where the behaviour is surprising a **Known issue** li
 - **Steps:**
   1. Create a prompt, toggle it, then attempt a delete.
 - **Expected:** Create and update succeed (write guard is admin+sales). The delete button does not render (`canDelete = admin`), and a direct `DELETE /api/v1/aeo/prompts/:id` returns 403.
-- **Automation:** blocked — no sales/support login helper.
+- **Automation:** planned — `gocrm-ui/e2e/tests/aeo.spec.ts`; the sales account comes from `APIClient.createUser` and signs in through the login form (`gocrm-ui/e2e/helpers/sso.ts`).
 
 ### TC-AEO-018 — Prompt generation without an Anthropic key
 - **Priority:** P1
@@ -703,5 +704,5 @@ drawer (#318, TC-AEO-059 and TC-AEO-060); it names the file itself, because CORS
 | **Total** | **60** | **16** | **31** | **13** |
 
 Automation status: 21 automated below the browser (the route smoke test, the two column-length
-cases and TC-AEO-043 to 060, which name their Go and Vitest tests), 36 planned, 3 blocked (two on
-the missing sales/support login helper, one on a live Anthropic call).
+cases and TC-AEO-043 to 060, which name their Go and Vitest tests), 38 planned, 1 blocked (a live
+Anthropic call).

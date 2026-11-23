@@ -732,7 +732,7 @@ the profiles `plan` (`automation/langflow/gophercrm_runner/validation.py`) can r
 - **Tests:** 203,292 lines of Go tests in 617 files, more test code than application code. They
   include 2,160 top-level `Test` functions, 176 Vitest files and 35 Playwright specs with 208
   browser tests, run against MySQL 8, MariaDB 10.11 and SQLite (`.github/workflows/ci.yml`). The
-  manual catalog in `docs/testing/` documents 799 cases.
+  manual catalog in `docs/testing/` documents 861 cases.
 - **Schema:** 46 SQL migration pairs, kept in parity with GORM AutoMigrate and checked by a
   migrations workflow for fresh install, populated upgrade, rollback and reapply.
 - **Delivery machinery:** 6 GitHub workflows with 17 jobs; 9 validation profiles that pick the

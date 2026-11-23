@@ -31,10 +31,11 @@ gating); where the two disagree, that disagreement gets its own case.
 
 **Constraints**
 
-- The only login helper today is `gocrm-ui/e2e/helpers/admin-auth.ts` (admin only). Every
-  non-admin case needs a support / sales / customer account created through the admin-guarded
-  `POST /users` (email from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`, password
-  `TempPass123!` — `min=10` plus complexity) and then a real login through `/login`. Self-service
+- Every non-admin case needs a support / sales / customer account created through the
+  admin-guarded `POST /users`, which `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` does
+  (email from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`, password
+  `TempPass123!` — `min=10` plus complexity) and then a real login through `/login`, or
+  `APIClient.login` for API-level assertions. Self-service
   `POST /auth/register` cannot be used: it always mints a `customer`.
 - Ticket creation needs a customer to exist. Create one per spec run via the customers UI or
   `POST /customers` using `generateCustomerData()`; never rely on pre-existing rows.

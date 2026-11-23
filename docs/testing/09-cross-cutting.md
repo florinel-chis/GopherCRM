@@ -38,9 +38,10 @@ coverage matrix.
 
 - Only the `admin` account is seeded, by `gocrm-ui/e2e/global-setup.ts` shelling out to
   `cmd/create-admin`. Every `sales` / `support` account in this file has to be created inside the
-  test through `/users/new` as admin, and a `customer` account through `/register` (that endpoint
-  always forces the `customer` role). There is no role-login helper — `AdminAuthHelper` only logs in
-  the seeded admin — so all role cases below carry that cost.
+  test as admin, through `/users/new` or `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`,
+  and a `customer` account through `/register` (that endpoint always forces the `customer` role).
+  `APIClient.login` signs such an account in for API-level calls; `AdminAuthHelper` logs in only
+  the seeded admin.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData`, `generateLeadData`, `generateCustomerData`, `generateTicketData`,
   `generateTaskData`). Never hardcode an email.
@@ -157,7 +158,8 @@ support and customer from the customer edit form.
   `APIRequestContext` with the sales token returns **403** with
   `{"success":false,"error":{"code":"FORBIDDEN","message":"Insufficient permissions"}}`
   (`internal/middleware/permission.go` `RequireAnyPermission`).
-- **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; needs a role-login helper)
+- **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; the sales account from
+  `APIClient.createUser`)
 
 ### TC-XCUT-006 — Sales reads tickets through the navigation, read-only
 - **Priority:** P1

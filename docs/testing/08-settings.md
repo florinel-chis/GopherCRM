@@ -3,10 +3,11 @@
 Test cases for the Settings section: API key management (FEATURES.md section 8, extended by
 section 10b "API keys") and Configuration Settings (FEATURES.md section 9). Every Expected field
 below records what the current build does, including the places where it is defective or
-surprising; those carry a "Known issue" line. The two screens are in very different shape:
-`ConfigurationSettings.tsx` is a complete, working page, while `APIKeys.tsx` is a heading-only stub,
-so the API key cases are written against the backend behaviour that already exists and are marked
-blocked until the page is built.
+surprising; those carry a "Known issue" line. Both screens are complete pages:
+`ConfigurationSettings.tsx`, and `APIKeys.tsx`, which lists the caller's own keys and creates,
+reveals once and revokes them (unit tests in `gocrm-ui/src/pages/settings/APIKeys.test.tsx`; the
+browser flow in `gocrm-ui/e2e/tests/settings.spec.ts` "creates a key, reveals it once, then revokes
+it"). The page offers no rename or reactivate control, so those API key cases are API-level.
 
 ## Sources
 
@@ -42,11 +43,13 @@ blocked until the page is built.
 
 ## Constraints
 
-- **Roles other than admin need a helper that does not exist yet.** `gocrm-ui/e2e/helpers/` only
-  contains `admin-auth.ts`, which logs in the seeded admin. A customer account can be produced
-  through `/register` (public registration always creates a `customer`), but sales and support
-  accounts must be created by an admin through the Users page using `generateUserData()` from
-  `e2e/fixtures/admin-user.ts` and then logged in through the login form. Cases needing that say so.
+- **Roles other than admin come from `APIClient`.** `gocrm-ui/e2e/helpers/admin-auth.ts` logs in the
+  seeded admin; `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` creates a sales, support or
+  customer account through the admin's `POST /users` (email from `generateUserData()` in
+  `e2e/fixtures/admin-user.ts`), `APIClient.login` signs it in for API-level calls through
+  `APIClient.get`/`post`/`put`/`delete`, and `APIClient.setActive` deactivates or reactivates it. A
+  customer account can also be produced through `/register` (public registration always creates a
+  `customer`).
 - **Configurations are global, shared, mutable state.** There are 23 rows, all seeded by
   `InitializeDefaults()`, and every session of the application reads the same ones. Any spec that
   writes a configuration must run serially and restore the value it changed (POST
@@ -67,22 +70,29 @@ blocked until the page is built.
 
 ## Page shell and navigation
 
-### TC-SET-001 — Confirm the API Keys page renders a heading and nothing else
+### TC-SET-001 — Open the API Keys page and its create, reveal and revoke dialogs
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** Seeded admin logged in (`ensureAdminLoggedIn`).
 - **Steps:**
   1. Navigate to `/settings/api-keys`.
-  2. Wait for the page to settle.
-  3. Inspect the page for any table, button or form control.
-- **Expected:** The route resolves and renders `<h1>API Keys</h1>` only. There is no "Generate key"
-  button, no table, no dialog; the component body is a single heading
-  (`gocrm-ui/src/pages/settings/APIKeys.tsx`). No request to `/api-keys` is issued — the endpoint
-  module `apiKeysApi` has no caller in `src/`.
-- **Known issue:** FEATURES.md rows 8.1–8.3 describe generate/list/revoke as user-facing features;
-  the backend implements all of them but the page is a stub, so none is reachable from the UI. The
-  capture `docs/screenshots/settings/02-api-keys.png` records this state.
-- **Automation:** automated — `gocrm-ui/e2e/screenshots/08-settings.spec.ts` "api keys page"
+  2. Read the page.
+  3. Click "Create API Key", create a key, and close the reveal dialog with "Done".
+  4. Click the new row's revoke button and confirm.
+- **Expected:** The page renders the heading "API Keys", a "Create API Key" button, a note that
+  every role, admin included, sees and creates only its own keys, and a table loaded from
+  `GET /api-keys` with the columns Name, Prefix, Status (Active, Expired or Inactive), Created,
+  Expires, Last used and Actions ("You have no API keys yet." when the list is empty; a failed
+  request shows an error instead of an empty table). The "Create API Key" dialog has a Name field (3
+  to 100 characters) and an optional "Expires on" date of at most one year from today. After a
+  create the plaintext key is shown once in the "Your new API key" dialog, which stays open until
+  "Done". Each row's revoke button ("Revoke <name>", disabled on an inactive key) opens the "Revoke
+  API key" confirmation; a confirmed revoke keeps the row and shows it as Inactive. The page has no
+  rename or reactivate control.
+- **Automation:** automated — `gocrm-ui/e2e/tests/settings.spec.ts` "creates a key, reveals it once,
+  then revokes it"; `gocrm-ui/src/pages/settings/APIKeys.test.tsx` "lists the caller own keys with
+  status and dates", "shows the plaintext key exactly once after creation and refreshes the list"
+  and "revokes a key after confirmation"
 
 ### TC-SET-002 — Confirm every authenticated role can reach the API Keys page
 - **Priority:** P2
@@ -98,7 +108,8 @@ blocked until the page is built.
   `settings/api-keys` sits outside every guarded pathless route in `routes/index.tsx`, so the
   page loads and shows the heading. This matches the backend: `SetupAPIKeyRoutes` installs no
   `RequireRole`, so any authenticated role may manage its own keys.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-apikeys.spec.ts` (new; closes part of G13)
+- **Automation:** planned — `gocrm-ui/e2e/tests/settings.spec.ts` (extended; a customer account from
+  `/register`; closes part of G13)
 
 ---
 
@@ -110,18 +121,18 @@ blocked until the page is built.
 - **Preconditions:** Seeded admin logged in; key name from `generateAPIKeyData()`.
 - **Steps:**
   1. Go to `/settings/api-keys`.
-  2. Click the generate control, enter the generated name, submit.
+  2. Click "Create API Key", enter the generated name, submit.
   3. Note the plaintext key shown in the result dialog.
   4. Close the dialog and reload the page.
 - **Expected:** `POST /api-keys` returns **201** with `{ key, api_key }`; `key` begins with `gcrm_`
   followed by 64 hex characters (`apiKeyService.Generate`), `api_key.prefix` equals the first 8 hex
   characters of the key **without** the `gcrm_` prefix, and `api_key.key_hash` is stripped by
   `transformAPIKeyFromBackend` before it reaches component state. After the reload the plaintext
-  value is nowhere on the page — only the prefix — because only the HMAC hash is stored. Today the
-  page offers no control to drive, so the flow cannot be executed from the UI at all.
-- **Known issue:** FEATURES.md 8.1 — "No E2E test"; the underlying cause is that the page is a stub.
-- **Automation:** blocked — the API Keys page is a heading-only stub, so there is no create control;
-  backend behaviour is covered by
+  value is nowhere on the page — only the prefix — because only the HMAC hash is stored.
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/settings.spec.ts` "creates a key,
+  reveals it once, then revokes it" (the create, the one-time reveal and the new row);
+  `gocrm-ui/src/pages/settings/APIKeys.test.tsx` "shows the plaintext key exactly once after
+  creation and refreshes the list"; backend behaviour is covered by
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_Success` and
   `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKey`
 
@@ -130,45 +141,52 @@ blocked until the page is built.
 - **Type:** validation
 - **Preconditions:** Seeded admin logged in.
 - **Steps:**
-  1. Open the generate dialog.
+  1. Open the "Create API Key" dialog.
   2. Enter `ab` as the name and submit.
-- **Expected:** `POST /api-keys` returns **400**; the binding tag is
-  `binding:"required,min=3,max=100"` on `CreateAPIKeyRequest.Name`, and the bind error is routed
-  through `gin.ErrorTypeBind` to the error-handler middleware. A name of 101 characters is rejected
-  the same way. No key row is created.
-- **Automation:** blocked — no create form exists;
-  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_InvalidName` covers the equivalent rule on update
+  3. Send `POST /api-keys` with the name `ab` directly.
+- **Expected:** Step 2: the form shows "Name must be at least 3 characters" under the Name field and
+  sends no request (the page's schema mirrors the server's limits). Step 3: `POST /api-keys` returns
+  **400**; the binding tag is `binding:"required,min=3,max=100"` on `CreateAPIKeyRequest.Name`, and
+  the bind error is routed through `gin.ErrorTypeBind` to the error-handler middleware. A name of
+  101 characters is rejected the same way. No key row is created.
+- **Automation:** planned — `gocrm-ui/e2e/tests/settings.spec.ts` (extended);
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_InvalidName` covers
+  the equivalent rule on update
 
 ### TC-SET-005 — Generate a key with a future expiry
 - **Priority:** P1
 - **Type:** functional
 - **Preconditions:** Seeded admin logged in.
 - **Steps:**
-  1. Open the generate dialog, enter a generated name and an expiry one day in the future.
+  1. Open the "Create API Key" dialog, enter a generated name and an "Expires on" date one day in
+     the future.
   2. Submit and inspect the created key in the list.
 - **Expected:** `POST /api-keys` with `expires_at` as an RFC3339 timestamp (for example
   `2026-12-31T23:59:59Z`) returns **201** and the stored record carries that `expires_at`. Omitting
   the field gives `expires_at` one year from now (#532). Expiry cannot be lifted afterwards:
   `PUT /api-keys/{id}` only accepts `name` and `is_active`.
-- **Automation:** blocked — no create form; covered by
-  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_WithFutureExpiresAt` and
-  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithExpiry`
+- **Automation:** automated — `gocrm-ui/src/pages/settings/APIKeys.test.tsx` "sends the chosen
+  expiry as an end-of-day RFC3339 timestamp" (the page sends the chosen day as 23:59:59 local time);
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_WithFutureExpiresAt`
+  and `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithExpiry`
 
 ### TC-SET-006 — Reject a past or malformed expiry
 - **Priority:** P1
 - **Type:** negative
 - **Preconditions:** Seeded admin logged in.
 - **Steps:**
-  1. Submit the generate form with `expires_at` set to a timestamp in the past.
+  1. Send `POST /api-keys` with `expires_at` set to a timestamp in the past.
   2. Repeat with a non-RFC3339 string such as `31-12-2026`.
 - **Expected:** Both are **400** with distinct messages from `APIKeyHandler.Create`: `expires_at must
   be in the future` and `expires_at must be an RFC3339 timestamp`. An expiry more than one year ahead
   is **400** `expires_at must be at most one year from now` (#532). No key is minted in either case —
   the handler deliberately refuses to issue a credential that could never authenticate.
-- **Automation:** blocked — no create form; covered by
+- **Automation:** automated (backend) — the page's date field offers no past date and refuses one
+  more than a year ahead (`gocrm-ui/src/pages/settings/APIKeys.test.tsx` "refuses an expiry later
+  than one year from today without sending a request"), so the API answers are pinned by
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_PastExpiresAt` /
-  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_MalformedExpiresAt` and
-  `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithPastExpiry`
+  `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestCreate_MalformedExpiresAt`
+  and `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestCreateAPIKeyWithPastExpiry`
 
 ---
 
@@ -188,7 +206,8 @@ blocked until the page is built.
   there is no admin-wide view and the `user_id` / `is_active` fields of `APIKeyFilters` are ignored by
   the server. Revoked keys are included, distinguishable by `is_active=false`. Each row shows the
   8-character prefix, never the plaintext key, plus `last_used_at`.
-- **Automation:** blocked — no table in the page; covered by
+- **Automation:** automated — `gocrm-ui/src/pages/settings/APIKeys.test.tsx` "lists the caller own
+  keys with status and dates";
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestList_Success` and
   `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestListAPIKeys`
 
@@ -204,7 +223,10 @@ blocked until the page is built.
   Ownership is enforced in `apiKeyService.ownedKey`, and there is no admin override — an admin is
   as forbidden as anyone else. An id that does not exist is **404** `API key not found`; a
   non-numeric id is **400** `Invalid API key ID`.
-- **Automation:** blocked — no UI surface and no role-login helper; covered by
+- **Automation:** planned — `gocrm-ui/e2e/tests/settings.spec.ts` (extended), API-level: the support
+  user from `APIClient.createUser`, signed in with `APIClient.login`, calls
+  `APIClient.get('/api-keys/{id}')` (`gocrm-ui/e2e/helpers/sso.ts`; the page offers no read of
+  another user's key). Go:
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_Forbidden` /
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_NotFound` /
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestGet_InvalidID` and
@@ -220,9 +242,9 @@ blocked until the page is built.
 - **Expected:** Whatever the backend serialises, `transformAPIKeyFromBackend` strips `key_hash`
   before the object is returned to callers, on the list, get and create paths alike, so no hash is
   ever placed in component state or rendered.
-- **Automation:** blocked — no page consumes the endpoint; the transform itself is pinned by the
-  Vitest unit test `gocrm-ui/src/api/endpoints/apikeys.test.ts` "lists keys from the bare array at
-  /api-keys and strips key_hash"
+- **Automation:** automated — the transform is pinned by the Vitest unit test
+  `gocrm-ui/src/api/endpoints/apikeys.test.ts` "lists keys from the bare array at /api-keys and
+  strips key_hash"
 
 ---
 
@@ -242,7 +264,9 @@ blocked until the page is built.
   `revoked_at` time; revoking it again answers 200 and keeps the first `revoked_at`. The subsequent API-key call is rejected
   at authentication (`ValidateAPIKey` returns "API key has been revoked"), surfacing as **401**.
   Revoking someone else's key is **403**; an unknown id is **404**.
-- **Automation:** blocked — no revoke control in the page; covered by
+- **Automation:** automated (partial) — `gocrm-ui/e2e/tests/settings.spec.ts` "creates a key,
+  reveals it once, then revokes it" (the revoke in the UI; the row stays and shows Inactive); the
+  authentication refusal is covered by
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_Success` /
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_Forbidden` /
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestRevoke_NotFound` and
@@ -253,13 +277,13 @@ blocked until the page is built.
 - **Type:** validation
 - **Preconditions:** Seeded admin logged in with one key created by the test.
 - **Steps:**
-  1. Edit the key's name to a new generated value and save.
+  1. Send `PUT /api-keys/{id}` with a new generated name (the page has no rename control).
   2. Submit an update whose body contains neither `name` nor `is_active`.
 - **Expected:** The rename returns **200** with the updated record. The empty update returns **400**
   `At least one of name or is_active must be provided` — the request struct uses pointers precisely
   so that an omitted `is_active` is not read as "deactivate", and a body with no updatable field is
   refused rather than reported as a successful no-op.
-- **Automation:** blocked — no edit control; covered by
+- **Automation:** automated (backend) —
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_Rename` and
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_EmptyBody`
 
@@ -278,7 +302,7 @@ blocked until the page is built.
   stays refused (**401**). A key that was inactive before `revoked_at` existed is refused the same
   way. `is_active: true` on a live key answers 200 and changes nothing. Expiry is checked
   separately in `ValidateAPIKey` and is not affected by this endpoint.
-- **Automation:** blocked — no edit control; covered by
+- **Automation:** automated (backend) —
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_SwitchOnRevokedIsConflict`,
   `internal/handler/apikey_handler_test.go` `APIKeyHandlerTestSuite.TestUpdate_SwitchOnFromAPIKeyIsForbidden`,
   `tests/apikey_integration_test.go` `APIKeyIntegrationTestSuite.TestUpdateAPIKey` and
@@ -302,11 +326,14 @@ blocked until the page is built.
   revokes every key of the user in the same transaction (#526: `is_active` false, `revoked_at`
   set). Deactivation is the reversible alternative to erasure and touches no personal data; the
   key stays revoked after reactivation, so the user issues a new one.
-- **Automation:** blocked — no UI surface for API keys and no role-login helper; covered by
-  `internal/service/auth_service_test.go` `TestAuthService_ValidateAPIKey` subtest "key of a
-  deactivated user is rejected", `test/integration/erasure_test.go`
-  `TestAPIKeyOfADeactivatedUserCannotAuthenticate`, `TestCredentialRevocation{SQLite,MySQL}`
-  (`set_active_false`, `set_active_true_after_a_deactivation_restores_nothing`) and
+- **Automation:** planned — `gocrm-ui/e2e/tests/settings.spec.ts` (extended), API-level: the user
+  from `APIClient.createUser` creates its key through `APIClient.post('/api-keys')`, the admin
+  deactivates it with `APIClient.setActive` and the key is retried (`gocrm-ui/e2e/helpers/sso.ts`).
+  Go: `internal/service/auth_service_test.go` `TestAuthService_ValidateAPIKey` subtest "key of a
+  deactivated user is rejected",
+  `test/integration/erasure_test.go` `TestAPIKeyOfADeactivatedUserCannotAuthenticate`,
+  `TestCredentialRevocation{SQLite,MySQL}` (`set_active_false`,
+  `set_active_true_after_a_deactivation_restores_nothing`) and
   `TestCredentialRevocationProductionWiring` (`administrator_deactivation_then_activation`)
 
 ### TC-SET-014 — Reject a key whose owner has been erased
@@ -322,10 +349,9 @@ blocked until the page is built.
   longer exists; the owner lookup in `ValidateAPIKey` is the second line of defence and rejects any
   key that survived (restored from a backup, written by an older release). The deletion is
   irreversible GDPR erasure — only ever apply it to the account the test created.
-- **Automation:** blocked — needs an API-key fixture the UI cannot create; covered by
-  `test/integration/erasure_test.go`
-  `TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount` and
-  `TestAPIKeyOfAnErasedUserCannotAuthenticate`
+- **Automation:** automated (backend) —
+  `test/integration/erasure_test.go` `TestUserErasureDestroysCredentialsThatWouldOutliveTheAccount`
+  and `TestAPIKeyOfAnErasedUserCannotAuthenticate`
 
 ### TC-SET-015 — Reject an expired key at authentication time
 - **Priority:** P0
@@ -622,8 +648,8 @@ blocked until the page is built.
   `ProtectedRoute requiredPermission="settings.view"` route, and `ProtectedRoute` issues
   `<Navigate to="/unauthorized" replace />`. The Configuration Settings heading never renders and no
   `GET /configurations` request is made.
-- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (needs a role-login
-  helper for sales/support)
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-configurations.spec.ts` (the sales and support
+  accounts from `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`)
 
 ### TC-SET-031 — Confirm the API refuses configuration reads and writes for non-admins
 - **Priority:** P0

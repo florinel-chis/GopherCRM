@@ -11,8 +11,9 @@ the handlers, service and repository; every automated browser case names the exa
 `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` for the pipeline board of section 14.7 (15 of those
 16 partial, as in 10-labels and 13-companies: the spec asserts the core outcome, the rest is pinned
 in Go or Vitest) and 1 by Go tests alone (TC-DEAL-035, whose web Tasks section is pinned in Vitest only),
-9 planned (7 against `admin-deals.spec.ts`, 2 against
-`admin-deals-board.spec.ts`), 9 blocked on the sales/support role-login helper. Every case
+18 planned (14 against `admin-deals.spec.ts`, 4 against
+`admin-deals-board.spec.ts`; nine of them the sales and support role cases, whose accounts come
+from `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`), 0 blocked. Every case
 names the Go test that already pins its API behaviour.
 
 **Sources**
@@ -60,11 +61,14 @@ names the Go test that already pins its API behaviour.
 - **`PUT` is the new state of the text fields, amount, stage and date;** the links follow the
   scalar rule of `company_id` on leads (absent keeps, `0` clears, a value sets), `owner_id` absent
   keeps, `currency` absent keeps.
-- **Only the admin account is available to e2e.** Sales sessions need an admin-authenticated
-  `POST /users` plus a role-login helper that does not exist yet. Cases that need one are marked
-  *blocked*; the backend half of every such case is pinned by
-  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`) / `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`) and
-  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`) / `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
+- **Non-admin accounts come from the test.** Sales sessions need an admin-authenticated
+  `POST /users`, which `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts` sends;
+  `APIClient.login` signs the account in. Cases that need one are planned against the deals specs;
+  the backend half of every such case is pinned by
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`) /
+  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`)
+  and `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`) /
+  `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 - **The moderate rate tier applies.** 120 req/min with a burst of 30 per IP.
 
 ---
@@ -145,9 +149,12 @@ names the Go test that already pins its API behaviour.
 - **Expected:** Step 1: each rep sees only its own deals, and the `owner_id` filter does not widen
   the scope (the handler overrides it with the caller). Step 2: **403** "Insufficient permissions"
   from the per-route guard built from `RouteKeys`; the sidebar hides "Deals" for those roles.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestList_SalesIsAlwaysNarrowedToItself` (`internal/handler/deal_handler_test.go`);
-  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`), `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`),
+  `DealHandlerTestSuite.TestList_SalesIsAlwaysNarrowedToItself` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`),
+  `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 
 ## 14.2 Create
 
@@ -240,8 +247,10 @@ names the Go test that already pins its API behaviour.
   2. As admin, create a deal with `owner_id` of a sales user.
 - **Expected:** Step 1: **201** with `owner_id` the sales user; then **403** "You can only assign
   deals to yourself". Step 2: **201** with the named owner. `owner_id: 0` is a 400.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `DealHandlerTestSuite.TestCreate_OwnerRules` (`internal/handler/deal_handler_test.go`); `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `DealHandlerTestSuite.TestCreate_OwnerRules` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestSalesOwnerRuleAndOwnDealsOnly` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-011 — Amounts render per currency
 - **Priority:** P2
@@ -302,8 +311,10 @@ names the Go test that already pins its API behaviour.
   2. As rep A, `PUT` its own deal with `owner_id` of rep B.
 - **Expected:** Step 1: **403** "You can only view your own deals". Step 2: **403** "You can only
   assign deals to yourself". Admin may do both.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`), `DealHandlerTestSuite.TestUpdate_OwnerRules` (`internal/handler/deal_handler_test.go`);
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`),
+  `DealHandlerTestSuite.TestUpdate_OwnerRules` (`internal/handler/deal_handler_test.go`);
   `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.4 Stage changes and history
@@ -389,8 +400,10 @@ names the Go test that already pins its API behaviour.
 - **Steps:**
   1. As rep A, `POST /api/v1/deals/{rep B's deal}/stage` and `GET …/history`.
 - **Expected:** **403** on both, before the service is reached; on its own deal both are **200**.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`); `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `DealHandlerTestSuite.TestSalesMayOnlyTouchItsOwnDeals` (`internal/handler/deal_handler_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.5 Detail and sub-lists
 
@@ -437,9 +450,11 @@ names the Go test that already pins its API behaviour.
 - **Steps:**
   1. As each rep, `GET /api/v1/companies/{id}/deals`; as support, the same.
 - **Expected:** Each rep sees one deal with `meta.total` 1; the admin sees two; support is **403**.
-- **Automation:** blocked — needs a role-login helper. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
   `DealHandlerTestSuite.TestSubLists_SalesIsNarrowedAdminIsNotAndMissingParentsAre404` (`internal/handler/deal_handler_test.go`);
-  `DealServiceTestSuite.TestListByCompany_ScopesTheFilterToTheCompanyAndOwner` (`internal/service/deal_service_test.go`); `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
+  `DealServiceTestSuite.TestListByCompany_ScopesTheFilterToTheCompanyAndOwner` (`internal/service/deal_service_test.go`);
+  `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ## 14.6 Delete and data
 
@@ -451,7 +466,9 @@ names the Go test that already pins its API behaviour.
   1. As the sales owner, `DELETE /api/v1/deals/{id}`.
 - **Expected:** **403** even on its own deal (`RequireRole(admin)` on the route); the delete button
   is hidden for sales.
-- **Automation:** blocked — needs a role-login helper. Go: `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`);
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
+  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`);
   `DealIntegrationTestSuite.TestRoleMatrix` (`test/integration/deal_integration_test.go`).
 
 ### TC-DEAL-025 — Admin deletes a deal; the history stays
@@ -580,8 +597,9 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   1. As sales, `GET /api/v1/deals/pipeline` and `GET /api/v1/deals/pipeline?owner_id=<other>`.
 - **Expected:** both **200** with the caller's own deals only; `owner_id` cannot widen it, as on
   the list. `company_id` still narrows within the caller's deals.
-- **Automation:** blocked — needs a role-login helper. Go:
-  `TestDealService_PipelineScoping` (`internal/service/deal_service_test.go`);
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` (extended); the sales
+  account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`).
+  Go: `TestDealService_PipelineScoping` (`internal/service/deal_service_test.go`);
   `DealPipelineIntegrationTestSuite.TestPipelineAsSalesIsScopedToItself` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-032 — Admin filters the pipeline by owner and company
@@ -608,8 +626,10 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   1. As each, `GET /api/v1/deals/pipeline`; open `/deals/board`.
 - **Expected:** **403** from the deals guard; the board route and its nav entry are not offered to
   these roles.
-- **Automation:** blocked — needs a role-login helper for support. Go:
-  `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`); `DealPipelineIntegrationTestSuite.TestRolesAndBadFilters` (`test/integration/deal_pipeline_integration_test.go`).
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals-board.spec.ts` (extended); the support
+  account comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`).
+  Go: `DealHandlerTestSuite.TestRoleMatrix` (`internal/handler/deal_handler_test.go`);
+  `DealPipelineIntegrationTestSuite.TestRolesAndBadFilters` (`test/integration/deal_pipeline_integration_test.go`).
 
 ### TC-DEAL-034 — Sales cannot link or read another rep's lead through a deal
 - **Priority:** P0
@@ -632,11 +652,14 @@ with all five stages in pipeline order, empty ones as `count: 0, totals: []`.
   lead ids, and none of them changes the deal or writes a history row; A's echo is **200**. A
   `lead_id` that is sent is always checked, even when it equals the stored one; only an absent
   `lead_id` keeps a hidden link unchecked.
-- **Automation:** blocked — needs a role-login helper for sales. Go:
+- **Automation:** planned — `gocrm-ui/e2e/tests/admin-deals.spec.ts` (extended); the sales account
+  comes from `APIClient.createUser` and `APIClient.login` (`gocrm-ui/e2e/helpers/sso.ts`). Go:
   `LeadVisibilityIntegrationTestSuite.TestDealWrites_SalesCannotLinkAnotherRepsLead` (`internal/integration/lead_visibility_integration_test.go`),
-  `LeadVisibilityIntegrationTestSuite.TestDealReads_HideHistoricalLinks` (`internal/integration/lead_visibility_integration_test.go`), `LeadVisibilityIntegrationTestSuite.TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle` (`internal/integration/lead_visibility_integration_test.go`);
+  `LeadVisibilityIntegrationTestSuite.TestDealReads_HideHistoricalLinks` (`internal/integration/lead_visibility_integration_test.go`),
+  `LeadVisibilityIntegrationTestSuite.TestDealUpdate_SendingTheHiddenStoredLeadIsNoOracle` (`internal/integration/lead_visibility_integration_test.go`);
   `TestDealService_LeadLinkFollowsTheLeadVisibilityPolicy` (`internal/service/deal_lead_visibility_test.go`);
-  `TestDealRoutes_HideALeadTheOwnerMayNotSee` (`internal/handler/deal_lead_visibility_handler_test.go`), `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink` (`internal/handler/deal_lead_visibility_handler_test.go`).
+  `TestDealRoutes_HideALeadTheOwnerMayNotSee` (`internal/handler/deal_lead_visibility_handler_test.go`),
+  `TestDealUpdate_SentLeadIDIsFlaggedEvenWhenItIsTheStoredLink` (`internal/handler/deal_lead_visibility_handler_test.go`).
 
 ### TC-DEAL-035 — GET /deals/{id}/tasks lists a deal's tasks under the deal rule
 - **Priority:** P0

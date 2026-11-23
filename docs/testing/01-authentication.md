@@ -39,8 +39,9 @@ file, not by trusting the coverage matrix.
 - The admin account is seeded out-of-band by `gocrm-ui/e2e/global-setup.ts`, which shells out to
   `cmd/create-admin` with `testAdminCredentials` — `POST /auth/register` can never produce one.
 - Non-admin accounts must be created inside the test: a `customer` by self-registering through
-  `/register`, and `sales` / `support` by an admin through `/users/new`. There is no role-login
-  helper; `AdminAuthHelper` only logs in the seeded admin.
+  `/register`, and `sales` / `support` by an admin, through `/users/new` or
+  `APIClient.createUser` in `gocrm-ui/e2e/helpers/sso.ts`; `APIClient.login` signs such an account
+  in for API-level calls, and `AdminAuthHelper` logs in only the seeded admin.
 - All records must come from the faker generators in `gocrm-ui/e2e/fixtures/admin-user.ts`
   (`generateUserData()`) or `fixtures/test-data.ts` (`generateTestUser()`). Never hardcode an email.
 - `/auth/*` is behind `RateLimitStrict()` — 10 req/min, burst 5 (`RateLimitStrict` (`internal/middleware/rate_limit.go`),
@@ -960,8 +961,8 @@ file, not by trusting the coverage matrix.
   Issuing the same `GET /api/v1/users` from an `APIRequestContext` with that role's bearer token
   returns **403**, so client gating and server guard agree on the outcome but not on the mechanism:
   the UI never produces the 403 that the API would.
-- **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; no role-login helper
-  exists yet, so the spec must create the users and log in through the form)
+- **Automation:** planned — `gocrm-ui/e2e/tests/rbac-routes.spec.ts` (new; the spec creates the
+  users with `APIClient.createUser` and logs them in through the form)
 
 ### TC-AUTH-042 — A stale token in storage is discarded and the visitor sent to login
 - **Priority:** P1
