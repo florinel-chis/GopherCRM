@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documentation states one Node minimum, Node.js 22 or later, in README, SETUP, FORKING, the UI
+  README and the runner README (#737). The per-release SQLite upgrade notes are written once, in
+  `docs/DOCKER.md` "Upgrading the SQLite database", now covering a binary run from source as well
+  as the image, and README links there. Quote PDF setup is described once, in
+  `docs/SERVER_PROVISIONING.md` "Quote PDF output" (which gains the development-run notes), with
+  links from README, SETUP, DOCKER, FORKING and `.env.example`. The README Documentation table is
+  the single index of the guides: it lists every guide, and the "Docs:" line and the "Fork it"
+  link list are gone.
 - `README.md` is brought up to 1.3.0. It describes four system roles plus custom roles managed in
   Settings → Roles, replaces "Admin Features" with an "Administration and settings" section that
   names every Settings screen and the permission it needs, lists the Deals configuration tab and

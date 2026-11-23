@@ -265,31 +265,20 @@ launcher for it: the server starts both kinds of binary with the same arguments.
   only `/tmp` (tmpfs) and `/data` writable.
 - **Off in both development stacks.** `docker-compose.yml` and `docker-compose.sqlite.yml` set
   `QUOTE_PDF_CHROME_PATH: ""`. Their `APP_BASE_URL` is `http://localhost:${UI_PORT}`, and inside
-  the backend container `localhost` is that container, not the UI: every render would fail. With
-  the variable empty (or naming a file that is not executable) PDF output is switched off: the
-  server starts as usual, quote emails go out as text only, `GET /api/v1/quotes/:id/pdf` answers
-  503 `PDF_UNAVAILABLE`, `GET /api/v1/configurations/ui` reports `quotes.pdf_available` `false`
-  and the quote page shows no Download PDF button.
+  the backend container `localhost` is that container, not the UI: every render would fail. What
+  PDF output off means is in
+  [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output).
 - **Switching it on.** The production override example does not forward the variable, so the
   stack it is applied to keeps PDF output off. Add `QUOTE_PDF_CHROME_PATH: /usr/local/bin/quote-pdf-browser`
-  (the image's default) to the backend `environment` in your own override, together with an `APP_BASE_URL` that meets
-  both conditions:
-  - it is **reachable from inside the backend container**. A public origin works when the
-    container can resolve and reach it (through your TLS proxy); `http://ui`, the UI service on
-    the Compose network, works without leaving the host;
-  - its origin is **allowed by `CORS_ALLOWED_ORIGINS`** when the API is on another origin than
-    `APP_BASE_URL`. The render page calls `POST /api/v1/quotes/public/render` from the browser
-    with an `Origin` header; an origin that is not listed gets a bare 403 that the backend does
-    not log, the credential is never redeemed, and every render fails: the download answers 503
-    `PDF_RENDER_FAILED` and the quote email falls back to text. With the UI nginx proxying
-    `/api/v1/` the call is same-origin, but the browser still sends `Origin`, so list the
-    `APP_BASE_URL` origin either way.
-- **Time budget.** One render runs at a time per backend process and is bounded at 15 s, the
-  wait for its turn included. `POST /api/v1/quotes/:id/email` takes at most 15 s for the render
-  plus 30 s for the SMTP delivery, 45 s; the web application waits 55 s for that call and for
-  the PDF download. A reverse proxy in front must keep a read timeout of 60 s or more
-  (`proxy_read_timeout`, 60 s by default in nginx; the UI image's nginx does not lower it), or
-  it answers 504 for a mail the backend still delivers.
+  (the image's default) to the backend `environment` in your own override, together with an
+  `APP_BASE_URL` that is **reachable from inside the backend container**. A public origin works
+  when the container can resolve and reach it (through your TLS proxy); `http://ui`, the UI
+  service on the Compose network, works without leaving the host. The `CORS_ALLOWED_ORIGINS`
+  condition and how a failed render shows are in
+  [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output); the render page still sends
+  `Origin` when the UI nginx proxies `/api/v1/`, so list the `APP_BASE_URL` origin either way.
+- **Time budget.** See [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output); the UI
+  image's nginx keeps the 60 s default `proxy_read_timeout`.
 - Known limits (credentials per backend process, dates in the container's time zone, UTC) are
   in `docs/ROADMAP.md`.
 
@@ -561,33 +550,39 @@ write ("attempt to write a readonly database").
 
 ### Upgrading the SQLite database
 
-Take one of the two backups above before pulling a new image: the schema
-advances only through auto-migration on startup, which is not reversible. The
-release after 1.2.0 adds the company link to `leads` and `customers`, and the
-SQLite driver adds a foreign key by rebuilding the table — drop and copy. The
-two rebuilds run one after the other, each in its own transaction, so the first
-start needs free space in the `/data` volume for a full copy of one table at a
-time, while the WAL file accumulates both rebuilds until the next checkpoint.
-Auto-migration runs with foreign-key enforcement switched off, as SQLite
-prescribes for table rebuilds, checks every foreign key once it is done and
-refuses to start if the check finds a dangling reference. A refused start has
-already committed the schema change; only the data violation is left.
-`docker compose -f docker-compose.sqlite.yml logs backend` names the tables
-involved as `child -> parent`; either restore the backup or fix those rows, then
-start again. The 1.2.0 image still opens the upgraded file — it ignores the
-extra tables and columns — so the image can be rolled back even though the
-schema is not. The deals release adds the `deals` and `deal_stage_changes`
-tables only: it rebuilds no existing table, and the previous image still opens
-the file. The quotes release does the same with `products`, `quotes`,
-`quote_lines` and `quote_status_changes`: four new tables, no existing table
-touched, and the previous image still opens the file. The task-to-deal link
-release does touch one: it adds `tasks.deal_id` and rebuilds `tasks` — drop and
-copy, in one transaction with enforcement off — to add `fk_tasks_deal`, so the
-first start needs free space in the `/data` volume for a full copy of `tasks`,
-and the WAL file holds that copy until the next checkpoint. Every existing task
-keeps `deal_id` NULL. The previous image still opens the upgraded file: it
-ignores the extra column, so it neither shows nor removes a stored link, and
-the link is back when the newer image returns.
+These notes apply to the image and to a backend binary run from source alike.
+Take a backup before upgrading — one of the two above for the image; for a
+binary, stop the backend and copy the file with its `-wal` and `-shm` siblings,
+or take a `VACUUM INTO` snapshot. The schema advances only through
+auto-migration on startup, which is not reversible (the `migrations/` SQL is
+MySQL-only). The release after 1.2.0 adds the company link to `leads` and
+`customers`, and the SQLite driver adds a foreign key by rebuilding the table —
+drop and copy. The two rebuilds run one after the other, each in its own
+transaction, so the first start needs free space for a full copy of one table
+at a time — in the `/data` volume for the image, in the directory of `DB_PATH`
+for a binary — while the WAL file accumulates both rebuilds until the next
+checkpoint. Auto-migration runs with foreign-key enforcement switched off, as
+SQLite prescribes for table rebuilds, checks every foreign key once it is done
+and refuses to start if the check finds a dangling reference. A refused start
+has already committed the schema change; only the data violation is left. The
+startup log (`docker compose -f docker-compose.sqlite.yml logs backend` for the
+image) names the tables involved as `child -> parent`; either restore the
+backup or fix those rows, then start again. The 1.2.0 image or binary still
+opens the upgraded file — it ignores the extra tables and columns — so the
+image or binary can be rolled back even though the schema is not. The deals
+release adds the `deals` and `deal_stage_changes` tables only: it rebuilds no
+existing table, and the previous image or binary still opens the file. The
+quotes release does the same with `products`, `quotes`, `quote_lines` and
+`quote_status_changes`: four new tables, no existing table touched, and the
+previous image or binary still opens the file. The task-to-deal link release
+does touch one: it adds `tasks.deal_id` and rebuilds `tasks` — drop and copy,
+in one transaction with enforcement off — to add `fk_tasks_deal`, so the first
+start needs free space (the `/data` volume, or the directory of `DB_PATH`) for
+a full copy of `tasks`, and the WAL file holds that copy until the next
+checkpoint. Every existing task keeps `deal_id` NULL. The previous image or
+binary still opens the upgraded file: it ignores the extra column, so it
+neither shows nor removes a stored link, and the link is back when the newer
+release returns.
 
 ## Rebuilding after code changes
 

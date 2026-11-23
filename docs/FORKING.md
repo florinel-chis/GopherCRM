@@ -116,7 +116,7 @@ roles and permissions, API keys, webhooks, single sign-on and SCIM provisioning,
 
 ### 2.1 SQLite, from source
 
-No database server is needed. Requires Go 1.25 (the `go` directive of `go.mod`), Node 20 or later, and `jq` for the
+No database server is needed. Requires Go 1.25 (the `go` directive of `go.mod`), Node.js 22 or later, and `jq` for the
 API example in section 2.4.
 
 ```bash
@@ -344,7 +344,7 @@ startup.
 | `TRUSTED_PROXIES` | trust none | `Load` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `Load` | every browser origin of your UI |
 | `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
-| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `Load` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [DOCKER.md](DOCKER.md)) |
+| `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `Load` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output)) |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | `Load` | this backend's public origin; form confirmation links |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `Load` | empty host means log-only mail |
 | `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `Load` | both or the layer is skipped |

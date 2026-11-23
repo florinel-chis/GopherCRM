@@ -44,10 +44,7 @@ Open http://localhost:3000 and sign in as `admin@example.com` / `ChangeMe!2345`,
 password under **Settings > Profile**. Port 3000 taken? Put `UI_PORT=3001` in front of the `up`
 command and open http://localhost:3001 instead.
 
-**Docs:** [Docker](docs/DOCKER.md) · [Setup](docs/SETUP.md) · [Features](docs/FEATURES.md) ·
-[Developer guide](docs/DEVELOPMENT.md) · [Data model](docs/datamodel.md) ·
-[Screenshots](docs/SCREENSHOTS.md) · [API reference](api/index.html) ([spec](api/swagger.yaml)) · [Roadmap](docs/ROADMAP.md) ·
-[Changelog](CHANGELOG.md) · [Releases](https://github.com/florinel-chis/GopherCRM/releases) · [Validation and release workflow](docs/VALIDATION_RELEASE.md) · [Documentation maintenance](docs/DOCUMENTATION_WORKFLOW.md)
+Every guide is listed in the [Documentation](#documentation) table below.
 
 If it's useful, a star helps others find it.
 
@@ -62,16 +59,9 @@ MySQL 8 and MariaDB 10.11, and
 6 CI workflows (measured on `bbc5c81f`; commands in
 [FORKING.md](docs/FORKING.md#9-why-fork-instead-of-rebuild)).
 
-- [docs/FORKING.md](docs/FORKING.md) — first run, rebranding, configuration, deployment, CI and
-  staying in sync with upstream.
-- [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md) — preparing a fresh systemd server
-  (MySQL or MariaDB) for the release-tarball deploy path, with the reverse proxy and TLS for nginx
-  or Apache 2.4 ([Reverse proxy and TLS](docs/SERVER_PROVISIONING.md#reverse-proxy-and-tls)).
-- [docs/USE_CASES.md](docs/USE_CASES.md) — worked recipes for concrete deployments, with their gaps.
-- [docs/EXTENDING.md](docs/EXTENDING.md) — adding or removing entities, routes, migrations and modules.
-- [docs/CONCURRENCY.md](docs/CONCURRENCY.md) — lock order and retry rule for multi-table writes.
-- [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) — permission catalogue, system-role matrix, custom roles and the phase 2 sign-in design note.
-- [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md) — administrator guide to roles, permissions and single sign-on (OpenID Connect, with a Microsoft Entra ID walk-through).
+Start with [docs/FORKING.md](docs/FORKING.md) — first run, rebranding, configuration,
+deployment, CI and staying in sync with upstream; the other guides are in the
+[Documentation](#documentation) table.
 
 Three things catch most first runs from source (`cp .env.example .env`, then `go run ./cmd` or
 `make run`):
@@ -141,7 +131,7 @@ with the database in a file on a named volume ([docs/DOCKER.md](docs/DOCKER.md#s
 - Make (optional, for using Makefile commands)
 
 ### Frontend
-- Node.js 20 or newer (React Router 7 requires Node >= 20) and npm
+- Node.js 22 or later and npm
 - Modern web browser
 
 ## Setup Instructions
@@ -193,26 +183,9 @@ Things to know before relying on it:
 - **Back up before upgrading.** On SQLite the schema advances only through the
   auto-migration that runs at startup — the `migrations/` SQL is MySQL-only — and
   auto-migration is not reversible. Take the offline copy or the `VACUUM INTO`
-  snapshot above first. Upgrading from v1.2.0 rewrites `leads` and `customers`
-  in place (the driver drops and copies each table to add the company link).
-  The two rebuilds run one after the other, each in its own transaction, so the
-  first start needs free disk for a full copy of one table at a time, while the
-  WAL accumulates both rebuilds until the next checkpoint. Auto-migration runs
-  with foreign-key enforcement off, as SQLite prescribes for table rebuilds,
-  checks every foreign key afterwards and refuses to start if the check finds a
-  dangling reference. A refused start has already committed the schema change;
-  only the data violation is left. Restore the backup, or fix the offending rows
-  (the message names the tables as `child -> parent`), and start again. The
-  v1.2.0 binary still opens the upgraded file — it ignores the extra tables and
-  columns — so the binary can be rolled back even though the schema is not.
-  The deals release adds the `deals` and `deal_stage_changes` tables only: it
-  rebuilds no existing table, and the previous binary still opens the file.
-  The quotes release does the same with `products`, `quotes`, `quote_lines` and
-  `quote_status_changes`: four new tables, no existing table touched. The
-  task-to-deal link release rebuilds `tasks` (drop and copy) to add
-  `fk_tasks_deal`, so its first start needs free disk for a full copy of that
-  table; every existing task keeps `deal_id` NULL, and the previous binary still
-  opens the file, ignoring the extra column.
+  snapshot above first. What each release changes in the file, and the free disk
+  its first start needs, is in
+  [docs/DOCKER.md](docs/DOCKER.md#upgrading-the-sqlite-database).
 - `DB_PATH` must not contain `?`; the connector appends its own pragma query
   string, so startup rejects a path that already carries one.
 
@@ -1336,15 +1309,28 @@ gophercrm/
 
 | Document | Contents |
 |---|---|
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration, deletion semantics |
+| [docs/FORKING.md](docs/FORKING.md) | Running your own copy: first run, rebranding, configuration, deployment, CI and staying in sync with upstream |
 | [docs/SETUP.md](docs/SETUP.md) | Backend and frontend setup walkthrough |
+| [docs/DOCKER.md](docs/DOCKER.md) | Running with Docker Compose (MySQL or SQLite), backups and SQLite upgrade notes, the production override example and the image's quote PDF browser |
+| [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md) | Preparing a fresh systemd server (MySQL or MariaDB) for the release-tarball deploy path, quote PDF setup, and the [Reverse proxy and TLS](docs/SERVER_PROVISIONING.md#reverse-proxy-and-tls) sites for nginx or Apache 2.4 |
+| [docs/USE_CASES.md](docs/USE_CASES.md) | Worked recipes for concrete deployments, with their gaps |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Developer guide: commands, architecture layers, key patterns, configuration, deletion semantics |
+| [docs/EXTENDING.md](docs/EXTENDING.md) | Adding or removing entities, routes, migrations and modules |
+| [docs/CONCURRENCY.md](docs/CONCURRENCY.md) | Lock order and retry rule for multi-table writes |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature and test-coverage matrix with known issues |
 | [docs/datamodel.md](docs/datamodel.md) | Entity model and relationships |
 | [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md) | Permission catalogue, system-role matrix, custom roles, role-change rules and the phase 2 sign-in design note |
 | [docs/user-guide/permissions-access/overview.md](docs/user-guide/permissions-access/overview.md) | Administrator guide: roles and permissions, single sign-on, a Microsoft Entra ID walk-through and an FAQ |
+| [docs/AEO_SECURITY.md](docs/AEO_SECURITY.md) | AEO provider egress policy, operator migration steps and failure diagnostics |
+| [api/index.html](api/index.html) | Offline API reference, generated from the OpenAPI spec [api/swagger.yaml](api/swagger.yaml) |
+| [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) | Screenshot catalog of every user-facing screen |
+| [docs/testing/README.md](docs/testing/README.md) | Test-case catalog: end-to-end cases per feature, automated, planned and blocked |
 | [gocrm-ui/e2e/README.md](gocrm-ui/e2e/README.md) | End-to-end suite: make e2e, running by hand, the seeded admin account, spec coverage and conventions |
+| [docs/VALIDATION_RELEASE.md](docs/VALIDATION_RELEASE.md) | Contextual validation profiles, the release workflow and deploys |
+| [docs/DOCUMENTATION_WORKFLOW.md](docs/DOCUMENTATION_WORKFLOW.md) | How documentation is assessed and updated with each pull request |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Ideas that are not implemented yet |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes |
+| [Releases](https://github.com/florinel-chis/GopherCRM/releases) | Published releases and their artifacts |
 
 ## Known Limitations
 
@@ -1374,13 +1360,10 @@ gophercrm/
   automation email step is logged as `succeeded`, although nothing was delivered. Form mail and
   ticket comment mail (`email_customer`) are the exception: each delivery is recorded `log_only`,
   not `sent`. Fine for development, useless in production.
-- **Quote PDF output needs a browser on the server.** The PDF of a quote (download and email
-  attachment) is printed by a headless browser named by `QUOTE_PDF_CHROME_PATH`
-  (`chrome-headless-shell`, or a full Chrome or Chromium).
-  Without it, and in the two development Compose stacks, PDF output is off: the quote email is
-  text only and the download answers 503 `PDF_UNAVAILABLE`. The Docker image ships
-  `chrome-headless-shell` and a font; a full Chrome or Chromium is accepted as well. The limits
-  of the renderer are listed in `docs/ROADMAP.md`.
+- **Quote PDF output needs a browser on the server.** Without a headless browser named by
+  `QUOTE_PDF_CHROME_PATH`, and in the two development Compose stacks, PDF output is off and quote
+  emails are text only; setup is in
+  [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md#quote-pdf-output).
 - **Form mail is retried by hand only.** Every form mail (confirmation, follow-up, one notification
   per address) is recorded and shown on the submission and in `GET /api/v1/forms/deliveries`;
   admin and sales retry a failed, log-only or stuck one with

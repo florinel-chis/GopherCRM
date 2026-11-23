@@ -223,8 +223,10 @@ func TestAuthorizationGuideIsLinked(t *testing.T) {
 
 	readme := readGuideFile(t, "README.md")
 	const link = "[docs/AUTHORIZATION.md](docs/AUTHORIZATION.md)"
-	if !hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "- "+link) }) {
-		t.Errorf("README.md must have a bullet starting %q", "- "+link)
+	// The Documentation table is README's only docs index: a bullet list of
+	// guides next to it would be a second index.
+	if hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "- "+link) }) {
+		t.Errorf("README.md must not have a bullet starting %q: the Documentation table is the index", "- "+link)
 	}
 	if !hasLine(readme, func(l string) bool { return strings.HasPrefix(l, "| "+link+" |") }) {
 		t.Errorf("README.md must have a Documentation-table row starting %q", "| "+link+" |")

@@ -25,7 +25,7 @@ A modern React TypeScript frontend for the GopherCRM application, built with Mat
 
 ## Prerequisites
 
-- Node.js 18+ and npm/yarn
+- Node.js 22 or later and npm
 - Backend GopherCRM server running on port 8080
 
 ## Getting Started
