@@ -177,12 +177,35 @@ class DocCitationCheckTest(unittest.TestCase):
 
     def test_default_files_are_every_tracked_doc(self):
         for path in ('README.md', 'docs/A.md', 'docs/testing/B.md', 'docs/CONCURRENCY.md',
-                     'other/README.md', 'docs/notes.txt'):
+                     'other/README.md', 'docs/notes.txt', 'internal/idkit/README.md', 'CHANGELOG.md'):
             self.write(path, '# doc\n')
         self.write('docs/X.md', '# untracked\n', track=False)
         self.assertEqual(sorted(gate.default_files(self.root)),
-                         ['README.md', 'docs/A.md', 'docs/testing/B.md'])
+                         ['README.md', 'docs/A.md', 'docs/testing/B.md', 'internal/idkit/README.md'])
         self.assertEqual(set(gate.EXEMPT_FILES), {'docs/CONCURRENCY.md'})
+
+    def test_untracked_extra_default_file_is_not_checked(self):
+        self.write('internal/idkit/README.md', 'See `pkg/absent.go`.\n', track=False)
+        self.assertNotIn('internal/idkit/README.md', gate.default_files(self.root))
+
+    def test_missing_path_in_idkit_readme_fails_default_run(self):
+        self.write('docs/A.md', 'See `pkg/sample.go`.\n')
+        self.write('internal/idkit/README.md', 'See `pkg/absent.go`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 1, out)
+        self.assertIn('internal/idkit/README.md:1: `pkg/absent.go`: missing path', out)
+        self.write('internal/idkit/README.md', 'See `pkg/sample.go`.\n')
+        code, out = run(self.root)
+        self.assertEqual(code, 0, out)
+        self.assertIn('in 2 files', out)
+
+    def test_extra_default_files_are_tracked(self):
+        tracked = set(gate.tracked_files(ROOT))
+        self.assertTrue(gate.EXTRA_DEFAULT_FILES)
+        for doc in gate.EXTRA_DEFAULT_FILES:
+            self.assertIn(doc, tracked, doc)
+            self.assertNotIn(doc, gate.EXEMPT_FILES, doc)
+        self.assertNotIn('CHANGELOG.md', gate.EXTRA_DEFAULT_FILES)
 
     def test_exemptions_name_a_test_that_reads_the_doc(self):
         tracked = set(gate.tracked_files(ROOT))

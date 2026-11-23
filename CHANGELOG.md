@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backend), whose `client_max_body_size 1m` and `proxy_read_timeout 60s`
   defaults are now written out. README, SETUP, DOCKER and FORKING link the section. Docs only.
 
+### Changed
+
+- The 1.3.0 section of this changelog has one heading of each kind (Added, Changed, Removed,
+  Fixed, Security), each entry kept word for word under its kind, and a new Upgrade notes
+  subsection that collects the operator steps its entries already describe (#746).
+  `python3 scripts/ci/check-doc-citations.py` now also checks `internal/idkit/README.md` by
+  default (`EXTRA_DEFAULT_FILES`), and says why `CHANGELOG.md` stays unchecked; that README now
+  states that a SCIM `POST /Groups` resolves to an existing group and creates no value, and that
+  `DELETE /Groups/{id}` answers 405. A release unit test keeps every changelog section to one
+  heading of each kind. Docs and CI checks only.
+
 ### Fixed
 
 - The SCIM endpoint is reachable behind the shipped reverse proxies (#728). Neither the UI
@@ -1295,6 +1306,355 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `20261106120000_add_form_mail_deliveries`; SQLite gets the table through AutoMigrate. The public
   submit and confirm answers are unchanged, and nothing retries automatically.
 
+- **Retention purge for spam and unconfirmed form submissions (#217).** With the new
+  `FORM_RETENTION_DAYS` set, spam and never-confirmed submissions with no linked lead are permanently
+  removed with their confirmation tokens once they pass that age. It is off by default. 1 and 2 are
+  raised to a 3-day floor, and anything above 36500 is lowered to it. The purge runs at boot and then
+  every 24 hours, so **the first boot with the setting removes the whole existing backlog**: take a
+  backup first if you may want those rows. A pending row that still holds a spendable token stays
+  until the token is spent or expires, and received, confirmed and lead-linked rows are never touched.
+  The drain is now automation, then the purge, then AEO. Both form-delete dialogs still say "Collected
+  submissions are retained" until a separate frontend task merges, which is wrong for purged rows.
+  No schema change.
+- **Tasks can link a deal (#240).** A task gains a nullable `deal_id`, additive to the
+  lead-or-customer link: migration `20261101120000_add_task_deal_link` on MySQL/MariaDB, AutoMigrate
+  on SQLite (the first start rebuilds `tasks`). `POST /tasks` and `PUT /tasks/{id}` accept `deal_id`
+  when it names a live deal the caller may see, closed deals included: admin any, sales its own, and
+  a hidden deal is 404 like a missing one. On update an absent `deal_id` keeps the link, 0 clears it,
+  and a clear of a link hidden from the caller answers 200 and keeps it. Every task the API returns
+  carries `deal_id` and a `deal` summary of id, title and stage only when the caller may see that
+  deal, decided on every read. `GET /deals/{id}/tasks` lists a deal's live tasks: every task for an
+  admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
+  rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
+  created by earlier runs are not backfilled.
+- **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
+  `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
+  neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body
+  field, one message per route), writing nothing and recording no event; an unknown id used to fail
+  on the foreign key as a 500 and an erased user's id was accepted. An update that leaves the owner
+  alone, or re-sends it, is not checked, so a lead whose owner has left stays editable; an assignment
+  always checks the user it names. The assign route takes the `{user_id}` body the frontend client
+  already sends and follows the lead visibility policy on the locked row: an admin on any lead, a
+  sales user on its own, which it loses at once when it hands the lead over. The check is a locking
+  read of the user, so a deactivation committed earlier is seen on MySQL too. `NewLeadService` now
+  takes the user repository; a service built without it refuses these writes
+  (`ErrLeadOwnerCheckUnavailable`) rather than skipping the check. Public form default owners, the
+  automation `assign_owner` step and leads whose owner already left are unchanged.
+
+- **Lead lookup by external id.** `GET /leads?external_id=` returns the live leads whose
+  `external_id` equals the value, in the usual list shape (ascending id, owner loaded, `total` is
+  their number), so integrations can correlate their records with CRM leads. It takes precedence
+  over `search`, `classification`, the sort and paging. Visibility follows the lead policy (admin
+  any lead, sales its own) row by row: a lead the caller may not see is left out, never 403 or
+  404, so an unknown id and a hidden one read the same. At most the first 100 matching leads are
+  read. A value longer than the 255-character column is 400 `VALIDATION_ERROR`.
+
+- **Complete API reference and its CI gate.** Every operation of the Swagger 2.0 spec in `api/`
+  now names the roles it admits, its parameters with defaults and clamping, the `error.code`
+  values it can return and their conditions, and its side effects; every schema property is
+  described, with examples, enums for the closed sets and the limits the code enforces. The
+  general description covers authentication, the response envelope, the error catalogue,
+  pagination, rate limits (and the absence of rate-limit headers), CORS and `X-Request-ID`, and
+  every tag is described. The four public form pages that return JavaScript or HTML
+  (`GET /forms/public/embed.js`, `GET /forms/public/{key}/view`, `GET` and `POST
+  /forms/public/confirm`) are documented under a new `public-forms` tag, the quote responses now
+  show the fields their JSON really carries (`number` and the customer, deal and owner
+  summaries), and list payloads are typed. `make swagger` also renders `api/index.html`, a static
+  offline HTML reference. `make verify-api-docs` (in `make verify`, CI and every validation
+  profile) fails when `api/` differs from a fresh generation, a route has no operation or an
+  operation no route, an operation's security disagrees with the route's authentication (exactly
+  the two schemes as alternatives behind it), a 401, 403 or 429 the route middleware can return is
+  undocumented, a query parameter, form field or body the registered handler reads is undocumented
+  (or a documented one is never read, or the body's schema or required flag differs from what the
+  handler binds), the base path or a security scheme's header form is wrong, a description, tag or
+  success response is missing, or a closed set's enum drifts from its Go constants.
+
+- **Follow-up automation: rule names on runs, field-level rule errors, dry run of unsaved edits.**
+  Run responses (`GET /automation/runs`, `GET /automation/runs/{id}`, the cancel answer) carry
+  `rule_name` — the rule's current name, also for a deleted rule, flagged `rule_deleted` — and
+  never the rule's trigger or steps (the `rule` association is no longer serialised at all); the
+  run list, run detail, the lead and deal Automation sections and the run list's rule filter show
+  the name. Sales users therefore see the names of the rules that ran on their records, also after
+  a rule is deleted; the rule form says so under the name. A refused rule body lists every refused
+  field in `error.details.fields` as `{field, code, message}` (`steps[2].config.title`, steps
+  counted from zero) while `error.message` and `error.code` stay those of the first refusal; the
+  editor puts each message under its field, following steps moved while the save was in flight and
+  dropping errors of fields edited or steps removed meanwhile. `POST /automation/rules/dry-run`
+  (admin) simulates an unsaved rule body after the same validation as a create, saving nothing and
+  starting no transaction; the editor's Dry run button now simulates the form as it is, on a new
+  rule too, while the rule list's dry run keeps simulating the saved version.
+- **Follow-up automation and notifications (UI).** The screens for the automation API:
+  `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
+  cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and
+  `/automation/rules/{id}/edit` build the trigger and up to 20 steps with a sub-form per step
+  type, forward-only jumps, placeholder help, status and stage condition values as free text with
+  the known values suggested (kept verbatim, as the API compares plain strings), the API's limits
+  checked client-side, and an edit
+  asks for confirmation before it creates a new version; the dry-run dialog simulates the saved
+  rule on a chosen lead or deal and shows each step's outcome, simulated time and details.
+  `/automation/runs` (admin and sales; sales sees runs on records it owns) filters by status,
+  rule, entity and record, and `/automation/runs/{id}` shows the step log with an admin-only
+  Cancel run. Lead and deal detail pages gain an Automation section with the record's runs. Staff
+  users get a notification bell in the app bar (unread count polled every 60 s and on window
+  focus, the latest ten in its menu, mark read, mark all read) and a `/notifications` page with an
+  unread filter; customers see neither. Failed loads show the server message with a retry. The e2e
+  spec `automation-rules.spec.ts` builds a rule in
+  the form and dry-runs it; eight captures are in `docs/screenshots/automation/`.
+
+- **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
+  sales; name, SKU, price with currency, active chip, search, active filter, server pagination and
+  sorting) with an admin-only form at `/products/new` and `/products/{id}/edit` (name ≤ 200,
+  SKU ≤ 64, price in major units sent as `unit_price_cents`, currency defaulting to
+  `deals.default_currency`, active switch); `/quotes` (number, title, status, customer, deal,
+  total, valid until; status filter, server pagination) with a create dialog (title, deal and
+  customer pickers, currency, valid until, notes); `/quotes/{id}` with the lines table, add/edit/
+  delete of lines and an edit dialog while the quote is a draft and no edit control otherwise,
+  the server's subtotal, discount and total, status buttons for the valid transitions only (the
+  server message on `INVALID_STATUS_TRANSITION` and `CONFLICT`), a Print link, an "Email quote"
+  confirmation on sent and accepted quotes that names the customer and distinguishes a 409 from a
+  502, and the status history; `/quotes/{id}/print`, a print-styled route whose app chrome is
+  hidden under `@media print` and whose Print button calls `window.print()`; a "Quotes" section on
+  the deal detail page with "New quote" prefilled with the deal and hidden on won or lost deals;
+  Products and Quotes navigation entries and routes for admin and sales only, the product form
+  routes for admin only. Discounts are typed as percentages and sent as basis points; totals are
+  never recomputed in the browser. New endpoint modules `src/api/endpoints/products.ts` and
+  `quotes.ts`; Vitest coverage per screen and the Playwright spec
+  `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (product → deal → quote → line → sent → print →
+  accepted, with print-media emulation). No new dependency. (#167)
+
+- **Products and quotes screenshots.** Ten documentation captures under
+  `docs/screenshots/quotes/` (product list and form, quote list, the create dialog from a deal,
+  the draft detail with two lines, the add-line dialog, the sent detail with its status actions,
+  the print page on screen and under print media, and the deal's Quotes section with an accepted
+  quote), produced by the new screenshot spec `gocrm-ui/e2e/screenshots/11-quotes.spec.ts` and
+  indexed in `docs/SCREENSHOTS.md`. The capture review also fixed the "Active" filter on
+  `/products` and the "Status" filter on `/quotes`, whose floating label overlapped the empty
+  "All products" / "All statuses" value: the label is now shrunk and the outline notched.
+
+- **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
+  start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
+  (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
+  schedule, and run ordered steps: `wait`, `condition` (allowlisted fields and operators, `else`
+  stop or forward jump, `amount_cents` only in the deal's currency), `create_task`, `assign_owner`,
+  `send_email` to a staff user and `notify` (in-app). Every lead and deal write path — the lead
+  service, form submissions, bulk status/assign/convert, conversion, and deal create/update/stage —
+  records an outbox event inside the transaction that commits the write; automation-originated
+  writes record `origin=automation` events that start no run. A worker (`AUTOMATION_ENABLED`,
+  `AUTOMATION_POLL_INTERVAL_SECONDS`, see `.env.example`) claims events with a conditional update,
+  starts one run per enabled matching rule (`clause.OnConflict{DoNothing: true}` on the dedupe
+  key, so a duplicate is neither an error nor a row on SQLite or MySQL), executes each step in one
+  transaction behind a locking read of the record and a conditional advance of the run row, parks
+  waits in `resume_at` so they survive a restart, continues schedule passes from a persisted
+  cursor (500 records per tick, one pass per UTC day, same-day catch-up, no backfill) and
+  reconciles interrupted runs at boot (a `send_email` left in `sending` is failed with
+  `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
+  neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
+  step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
+  only the placeholders `lead.id`, `lead.status`, `lead.source` and the `deal.*` fields because
+  a task survives the erasure of its lead (`deal.title` is staff-typed and may name the client; a
+  task rendered from it before an erasure keeps that text, see #245); the name, email, phone, company and
+  owner placeholders stay available to the email and notification text, which does not outlive
+  the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
+  `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
+  run (`POST /automation/rules/{id}/dry-run`) reports each step's would-be outcome and writes,
+  sends and notifies nothing. The run history (`/automation/runs`) follows lead and deal
+  visibility inside the query; `/notifications` serves a staff user's own notifications. Lead
+  erasure cancels the lead's active runs (`record_deleted`) and hard-deletes its notifications,
+  before the scrub; user erasure hard-deletes the user's notifications. Logs carry ids, statuses,
+  step types, outcomes and error codes only. Schema: AutoMigrate plus the MySQL/MariaDB migration
+  `20261028120000_add_follow_up_automation` (six new tables, nothing altered). The worker assumes a
+  single API replica and no retention pruning exists yet. The screens are described in the
+  "Follow-up automation and notifications (UI)" entry above. (#164)
+
+- **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
+  integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
+  quotes linked to a deal and/or a customer (`/quotes`, `/deals/{id}/quotes`,
+  `/customers/{id}/quotes`; admin and sales, sales narrowed to its own quotes inside the query).
+  Lines copy the product's name and price when they are added, take a per-line discount in basis
+  points, and the server recomputes the totals with round-half-up on every line change; the line
+  gross and the quote total are capped at 10^12 minor units and a quote holds at most 100 lines.
+  The lifecycle is draft → sent → accepted/rejected/expired (sent → draft to revise): each
+  transition is a conditional claim plus one `quote_status_changes` row in a single transaction,
+  draft → sent reads the line count after the claim and refuses an empty quote, and acceptance is
+  refused after `valid_until`. Only drafts are editable. `POST /quotes/{id}/email` sends a
+  plaintext rendering of a sent or accepted quote to the linked customer's current address with a
+  fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
+  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. Without `SMTP_HOST` the
+  quote email takes the same logging fallback as the password reset: it is logged, not delivered,
+  and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
+  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
+  the code of a relay reply without the text, which can echo the recipient. Customer erasure keeps
+  the quotes, and since #245 redacts their title, notes and line descriptions; the PII sweep
+  covers the four new tables. Schema:
+  AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
+  frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
+  (#158)
+
+- **Feature analysis workflow (runner 0.9.0).** `automation/langflow/flows/analysis.json` and
+  `gophercrm-runner analyze` turn one feature request into a gitignored
+  `docs/specs/<date>-<slug>.md`: a one-page summary, then acceptance criteria in the task
+  manifest shape, the data model with both migration halves, API, screens, permissions, Mermaid
+  diagrams, test plan, documentation to update, cited research notes, an independent review with
+  one bounded revision and the open questions. Agents are read-only and restricted to a detached
+  worktree at `origin/main`; the runner writes the file, records provider-reported cost and
+  duration per call, and verifies a digest chain between stages. Refinements re-enter with
+  numbered owner comments and inherit the parent run's journals. See the
+  [runner guide](automation/langflow/README.md#analyse-a-feature-request).
+
+- **Frontend task profile with named Vitest evidence (runner).** A task manifest may now set
+  `validation_profile: "frontend"`. Its acceptance checks are registry entries of the new
+  optional `kind: "vitest"` (`go` remains the default, so existing entries and frozen contract
+  hashes are unchanged) whose argument array is exactly `npm --prefix gocrm-ui test --silent --
+  --run --reporter=json` followed by test files under `gocrm-ui/src`; each named test is a file
+  and the exact `fullName` the JSON reporter prints, and must report `passed` exactly once.
+  Failed, skipped, pending or todo cases, a required file without results, and duplicates fail
+  acceptance. A frontend ticket changes only `gocrm-ui/`, `docs/`, `README.md` and
+  `CHANGELOG.md`, cannot mix Go and Vitest checks, keeps `make verify` (build, zero-warning lint,
+  unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
+  `database_test_commands` and `TEST_MYSQL_DSN`. For every profile, the Vitest and Playwright
+  configuration, the Vitest setup files and the whole `gocrm-ui/e2e/` suite are now protected
+  validation gates that no agent may change; only a newly added `gocrm-ui/e2e/tests/*.spec.ts`
+  is admitted. See the [runner guide](automation/langflow/README.md#execute-the-queue).
+- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
+  closed outside the runner, recording the closure and its closing pull requests as unvalidated
+  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
+- **Maintainer-commit adoption for ticket executions (runner).** `gophercrm-runner adopt-commit
+  --issue N --head FULL_SHA --reason ...` continues an unfinished ticket whose repair budget is
+  exhausted, or whose candidate must be corrected by hand, with an inspected maintainer commit on
+  the ticket branch: the counterpart of `complete-pr --refresh --head`. The worktree must be
+  clean at that exact commit, the commit must descend from the recorded head, its diff from the
+  journal base must pass the protected-path and frozen-scope gates, and a recorded pull request
+  must already carry it. Adoption records an `adoptions` entry, invalidates tests and review as
+  `freeze --refresh` does and returns the execution to `validate`; it consumes no repair round
+  and leaves spent calls and the deadline unchanged. See the
+  [operations runbook](automation/langflow/OPERATIONS.md#adopt-a-maintainer-commit).
+
+- A shared bounded mailer validation profile: API build/vet, SMTP transport/header/privacy
+  regressions, focused password-reset/form/quote/automation delivery callers and browser health smoke.
+  Required tests cannot be absent or skipped; mixed application changes and explicit
+  full/release runs retain complete coverage.
+
+- **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
+  on, even when no provider key exists at boot: engines are resolved from the environment plus
+  the administrator's stored keys when a tick is due, so a key saved in Settings is used by the
+  next scheduled run without a restart. A tick that finds the module unconfigured is
+  logged once at info level and the loop sleeps until the next day. At shutdown the process
+  closes run admission (a run requested while draining answers 503 `SHUTTING_DOWN`), cancels
+  the scheduler and every manual, scheduled or single-prompt run in flight — cancellation
+  reaches provider calls and repository writes — joins them, and only then closes the database.
+  When cleanup can persist it, an interrupted run is finalized as `failed` (or `partial` when answers were already recorded)
+  with `completed_at` set; queries cut short are counted as failed and not recorded as answers.
+  The drain waits at most 15 seconds; if a provider or database write still has not released by
+  then, the process exits without closing the database and the next boot's reconciliation fails
+  the row, as after a crash. (#111)
+
+- Shared Go validation isolates application database variables while retaining the disposable
+  `TEST_MYSQL_DSN`, so configuration defaults are tested consistently locally and in MariaDB CI.
+  Runner policies can explicitly allow zero repair rounds for a continuation whose repair
+  allowance is exhausted; validation, independent review and CI remain required.
+
+- A conservative committed proof for comment-only `.env.example` edits, allowing required
+  configuration guidance to accompany bounded validation without relaxing active-setting,
+  mixed-scope or explicit full/release gates.
+
+- A shared bounded AEO runtime validation profile with committed startup/interface scope
+  proofs, required lifecycle roots, focused Go checks and health/provider browsers. SQL,
+  MariaDB migration coverage and explicit full/release gates remain mandatory.
+- Opt-in candidate validation inspection through `confirm-validation`; changed candidates
+  need new inspection, and stopped executions retain their spent budgets.
+
+- Runner recovery and Markdown handoff reports, batch-wide audited budget extensions,
+  worker heartbeats, installed-module verification and validation-cost previews. Heavy commands
+  share a machine lock, record bounded resource observations and enforce wall-clock deadlines
+  after sleep. Explicit retention preview/apply reclaims only inactive merged validation
+  dependencies while preserving source and evidence.
+
+- A shared transaction validation profile with SQLite/MySQL boundaries, affected-caller race
+  regressions and health smoke; CI adds MariaDB boundaries. Partial full-suite attempts remain
+  evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.
+  Browser port conflicts stop for environment recovery without launching a code repair.
+
+- Dedicated PR migration checks on disposable MySQL 8 and MariaDB 10.11 services,
+  including populated upgrades, rollback/reapply and SQLite upgrade fixtures. Required
+  tests must execute without skips; CI retains their results and tested revision. Both engines
+  feed the existing required Backend check. Workflow/checker-only changes use shared targeted
+  migration validation and health smoke.
+- A targeted auth validation profile with auth/session race regressions and application
+  health, login and registration checks. Explicit full/release validation remains complete.
+- Explicit documentation impact and review decisions in new Langflow runner configurations,
+  with candidate-bound evidence and verification after merge. CI publishes impact reports;
+  documentation updates remain in the reviewed PR.
+- Bounded prepared backend batches and a runner-only validation profile using relevant workflow
+  tests and application health smoke. Releases retain the full validation matrix.
+
+- Contextual browser validation for PRs and the local Langflow runner: health smoke plus
+  affected feature specs, with full fallback for shared or unknown changes. Selected core checks,
+  named issue regressions, independent review and exact-commit merge checks remain required.
+- A manual full-validation Release workflow with rehearsal mode, version/changelog preparation,
+  verified artifacts, annotated tags and draft-first publication. Production deploys now consume
+  published release artifacts after checking their full-validation run and commit identity.
+
+- **`SERVER_HOST`.** Optional listen interface for the API server. Empty, the default, keeps
+  the previous behaviour of binding every interface; `127.0.0.1` restricts the server to the
+  local machine behind a reverse proxy. The startup log now names the full listen address.
+- **Deal pipeline aggregates.** `GET /deals/pipeline` (admin and sales; sales always sees its own
+  deals, admin may filter by `owner_id` and `company_id`) returns all five stages in pipeline
+  order with each stage's deal count and totals per currency: the amount and the weighted amount,
+  round half up of Σ `amount_cents × probability` / 100, rounded once per stage and currency.
+  `GET /dashboard/pipeline` returns the same stages for the dashboard plus `won_this_month`, the
+  deals won in the current calendar month in UTC, counted and summed per currency (admin all,
+  sales own; support and customer 403). Aggregation is integer arithmetic grouped in SQL with no
+  date functions, the same on MySQL, MariaDB and SQLite; no schema change.
+- **Deal amount bound.** `amount_cents` on `POST`/`PUT /deals` is now capped at 1000000000000
+  (10,000,000,000.00 in major units) so the pipeline sums keep ample headroom; larger values are
+  refused with a 400 naming the bound.
+- **Deals with stage history.** A sales opportunity with a fixed pipeline and an append-only
+  record of every stage it has been through.
+  - `/deals` (admin and sales; sales sees and edits its own, delete is admin only): list with
+    search over title and notes, server-side filters (`stage`, `open=true`, `company_id`,
+    `customer_id`, `owner_id`), a sort allowlist and pagination; get with owner, company,
+    customer and lead; create and update with validation of the links (400
+    `INVALID_REFERENCE`; on update, links are checked only when the request sets them, so a
+    deal keeps links to erased records and stays editable); `POST /deals/{id}/stage` and
+    `GET /deals/{id}/history`;
+    `GET /companies/{id}/deals` and `GET /customers/{id}/deals`.
+  - Stages `qualification`, `proposal`, `negotiation`, `won`, `lost` with default probabilities
+    10/40/70/100/0; `won` is always 100 and `lost` always 0; `closed_at` is set on entering a
+    closed stage and cleared on leaving it; `lost_reason` is kept only while lost. Every stage
+    change, the create included, writes one history row in the same transaction; asking for the
+    current stage again writes nothing.
+  - Money is an integer amount in minor units (`amount_cents`) next to a three-letter currency
+    code; the default currency is the new `deals.default_currency` setting (category `deals`,
+    shipped as `EUR`, admin-editable, and exposed on `GET /configurations/ui`).
+    `expected_close_date` is a plain `YYYY-MM-DD` date on the wire.
+  - Companies report `deal_count`, and deleting a company also clears `company_id` on its deals.
+  - Erasing a linked customer, lead or user keeps the deals and their history; since #245 erasing
+    the customer or lead (or a customer-role login reaching them) redacts their title, notes and
+    lost reason. Erasing a staff owner does not.
+  - Migration `20260930120000_add_deals` for MySQL and MariaDB (two new tables, nothing altered);
+    auto-migration covers SQLite, populated files included.
+- **Companies.** A curated organisation record next to the free-text company field of leads and
+  customers.
+  - `/companies`: list with search (name, domain, industry, city), a sort allowlist and
+    pagination; get with the owner and live customer and lead counts; create and update with the
+    domain normalised (lower case, no scheme, path or `www.`) and unique among live companies
+    (409); admin-only delete that clears the links from leads and customers in the same
+    transaction. Reading is open to admin, sales and support; writing to admin and sales.
+  - `GET /companies/{id}/customers` and `GET /companies/{id}/leads` page through the linked
+    records; sales sees only the leads it owns.
+  - Leads and customers accept an optional `company_id` on create and update (unknown → 400
+    `INVALID_REFERENCE`; on update `0` clears, absent keeps) and return `company_record` on their
+    detail endpoints. The free-text `company` column and the public forms are unchanged.
+  - Erasure is unchanged: `company_id` is a business link and stays on the erased row; companies
+    hold no personal data.
+  - Migration `20260929120000_add_companies` for MySQL and MariaDB; auto-migration covers SQLite.
+- `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
+  licensing as unresolved.
+- **E2E on SQLite in CI.** The e2e suite now also runs against SQLite on every pull request
+  (job "E2E (Playwright on SQLite)", no database service). `make e2e E2E_DB_DRIVER=sqlite` runs it
+  locally on a new SQLite file and leaves the `gocrm_e2e` MySQL database alone; the default
+  (`mysql`) is unchanged.
+
 ### Changed
 
 - **Identity package boundary (#641).** The new `internal/idkit` package will hold the sign-in,
@@ -2162,6 +2522,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its text, and graphs erased before this release are not repaired. No schema change and no API
   response change.
 
+- **Sales users see Tickets in the navigation.** The API already let sales read every ticket and
+  the ticket pages already showed it no create, edit or delete; only the nav item was hidden, so
+  sales reached tickets by deep link alone. The navigation now matches the API, and the dashboard
+  "New Ticket" quick action and the customer page's "Create Ticket" and "New Ticket" buttons, which
+  led sales (and the dashboard one customers) to the unauthorized page, show only to admin and
+  support (#241).
+- Refresh-token persistence validation now uses auth/session and transaction boundary checks,
+  named SQLite/MySQL rotation regressions, migrations and auth browsers; CI adds MariaDB.
+  Shared repository-interface changes qualify only with proof that other declarations are
+  unchanged and all six required rotation boundary roots are present in the candidate.
+  Unrelated entity browsers and frontend unit suites are excluded from this
+  bounded profile; explicit full/release validation remains complete.
+
+- **Lookup indexes for leads and companies (#109).** `leads.email`, `leads.classification`,
+  `leads.external_id` and `companies.domain` are now indexed, non-uniquely (a person may be
+  captured as a lead twice; a soft-deleted company keeps its domain while a live one reuses it).
+  The duplicate-domain check compares the stored, already lower-cased domain with plain equality
+  instead of `LOWER(domain)`, which no index could serve on SQLite or MySQL. MySQL/MariaDB
+  upgrades run `migrations/20261029140000_add_lead_company_lookup_indexes` (idempotent after an
+  AutoMigrate start, lower-cases any domain written outside the application; rollback drops the
+  four indexes); SQLite gets the same indexes from AutoMigrate, and application startup
+  (`models.MigrateDatabase`) lower-cases such domains on every driver, so SQLite installs, which
+  never run the SQL migration, keep catching a mixed-case duplicate. Query plans before and after are
+  recorded in `docs/datamodel.md`.
+
+- **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite
+  passes on the queue's temporary branch, on top of the current `main`, before a pull request
+  merges. Production deploys still follow only CI runs of pushes to `main`.
+
+- **Bulk status service narrowed (internal, no API change).** `POST /leads|tickets|tasks/bulk/status`
+  now run on a `BulkStatusService` holding only the three status operations, over a
+  `BulkStatusRepository` (the read and write halves of a status change) and a
+  `BulkOperationRepository` reduced to the history-row create and outcome update. Responses,
+  authorization, all-or-nothing transactions, `error.details`, the `bulk_operations` history
+  rows and the lead automation events are unchanged; new SQLite/MySQL regression roots pin the
+  rollback, history and event behaviour (#112).
+
+### Removed
+
+- **The unused CSRF middleware and cookie-session helpers (#362).** Authentication is header-only
+  (Bearer or ApiKey) and no cookie credential is accepted, so CSRF does not apply; the code that
+  prepared a cookie session was never installed and is gone: `internal/middleware/csrf.go`
+  (`CSRF`, `CSRFToken`), the `GenerateCSRFToken`/`ValidateCSRFToken` token codec on `AuthService`,
+  `config.CSRFConfig`, the whole of `internal/utils/cookie.go` (`SetAuthCookies`,
+  `ClearAuthCookies`, `SetSecureCookie`, `ClearCookie`, `GetTokenFromCookie`, `SetCSRFCookie`,
+  `IsCookieSecureContext`, `ParseSameSite`, `ValidateCookieConfig`, `GetCookieMaxAge`,
+  `GenerateSecureToken`, `HashToken` and the cookie-name constants) and
+  `JWTConfig.CookieSameSite`/`CookieDomain`/`CookieSecure` with the production warning about the
+  `Secure` flag. `JWT_COOKIE_SECURE`, `JWT_COOKIE_DOMAIN` and `JWT_COOKIE_SAMESITE` are no longer
+  read; setting them is harmless. No route, response or behaviour changes. A new integration test
+  pins that a valid access token sent only in cookies answers 401 on a protected route. Any
+  future cookie session must ship with session-bound CSRF protection (#261).
+- **Two settings that did nothing.** `security.session_timeout_hours` and
+  `tickets.auto_assign_support` were seeded and never read: session length comes from
+  `JWT_EXPIRY_HOURS` and `REFRESH_TOKEN_EXPIRY_DAYS`, and tickets are not distributed among support
+  users (a ticket created without `assigned_to_id` goes to its creator). Startup now deletes both
+  rows on every driver, and `migrations/20261031120000_retire_inert_configurations` does the same
+  on MySQL and MariaDB; its down migration restores them as first seeded. The Settings page no
+  longer lists them (#224).
+- **`repository.NewCustomerRepositoryWithLeadErasure` (#108).** The identity cascade now lives in
+  the plain user, customer and lead repositories, so no constructor can erase half a person;
+  `cmd/main.go` uses `NewCustomerRepository`.
+- **The unused generic bulk subsystem (#112).** Nothing routed it since the generic
+  `/bulk/:resource` handlers were dropped: the `ProcessBulk*` dispatchers, the
+  `BulkCreate*`/`BulkUpdate*`/`BulkDelete*`/`BulkAction*` service methods for users, leads,
+  customers, tasks and tickets, the matching repository mutations (including the batch-erasure
+  wrapper and its per-item savepoint helpers, which only that path used), the bulk-operation read
+  methods, their mocks and tests, and the request/response DTOs. Single-record erasure is
+  untouched. No table or column is dropped: `bulk_operations` keeps receiving one row per status
+  update, and `bulk_operation_items` stays in the schema although nothing writes it any more
+  (retirement is a separate roadmap item).
+- **Customer fields the API never stored (#118).** The customer form no longer offers Industry,
+  Number of Employees, Annual Revenue or the "Active Customer" switch, the customer list drops
+  its Status column and the customer detail page drops the Industry, Annual Revenue and Employees
+  fields and the Active/Inactive chip. None of them exists on the customer API: saves discarded
+  what was typed and reads showed invented defaults (blank, zero, always active). The Company
+  record already owns industry and employee range, and customers link to it; there is no
+  customer activation concept. The frontend `Customer` type and the read adapter no longer carry
+  the four fields. No backend change.
+
 ### Fixed
 
 - **Release notes fit GitHub's limit.** A changelog entry longer than 60,000 characters is
@@ -2691,441 +3131,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   company. Live customers behave as before, including last-write-wins, the website and `company_id`
   clears and the 409 on a duplicate email.
 
-### Added
-
-- **Retention purge for spam and unconfirmed form submissions (#217).** With the new
-  `FORM_RETENTION_DAYS` set, spam and never-confirmed submissions with no linked lead are permanently
-  removed with their confirmation tokens once they pass that age. It is off by default. 1 and 2 are
-  raised to a 3-day floor, and anything above 36500 is lowered to it. The purge runs at boot and then
-  every 24 hours, so **the first boot with the setting removes the whole existing backlog**: take a
-  backup first if you may want those rows. A pending row that still holds a spendable token stays
-  until the token is spent or expires, and received, confirmed and lead-linked rows are never touched.
-  The drain is now automation, then the purge, then AEO. Both form-delete dialogs still say "Collected
-  submissions are retained" until a separate frontend task merges, which is wrong for purged rows.
-  No schema change.
-- **Tasks can link a deal (#240).** A task gains a nullable `deal_id`, additive to the
-  lead-or-customer link: migration `20261101120000_add_task_deal_link` on MySQL/MariaDB, AutoMigrate
-  on SQLite (the first start rebuilds `tasks`). `POST /tasks` and `PUT /tasks/{id}` accept `deal_id`
-  when it names a live deal the caller may see, closed deals included: admin any, sales its own, and
-  a hidden deal is 404 like a missing one. On update an absent `deal_id` keeps the link, 0 clears it,
-  and a clear of a link hidden from the caller answers 200 and keeps it. Every task the API returns
-  carries `deal_id` and a `deal` summary of id, title and stage only when the caller may see that
-  deal, decided on every read. `GET /deals/{id}/tasks` lists a deal's live tasks: every task for an
-  admin, only the tasks assigned to the caller for the sales owner. A `create_task` step of a deal
-  rule records the deal beside its customer-else-lead link, in the run step and in the dry run. Tasks
-  created by earlier runs are not backfilled.
-- **Lead owner validation and `POST /leads/{id}/assign` (#255, #185).** `POST /leads`,
-  `PUT /leads/{id}` and the new assign route refuse an owner that is unknown, deactivated, erased or
-  neither an admin nor a sales user with 400 `INVALID_REFERENCE` (`details.field` names the body
-  field, one message per route), writing nothing and recording no event; an unknown id used to fail
-  on the foreign key as a 500 and an erased user's id was accepted. An update that leaves the owner
-  alone, or re-sends it, is not checked, so a lead whose owner has left stays editable; an assignment
-  always checks the user it names. The assign route takes the `{user_id}` body the frontend client
-  already sends and follows the lead visibility policy on the locked row: an admin on any lead, a
-  sales user on its own, which it loses at once when it hands the lead over. The check is a locking
-  read of the user, so a deactivation committed earlier is seen on MySQL too. `NewLeadService` now
-  takes the user repository; a service built without it refuses these writes
-  (`ErrLeadOwnerCheckUnavailable`) rather than skipping the check. Public form default owners, the
-  automation `assign_owner` step and leads whose owner already left are unchanged.
-
-- **Lead lookup by external id.** `GET /leads?external_id=` returns the live leads whose
-  `external_id` equals the value, in the usual list shape (ascending id, owner loaded, `total` is
-  their number), so integrations can correlate their records with CRM leads. It takes precedence
-  over `search`, `classification`, the sort and paging. Visibility follows the lead policy (admin
-  any lead, sales its own) row by row: a lead the caller may not see is left out, never 403 or
-  404, so an unknown id and a hidden one read the same. At most the first 100 matching leads are
-  read. A value longer than the 255-character column is 400 `VALIDATION_ERROR`.
-
-- **Complete API reference and its CI gate.** Every operation of the Swagger 2.0 spec in `api/`
-  now names the roles it admits, its parameters with defaults and clamping, the `error.code`
-  values it can return and their conditions, and its side effects; every schema property is
-  described, with examples, enums for the closed sets and the limits the code enforces. The
-  general description covers authentication, the response envelope, the error catalogue,
-  pagination, rate limits (and the absence of rate-limit headers), CORS and `X-Request-ID`, and
-  every tag is described. The four public form pages that return JavaScript or HTML
-  (`GET /forms/public/embed.js`, `GET /forms/public/{key}/view`, `GET` and `POST
-  /forms/public/confirm`) are documented under a new `public-forms` tag, the quote responses now
-  show the fields their JSON really carries (`number` and the customer, deal and owner
-  summaries), and list payloads are typed. `make swagger` also renders `api/index.html`, a static
-  offline HTML reference. `make verify-api-docs` (in `make verify`, CI and every validation
-  profile) fails when `api/` differs from a fresh generation, a route has no operation or an
-  operation no route, an operation's security disagrees with the route's authentication (exactly
-  the two schemes as alternatives behind it), a 401, 403 or 429 the route middleware can return is
-  undocumented, a query parameter, form field or body the registered handler reads is undocumented
-  (or a documented one is never read, or the body's schema or required flag differs from what the
-  handler binds), the base path or a security scheme's header form is wrong, a description, tag or
-  success response is missing, or a closed set's enum drifts from its Go constants.
-
-- **Follow-up automation: rule names on runs, field-level rule errors, dry run of unsaved edits.**
-  Run responses (`GET /automation/runs`, `GET /automation/runs/{id}`, the cancel answer) carry
-  `rule_name` — the rule's current name, also for a deleted rule, flagged `rule_deleted` — and
-  never the rule's trigger or steps (the `rule` association is no longer serialised at all); the
-  run list, run detail, the lead and deal Automation sections and the run list's rule filter show
-  the name. Sales users therefore see the names of the rules that ran on their records, also after
-  a rule is deleted; the rule form says so under the name. A refused rule body lists every refused
-  field in `error.details.fields` as `{field, code, message}` (`steps[2].config.title`, steps
-  counted from zero) while `error.message` and `error.code` stay those of the first refusal; the
-  editor puts each message under its field, following steps moved while the save was in flight and
-  dropping errors of fields edited or steps removed meanwhile. `POST /automation/rules/dry-run`
-  (admin) simulates an unsaved rule body after the same validation as a create, saving nothing and
-  starting no transaction; the editor's Dry run button now simulates the form as it is, on a new
-  rule too, while the rule list's dry run keeps simulating the saved version.
-- **Follow-up automation and notifications (UI).** The screens for the automation API:
-  `/automation/rules` (admin) lists rules with an enable switch (disabling asks first, because it
-  cancels the rule's active runs), Edit, Dry run and delete tools; `/automation/rules/new` and
-  `/automation/rules/{id}/edit` build the trigger and up to 20 steps with a sub-form per step
-  type, forward-only jumps, placeholder help, status and stage condition values as free text with
-  the known values suggested (kept verbatim, as the API compares plain strings), the API's limits
-  checked client-side, and an edit
-  asks for confirmation before it creates a new version; the dry-run dialog simulates the saved
-  rule on a chosen lead or deal and shows each step's outcome, simulated time and details.
-  `/automation/runs` (admin and sales; sales sees runs on records it owns) filters by status,
-  rule, entity and record, and `/automation/runs/{id}` shows the step log with an admin-only
-  Cancel run. Lead and deal detail pages gain an Automation section with the record's runs. Staff
-  users get a notification bell in the app bar (unread count polled every 60 s and on window
-  focus, the latest ten in its menu, mark read, mark all read) and a `/notifications` page with an
-  unread filter; customers see neither. Failed loads show the server message with a retry. The e2e
-  spec `automation-rules.spec.ts` builds a rule in
-  the form and dry-runs it; eight captures are in `docs/screenshots/automation/`.
-
-- **Products and quotes (UI).** The frontend slice of the quotes feature: `/products` (admin and
-  sales; name, SKU, price with currency, active chip, search, active filter, server pagination and
-  sorting) with an admin-only form at `/products/new` and `/products/{id}/edit` (name ≤ 200,
-  SKU ≤ 64, price in major units sent as `unit_price_cents`, currency defaulting to
-  `deals.default_currency`, active switch); `/quotes` (number, title, status, customer, deal,
-  total, valid until; status filter, server pagination) with a create dialog (title, deal and
-  customer pickers, currency, valid until, notes); `/quotes/{id}` with the lines table, add/edit/
-  delete of lines and an edit dialog while the quote is a draft and no edit control otherwise,
-  the server's subtotal, discount and total, status buttons for the valid transitions only (the
-  server message on `INVALID_STATUS_TRANSITION` and `CONFLICT`), a Print link, an "Email quote"
-  confirmation on sent and accepted quotes that names the customer and distinguishes a 409 from a
-  502, and the status history; `/quotes/{id}/print`, a print-styled route whose app chrome is
-  hidden under `@media print` and whose Print button calls `window.print()`; a "Quotes" section on
-  the deal detail page with "New quote" prefilled with the deal and hidden on won or lost deals;
-  Products and Quotes navigation entries and routes for admin and sales only, the product form
-  routes for admin only. Discounts are typed as percentages and sent as basis points; totals are
-  never recomputed in the browser. New endpoint modules `src/api/endpoints/products.ts` and
-  `quotes.ts`; Vitest coverage per screen and the Playwright spec
-  `gocrm-ui/e2e/tests/admin-quotes.spec.ts` (product → deal → quote → line → sent → print →
-  accepted, with print-media emulation). No new dependency. (#167)
-
-- **Products and quotes screenshots.** Ten documentation captures under
-  `docs/screenshots/quotes/` (product list and form, quote list, the create dialog from a deal,
-  the draft detail with two lines, the add-line dialog, the sent detail with its status actions,
-  the print page on screen and under print media, and the deal's Quotes section with an accepted
-  quote), produced by the new screenshot spec `gocrm-ui/e2e/screenshots/11-quotes.spec.ts` and
-  indexed in `docs/SCREENSHOTS.md`. The capture review also fixed the "Active" filter on
-  `/products` and the "Status" filter on `/quotes`, whose floating label overlapped the empty
-  "All products" / "All statuses" value: the label is now shrunk and the outline notched.
-
-- **Follow-up automation and notifications (API).** Admin-defined rules (`/automation/rules`)
-  start on lead events (`lead_created`, `lead_updated`, `lead_status_changed`), deal events
-  (`deal_created`, `deal_updated`, `deal_stage_changed`, won and lost included) or a daily UTC
-  schedule, and run ordered steps: `wait`, `condition` (allowlisted fields and operators, `else`
-  stop or forward jump, `amount_cents` only in the deal's currency), `create_task`, `assign_owner`,
-  `send_email` to a staff user and `notify` (in-app). Every lead and deal write path — the lead
-  service, form submissions, bulk status/assign/convert, conversion, and deal create/update/stage —
-  records an outbox event inside the transaction that commits the write; automation-originated
-  writes record `origin=automation` events that start no run. A worker (`AUTOMATION_ENABLED`,
-  `AUTOMATION_POLL_INTERVAL_SECONDS`, see `.env.example`) claims events with a conditional update,
-  starts one run per enabled matching rule (`clause.OnConflict{DoNothing: true}` on the dedupe
-  key, so a duplicate is neither an error nor a row on SQLite or MySQL), executes each step in one
-  transaction behind a locking read of the record and a conditional advance of the run row, parks
-  waits in `resume_at` so they survive a restart, continues schedule passes from a persisted
-  cursor (500 records per tick, one pass per UTC day, same-day catch-up, no backfill) and
-  reconciles interrupted runs at boot (a `send_email` left in `sending` is failed with
-  `email_unconfirmed` and never resent); a process started with `AUTOMATION_ENABLED=false`
-  neither executes nor reconciles runs, so it leaves the worker replica's runs alone. The email
-  step is two transactions around one `Mailer.Send`. A `create_task` title or description accepts
-  only the placeholders `lead.id`, `lead.status`, `lead.source` and the `deal.*` fields because
-  a task survives the erasure of its lead (`deal.title` is staff-typed and may name the client; a
-  task rendered from it before an erasure keeps that text, see #245); the name, email, phone, company and
-  owner placeholders stay available to the email and notification text, which does not outlive
-  the person. Rule updates cancel the rule's active runs with `rule_changed` (disable:
-  `rule_disabled`, delete: `rule_deleted`); `POST /automation/runs/{id}/cancel` is `manual`. A dry
-  run (`POST /automation/rules/{id}/dry-run`) reports each step's would-be outcome and writes,
-  sends and notifies nothing. The run history (`/automation/runs`) follows lead and deal
-  visibility inside the query; `/notifications` serves a staff user's own notifications. Lead
-  erasure cancels the lead's active runs (`record_deleted`) and hard-deletes its notifications,
-  before the scrub; user erasure hard-deletes the user's notifications. Logs carry ids, statuses,
-  step types, outcomes and error codes only. Schema: AutoMigrate plus the MySQL/MariaDB migration
-  `20261028120000_add_follow_up_automation` (six new tables, nothing altered). The worker assumes a
-  single API replica and no retention pruning exists yet. The screens are described in the
-  "Follow-up automation and notifications (UI)" entry above. (#164)
-
-- **Products and quotes (API).** A product catalogue (`/products`: name, SKU, unit price in
-  integer minor units with an ISO 4217 currency, active flag; admin writes, sales reads) and
-  quotes linked to a deal and/or a customer (`/quotes`, `/deals/{id}/quotes`,
-  `/customers/{id}/quotes`; admin and sales, sales narrowed to its own quotes inside the query).
-  Lines copy the product's name and price when they are added, take a per-line discount in basis
-  points, and the server recomputes the totals with round-half-up on every line change; the line
-  gross and the quote total are capped at 10^12 minor units and a quote holds at most 100 lines.
-  The lifecycle is draft → sent → accepted/rejected/expired (sent → draft to revise): each
-  transition is a conditional claim plus one `quote_status_changes` row in a single transaction,
-  draft → sent reads the line count after the claim and refuses an empty quote, and acceptance is
-  refused after `valid_until`. Only drafts are editable. `POST /quotes/{id}/email` sends a
-  plaintext rendering of a sent or accepted quote to the linked customer's current address with a
-  fixed subject and stamps `last_emailed_at` by a conditional update that a revision during the
-  send defeats (409); a mailer failure is 502 `MAIL_DELIVERY_FAILED`. Without `SMTP_HOST` the
-  quote email takes the same logging fallback as the password reset: it is logged, not delivered,
-  and the call still answers 200 and stamps `last_emailed_at`. The SMTP mailer refuses a
-  recipient or subject containing CR or LF (`mailer.ErrInvalidHeader`), and its failure log keeps
-  the code of a relay reply without the text, which can echo the recipient. Customer erasure keeps
-  the quotes, and since #245 redacts their title, notes and line descriptions; the PII sweep
-  covers the four new tables. Schema:
-  AutoMigrate plus the MySQL/MariaDB migration `20261026120000_add_products_and_quotes`. The
-  frontend (products and quotes pages, print page, DealDetail section) is a separate follow-up.
-  (#158)
-
-- **Feature analysis workflow (runner 0.9.0).** `automation/langflow/flows/analysis.json` and
-  `gophercrm-runner analyze` turn one feature request into a gitignored
-  `docs/specs/<date>-<slug>.md`: a one-page summary, then acceptance criteria in the task
-  manifest shape, the data model with both migration halves, API, screens, permissions, Mermaid
-  diagrams, test plan, documentation to update, cited research notes, an independent review with
-  one bounded revision and the open questions. Agents are read-only and restricted to a detached
-  worktree at `origin/main`; the runner writes the file, records provider-reported cost and
-  duration per call, and verifies a digest chain between stages. Refinements re-enter with
-  numbered owner comments and inherit the parent run's journals. See the
-  [runner guide](automation/langflow/README.md#analyse-a-feature-request).
-
-- **Frontend task profile with named Vitest evidence (runner).** A task manifest may now set
-  `validation_profile: "frontend"`. Its acceptance checks are registry entries of the new
-  optional `kind: "vitest"` (`go` remains the default, so existing entries and frozen contract
-  hashes are unchanged) whose argument array is exactly `npm --prefix gocrm-ui test --silent --
-  --run --reporter=json` followed by test files under `gocrm-ui/src`; each named test is a file
-  and the exact `fullName` the JSON reporter prints, and must report `passed` exactly once.
-  Failed, skipped, pending or todo cases, a required file without results, and duplicates fail
-  acceptance. A frontend ticket changes only `gocrm-ui/`, `docs/`, `README.md` and
-  `CHANGELOG.md`, cannot mix Go and Vitest checks, keeps `make verify` (build, zero-warning lint,
-  unit tests) and requires the selected browser checks on SQLite and MySQL; freezing it needs
-  `database_test_commands` and `TEST_MYSQL_DSN`. For every profile, the Vitest and Playwright
-  configuration, the Vitest setup files and the whole `gocrm-ui/e2e/` suite are now protected
-  validation gates that no agent may change; only a newly added `gocrm-ui/e2e/tests/*.spec.ts`
-  is admitted. See the [runner guide](automation/langflow/README.md#execute-the-queue).
-- `gophercrm-runner retire-issue` retires an unfinished ticket execution whose GitHub issue was
-  closed outside the runner, recording the closure and its closing pull requests as unvalidated
-  by that execution, releasing its admission slot and stopping the queue without modifying GitHub.
-- **Maintainer-commit adoption for ticket executions (runner).** `gophercrm-runner adopt-commit
-  --issue N --head FULL_SHA --reason ...` continues an unfinished ticket whose repair budget is
-  exhausted, or whose candidate must be corrected by hand, with an inspected maintainer commit on
-  the ticket branch: the counterpart of `complete-pr --refresh --head`. The worktree must be
-  clean at that exact commit, the commit must descend from the recorded head, its diff from the
-  journal base must pass the protected-path and frozen-scope gates, and a recorded pull request
-  must already carry it. Adoption records an `adoptions` entry, invalidates tests and review as
-  `freeze --refresh` does and returns the execution to `validate`; it consumes no repair round
-  and leaves spent calls and the deadline unchanged. See the
-  [operations runbook](automation/langflow/OPERATIONS.md#adopt-a-maintainer-commit).
-
-- A shared bounded mailer validation profile: API build/vet, SMTP transport/header/privacy
-  regressions, focused password-reset/form/quote/automation delivery callers and browser health smoke.
-  Required tests cannot be absent or skipped; mixed application changes and explicit
-  full/release runs retain complete coverage.
-
-- **AEO runtime ownership.** The daily scheduler now starts whenever `AEO_SCHEDULE_ENABLED` is
-  on, even when no provider key exists at boot: engines are resolved from the environment plus
-  the administrator's stored keys when a tick is due, so a key saved in Settings is used by the
-  next scheduled run without a restart. A tick that finds the module unconfigured is
-  logged once at info level and the loop sleeps until the next day. At shutdown the process
-  closes run admission (a run requested while draining answers 503 `SHUTTING_DOWN`), cancels
-  the scheduler and every manual, scheduled or single-prompt run in flight — cancellation
-  reaches provider calls and repository writes — joins them, and only then closes the database.
-  When cleanup can persist it, an interrupted run is finalized as `failed` (or `partial` when answers were already recorded)
-  with `completed_at` set; queries cut short are counted as failed and not recorded as answers.
-  The drain waits at most 15 seconds; if a provider or database write still has not released by
-  then, the process exits without closing the database and the next boot's reconciliation fails
-  the row, as after a crash. (#111)
-
-- Shared Go validation isolates application database variables while retaining the disposable
-  `TEST_MYSQL_DSN`, so configuration defaults are tested consistently locally and in MariaDB CI.
-  Runner policies can explicitly allow zero repair rounds for a continuation whose repair
-  allowance is exhausted; validation, independent review and CI remain required.
-
-- A conservative committed proof for comment-only `.env.example` edits, allowing required
-  configuration guidance to accompany bounded validation without relaxing active-setting,
-  mixed-scope or explicit full/release gates.
-
-- A shared bounded AEO runtime validation profile with committed startup/interface scope
-  proofs, required lifecycle roots, focused Go checks and health/provider browsers. SQL,
-  MariaDB migration coverage and explicit full/release gates remain mandatory.
-- Opt-in candidate validation inspection through `confirm-validation`; changed candidates
-  need new inspection, and stopped executions retain their spent budgets.
-
-- Runner recovery and Markdown handoff reports, batch-wide audited budget extensions,
-  worker heartbeats, installed-module verification and validation-cost previews. Heavy commands
-  share a machine lock, record bounded resource observations and enforce wall-clock deadlines
-  after sleep. Explicit retention preview/apply reclaims only inactive merged validation
-  dependencies while preserving source and evidence.
-
-- A shared transaction validation profile with SQLite/MySQL boundaries, affected-caller race
-  regressions and health smoke; CI adds MariaDB boundaries. Partial full-suite attempts remain
-  evidence of interrupted runs, and explicit full/release validation includes the SQL boundaries.
-  Browser port conflicts stop for environment recovery without launching a code repair.
-
-- Dedicated PR migration checks on disposable MySQL 8 and MariaDB 10.11 services,
-  including populated upgrades, rollback/reapply and SQLite upgrade fixtures. Required
-  tests must execute without skips; CI retains their results and tested revision. Both engines
-  feed the existing required Backend check. Workflow/checker-only changes use shared targeted
-  migration validation and health smoke.
-- A targeted auth validation profile with auth/session race regressions and application
-  health, login and registration checks. Explicit full/release validation remains complete.
-- Explicit documentation impact and review decisions in new Langflow runner configurations,
-  with candidate-bound evidence and verification after merge. CI publishes impact reports;
-  documentation updates remain in the reviewed PR.
-- Bounded prepared backend batches and a runner-only validation profile using relevant workflow
-  tests and application health smoke. Releases retain the full validation matrix.
-
-- Contextual browser validation for PRs and the local Langflow runner: health smoke plus
-  affected feature specs, with full fallback for shared or unknown changes. Selected core checks,
-  named issue regressions, independent review and exact-commit merge checks remain required.
-- A manual full-validation Release workflow with rehearsal mode, version/changelog preparation,
-  verified artifacts, annotated tags and draft-first publication. Production deploys now consume
-  published release artifacts after checking their full-validation run and commit identity.
-
-- **`SERVER_HOST`.** Optional listen interface for the API server. Empty, the default, keeps
-  the previous behaviour of binding every interface; `127.0.0.1` restricts the server to the
-  local machine behind a reverse proxy. The startup log now names the full listen address.
-- **Deal pipeline aggregates.** `GET /deals/pipeline` (admin and sales; sales always sees its own
-  deals, admin may filter by `owner_id` and `company_id`) returns all five stages in pipeline
-  order with each stage's deal count and totals per currency: the amount and the weighted amount,
-  round half up of Σ `amount_cents × probability` / 100, rounded once per stage and currency.
-  `GET /dashboard/pipeline` returns the same stages for the dashboard plus `won_this_month`, the
-  deals won in the current calendar month in UTC, counted and summed per currency (admin all,
-  sales own; support and customer 403). Aggregation is integer arithmetic grouped in SQL with no
-  date functions, the same on MySQL, MariaDB and SQLite; no schema change.
-- **Deal amount bound.** `amount_cents` on `POST`/`PUT /deals` is now capped at 1000000000000
-  (10,000,000,000.00 in major units) so the pipeline sums keep ample headroom; larger values are
-  refused with a 400 naming the bound.
-- **Deals with stage history.** A sales opportunity with a fixed pipeline and an append-only
-  record of every stage it has been through.
-  - `/deals` (admin and sales; sales sees and edits its own, delete is admin only): list with
-    search over title and notes, server-side filters (`stage`, `open=true`, `company_id`,
-    `customer_id`, `owner_id`), a sort allowlist and pagination; get with owner, company,
-    customer and lead; create and update with validation of the links (400
-    `INVALID_REFERENCE`; on update, links are checked only when the request sets them, so a
-    deal keeps links to erased records and stays editable); `POST /deals/{id}/stage` and
-    `GET /deals/{id}/history`;
-    `GET /companies/{id}/deals` and `GET /customers/{id}/deals`.
-  - Stages `qualification`, `proposal`, `negotiation`, `won`, `lost` with default probabilities
-    10/40/70/100/0; `won` is always 100 and `lost` always 0; `closed_at` is set on entering a
-    closed stage and cleared on leaving it; `lost_reason` is kept only while lost. Every stage
-    change, the create included, writes one history row in the same transaction; asking for the
-    current stage again writes nothing.
-  - Money is an integer amount in minor units (`amount_cents`) next to a three-letter currency
-    code; the default currency is the new `deals.default_currency` setting (category `deals`,
-    shipped as `EUR`, admin-editable, and exposed on `GET /configurations/ui`).
-    `expected_close_date` is a plain `YYYY-MM-DD` date on the wire.
-  - Companies report `deal_count`, and deleting a company also clears `company_id` on its deals.
-  - Erasing a linked customer, lead or user keeps the deals and their history; since #245 erasing
-    the customer or lead (or a customer-role login reaching them) redacts their title, notes and
-    lost reason. Erasing a staff owner does not.
-  - Migration `20260930120000_add_deals` for MySQL and MariaDB (two new tables, nothing altered);
-    auto-migration covers SQLite, populated files included.
-- **Companies.** A curated organisation record next to the free-text company field of leads and
-  customers.
-  - `/companies`: list with search (name, domain, industry, city), a sort allowlist and
-    pagination; get with the owner and live customer and lead counts; create and update with the
-    domain normalised (lower case, no scheme, path or `www.`) and unique among live companies
-    (409); admin-only delete that clears the links from leads and customers in the same
-    transaction. Reading is open to admin, sales and support; writing to admin and sales.
-  - `GET /companies/{id}/customers` and `GET /companies/{id}/leads` page through the linked
-    records; sales sees only the leads it owns.
-  - Leads and customers accept an optional `company_id` on create and update (unknown → 400
-    `INVALID_REFERENCE`; on update `0` clears, absent keeps) and return `company_record` on their
-    detail endpoints. The free-text `company` column and the public forms are unchanged.
-  - Erasure is unchanged: `company_id` is a business link and stays on the erased row; companies
-    hold no personal data.
-  - Migration `20260929120000_add_companies` for MySQL and MariaDB; auto-migration covers SQLite.
-- `LICENSE`: GopherCRM is released under the MIT License. The README no longer describes the
-  licensing as unresolved.
-- **E2E on SQLite in CI.** The e2e suite now also runs against SQLite on every pull request
-  (job "E2E (Playwright on SQLite)", no database service). `make e2e E2E_DB_DRIVER=sqlite` runs it
-  locally on a new SQLite file and leaves the `gocrm_e2e` MySQL database alone; the default
-  (`mysql`) is unchanged.
-
-### Changed
-
-- **Sales users see Tickets in the navigation.** The API already let sales read every ticket and
-  the ticket pages already showed it no create, edit or delete; only the nav item was hidden, so
-  sales reached tickets by deep link alone. The navigation now matches the API, and the dashboard
-  "New Ticket" quick action and the customer page's "Create Ticket" and "New Ticket" buttons, which
-  led sales (and the dashboard one customers) to the unauthorized page, show only to admin and
-  support (#241).
-- Refresh-token persistence validation now uses auth/session and transaction boundary checks,
-  named SQLite/MySQL rotation regressions, migrations and auth browsers; CI adds MariaDB.
-  Shared repository-interface changes qualify only with proof that other declarations are
-  unchanged and all six required rotation boundary roots are present in the candidate.
-  Unrelated entity browsers and frontend unit suites are excluded from this
-  bounded profile; explicit full/release validation remains complete.
-
-- **Lookup indexes for leads and companies (#109).** `leads.email`, `leads.classification`,
-  `leads.external_id` and `companies.domain` are now indexed, non-uniquely (a person may be
-  captured as a lead twice; a soft-deleted company keeps its domain while a live one reuses it).
-  The duplicate-domain check compares the stored, already lower-cased domain with plain equality
-  instead of `LOWER(domain)`, which no index could serve on SQLite or MySQL. MySQL/MariaDB
-  upgrades run `migrations/20261029140000_add_lead_company_lookup_indexes` (idempotent after an
-  AutoMigrate start, lower-cases any domain written outside the application; rollback drops the
-  four indexes); SQLite gets the same indexes from AutoMigrate, and application startup
-  (`models.MigrateDatabase`) lower-cases such domains on every driver, so SQLite installs, which
-  never run the SQL migration, keep catching a mixed-case duplicate. Query plans before and after are
-  recorded in `docs/datamodel.md`.
-
-- **CI runs for the merge queue.** The workflow also runs on `merge_group` events, so the suite
-  passes on the queue's temporary branch, on top of the current `main`, before a pull request
-  merges. Production deploys still follow only CI runs of pushes to `main`.
-
-- **Bulk status service narrowed (internal, no API change).** `POST /leads|tickets|tasks/bulk/status`
-  now run on a `BulkStatusService` holding only the three status operations, over a
-  `BulkStatusRepository` (the read and write halves of a status change) and a
-  `BulkOperationRepository` reduced to the history-row create and outcome update. Responses,
-  authorization, all-or-nothing transactions, `error.details`, the `bulk_operations` history
-  rows and the lead automation events are unchanged; new SQLite/MySQL regression roots pin the
-  rollback, history and event behaviour (#112).
-
-### Removed
-
-- **The unused CSRF middleware and cookie-session helpers (#362).** Authentication is header-only
-  (Bearer or ApiKey) and no cookie credential is accepted, so CSRF does not apply; the code that
-  prepared a cookie session was never installed and is gone: `internal/middleware/csrf.go`
-  (`CSRF`, `CSRFToken`), the `GenerateCSRFToken`/`ValidateCSRFToken` token codec on `AuthService`,
-  `config.CSRFConfig`, the whole of `internal/utils/cookie.go` (`SetAuthCookies`,
-  `ClearAuthCookies`, `SetSecureCookie`, `ClearCookie`, `GetTokenFromCookie`, `SetCSRFCookie`,
-  `IsCookieSecureContext`, `ParseSameSite`, `ValidateCookieConfig`, `GetCookieMaxAge`,
-  `GenerateSecureToken`, `HashToken` and the cookie-name constants) and
-  `JWTConfig.CookieSameSite`/`CookieDomain`/`CookieSecure` with the production warning about the
-  `Secure` flag. `JWT_COOKIE_SECURE`, `JWT_COOKIE_DOMAIN` and `JWT_COOKIE_SAMESITE` are no longer
-  read; setting them is harmless. No route, response or behaviour changes. A new integration test
-  pins that a valid access token sent only in cookies answers 401 on a protected route. Any
-  future cookie session must ship with session-bound CSRF protection (#261).
-- **Two settings that did nothing.** `security.session_timeout_hours` and
-  `tickets.auto_assign_support` were seeded and never read: session length comes from
-  `JWT_EXPIRY_HOURS` and `REFRESH_TOKEN_EXPIRY_DAYS`, and tickets are not distributed among support
-  users (a ticket created without `assigned_to_id` goes to its creator). Startup now deletes both
-  rows on every driver, and `migrations/20261031120000_retire_inert_configurations` does the same
-  on MySQL and MariaDB; its down migration restores them as first seeded. The Settings page no
-  longer lists them (#224).
-- **`repository.NewCustomerRepositoryWithLeadErasure` (#108).** The identity cascade now lives in
-  the plain user, customer and lead repositories, so no constructor can erase half a person;
-  `cmd/main.go` uses `NewCustomerRepository`.
-- **The unused generic bulk subsystem (#112).** Nothing routed it since the generic
-  `/bulk/:resource` handlers were dropped: the `ProcessBulk*` dispatchers, the
-  `BulkCreate*`/`BulkUpdate*`/`BulkDelete*`/`BulkAction*` service methods for users, leads,
-  customers, tasks and tickets, the matching repository mutations (including the batch-erasure
-  wrapper and its per-item savepoint helpers, which only that path used), the bulk-operation read
-  methods, their mocks and tests, and the request/response DTOs. Single-record erasure is
-  untouched. No table or column is dropped: `bulk_operations` keeps receiving one row per status
-  update, and `bulk_operation_items` stays in the schema although nothing writes it any more
-  (retirement is a separate roadmap item).
-- **Customer fields the API never stored (#118).** The customer form no longer offers Industry,
-  Number of Employees, Annual Revenue or the "Active Customer" switch, the customer list drops
-  its Status column and the customer detail page drops the Industry, Annual Revenue and Employees
-  fields and the Active/Inactive chip. None of them exists on the customer API: saves discarded
-  what was typed and reads showed invented defaults (blank, zero, always active). The Company
-  record already owns industry and employee range, and customers link to it; there is no
-  customer activation concept. The frontend `Customer` type and the read adapter no longer carry
-  the four fields. No backend change.
-
-### Fixed
-
 - **A documented API change no longer runs the whole browser suite by itself.** The regenerated
   `api/swagger.json`, `api/swagger.yaml` and `api/index.html` selected the full profile on every
   annotation change. `make verify-api-docs`, which every profile runs, already fails unless they
@@ -3589,6 +3594,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   level statements are printed with `?` placeholders instead of the bound values, and quoted
   values in driver error messages (MySQL's `Duplicate entry 'alice@example.com'`) are redacted
   as well. A record-not-found result is no longer logged as a failed statement.
+
+### Upgrade notes
+
+- **Back up the database, then upgrade and apply the SQL migrations.** 1.3.0 adds 42 migration
+  pairs, from `20260929120000_add_companies` to `20261129120008_refresh_token_provider_session`.
+  The backend auto-migrates at every start. On MySQL/MariaDB the SQL half is applied with
+  `bin/migrate -command up` after the deploy reports the revision live; on the release-tarball
+  path that step is manual, and `docs/SERVER_PROVISIONING.md` gives the exact command under
+  "Schema migrations".
+- **Expect API keys to expire within a year and customer keys to be revoked.** Migration
+  `20261129120003_api_key_lifetime`, and the same step at every startup, gives every key without an
+  expiry, or with a later one, an expiry one year from the upgrade and revokes every key of a
+  customer account; its down half changes nothing. Creating a key now needs a sign-in within the
+  last 15 minutes.
+- **Single sign-on and SCIM settings become admin-only.** `settings.sso_manage` and
+  `settings.scim_manage` are removed from every custom role at startup and by
+  `20261129120001_admin_only_sso_scim_permissions`, with one `role_updated` audit row per changed
+  role; the rollback restores nothing.
+- **Stop every replica before starting 1.3.0.** The quote quantity change
+  (`20261118120000_store_quote_line_quantity_milli`), the automation run leases and the AEO run
+  ownership require it. To roll back to an older binary, first run the quantity down migration on
+  MySQL/MariaDB, or restore the pre-upgrade backup on SQLite.
+- **Point `QUOTE_PDF_CHROME_PATH` at the image's launcher.** The Docker image's default is
+  `/usr/local/bin/quote-pdf-browser`. An override naming `/usr/bin/chromium-browser` or the old
+  `chromium-headless-shell` paths switches PDF output off. A custom launcher must pass file
+  descriptors 3 and 4 through.
+- **Review the configuration before starting.** The server refuses to start with
+  `DISABLE_RATE_LIMIT=true` and `SERVER_MODE=production`. `JWT_COOKIE_SECURE`, `JWT_COOKIE_DOMAIN`
+  and `JWT_COOKIE_SAMESITE` are no longer read. The settings `security.session_timeout_hours` and
+  `tickets.auto_assign_support` are deleted (`20261031120000_retire_inert_configurations`).
 
 ## [1.2.0] - 2026-09-25
 
