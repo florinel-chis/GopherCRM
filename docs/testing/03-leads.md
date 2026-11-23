@@ -874,21 +874,22 @@ the frontend gating.
   against a lead the sales user owns returns 200.
 - **Automation:** blocked — needs a sales role-login helper
 
-### TC-LEAD-048 — Converting a lead whose email already belongs to a customer returns 500
+### TC-LEAD-048 — Converting a lead whose email already belongs to a customer returns 409
 - **Priority:** P2
 - **Type:** negative
 - **Preconditions:** Admin logged in. Create a customer with a generated email, then create a
   qualified lead reusing that same email.
 - **Steps:**
   1. Convert the lead.
-- **Expected:** **500** `{"error":{"code":"INTERNAL_ERROR", …}}`. `customers.email` carries a
-  unique index (`internal/models/customer.go` `Customer.Email`), the insert inside the conversion transaction fails, and the
-  handler only classifies `ErrLeadConverted` — every other error falls into
-  `utils.RespondInternalError` in `internal/handler/lead_handler.go` `LeadHandler.ConvertToCustomer`. The UI shows "Failed to convert lead"; the
-  transaction rolls back, so no partial customer is left behind.
-- **Known issue:** A duplicate-email conflict is reported as 500 rather than the 409 that
-  `apperrors.ErrDuplicateEmail` supports elsewhere (see the API-defect list in
-  `docs/DEVELOPMENT.md`, "Defects found while documenting the API"). Clean-up: delete both records the test created.
+- **Expected:** **409** `{"error":{"code":"CONFLICT","message":"customer with this email already exists"}}`.
+  `customers.email` carries a unique index (`internal/models/customer.go` `Customer.Email`), so the
+  insert inside the conversion transaction fails; the repository wraps that failure as
+  `apperrors.ErrDuplicateEmail`, and `internal/handler/lead_handler.go`
+  `LeadHandler.ConvertToCustomer` maps it to `utils.RespondConflict`. The transaction rolls back, so
+  no customer is created and the lead keeps its status. `ConvertLeadDialog`
+  (`gocrm-ui/src/components/ConvertLeadDialog.tsx`, `readRefusal`) shows the server's message,
+  "customer with this email already exists", in the open dialog. Clean-up: delete both records the
+  test created.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-leads.spec.ts` (new)
 
 ---

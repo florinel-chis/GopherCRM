@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Test catalog (#758): TC-LEAD-048 expects the 409 "customer with this email already exists" of a
+  duplicate-email conversion; TC-AUTH-034/035 describe the Forgot Password and Reset Password
+  pages, and the TC-AUTH-037 blocker no longer names a missing reset route; stale `docs/ROADMAP.md`
+  and API-defect citations are removed from the authentication, cross-cutting, users and
+  products-and-quotes files.
 - Operator documentation for single sign-on and SCIM (#729). `docs/SERVER_PROVISIONING.md`,
   `docs/DOCKER.md` (new section "Single sign-on and SCIM") and `docs/FORKING.md` name the addresses
   to register with the identity provider (`APP_BASE_URL/auth/callback`, `APP_BASE_URL/login` and

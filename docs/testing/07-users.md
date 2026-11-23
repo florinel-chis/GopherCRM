@@ -907,9 +907,7 @@ Expected field still describes it and a **Known issue** line records the defect.
   its loading state: `UserDetail` returns `<Loading />` whenever `isLoading || !user`, and a failed
   query leaves `user` undefined forever. No error message, no redirect, no NotFound page — a
   permanent spinner.
-- **Known issue:** Missing error branch in `UserDetail.tsx`; the same shape of defect as the
-  500-instead-of-404 items listed in `docs/DEVELOPMENT.md`, "Defects found while
-  documenting the API".
+- **Known issue:** Missing error branch in `UserDetail.tsx`.
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---

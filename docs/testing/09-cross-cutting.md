@@ -14,7 +14,7 @@ coverage matrix.
 - `docs/FEATURES.md` sections 11 (rows 11.1–11.8) and 12 (rows 12.1–12.12), plus rows 2.2, 3.8, 5.5,
   6.5, 7.5, 7.8 for the shared list conventions; Gap Summary G22, G34
 - `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
-  session-ending events, concurrent-refresh stampede)
+  session-ending events, live session updates across tabs)
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
   `gocrm-ui/src/layouts/MainLayout.tsx`, `gocrm-ui/src/components/Breadcrumbs.tsx`,
   `gocrm-ui/src/components/DataTable.tsx`, `gocrm-ui/src/components/ErrorBoundary.tsx`,
