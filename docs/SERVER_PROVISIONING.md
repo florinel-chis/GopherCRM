@@ -298,8 +298,8 @@ GRANT ALL PRIVILEGES ON gophercrm.* TO 'gophercrm'@'127.0.0.1';
 
 ## Reverse proxy and TLS
 
-nginx serves the UI from the web root, proxies the API and `/health` to the backend on
-`127.0.0.1:8080`, and terminates TLS. The certificate comes from Let's Encrypt through certbot's
+nginx serves the UI from the web root, proxies the API, the SCIM endpoint and `/health` to the
+backend on `127.0.0.1:8080`, and terminates TLS. The certificate comes from Let's Encrypt through certbot's
 webroot mode, which needs the plain-HTTP site first.
 
 Create the ACME directory. It sits outside the web root on purpose: every deploy syncs
@@ -365,6 +365,14 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    location /scim/v2/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # The quote email links here with the client's response token in the query string;
     # keep that request out of the access log.
     location = /quote-response {
@@ -388,8 +396,36 @@ server {
 
 Enable it and run `nginx -t && systemctl reload nginx` again.
 
+On a server that runs Apache instead of nginx, the proxy part of the `<VirtualHost *:443>` site
+is:
+
+```apache
+ProxyPreserveHost On
+ProxyAddHeaders Off
+RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
+RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
+RequestHeader set X-Forwarded-Proto "https"
+
+ProxyPass /api/v1/ http://127.0.0.1:8080/api/v1/
+ProxyPassReverse /api/v1/ http://127.0.0.1:8080/api/v1/
+ProxyPass /health http://127.0.0.1:8080/health
+ProxyPassReverse /health http://127.0.0.1:8080/health
+ProxyPass /scim/v2/ http://127.0.0.1:8080/scim/v2/
+ProxyPassReverse /scim/v2/ http://127.0.0.1:8080/scim/v2/
+```
+
+It proxies the same paths as the nginx site and sends the backend the same four headers.
+`ProxyAddHeaders Off` keeps `X-Forwarded-For` a single address, as `TRUSTED_PROXIES=127.0.0.1`
+expects. It needs the `proxy`, `proxy_http` and `headers` modules
+(`a2enmod proxy proxy_http headers`). The SPA fallback of the site (`FallbackResource` or a
+`RewriteRule` to `/index.html`) and any browser `Header` lines must leave `/api/v1/`, `/health`
+and `/scim/v2/` alone, so those requests reach the backend and keep its headers.
+
 - `proxy_pass` carries no URI part, so the request path reaches the backend unchanged
-  (`/api/v1/...` matches `API_PREFIX`).
+  (`/api/v1/...` matches `API_PREFIX`, `/scim/v2/...` the SCIM routes).
+- `/scim/v2/` must reach the backend, not the web app: identity providers provision users at
+  `PUBLIC_BASE_URL/scim/v2`. Without the location the request falls through to `location /`
+  and gets the UI's `index.html` with 200.
 - `/health` must be proxied: after `receive-release` has seen the new revision on
   `http://127.0.0.1:8080/health`, the Deploy workflow checks `<public URL>/health` as visitors
   reach it (the `Verify from outside` step of `.github/workflows/deploy.yml`).
@@ -407,10 +443,36 @@ Enable it and run `nginx -t && systemctl reload nginx` again.
   `X-Content-Type-Options` and `Referrer-Policy`) are the same set as the Docker image's
   `gocrm-ui/docker/nginx.conf`, and `always` puts them on error answers too. nginx drops inherited
   `add_header` lines in a location that sets its own, so they are repeated in each web app
-  location instead of the server level. `location /api/v1/` and `location = /health` carry none:
-  proxied answers keep the backend's own headers. A UI built with `VITE_API_BASE_URL` on another
+  location instead of the server level. `location /api/v1/`, `location = /health` and
+  `location /scim/v2/` carry none: proxied answers keep the backend's own headers. A UI built with `VITE_API_BASE_URL` on another
   origin must add that origin to `connect-src`.
 - The web root stays empty until the first deploy, so the site answers 404 until then.
+
+### Updating an existing server
+
+A server provisioned before the SCIM location was added answers `/scim/v2/` with the web app.
+On nginx, add the `location /scim/v2/` block above to the TLS site file, next to
+`location /api/v1/`, then check and reload:
+
+```bash
+nginx -t && systemctl reload nginx
+```
+
+On Apache, add the `ProxyPass` and `ProxyPassReverse` lines for `/scim/v2/` from the fragment
+above to the site, then check and reload:
+
+```bash
+apachectl configtest && systemctl reload apache2
+```
+
+Then check from outside. Without a SCIM token the backend refuses the request, so
+`/scim/v2/ServiceProviderConfig` should print `401 application/scim+json`:
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://crm.example.com/scim/v2/ServiceProviderConfig
+```
+
+`200 text/html` means the request still reaches the web app.
 
 ## Bootstrap and first deploy
 

@@ -287,6 +287,12 @@ func TestComposeProductionExamplePorts(t *testing.T) {
 	assert.Equal(t, "!reset []", backendPorts.value)
 	assert.Empty(t, backendPorts.items)
 	assert.Empty(t, backendPorts.children)
+	// Without a host port, every backend route family except /health (which
+	// the healthcheck reaches inside the container) needs the UI proxy.
+	uiConf := strings.ReplaceAll(readRepositoryFile(t, uiNginxConfigFile), "\r\n", "\n")
+	for _, opener := range uiNginxBackendLocations {
+		requireUINginxBackendLocation(t, uiConf, opener)
+	}
 
 	uiPorts := composeService(t, root, "ui").child("ports")
 	require.NotNil(t, uiPorts, "services.ui.ports")

@@ -43,7 +43,7 @@ services:
       AUTOMATION_POLL_INTERVAL_SECONDS: ${AUTOMATION_POLL_INTERVAL_SECONDS:-}
       AEO_SCHEDULE_ENABLED: ${AEO_SCHEDULE_ENABLED:-}
       AEO_SCHEDULE_HOUR: ${AEO_SCHEDULE_HOUR:-}
-    # No host port for the API: the UI nginx proxies /api/v1/ to it.
+    # No host port for the API: the UI nginx proxies /api/v1/ and /scim/v2/ to it.
     ports: !reset []
 
   ui:

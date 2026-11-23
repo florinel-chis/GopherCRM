@@ -8,7 +8,8 @@ The stack is three containers wired by `docker-compose.yml` at the repo root:
 | `backend` | built from `Dockerfile`        | Go API server + `create-admin` CLI        | 8080      |
 | `ui`      | built from `gocrm-ui/Dockerfile` | Production React build served by nginx  | 3000      |
 
-The UI container's nginx proxies `/api/v1/` to the backend, so the browser only
+The UI container's nginx proxies `/api/v1/` and the SCIM endpoint `/scim/v2/` to
+the backend, so the browser only
 ever talks to `http://localhost:3000`. The browser still sends an `Origin`
 header, and nginx forwards `Host` without the port (`proxy_set_header Host $host` in
 `gocrm-ui/docker/nginx.conf`),
@@ -20,8 +21,8 @@ The UI container's nginx also sends browser headers on every page and asset of
 the web app, error answers included: a content policy (`Content-Security-Policy`
 that allows scripts, styles, images, fonts and API calls from the UI origin
 only), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and
-`Referrer-Policy: same-origin`. Answers proxied from `/api/v1/` keep the
-backend's own headers. A UI built with `VITE_API_BASE_URL` on another origin
+`Referrer-Policy: same-origin`. Answers proxied from `/api/v1/` and `/scim/v2/`
+keep the backend's own headers. A UI built with `VITE_API_BASE_URL` on another origin
 (see below) needs that origin added to `connect-src` in
 `gocrm-ui/docker/nginx.conf`.
 
@@ -373,7 +374,9 @@ What the values mean here:
 - `PUBLIC_BASE_URL` is the public origin of the UI proxy, normally the same
   value as `APP_BASE_URL`. The example removes the backend's host port, so
   form confirmation links, the hosted form page and the embed snippet reach
-  the API through the UI nginx `/api/v1/` proxy, not on port 8080.
+  the API through the UI nginx `/api/v1/` proxy, not on port 8080, and
+  identity providers reach `PUBLIC_BASE_URL/scim/v2` through the same proxy
+  (`/scim/v2/`).
 - `CORS_ALLOWED_ORIGINS` is a comma-separated list added to the built-in
   localhost origins; list every origin your UI is served from.
 - The stack runs one backend. The automation worker (#237), AEO runs and the
