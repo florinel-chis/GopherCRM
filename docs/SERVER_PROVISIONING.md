@@ -183,6 +183,21 @@ chmod 600 /srv/gophercrm/env/gophercrm.env
 - **URLs.** `APP_BASE_URL` builds password-reset links, `PUBLIC_BASE_URL` form confirmation links,
   and `CORS_ALLOWED_ORIGINS` admits the UI's origin. With the UI and the API on one origin all
   three are the public URL.
+- **Single sign-on and SCIM.** `APP_BASE_URL` also gives the single sign-on redirect URI
+  `APP_BASE_URL/auth/callback` and the post-logout redirect URI `APP_BASE_URL/login`; register
+  both with the identity provider. The front-channel logout URL is
+  `https://crm.example.com/api/v1/auth/oidc/frontchannel-logout`, served through the `/api/v1/`
+  location below. `PUBLIC_BASE_URL` also gives the SCIM base URL `PUBLIC_BASE_URL/scim/v2` and
+  each user's `meta.location`. That base URL is outside `API_PREFIX` (the `/scim/v2` group in
+  `cmd/main.go`, built with `cfg.Forms.PublicBaseURL` in `setupDependencies`), so the proxy needs
+  its own rule: the nginx `location /scim/v2/` and the Apache `ProxyPass /scim/v2/` lines of the
+  sites below. An install that uses them may add these environment-only settings to this file:
+  `OIDC_GRAPH_MAX_PAGES`, `OIDC_ENTRA_APP_SIGNING_KEYS`, `SCIM_RATE_LIMIT_PER_MINUTE`,
+  `SCIM_RATE_LIMIT_BURST` and `AUTH_AUDIT_RETENTION_DAYS` (defaults and limits in
+  `.env.example`). The seven `OIDC_*` fallbacks are better set in Settings → Single sign-on.
+  The values to exchange are listed in the user guide:
+  [single sign-on](user-guide/permissions-access/single-sign-on.md#values-to-exchange-with-the-identity-provider)
+  and [SCIM base URL](user-guide/permissions-access/scim-provisioning.md#base-url).
 
 Every key in the block is documented in `.env.example`.
 

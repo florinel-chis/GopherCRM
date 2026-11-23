@@ -189,8 +189,10 @@ The two schemes are parsed in `internal/middleware/auth.go`.
 ## Production
 
 Production configuration (`SERVER_MODE=production`, TLS in front, `TRUSTED_PROXIES`,
-`CORS_ALLOWED_ORIGINS`, SMTP, `PUBLIC_BASE_URL`, `APP_BASE_URL` and `FORM_RETENTION_DAYS`) and the deploy options are covered in
-[FORKING.md](FORKING.md) (sections 4 and 5) and [DOCKER.md](DOCKER.md). For the release tarball
+`CORS_ALLOWED_ORIGINS`, SMTP, `PUBLIC_BASE_URL`, `APP_BASE_URL`, `FORM_RETENTION_DAYS`, and single
+sign-on and SCIM: the addresses to register, the `/scim/v2` proxy rule and the environment-only
+settings) and the deploy options are covered in
+[FORKING.md](FORKING.md) (sections 4 and 5) and [DOCKER.md](DOCKER.md) ("Single sign-on and SCIM"). For the release tarball
 with systemd and nginx or Apache on a fresh server (MySQL or MariaDB only), follow
 [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) before the first deploy; its
 [Reverse proxy and TLS](SERVER_PROVISIONING.md#reverse-proxy-and-tls) section documents both web servers. To serve the frontend yourself,
@@ -200,5 +202,5 @@ client-side routes.
 ## API documentation
 
 The API is described in `api/swagger.json` and `api/swagger.yaml` (Swagger 2.0, regenerated with
-`make swagger`). The application does not serve a Swagger UI. All routes mount under `API_PREFIX`
-(default `/api/v1`).
+`make swagger`). The application does not serve a Swagger UI. API routes mount under `API_PREFIX`
+(default `/api/v1`); `/health` and the SCIM 2.0 server at `/scim/v2` are outside it.

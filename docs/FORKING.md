@@ -343,20 +343,26 @@ startup.
 | `SERVER_MODE` | `development` | `Load` | `production` switches Gin to release mode (`setupRouter` (`cmd/main.go`)) and refuses to start with `DISABLE_RATE_LIMIT=true` (`CheckRateLimitSwitch` (`internal/middleware/rate_limit.go`)) |
 | `TRUSTED_PROXIES` | trust none | `Load` | see below |
 | `CORS_ALLOWED_ORIGINS` | none beyond the localhost list | `Load` | every browser origin of your UI |
-| `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host |
+| `APP_BASE_URL` | `http://localhost:5173` | `Load` | the UI origin; password-reset links, the client response link of a quote email (`/quote-response?token=`) and the page the server's browser opens to print a quote to PDF (`/quote-render`), so with PDF output on it must be reachable from the backend host; also the single sign-on redirect URI `APP_BASE_URL/auth/callback` and post-logout redirect URI `APP_BASE_URL/login` |
 | `QUOTE_PDF_CHROME_PATH` | empty (PDF output off); `/usr/local/bin/quote-pdf-browser` (a launcher of `chrome-headless-shell`) in the Docker image, empty again in the two development Compose files | `Load` | the browser binary that prints quotes to PDF, `chrome-headless-shell` or a full Chrome or Chromium; needs a font, a reachable `APP_BASE_URL`, and the `APP_BASE_URL` origin in `CORS_ALLOWED_ORIGINS` when the API is on another origin (`.env.example`, [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md#quote-pdf-output)) |
-| `PUBLIC_BASE_URL` | `http://localhost:8080` | `Load` | this backend's public origin; form confirmation links |
+| `PUBLIC_BASE_URL` | `http://localhost:8080` | `Load` | this backend's public origin; form confirmation links, the SCIM base URL `PUBLIC_BASE_URL/scim/v2` (outside `API_PREFIX`; the proxy must forward `/scim/v2/`) and each SCIM user's `meta.location` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | empty, 587, empty, empty, `no-reply@localhost` | `Load` | empty host means log-only mail |
 | `RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY` | empty | `Load` | both or the layer is skipped |
 | `FORM_RETENTION_DAYS` | off | `Load` | age in days after which spam and never-confirmed submissions with no linked lead are permanently removed; 3-day floor, 36500 ceiling. The first boot with it set removes the existing backlog; safe on every replica |
 | `AUTH_AUDIT_RETENTION_DAYS` | `90` | `Load` | days a sign-in audit row (`auth_audit_log`, #454) is kept; unset, empty, zero, negative or unparseable keeps 90, 36500 ceiling. Pruned at boot and every 15 minutes by the stale bulk operation sweep; safe on every replica |
+| `OIDC_ENABLED`, `OIDC_ALLOW_PASSWORD`, `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_ROLE_MAPPING` | SSO off, password sign-in for linked accounts off, scopes `openid profile email`, the rest empty | `loadSSOConfig` (`internal/config/sso.go`) | fallbacks behind Settings → Single sign-on, which wins per field; register `APP_BASE_URL/auth/callback`, `APP_BASE_URL/login` and the front-channel logout URL `<API origin>/api/v1/auth/oidc/frontchannel-logout` with the identity provider ([single sign-on](user-guide/permissions-access/single-sign-on.md#values-to-exchange-with-the-identity-provider)) |
+| `OIDC_GRAPH_MAX_PAGES` | `10` | `loadSSOConfig` (`internal/config/sso.go`) | environment only; Microsoft Graph pages read per Entra ID sign-in with group overage, 1 to 50 |
+| `OIDC_ENTRA_APP_SIGNING_KEYS` | `false` | `loadSSOConfig` (`internal/config/sso.go`) | environment only; Entra ID app registrations with claims mapping |
+| `SCIM_RATE_LIMIT_PER_MINUTE`, `SCIM_RATE_LIMIT_BURST` | `1500`, `150` | `loadSCIMConfig` (`internal/config/scim.go`) | environment only; requests per SCIM token (maximum 6000 and 1000) |
 | `AUTOMATION_ENABLED` | `true` | `Load` | true on any number of instances sharing one MySQL/MariaDB database (#237); one process on SQLite |
 | `AEO_SCHEDULE_ENABLED`, `AEO_SCHEDULE_HOUR` | `true`, `6` | `Load` | daily AEO run |
 | `AEO_EGRESS_ALLOWED_ORIGINS`, `AEO_EGRESS_LOCAL_ORIGINS` | empty | `Load` | environment only; see `docs/AEO_SECURITY.md` |
 | `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | `Load` | SQL statements only at debug/trace |
 
 The AEO egress policy, the schedule and the custom engine (`AEO_CUSTOM_*`) can be set only in the
-environment. `docs/AEO_SECURITY.md` explains why.
+environment. `docs/AEO_SECURITY.md` explains why. So can `OIDC_GRAPH_MAX_PAGES`,
+`OIDC_ENTRA_APP_SIGNING_KEYS`, `SCIM_RATE_LIMIT_*` and `AUTH_AUDIT_RETENTION_DAYS`; the other
+`OIDC_*` variables are fallbacks behind Settings → Single sign-on.
 
 ### 4.2 Choices that are irreversible or easy to get wrong
 
@@ -366,7 +372,18 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   (`formTokenSecret` (`internal/service/form_service.go`)), and the encryption of sensitive settings
 >   (the `configuration-secret` box built in `setupDependencies`, `internal/utils/secretbox.go`). Rotating
 >   it invalidates every API key, refresh token, reset link and pending form confirmation, and
->   leaves stored AEO provider keys unreadable (they are treated as unset). Rotating `JWT_SECRET`
+>   leaves stored AEO provider keys unreadable (they are treated as unset). The same secret, in
+>   `setupDependencies`, also keys:
+>   - SCIM tokens (`NewSCIMTokenService`): after a rotation every SCIM token is refused; create
+>     new ones in Settings → SCIM tokens and give them to the identity provider;
+>   - webhook signing secrets (`webhookBox`, sealed with `webhook.WebhookSecretContext`);
+>   - the stored single sign-on client secret, client certificate and private key, and role
+>     mapping (the `configuration-secret` box): an unreadable value counts as not set, an
+>     unreadable client certificate makes the client secret apply, and an unreadable role mapping
+>     becomes empty;
+>   - pending quote response links (`quoteTokenSecret`), which stop working.
+>
+>   Rotating `JWT_SECRET`
 >   invalidates every issued access token, but when `API_KEY_SECRET` is set separately and left
 >   unchanged, refresh tokens stay valid (they are hashed with it,
 >   `authService.sessionTokenSecret` (`internal/service/auth_tokens.go`)) and the UI silently trades them for new access
@@ -387,11 +404,15 @@ environment. `docs/AEO_SECURITY.md` explains why.
 >   (`rateLimiter.middlewareWith` (`internal/middleware/rate_limit.go`)). Behind a reverse proxy or CDN with no trusted
 >   proxies, every client shares the proxy's address and therefore one rate-limit bucket: one
 >   noisy user locks out everyone on `/auth`. An IPv6 client is counted per /64 network
->   (`rateLimitClientKey`), so the addresses of one IPv6 /64 share a bucket.
+>   (`rateLimitClientKey`), so the addresses of one IPv6 /64 share a bucket. SCIM requests without
+>   a valid token are limited per client address too.
 > - **`CORS_ALLOWED_ORIGINS`.** Missing origins fail silently in the browser (section 2.3).
 > - **`PUBLIC_BASE_URL` versus `APP_BASE_URL`.** The first is the API's public origin, used in form
->   confirmation links; the second is the UI's, used in password-reset links and in the client
->   response link of a quote email. Left at their
+>   confirmation links and the SCIM base URL `PUBLIC_BASE_URL/scim/v2`; the second is the UI's,
+>   used in password-reset links, in the client response link of a quote email and in the single
+>   sign-on redirect URI `APP_BASE_URL/auth/callback` and post-logout redirect URI
+>   `APP_BASE_URL/login`. The front-channel logout URL is the API origin followed by
+>   `/api/v1/auth/oidc/frontchannel-logout`. Left at their
 >   defaults, both send recipients to `localhost`.
 > - **SMTP.** With `SMTP_HOST` empty every mail is logged instead of sent, and the sending code
 >   reports success (README "Known Limitations"); form mail and ticket comment mail
@@ -430,12 +451,13 @@ stays off until you set it.
 `docker-compose.yml` (MySQL 8, API, UI) and `docker-compose.sqlite.yml` (API, UI) are tuned for a
 local machine. Before you put either on the internet:
 
-- They do not forward SMTP, `PUBLIC_BASE_URL`, reCAPTCHA, `AUTOMATION_*` or `AEO_SCHEDULE_*`
-  variables to the backend, and they set `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS` to
+- They do not forward SMTP, `PUBLIC_BASE_URL`, reCAPTCHA, `AUTOMATION_*`, `AEO_SCHEDULE_*`,
+  `OIDC_*`, `SCIM_*` or `AUTH_AUDIT_RETENTION_DAYS` variables to the backend, and they set `APP_BASE_URL` and `CORS_ALLOWED_ORIGINS` to
   `localhost:${UI_PORT}` (`docker-compose.yml:41-65`, `docker-compose.sqlite.yml:25-48`). Apply
   the committed `docker-compose.production.example.yml` with a second `-f` and supply your real
   values from the shell or the repo-root `.env`; [DOCKER.md](DOCKER.md) ("Production override
-  example") lists what it forwards and the values it requires.
+  example") lists what it forwards and the values it requires. Single sign-on and SCIM settings go into
+  your own override ([DOCKER.md](DOCKER.md), "Single sign-on and SCIM").
 - Both files switch quote PDF output off (`QUOTE_PDF_CHROME_PATH: ""`), because their
   `APP_BASE_URL` is not reachable from the backend container. The production example does not
   forward the variable, so PDF output stays off under it too; switch it on in your own override
@@ -481,7 +503,7 @@ directory `/srv/gophercrm` (bootstrap only re-owns it: `chown root:root /srv/gop
 default) that runs `/srv/gophercrm/bin/gophercrm` (a link into the current release, `link_binaries`
 in `scripts/deploy/receive-release.sh`) with the environment file `/srv/gophercrm/env/gophercrm.env`
 (the `ENV_FILE=` default there, restarted by `restart_and_check`); and a TLS-terminating web server that serves the web root and proxies
-`/api/v1` to the backend. [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) walks a fresh
+`/api/v1/`, `/health` and `/scim/v2/` to the backend. [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) walks a fresh
 systemd host through each of them, with a sample unit, environment file and the sites for nginx or
 Apache 2.4 ([Reverse proxy and TLS](SERVER_PROVISIONING.md#reverse-proxy-and-tls), #231, #749); no sample file ships under `scripts/deploy`. On
 your machine: root SSH access to the server, a `gh` login with admin rights on the repository,

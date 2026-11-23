@@ -40,7 +40,10 @@ describes what GopherCRM does today. Single sign-on itself is described in
 The SCIM base URL is `PUBLIC_BASE_URL/scim/v2`: the public address of the GopherCRM backend
 followed by `/scim/v2`, for example https://crm.example.com/scim/v2. The links GopherCRM returns in
 each user's meta.location are built from the same setting. When the web application and the
-backend share one address, the base URL is that address followed by `/scim/v2`.
+backend share one address, the base URL is that address followed by `/scim/v2`. The reverse proxy
+in front of GopherCRM must forward every path under `/scim/v2` to the backend, as the shipped proxy setups do
+([nginx and Apache](../../SERVER_PROVISIONING.md#reverse-proxy-and-tls),
+[Docker](../../DOCKER.md#single-sign-on-and-scim)).
 
 ## Tokens
 

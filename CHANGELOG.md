@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Operator documentation for single sign-on and SCIM (#729). `docs/SERVER_PROVISIONING.md`,
+  `docs/DOCKER.md` (new section "Single sign-on and SCIM") and `docs/FORKING.md` name the addresses
+  to register with the identity provider (`APP_BASE_URL/auth/callback`, `APP_BASE_URL/login` and
+  the front-channel logout URL under `/api/v1`), the SCIM base URL `PUBLIC_BASE_URL/scim/v2`
+  outside `/api/v1` with the nginx and Apache proxy rules, and the environment-only `OIDC_*`,
+  `SCIM_*` and `AUTH_AUDIT_RETENTION_DAYS` settings with how to pass them in a Compose override.
+  FORKING section 4.2 lists every stored value that depends on `API_KEY_SECRET` (SCIM tokens,
+  webhook signing secrets, the stored single sign-on client secret, client certificate and role
+  mapping, quote response links). SETUP, DEVELOPMENT and FORKING section 5.2 say that `/health`
+  and `/scim/v2` sit outside the API prefix, and the SCIM base URL steps of the user guide link
+  the proxy setup. Docs only.
 - Documentation states one Node minimum, Node.js 22 or later, in README, SETUP, FORKING, the UI
   README and the runner README (#737). The per-release SQLite upgrade notes are written once, in
   `docs/DOCKER.md` "Upgrading the SQLite database", now covering a binary run from source as well
