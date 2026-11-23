@@ -62,20 +62,7 @@ fresh account. The same holds for a deactivated account until you activate it ag
 
 ## Does GopherCRM support SCIM or SAML?
 
-SAML: no. Single sign-on uses OpenID Connect only. SCIM 2.0: partly. An identity provider holding a
-SCIM token can create accounts, and read, update and deactivate the accounts SCIM created or that
-are linked to the provider (never an account created locally in GopherCRM), with the role taken
-from the single sign-on role mapping, so an account can exist before the person's first sign-in. When the
-provider deactivates an account, the person is signed out everywhere at once and their API keys are
-revoked; reactivating it lets them sign in again, but not with the old sessions or keys. A SCIM DELETE deactivates the account the
-same way: SCIM never erases accounts: delete people in GopherCRM when their data must go. The
-provider can also read the groups of the role mapping and change their members; a member change
-sets the person's role from their groups. A person left in no mapped group is deactivated and
-signed out everywhere, with their API keys revoked; a person moved to a role that lacks a
-permission the old one had is signed out at once. A change that would leave no active
-administrator is refused. Groups cannot be renamed or deleted through SCIM; a create only answers with the existing group of a role mapping value. GopherCRM keeps the user
-name, active state, given and family name, work email and roles from the provider's updates; other
-attributes the provider sends, for example `externalId`, `displayName` or a job title, are accepted
-and not stored, so the provider's default attribute mappings can stay. An administrator creates the provider's SCIM token under Settings →
-SCIM tokens, where the token is shown once, and revokes it there; the provider is refused at once.
-Without SCIM, accounts are created at the first sign-in.
+SAML is not supported: single sign-on uses OpenID Connect only. SCIM 2.0 is partly supported: an
+identity provider can create, update and deactivate accounts and manage the members of the groups
+the role mapping names, but SCIM never erases an account. See [SCIM provisioning](scim-provisioning.md)
+for the details.

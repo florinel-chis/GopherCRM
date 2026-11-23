@@ -4,12 +4,8 @@ Back to the [overview](overview.md).
 
 GopherCRM supports single sign-on through OpenID Connect, with one identity provider at a time
 (for example Microsoft Entra ID or Okta). SAML is not supported. Accounts are created at the first
-sign-in, or in advance by a provider that provisions through SCIM 2.0 (create, update and
-deactivate; a deactivation signs the person out everywhere at once, a SCIM DELETE deactivates
-too, and SCIM never erases an account; the provider can also manage the members of the groups the
-role mapping names; see [SCIM provisioning](scim-provisioning.md)). SCIM stores the user name, active
-state, given and family name, work email and roles; other attributes the provider sends, such as
-`externalId` or `displayName`, are accepted and not stored.
+sign-in, or in advance by an identity provider through SCIM 2.0; see
+[SCIM provisioning](scim-provisioning.md).
 
 ## What happens at sign-in
 
@@ -188,8 +184,8 @@ method and read the reason column.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| The provider shows an error instead of returning to GopherCRM, for Entra ID AADSTS50011 ("The redirect URI ... does not match"). | The redirect URI registered at the provider is not exactly `APP_BASE_URL/auth/callback`. | Register the exact URI (scheme, host, port, path, no trailing slash) as a Web redirect URI, and check that `APP_BASE_URL` on the server is the address people use. |
-| "Single sign-on failed" for a first sign-in; reason `email_missing`. | The ID token carries no email claim. | Keep `email` in **Scopes**, give the person an email address at the provider, and for Entra ID add the optional claim email to the ID token if it is still missing. |
+| The provider shows an error instead of returning to GopherCRM, for Entra ID AADSTS50011 ("The redirect URI ... does not match"). | The redirect URI registered at the provider is not exactly `APP_BASE_URL/auth/callback`, or `APP_BASE_URL` points at the API instead of the web app. | Register the exact URI (scheme, host, port, path, no trailing slash) as a Web redirect URI, and check that `APP_BASE_URL` on the server is the address people use: the web app's address, not the API's. |
+| "Single sign-on failed" for a first sign-in; reason `email_missing`. | The ID token carries no email claim; with Entra ID this is often an external (`#EXT#`) account. | Keep `email` in **Scopes**, give the person an email address at the provider, and for Entra ID add the optional claim email to the ID token if it is still missing (see [external accounts](testing-single-sign-on.md#7-external-ext-accounts)). |
 | "Single sign-on failed"; reason `email_taken`. | Another GopherCRM account already uses that email address. Accounts are never linked by email. | See the [FAQ](faq.md#someone-already-has-a-password-account-can-they-switch-to-single-sign-on). |
 | "Single sign-on failed"; reason `no_mapping_match`. | No role mapping row matches the person's `roles` or `groups` values. | Compare the values recorded in the sign-in audit row with the mapping. Assign the person the app role or group at the provider, or add a row. Values are case-sensitive. |
 | "Single sign-on failed" after the provider page; reason `token_exchange_failed` (the API answers 503 `SSO_UNAVAILABLE`). | The provider refused the client secret or the client certificate: it is wrong, expired, or belongs to another application, or the certificate was not uploaded at the provider. | Create a new secret at the provider, type it into **Client secret** and save; or upload the certificate at the provider, compare its thumbprint with the one Settings → Single sign-on shows, and renew it if it has expired. |
