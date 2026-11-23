@@ -12,7 +12,7 @@ Expected field still describes it and a **Known issue** line records the defect.
 **Sources consulted**
 
 - `docs/FEATURES.md` section 7 (rows 7.1–7.9) and the Gap Summary (G19, G20, G33, G34)
-- `docs/ROADMAP.md` (known API defects)
+- `docs/DEVELOPMENT.md`, "Defects found while documenting the API" (known API defects)
 - `gocrm-ui/src/pages/users/UserList.tsx`, `UserForm.tsx`, `UserDetail.tsx`
 - `gocrm-ui/src/pages/settings/Profile.tsx`
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
@@ -523,8 +523,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   — only another admin or the `create-admin` CLI can.
 - **Known issue:** An admin can still demote itself here while another active admin remains (the
   case's precondition); `POST /users/{id}/deactivate` refuses the caller's own account, this route
-  does not (ROADMAP.md). The last active admin is protected since #348: the same request answers
-  409 `LAST_ADMIN` and writes nothing. Since #381 the form stays open on that answer and shows
+  does not (`docs/DEVELOPMENT.md`, "Defects found while documenting the API"). The last active
+  admin is protected since #348: the same request answers 409 `LAST_ADMIN` and writes nothing. Since #381 the form stays open on that answer and shows
   "The last active administrator cannot be given another role or be deactivated." above its
   buttons instead of only a snackbar (Vitest `src/pages/users/UserForm.roles.test.tsx`).
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended; needs the login
@@ -908,7 +908,8 @@ Expected field still describes it and a **Known issue** line records the defect.
   query leaves `user` undefined forever. No error message, no redirect, no NotFound page — a
   permanent spinner.
 - **Known issue:** Missing error branch in `UserDetail.tsx`; the same shape of defect as the
-  500-instead-of-404 items listed in `docs/ROADMAP.md`.
+  500-instead-of-404 items listed in `docs/DEVELOPMENT.md`, "Defects found while
+  documenting the API".
 - **Automation:** planned — `gocrm-ui/e2e/tests/admin-users.spec.ts` (extended)
 
 ---

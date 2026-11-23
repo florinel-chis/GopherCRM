@@ -9,42 +9,15 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 - **Kanban board for tasks** — drag-and-drop status board alongside the existing task list
 - **Saved filters** — persist per-user filter presets on the list pages
-- **Reports and analytics** — sales pipeline, lead conversion rate over time, ticket metrics,
-  user activity
-- **Data export** — CSV/PDF export from the list views
+- **Reports and analytics** — the dashboard shows the deal pipeline and the deals won this month
+  (`gocrm-ui/src/components/dashboard/PipelineChart.tsx`,
+  `gocrm-ui/src/components/dashboard/WonThisMonthTile.tsx`, `GET /dashboard/pipeline`). Still
+  open: lead conversion rate over time, ticket metrics, user activity
+- **Data export** — the lead list has a CSV export button
+  (`gocrm-ui/src/pages/leads/LeadList.tsx`); customer CSV export is API-only
+  (`GET /customers/export`, no button in `gocrm-ui/src/pages/customers/CustomerList.tsx`). Still
+  open: export from the other list views, a customer export button, and PDF export of lists
 - **Accessibility pass** — keyboard navigation and screen reader review against WCAG 2.1 AA
-- **Vitest cases that time out on a loaded machine** — reduced in #403, not closed for the whole suite.
-  - **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
-    running; load average up to 71):**
-    - `src/routes/index.test.tsx` › "blocks non-admin users from /users via the pathless
-      ProtectedRoute layout": the page rendered empty and `findByText` gave up after 1 s.
-    - `src/pages/forms/FormBuilder.test.tsx` › "refuses a dropdown without options" and "lets an
-      admin pick the lead owner from the user list" hit Vitest's 5 s test timeout.
-    - Later runs under contention added `src/layouts/MainLayout.test.tsx` › "shows the Automation
-      group for admin and sales and hides it for support and customer" and synchronous
-      `FormBuilder.test.tsx` cases to the list.
-  - **Not regressions:** each file passes alone.
-  - **What was done (#403):**
-    - `make verify-frontend` and the documented one-shot command run Vitest with `--maxWorkers=3`
-      (`npm test -- --run --maxWorkers=3`).
-    - `make verify` runs the frontend gate before the race-enabled Go tests, so the two no longer
-      compete for the processor.
-    - Every test in `src/routes/index.test.tsx`, `src/pages/forms/FormBuilder.test.tsx` and
-      `src/layouts/MainLayout.test.tsx` carries an explicit test timeout (30 s or more) and every
-      `findBy*`/`waitFor` call in them an explicit 15 s timeout, and the `MainLayout` test waits
-      for the opened Automation group instead of reading it straight after the click. These three
-      files no longer depend on the runner's 5 s test default or the 1 s query default: with the
-      runner default forced to 1 ms (`--testTimeout=1`) all 63 of their tests pass, where 36 failed
-      before.
-  - **The check that was run:** ten consecutive runs of the three files next to one CPU-bound busy
-    process per core (10 on a 10-core machine), started and stopped by the test command itself:
-    63 of 63 passed in all ten runs. That load is the bound set for the check; it is not claimed
-    to reproduce the original timeouts.
-  - **What remains:** the sibling files (`MainLayout.branding.test.tsx`,
-    `MainLayout.permissions.test.tsx`, `routes/index.permissions.test.tsx`,
-    `FormBuilder.ticket.test.tsx`) and the rest of the suite keep the default timeouts and rely on
-    the worker cap. A machine loaded well beyond one busy process per core can still time them
-    out; give a file that does so the same explicit timeouts.
 - **Sortable columns the backend has no mapping for** — the tickets **Customer** /
   **Assigned To** and the tasks **Assigned To** header are deliberately non-sortable in the list
   pages: tickets/tasks allow only the `customer_id` / `assigned_to_id` foreign keys, which order
@@ -119,7 +92,8 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 - **Domain repair locking on MySQL** — the startup normalisation of mixed-case company domains
   updates them by primary key in chunks of 500; the optimiser may still plan a large `IN` list as
   a full scan and lock unrelated rows while it runs. It only runs when mixed-case domains exist.
-  Tracked in #181.
+  #181 was closed as not planned: the application writes no mixed-case domains; reopen it if a
+  database that holds them is in scope.
 - **Compose `build.args` pass-through of `VITE_APP_NAME`** — delivered (#308).
   `gocrm-ui/Dockerfile` accepts an optional `VITE_APP_NAME` build argument (#303), and the `ui`
   service in `docker-compose.yml` and `docker-compose.sqlite.yml` now forwards it through
@@ -147,18 +121,18 @@ functionality and its test coverage are tracked in [FEATURES.md](FEATURES.md).
 
 ## Follow-ups from the backend build-out
 
-The audit-defect list and its loose ends are done: dashboard role guard, sentinel-error
-classification everywhere, sales read-only on tickets (backend and frontend), standardised
-pagination, strict configuration typing, and — instead of deleting the frontend functions that
-called missing routes — the routes now exist (auth session lifecycle, dashboard analytics, bulk
-status updates, API-key management, customer export/assign, upcoming tasks). Still open:
+The audit-defect list of the backend build-out and its loose ends are done. Still open:
 
-- **Access-token revocation beyond the session-ending events** — logout, a password change and a
-  password reset now end every earlier access token through `users.token_version` (#236). A
-  refresh rotation still leaves the access token it replaces valid until expiry, and a role change
-  ends nothing; revoking a single access token would need a `jti` denylist, which is not planned.
-  The web client's Profile copy still says access held elsewhere "ends when it expires"; that
-  frontend text is a separate ticket.
+- **Access-token revocation beyond the session-ending events** — every access token carries the
+  account's `users.token_version`, and raising it ends every earlier access token at once. It is
+  raised by logout, a password change, a password reset (#236), deactivation (by an administrator
+  or through SCIM), a SCIM group change that leaves the account in no mapped group (which
+  deactivates it) or that gives it a role lacking a permission the old one had, and the identity
+  provider's front-channel sign-out (`GET /auth/oidc/frontchannel-logout`, which logs the account
+  out); see README "Known Limitations" and [AUTHORIZATION.md](AUTHORIZATION.md). Still open: a
+  refresh rotation leaves the access token it replaces valid until expiry, and a role change made
+  any other way leaves the account's access tokens valid until expiry. Revoking a single access
+  token would need a `jti` denylist, which is not planned.
 - **Live session updates across tabs** — refreshes and password changes are coordinated across
   tabs by the Web Lock `gophercrm-session` and the session is stored as one record (#184), but
   other open tabs are not told about a sign-in or sign-out: they notice on their next request.
@@ -203,30 +177,10 @@ status updates, API-key management, customer export/assign, upcoming tasks). Sti
   password-reset and confirmation links, in cleartext. A setting that refuses delivery without
   TLS (and optionally implicit TLS on port 465) is a known gap.
 
-## Defects found while documenting the API (2026-10)
+## Quote PDF — follow-ups (#384)
 
-Recorded while writing the API reference; the spec documents the current behaviour, warts
-included. Found by reading the code path unless noted.
+Limits of the quote PDF renderer that are still open:
 
-- ~~**Changing the login email needs no current password**~~ — done (#394): `PUT /users/me`, and
-  `PUT /users/{id}` on the caller's own id, change the email only when the body carries the
-  account's `current_password` (400 `CURRENT_PASSWORD_REQUIRED` without it, 400
-  `INVALID_CURRENT_PASSWORD` when it does not match, nothing written), for a Bearer token and an
-  API key alike, so a live access token or API key alone can no longer redirect the password
-  reset. Changing another account's email (`users.update`) needs no password, as before. Known
-  limits: a wrong `current_password` is not counted toward the login lockout, as on
-  `POST /auth/change-password` (the same authenticated rate tier, so no new guess surface); an
-  email change revokes no session and sends no confirmation mail.
-- **`PUT /users/{id}` accepts an admin's own deactivation or demotion while another active admin
-  remains**, which `POST /users/{id}/deactivate` refuses with 400 for every caller's own account.
-  The last active admin is protected on both routes since #348 (409 `LAST_ADMIN`).
-- **Database failures reported as 404** — these lookups report every lookup error, a database
-  failure included, as a missing record or reference:
-  - `GET`, `PUT` and `DELETE /leads/{id}` and the pre-read of `POST /leads/{id}/convert` answer
-    404 `Lead not found` (the convert pre-read answers 500 only when the request was cancelled);
-  - the assignee and customer lookups of `POST /tasks` and `PUT /tasks/{id}` answer 404;
-  - the customer lookup of `POST /tickets` answers 404, and the assignee lookups of
-    `POST /tickets` and `PUT /tickets/{id}` answer 400.
 - **Quote PDF: the render credential store is per process (#384).** A render credential lives
   in the memory of the backend process that minted it. With several backend instances behind one
   origin, a render succeeds only when the render page's `POST /quotes/public/render` reaches the
@@ -254,13 +208,6 @@ included. Found by reading the code path unless noted.
   linux/arm64. For linux/amd64 the only render is the single-page PDF of the
   [Docker image](../.github/workflows/docker-image.yml) workflow, which also builds the browser
   download for both architectures; it is not a required check.
-- **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
-  replaced; errors that must reach the client use 503 elsewhere.
-- **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON
-  name for service-level field errors; Gin's validator has no tag-name function registered.
-- **Zero-valued nested objects** — `Lead.owner`, `Ticket.customer` and `Task.assigned_to` are
-  non-pointer structs tagged `omitempty`, which Go ignores, so responses that do not load them
-  carry an object with id 0 instead of omitting the field.
 
 ## Forms module — deliberate v1 cuts
 
@@ -272,18 +219,9 @@ candidate follow-up, not an accident:
 - **HTML email templates** — confirmation/follow-up/notification mail is plaintext, like the
   password-reset mail it reuses.
 - **CSV export of submissions, form-submission webhooks** — submissions are viewable in the UI and
-  via the API. Outbound webhooks for created leads, customers and tickets ship with #345 (a form
-  that creates a lead or opens a ticket sends `lead.created` / `ticket.created`), and #408 adds
-  `lead.updated`, `customer.updated` and `ticket.updated` for `PUT /leads/{id}`,
-  `PUT /customers/{id}`, `PUT /tickets/{id}` and the lead and ticket bulk status endpoints (#616
-  adds lead assignment, lead conversion and the automation assign-owner step), and
-  #437 adds `lead.deleted`, `customer.deleted` and `ticket.deleted` for deletes and erasures, and
-  #515 adds `deal.created`, `deal.updated` and `deal.deleted`, #516 adds `task.created`,
-  `task.updated` and `task.deleted`, #517 adds `company.created`, `company.updated` and
-  `company.deleted`, and #518 adds `quote.created`, `quote.updated` and `quote.deleted`; still
-  open: a submission event of its own, events of other entities (users), updated events for customer assignment, a repeat form enquiry or a company
-  delete, secret rotation
-  and retry jitter (the registry and the delivery log have a screen since #409).
+  via the API only, with no CSV export. A form that creates a lead or opens a ticket sends the
+  outbound webhook events of that lead or ticket, but a submission has no event of its own (see
+  [Outbound webhooks — follow-ups](#outbound-webhooks--follow-ups)).
 - **Per-form styling themes** — the embed exposes CSS custom properties (`--gcrm-*`) and nothing
   else.
 - **Per-form or per-status retention, and a settings screen** — the retention purge has one age,
@@ -297,10 +235,6 @@ candidate follow-up, not an accident:
 Form ticket intake ships with the form builder's "Create a support ticket" submission action
 (#335) and the FormDetail "Creates tickets" line, with these open:
 
-- ~~**Per-render idempotency key in the embed script**~~ — done: the hosted view renders one
-  `crypto/rand` key per render as `data-idempotency-key` (#340), and the embed script sends it, or
-  a key it draws once per rendered form from `crypto.getRandomValues`, on every submission of the
-  render (#341).
 - **Lead deduplication for `create_lead` forms** — the server ignores `idempotency_key` on
   `create_lead` and no-action forms, so a resend there still stores a second submission and can add
   a second lead note or lead; storing and honouring the key for those forms needs its own backend
@@ -324,12 +258,10 @@ each a candidate follow-up:
 
 - **Email to leads and customers** — `send_email` reaches staff users only until a consent and
   opt-out model exists.
-- ~~**Multi-replica leases**~~ — done (#237): each claim records the engine's instance id and a
-  heartbeat lease, every write after it is fenced on the owner, and a stale sweep at boot and on
-  every tick recovers runs whose lease is older than 3 minutes, so several replicas may run the
-  worker against one MySQL/MariaDB database. Still open: fencing the window between the pre-send
-  check and `Mailer.Send` (an executor paused exactly there can send once after a sweep recorded
-  `email_unconfirmed`). Every cancel, lead erasure and ticket delete included, clears the lease
+- **Multi-replica leases: the pre-send window** — several replicas may run the worker against one
+  MySQL/MariaDB database (#237), but the window between the pre-send check and `Mailer.Send` is
+  not fenced: an executor paused exactly there can send once after a stale sweep recorded
+  `email_unconfirmed`. Every cancel, lead erasure and ticket delete included, clears the lease
   columns since #333.
 - **Retention** — processed `automation_events` and finished runs are kept forever; a pruning
   sweep is a retention decision, not an erasure one (the rows hold ids only).
@@ -348,10 +280,48 @@ each a candidate follow-up:
   new run of a matching rule, so a rule that should fire once per resolution belongs on
   `ticket_status_changed` or behind a condition.
 
+## Outbound webhooks — follow-ups
+
+Outbound webhooks send created, updated and deleted events for leads, customers, tickets, deals,
+tasks, companies and quotes (the catalogue is `defaultCatalogue` in `internal/webhook/catalog.go`; #345,
+#408, #437, #515–#518, #616), and Settings > Webhooks lists the endpoints and their delivery log
+with a test ping, a rotate-secret control and redelivery (#409, #750). Still open:
+
+- **User events** — there is no `user.*` event type in `internal/webhook/catalog.go`.
+- **More updated events** — customer assignment, a repeat form enquiry and a company delete send
+  no updated event.
+- **Retry jitter** — the retry delay is a plain doubling up to a ceiling
+  (`internal/webhook/runtime.go` `WebhookBackoff`), with no jitter.
+- **Pause state on the Settings screen** — an endpoint's `paused_until` and
+  `consecutive_failures` are in the API response, but Settings > Webhooks does not show them.
+
+## Single sign-on and SCIM — follow-ups
+
+- **SAML** — not supported: single sign-on is OpenID Connect only, with one identity provider at
+  a time.
+- **SCIM Bulk, sorting and ETags** — not served; the service provider configuration
+  (`internal/idkit/scim/scim.go` `NewServiceProviderConfig`) declares them unsupported.
+- **Renaming or deleting a SCIM group** — not possible: `DELETE /Groups/{id}` answers 405 and
+  `PUT /Groups/{id}` is not routed (`internal/handler/scim_routes.go` `SetupSCIMRoutes`).
+
+## Audit and API keys — follow-ups
+
+- **Single sign-on settings changes are not audited** — `internal/handler/sso_settings_handler.go`
+  writes no audit row, so a change appears on neither Settings → Role audit nor Sign-in audit.
+- **Other users' API keys** — an administrator cannot list or revoke another user's API keys:
+  `GET /api-keys` lists the caller's own keys, and another user's key is 403 with no admin
+  override (`internal/handler/apikey_handler.go` `APIKeyHandler.List`).
+
 ## Sensitive settings — follow-ups
 
 - **reCAPTCHA and SMTP credentials** are the next candidates for the sensitive-configuration
   mechanism (admin-editable, encrypted at rest, env fallback) that the AEO provider keys use.
 - **Master-secret rotation orphans stored secrets**: sensitive values are sealed with a key
   derived from `API_KEY_SECRET` (falling back to `JWT_SECRET`); rotating it makes stored secrets
-  undecryptable — they read as unset and must be re-entered in the UI.
+  undecryptable — they read as unset and must be re-entered in the UI. The same rotation also
+  makes unreadable:
+  - the stored single sign-on client secret and client certificate (an unreadable certificate
+    counts as not set, and the client secret applies; see
+    [single-sign-on.md](user-guide/permissions-access/single-sign-on.md));
+  - every webhook signing secret: deliveries fail with `secret_unavailable` until the secret is
+    replaced with `POST /webhooks/endpoints/{id}/rotate-secret`.

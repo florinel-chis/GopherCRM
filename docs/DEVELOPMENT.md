@@ -2771,6 +2771,43 @@ TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestOIDCS
 TEST_MYSQL_DSN="$TEST_MARIADB_DSN" timeout 540 go test -count=1 -run '^TestLastAdmin' ./internal/integration
 ```
 
+### Vitest timeouts under load (#403)
+
+Some Vitest cases time out on a heavily loaded machine. #403 reduced this; it is not closed for the
+whole suite.
+
+- **The failures (2026-09-25, during `make verify` while the Go race tests and other work were
+  running; load average up to 71):**
+  - `src/routes/index.test.tsx` › "blocks non-admin users from /users via the pathless
+    ProtectedRoute layout": the page rendered empty and `findByText` gave up after 1 s.
+  - `src/pages/forms/FormBuilder.test.tsx` › "refuses a dropdown without options" and "lets an
+    admin pick the lead owner from the user list" hit Vitest's 5 s test timeout.
+  - Later runs under contention added `src/layouts/MainLayout.test.tsx` › "shows the Automation
+    group for admin and sales and hides it for support and customer" and synchronous
+    `FormBuilder.test.tsx` cases to the list.
+- **Not regressions:** each file passes alone.
+- **What was done (#403):**
+  - `make verify-frontend` and the documented one-shot command run Vitest with `--maxWorkers=3`
+    (`npm test -- --run --maxWorkers=3`).
+  - `make verify` runs the frontend gate before the race-enabled Go tests, so the two no longer
+    compete for the processor.
+  - Every test in `src/routes/index.test.tsx`, `src/pages/forms/FormBuilder.test.tsx` and
+    `src/layouts/MainLayout.test.tsx` carries an explicit test timeout (30 s or more) and every
+    `findBy*`/`waitFor` call in them an explicit 15 s timeout, and the `MainLayout` test waits
+    for the opened Automation group instead of reading it straight after the click. These three
+    files no longer depend on the runner's 5 s test default or the 1 s query default: with the
+    runner default forced to 1 ms (`--testTimeout=1`) all 63 of their tests pass, where 36 failed
+    before.
+- **The check that was run:** ten consecutive runs of the three files next to one CPU-bound busy
+  process per core (10 on a 10-core machine), started and stopped by the test command itself:
+  63 of 63 passed in all ten runs. That load is the bound set for the check; it is not claimed
+  to reproduce the original timeouts.
+- **What remains:** the sibling files (`MainLayout.branding.test.tsx`,
+  `MainLayout.permissions.test.tsx`, `routes/index.permissions.test.tsx`,
+  `FormBuilder.ticket.test.tsx`) and the rest of the suite keep the default timeouts and rely on
+  the worker cap. A machine loaded well beyond one busy process per core can still time them
+  out; give a file that does so the same explicit timeouts.
+
 ## Gotchas
 
 Traps that have already cost time here. Each is stated as the wrong move and the correct one.
@@ -3387,7 +3424,9 @@ router in `internal/handler/` remains the source of truth when the two disagree.
 ### OpenAPI spec
 
 The annotations document what the code does, including its warts. A defect found while
-documenting goes to [ROADMAP.md](ROADMAP.md), never into the spec as intended behaviour.
+documenting is recorded under [Defects found while documenting the
+API](#defects-found-while-documenting-the-api) below, never put into the spec as intended
+behaviour; a product limitation still goes to [ROADMAP.md](ROADMAP.md).
 
 - **General block** (`cmd/main.go`): authentication (`Authorization: Bearer <jwt>` and
   `Authorization: ApiKey <key>`, refresh rotation, access tokens ended by logout or a password
@@ -3419,6 +3458,30 @@ documenting goes to [ROADMAP.md](ROADMAP.md), never into the spec as intended be
 - **Known swag behaviours**: binding failures report `error.details` keyed by Go field name, and
   swag keeps comment line breaks in descriptions (the HTML renderer joins them). An escaped quote
   (`\"`) inside a `@Failure` description reaches the spec verbatim; plain double quotes work.
+
+### Defects found while documenting the API
+
+Recorded while writing the API reference (2026-10 onwards); the spec documents the current
+behaviour, warts included. Found by reading the code path unless noted.
+
+- **`PUT /users/{id}` accepts an admin's own deactivation or demotion while another active admin
+  remains**, which `POST /users/{id}/deactivate` refuses with 400 for every caller's own account.
+  The last active admin is protected on both routes since #348 (409 `LAST_ADMIN`).
+- **Database failures reported as 404** — these lookups report every lookup error, a database
+  failure included, as a missing record or reference:
+  - `GET`, `PUT` and `DELETE /leads/{id}` and the pre-read of `POST /leads/{id}/convert` answer
+    404 `Lead not found` (the convert pre-read answers 500 only when the request was cancelled);
+  - the assignee and customer lookups of `POST /tasks` and `PUT /tasks/{id}` answer 404;
+  - the customer lookup of `POST /tickets` answers 404, and the assignee lookups of
+    `POST /tickets` and `PUT /tickets/{id}` answer 400.
+- **A failed quote email answers 502 `MAIL_DELIVERY_FAILED`** — behind Cloudflare the JSON body is
+  replaced; errors that must reach the client use 503 elsewhere.
+- **Validation details are keyed by Go field name** (`FirstName`) for binding failures but by JSON
+  name for service-level field errors; Gin's validator has no tag-name function registered.
+- **Zero-valued nested objects** — `Lead.owner`, `Ticket.customer` and `Task.assigned_to` are
+  non-pointer structs tagged `omitempty`, which Go ignores, so responses that do not load them
+  carry an object with id 0 instead of omitting the field.
+
 
 ### API docs gate
 

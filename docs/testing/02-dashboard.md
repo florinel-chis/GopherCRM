@@ -39,7 +39,7 @@ that can exceed 100 %, a "Sales Performance" chart that plots conversions rather
   `waitForURL('/')`. Treat the dashboard as effectively unautomated.
 - `docs/ROADMAP.md` used to list `/dashboard/stats` as unguarded. It is guarded now —
   `SetupDashboardRoutes` applies `RequireRole(admin, sales, support)` to all nine routes
-  (`internal/handler/routes.go` `SetupDashboardRoutes`) — and ROADMAP's follow-up section records the fix. Cases here
+  (`internal/handler/routes.go` `SetupDashboardRoutes`) — and ROADMAP no longer lists it. Cases here
   assert the guard, not the old defect.
 - A **customer**-role account is obtainable in-test from public `POST /auth/register`, which always
   forces `customer`. **Sales** and **support** accounts are not: they require an admin-authenticated

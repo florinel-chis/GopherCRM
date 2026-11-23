@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/ROADMAP.md` lists only what is still open (#734). Shipped items are removed or narrowed
+  (the Profile wording, webhook secret rotation, items marked done, the sales pipeline and the
+  lead CSV export), the access-token bullet lists every event that ends access tokens today, the
+  master-secret note covers the single sign-on and webhook secrets, the webhook items leave the
+  forms cuts, and new follow-up sections cover outbound webhooks, single sign-on and SCIM, audit
+  and API keys, and the quote PDF limits. The Vitest timeouts under load and the API defects
+  found while documenting move to `docs/DEVELOPMENT.md`, and `docs/testing/07-users.md` points
+  there. Docs only.
 - `docs/ADMIN_TESTING.md` is retired because it no longer matched the end-to-end suite.
   `gocrm-ui/e2e/README.md` is the guide to that suite and now also lists the
   `test:e2e:admin:headed` and `test:e2e:admin:suite` scripts and the failure artifacts (screenshots,
