@@ -155,11 +155,7 @@ configuration** → **Add optional claim**, choose the ID token and add `email`.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Entra ID shows AADSTS50011 (redirect URI mismatch). | The registered redirect URI is not exactly `<APP_BASE_URL>/auth/callback`, or `APP_BASE_URL` points at the API instead of the web app. | Register the exact URI (scheme, host, port, path, no trailing slash) and set `APP_BASE_URL` to the web app's address. |
-| Reason `email_missing`. | The ID token has no email claim (often an `#EXT#` account). | Add the `email` optional claim to the ID token (section 7) and keep `email` in **Scopes**. |
-| Reason `no_mapping_match`. | The person holds no app role that a mapping row names. | Assign the app role in Entra ID or add a mapping row. Values are case-sensitive. |
-| Reason `email_taken`. | A GopherCRM account already uses that address. | Use another test person, or see the [FAQ](faq.md). Accounts are never linked by email. |
 | Nobody knows the test user's password. | The tenant user was created without a password you can use. | Reset the password in the Microsoft Entra admin center and sign in once to set a new one. |
-| 503 `SSO_UNAVAILABLE`, or "Single sign-on is unavailable" on the sign-in page. | The Issuer URL, the Client ID or the client secret is missing or wrong, or the issuer cannot be reached. A secret the issuer refuses is recorded with reason `token_exchange_failed`. | Check the three values in `/settings/sso`; create a new secret if needed. |
 
-For every other reason code, see [the troubleshooting table](single-sign-on.md#troubleshooting).
+For every reason code, see [the troubleshooting table](single-sign-on.md#troubleshooting). When
+another GopherCRM account already uses the test person's address, use another test person.

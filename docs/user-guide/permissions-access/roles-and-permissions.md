@@ -11,7 +11,7 @@ applies to its users from their next request; nobody has to sign in again.
 
 Admin, Sales, Support and Customer ship with GopherCRM. They are fixed: they cannot be edited or
 deleted (the API answers 409 `SYSTEM_ROLE_IMMUTABLE`), but each can be cloned into a custom role
-that you then change. Admin holds 75 permissions, Sales 37, Support 17 and Customer 4.
+that you then change. Admin holds 76 permissions, Sales 37, Support 17 and Customer 4.
 
 In the table, "all" means every record and "own" means only the records the user owns or is
 assigned. A dash means the role holds nothing in that group. The full list, one permission per

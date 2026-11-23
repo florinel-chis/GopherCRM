@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- User guide corrections in `docs/user-guide/permissions-access/`: the roles page gives the Admin
+  role 76 permissions, the count of the system-role definition; the SCIM behaviour is described
+  once, on the SCIM provisioning page, and the FAQ, the single sign-on page and the overview link
+  to it; the single sign-on troubleshooting table lives on the single sign-on page, and the
+  testing page keeps only its test-specific row and links to it. Docs only (#732).
 - `docs/ROADMAP.md` lists only what is still open (#734). Shipped items are removed or narrowed
   (the Profile wording, webhook secret rotation, items marked done, the sales pipeline and the
   lead CSV export), the access-token bullet lists every event that ends access tokens today, the
