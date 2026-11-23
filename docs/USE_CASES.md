@@ -6,8 +6,9 @@ path that does it, and lists the gaps that stand in the way, with the issue that
 For running your own copy see [FORKING.md](FORKING.md); for adding code see
 [EXTENDING.md](EXTENDING.md); for the full feature and test matrix see [FEATURES.md](FEATURES.md).
 
-Every recipe was checked against `main` at `4dfe404`. When the code moves, re-check the cited path
-before relying on a claim.
+Every recipe was last corrected against `main` at `98dabb04` (#733), and the cited paths and
+symbols are checked by `scripts/ci/check-doc-citations.py`. When the code moves, re-check the cited
+path before relying on a claim.
 
 ## How to read a recipe
 
@@ -308,6 +309,17 @@ engines describe its product against competitors.
   restricted by the egress policy (`internal/aeo/`, `docs/AEO_SECURITY.md`). The dashboard shows
   share of voice and citations (`gocrm-ui/src/pages/aeo/AEODashboard.tsx`). AEO read routes are
   open to admin, sales and support; writes to admin and sales (`SetupAEORoutes` (`internal/handler/aeo_routes.go`)).
+- **Lead lookup by external id.** A lead's `external_id` (`Lead.ExternalID` (`internal/models/lead.go`))
+  is looked up through `GET /leads?external_id=` (`LeadHandler.List` (`internal/handler/lead_handler.go`),
+  which hands off to `listByExternalID`): an admin finds any lead, a sales user only its own leads,
+  every other role none. The value is not unique, the match is exact (the MySQL/MariaDB collation
+  makes it case-insensitive, see the `List` annotation), and at most the first 100 matching leads
+  are read. Leads have no mapping table like the customers' (section 9, #212).
+- **Push to a product or marketing system.** Outbound webhooks send the `lead.created`,
+  `lead.updated`, `lead.deleted`, `customer.*`, `deal.*` and `quote.*` events (created, updated,
+  deleted; `internal/webhook/catalog.go`) to an endpoint an admin registers in Settings > Webhooks,
+  signed and recorded in a delivery log ([webhooks](user-guide/permissions-access/webhooks.md)).
+  Users emit no events.
 
 ### Setup
 
@@ -326,9 +338,6 @@ engines describe its product against competitors.
 
 ### Gaps
 
-- Lead `external_id` is stored (`Lead.ExternalID` (`internal/models/lead.go`)), and
-  `LeadService.GetByExternalID` exists
-  (`leadService.GetByExternalID` (`internal/service/lead_queries.go`)), but no route calls it: #215.
 - AEO results can be exported as CSV or JSON through `GET /aeo/export` (#244) or the export
   buttons on the AEO dashboard and in the prompts answer drawer (#318); there is no threshold
   alerting, and scheduled client reports are a deliberate cut (#320, docs/ROADMAP.md).
@@ -367,6 +376,10 @@ history. This is a staff-maintained register, not a shared helpdesk.
 - Tasks with labels (`internal/service/task_service.go`, `internal/service/label_service.go`).
 - Bulk status updates, at most 100 ids, all or nothing (`internal/service/bulk_status_service.go`).
 - The dashboard's recent tickets are narrowed to what the caller may see.
+- **Ticket events to an external tool.** Outbound webhooks send `ticket.created`, `ticket.updated`
+  and `ticket.deleted` (and the `customer.*` and `task.*` events; `internal/webhook/catalog.go`) to an
+  endpoint an admin registers in Settings > Webhooks, for example a chat channel or an issue
+  tracker ([webhooks](user-guide/permissions-access/webhooks.md)).
 
 ### Setup
 
@@ -394,7 +407,10 @@ history. This is a staff-maintained register, not a shared helpdesk.
 - Ticket status and priority filters run server-side (#218, delivered): `GET /tickets` applies
   them before pagination, so totals are correct, and for support they only narrow the assigned
   tickets (`docs/FEATURES.md`, 5.5).
-- No inbound mail, and no reply email to the customer: #219.
+- Reply email is API only: a staff comment posted with `email_customer: true` is mailed once to the
+  ticket's customer and recorded in `ticket_mail_deliveries`, but the comment form has no checkbox
+  for it and a failed mail is not retried. Inbound mail and a ticket channel field remain gaps
+  (#219).
 - No intake path from a form or an external system that is safe to retry: a ticket has no
   submission or external key, so idempotent import is a schema change (#213). Customers, unlike
   tickets, can be mapped to an external system's ids (delivered, #212): `POST
@@ -465,7 +481,75 @@ A provider that runs courses for individuals and corporate groups.
 - **Limit:** automation schedules run daily in UTC (`AutomationTrigger.HourUTC` (`internal/models/automation.go`)).
 - **Do not promise:** sessions, capacity, booking or attendance tracking.
 
-## 7. Poor fits
+## 7. Team that signs in through Microsoft Entra ID
+
+**Fit: good.**
+
+A company whose staff already sign in to Microsoft 365 wants them to reach the CRM with the same
+account, get their CRM role from Entra ID, and lose access when they leave.
+
+### Existing flow
+
+- **Single sign-on.** OpenID Connect with one identity provider at a time
+  (`SetupSSOSettingsRoutes` (`internal/handler/routes.go`), settings behind the admin-only
+  `settings.sso_manage`). The sign-in page shows **Sign in with single sign-on**; the first
+  sign-in creates an active account with no usable password, and later sign-ins recognise the
+  person by the provider's identifier, never by email
+  ([single sign-on](user-guide/permissions-access/single-sign-on.md)).
+- **Roles from Entra ID.** The role mapping turns an Entra ID app role (claim `roles`) or a security
+  group (claim `groups`, by Object ID) into a GopherCRM role, a custom role included, at every
+  sign-in; a person no mapping row matches gets no access. A session that started with single
+  sign-on can be refreshed for 24 hours after the sign-in at the provider.
+- **Sign-out.** Logout also sends the browser to the Entra ID sign-out page, and Entra ID's
+  front-channel logout (`GET /auth/oidc/frontchannel-logout`) ends every GopherCRM session of that
+  person.
+- **Optional SCIM provisioning.** Entra ID creates, updates and deactivates accounts before people
+  sign in, over `/scim/v2` with a SCIM token an admin creates in Settings > SCIM tokens
+  (`SetupSCIMRoutes` (`internal/handler/scim_routes.go`), `SetupSCIMTokenRoutes` (`internal/handler/scim_routes.go`);
+  [SCIM provisioning](user-guide/permissions-access/scim-provisioning.md)). A provider deactivation
+  or DELETE deactivates the account and ends its tokens.
+- **Audit.** Refused sign-ins and SCIM token failures carry a reason code in Settings > Sign-in audit
+  ([sign-in audit](user-guide/permissions-access/sign-in-audit.md)).
+
+### Setup
+
+Follow [How to: single sign-on with Microsoft Entra ID](user-guide/permissions-access/how-to-microsoft-entra-id.md):
+
+- Create a local break-glass administrator with a password (`create-admin`) **before** enabling
+  single sign-on, and keep it: local accounts can always sign in with their password, so a provider
+  outage, an expired certificate or secret, or a wrong role mapping cannot lock you out.
+- Register the application in Entra ID with the redirect URI `APP_BASE_URL/auth/callback`, the
+  sign-out return address `APP_BASE_URL/login`, the front-channel logout URL and the `sid` optional
+  claim; prefer a certificate over a client secret.
+- Create app roles (for example `CRM.Admin`, `CRM.Sales`), assign people or groups (groups need
+  Entra ID P1), and set **Assignment required?** to Yes.
+- In Settings > Single sign-on enter the issuer, client id and credential, map each app role to a
+  GopherCRM role, and switch it on.
+- For SCIM, set the Tenant URL to `PUBLIC_BASE_URL/scim/v2` and make the reverse proxy forward
+  every path under `/scim/v2/` to the backend: the SCIM base URL is outside `/api/v1`, and without
+  that rule Entra ID's **Test Connection** receives the web page.
+
+### Gaps
+
+- No SAML, and one identity provider at a time: a second tenant or another provider needs code.
+- SCIM serves Users and the role-mapping Groups only: a group POST never adds a group, group DELETE
+  answers 405, group PUT is not routed, renaming a group is refused (Entra ID's default group
+  mapping sends `displayName`, so map the groups in Settings > Single sign-on instead), and
+  `/scim/v2/Bulk`, sorting and ETags are not served (scim-provisioning.md, "What is not served").
+- A role changed in Entra ID applies at the person's next sign-in, at the latest 24 hours later;
+  access tokens issued before stay valid until they expire unless a SCIM group change ends them
+  (section 8, "Regulated health records").
+
+### Do not promise
+
+SAML, several identity providers, groups created or renamed from Entra ID through SCIM, or that
+removing a person from a group leaves the account as it is. Removing them from one group gives
+them the role of the first mapping row that matches one of their remaining groups; removing them
+from their last mapped group deactivates the account, as SCIM `active` false does (signed out
+everywhere, API keys revoked), so keep integration and service accounts in a mapped group. A group change never erases an account:
+deactivate people at the provider, and erase the account in GopherCRM when the data must go.
+
+## 8. Poor fits
 
 Each of these would need a different core model, not a recipe.
 
@@ -475,10 +559,10 @@ Each of these would need a different core model, not a recipe.
 | Recruiting | No attachments for CVs, and the pipeline links one deal to one customer, where recruiting needs many candidates per opening |
 | Nonprofit donor CRM | No recurring gifts, campaigns or nurture email to contacts |
 | Multi-tenant reseller hosting | No tenant column; settings and the AEO profile are installation-wide singletons (`AEOProfile` (`internal/models/aeo.go`)) |
-| Regulated health records | No field-level encryption, no read audit, and a single access token cannot be revoked on its own: only logout, a password change or a reset ends access tokens early, all of an account's at once (#236; `docs/ROADMAP.md`, "Access-token revocation beyond the session-ending events") |
+| Regulated health records | No field-level encryption, no read audit, and a single access token cannot be revoked on its own: only logout (the single sign-on front-channel logout included), a password change, a password reset, deactivation (by an administrator or through SCIM) and a SCIM group change that leaves the account in no mapped group or gives it a role lacking a permission the old one had end access tokens early, all of an account's at once (#236; `docs/ROADMAP.md`, "Access-token revocation beyond the session-ending events") |
 | An e-commerce order system inside the CRM | Products and quotes are sales tools; the shop platform stays the system of record for orders, stock and payment |
 
-## 8. Cross-cutting gaps
+## 9. Cross-cutting gaps
 
 Gaps that more than one recipe runs into. Check `gh issue list` for the current state before
 planning around an issue number.
@@ -492,10 +576,10 @@ planning around an issue number.
 | Delivered: erasure redacts the deal and quote text of the erased customer or lead and deletes notifications about those deals. Still open: a task rendered from `{{deal.title}}` before the erasure keeps that text | 2, 5, 6 | `internal/repository/business_text_erasure.go` | #245 |
 | Delivered: the UI takes its product name from one helper (stored `general.company_name`, else `VITE_APP_NAME`, else `GoCRM`) and the light theme's primary colour from `ui.theme.primary_color` (#291); the password reset, quote and ticket reply mails take their product name from the same setting, else `GopherCRM` (#292); the Docker UI image's optional `VITE_APP_NAME` build argument (#303), forwarded by both dev Compose files through `build.args` (#308) | 1, 2 | `internal/service/product_name.go`; `gocrm-ui/Dockerfile`; `docker-compose.yml` | #221 |
 | Delivered: production Compose override example `docker-compose.production.example.yml` (SMTP, base URLs, automation, reCAPTCHA, AEO schedule, CORS; no backend host port, UI on loopback); AEO runs and the daily schedule coordinated across backend replicas on MySQL/MariaDB (#229); the automation worker on several backend replicas (#237). Still open: TLS proxy configuration | all | `docker-compose.production.example.yml`; the `backend` service's `environment` block in `docker-compose.yml` and `docker-compose.sqlite.yml`; `docs/FORKING.md` 5.4 | #222, #229, #237 |
-| Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `APIKey` (`internal/models/apikey.go`) | #211 |
+| Delivered: a least-privilege credential for integrations is a dedicated user on a custom role holding only the keys it needs, documented with setup, rotation and revocation in [AUTHORIZATION.md](AUTHORIZATION.md#least-privilege-integration-user) and proven by `TestLeastPrivilegeIntegrationUser*`. Also delivered: outbound webhooks for the created, updated and deleted events of leads, customers, tickets, deals, tasks, companies and quotes, signed, with a delivery log and a screen in Settings > Webhooks. Still open: API keys have no scopes of their own, and an administrator cannot list or revoke another user's keys | 3, 4 | `internal/integration/integration_user_integration_test.go`; `APIKey` (`internal/models/apikey.go`); `internal/webhook/catalog.go` | #211 |
 | Delivered: external identity mapping for customers, a `(source, scope, external_id)` table unique on the exact triple (customer email stays globally unique), written by admin and sales, resolved by an exact lookup on `GET /customers`, and deleted with the customer by every erasure path. Still open: no UI, and no mapping table for leads (they keep one external_id column), users, companies or deals | 3, 4 | `internal/models/customer_external_id.go`; `internal/handler/customer_external_id_handler.go` | #212 |
 | Retry-safe intake from forms or external systems into tickets (schema change) | 4 | `internal/models/ticket.go` | #213 |
-| Route the lead `external_id` lookup | 3 | `leadService.GetByExternalID` (`internal/service/lead_queries.go`) | #215 |
+| Delivered: the lead `external_id` lookup is routed as `GET /leads?external_id=` (admin any lead, sales own leads). Still open: no mapping table for leads | 3 | `LeadHandler.List` (`internal/handler/lead_handler.go`) | #215 |
 | Delivered: server-side ticket status and priority filters (#218). Still open: a shared or unassigned support queue | 4 | `TicketHandler.List` (`internal/handler/ticket_handler.go`); `docs/FEATURES.md` 5.5 | #259 |
 | Delivered: outbound ticket replies by email — a staff comment sent with `email_customer: true` is mailed once to the ticket's customer, the outcome recorded per comment (backend only; no retry). Still open: the comment-form checkbox, a ticket channel field and inbound mail | 4 | `internal/service/ticket_comment_email.go`; `docs/FEATURES.md` 5.10 | #219 |
 | Delivered: a bulk status batch writes `completed` inside its own transaction, and a row left `pending` (its batch never committed, its `failed` write timed out) is failed by a sweep at boot and every 15 minutes once it is an hour old. Still open: rows already `pending` before the upgrade are swept to `failed` although their batch may have committed (outcome unknown, not stored) | 4 | `internal/service/bulk_status_service.go`; `internal/service/bulk_operation_recovery_runtime.go`; `docs/DEVELOPMENT.md`, *Bulk endpoints* | #196 |

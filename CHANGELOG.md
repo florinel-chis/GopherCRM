@@ -40,6 +40,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/FORKING.md` and `docs/USE_CASES.md` are brought up to date with 1.3.0 (#733): the web UI
+  shows and edits quote tax; every event that ends access tokens early is listed, as in the README
+  Known Limitations; the lead lookup by external id is routed (`GET /leads?external_id=`, also in
+  `docs/EXTENDING.md`); ticket reply email works through the API; the counts in FORKING section 9
+  are re-measured on a named commit, and the dated open-issue lists give way to the `gh` command.
+  FORKING's module table gains rows for roles and permissions, single sign-on, SCIM provisioning,
+  webhooks and the sign-in and role audit, and USE_CASES gains webhook integration notes and a
+  Microsoft Entra ID recipe.
 - `docs/datamodel.md` now covers every table the migrations create (labels, task labels, password
   reset and form confirmation tokens, forms and their submissions, the AEO tables, configurations
   and products) and the `failed_login_attempts` and `locked_until` user columns, and states the
