@@ -10,9 +10,10 @@ file, not by trusting the coverage matrix.
 
 - `docs/FEATURES.md` section 1 (rows 1.1–1.17), section 10b "Auth sessions", section 11.1, Gap
   Summary G11/G12
-- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (missing SPA reset route,
-  access-token revocation beyond the session-ending events, concurrent-refresh stampede)
-- `gocrm-ui/src/pages/auth/Login.tsx`, `gocrm-ui/src/pages/auth/Register.tsx`
+- `docs/ROADMAP.md` — "Follow-ups from the backend build-out" (access-token revocation beyond the
+  session-ending events, live session updates across tabs)
+- `gocrm-ui/src/pages/auth/Login.tsx`, `gocrm-ui/src/pages/auth/Register.tsx`,
+  `gocrm-ui/src/pages/auth/ForgotPassword.tsx`, `gocrm-ui/src/pages/auth/ResetPassword.tsx`
 - `gocrm-ui/src/contexts/AuthContext.tsx`, `gocrm-ui/src/api/client.ts`,
   `gocrm-ui/src/api/endpoints/auth.ts`
 - `gocrm-ui/src/routes/index.tsx`, `gocrm-ui/src/components/ProtectedRoute.tsx`,
@@ -687,28 +688,33 @@ file, not by trusting the coverage matrix.
   `gocrm-ui/src/api/client.sessionRecord.test.ts` and `gocrm-ui/src/api/sessionLock.test.ts`;
   `AuthContext.test.tsx` covers the stale `/users/me` answer, the stale 401 and competing sign-ins.
 
-### TC-AUTH-034 — "Forgot password?" leads to the 404 page
+### TC-AUTH-034 — "Forgot password?" opens the Forgot Password page
 - **Priority:** P1
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Logged out, on `/login`.
 - **Steps:** Click the "Forgot password?" link.
-- **Expected:** The URL becomes `/forgot-password` and the SPA renders the catch-all `NotFound` page —
-  the "404" heading and "Page Not Found". `routes/index.tsx` declares no `/forgot-password` route, so
-  the `path: '*'` entry matches.
-- **Known issue:** The login page links to a page that does not exist. `docs/ROADMAP.md`, "UI pages
-  for the new auth flows": `authApi.requestPasswordReset` and `resetPassword` are real endpoints but
-  no page calls them.
+- **Expected:** The URL becomes `/forgot-password` (the link is in `Login.tsx`, the route in
+  `routes/index.tsx`) and the `ForgotPassword` page renders: the heading "Forgot Password" and a
+  form with the "Email Address" field and the "Send Reset Link" button.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (extended)
 
-### TC-AUTH-035 — A reset link from the email lands on the 404 page
+### TC-AUTH-035 — A reset link from the email opens the Reset Password page
 - **Priority:** P1
-- **Type:** negative
+- **Type:** functional
 - **Preconditions:** Logged out.
-- **Steps:** Navigate directly to `/reset-password?token=anything`.
-- **Expected:** The `NotFound` page renders. The backend builds this link from `APP_BASE_URL` in
-  `internal/mailer`, but the SPA has no matching route, so a real reset email is a dead end in the UI.
-- **Known issue:** `docs/ROADMAP.md` — "the reset email links to `/reset-password?token=...`, which
-  has no route in the SPA yet".
+- **Steps:**
+  1. Navigate directly to `/reset-password?token=anything`.
+  2. Enter a valid new password in "New Password" and "Confirm New Password" and click "Reset
+     Password".
+  3. Navigate to `/reset-password` without a token.
+- **Expected:** Step 1: the `ResetPassword` page renders with the heading "Reset Password" and the
+  new-password form ("New Password", "Confirm New Password"). The backend builds this link from
+  `APP_BASE_URL` in `internal/mailer`. Step 2: the token is unknown, so the API answers the generic
+  **400** "Invalid or expired reset token" (`internal/handler/auth_handler.go`
+  `AuthHandler.ConfirmPasswordReset`) and the form's error alert shows that message (the page falls
+  back to "Failed to reset password. Please try again." only when the response carries none).
+  Step 3: the page shows the warning "Invalid or missing reset token. Please request a new password
+  reset link." and a "Request Reset Link" button to `/forgot-password`, instead of the form.
 - **Automation:** planned — `gocrm-ui/e2e/tests/login.spec.ts` (extended)
 
 ### TC-AUTH-036 — Requesting a password reset answers identically for known and unknown emails
@@ -793,7 +799,7 @@ file, not by trusting the coverage matrix.
   the password; the old password no longer authenticates and a replay of the link returns the
   generic **400**.
 - **Automation:** blocked — needs mail capture (with `SMTP_HOST` unset the mailer only writes a
-  redacted log line) *and* the missing `/reset-password` SPA route. The API round trip is
+  redacted log line). The API round trip is
   covered in Go by `tests/auth_session_integration_test.go` `AuthSessionIntegrationTestSuite.TestPasswordResetRoundTrip`;
   the credential revocation by `TestCredentialRevocation{SQLite,MySQL}` (`reset_confirm`,
   `reset_confirm_rolls_back_when_the_key_revocation_fails`) and

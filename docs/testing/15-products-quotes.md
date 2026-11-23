@@ -1360,9 +1360,10 @@ Sources: `internal/service/quote_pdf.go`, `quote_pdf_chrome.go`, `quote_email.go
   8: each round ends with the answer committed (quote `accepted`, token `decision` `accept` with
   the answer's `used_at`) or refused with the generic rejection (quote `sent`, token stamped,
   `decision` NULL); the erasure always succeeds and neither side sees a deadlock or a lock wait
-  timeout.
-- **Known issue:** a quote email in flight while the erasure runs can still mint and mail a
-  link the erasure does not stamp (`docs/ROADMAP.md`, #395).
+  timeout. A link minted by a quote email that is in flight while the erasure runs is not
+  stamped, but both public routes refuse it once the erasure commits (`docs/DEVELOPMENT.md`,
+  "Deleting personal data", bullet "Response links (#395)"; `docs/CONCURRENCY.md`, "Global lock
+  order").
 - **Automation:** automated — `internal/service/quote_response_erasure_test.go`
   `TestQuoteResponseAfterCustomerErasure{SQLite,MySQL}`;
   `internal/repository/erasure_quote_tokens_test.go`
