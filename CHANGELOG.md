@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `docs/datamodel.md` now covers every table the migrations create (labels, task labels, password
+  reset and form confirmation tokens, forms and their submissions, the AEO tables, configurations
+  and products) and the `failed_login_attempts` and `locked_until` user columns, and states the
+  current lead owner, automation assignee, password, error code, user assignment, deletion and
+  dashboard rules (#739).
 - `docs/CONCURRENCY.md` cites code by path and symbol instead of line numbers (#743), and
   `scripts/ci/check-doc-citations.py` checks it like every other guide: its exemption is gone and
   it is listed in `CONVERTED_FILES`. The header names no fixed commit. The doc names the shared
