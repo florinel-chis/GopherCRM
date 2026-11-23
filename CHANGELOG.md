@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   states that a SCIM `POST /Groups` resolves to an existing group and creates no value, and that
   `DELETE /Groups/{id}` answers 405. A release unit test keeps every changelog section to one
   heading of each kind. Docs and CI checks only.
+- `docs/FEATURES.md` matches the current code and tests (#741). The rows for logout, API key
+  authentication and management, OpenID Connect sign-in and dashboard stats name the tests that
+  cover them, and the webhook section introduction lists all seven entities. Gap G11 is narrowed,
+  G13 resolved, G15 narrowed and G35 marked as a duplicate of G23. The Playwright count table is
+  regenerated from `playwright test --list` (208 tests in 35 files), the Go, integration and
+  Vitest count tables are marked as not recounted, and the header date is refreshed. Docs only.
 
 ### Fixed
 
