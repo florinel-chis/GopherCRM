@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -197,21 +198,31 @@ func TestMigrationSequence_UpgradePathFromExistingMain(t *testing.T) {
 		"ticket comments migration should follow schema parity, got %s", pendingMigrations[1].name)
 }
 
-// testMySQLBaseDSN returns the server-level DSN (no database name) the
-// MySQL/MariaDB migration roots run against. It reads only TEST_MYSQL_DSN: an
-// unset or blank value skips the calling test, and a value that names an
-// unreachable server is returned as is so the test fails at its first
-// statement instead of falling back to another server. A query string is
-// accepted and kept unchanged; a param-free DSN without a trailing slash gets
-// one appended.
-func testMySQLBaseDSN(t *testing.T) string {
-	t.Helper()
-	dsn := strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN"))
+// mysqlBaseDSNFromEnv is the decision behind testMySQLBaseDSN: it reads only
+// TEST_MYSQL_DSN and reports ok=false for an unset or blank value. A value that
+// names an unreachable server is returned as is, so the calling test fails at
+// its first statement instead of falling back to another server. A query string
+// is kept unchanged; a param-free DSN without a trailing slash gets one
+// appended.
+func mysqlBaseDSNFromEnv() (dsn string, ok bool) {
+	dsn = strings.TrimSpace(os.Getenv("TEST_MYSQL_DSN"))
 	if dsn == "" {
-		t.Skip("TEST_MYSQL_DSN is not set: skipping the MySQL/MariaDB migration test")
+		return "", false
 	}
 	if !strings.Contains(dsn, "?") && !strings.HasSuffix(dsn, "/") {
 		dsn += "/"
+	}
+	return dsn, true
+}
+
+// testMySQLBaseDSN returns the server-level DSN (no database name) the
+// MySQL/MariaDB migration roots run against, as mysqlBaseDSNFromEnv decides
+// it; without one it skips the calling test.
+func testMySQLBaseDSN(t testing.TB) string {
+	t.Helper()
+	dsn, ok := mysqlBaseDSNFromEnv()
+	if !ok {
+		t.Skip("TEST_MYSQL_DSN is not set: skipping the MySQL/MariaDB migration test")
 	}
 	return dsn
 }
@@ -298,53 +309,89 @@ func TestMySQLTestDSN(t *testing.T) {
 	})
 }
 
+// skipRecorder is a testing.TB for testMySQLBaseDSN that records a requested
+// skip instead of skipping a real test, so the skip path is checked without
+// emitting a skip event (the release SQL gate rejects every skip). Only Helper
+// and Skip are implemented; any other method hits the nil embedded TB.
+type skipRecorder struct {
+	testing.TB
+	skipped bool
+	message string
+}
+
+func (r *skipRecorder) Helper() {}
+
+func (r *skipRecorder) Skip(args ...any) {
+	r.skipped = true
+	r.message = fmt.Sprint(args...)
+	runtime.Goexit()
+}
+
+// callTestMySQLBaseDSN runs testMySQLBaseDSN against a skipRecorder in its own
+// goroutine, so Skip's Goexit stops only the helper. returned reports whether
+// the helper came back normally.
+func callTestMySQLBaseDSN() (rec *skipRecorder, got string, returned bool) {
+	rec = &skipRecorder{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		got = testMySQLBaseDSN(rec)
+		returned = true
+	}()
+	<-done
+	return rec, got, returned
+}
+
 func TestMySQLBaseDSNFromEnvironmentOnly(t *testing.T) {
-	run := func(t *testing.T, name string) (string, *testing.T) {
+	const skipMessage = "TEST_MYSQL_DSN is not set: skipping the MySQL/MariaDB migration test"
+	assertSkips := func(t *testing.T) {
 		t.Helper()
-		var inner *testing.T
-		var got string
-		t.Run(name, func(t *testing.T) {
-			inner = t
-			got = testMySQLBaseDSN(t)
-		})
-		return got, inner
+		dsn, ok := mysqlBaseDSNFromEnv()
+		assert.False(t, ok)
+		assert.Empty(t, dsn)
+		rec, got, returned := callTestMySQLBaseDSN()
+		assert.True(t, rec.skipped, "testMySQLBaseDSN must request a skip")
+		assert.Equal(t, skipMessage, rec.message)
+		assert.False(t, returned, "testMySQLBaseDSN must not return after requesting a skip")
+		assert.Empty(t, got)
+	}
+	assertReturns := func(t *testing.T, want string) {
+		t.Helper()
+		dsn, ok := mysqlBaseDSNFromEnv()
+		assert.True(t, ok)
+		assert.Equal(t, want, dsn)
+		rec, got, returned := callTestMySQLBaseDSN()
+		assert.False(t, rec.skipped)
+		assert.True(t, returned)
+		assert.Equal(t, want, got)
 	}
 
 	t.Run("unset skips", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", "")
 		require.NoError(t, os.Unsetenv("TEST_MYSQL_DSN"))
-		_, inner := run(t, "helper")
-		assert.True(t, inner.Skipped())
+		assertSkips(t)
 	})
 	t.Run("empty skips", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", "")
-		_, inner := run(t, "helper")
-		assert.True(t, inner.Skipped())
+		assertSkips(t)
 	})
 	t.Run("whitespace skips", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", " \t\n ")
-		_, inner := run(t, "helper")
-		assert.True(t, inner.Skipped())
+		assertSkips(t)
 	})
 	t.Run("set value is returned without connecting", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)/")
 		start := time.Now()
-		got, inner := run(t, "helper")
-		assert.False(t, inner.Skipped())
-		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/", got)
+		assertReturns(t, "nobody:x@tcp(127.0.0.1:1)/")
 		assert.Less(t, time.Since(start), time.Second)
 	})
 	t.Run("missing trailing slash is appended", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)")
-		got, inner := run(t, "helper")
-		assert.False(t, inner.Skipped())
-		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/", got)
+		assertReturns(t, "nobody:x@tcp(127.0.0.1:1)/")
 	})
 	t.Run("query string is kept without appending a slash", func(t *testing.T) {
 		t.Setenv("TEST_MYSQL_DSN", "nobody:x@tcp(127.0.0.1:1)/?parseTime=true")
-		got, inner := run(t, "helper")
-		assert.False(t, inner.Skipped())
-		assert.Equal(t, "nobody:x@tcp(127.0.0.1:1)/?parseTime=true", got)
+		assertReturns(t, "nobody:x@tcp(127.0.0.1:1)/?parseTime=true")
 	})
 }
 
