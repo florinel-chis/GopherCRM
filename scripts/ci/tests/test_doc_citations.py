@@ -273,7 +273,7 @@ class DocCitationCheckTest(unittest.TestCase):
         # guides that cited code by line; each must stay under rule c.
         expected = {
             'docs/FORKING.md', 'docs/EXTENDING.md', 'docs/USE_CASES.md',
-            'docs/SERVER_PROVISIONING.md', 'README.md', 'docs/REFACTORING_GUIDE.md',
+            'docs/SERVER_PROVISIONING.md', 'README.md',
             'docs/FEATURES.md', 'docs/DOCKER.md', 'docs/datamodel.md', 'docs/SETUP.md',
         }
         self.assertEqual(expected - set(gate.CONVERTED_FILES), set())

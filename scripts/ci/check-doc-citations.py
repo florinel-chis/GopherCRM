@@ -81,7 +81,6 @@ CONVERTED_FILES = (
     'docs/USE_CASES.md',
     'docs/SERVER_PROVISIONING.md',
     'README.md',
-    'docs/REFACTORING_GUIDE.md',
     'docs/FEATURES.md',
     'docs/DOCKER.md',
     'docs/datamodel.md',

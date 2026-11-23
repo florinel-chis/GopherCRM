@@ -7,6 +7,9 @@ boundary and caller tests with health smoke. Production deploys move to validate
 
 ## Working prompt
 
+> **Historical.** This section describes the Langflow runner's local validation. Ticket work
+> no longer runs through the runner; the text is kept as a record of its design and rollout.
+
 > Implement a documented validation policy that selects relevant tests from the changed
 > files, defaults to full validation for uncertain or high-risk changes, and preserves
 > independent review and exact-commit merge checks. Add a release workflow that validates
@@ -27,6 +30,9 @@ boundary and caller tests with health smoke. Production deploys move to validate
 | Migration coverage | CI: a pull request that changes migration code runs `Migrations (MySQL 8)` (not a required check), and a change under `migrations/` or `cmd/migrate` runs the `cmd/migrate` tests on MariaDB through the selection. Runner: local persistence/full fallback also requires migration checks; skips rejected | Dedicated MySQL/MariaDB migration and SQLite upgrade CI: fresh, upgrade, rollback; skips rejected |
 | Runner tests | Required when the workflow changes | Always |
 | Independent review and exact-head merge checks | Required | Release uses the already-reviewed main commit |
+
+The "Runner" entries above and the per-profile local-validation paragraphs below describe the
+Langflow runner's local checks; what CI does is stated in "What CI runs outside a release".
 
 ### What CI runs outside a release (#365)
 
@@ -145,13 +151,6 @@ only on `full`, and browser specs only for a release (11 November 2026).
 Frontend build health remains required in CI; unrelated frontend units and entity browsers
 are excluded. Explicit full validation and releases remain complete.
 
-This correction follows the stopped #103 recovery, which replayed unrelated entity browsers
-under its old frozen policy. Passed checks and the interrupted browser attempt remain historical
-evidence. Install the reviewed selector, retain the old journal and remaining budgets, then
-use a new configuration/state for fresh focused completion; never rewrite an admitted policy
-or relabel the interrupted check as passed. Record actual candidate selection before expensive
-work. A manifest containing scope globs is a conservative preview, not the committed diff.
-
 The shared `check-go.py` profiles (AEO, transaction, migration and mailer) isolate application
 database connection variables from Go subprocesses,
 while retaining `TEST_MYSQL_DSN` for disposable fixtures. This applies equally to local and
@@ -235,21 +234,6 @@ run in CI and explicit full local validation also run `python3 scripts/ci/check-
 --persistence` against MySQL, so the auth and refresh-rotation MySQL roots, which
 `make verify-backend` skips without `TEST_MYSQL_DSN`, cannot skip on a general change (#230). New transaction callers
 or test locations require updating the maintained source map.
-
-This profile corrects the #106 run that selected all 159 SQLite browser cases merely because
-the transaction helper was shared. That run was stopped and retained as partial evidence.
-The revised candidate needs fresh focused validation and independent review. An orphaned Vite
-server also exposed a port-conflict classification gap: occupied browser ports now stop as
-environment failures instead of spending a source-repair call. Stop only the identified stale
-process, then resume; do not change application code or reuse an unknown server. Do not edit a
-frozen execution's policy or reinterpret its interrupted checks: retain it, document the
-handoff and remaining budgets, and use an explicitly new configuration/state for completion.
-
-This refinement came from issue #100: the previous map treated even a bounded login-counter
-fix as a full application change. Deterministic boundary tests and real session HTTP coverage
-provide direct evidence for that behavior without replaying unrelated entity journeys.
-Use an explicitly new local configuration/state after installing the updated selector;
-its content hash invalidates unfinished contextual execution policies.
 
 The smoke test checks `/health`, rejection of anonymous ticket access, admin login and
 successful collection/page loading for leads, customers, tickets, tasks and users. It
@@ -381,6 +365,9 @@ not change the selected browser profile or replace semantic review of migration 
 
 ## Local Langflow rollout
 
+> **Historical.** This section describes the Langflow runner's local validation. Ticket work
+> no longer runs through the runner; the text is kept as a record of its design and rollout.
+
 New example configurations use `"validation_mode": "contextual"`. Existing configurations
 that omit the field use `"legacy"`: the original v0.3 behavior and policy hashes. Legacy
 mode retains its original conditional local browser coverage. Explicit `"full"` always
@@ -443,6 +430,9 @@ version as needed. Repository immutable-release settings are not changed by this
 
 ## Process and lessons
 
+> **Historical.** This section describes the Langflow runner's local validation. Ticket work
+> no longer runs through the runner; the text is kept as a record of its design and rollout.
+
 The motivating #97 run spent about twenty minutes on each full local browser suite while
 core verification took only a few minutes. Its full policy was already frozen, so it completed
 under that policy. The workflow change was developed in a separate worktree. This avoids
@@ -492,14 +482,34 @@ trusted bases. Release tests cover version preparation, tag reuse, transport fai
 corruption/traversal, mismatched commits, draft failures and unvalidated deployment. Actual
 workflow syntax, health smoke and repository verification supplement those isolated tests.
 
+This correction follows the stopped #103 recovery and is the bounded `auth-persistence` profile.
+That recovery replayed unrelated entity browsers under its old frozen policy. Passed checks and the interrupted browser attempt remain historical
+evidence. Install the reviewed selector, retain the old journal and remaining budgets, then
+use a new configuration/state for fresh focused completion; never rewrite an admitted policy
+or relabel the interrupted check as passed. Record actual candidate selection before expensive
+work. A manifest containing scope globs is a conservative preview, not the committed diff.
+
+This profile corrects the #106 run. The profile is the bounded `transaction` profile; the run
+selected all 159 SQLite browser cases merely because the transaction helper was shared. That run was stopped and retained as partial evidence.
+The revised candidate needs fresh focused validation and independent review. An orphaned Vite
+server also exposed a port-conflict classification gap: occupied browser ports now stop as
+environment failures instead of spending a source-repair call. Stop only the identified stale
+process, then resume; do not change application code or reuse an unknown server. Do not edit a
+frozen execution's policy or reinterpret its interrupted checks: retain it, document the
+handoff and remaining budgets, and use an explicitly new configuration/state for completion.
+
+This refinement came from issue #100 and is the bounded `auth` profile: the previous map
+treated even a bounded login-counter fix as a full application change. Deterministic boundary tests and real session HTTP coverage
+provide direct evidence for that behavior without replaying unrelated entity journeys.
+Use an explicitly new local configuration/state after installing the updated selector;
+its content hash invalidates unfinished contextual execution policies.
+
 Potential follow-ups, after measuring real contextual runs:
 
 - Record p50/p95 duration by profile, changed feature and database; compare failures discovered
   in full rehearsals with earlier contextual results before expanding the map.
 - Replace existing skipped browser scenarios with stable record-specific tests. A mapped suite
   containing skips is not complete feature coverage.
-- Consider dependency-aware Go/frontend selection only after the browser reduction is measured;
-  keeping these inexpensive suites complete avoids a second uncertain dependency map in the MVP.
 - Add artifact attestations/signing and an explicitly audited resume operation for partial
   publication. Current fail-closed recovery is safe but needs operator work.
 - Consider periodic full runs to detect mapping omissions between releases. No new schedule is
