@@ -58,8 +58,9 @@ MySQL 8 and MariaDB 10.11, and 5 CI workflows (measured on `4dfe404`; commands i
 
 - [docs/FORKING.md](docs/FORKING.md) — first run, rebranding, configuration, deployment, CI and
   staying in sync with upstream.
-- [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md) — preparing a fresh systemd/nginx
-  server (MySQL or MariaDB) for the release-tarball deploy path.
+- [docs/SERVER_PROVISIONING.md](docs/SERVER_PROVISIONING.md) — preparing a fresh systemd server
+  (MySQL or MariaDB) for the release-tarball deploy path, with the reverse proxy and TLS for nginx
+  or Apache 2.4 ([Reverse proxy and TLS](docs/SERVER_PROVISIONING.md#reverse-proxy-and-tls)).
 - [docs/USE_CASES.md](docs/USE_CASES.md) — worked recipes for concrete deployments, with their gaps.
 - [docs/EXTENDING.md](docs/EXTENDING.md) — adding or removing entities, routes, migrations and modules.
 - [docs/CONCURRENCY.md](docs/CONCURRENCY.md) — lock order and retry rule for multi-table writes.

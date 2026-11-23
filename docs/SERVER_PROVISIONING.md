@@ -13,7 +13,7 @@ disagree, the script wins: re-check the functions and lines cited below against 
 
 ## Scope
 
-- **Host.** A Linux server with systemd and nginx, reachable over SSH as root from the machine
+- **Host.** A Linux server with systemd and nginx or Apache 2.4, reachable over SSH as root from the machine
   that runs `scripts/deploy/bootstrap.sh`.
 - **Database.** MySQL 8 or MariaDB 10.11, on the same host and listening on `127.0.0.1:3306`.
   Installing and tuning the database server is outside this guide; it only creates the database
@@ -43,7 +43,8 @@ The public name in the examples is `crm.example.com`; replace it everywhere.
 
 `bootstrap.sh` checks for these tools on the server before it installs anything
 (`for tool in flock rsync mysqldump gzip curl tar systemctl` in `scripts/deploy/bootstrap.sh`):
-`flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and `systemctl`. The proxy and the certificate need `nginx` and `certbot` as well.
+`flock`, `rsync`, `mysqldump`, `gzip`, `curl`, `tar` and `systemctl`. The proxy and the certificate need `nginx` and `certbot` as well
+(or Apache 2.4 and certbot's Apache plugin, see [Reverse proxy and TLS](#reverse-proxy-and-tls)).
 
 On Debian or Ubuntu, for example:
 
@@ -58,6 +59,17 @@ yours, then confirm every tool is on the `PATH`:
 
 ```bash
 for tool in flock rsync mysqldump gzip curl tar systemctl nginx certbot; do
+  command -v "$tool" >/dev/null || echo "missing: $tool"
+done
+```
+
+With Apache instead of nginx, install `apache2 python3-certbot-apache` in place of `nginx certbot`
+(Debian or Ubuntu; `python3-certbot-apache` pulls in `certbot`), and check `apachectl` in place of
+`nginx`:
+
+```bash
+apt-get install util-linux rsync default-mysql-client gzip curl tar systemd apache2 python3-certbot-apache
+for tool in flock rsync mysqldump gzip curl tar systemctl apachectl certbot; do
   command -v "$tool" >/dev/null || echo "missing: $tool"
 done
 ```
@@ -220,8 +232,8 @@ download after switching it on.
 **Time budget.** One render runs at a time per backend process and is bounded at 15 s, the wait
 for its turn included. `POST /api/v1/quotes/:id/email` therefore takes at most 15 s for the render
 plus 30 s for the SMTP delivery, 45 s; the web application waits 55 s for that call and for the
-download. Keep the reverse proxy's read timeout at 60 s or more: `proxy_read_timeout` defaults to
-60 s in nginx and the site below does not lower it. A shorter timeout makes the proxy answer 504
+download. Keep the reverse proxy's read timeout at 60 s or more: both sites below set 60 s
+(`proxy_read_timeout 60s` in the nginx TLS site, `ProxyTimeout 60` in the Apache HTTPS site). A shorter timeout makes the proxy answer 504
 for a mail the backend still delivers.
 
 ## Systemd unit
@@ -298,9 +310,10 @@ GRANT ALL PRIVILEGES ON gophercrm.* TO 'gophercrm'@'127.0.0.1';
 
 ## Reverse proxy and TLS
 
-nginx serves the UI from the web root, proxies the API, the SCIM endpoint and `/health` to the
-backend on `127.0.0.1:8080`, and terminates TLS. The certificate comes from Let's Encrypt through certbot's
-webroot mode, which needs the plain-HTTP site first.
+The web server serves the UI from the web root, proxies the API, the SCIM endpoint and `/health` to the
+backend on `127.0.0.1:8080`, and terminates TLS. This section covers nginx first; the same setup for
+Apache 2.4 follows under [Apache 2.4](#apache-24). With nginx the certificate comes from Let's Encrypt
+through certbot's webroot mode, which needs the plain-HTTP site first.
 
 Create the ACME directory. It sits outside the web root on purpose: every deploy syncs
 `/var/www/gophercrm` with `rsync --delete` (`activate` in `scripts/deploy/receive-release.sh`), which would
@@ -349,6 +362,9 @@ server {
     root /var/www/gophercrm;
     index index.html;
 
+    client_max_body_size 1m;
+    proxy_read_timeout 60s;
+
     location /api/v1/ {
         proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
@@ -396,31 +412,6 @@ server {
 
 Enable it and run `nginx -t && systemctl reload nginx` again.
 
-On a server that runs Apache instead of nginx, the proxy part of the `<VirtualHost *:443>` site
-is:
-
-```apache
-ProxyPreserveHost On
-ProxyAddHeaders Off
-RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
-RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
-RequestHeader set X-Forwarded-Proto "https"
-
-ProxyPass /api/v1/ http://127.0.0.1:8080/api/v1/
-ProxyPassReverse /api/v1/ http://127.0.0.1:8080/api/v1/
-ProxyPass /health http://127.0.0.1:8080/health
-ProxyPassReverse /health http://127.0.0.1:8080/health
-ProxyPass /scim/v2/ http://127.0.0.1:8080/scim/v2/
-ProxyPassReverse /scim/v2/ http://127.0.0.1:8080/scim/v2/
-```
-
-It proxies the same paths as the nginx site and sends the backend the same four headers.
-`ProxyAddHeaders Off` keeps `X-Forwarded-For` a single address, as `TRUSTED_PROXIES=127.0.0.1`
-expects. It needs the `proxy`, `proxy_http` and `headers` modules
-(`a2enmod proxy proxy_http headers`). The SPA fallback of the site (`FallbackResource` or a
-`RewriteRule` to `/index.html`) and any browser `Header` lines must leave `/api/v1/`, `/health`
-and `/scim/v2/` alone, so those requests reach the backend and keep its headers.
-
 - `proxy_pass` carries no URI part, so the request path reaches the backend unchanged
   (`/api/v1/...` matches `API_PREFIX`, `/scim/v2/...` the SCIM routes).
 - `/scim/v2/` must reach the backend, not the web app: identity providers provision users at
@@ -446,7 +437,168 @@ and `/scim/v2/` alone, so those requests reach the backend and keep its headers.
   location instead of the server level. `location /api/v1/`, `location = /health` and
   `location /scim/v2/` carry none: proxied answers keep the backend's own headers. A UI built with `VITE_API_BASE_URL` on another
   origin must add that origin to `connect-src`.
+- `client_max_body_size 1m` and `proxy_read_timeout 60s` are nginx's own defaults, written out so
+  the Apache site below can match them, so the nginx site behaves as before. No route takes a file
+  upload, and the backend's own body caps (public form submissions, SCIM) and its text-field caps
+  are 64 KiB, well under 1 MiB; 60 s is above the 45 s a quote email may take (see
+  [Quote PDF output](#quote-pdf-output)). They sit at server level, so every proxied location
+  gets the same values.
 - The web root stays empty until the first deploy, so the site answers 404 until then.
+
+### Apache 2.4
+
+On a server that runs Apache 2.4 instead of nginx, the setup below replaces the two nginx sites:
+it proxies the same paths, sends the backend the same client address, puts the same browser
+headers on the web app only and applies the same timeout and, to every request that declares its
+length, the same body limit. Paths follow Debian and Ubuntu (`/etc/apache2`, `a2enmod`,
+`a2ensite`); adapt them for other distributions.
+
+Enable the modules the sites use:
+
+```bash
+a2enmod proxy proxy_http rewrite headers ssl setenvif
+```
+
+HTTP site, for example `/etc/apache2/sites-available/gophercrm-http.conf`:
+
+```apache
+<VirtualHost *:80>
+    ServerName crm.example.com
+    Redirect permanent / https://crm.example.com/
+</VirtualHost>
+```
+
+Enable it, check and reload Apache, and request the certificate:
+
+```bash
+a2ensite gophercrm-http
+apachectl configtest && systemctl reload apache2
+certbot certonly --apache -d crm.example.com --deploy-hook 'systemctl reload apache2'
+```
+
+`certonly` only obtains the certificate: certbot answers the challenge through a temporary
+configuration of its own and does not rewrite the site files, so the sites stay as written here.
+
+HTTPS site, for example `/etc/apache2/sites-available/gophercrm-https.conf`:
+
+```apache
+<VirtualHost *:443>
+    ServerName crm.example.com
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/crm.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/crm.example.com/privkey.pem
+
+    DocumentRoot /var/www/gophercrm
+
+    # The quote email links here with the client's response token in the query string;
+    # keep that request out of the access log.
+    SetEnvIf Request_URI "^/quote-response$" gophercrm_nolog
+    CustomLog ${APACHE_LOG_DIR}/gophercrm-access.log combined env=!gophercrm_nolog
+    ErrorLog ${APACHE_LOG_DIR}/gophercrm-error.log
+
+    LimitRequestBody 1048576
+    ProxyTimeout 60
+
+    # LimitRequestBody does not reach proxied requests; refuse a declared body over 1 MiB
+    # before it is proxied.
+    RewriteEngine On
+    RewriteCond expr "%{HTTP:Content-Length} -gt 1048576"
+    RewriteRule ^ - [R=413,L]
+
+    ProxyPreserveHost On
+    ProxyAddHeaders Off
+    RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
+    RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
+    RequestHeader set X-Forwarded-Proto "https"
+
+    ProxyPass /api/v1/ http://127.0.0.1:8080/api/v1/
+    ProxyPassReverse /api/v1/ http://127.0.0.1:8080/api/v1/
+    ProxyPass /health http://127.0.0.1:8080/health
+    ProxyPassReverse /health http://127.0.0.1:8080/health
+    ProxyPass /scim/v2/ http://127.0.0.1:8080/scim/v2/
+    ProxyPassReverse /scim/v2/ http://127.0.0.1:8080/scim/v2/
+
+    <Directory /var/www/gophercrm>
+        Options FollowSymLinks
+        AllowOverride None
+        Require all granted
+
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteRule ^ index.html [L]
+
+        Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+        Header always set X-Frame-Options "DENY"
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set Referrer-Policy "same-origin"
+    </Directory>
+</VirtualHost>
+```
+
+Enable it with `a2ensite gophercrm-https`, then run `apachectl configtest && systemctl reload apache2`
+again.
+
+- `ProxyPass` and `ProxyPassReverse` cover exactly the paths the nginx TLS site proxies:
+  `/api/v1/`, `/health` and `/scim/v2/`. The target repeats the path, so the request path reaches
+  the backend unchanged, as with nginx's `proxy_pass` without a URI part.
+- `ProxyPass /health` is a prefix, while nginx's `location = /health` matches the path exactly.
+  The difference is harmless: any other path that starts with `/health` reaches the backend and
+  gets its 404.
+- `/quote-response` is not proxied, as in the nginx site: the backend has no such route, and the
+  page calls `/api/v1/quotes/public/response` itself. The request falls through to the SPA rewrite
+  and gets the browser headers. The `SetEnvIf` and `CustomLog ... env=!gophercrm_nolog` pair keeps
+  it out of the access log, the Apache form of nginx's `access_log off`, because the default
+  `combined` format records the query string that carries the token.
+- `ProxyPreserveHost On` is nginx's `Host $host`. `ProxyAddHeaders Off` stops mod_proxy from
+  appending its own `X-Forwarded-*` headers, and the three `RequestHeader set` lines replace
+  whatever the client sent: `X-Real-IP` and `X-Forwarded-For` carry the connecting address
+  (`REMOTE_ADDR`, nginx's `$remote_addr`) and `X-Forwarded-Proto` is `https`. The backend reads
+  `X-Forwarded-For`, then `X-Real-IP`, from the trusted proxy `TRUSTED_PROXIES=127.0.0.1`, so both
+  must be overwritten on every proxied request, or a client could choose its own rate-limit and
+  lockout key.
+- `RewriteCond %{REQUEST_FILENAME} !-f` with `RewriteRule ^ index.html [L]` is nginx's
+  `try_files $uri $uri/ /index.html`: every path that is not a file of the built UI gets
+  `index.html`. mod_rewrite in a `<Directory>` needs `Options FollowSymLinks`.
+- The four `Header always set` lines are the browser headers of the nginx web app locations, and
+  `always` puts them on error answers too. They sit inside `<Directory /var/www/gophercrm>`, which
+  applies only to requests that map to the web root. Proxied requests never map to it, so
+  `/api/v1/`, `/health` and `/scim/v2/` keep the backend's own headers: this is the Apache form of
+  "not on proxied API responses". Put no `Header` line at the `<VirtualHost>` level. A UI built with
+  `VITE_API_BASE_URL` on another origin must add that origin to `connect-src`.
+- The body limit is nginx's `client_max_body_size 1m` in two parts. `LimitRequestBody 1048576`
+  applies only to requests Apache answers itself (the web root); mod_proxy_http forwards a
+  proxied body whatever its size. The vhost-level `RewriteCond expr "%{HTTP:Content-Length} -gt 1048576"`
+  with `RewriteRule ^ - [R=413,L]` therefore answers 413 to any request, proxied or not, whose
+  `Content-Length` exceeds 1 MiB, as nginx does; a body of exactly 1 MiB passes. A chunked body
+  (`Transfer-Encoding: chunked`, no `Content-Length`) is not checked by either line: Apache
+  forwards it, and only the backend's own caps (64 KiB on public form submissions and SCIM)
+  bound it. The web app's own requests carry a `Content-Length`.
+- `ProxyTimeout 60` equals the nginx TLS site's `proxy_read_timeout 60s`, so the quote email's
+  45 s budget fits under the 60 s timeout on either server.
+
+When Cloudflare (or another CDN) fronts the server, `REMOTE_ADDR` is the CDN's address and every
+visitor shares one rate-limit key. Add these lines to the HTTPS site, after its two `REMOTE_ADDR`
+lines, which stay in place:
+
+```apache
+RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"
+RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"
+SetEnvIfNoCase CF-Connecting-IP "^(.+)$" CF_CLIENT_IP=$1
+RequestHeader set X-Forwarded-For "%{CF_CLIENT_IP}e" env=CF_CLIENT_IP
+RequestHeader set X-Real-IP "%{CF_CLIENT_IP}e" env=CF_CLIENT_IP
+```
+
+- The first two lines are the site's own `REMOTE_ADDR` lines, repeated to show where the others
+  go: add the Cloudflare lines after them and keep them.
+- mod_headers applies the `RequestHeader` lines in order, so the conditional `set` lines override
+  the two headers only when the request carries `CF-Connecting-IP`.
+- `REMOTE_ADDR` stays the fallback. Without it, a request lacking `CF-Connecting-IP` would pass the
+  client's own `X-Forwarded-For` and `X-Real-IP` to the backend, because `ProxyAddHeaders` is Off.
+- `CF-Connecting-IP` itself can be forged by any client that reaches the origin directly. The
+  variant is safe only when a firewall limits the origin's port 443 to Cloudflare's address
+  ranges; otherwise a client picks its own rate-limit and lockout key.
+- `TRUSTED_PROXIES` stays `127.0.0.1`: the backend still talks only to Apache.
 
 ### Updating an existing server
 
@@ -458,8 +610,8 @@ On nginx, add the `location /scim/v2/` block above to the TLS site file, next to
 nginx -t && systemctl reload nginx
 ```
 
-On Apache, add the `ProxyPass` and `ProxyPassReverse` lines for `/scim/v2/` from the fragment
-above to the site, then check and reload:
+On Apache, add the `ProxyPass` and `ProxyPassReverse` lines for `/scim/v2/` from the
+[Apache HTTPS site](#apache-24) above to the site, then check and reload:
 
 ```bash
 apachectl configtest && systemctl reload apache2
@@ -473,6 +625,13 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://crm.example.com
 ```
 
 `200 text/html` means the request still reaches the web app.
+
+On either server, check `/health` as visitors reach it: its JSON carries `"revision":"<sha>"`,
+the field the `Verify from outside` step of `.github/workflows/deploy.yml` looks for:
+
+```bash
+curl -fsS https://crm.example.com/health
+```
 
 ## Bootstrap and first deploy
 

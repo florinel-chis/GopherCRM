@@ -503,6 +503,9 @@ func TestServerProvisioningGuideNginx(t *testing.T) {
 	require.NotContains(t, tlsOutside, "try_files", "every TLS location removed")
 	assertNoAddHeaders(t, tlsOutside, "TLS server level")
 	assertNoAddHeaders(t, httpSite.body, "HTTP site")
+	// nginx's defaults, written out so the Apache site can be pinned to them (#749).
+	assertNginxDirective(t, tlsOutside, regexp.QuoteMeta("client_max_body_size 1m;"), "TLS server-level client_max_body_size")
+	assertNginxDirective(t, tlsOutside, regexp.QuoteMeta("proxy_read_timeout 60s;"), "TLS server-level proxy_read_timeout")
 }
 
 // nginxProxiedPaths returns the paths of the locations of a site that hold a
@@ -525,59 +528,396 @@ func nginxProxiedPaths(t *testing.T, site string) map[string]bool {
 	return paths
 }
 
-// TestServerProvisioningGuideApache pins the Apache equivalent of the TLS
-// site's proxied paths and the steps to update an existing server (#728).
-func TestServerProvisioningGuideApache(t *testing.T) {
-	d := parseDeployDefaults(t)
-	guide := readProvisioningGuide(t)
-	require.Len(t, fencesWithInfo(parseGuideFences(t, guide), "apache"), 1, "exactly one ```apache block")
-	section := guideSection(t, guide, "## Reverse proxy and TLS")
-	sectionFences := parseGuideFences(t, section)
-	apache := fencesWithInfo(sectionFences, "apache")
-	require.Len(t, apache, 1, "the ```apache block is in Reverse proxy and TLS")
-	sites := fencesWithInfo(sectionFences, "nginx")
-	require.Len(t, sites, 2, "the section holds the HTTP and the TLS nginx site")
+// apacheLine is one directive line of an Apache block: the trimmed text, its
+// fields and the directive name in lower case (Apache directive names are
+// case-insensitive).
+type apacheLine struct {
+	text      string
+	fields    []string
+	directive string
+}
 
-	want := nginxProxiedPaths(t, sites[1].body)
-	require.Equal(t, map[string]bool{"/api/v1/": true, "/health": true, "/scim/v2/": true}, want,
-		"the TLS site proxies these paths")
-
-	passes, reverses := map[string]bool{}, map[string]bool{}
-	var lines []string
-	for _, raw := range strings.Split(apache[0].body, "\n") {
+// apacheLines returns the non-blank, non-comment lines of an Apache block.
+func apacheLines(block string) []apacheLine {
+	var out []apacheLine
+	for _, raw := range strings.Split(block, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		lines = append(lines, line)
 		fields := strings.Fields(line)
-		var into map[string]bool
-		switch fields[0] {
-		case "ProxyPass":
-			into = passes
-		case "ProxyPassReverse":
-			into = reverses
-		default:
-			assert.NotEqual(t, "Header", fields[0], "no response header line: %q", line)
+		out = append(out, apacheLine{text: line, fields: fields, directive: strings.ToLower(fields[0])})
+	}
+	return out
+}
+
+// apacheDirectiveLines returns the lines whose directive is one of names
+// (lower case).
+func apacheDirectiveLines(block string, names ...string) []apacheLine {
+	var out []apacheLine
+	for _, l := range apacheLines(block) {
+		for _, n := range names {
+			if l.directive == n {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// apacheSingle returns the value fields of the one line of a directive.
+func apacheSingle(t *testing.T, block, directive, what string) []string {
+	t.Helper()
+	lines := apacheDirectiveLines(block, strings.ToLower(directive))
+	require.Len(t, lines, 1, "%s sets %s exactly once", what, directive)
+	return lines[0].fields[1:]
+}
+
+// apacheArg drops the quotes and a trailing slash from a path argument.
+func apacheArg(arg string) string {
+	arg = strings.Trim(arg, `"'`)
+	if len(arg) > 1 {
+		arg = strings.TrimRight(arg, "/")
+	}
+	return arg
+}
+
+// apacheTagBlock returns the text between the one `<tag args>` line whose
+// arguments satisfy match and its `</tag>` line, and text without that whole
+// section. The tag is compared case-insensitively.
+func apacheTagBlock(t *testing.T, text, tag string, match func(args string) bool) (inner, outside string) {
+	t.Helper()
+	lines := strings.Split(text, "\n")
+	open := regexp.MustCompile(`(?i)^\s*<` + regexp.QuoteMeta(tag) + `(\s+[^>]*)?>\s*$`)
+	closing := regexp.MustCompile(`(?i)^\s*</` + regexp.QuoteMeta(tag) + `>\s*$`)
+	from, to := -1, -1
+	for i, line := range lines {
+		m := open.FindStringSubmatch(line)
+		if m == nil || !match(strings.TrimSpace(m[1])) {
 			continue
 		}
-		require.Len(t, fields, 3, "%q is <directive> <path> <target>", line)
-		require.False(t, into[fields[1]], "%s %s appears twice", fields[0], fields[1])
-		into[fields[1]] = true
-		assert.Equal(t, "http://127.0.0.1:"+d.Port+fields[1], fields[2], "%s %s target", fields[0], fields[1])
+		require.Equal(t, -1, from, "<%s> matches twice", tag)
+		from = i
+		for j := i + 1; j < len(lines); j++ {
+			require.False(t, open.MatchString(lines[j]), "<%s> nested in <%s>", tag, tag)
+			if closing.MatchString(lines[j]) {
+				to = j
+				break
+			}
+		}
+		require.NotEqual(t, -1, to, "<%s> is not closed", tag)
 	}
-	assert.Equal(t, want, passes, "ProxyPass paths equal the nginx site's proxied paths")
-	assert.Equal(t, want, reverses, "ProxyPassReverse paths equal the nginx site's proxied paths")
-	for _, directive := range []string{
-		"ProxyPreserveHost On",
-		"ProxyAddHeaders Off",
-		`RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"`,
-		`RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"`,
-		`RequestHeader set X-Forwarded-Proto "https"`,
-	} {
-		assert.Contains(t, lines, directive, "the Apache fragment sets %s", directive)
+	require.NotEqual(t, -1, from, "<%s> not found", tag)
+	inner = strings.Join(lines[from+1:to], "\n")
+	outside = strings.Join(append(append([]string{}, lines[:from]...), lines[to+1:]...), "\n")
+	return inner, outside
+}
+
+// apacheProxyPaths returns path -> target of the ProxyPass (or ProxyPassMatch)
+// or ProxyPassReverse lines of a block. A ProxyPassMatch "^<path>$" counts as
+// the entry for <path>.
+func apacheProxyPaths(t *testing.T, block string, reverse bool) map[string]string {
+	t.Helper()
+	names := []string{"proxypass", "proxypassmatch"}
+	if reverse {
+		names = []string{"proxypassreverse"}
+	}
+	out := map[string]string{}
+	for _, l := range apacheDirectiveLines(block, names...) {
+		require.GreaterOrEqual(t, len(l.fields), 3, "%q is <directive> <path> <target>", l.text)
+		p := strings.Trim(l.fields[1], `"'`)
+		if l.directive == "proxypassmatch" {
+			p = strings.TrimSuffix(strings.TrimPrefix(p, "^"), "$")
+		}
+		_, dup := out[p]
+		require.False(t, dup, "%s %s appears twice", l.fields[0], p)
+		out[p] = strings.Trim(l.fields[2], `"'`)
+	}
+	return out
+}
+
+// nginxServerSize parses a server-level nginx size (1m, 64k, 1024) into bytes.
+func nginxServerSize(t *testing.T, server, directive string) int64 {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^\s*`+regexp.QuoteMeta(directive)+`\s+(\d+)([kKmMgG]?);\s*$`).FindAllStringSubmatch(server, -1)
+	require.Len(t, m, 1, "the nginx TLS server level sets %s once", directive)
+	n, err := strconv.ParseInt(m[0][1], 10, 64)
+	require.NoError(t, err)
+	switch strings.ToLower(m[0][2]) {
+	case "k":
+		n <<= 10
+	case "m":
+		n <<= 20
+	case "g":
+		n <<= 30
+	}
+	return n
+}
+
+// nginxServerSeconds parses a server-level nginx time (60s, 1m, 60) into seconds.
+func nginxServerSeconds(t *testing.T, server, directive string) int64 {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^\s*`+regexp.QuoteMeta(directive)+`\s+(\d+)(s|m|h)?;\s*$`).FindAllStringSubmatch(server, -1)
+	require.Len(t, m, 1, "the nginx TLS server level sets %s once", directive)
+	n, err := strconv.ParseInt(m[0][1], 10, 64)
+	require.NoError(t, err)
+	switch m[0][2] {
+	case "m":
+		n *= 60
+	case "h":
+		n *= 3600
+	}
+	return n
+}
+
+// fenceEnd returns the offset just after the closing line of the fence that
+// opens at offset in text.
+func fenceEnd(t *testing.T, text string, offset int) int {
+	t.Helper()
+	rel := strings.Index(text[offset+3:], "\n```")
+	require.NotEqual(t, -1, rel, "fence at %d is closed", offset)
+	end := offset + 3 + rel + 1
+	if nl := strings.Index(text[end:], "\n"); nl != -1 {
+		return end + nl + 1
+	}
+	return len(text)
+}
+
+// fenceProse returns the paragraph directly before the fence that opens at
+// offset and the text after it up to the next fence or heading.
+func fenceProse(t *testing.T, text string, offset int) string {
+	t.Helper()
+	before := strings.TrimRight(text[:offset], "\n")
+	if i := strings.LastIndex(before, "\n\n"); i != -1 {
+		before = before[i+2:]
+	}
+	after := text[fenceEnd(t, text, offset):]
+	var kept []string
+	for _, line := range strings.Split(after, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") || strings.HasPrefix(line, "#") {
+			break
+		}
+		kept = append(kept, line)
+	}
+	return before + "\n" + strings.Join(kept, "\n")
+}
+
+// TestServerProvisioningGuideApache pins the Apache 2.4 setup of the guide
+// against its nginx TLS site (#728, #749).
+func TestServerProvisioningGuideApache(t *testing.T) {
+	d := parseDeployDefaults(t)
+	guide := readProvisioningGuide(t)
+	require.Len(t, fencesWithInfo(parseGuideFences(t, guide), "apache"), 3, "exactly three ```apache blocks")
+	section := guideSection(t, guide, "## Reverse proxy and TLS")
+	sectionFences := parseGuideFences(t, section)
+	apache := fencesWithInfo(sectionFences, "apache")
+	require.Len(t, apache, 3, "the ```apache blocks are in Reverse proxy and TLS")
+	sites := fencesWithInfo(sectionFences, "nginx")
+	require.Len(t, sites, 2, "the section holds the HTTP and the TLS nginx site")
+	nginxTLS := sites[1].body
+
+	pick := func(needle, what string) guideFence {
+		t.Helper()
+		found := fencesContaining(apache, needle)
+		require.Len(t, found, 1, "one ```apache block is the %s", what)
+		return found[0]
+	}
+	httpFence := pick("<VirtualHost *:80>", ":80 site")
+	httpsFence := pick("<VirtualHost *:443>", ":443 site")
+	cfFence := pick("CF-Connecting-IP", "Cloudflare block")
+	require.NotEqual(t, httpsFence.offset, cfFence.offset, "the Cloudflare block is separate from the :443 site")
+	require.NotEqual(t, httpFence.offset, cfFence.offset, "the Cloudflare block is separate from the :80 site")
+
+	vhostArgs := func(port string) func(string) bool {
+		return func(args string) bool { return args == "*:"+port }
+	}
+	httpSite, _ := apacheTagBlock(t, httpFence.body, "VirtualHost", vhostArgs("80"))
+	https, _ := apacheTagBlock(t, httpsFence.body, "VirtualHost", vhostArgs("443"))
+	webRoot := path.Clean(d.WebRoot)
+	directory, vhostLevel := apacheTagBlock(t, https, "Directory", func(args string) bool { return apacheArg(args) == webRoot })
+	cf := cfFence.body
+
+	// (i) Proxied paths equal the nginx TLS site's, with the backend target.
+	want := nginxProxiedPaths(t, nginxTLS)
+	require.Equal(t, map[string]bool{"/api/v1/": true, "/health": true, "/scim/v2/": true}, want,
+		"the TLS site proxies these paths")
+	for _, reverse := range []bool{false, true} {
+		got := apacheProxyPaths(t, https, reverse)
+		paths := map[string]bool{}
+		for p, target := range got {
+			paths[p] = true
+			assert.Equal(t, "http://127.0.0.1:"+d.Port+p, target, "proxy target of %s (reverse=%v)", p, reverse)
+		}
+		assert.Equal(t, want, paths, "Apache :443 proxied paths (reverse=%v) equal the nginx site's", reverse)
+	}
+	proxyFamily := []string{"proxypass", "proxypassmatch", "proxypassreverse"}
+	assert.Empty(t, apacheDirectiveLines(directory, proxyFamily...), "no ProxyPass inside <Directory>")
+	assert.Empty(t, apacheDirectiveLines(httpFence.body, proxyFamily...), "no ProxyPass in the :80 site")
+	assert.Empty(t, apacheDirectiveLines(cf, proxyFamily...), "no ProxyPass in the Cloudflare block")
+	for _, f := range apache {
+		for _, l := range apacheDirectiveLines(f.body, proxyFamily...) {
+			assert.NotContains(t, l.text, "/quote-response", "/quote-response is not proxied")
+		}
 	}
 
+	// (ii) The proxy headers, one for one with the nginx proxy_set_header lines.
+	vhostTexts := map[string]bool{}
+	for _, l := range apacheLines(vhostLevel) {
+		vhostTexts[l.text] = true
+	}
+	apiLoc := nginxBlock(t, nginxTLS, "location /api/v1/ {")
+	for apacheText, nginxText := range map[string]string{
+		"ProxyPreserveHost On":                                    "proxy_set_header Host $host;",
+		`RequestHeader set X-Real-IP "expr=%{REMOTE_ADDR}"`:       "proxy_set_header X-Real-IP $remote_addr;",
+		`RequestHeader set X-Forwarded-For "expr=%{REMOTE_ADDR}"`: "proxy_set_header X-Forwarded-For $remote_addr;",
+		`RequestHeader set X-Forwarded-Proto "https"`:             "proxy_set_header X-Forwarded-Proto $scheme;",
+	} {
+		assertNginxDirective(t, apiLoc, regexp.QuoteMeta(nginxText), "nginx "+nginxText)
+		assert.True(t, vhostTexts[apacheText], "the :443 site sets %s (nginx %s)", apacheText, nginxText)
+	}
+	assert.True(t, vhostTexts["ProxyAddHeaders Off"], "the :443 site sets ProxyAddHeaders Off")
+	requestHeaders := map[string]int{}
+	for _, l := range apacheDirectiveLines(https, "requestheader") {
+		require.GreaterOrEqual(t, len(l.fields), 3, "%q", l.text)
+		requestHeaders[strings.ToLower(l.fields[2])]++
+	}
+	for _, h := range []string{"x-real-ip", "x-forwarded-for", "x-forwarded-proto"} {
+		assert.Equal(t, 1, requestHeaders[h], "the :443 site sets %s once", h)
+	}
+
+	// (iii) Web root and SPA fallback.
+	assert.Equal(t, webRoot, apacheArg(strings.Join(apacheSingle(t, vhostLevel, "DocumentRoot", ":443 site"), " ")),
+		"DocumentRoot is the web root")
+	dirTexts := map[string]bool{}
+	for _, l := range apacheLines(directory) {
+		dirTexts[l.text] = true
+	}
+	for _, line := range []string{
+		"RewriteEngine On",
+		"RewriteCond %{REQUEST_FILENAME} !-f",
+		"RewriteRule ^ index.html [L]",
+	} {
+		assert.True(t, dirTexts[line], "<Directory %s> holds %s", webRoot, line)
+	}
+
+	// (iv) Browser headers inside <Directory> only, none of any action elsewhere.
+	var wantHeaders []string
+	for _, h := range uiBrowserHeaders {
+		wantHeaders = append(wantHeaders, `Header always set `+h.name+` "`+h.value+`"`)
+	}
+	texts := func(lines []apacheLine) []string {
+		var out []string
+		for _, l := range lines {
+			out = append(out, l.text)
+		}
+		return out
+	}
+	assert.ElementsMatch(t, wantHeaders, texts(apacheDirectiveLines(https, "header")), ":443 site Header lines")
+	assert.ElementsMatch(t, wantHeaders, texts(apacheDirectiveLines(directory, "header")), "<Directory> Header lines")
+	assert.Empty(t, apacheDirectiveLines(vhostLevel, "header"), "no Header line at :443 vhost level")
+	assert.Empty(t, apacheDirectiveLines(httpFence.body, "header"), "no Header line in the :80 site")
+	assert.Empty(t, apacheDirectiveLines(cf, "header"), "no Header line in the Cloudflare block")
+
+	// (v) Body limit and timeout equal the nginx TLS site's server level.
+	nginxServer := nginxOutsideLocations(t, nginxTLS)
+	maxBody := strconv.FormatInt(nginxServerSize(t, nginxServer, "client_max_body_size"), 10)
+	body := apacheSingle(t, https, "LimitRequestBody", ":443 site")
+	require.Len(t, body, 1)
+	assert.Equal(t, maxBody, body[0], "LimitRequestBody equals client_max_body_size")
+	// LimitRequestBody does not reach requests mod_proxy_http forwards, so the
+	// limit on proxied bodies is a vhost-level Content-Length check answering 413.
+	for _, line := range []string{
+		"RewriteEngine On",
+		`RewriteCond expr "%{HTTP:Content-Length} -gt ` + maxBody + `"`,
+		"RewriteRule ^ - [R=413,L]",
+	} {
+		assert.True(t, vhostTexts[line], ":443 vhost level holds %s", line)
+	}
+	var bodyBullet string
+	for _, para := range strings.Split(section, "\n- ") {
+		if strings.HasPrefix(para, "The body limit") {
+			bodyBullet = para
+		}
+	}
+	require.NotEmpty(t, bodyBullet, "a bullet explains the body limit")
+	for _, word := range []string{"LimitRequestBody", "proxied", "Content-Length", "413", "chunked"} {
+		assert.Contains(t, bodyBullet, word, "the body limit bullet names %s", word)
+	}
+	timeout := apacheSingle(t, https, "ProxyTimeout", ":443 site")
+	require.Len(t, timeout, 1)
+	assert.Equal(t, strconv.FormatInt(nginxServerSeconds(t, nginxServer, "proxy_read_timeout"), 10), timeout[0],
+		"ProxyTimeout equals proxy_read_timeout")
+
+	// (vi) The :80 site redirects 301 to https.
+	redirected := false
+	for _, l := range apacheLines(httpSite) {
+		switch l.directive {
+		case "redirect":
+			if len(l.fields) == 4 && (strings.EqualFold(l.fields[1], "permanent") || l.fields[1] == "301") &&
+				l.fields[2] == "/" && strings.TrimRight(l.fields[3], "/") == "https://crm.example.com" {
+				redirected = true
+			}
+		case "rewriterule":
+			if len(l.fields) == 4 && strings.HasPrefix(l.fields[2], "https://crm.example.com") &&
+				strings.Contains(l.fields[3], "R=301") {
+				redirected = true
+			}
+		}
+	}
+	assert.True(t, redirected, "the :80 site redirects 301 to https://crm.example.com")
+	assert.Equal(t, []string{"crm.example.com"}, apacheSingle(t, httpSite, "ServerName", ":80 site"))
+	assert.Equal(t, []string{"crm.example.com"}, apacheSingle(t, vhostLevel, "ServerName", ":443 site"))
+
+	// (vii) Modules, certificate and the /quote-response access log.
+	modulesFound := false
+	for _, line := range strings.Split(section, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == "a2enmod" {
+			require.False(t, modulesFound, "one a2enmod line")
+			modulesFound = true
+			assert.ElementsMatch(t, []string{"proxy", "proxy_http", "rewrite", "headers", "ssl", "setenvif"}, fields[1:],
+				"a2enmod modules")
+		}
+	}
+	assert.True(t, modulesFound, "the section enables the Apache modules")
+	assert.True(t, lineWithAll(section, "certbot certonly --apache", "-d crm.example.com"), "certbot certonly --apache")
+	nolog := ""
+	for _, l := range apacheDirectiveLines(vhostLevel, "setenvif") {
+		if len(l.fields) == 4 && l.fields[1] == "Request_URI" && strings.Trim(l.fields[2], `"`) == "^/quote-response$" {
+			nolog = l.fields[3]
+		}
+	}
+	require.NotEmpty(t, nolog, `SetEnvIf Request_URI "^/quote-response$" <var>`)
+	custom := apacheDirectiveLines(vhostLevel, "customlog")
+	require.Len(t, custom, 1, "one CustomLog")
+	assert.Equal(t, "env=!"+nolog, custom[0].fields[len(custom[0].fields)-1], "CustomLog skips /quote-response")
+
+	// (viii) Cloudflare: REMOTE_ADDR lines first, the conditional lines after them.
+	cfLines := apacheLines(cf)
+	indexOf := func(text string) int {
+		for i, l := range cfLines {
+			if l.text == text {
+				return i
+			}
+		}
+		return -1
+	}
+	assert.Equal(t, 1, len(apacheDirectiveLines(cf, "setenvifnocase")), "one SetEnvIfNoCase")
+	assert.True(t, lineWithAll(cf, "SetEnvIfNoCase CF-Connecting-IP", "CF_CLIENT_IP="), "SetEnvIfNoCase CF-Connecting-IP")
+	for _, h := range []string{"X-Forwarded-For", "X-Real-IP"} {
+		remote := indexOf(`RequestHeader set ` + h + ` "expr=%{REMOTE_ADDR}"`)
+		conditional := indexOf(`RequestHeader set ` + h + ` "%{CF_CLIENT_IP}e" env=CF_CLIENT_IP`)
+		require.NotEqual(t, -1, remote, "the Cloudflare block repeats the %s REMOTE_ADDR line", h)
+		require.NotEqual(t, -1, conditional, "the Cloudflare block sets %s from CF_CLIENT_IP", h)
+		assert.Less(t, remote, conditional, "%s: the REMOTE_ADDR line comes before the conditional line", h)
+	}
+	prose := normalizeDocText(fenceProse(t, section, cfFence.offset))
+	for _, word := range []string{"after", "REMOTE_ADDR", "fallback", "firewall", "Cloudflare's address ranges"} {
+		assert.Contains(t, prose, word, "the Cloudflare prose says %q", word)
+	}
+
+	// (ix) Updating an existing server.
 	const updating = "### Updating an existing server"
 	_, after, found := strings.Cut(section, "\n"+updating+"\n")
 	require.True(t, found, "the section holds %s", updating)
@@ -588,6 +928,44 @@ func TestServerProvisioningGuideApache(t *testing.T) {
 	assert.Contains(t, trimmed, "nginx -t && systemctl reload nginx", "nginx reload step")
 	assert.Contains(t, trimmed, "apachectl configtest && systemctl reload apache2", "Apache reload step")
 	assert.True(t, lineWithAll(after, "/scim/v2/ServiceProviderConfig", "401"), "the SCIM check expects 401")
+	assert.True(t, lineWithAll(after, "/health", "revision"), "the /health check names the revision")
+}
+
+// githubAnchor is GitHub's slug of a heading: lower case, spaces to dashes,
+// punctuation other than dashes and underscores dropped.
+func githubAnchor(heading string) string {
+	text := strings.ToLower(strings.TrimSpace(strings.TrimLeft(heading, "#")))
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case r == ' ':
+			b.WriteRune('-')
+		case r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// TestServerProvisioningGuideReverseProxyLinks pins #749 AC-5: README, SETUP
+// and DOCKER link the guide's reverse-proxy section and name both servers.
+func TestServerProvisioningGuideReverseProxyLinks(t *testing.T) {
+	const heading = "## Reverse proxy and TLS"
+	guideSection(t, readProvisioningGuide(t), heading)
+	anchor := githubAnchor(heading)
+	require.Equal(t, "reverse-proxy-and-tls", anchor)
+	link := regexp.MustCompile(`\]\([^)\s]*SERVER_PROVISIONING\.md#` + regexp.QuoteMeta(anchor) + `\)`)
+	for _, rel := range []string{"README.md", "docs/SETUP.md", "docs/DOCKER.md"} {
+		text := strings.ReplaceAll(readRepositoryFile(t, rel), "\r\n", "\n")
+		ok := false
+		for _, para := range regexp.MustCompile(`\n[ \t]*\n`).Split(text, -1) {
+			if link.MatchString(para) && strings.Contains(para, "nginx") && strings.Contains(para, "Apache") {
+				ok = true
+				break
+			}
+		}
+		assert.True(t, ok, "%s has a paragraph that links SERVER_PROVISIONING.md#%s and names nginx and Apache", rel, anchor)
+	}
 }
 
 var provisioningGuideHeadings = []string{

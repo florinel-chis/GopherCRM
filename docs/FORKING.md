@@ -482,8 +482,8 @@ default) that runs `/srv/gophercrm/bin/gophercrm` (a link into the current relea
 in `scripts/deploy/receive-release.sh`) with the environment file `/srv/gophercrm/env/gophercrm.env`
 (the `ENV_FILE=` default there, restarted by `restart_and_check`); and a TLS-terminating web server that serves the web root and proxies
 `/api/v1` to the backend. [SERVER_PROVISIONING.md](SERVER_PROVISIONING.md) walks a fresh
-systemd/nginx host through each of them, with a sample unit, environment file and nginx sites
-(#231); no sample file ships under `scripts/deploy`. On
+systemd host through each of them, with a sample unit, environment file and the sites for nginx or
+Apache 2.4 ([Reverse proxy and TLS](SERVER_PROVISIONING.md#reverse-proxy-and-tls), #231, #749); no sample file ships under `scripts/deploy`. On
 your machine: root SSH access to the server, a `gh` login with admin rights on the repository,
 and `main` protected (bootstrap refuses otherwise: its header comment and the
 `main is not a protected branch` check).
