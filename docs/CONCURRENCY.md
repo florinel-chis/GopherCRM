@@ -845,7 +845,6 @@ Neither ordering commits half a unit, and neither party returns the 1213.
   `internal/service/auth_oidc_host.go` `idkitSessionEnder.EndProviderSession`. That refuses to run
   inside a transaction (`idkit.ErrInTransaction`), reads the distinct owners of the live refresh
   tokens that carry the provider session hash with a plain read ordered by `user_id`
- 
   (`internal/repository/refresh_token_repository.go` `refreshTokenRepository.LiveUserIDsByProviderSession`), and then calls
   `internal/service/auth_logout.go` `authService.Logout` with `(userID, "")` for each owner. Each
   call takes what a logout takes: its own `WithTransaction`, a `LockingRead` of the owner's `users`

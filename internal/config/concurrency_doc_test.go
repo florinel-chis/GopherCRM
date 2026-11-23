@@ -1705,6 +1705,12 @@ func TestConcurrencyDocIdentityProviderSignOut(t *testing.T) {
 	for _, want := range []string{"idkitSessionEnder.EndProviderSession", "authService.Logout", "users → refresh_tokens"} {
 		assert.Contains(t, flow, want, "Identity-provider sign-out")
 	}
+	// The field, not only the flow body, carries the whole statement: a blank line inside the bullet
+	// would cut it off before the owner read and the Logout order.
+	rowsLocked := concurrencyDocFlowFields(t)["Identity-provider sign-out"]["Rows locked"]
+	for _, want := range []string{"refreshTokenRepository.LiveUserIDsByProviderSession", "authService.Logout", "LockingRead", "token_version"} {
+		assert.Contains(t, rowsLocked, want, "Identity-provider sign-out Rows locked")
+	}
 	end := concurrencyDocFuncBody(t, "internal/service/auth_oidc_host.go", "func (e *idkitSessionEnder) EndProviderSession(")
 	last := -1
 	for _, statement := range []string{"utils.InTransaction(ctx)", "LiveUserIDsByProviderSession(", `e.auth.Logout(userID, "")`} {
