@@ -11,8 +11,9 @@ provide it.
 
 Every check is a function that takes a repository root and returns a list of
 problems, so it can be pointed at any checkout. The files are found through
-`git ls-files` (tracked, plus untracked files that are not ignored, so a new
-catalog file is seen before its first commit). Each check is shown to report
+`git ls-files`, tracked files only, as scripts/ci/check-doc-citations.py
+does, so a local run and a fresh CI checkout judge the same files. Each check
+is shown to report
 a planted mismatch in a fixture git repository. Standard library only.
 """
 
@@ -68,9 +69,9 @@ def collapse(text):
 
 
 def listed_files(root):
-    """Tracked files plus untracked, not ignored ones; raises when git fails."""
+    """The tracked files; raises when git fails."""
     out = subprocess.run(
-        ['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+        ['git', '-C', str(root), 'ls-files', '-z'],
         capture_output=True, check=True).stdout.decode('utf-8')
     return sorted({name for name in out.split('\0') if name})
 
@@ -169,10 +170,11 @@ def check_index_rows(root):
     problems = []
     rows, total = index_rows(root)
     summed = dict.fromkeys(COLUMNS, 0)
+    tracked = set(listed_files(root))
     for name, row in rows.items():
         path = 'docs/testing/' + name
-        if not (Path(root) / path).is_file():
-            problems.append('%s: row links %s, which does not exist' % (README, name))
+        if path not in tracked:
+            problems.append('%s: row links %s, which is not a tracked file' % (README, name))
             continue
         computed = case_counts(read(root, path), path, problems)
         for key in COLUMNS:
@@ -398,6 +400,14 @@ class CatalogFixtureTest(unittest.TestCase):
     def test_missing_row(self):
         self.write('docs/testing/02-two.md', '# Two\n\n' + case('TC-TWO-001'))
         self.assert_reports(check_every_file_has_row, 'no Documents row for docs/testing/02-two.md')
+
+    def test_row_links_untracked_file(self):
+        target = self.root / 'docs/testing/02-two.md'
+        target.write_text('# Two\n\n' + case('TC-TWO-001'), encoding='utf-8')
+        self.replace(README, '| [08-settings.md]',
+                     '| [02-two.md](02-two.md) | Two | 1 | 1 | 0 | 0 | 1 | 0 | 0 |\n| [08-settings.md]')
+        self.assert_reports(check_index_rows, 'row links 02-two.md, which is not a tracked file')
+        self.assertEqual(check_every_file_has_row(self.root), [])
 
     def test_forms_entry_without_marker(self):
         self.replace(FORMS, '· automated · `x_test.go`', '`x_test.go`')
