@@ -479,7 +479,9 @@ or the full user agent. Neither are they logged.
   `unavailable` and `internal_error`. An unknown, spent or expired token carries no `user_id`;
   `token_invalid` names the owner only when a stored token was found but another confirmation
   claimed it first. The owner refusals carry the owner's `user_id`.
-- `logout` (#550, the caller's `user_id`): success, or `internal_error` (the 500).
+- `logout` (#550, the caller's `user_id`): success, or `internal_error` (the 500). A
+  front-channel sign-out (`GET /auth/oidc/frontchannel-logout`, #634) writes one such row for each
+  account it logs out, with that account's `user_id`.
 - `api_key_create` and `api_key_revoke` (#551, the caller's `user_id` and the key's
   `api_key_id`): success only.
 - `api_key_enable` (#551, the caller's `user_id` and the key's `api_key_id`): `key_revoked`
@@ -1511,6 +1513,42 @@ the redirect). Any failure, and an `error` parameter or a missing code or state,
 generic message "Single sign-on failed. Try again or sign in with your password." with a link
 back to the sign-in page; the page never shows or logs the code, the state or the tokens.
 Password login stays available as break-glass.
+
+### Single sign-on sign-out (#634)
+
+The callback also answers `id_token`, the raw ID token of the exchange, and the SPA keeps it in
+the session record (`idToken`, sessionStorage like the rest of the session; a refresh or a
+password change keeps it). The server never stores it. Logout of such a session posts
+`{id_token_hint}` to `POST /auth/logout`; a password session posts no body, as before. The server
+revokes exactly what it revoked before (every refresh token, `token_version` incremented, one
+`logout` audit row) and only then, for a hint, looks for the identity provider's end-session URL,
+under its own 5 s deadline: the hint must verify for the configured issuer and client
+(signature, `iss`, `aud`; an expired hint is accepted), its exact `(iss, sub)` pair must be linked
+to the caller, and discovery must advertise an `https` `end_session_endpoint` without a fragment.
+The answer then carries `end_session_url`: that endpoint, its own query kept, plus
+`id_token_hint`, `post_logout_redirect_uri` `APP_BASE_URL/login` and `client_id`. The SPA sends the
+browser there with `window.location.assign`; the provider signs the person out and returns them
+to `/login`, so the next "Sign in with single sign-on" asks for their credentials again. Without
+the field (any refusal, a timeout or a failed lookup, none of which fails the logout) the SPA goes
+to `/login` as before. A hint over 16384 bytes is 400 `VALIDATION_ERROR` and revokes nothing.
+
+The provider-initiated half is the unauthenticated `GET /auth/oidc/frontchannel-logout` (OpenID
+Connect Front-Channel Logout 1.0), on the strict `/auth` tier. The provider loads it in a hidden
+frame with `sid` (required, at most 256 bytes) and optionally `iss` (at most 512 bytes; Entra ID
+sends only `sid`); an `iss` that is sent must equal the configured issuer exactly, or nothing
+ends. Each refresh token of a single sign-on session records `provider_session_hash`, the
+keyed HMAC of the issuer, a newline and the ID token's `sid` claim (none when the claim is
+absent, not a string or over 256 bytes), copied by rotation and by the password-change renewal.
+The route logs out every account that holds a live refresh token with that hash, exactly as a
+logout without a body does: all of the account's sessions end, password sessions and other
+devices included, because the access-token generation is per account, and each account gets one
+`logout` audit row. The answer is always 200 `{message}` with `Cache-Control: no-cache, no-store`
+and `Pragma: no-cache` and without `X-Frame-Options` or a Content-Security-Policy, so a provider
+can frame it; 404 while single sign-on is off, 503 `SSO_UNAVAILABLE` while it is not configured,
+500 on a database failure. Its log lines carry only fixed messages and the count of accounts
+ended, never the `sid`, the issuer, a token or a URL. The provider must send `sid` in its ID
+tokens (for Entra ID an optional claim) and have the front-channel logout URL registered; see the
+[Entra ID how-to](user-guide/permissions-access/how-to-microsoft-entra-id.md).
 
 ### Browser tests against a local test issuer (#446)
 

@@ -89,6 +89,7 @@ var routeMatrixPublic = map[string]bool{
 	"POST /api/v1/auth/password-reset/confirm":   true,
 	"POST /api/v1/auth/oidc/start":               true,
 	"POST /api/v1/auth/oidc/callback":            true,
+	"GET /api/v1/auth/oidc/frontchannel-logout":  true,
 	"GET /api/v1/forms/public/embed.js":          true,
 	"GET /api/v1/forms/public/confirm":           true,
 	"POST /api/v1/forms/public/confirm":          true,

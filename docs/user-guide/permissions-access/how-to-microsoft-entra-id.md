@@ -26,6 +26,32 @@ the people one by one.
 6. On the application's **Overview** page, copy:
    - **Application (client) ID**: this is `<application (client) id>`.
    - **Directory (tenant) ID**: this is `<tenant id>`.
+7. Register sign-out, so that signing out of GopherCRM also signs the person out of Entra ID, and
+   signing out at Microsoft also ends their GopherCRM session:
+   1. Open **Authentication**. Under the **Web** platform, add a second redirect URI,
+      https://crm.example.com/login, that is `APP_BASE_URL/login` exactly, next to
+      `APP_BASE_URL/auth/callback`. Entra ID sends the browser back there after its sign-out.
+   2. On the same page, set **Front-channel logout URL** to
+      https://crm.example.com/api/v1/auth/oidc/frontchannel-logout, that is the address of the
+      GopherCRM API (`https`, the origin the browser reaches the API on, then the API prefix)
+      followed by `/auth/oidc/frontchannel-logout`. Choose **Save**.
+   3. Open **Token configuration** → **Add optional claim**, choose token type **ID**, tick `sid`
+      and choose **Add**. The `sid` claim names the person's Entra ID session; GopherCRM records it
+      with each single sign-on session.
+
+   What happens without each:
+   - Without the `APP_BASE_URL/login` redirect URI, Entra ID refuses the sign-out request with an
+     error page after GopherCRM has already ended its own session; the person is signed out of
+     GopherCRM but not of Entra ID.
+   - Without the front-channel logout URL, a sign-out at Microsoft (another application, or
+     myaccount.microsoft.com) leaves the GopherCRM session running until it expires, at most 24
+     hours after the sign-in.
+   - Without the `sid` optional claim, the front-channel sign-out finds no GopherCRM session to
+     end. Sessions that started before you added the claim are not found either; they end at
+     their next sign-out or expiry.
+
+   A front-channel sign-out ends every GopherCRM session of that person, on every device and
+   password sessions included, not only the one that signed in through that Entra ID session.
 
 ## 2. Create a client credential: a certificate (recommended) or a client secret
 

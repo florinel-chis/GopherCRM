@@ -42,7 +42,11 @@ cross the boundary as canonical decimal strings.
 - `idkit.AccountStore` (`internal/idkit/host.go`): signs an existing account in with the
   mapped role, or provisions a new one; its refusals are `oidc.RefusalError` values, and
   `sso.RefuseAccount` (`internal/idkit/sso/codes.go`) attaches the account a refusal concerns.
-- `idkit.SessionIssuer` (`internal/idkit/host.go`): issues the session of a signed-in account.
+- `idkit.SessionIssuer` (`internal/idkit/host.go`): issues the session of a signed-in account;
+  the request carries the verified issuer and the ID token's `sid` (`ProviderSessionID`), which a
+  host keeps a reference to (a keyed hash) for the front-channel sign-out.
+- `idkit.SessionEnder` (`internal/idkit/host.go`): ends the host's sessions that signed in under
+  a provider session (issuer, `sid`); called only outside a transaction.
 - `idkit.AttemptStore` (`internal/idkit/host.go`): the started sign-ins; a claim is single use.
 - `idkit.AuditSink` (`internal/idkit/host.go`): records the outcome of every callback.
 - `idkit.ConfigSource` (`internal/idkit/host.go`): the sign-in configuration, re-read on every
@@ -51,6 +55,7 @@ cross the boundary as canonical decimal strings.
 - `idkit.Clock` and `idkit.Logger`.
 
 `IdentityStore`, `AccountStore` and `SessionIssuer` join the transaction a ctx carries.
+`SessionEnder` is called only outside one.
 `AttemptStore`, `AuditSink` and `ConfigSource` run only outside one and refuse a ctx that
 carries one (`idkit.ErrInTransaction`; the audit sink writes nothing), so a spent attempt is
 never made usable again by a rollback and an audit record survives a failed sign-in.
@@ -83,6 +88,21 @@ The link rule is `Service.signInAccount` (`internal/idkit/sso/link.go`):
   `scim` under the same issuer; it then links the token's pair to that account.
 - Any other unknown pair provisions a new account.
 - Email never links an identity to an existing account.
+
+`Service.Callback` returns the raw ID token with the session (`Session.IDToken`), for the host's
+client to keep and present back at sign-out; no store sees it.
+
+## Sign-out
+
+`Service.EndSessionURL` (`internal/idkit/sso/logout.go`) is the RP-initiated sign-out: given the
+account whose session the host just ended and the ID token the client kept, it returns the
+provider's `end_session_endpoint` with `id_token_hint`, `post_logout_redirect_uri`
+(`Options.PostLogoutRedirectURL`) and `client_id`, or "" when the hint does not verify (signature,
+`iss`, `aud`; not its expiry), its exact (issuer, subject) pair is linked to no account or to
+another one, or the provider advertises no `https` endpoint. It runs under
+`Options.EndSessionTimeout` (5 s). `Service.FrontChannelLogout` is the provider-initiated
+sign-out: an optional `iss` must equal the configured issuer byte for byte, and the `sid` is handed
+to `SessionEnder.EndProviderSession` under the configured issuer.
 
 The refusal and unavailable codes the sign-in decides are the `sso.CodeStateInvalid` family
 (`internal/idkit/sso/codes.go`); the host's `AccountStore` adds its own (`account_inactive`,

@@ -160,11 +160,23 @@ func generateOpaqueToken() (string, error) {
 
 // refreshSession is what a refresh token records about the session it
 // belongs to: the family shared by every token of one rotation chain, how
-// that session signed in and when.
+// that session signed in and when, and, for a single sign-on session, the
+// keyed hash of the provider session it started in (providerSessionHash).
 type refreshSession struct {
-	FamilyID     string
-	SignInMethod string
-	StartedAt    time.Time
+	FamilyID            string
+	SignInMethod        string
+	StartedAt           time.Time
+	ProviderSessionHash string
+}
+
+// providerSessionHash is the stored reference of a provider session: the
+// HMAC of the issuer, a newline and the sid under the session token secret,
+// "" when there is no sid. The sid itself is never stored.
+func providerSessionHash(issuer, sid, secret string) string {
+	if sid == "" {
+		return ""
+	}
+	return hashOpaqueToken(issuer+"\n"+sid, secret)
 }
 
 // refreshFamilyIDBytes is the random length of a new family id, hex-encoded
@@ -226,6 +238,8 @@ func (s *authService) issueRefreshToken(repo repository.RefreshTokenRepository, 
 		ExpiresAt:    expiresAt,
 		FamilyID:     session.FamilyID,
 		SignInMethod: session.SignInMethod,
+		// The provider session reference is copied as given, never derived.
+		ProviderSessionHash: session.ProviderSessionHash,
 	}
 	// A zero start (a presented row without one) stays NULL; the row gets
 	// its own copy of the value either way.

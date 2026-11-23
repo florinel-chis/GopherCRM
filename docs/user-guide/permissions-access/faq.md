@@ -23,7 +23,10 @@ Remove them at the identity provider: remove their assignment to the application
 or group that the role mapping uses. Their next sign-in is refused. Without SCIM, their current
 session ends at most 24 hours after their last sign-in at the provider (an access token already
 issued stays valid until it expires); SCIM deprovisioning, or **Deactivate** in GopherCRM, ends it
-at once.
+at once. A sign-out at the provider also ends it at once, when the provider sends the `sid` claim
+and GopherCRM's front-channel logout URL is registered there (see
+[Single sign-on](single-sign-on.md#what-happens-at-sign-in)); removing an assignment alone does not
+sign the person out at the provider.
 
 If **Allow password sign-in and password reset for accounts linked to single sign-on** is on, also
 deactivate the account in GopherCRM (Users → the user → **Deactivate**, or

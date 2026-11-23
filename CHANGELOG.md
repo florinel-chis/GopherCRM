@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Single sign-on sign-out at the identity provider (#634).** Signing out of a single sign-on
+  session now also ends the session at the identity provider. `POST /auth/oidc/callback` also
+  returns `id_token`, which the web app keeps with the session. `POST /auth/logout` takes an
+  optional `id_token_hint` (at most 16384 bytes, else 400 `VALIDATION_ERROR`); after the sessions
+  ended, and only for a hint that verifies for the configured issuer and client (an expired one
+  included) and is linked to the caller, the answer carries `end_session_url`: the provider's
+  `end_session_endpoint` with `id_token_hint`, `post_logout_redirect_uri` `APP_BASE_URL/login` and
+  `client_id`. The web app sends the browser there, and the provider returns it to the sign-in
+  page. The lookup is bounded to 5 seconds and never fails the logout; password sessions are
+  unchanged (no body, no URL, same message). The new unauthenticated
+  `GET /auth/oidc/frontchannel-logout?sid=&iss=` (strict `/auth` tier) is the provider's
+  front-channel sign-out: it logs out every account with a live session that signed in under that
+  provider session (all of the account's sessions, as a logout without a body does) with one
+  `logout` sign-in audit row each, and answers 200 without caching and without frame headers; an
+  `iss` that is sent must equal the configured issuer. Each refresh token of a single sign-on
+  session records `provider_session_hash`, a keyed hash of the issuer and the ID token's `sid`
+  claim (never the `sid` itself), copied by rotation and the password-change renewal; migration
+  `20261129120008_refresh_token_provider_session` adds the column and its index on MySQL and
+  MariaDB (legacy rows keep ''). No setting or environment variable is added. The Microsoft Entra
+  ID how-to lists what to register: the redirect URI `APP_BASE_URL/login`, the front-channel logout
+  URL and the `sid` optional claim of the ID token.
 - **Quote webhook events (#518).** Quotes join the webhook catalogue with three thin events, so
   there are now twenty-one event types. `quote.created` comes from `POST /quotes`. `quote.updated`
   comes from `PUT /quotes/{id}` only when a stored value changed (compared with the quote row read

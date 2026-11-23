@@ -37,6 +37,9 @@ const (
 	TokenPath     = "/token"
 	JWKSPath      = "/jwks"
 	UserInfoPath  = "/userinfo"
+	// EndSessionPath is the end_session_endpoint discovery advertises by
+	// default.
+	EndSessionPath = "/logout"
 )
 
 // Default client credentials, replaced with WithClient.
@@ -57,6 +60,8 @@ type Claims struct {
 	Email  string
 	Groups interface{}
 	Roles  interface{}
+	// SID is the provider session id of the sign-in, left out when empty.
+	SID string
 	// Extra claims are set last, so they may override the standard ones.
 	Extra map[string]interface{}
 	// Nonce overrides the nonce of the authorization request when non-empty.
@@ -180,6 +185,10 @@ type Issuer struct {
 	jwksHits          int
 	jwksQueries       []string
 	discoveryPaths    []string
+	discoveryDelay    time.Duration
+	endSession        string
+	omitEndSession    bool
+	endSessionQueries []url.Values
 }
 
 // New starts the issuer. The server is closed when the test ends.
@@ -197,6 +206,7 @@ func New(t testing.TB, opts ...Option) *Issuer {
 	i.mux.HandleFunc(JWKSPath, i.jwks)
 	i.mux.HandleFunc(TokenPath, i.token)
 	i.mux.HandleFunc(UserInfoPath, i.userInfo)
+	i.mux.HandleFunc(EndSessionPath, i.endSessionHandler)
 	i.server = httptest.NewTLSServer(http.HandlerFunc(i.route))
 	t.Cleanup(i.server.Close)
 	return i
@@ -319,6 +329,65 @@ func (i *Issuer) SetAssertionCertificate(cert *x509.Certificate) {
 	i.mu.Unlock()
 }
 
+// SetEndSessionEndpoint replaces the end_session_endpoint discovery
+// advertises; "" restores the default, the server URL plus EndSessionPath.
+func (i *Issuer) SetEndSessionEndpoint(raw string) {
+	i.mu.Lock()
+	i.endSession = raw
+	i.mu.Unlock()
+}
+
+// OmitEndSessionEndpoint leaves end_session_endpoint out of discovery while
+// on is true.
+func (i *Issuer) OmitEndSessionEndpoint(on bool) {
+	i.mu.Lock()
+	i.omitEndSession = on
+	i.mu.Unlock()
+}
+
+// EndSessionQueries is the query of every request to EndSessionPath, in
+// order.
+func (i *Issuer) EndSessionQueries() []url.Values {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	out := make([]url.Values, 0, len(i.endSessionQueries))
+	for _, query := range i.endSessionQueries {
+		out = append(out, cloneValues(query))
+	}
+	return out
+}
+
+// LastEndSessionQuery is the query of the latest request to EndSessionPath,
+// nil before the first.
+func (i *Issuer) LastEndSessionQuery() url.Values {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if len(i.endSessionQueries) == 0 {
+		return nil
+	}
+	return cloneValues(i.endSessionQueries[len(i.endSessionQueries)-1])
+}
+
+// SetDiscoveryDelay makes discovery answer only after d, or when the request
+// is cancelled; 0 answers at once.
+func (i *Issuer) SetDiscoveryDelay(d time.Duration) {
+	i.mu.Lock()
+	i.discoveryDelay = d
+	i.mu.Unlock()
+}
+
+// IDToken signs an ID token with claims outside any sign-in, for a test that
+// presents one back to the client (an id_token_hint, say). It carries no
+// nonce unless claims.Nonce sets one, and is recorded as LastIDToken.
+func (i *Issuer) IDToken(t testing.TB, claims Claims) string {
+	t.Helper()
+	token, err := i.sign(grant{claims: claims})
+	if err != nil {
+		t.Fatalf("oidctest: sign the ID token: %v", err)
+	}
+	return token
+}
+
 // TakeTokenRequests returns and forgets the recorded token requests.
 func (i *Issuer) TakeTokenRequests() []TokenRequest {
 	i.mu.Lock()
@@ -437,7 +506,15 @@ func (i *Issuer) discovery(w http.ResponseWriter, r *http.Request) {
 	redirect := i.discoveryRedirect
 	omitUserInfo, plainUserInfo := i.userinfo.OmitEndpoint, i.userinfo.PlainHTTP
 	issuerPath := i.path
+	delay, endSession, omitEndSession := i.discoveryDelay, i.endSession, i.omitEndSession
 	i.mu.Unlock()
+	if delay > 0 {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(delay):
+		}
+	}
 	if redirect {
 		http.Redirect(w, r, i.server.URL+"/moved"+DiscoveryPath, http.StatusFound)
 		return
@@ -458,6 +535,13 @@ func (i *Issuer) discovery(w http.ResponseWriter, r *http.Request) {
 		document["userinfo_endpoint"] = "http://" + strings.TrimPrefix(i.server.URL, "https://") + UserInfoPath
 	default:
 		document["userinfo_endpoint"] = i.server.URL + UserInfoPath
+	}
+	switch {
+	case omitEndSession:
+	case endSession != "":
+		document["end_session_endpoint"] = endSession
+	default:
+		document["end_session_endpoint"] = i.server.URL + EndSessionPath
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(document)
@@ -602,12 +686,17 @@ func (i *Issuer) sign(grant grant) (string, error) {
 	spec := grant.claims
 	now := time.Now()
 	claims := map[string]interface{}{
-		"iss":   i.Issuer(),
-		"sub":   spec.Subject,
-		"aud":   i.clientID,
-		"exp":   now.Add(5 * time.Minute).Unix(),
-		"iat":   now.Unix(),
-		"nonce": grant.nonce,
+		"iss": i.Issuer(),
+		"sub": spec.Subject,
+		"aud": i.clientID,
+		"exp": now.Add(5 * time.Minute).Unix(),
+		"iat": now.Unix(),
+	}
+	if grant.nonce != "" {
+		claims["nonce"] = grant.nonce
+	}
+	if spec.SID != "" {
+		claims["sid"] = spec.SID
 	}
 	if spec.Audience != "" {
 		claims["aud"] = spec.Audience
@@ -660,6 +749,15 @@ func (i *Issuer) sign(grant grant) (string, error) {
 	i.issuedIDTokens = append(i.issuedIDTokens, compact)
 	i.mu.Unlock()
 	return compact, nil
+}
+
+// endSessionHandler records the query of a sign-out request and answers 200.
+func (i *Issuer) endSessionHandler(w http.ResponseWriter, r *http.Request) {
+	i.mu.Lock()
+	i.endSessionQueries = append(i.endSessionQueries, cloneValues(r.URL.Query()))
+	i.mu.Unlock()
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("signed out\n"))
 }
 
 // userInfo answers 401 unless the bearer is an access token this issuer

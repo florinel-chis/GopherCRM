@@ -216,7 +216,7 @@ func (s *authService) rotateRefreshTokenInTransaction(
 	// transaction, so a failure of either rolls the claim back: the presented
 	// token stays usable and the caller receives no credentials at all.
 	// The successor continues the presented token's session unchanged.
-	session := refreshSession{FamilyID: stored.FamilyID, SignInMethod: stored.SignInMethod}
+	session := refreshSession{FamilyID: stored.FamilyID, SignInMethod: stored.SignInMethod, ProviderSessionHash: stored.ProviderSessionHash}
 	if stored.SessionStartedAt != nil {
 		session.StartedAt = *stored.SessionStartedAt
 	}

@@ -106,6 +106,7 @@ func New(opts Options) (*App, error) {
 		Accounts:        store.AccountStore(),
 		Sessions:        store.SessionIssuer(),
 		Audit:           store.AuditSink(),
+		SessionEnder:    store.SessionEnder(),
 		Tx:              store.TxRunner(),
 		Logger:          logger,
 		StateHash:       func(state string) string { return keyed("state:", state) },

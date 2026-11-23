@@ -10,7 +10,7 @@ import {
   type ApiClientOptions,
   type SessionSnapshot,
 } from './client';
-import { legacySessionId, sha256Hex } from './sessionRecord';
+import { legacySessionId, parseSessionRecord, serializeSessionRecord, sha256Hex } from './sessionRecord';
 
 // The stored session is one record (#184). These tests drive the real
 // ApiClient over the browser storages (or instrumented ones) and a custom
@@ -562,5 +562,53 @@ describe('ApiClient session record', () => {
     expect(tabB.onSessionExpired).not.toHaveBeenCalled();
     expect(recordIn(local)).toMatchObject({ id: newId, access, refresh: 'r-second' });
     expect(local.getItem(TOKEN_KEY)).toBe(access);
+  });
+
+  describe('single sign-on ID token', () => {
+    it('a record without an id token still parses, and one with it keeps it', () => {
+      const base = { v: 1, id: 'abc', access: 'a', refresh: 'r', subject: '3', persist: false };
+      expect(parseSessionRecord(JSON.stringify(base))).toEqual(base);
+      expect(parseSessionRecord(JSON.stringify({ ...base, idToken: 'id-1' }))).toEqual({ ...base, idToken: 'id-1' });
+      expect(parseSessionRecord(JSON.stringify({ ...base, idToken: 7 }))).toEqual(base);
+      expect(parseSessionRecord(JSON.stringify({ ...base, idToken: '' }))).toEqual(base);
+      const written = serializeSessionRecord({ v: 1, id: 'abc', access: 'a', refresh: 'r', subject: '3', persist: false });
+      expect(JSON.parse(written)).not.toHaveProperty('idToken');
+      expect(JSON.parse(serializeSessionRecord({ ...base, v: 1, idToken: 'id-1' }))).toHaveProperty('idToken', 'id-1');
+    });
+
+    it('keeps the id token through a refresh and a password change, and hands it to the logout', async () => {
+      const { session, storage } = instrumented();
+      const access = jwtFor(3, 'a');
+      const { client, api } = makeTab(
+        {
+          'GET /items': accepts('opaque-renewed'),
+          'POST /auth/refresh': (config) => ok(config, { token: 'opaque-renewed', refresh_token: 'r1' }),
+          'POST /auth/change-password': (config) =>
+            ok(config, { message: 'Password changed successfully', token: 'opaque-pc', refresh_token: 'r-pc' }),
+        },
+        { storage }
+      );
+      client.startSession(access, 'r0', false, 'sso-id-token');
+      expect(recordIn(session)).toMatchObject({ access, refresh: 'r0', idToken: 'sso-id-token' });
+
+      await api.get('/items');
+      expect(recordIn(session)).toMatchObject({ access: 'opaque-renewed', refresh: 'r1', idToken: 'sso-id-token' });
+      await client.changePassword('OldStrongPass1!', 'NewStrongPass1!');
+      expect(recordIn(session)).toMatchObject({ access: 'opaque-pc', refresh: 'r-pc', idToken: 'sso-id-token' });
+
+      const revoke = vi.fn(async () => 'https://idp.test/logout');
+      await expect(client.endSession(revoke)).resolves.toBe('https://idp.test/logout');
+      expect(revoke).toHaveBeenCalledWith('opaque-pc', 'sso-id-token');
+      expect(recordIn(session)).toBeNull();
+    });
+
+    it('a password session hands no id token to the logout', async () => {
+      const { storage } = instrumented();
+      const { client } = makeTab({}, { storage });
+      client.startSession(jwtFor(4, 'p'), 'r0', false);
+      const revoke = vi.fn(async () => undefined);
+      await expect(client.endSession(revoke)).resolves.toBeUndefined();
+      expect(revoke).toHaveBeenCalledWith(expect.any(String), undefined);
+    });
   });
 });

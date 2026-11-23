@@ -1105,11 +1105,14 @@ value is stored; a rotation revokes the presented row and inserts its successor.
 | family_id | varchar(64) | No | '' | Shared by every token of one rotation chain; index `idx_refresh_tokens_family_id`. A sign-in (password or single sign-on) and the token issued by a password change start a new family of 32 lowercase hex characters; a rotation copies it. A row that predates #546 holds its own `id` as a decimal string |
 | sign_in_method | varchar(16) | No | '' | `password` or `oidc`, copied by a rotation. A row that predates #546 holds `oidc` when its owner has any `user_identities` row and `password` otherwise |
 | session_started_at | datetime(3) | Yes | NULL | When the sign-in of the chain happened, copied by a rotation. A password change that renews an `oidc` session keeps its `sign_in_method` and this start (#548); one that renews a password session starts a new one. A row that predates #546 holds its `created_at` |
+| provider_session_hash | varchar(64) | No | '' | The identity provider's session a single sign-on chain started in (#634): HMAC-SHA256 (hex) of the issuer, a newline and the ID token's `sid` claim, keyed like `token_hash`; the raw `sid` is never stored. '' for password sessions, for a sign-in whose ID token had no `sid` and for rows that predate the column. Copied by a rotation and by the password change that renews an `oidc` session; front-channel sign-out (`GET /auth/oidc/frontchannel-logout`) finds the live rows by it. Index `idx_refresh_tokens_provider_session_hash` |
 
 The three session columns come from AutoMigrate on SQLite and from migration
 `20261129120004_refresh_token_session` on MySQL/MariaDB; the startup step
 `backfillRefreshTokenSessions` and the up half fill legacy rows the same way, without touching
-`updated_at`, and a second run changes nothing.
+`updated_at`, and a second run changes nothing. `provider_session_hash` and its index come from
+AutoMigrate and from migration `20261129120008_refresh_token_provider_session`; legacy rows keep
+''.
 
 ## Configuration Model
 

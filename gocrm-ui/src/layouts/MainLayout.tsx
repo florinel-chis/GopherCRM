@@ -299,7 +299,11 @@ export const MainLayout: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await logout();
+    // A single sign-on logout may hand the browser to the identity
+    // provider's sign-out, which returns it to /login itself.
+    if (await logout()) {
+      return;
+    }
     navigate('/login');
   };
 

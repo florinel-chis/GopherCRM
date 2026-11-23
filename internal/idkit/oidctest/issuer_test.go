@@ -238,3 +238,58 @@ func keyID(t *testing.T, raw string) string {
 	require.NoError(t, json.Unmarshal(header, &decoded))
 	return decoded.KeyID
 }
+
+// TestIssuerEndSession: discovery advertises end_session_endpoint (or an
+// override, or none), the endpoint records each request's query, a sign-in
+// can carry a sid and IDToken signs a token outside any sign-in.
+func TestIssuerEndSession(t *testing.T) {
+	issuer := oidctest.New(t)
+	document := func(t *testing.T) map[string]interface{} {
+		t.Helper()
+		response, err := issuer.HTTPClient().Get(issuer.URL() + oidctest.DiscoveryPath)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		var out map[string]interface{}
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&out))
+		return out
+	}
+	assert.Equal(t, issuer.URL()+oidctest.EndSessionPath, document(t)["end_session_endpoint"])
+	issuer.SetEndSessionEndpoint("https://elsewhere.example.test/logout?tenant=t1")
+	assert.Equal(t, "https://elsewhere.example.test/logout?tenant=t1", document(t)["end_session_endpoint"])
+	issuer.OmitEndSessionEndpoint(true)
+	_, present := document(t)["end_session_endpoint"]
+	assert.False(t, present, "omitted")
+	issuer.OmitEndSessionEndpoint(false)
+	issuer.SetEndSessionEndpoint("")
+	assert.Equal(t, issuer.URL()+oidctest.EndSessionPath, document(t)["end_session_endpoint"], "the default again")
+
+	assert.Nil(t, issuer.LastEndSessionQuery())
+	for _, hint := range []string{"h-1", "h-2"} {
+		response, err := issuer.HTTPClient().Get(issuer.URL() + oidctest.EndSessionPath + "?id_token_hint=" + hint + "&client_id=c")
+		require.NoError(t, err)
+		_ = response.Body.Close()
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+	}
+	assert.Equal(t, url.Values{"id_token_hint": {"h-2"}, "client_id": {"c"}}, issuer.LastEndSessionQuery())
+	assert.Len(t, issuer.EndSessionQueries(), 2)
+
+	f := newFlow(t, issuer)
+	idToken, _ := f.signIn(t, oidctest.Claims{Subject: "sub-sid", SID: "sid-0634"})
+	var claims struct {
+		SID string `json:"sid"`
+	}
+	require.NoError(t, idToken.Claims(&claims))
+	assert.Equal(t, "sid-0634", claims.SID)
+	plain, _ := f.signIn(t, oidctest.Claims{Subject: "sub-nosid"})
+	var raw map[string]interface{}
+	require.NoError(t, plain.Claims(&raw))
+	_, hasSID := raw["sid"]
+	assert.False(t, hasSID, "no sid unless set")
+
+	hint := issuer.IDToken(t, oidctest.Claims{Subject: "sub-hint", SID: "sid-hint"})
+	assert.Equal(t, hint, issuer.LastIDToken())
+	verified, err := f.provider.Verifier(&oidc.Config{ClientID: issuer.ClientID()}).Verify(f.ctx, hint)
+	require.NoError(t, err)
+	assert.Equal(t, "sub-hint", verified.Subject)
+	assert.Empty(t, verified.Nonce, "no nonce outside a sign-in")
+}

@@ -193,7 +193,8 @@ done
 export AEO_EGRESS_LOCAL_ORIGINS="$aeo_local_origins"
 
 # The OpenID Connect test issuer: one client, registered with the SPA's
-# callback page as its only redirect URI and a secret made for this run. The
+# callback page as its only redirect URI, its login page as its only
+# post-logout redirect URI and a secret made for this run. The
 # OIDC_* settings above stay empty, so single sign-on is off unless a spec
 # (sso.spec.ts) switches it on through the settings API.
 E2E_OIDC_CLIENT_SECRET=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
@@ -264,6 +265,7 @@ echo "e2e: starting the OpenID Connect test issuer on :$oidc_port"
 (cd "$repo_root" && go build -o "$work_dir/oidc-issuer" ./scripts/e2e/oidc-issuer)
 "$work_dir/oidc-issuer" --listen "127.0.0.1:$oidc_port" --cert "$E2E_AEO_CERT" --key "$E2E_AEO_KEY" \
   --client-id "$E2E_OIDC_CLIENT_ID" --redirect-uri "http://localhost:$ui_port/auth/callback" \
+  --post-logout-redirect-uri "http://localhost:$ui_port/login" \
   >"$oidc_log" 2>&1 &
 oidc_pid=$!
 for _ in $(seq 1 30); do

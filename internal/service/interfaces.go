@@ -17,6 +17,10 @@ type AuthTokens struct {
 	// the raw opaque value — it is returned to the client once and only its
 	// hash is persisted; it must never be logged.
 	User *models.User
+	// IDToken is the raw ID token of a single sign-on sign-in, returned to
+	// the client once as the hint of its later sign-out; "" for every other
+	// sign-in. It is never stored or logged.
+	IDToken string
 }
 
 // Authentication methods recorded by the auth middleware under

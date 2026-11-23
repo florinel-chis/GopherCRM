@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { apiClient, SESSION_KEY, TOKEN_KEY, REFRESH_TOKEN_KEY } from './client';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { AxiosAdapter, InternalAxiosRequestConfig } from 'axios';
+import { api, apiClient, SESSION_KEY, TOKEN_KEY, REFRESH_TOKEN_KEY } from './client';
+import { authApi } from './endpoints/auth';
 
 // Regression tests for token storage: a session goes to localStorage only when
 // the user opted into "remember me" (persist=true); otherwise it belongs in
@@ -76,6 +78,57 @@ describe('ApiClient token storage', () => {
       }
       expect(apiClient.getToken()).toBeNull();
       expect(apiClient.getRefreshToken()).toBeNull();
+    });
+  });
+
+  describe('single sign-on logout', () => {
+    const originalAdapter = api.defaults.adapter;
+    let sent: { url?: string; data?: unknown; authorization?: unknown }[] = [];
+    let answer: Record<string, unknown> = { message: 'Logged out successfully' };
+
+    beforeEach(() => {
+      sent = [];
+      answer = { message: 'Logged out successfully' };
+      const adapter: AxiosAdapter = async (config: InternalAxiosRequestConfig) => {
+        sent.push({ url: config.url, data: config.data, authorization: config.headers?.Authorization });
+        return { data: { success: true, data: answer }, status: 200, statusText: 'OK', headers: {}, config };
+      };
+      api.defaults.adapter = adapter;
+    });
+    afterEach(() => {
+      api.defaults.adapter = originalAdapter;
+    });
+
+    it('startSession keeps the id token of an SSO sign-in in the record', () => {
+      apiClient.startSession('sso-access', 'sso-refresh', false, 'sso-id-token');
+      expect(JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? '{}')).toMatchObject({ idToken: 'sso-id-token' });
+      apiClient.startSession('pw-access', 'pw-refresh', false);
+      expect(JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? '{}')).not.toHaveProperty('idToken');
+    });
+
+    it('posts {id_token_hint} for an SSO session and returns end_session_url', async () => {
+      answer = { message: 'Logged out successfully', end_session_url: 'https://idp.test/logout?id_token_hint=h' };
+      await expect(authApi.logout('access-1', 'id-token-1')).resolves.toBe('https://idp.test/logout?id_token_hint=h');
+      expect(sent).toHaveLength(1);
+      expect(sent[0].url).toBe('/auth/logout');
+      expect(JSON.parse(String(sent[0].data))).toEqual({ id_token_hint: 'id-token-1' });
+      expect(sent[0].authorization).toBe('Bearer access-1');
+    });
+
+    it('posts no body for a password session and returns no URL', async () => {
+      await expect(authApi.logout('access-2')).resolves.toBeUndefined();
+      expect(sent).toHaveLength(1);
+      expect(sent[0].data).toBeUndefined();
+    });
+
+    it('an SSO session ends through endSession with its id token as the hint', async () => {
+      apiClient.startSession('sso-access', 'sso-refresh', false, 'sso-id-token');
+      answer = { message: 'Logged out successfully', end_session_url: 'https://idp.test/logout' };
+      await expect(apiClient.endSession((token, idToken) => authApi.logout(token, idToken))).resolves.toBe(
+        'https://idp.test/logout'
+      );
+      expect(JSON.parse(String(sent[0].data))).toEqual({ id_token_hint: 'sso-id-token' });
+      expect(apiClient.getToken()).toBeNull();
     });
   });
 });

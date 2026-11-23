@@ -88,9 +88,19 @@ type OIDCService interface {
 	// Callback finishes a sign-in with the code and state the issuer
 	// redirected back with and the value of the sign-in cookie the browser
 	// sent ("" when it sent none), and returns the session, as a password
-	// login does. The attempt is spent first; a binding that is empty or
-	// differs from the state is then refused.
+	// login does, plus the raw ID token (AuthTokens.IDToken). The attempt is
+	// spent first; a binding that is empty or differs from the state is then
+	// refused.
 	Callback(ctx context.Context, code, state, binding string) (*AuthTokens, error)
+	// EndSessionURL is where to send the browser of userID after its logout
+	// so the identity provider's session ends too, or "" (see
+	// sso.Service.EndSessionURL). It never takes longer than 5 s; an error
+	// means the settings or the identity could not be read.
+	EndSessionURL(ctx context.Context, userID uint, idTokenHint string) (string, error)
+	// FrontChannelLogout logs out every account with a live session that
+	// signed in under the provider session sid of the configured issuer and
+	// returns how many it logged out (see sso.Service.FrontChannelLogout).
+	FrontChannelLogout(ctx context.Context, iss, sid string) (int, error)
 }
 
 // OIDCAuthorization is what Start returns: the issuer's authorization URL,
@@ -112,6 +122,7 @@ const (
 	oidcIssuerMaxBytes     = models.UserIdentityIssuerMaxLength
 	oidcEmailMaxBytes      = 255
 	oidcCallbackPath       = "/auth/callback"
+	oidcPostLogoutPath     = "/login"
 	oidcRandomPasswordSize = 32
 )
 
@@ -191,21 +202,23 @@ func NewOIDCService(
 	s.configs = &oidcConfigSource{wired: s.auth != nil, inner: NewIDKitConfigSource(ssoSettings)}
 	s.accounts = &oidcAccountStore{}
 	options := sso.Options{
-		Config:          s.configs,
-		Attempts:        NewIDKitAttemptStore(attempts),
-		Identities:      NewIDKitIdentityStore(identities),
-		Accounts:        s.accounts,
-		Tx:              &oidcPasswordFirstRunner{next: &oidcSignInRunner{governance: governance}},
-		Clock:           idkit.ClockFunc(func() time.Time { return s.now() }),
-		Logger:          NewIDKitLogger("oidc_sign_in"),
-		RedirectURL:     s.redirectURI(),
-		RootCAs:         s.rootCAs,
-		EntraIssuerHost: entra.IssuerHost,
-		GraphBaseURL:    entra.GraphBaseURL,
-		GraphTimeout:    entra.GraphTimeout,
-		UserInfoTimeout: sso.UserInfoTimeout,
-		AttemptTTL:      oidcAttemptTTL,
-		IssuerMaxBytes:  oidcIssuerMaxBytes,
+		Config:      s.configs,
+		Attempts:    NewIDKitAttemptStore(attempts),
+		Identities:  NewIDKitIdentityStore(identities),
+		Accounts:    s.accounts,
+		Tx:          &oidcPasswordFirstRunner{next: &oidcSignInRunner{governance: governance}},
+		Clock:       idkit.ClockFunc(func() time.Time { return s.now() }),
+		Logger:      NewIDKitLogger("oidc_sign_in"),
+		RedirectURL: s.redirectURI(),
+		// Where the identity provider returns the browser after its sign-out.
+		PostLogoutRedirectURL: s.postLogoutRedirectURI(),
+		RootCAs:               s.rootCAs,
+		EntraIssuerHost:       entra.IssuerHost,
+		GraphBaseURL:          entra.GraphBaseURL,
+		GraphTimeout:          entra.GraphTimeout,
+		UserInfoTimeout:       sso.UserInfoTimeout,
+		AttemptTTL:            oidcAttemptTTL,
+		IssuerMaxBytes:        oidcIssuerMaxBytes,
 	}
 	if s.audit != nil {
 		options.Audit = NewIDKitAuditSink(s.audit)
@@ -218,6 +231,11 @@ func NewOIDCService(
 		}
 		if sessions, err := NewIDKitSessionIssuer(s.auth, userRepo, refreshTokens); err == nil {
 			options.Sessions = &oidcSessionIssuer{inner: sessions.(*idkitSessionIssuer)}
+		}
+		// Front-channel sign-out logs the accounts out through the auth
+		// service's Logout, with one logout audit row each.
+		if ender, err := NewIDKitSessionEnder(s.auth, refreshTokens, s.audit); err == nil {
+			options.SessionEnder = ender
 		}
 	}
 	s.signin = sso.New(options)
@@ -261,6 +279,12 @@ func (s *oidcService) redirectURI() string {
 	return s.appBaseURL + oidcCallbackPath
 }
 
+// postLogoutRedirectURI is the SPA page the issuer sends the browser back to
+// after its sign-out (post_logout_redirect_uri).
+func (s *oidcService) postLogoutRedirectURI() string {
+	return s.appBaseURL + oidcPostLogoutPath
+}
+
 func (s *oidcService) Start(ctx context.Context) (*OIDCAuthorization, error) {
 	authz, err := s.signin.Start(ctx)
 	if err != nil {
@@ -287,7 +311,22 @@ func (s *oidcService) Callback(ctx context.Context, code, state, binding string)
 	if result.user == nil || formatIDKitID(result.user.ID) != session.AccountID {
 		return nil, errors.New("single sign-on session without its account")
 	}
-	return &AuthTokens{AccessToken: session.AccessToken, RefreshToken: session.RefreshToken, User: result.user}, nil
+	return &AuthTokens{AccessToken: session.AccessToken, RefreshToken: session.RefreshToken, User: result.user,
+		IDToken: session.IDToken}, nil
+}
+
+// EndSessionURL asks the sign-in for the provider's end-session URL of
+// userID's sign-out. Without the session-issuing auth service it is "".
+func (s *oidcService) EndSessionURL(ctx context.Context, userID uint, idTokenHint string) (string, error) {
+	if s.auth == nil || userID == 0 || idTokenHint == "" {
+		return "", nil
+	}
+	return s.signin.EndSessionURL(ctx, formatIDKitID(userID), idTokenHint)
+}
+
+// FrontChannelLogout runs the provider-initiated sign-out of the sign-in.
+func (s *oidcService) FrontChannelLogout(ctx context.Context, iss, sid string) (int, error) {
+	return s.signin.FrontChannelLogout(ctx, iss, sid)
 }
 
 // oidcUnusablePasswordHash is the bcrypt hash of random bytes that are

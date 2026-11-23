@@ -14,6 +14,7 @@ vi.mock('@/api/endpoints', () => ({
     login: vi.fn(),
     register: vi.fn(),
     logout: vi.fn(),
+    oidcCallback: vi.fn(),
   },
 }));
 
@@ -205,9 +206,88 @@ describe('AuthContext', () => {
     // endSession drops the stored tokens first and then revokes on the
     // server with the access token it captured before dropping them.
     expect(apiClient.endSession).toHaveBeenCalledTimes(1);
-    expect(authApi.logout).toHaveBeenCalledWith('captured-access-token');
+    expect(authApi.logout).toHaveBeenCalledWith('captured-access-token', undefined);
     expect(result.current.user).toBe(null);
     expect(result.current.isAuthenticated).toBe(false);
+  });
+
+  describe('single sign-on sign-out', () => {
+    const assign = vi.fn();
+    const originalLocation = window.location;
+
+    beforeEach(() => {
+      assign.mockReset();
+      Object.defineProperty(window, 'location', { configurable: true, value: { ...originalLocation, assign } });
+      return () => {
+        Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
+      };
+    });
+
+    it('stores the ID token of an SSO sign-in with the session', async () => {
+      vi.mocked(apiClient.getToken).mockReturnValue(null);
+      vi.mocked(authApi.oidcCallback).mockResolvedValue({
+        token: 'sso-token', refresh_token: 'sso-refresh', user: mockUser, id_token: 'sso-id-token',
+      });
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.loginWithSSO('c', 's');
+      });
+      expect(apiClient.startSession).toHaveBeenCalledWith('sso-token', 'sso-refresh', false, 'sso-id-token');
+    });
+
+    it('sends the ID token as the hint and follows the end-session URL', async () => {
+      vi.mocked(apiClient.getToken).mockReturnValue('test-token');
+      vi.mocked(apiClient.endSession).mockImplementation(async (revoke) => {
+        session.generation += 1;
+        return revoke('captured-access-token', 'captured-id-token');
+      });
+      vi.mocked(authApi.logout).mockResolvedValue('https://idp.example/logout?id_token_hint=x');
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.user).toEqual(mockUser));
+
+      let leaving = false;
+      await act(async () => {
+        leaving = await result.current.logout();
+      });
+      expect(authApi.logout).toHaveBeenCalledWith('captured-access-token', 'captured-id-token');
+      expect(assign).toHaveBeenCalledTimes(1);
+      expect(assign).toHaveBeenCalledWith('https://idp.example/logout?id_token_hint=x');
+      expect(leaving).toBe(true);
+      expect(result.current.user).toBe(null);
+    });
+
+    it('a password session sends no hint and stays in the app', async () => {
+      vi.mocked(apiClient.getToken).mockReturnValue('test-token');
+      vi.mocked(authApi.logout).mockResolvedValue(undefined);
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.user).toEqual(mockUser));
+
+      let leaving = true;
+      await act(async () => {
+        leaving = await result.current.logout();
+      });
+      expect(authApi.logout).toHaveBeenCalledWith('captured-access-token', undefined);
+      expect(assign).not.toHaveBeenCalled();
+      expect(leaving).toBe(false);
+    });
+
+    it('a failed revocation never leaves for the provider', async () => {
+      vi.mocked(apiClient.getToken).mockReturnValue('test-token');
+      vi.mocked(apiClient.endSession).mockRejectedValue(new Error('network'));
+      const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+      await waitFor(() => expect(result.current.user).toEqual(mockUser));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      let leaving = true;
+      await act(async () => {
+        leaving = await result.current.logout();
+      });
+      expect(assign).not.toHaveBeenCalled();
+      expect(leaving).toBe(false);
+      consoleError.mockRestore();
+    });
   });
 
   it('handles registration', async () => {
@@ -349,7 +429,7 @@ describe('AuthContext', () => {
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.user).toEqual(mockUser));
 
-    let pending: Promise<void> = Promise.resolve();
+    let pending: Promise<unknown> = Promise.resolve();
     act(() => {
       pending = result.current.logout();
     });

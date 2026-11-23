@@ -27,6 +27,8 @@ const (
 	UserInfoTimeout = 5 * time.Second
 	// UserInfoMaxBytes bounds the userinfo response body.
 	UserInfoMaxBytes = 1 << 20
+	// EndSessionTimeout is the default deadline of EndSessionURL.
+	EndSessionTimeout = 5 * time.Second
 )
 
 // Options is what a Service is built from.
@@ -42,6 +44,9 @@ type Options struct {
 	Sessions   idkit.SessionIssuer
 	// Audit, when set, records every callback after its transaction.
 	Audit idkit.AuditSink
+	// SessionEnder ends the host's sessions of a provider session for
+	// FrontChannelLogout. It runs outside a transaction.
+	SessionEnder idkit.SessionEnder
 	// Tx runs the transaction of a callback.
 	Tx idkit.TxRunner
 	// Clock drives the attempt expiry and the time of a client assertion
@@ -59,6 +64,9 @@ type Options struct {
 
 	// RedirectURL is the redirect URI of the authorization request.
 	RedirectURL string
+	// PostLogoutRedirectURL is the post_logout_redirect_uri of the URL
+	// EndSessionURL returns (left out when empty).
+	PostLogoutRedirectURL string
 	// RootCAs, when set, replaces the system roots of the issuer client. New
 	// reads it once.
 	RootCAs *x509.CertPool
@@ -73,6 +81,9 @@ type Options struct {
 	// UserInfoTimeout is the deadline of the userinfo request
 	// (UserInfoTimeout when zero).
 	UserInfoTimeout time.Duration
+	// EndSessionTimeout is the deadline of one EndSessionURL call, its
+	// discovery and key fetch included (EndSessionTimeout when zero).
+	EndSessionTimeout time.Duration
 	// AttemptTTL is how long a started sign-in can be finished
 	// (DefaultAttemptTTL when zero).
 	AttemptTTL time.Duration
@@ -111,6 +122,9 @@ func New(opts Options) *Service {
 	}
 	if opts.UserInfoTimeout == 0 {
 		opts.UserInfoTimeout = UserInfoTimeout
+	}
+	if opts.EndSessionTimeout == 0 {
+		opts.EndSessionTimeout = EndSessionTimeout
 	}
 	if opts.AttemptTTL == 0 {
 		opts.AttemptTTL = DefaultAttemptTTL

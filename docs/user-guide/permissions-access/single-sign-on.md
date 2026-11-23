@@ -36,6 +36,19 @@ state, given and family name, work email and roles; other attributes the provide
    access token already issued stays valid until it expires (`JWT_EXPIRY_HOURS`). Password
    sessions keep the lifetime set by `REFRESH_TOKEN_EXPIRY_DAYS`, and a password change during a
    single sign-on session keeps the same 24-hour limit.
+8. **Signing out.** Logout ends the GopherCRM session as for any account. For a single sign-on
+   session it then also sends the browser to the provider's sign-out page, which signs the person
+   out there and returns them to GopherCRM's sign-in page (`APP_BASE_URL/login`); without that, the
+   next **Sign in with single sign-on** would sign them straight back in. This needs the
+   provider to publish a sign-out endpoint (`end_session_endpoint`) and to accept
+   `APP_BASE_URL/login` as a return address. When it does not, logout ends only the GopherCRM
+   session and shows the sign-in page, as before. Password sessions are unchanged.
+9. **Signing out at the provider.** When the person signs out at the provider, a provider that
+   supports front-channel sign-out loads `GET /auth/oidc/frontchannel-logout` in the browser, and
+   GopherCRM ends the sessions that signed in through that provider session. It ends every
+   session of that person, on every device and password sessions included, and records a
+   `logout` row in the sign-in audit. It works only when the provider sends a `sid` claim in its
+   ID tokens and the front-channel logout URL is registered there.
 
 Accounts are never linked by email. If any GopherCRM account, active, deactivated or deleted,
 already uses the email address the provider sends (in any letter case), the sign-in is refused and
@@ -57,6 +70,9 @@ the common ones.
 | Direction | Value | Where it goes |
 |---|---|---|
 | GopherCRM → provider | Redirect URI: `APP_BASE_URL/auth/callback`, for example https://crm.example.com/auth/callback | The provider's application, as a Web redirect URI. It must match exactly, including `https` and with no trailing slash. |
+| GopherCRM → provider | Post-logout redirect URI: `APP_BASE_URL/login`, for example https://crm.example.com/login | The provider's application, as a second Web redirect URI (some providers call it a post-logout or sign-out redirect URI). Without it the provider refuses the sign-out that follows a logout. |
+| GopherCRM → provider | Front-channel logout URL: the API origin, the API prefix and `/auth/oidc/frontchannel-logout`, for example https://crm.example.com/api/v1/auth/oidc/frontchannel-logout | The provider's application, as its front-channel logout URL. It must be `https`. Without it a sign-out at the provider leaves the GopherCRM session running until it expires. |
+| Provider → GopherCRM | The `sid` claim in the ID token | Configured at the provider (for Entra ID an optional claim of the ID token). Without it the front-channel sign-out finds no session to end. |
 | Provider → GopherCRM | Issuer URL | **Issuer URL**. An absolute `https` URL, exactly as the provider publishes it. |
 | Provider → GopherCRM | Client ID | **Client ID** |
 | Provider → GopherCRM | Client secret, or a client certificate | **Client secret**, or **Client certificate (PEM)** and **Client private key (PEM)**. The certificate is uploaded at the provider and its private key stays with GopherCRM; while one is set it is used instead of the secret. |

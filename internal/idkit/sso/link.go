@@ -9,13 +9,15 @@ import (
 
 // signIn is what one verified callback asks the transaction for: the exact
 // (issuer, subject) pair of the ID token, the link hint (entra.LinkHint, ""
-// when there is none), the role the first matching mapping entry names and
-// the profile of a first sign-in.
+// when there is none), the role the first matching mapping entry names, the
+// profile of a first sign-in and the provider session id of the token (its
+// sid, "" when absent).
 type signIn struct {
 	issuer, subject string
 	linkHint        string
 	roleID          uint
 	profile         idkit.Profile
+	sid             string
 }
 
 // signInAccount is the link rule and the session, run inside the callback's
@@ -102,8 +104,10 @@ func (s *Service) signInAccount(ctx context.Context, in signIn) (idkit.Session, 
 	}
 
 	return s.Sessions.Issue(ctx, idkit.SessionRequest{
-		AccountID:  accountID,
-		Method:     idkit.SignInMethodOIDC,
-		SignedInAt: idkit.SystemClock{}.Now(),
+		AccountID:         accountID,
+		Method:            idkit.SignInMethodOIDC,
+		SignedInAt:        idkit.SystemClock{}.Now(),
+		Issuer:            in.issuer,
+		ProviderSessionID: in.sid,
 	})
 }

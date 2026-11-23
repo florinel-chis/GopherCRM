@@ -133,8 +133,10 @@ func (s *authService) changePasswordInTransaction(
 	}
 
 	// renewOIDCStart is the start of the presented single sign-on session,
-	// nil when the presented session is not one.
+	// nil when the presented session is not one; renewProviderSession is its
+	// provider session reference.
 	var renewOIDCStart *time.Time
+	var renewProviderSession string
 	if presentedHash != "" {
 		stored, err := refreshRepo.GetByTokenHash(presentedHash)
 		if err != nil {
@@ -153,6 +155,7 @@ func (s *authService) changePasswordInTransaction(
 		}
 		if stored.SignInMethod == models.RefreshTokenSignInOIDC {
 			renewOIDCStart = stored.SessionStartedAt
+			renewProviderSession = stored.ProviderSessionHash
 		}
 		if err := refreshRepo.ClaimForRotation(stored.ID); err != nil {
 			if apperrors.IsNotFound(err) {
@@ -200,6 +203,7 @@ func (s *authService) changePasswordInTransaction(
 	if renewOIDCStart != nil {
 		session.SignInMethod = models.RefreshTokenSignInOIDC
 		session.StartedAt = *renewOIDCStart
+		session.ProviderSessionHash = renewProviderSession
 	}
 	newRefreshToken, err := s.issueRefreshToken(refreshRepo, userID, session)
 	if err != nil {

@@ -7,6 +7,11 @@ import type { User } from '@/types';
 import { permissionsOf } from '@/test/permissions';
 
 const mockUseAuth = vi.fn();
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('react-router-dom')>()),
+  useNavigate: () => mockNavigate,
+}));
 vi.mock('@/components/layout/NotificationBell', () => ({
   NotificationBell: () => <div data-testid="notification-bell" />,
 }));
@@ -125,5 +130,23 @@ describe('MainLayout', () => {
     const accountButton = screen.getByRole('button', { name: 'Account menu' });
     await userEvent.click(accountButton);
     expect(await screen.findByRole('menuitem', { name: 'Logout' })).toBeInTheDocument();
+  }, 30000);
+
+  it.each([
+    [false, 'goes to the login page after a logout that stays in the app'],
+    [true, 'leaves the navigation to the identity provider when the logout hands the browser to it'],
+  ])('logout resolving %s %s', async (leaving) => {
+    const logout = vi.fn().mockResolvedValue(leaving);
+    mockUseAuth.mockReturnValue({ ...authState(createMockUser({ role: 'admin' })), logout });
+    render(<MainLayout />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Logout' }));
+    expect(logout).toHaveBeenCalledTimes(1);
+    if (leaving) {
+      expect(mockNavigate).not.toHaveBeenCalledWith('/login');
+    } else {
+      expect(mockNavigate).toHaveBeenCalledWith('/login');
+    }
   }, 30000);
 });

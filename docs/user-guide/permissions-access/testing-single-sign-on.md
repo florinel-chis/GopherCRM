@@ -18,6 +18,11 @@ steps. Before you test, check that you have:
 - **The Web redirect URI** `APP_BASE_URL/auth/callback`, that is `<APP_BASE_URL>/auth/callback`
   exactly, with no trailing slash (section 1, step 4). Entra ID accepts `http` only for
   localhost, so a local test uses for example http://localhost:5173/auth/callback.
+- **The sign-out registration** (section 1, step 7): a second Web redirect URI
+  `APP_BASE_URL/login` (for a local test for example http://localhost:5173/login), and the `sid`
+  optional claim of the ID token. The **Front-channel logout URL** must be `https` and the API's
+  address as the browser reaches it, so it cannot be tested against a plain-http local API; leave it
+  empty for a local test and check it on a deployment served over https.
 - **A client secret or a certificate** (section 2). For a secret, copy its **Value**, not the
   Secret ID. A certificate and its private key are entered in Settings → Single sign-on only; there
   is no environment variable for them.
@@ -113,6 +118,8 @@ out between tests.
 | Not assigned | Sign in as a tenant user with no assignment to the application. | Microsoft refuses the sign-in before it reaches GopherCRM. | The Microsoft sign-in page; no row in GopherCRM's Sign-in audit. |
 | Email already used | Create a local account with the test person's email address first, then sign in as that person. | Refused; the local account is left alone and not linked. | Sign-in audit: reason `email_taken`. |
 | Local admin password | Sign in with the break-glass local administrator's password. | Works, whether single sign-on is on or off. | Sign-in audit: a password success row. |
+| Sign-out | Signed in through single sign-on, choose Logout. | The browser passes through Microsoft's sign-out page and lands on GopherCRM's sign-in page; choosing **Sign in with single sign-on** asks for the Microsoft sign-in again. | Sign-in audit: a `logout` success row. An AADSTS error page instead means `APP_BASE_URL/login` is not registered. |
+| Sign-out at Microsoft (deployment over https) | Signed in through single sign-on, sign out at myaccount.microsoft.com or another application of the tenant, then use GopherCRM. | GopherCRM asks for a sign-in again. | Sign-in audit: a `logout` success row for the account. Nothing happens without the `sid` claim or the front-channel logout URL. |
 | Password for a linked account, setting off | With `security.sso.allow_password` off (the default), try a password sign-in and a password reset for the account single sign-on created. | Sign-in gets the generic "Invalid email or password"; password reset answers as usual but sends no mail. | Sign-in audit: reason `sso_account`. No mail in the mail log. |
 | Password for a linked account, setting on | Switch `security.sso.allow_password` on and request a password reset for that account. | The reset mail is sent and the new password works. | The mail (or the log-only mailer's line); Sign-in audit: a password success row. |
 

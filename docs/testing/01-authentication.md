@@ -1976,3 +1976,44 @@ TC-AUTH-092), whose members patch recomputes the members' roles from the groups 
   (`TestResetLinkEmailChangeSQLite`, `TestResetLinkEmailChangeMySQL`, which needs
   `TEST_MYSQL_DSN`) and `internal/repository/user_repository_test.go`
   (`TestUpdateFieldsEmailSpendsResetTokens`)
+
+### TC-AUTH-095 — Logout of a single sign-on session also signs out at the identity provider (#634)
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Single sign-on configured against an issuer that advertises an
+  `end_session_endpoint` and accepts `APP_BASE_URL/login` as its post-logout redirect URI; a
+  person signed in through it.
+- **Steps:** Choose Logout. Controls: log out of a password session; send `POST /auth/logout` with
+  an `id_token_hint` signed by another key, for another client, from another issuer, linked to
+  another account or to none, against a discovery without `end_session_endpoint`, with single
+  sign-on off, and one longer than 16384 bytes.
+- **Expected:** The SPA posts `{id_token_hint}`; the answer carries `end_session_url` (the
+  endpoint plus `id_token_hint`, `post_logout_redirect_uri` `APP_BASE_URL/login` and `client_id`)
+  and the browser passes through the issuer's sign-out and lands on `/login`. The old refresh
+  token is refused (**401**). A password session posts no body and gets the plain message. Every
+  refused hint answers **200** with the plain message and still revokes the sessions; the
+  over-long hint is **400** `VALIDATION_ERROR` and revokes nothing. No log line carries the hint
+  or the URL.
+- **Automation:** automated — `gocrm-ui/e2e/tests/sso.spec.ts` (S16);
+  `internal/idkit/sso/logout_test.go` (`TestEndSessionURL`), `internal/handler/auth_oidc_logout_test.go`
+  (`TestLogoutEndSession`), `cmd/auth_oidc_wiring_test.go` (`TestOIDCRoutesWired_SignOut`) and
+  `AuthContext.test.tsx`, `client.test.ts`, `client.sessionRecord.test.ts`, `AuthCallback.test.tsx`
+
+### TC-AUTH-096 — A front-channel sign-out from the identity provider ends the account's sessions (#634)
+- **Priority:** P1
+- **Type:** functional
+- **Preconditions:** Single sign-on on; account A signed in through it under provider session
+  `sid` s1 (its ID token carries `sid`), account B under s2.
+- **Steps:** `GET /api/v1/auth/oidc/frontchannel-logout?sid=s1` without a credential. Controls: the
+  same with `iss` equal to the configured issuer, with another `iss`, with a `sid` differing only in
+  letter case, without `sid`, and with single sign-on off.
+- **Expected:** **200** `{message}` with `Cache-Control: no-cache, no-store`, `Pragma: no-cache` and
+  no `X-Frame-Options`. Every refresh token of A is revoked and A's access tokens are refused
+  (**401**); one `logout` row is written to the sign-in audit for A; B keeps its session. Another
+  `iss` and the other letter case answer **200** and end nothing; no `sid` is **400**
+  `VALIDATION_ERROR`; with single sign-on off the route is **404**.
+- **Automation:** automated (backend) — `internal/service/auth_oidc_signout_test.go`
+  (`TestFrontChannelLogout`, `TestFrontChannelLogoutMySQL`, which needs `TEST_MYSQL_DSN`),
+  `internal/idkit/sso/logout_test.go` (`TestFrontChannelLogout`),
+  `internal/handler/auth_oidc_logout_test.go` (`TestFrontChannelLogout`) and
+  `cmd/auth_oidc_wiring_test.go` (`TestOIDCRoutesWired_SignOut`)

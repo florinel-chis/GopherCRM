@@ -973,6 +973,10 @@ type RefreshTokenRepository interface {
 	// RevokeFamily revokes every live token of the user's family. An empty
 	// family id is an error and runs no statement.
 	RevokeFamily(userID uint, familyID string) error
+	// LiveUserIDsByProviderSession returns the distinct owners of the live
+	// (not revoked, unexpired) tokens whose provider_session_hash is hash,
+	// in ascending order. An empty hash is an error and runs no statement.
+	LiveUserIDsByProviderSession(hash string) ([]uint, error)
 	// ClaimForRotation revokes the token only while it is still not revoked
 	// and strictly unexpired, and succeeds only when exactly one row was
 	// affected; otherwise it reports gorm.ErrRecordNotFound. It is the

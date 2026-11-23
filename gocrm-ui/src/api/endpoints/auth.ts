@@ -12,6 +12,20 @@ export interface OIDCStartResponse {
   authorization_url: string;
 }
 
+// POST /auth/oidc/callback: the session, plus the ID token of the sign-in,
+// kept with the session for the logout's id_token_hint.
+export interface OIDCCallbackResponse extends LoginResponse {
+  id_token: string;
+}
+
+// POST /auth/logout. end_session_url is present only for a single sign-on
+// session whose ID token was sent as id_token_hint: the identity provider's
+// sign-out, where the browser goes next.
+export interface LogoutResponse {
+  message: string;
+  end_session_url?: string;
+}
+
 export const authApi = {
   // Public probe of the security.allow_public_registration switch, so the
   // login and register screens know whether to offer sign-up before any
@@ -45,8 +59,8 @@ export const authApi = {
   // Exchanges the single-use code and state from the issuer's redirect for a
   // session, with the sign-in cookie of startOIDC. The path stays under
   // /auth/ so the client never tries a token refresh on its 401.
-  oidcCallback: async (code: string, state: string): Promise<LoginResponse> => {
-    const response = await api.post<LoginResponse>(
+  oidcCallback: async (code: string, state: string): Promise<OIDCCallbackResponse> => {
+    const response = await api.post<OIDCCallbackResponse>(
       '/auth/oidc/callback',
       { code, state },
       { withCredentials: true }
@@ -59,15 +73,20 @@ export const authApi = {
     return response.data;
   },
 
-  // Revokes every refresh session of the user (no body). The access token is
-  // passed explicitly because the session's stored tokens are already gone
-  // by the time the request goes out (see ApiClient.endSession).
-  logout: async (accessToken?: string): Promise<void> => {
-    await api.post(
+  // Revokes every refresh session of the user. The access token is passed
+  // explicitly because the session's stored tokens are already gone by the
+  // time the request goes out (see ApiClient.endSession). A single sign-on
+  // session sends its ID token as {id_token_hint} and gets back the identity
+  // provider's end-session URL, when the server has one; every other session
+  // sends no body, as before. Returns that URL, or undefined.
+  logout: async (accessToken?: string, idTokenHint?: string): Promise<string | undefined> => {
+    const response = await api.post<LogoutResponse>(
       '/auth/logout',
-      undefined,
+      idTokenHint ? { id_token_hint: idTokenHint } : undefined,
       accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined
     );
+    const endSessionURL = response?.data?.end_session_url;
+    return typeof endSessionURL === 'string' && endSessionURL !== '' ? endSessionURL : undefined;
   },
 
   getCurrentUser: async (): Promise<CurrentUser> => {

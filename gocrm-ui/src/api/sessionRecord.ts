@@ -23,6 +23,12 @@ export interface SessionRecord {
   /** The unverified `user_id` claim of the access token at sign-in. */
   subject: string | null;
   persist: boolean;
+  /**
+   * The ID token of a single sign-on sign-in, sent back as `id_token_hint`
+   * at logout so the identity provider's session can end too. Absent for
+   * every other session and in records written before it existed.
+   */
+  idToken?: string;
 }
 
 /** 32 lowercase hex characters from crypto.getRandomValues. */
@@ -55,6 +61,7 @@ export function parseSessionRecord(raw: string): SessionRecord | null {
     refresh: typeof candidate.refresh === 'string' ? candidate.refresh : null,
     subject: typeof candidate.subject === 'string' ? candidate.subject : null,
     persist: candidate.persist === true,
+    ...(typeof candidate.idToken === 'string' && candidate.idToken !== '' ? { idToken: candidate.idToken } : {}),
   };
 }
 
@@ -66,6 +73,7 @@ export function serializeSessionRecord(record: SessionRecord): string {
     refresh: record.refresh,
     subject: record.subject,
     persist: record.persist,
+    ...(record.idToken ? { idToken: record.idToken } : {}),
   });
 }
 
