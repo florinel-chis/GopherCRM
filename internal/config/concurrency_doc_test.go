@@ -1473,13 +1473,21 @@ func leadErasurePlanBody(t *testing.T, rel string) string {
 }
 
 func TestConcurrencyDocIndexAndChangelog(t *testing.T) {
-	var listed bool
-	for _, b := range concurrencyDocBullets(readRepositoryFile(t, "README.md")) {
-		if strings.HasPrefix(b, "- [docs/CONCURRENCY.md](docs/CONCURRENCY.md)") {
-			listed = true
+	// The README Documentation table is the only docs index: the guide has a
+	// row there and no bullet elsewhere.
+	const link = "[docs/CONCURRENCY.md](docs/CONCURRENCY.md)"
+	var row, bullet bool
+	for _, line := range strings.Split(readRepositoryFile(t, "README.md"), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "| "+link+" |") {
+			row = true
+		}
+		if strings.HasPrefix(line, "- "+link) {
+			bullet = true
 		}
 	}
-	assert.True(t, listed, "README.md lists [docs/CONCURRENCY.md](docs/CONCURRENCY.md)")
+	assert.True(t, row, "README.md has a Documentation-table row starting %q", "| "+link+" |")
+	assert.False(t, bullet, "README.md has no bullet starting %q: the Documentation table is the index", "- "+link)
 
 	changelog := readRepositoryFile(t, "CHANGELOG.md")
 	start := strings.Index(changelog, "## [Unreleased]")

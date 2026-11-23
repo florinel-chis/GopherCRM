@@ -211,6 +211,13 @@ To switch it on:
      backend does not log, and every render then fails: the download answers 503
      `PDF_RENDER_FAILED` and the email falls back to text.
 
+**From source, in development.** The same variable switches it on for `go run ./cmd` or a local
+binary. A full Chrome is accepted, for example
+`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` on macOS. `APP_BASE_URL` defaults to
+the Vite dev server, `http://localhost:5173`, so the frontend must be running there. The UI on 5173
+and the API on 8080 are two origins: the localhost origins 5173, 3000 and 8080 are admitted by
+default, and any other origin must be listed in `CORS_ALLOWED_ORIGINS`.
+
 **The unit needs no change.** The renderer writes only below one temporary directory per render
 (the browser profile, `HOME`, `TMPDIR` and the XDG directories), which
 `PrivateTmp=yes` provides, and removes it afterwards; `ProtectHome=yes` and `ProtectSystem=strict`
